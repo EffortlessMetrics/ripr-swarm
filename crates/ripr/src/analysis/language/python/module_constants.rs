@@ -107,6 +107,11 @@ pub(super) struct PythonTestRebinding {
     /// Names the test cannot be trusted to hold at their imported value: its
     /// own parameters and locals, and names its module binds more than once.
     pub(super) names: Vec<String>,
+    /// Names the test's module binds more than once (an import later replaced
+    /// by `fee = ...` or `def fee`) or any function declares `global`. Kept
+    /// apart from `names` so a function-local import of an owner is not
+    /// mistaken for a module-level replacement (#8247).
+    pub(super) module_names: Vec<String>,
     /// Attribute names the test file assigns anywhere (`pricing.LIMIT = 5`),
     /// or `*` when it names a dynamic namespace writer (`setattr`,
     /// `sys.modules`, ...); either can rewrite another module's constant at
@@ -121,6 +126,11 @@ impl PythonTestRebinding {
     /// Whether the test may see `name` at a value other than its import.
     pub(super) fn rebinds(&self, name: &str) -> bool {
         self.opaque || self.names.iter().any(|bound| bound == name)
+    }
+
+    /// Whether the test's module rebinds `name` after, or besides, importing it.
+    pub(super) fn module_rebinds(&self, name: &str) -> bool {
+        self.module_names.iter().any(|bound| bound == name)
     }
 
     /// Whether the test file may assign attribute `name` on another module.
@@ -142,6 +152,7 @@ pub(super) fn python_test_rebinding(
     PythonTestRebinding {
         opaque: locals.is_none() || contains_nested_scope(body) || body_text.contains(":="),
         names: locals.unwrap_or_default(),
+        module_names: Vec::new(),
         attributes: Vec::new(),
     }
 }
@@ -178,6 +189,11 @@ pub(super) fn with_module_rebinding(source: &str, statements: &[Stmt], tests: &m
             .extend(rebound.iter().map(|name| (*name).clone()));
         rebinding.names.sort();
         rebinding.names.dedup();
+        rebinding
+            .module_names
+            .extend(rebound.iter().map(|name| (*name).clone()));
+        rebinding.module_names.sort();
+        rebinding.module_names.dedup();
         rebinding.attributes.clone_from(&attributes);
     }
 }

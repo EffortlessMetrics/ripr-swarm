@@ -1,0 +1,150 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_wrong_receiver_assertion/input",
+  "config_path": "<cwd>/fixtures/python_wrong_receiver_assertion/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:34f9d6c12bafa519b3d5d145592e9a21e4bb396e4bbb776f887e1e46fdaf62f2","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_cart.py:python_preview:95942161",
+      "canonical_gap_id": "gap:python:src/cart.py:Cart.total:return_value:return_value:amount*3",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:src/cart.py:Cart.total:return_value:return_value:amount*3",
+        "language": "python",
+        "file": "src/cart.py",
+        "owner": "Cart.total",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "amount*3"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "probe": {
+        "id": "probe:src_cart.py:python_preview:95942161",
+        "family": "return_value",
+        "delta": "value",
+        "file": "src/cart.py",
+        "line": 3,
+        "expression": "        return amount * 3",
+        "owner": "python:src/cart.py::Cart.total"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `total`"},
+        "infect": {"state":"yes","confidence":"low","summary":"Changed Python return expression can alter the owner return value: `return amount * 3`"},
+        "propagate": {"state":"yes","confidence":"low","summary":"Changed Python return value is already at the owner output boundary."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
+       },
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `total`", "infection yes: Changed Python return expression can alter the owner return value: `return amount * 3`", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return amount * 3 (line 3)", "related test tests/test_cart.py:4 test_total_on_another_receiver uses strong exact value oracle: assert other.total(10) == 30", "missing discriminator return value == <expected value>: changed Python returned-value at line 3 lacks a concrete repair discriminator"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"return amount * 3","line":3}
+      ],
+      "evidence": ["owner: Cart.total", "owner_kind: method", "missing_discriminator: return value == <expected value>", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_cart.py", "suggested_test_name: test_total_on_another_receiver", "suggested_test_node_id: tests/test_cart.py::test_total_on_another_receiver", "suggested_verify_command: python -m pytest tests/test_cart.py::test_total_on_another_receiver", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_total_on_another_receiver)", "test_verify_command: python -m pytest tests/test_cart.py::test_total_on_another_receiver (test_total_on_another_receiver)", "related_test_relation: syntactic_call (test_total_on_another_receiver)", "test_oracle: exact_value strong (test_total_on_another_receiver)"],
+      "missing": ["A strong Python oracle reaches `total`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "return value == <expected value>",
+            "reason": "changed Python returned-value at line 3 lacks a concrete repair discriminator",
+            "flow_sink": {"kind":"return_value","text":"return amount * 3","line":3}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "return value == <expected value>",
+          "reason": "changed Python returned-value at line 3 lacks a concrete repair discriminator",
+          "flow_sink": {"kind":"return_value","text":"return amount * 3","line":3}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_total_on_another_receiver",
+          "file": "tests/test_cart.py",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert other.total(10) == 30"
+        }
+      ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_cart.py",
+        "suggested_test_name": "test_total_on_another_receiver",
+        "suggested_test_node_id": "tests/test_cart.py::test_total_on_another_receiver",
+        "verify_command": "python -m pytest tests/test_cart.py::test_total_on_another_receiver",
+        "verify_command_confidence": "high"
+       },
+      "python_repair_card": {
+        "card_version": "python_repair_card.v1",
+        "source": "check_python_preview",
+        "canonical_gap_id": "gap:python:src/cart.py:Cart.total:return_value:return_value:amount*3",
+        "language": "python",
+        "language_status": "preview",
+        "authority_boundary": "preview_advisory_only",
+        "repair_action": "strengthen_existing_test",
+        "changed_owner": "Cart.total",
+        "changed_behavior": "return_value changed at src/cart.py:3: `return amount * 3`",
+        "current_test_evidence": "tests/test_cart.py:4 test_total_on_another_receiver currently has oracle_strength=strong, oracle_kind=exact_value: assert other.total(10) == 30",
+        "missing_discriminator": "return value == <expected value>",
+        "recommended_test_shape": "Strengthen the existing pytest exact return-value assertion for `return value == <expected value>`.",
+        "suggested_assertion": "Assert the returned value equals the expected value for the changed inputs.",
+        "suggested_location": {
+          "test_file": "tests/test_cart.py",
+          "test_name": "test_total_on_another_receiver",
+          "pytest_node_id": "tests/test_cart.py::test_total_on_another_receiver"
+         },
+        "verify": {
+          "command": "python -m pytest tests/test_cart.py::test_total_on_another_receiver",
+          "confidence": "high"
+         },
+        "receipt": {
+          "command": null,
+          "status": "unavailable_until_python_gap_ledger",
+          "guidance": "Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command."
+         },
+        "stop_conditions": ["Stop if imports, fixtures, or test setup cannot call the changed owner.", "Stop if the expected value for the missing discriminator is ambiguous.", "Stop if adding the test appears to require a production-code edit."],
+        "limits": ["Syntax-first Python preview evidence only.", "No source edits, generated tests, mutation execution, provider calls, or gate authority.", "Verify success alone is not a gap-closure receipt."]
+       },
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `return value == <expected value>`.",
+      "suggested_next_action": "Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `return value == <expected value>`.",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "method",
+      "changed_sink": "amount",
+      "observed_sink": "assert other.total(10) == 30",
+      "oracle_alignment": "orthogonal",
+      "alignment_reason": "strong_oracle_observes_different_sink",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["src/cart.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/cart.py","digest":"sha256:ba92c9977fb8cef5f4e0bdf150bfc92e228ac98da2996f98a90b436b4eadaeb8"},{"path":"tests/test_cart.py","digest":"sha256:ec8a8a8fa456dbe2b292ddf72e50f42d7b3434ef9db68828729af4611b0d5fd0"}]}
+}

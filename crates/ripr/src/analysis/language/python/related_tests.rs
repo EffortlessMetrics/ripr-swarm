@@ -26,6 +26,9 @@ pub(super) enum PythonRelationKind {
     /// The test calls a same-module caller of the owner, and no test calls the
     /// owner itself (#4568). Reach evidence only; never an oracle.
     HelperOwnerCall,
+    /// The test names a pytest fixture whose body calls the owner (#4563).
+    /// Reach evidence only; the fixture value is not an oracle.
+    FixtureOwnerCall,
     ActivationLimited,
 }
 
@@ -42,6 +45,7 @@ impl PythonRelationKind {
             Self::SameStem => 3,
             Self::TestNameSimilarity => 2,
             Self::FixtureName => 1,
+            Self::FixtureOwnerCall => 2,
             Self::HelperOwnerCall => 2,
             Self::ActivationLimited => 0,
         }
@@ -75,6 +79,7 @@ impl PythonRelationKind {
             Self::SameStem => "same_stem",
             Self::TestNameSimilarity => "test_name_similarity",
             Self::FixtureName => "fixture_name",
+            Self::FixtureOwnerCall => "fixture_owner_call",
             Self::HelperOwnerCall => "helper_owner_call",
             Self::ActivationLimited => "test_activation_unestablished",
         }
@@ -432,6 +437,9 @@ pub(super) fn related_test_relation(
     if local_binding_calls_owner(test, owner) {
         return Some(PythonRelationKind::LocalBinding);
     }
+    if fixture_owner_call(test, owner) {
+        return Some(PythonRelationKind::FixtureOwnerCall);
+    }
     // A test is related to an owner only when it references the owner
     // (RIPR-SPEC-0028). File-stem, test-name and fixture-name proximity are
     // ranking labels for a test that already references the owner without a
@@ -452,6 +460,26 @@ pub(super) fn related_test_relation(
         return Some(PythonRelationKind::FixtureName);
     }
     None
+}
+
+/// Whether a fixture the test names calls the owner by the rules a test body
+/// uses (#4563). A test that rebinds the parameter name in its body no longer
+/// holds the fixture value. One hop only: a fixture's own fixtures are not
+/// followed.
+fn fixture_owner_call(test: &PythonTest, owner: &PythonOwner) -> bool {
+    test.fixture_defs.iter().any(|def| {
+        if test_body_binds_local(test, &def.name) {
+            return false;
+        }
+        let mut view = test.clone();
+        view.file = def.file.clone();
+        view.body_text = def.body_text.clone();
+        view.imports = def.imports.clone();
+        view.assertions.clear();
+        view.fixtures.clear();
+        view.fixture_defs.clear();
+        related_test_relation(&view, owner).is_some_and(PythonRelationKind::uses_oracle)
+    })
 }
 
 /// The class of a dunder method owner (`LowerBound` for
@@ -1645,6 +1673,71 @@ pub(super) fn owner_method_bound_locals(
         }
     }
     locals
+}
+
+/// Whether the assertion text calls `.method(` only on receivers that are not
+/// statically bound to the owner class (#8247). The relation-level evidence
+/// ([`strong_test_calls_owner_method_on_bound_receiver`]) reads the whole test
+/// body, so a test that calls the owner on `c = Cart()` and asserts a different
+/// object's `.total(...)` borrows the owner's identity. An assertion with no
+/// `.method(` call (it reads a result local, say) is not judged here.
+pub(super) fn assertion_calls_method_only_on_foreign_receiver(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    class: &str,
+    method: &str,
+    assertion_text: &str,
+) -> bool {
+    let needle = format!(".{method}(");
+    let class_locals = owner_class_locals(test, owner, class);
+    let bound_locals = owner_method_bound_locals(test, owner, class, method);
+    let mut saw_call = false;
+    for (dot, _) in assertion_text.match_indices(&needle) {
+        if line_prefix_looks_like_comment_or_string(assertion_text, dot) {
+            continue;
+        }
+        saw_call = true;
+        let before = assertion_text[..dot].trim_end();
+        let receiver = if before.ends_with(')') {
+            inline_construct_callee(before)
+        } else {
+            let start = before
+                .rfind(|ch: char| !(is_python_identifier_char(ch) || ch == '.'))
+                .map_or(0, |idx| idx + 1);
+            Some(&before[start..])
+        };
+        let bound = receiver.is_some_and(|receiver| {
+            class_locals.iter().any(|local| local == receiver)
+                || bound_locals.iter().any(|local| local == receiver)
+        });
+        if bound {
+            return false;
+        }
+    }
+    saw_call
+}
+
+/// The callee name of the trailing call in `before` (`Cart(...)` -> `Cart`,
+/// `pkg.Cart(...)` -> `pkg.Cart`), or None when the parentheses do not balance.
+fn inline_construct_callee(before: &str) -> Option<&str> {
+    let mut depth = 0i32;
+    for (idx, ch) in before.char_indices().rev() {
+        match ch {
+            ')' => depth += 1,
+            '(' => {
+                depth -= 1;
+                if depth == 0 {
+                    let head = &before[..idx];
+                    let start = head
+                        .rfind(|ch: char| !(is_python_identifier_char(ch) || ch == '.'))
+                        .map_or(0, |found| found + 1);
+                    return Some(&head[start..]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Relation-layer receiver-identity evidence for a method/classmethod owner: a

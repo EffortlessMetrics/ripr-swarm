@@ -1122,3 +1122,75 @@ fn user_type_between_owner_and_caller_abstains() -> Result<(), String> {
     assert_abstains_through_hop(&finding, "user Display");
     Ok(())
 }
+
+// #6926: a helper called inside an `Arc<Mutex<T>>::lock().await` closure is
+// not a forwarding tail, so the wrapper's pin must not credit the owner.
+#[test]
+fn helper_inside_async_lock_closure_abstains() -> Result<(), String> {
+    let wrapper = "    let locked = std::sync::Arc::new(std::sync::Mutex::new(qty));\n    let guard = locked.lock().await;\n    (|| {\n        if is_bulk(*guard) {\n            5\n        } else {\n            0\n        }\n    })()";
+    let finding = predicate_finding(&bulk_source(wrapper, BOUNDARY_TESTS), BULK_DIFF)?;
+    assert_eq!(
+        relation_of(&finding, "ten_items_earn_the_bulk_discount"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    assert_not_forwarded(&finding);
+    Ok(())
+}
+
+// #6926: OnceCell / OnceLock / lazy_static cache the helper, so a later
+// wrapper pin does not observe a forwarded hop result.
+#[test]
+fn helper_cached_behind_once_cell_once_lock_or_lazy_static_abstains() -> Result<(), String> {
+    for wrapper in [
+        "    let cache = std::cell::OnceCell::new();\n    *cache.get_or_init(|| if is_bulk(qty) { 5 } else { 0 })",
+        "    static CACHE: std::sync::OnceLock<u32> = std::sync::OnceLock::new();\n    *CACHE.get_or_init(|| if is_bulk(qty) { 5 } else { 0 })",
+        "    lazy_static::lazy_static! {\n        static ref CACHE: u32 = if is_bulk(qty) { 5 } else { 0 };\n    }\n    *CACHE",
+    ] {
+        let finding = predicate_finding(&bulk_source(wrapper, BOUNDARY_TESTS), BULK_DIFF)?;
+        assert_eq!(
+            relation_of(&finding, "ten_items_earn_the_bulk_discount"),
+            Some("helper_owner_call"),
+            "{wrapper}: {finding}"
+        );
+        assert_not_forwarded(&finding);
+    }
+    Ok(())
+}
+
+// #6926: `Option<&T>` wrapping or slicing the helper's own result, not an
+// index into a separate table (`TABLE.get(title().len())` above).
+#[test]
+fn option_ref_derived_from_helper_result_abstains() -> Result<(), String> {
+    for (item, test) in [
+        (
+            "pub fn entry() -> Option<&'static str> {\n    Some(title())\n}",
+            "assert_eq!(entry(), Some(\"ripr\"));",
+        ),
+        (
+            "pub fn entry() -> Option<&'static str> {\n    title().get(..)\n}",
+            "assert_eq!(entry(), Some(\"ripr\"));",
+        ),
+    ] {
+        assert_abstains_through_hop(&title_item_finding(item, test)?, test);
+    }
+    Ok(())
+}
+
+// #6926: a same-named `fn` in the test module that macro expansion would
+// define is absent from the workspace index, so uniqueness cannot see it.
+// `test_call_is_shadowed`'s fail-closed path (lexical / macro) must still
+// refuse the helper-owner relation.
+#[test]
+fn unindexed_same_named_test_module_fn_is_caught_by_shadow_fallback() -> Result<(), String> {
+    let items = "    macro_rules! local_discount {\n        () => {\n            fn order_discount(_: u32) -> u32 { 5 }\n        };\n    }\n    local_discount!();\n";
+    let finding = predicate_finding(&bulk_with_test_items(items, BOUNDARY_TESTS), BULK_DIFF)?;
+    assert_ne!(
+        relation_of(&finding, "ten_items_earn_the_bulk_discount"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    assert!(!has_boundary_row(&finding, "qty == 10"), "{finding}");
+    Ok(())
+}
