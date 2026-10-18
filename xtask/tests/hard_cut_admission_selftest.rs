@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::process::Command;
 
-fn run_self_test(script: &str, expected: &str) {
+fn run_self_test(script: &str, expected: &str) -> Result<(), String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     let path = root
         .join(".github/actions/pr-candidate-admission")
@@ -13,25 +13,26 @@ fn run_self_test(script: &str, expected: &str) {
         .arg(&path)
         .arg("--self-test")
         .output()
-        .expect("python3 must be available to run the admission self-tests");
+        .map_err(|error| format!("python3 must be available for {script}: {error}"))?;
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        output.status.success(),
-        "{script} self-test failed: {stdout}{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(
-        stdout.contains(expected),
-        "{script} unexpected output: {stdout}"
-    );
+    if !output.status.success() {
+        return Err(format!(
+            "{script} self-test failed: {stdout}{}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    if !stdout.contains(expected) {
+        return Err(format!("{script} unexpected output: {stdout}"));
+    }
+    Ok(())
 }
 
 #[test]
-fn candidate_admission_self_test_passes() {
-    run_self_test("candidate_admission.py", "controls passed");
+fn candidate_admission_self_test_passes() -> Result<(), String> {
+    run_self_test("candidate_admission.py", "controls passed")
 }
 
 #[test]
-fn release_cut_admission_self_test_passes() {
-    run_self_test("release_cut_admission.py", "controls passed");
+fn release_cut_admission_self_test_passes() -> Result<(), String> {
+    run_self_test("release_cut_admission.py", "controls passed")
 }
