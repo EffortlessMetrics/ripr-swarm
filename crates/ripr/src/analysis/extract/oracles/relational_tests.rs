@@ -1274,6 +1274,22 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         ("assert_eq!(Foo::new({ let a = 1; a == b }), f);", &weak),
         ("assert_eq!(Some({ x == 1 }), Some(f));", &weak),
         ("assert_eq!(Foo::new({ let a = 1; a }), f);", &whole),
+        // Review of db31eba: field chains and bare blocks.
+        ("assert_eq!(Wrap(Wrap(x == 1)).0.0, false);", &weak),
+        (
+            "assert_eq!(Outer { inner: Inner { ok: x == 1 } }.inner.ok, e);",
+            &weak,
+        ),
+        ("assert_eq!({ let a = 1; a == b }, expected);", &weak),
+        ("assert_eq!({ x == 1 }, f);", &weak),
+        ("assert_eq!({ x == 1 }, true);", &whole),
+        ("assert_eq!({ let a = 1; a }, 1);", &whole),
+        ("assert_eq!(cfg.enabled.inner, 3);", &exact),
+        ("assert_eq!(Ok::<bool, ()>(x == 3).unwrap(), true);", &exact),
+        (
+            "assert_eq!(Some::<(u8, u8)>((1, 2)).unwrap(), (1, 2));",
+            &exact,
+        ),
         // Path spellings of the standard wrappers.
         (
             "assert_eq!(Box::<bool>::new(x == 3), Box::new(true));",

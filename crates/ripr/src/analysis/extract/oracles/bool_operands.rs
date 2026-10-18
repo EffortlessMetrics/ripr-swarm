@@ -681,7 +681,8 @@ fn member_receiver(text: &str) -> Option<(&str, bool)> {
     let is_member =
         !member.is_empty() && member.chars().all(|ch| ch.is_alphanumeric() || ch == '_');
     // `1.5` is a float, and `a..b` a range.
-    let after_value = receiver.ends_with([')', ']', '}']) || call;
+    // A chain (`X.0.0`) ends its receiver in a name or digit.
+    let after_value = receiver.ends_with([')', ']', '}']) || call || receiver.contains('.');
     (is_member && after_value && !receiver.is_empty() && !receiver.ends_with('.'))
         .then(|| text.get(..receiver.len()).map(|receiver| (receiver, call)))?
 }
@@ -803,7 +804,8 @@ fn unwrapped_wrapper_argument(text: &str) -> Option<&str> {
     // Only the standard wrappers' `unwrap` is known to return what they
     // hold (review of 6b1c3c4).
     let callee = mask_comments_and_strings(receiver);
-    let path = callee.trim_start().split('(').next().unwrap_or_default();
+    let callee = callee.trim_start();
+    let path = callee.get(..final_group_open(callee)?)?;
     let path = strip_path_generics(path.trim());
     let mut segments = path.rsplit("::").map(str::trim);
     let standard = match (segments.next(), segments.next()) {
@@ -834,9 +836,15 @@ fn shaped_wrapper_argument(text: &str) -> Option<(&str, String)> {
     // A turbofish names the wrapper's type, not another wrapper
     // (`Ok::<bool, ()>(_)` or `Box::<bool>::new(_)` against the plain
     // spelling), and `Option::Some` is `Some`.
-    let head = strip_path_generics(&squeeze(&before))
-        .replace("Option::Some", "Some")
-        .replace("Result::Ok", "Ok");
+    let head = replace_path(
+        &replace_path(
+            &strip_path_generics(&squeeze(&before)),
+            "Option::Some",
+            "Some",
+        ),
+        "Result::Ok",
+        "Ok",
+    );
     let callee = head.trim_end_matches('(');
     let associated = callee.ends_with("::new") || callee.ends_with("::from");
     let standard = ["Box::new", "Rc::new", "Arc::new"]
@@ -846,6 +854,26 @@ fn shaped_wrapper_argument(text: &str) -> Option<(&str, String)> {
         return None;
     }
     Some((inner, format!("{head}_{}", squeeze(&after))))
+}
+
+/// `text` with the path `from` (not the tail of a longer name) spelled `to`.
+fn replace_path(text: &str, from: &str, to: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    let mut previous = None::<char>;
+    while let Some(at) = rest.find(from) {
+        let before = rest[..at].chars().next_back().or(previous);
+        out.push_str(&rest[..at]);
+        if before.is_some_and(|ch| ch.is_alphanumeric() || ch == '_') {
+            out.push_str(from);
+        } else {
+            out.push_str(to);
+        }
+        previous = from.chars().next_back();
+        rest = &rest[at + from.len()..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// `text` without its `::<..>` generic arguments.
@@ -995,6 +1023,16 @@ fn sides_compare_test_with_non_literal<'a>(mut left: &'a str, mut right: &'a str
     // true)`; review of #8110).
     loop {
         (left, right) = (left.trim(), right.trim());
+        // A statement block is the value its tail holds
+        // (`{ let a = 1; a == b }`; #8615).
+        if block_tail(left) != left {
+            left = block_tail(left);
+            continue;
+        }
+        if block_tail(right) != right {
+            right = block_tail(right);
+            continue;
+        }
         // `Some(..).unwrap()` and `Ok(..).expect(..)` return what they hold.
         if let Some(inner) = unwrapped_wrapper_argument(left) {
             left = inner;
