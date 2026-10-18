@@ -3260,6 +3260,9 @@ pub(crate) fn ts_predicate_boundary_limitation(
         Some(boundary) => format!(
             "Related tests reach `{owner_name}` with a strong oracle, but no strong assertion observes a `{owner_name}(...)` call at the changed predicate boundary `{boundary}`; inputs on one side of the boundary do not discriminate the changed comparison."
         ),
+        None if !probe_shape.specific => format!(
+            "Related tests reach `{owner_name}` with a strong oracle, but the TypeScript preview adapter does not recognise the shape of the changed line, so static evidence cannot tie an assertion to it."
+        ),
         None => format!(
             "Related tests reach `{owner_name}` with a strong oracle, but the changed line has no statically comparable predicate boundary; static evidence cannot tie an assertion to the changed branch."
         ),
