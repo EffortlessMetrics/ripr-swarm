@@ -735,6 +735,38 @@ fn check_routes_a_continuation_line_finding_to_the_line_the_stub_targets() -> Re
     scratch.cleanup()
 }
 
+/// #8444: when the nearest gap cannot be named by its own line (two seams
+/// share it, so `--at` refuses), `check` prints no stub command rather than
+/// one that fails or stubs a different gap.
+#[test]
+fn check_prints_no_route_when_the_nearest_gap_line_is_ambiguous() -> Result<(), String> {
+    const LIB: &str = "pub fn pair(a: u64, b: u64) -> (Option<u64>, Option<u64>) {\n    (Some(a + 1), Some(\n        b + 2,\n    ))\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn runs() {\n        assert!(pair(1, 2).0.is_some());\n    }\n}\n";
+    let scratch = Scratch::new()?;
+    let root = scratch.directory.clone();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"stub_ambiguous\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), LIB).map_err(|error| error.to_string())?;
+    let diff = scratch.directory.join("ambiguous.diff");
+    std::fs::write(
+        &diff,
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3 +3 @@\n-        b + 1,\n+        b + 2,\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let stdout = check_human(&root, &diff)?;
+    assert!(
+        stdout.contains("src/lib.rs:3"),
+        "the finding is on line 3: {stdout}"
+    );
+    assert!(
+        printed_stub_args(&stdout).is_none(),
+        "an ambiguous nearest gap must not print a stub command: {stdout}"
+    );
+    scratch.cleanup()
+}
+
 /// `check` output for a one-line change to line 2 of a scratch crate.
 fn check_for_changed_line_two(lib: &str, old: &str, new: &str) -> Result<String, String> {
     let scratch = Scratch::new()?;
