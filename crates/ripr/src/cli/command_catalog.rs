@@ -1568,4 +1568,63 @@ mod tests {
             "nested parser/catalog drift: {failures:?}"
         );
     }
+
+    fn distance_one_typo(name: &str) -> String {
+        let mut chars: Vec<char> = name.chars().collect();
+        let Some(last) = chars.last_mut() else {
+            return "x".to_string();
+        };
+        *last = if *last == 'x' { 'z' } else { 'x' };
+        chars.into_iter().collect()
+    }
+
+    #[test]
+    fn slice_b_nested_subcommand_typos_suggest_catalog_children() {
+        type NestedParse = fn(&[String]) -> Result<(), String>;
+        let families: &[(&str, NestedParse)] = &[
+            ("zero", commands::zero),
+            ("policy", commands::policy),
+            ("pr-ledger", commands::pr_ledger),
+            ("pr-comments", commands::pr_comments),
+            ("pr-review", commands::pr_review),
+            ("coverage-grip", commands::coverage_grip),
+            ("assistant-loop", commands::assistant_loop),
+            ("reports", commands::reports),
+            ("calibrate", commands::calibrate),
+            ("receipt", commands::receipt),
+        ];
+        let mut failures = Vec::new();
+        for (family, parse) in families {
+            let children = catalog_children(family);
+            if children.is_empty() {
+                failures.push(format!("{family}: catalog listed no nested children"));
+                continue;
+            }
+            for child in children {
+                let typo = distance_one_typo(child);
+                match parse(&args(&[&typo])) {
+                    Err(error) => {
+                        let expected = format!("Did you mean `{child}`?");
+                        if !error.contains(&expected) {
+                            failures.push(format!(
+                                "{family} {typo:?}: missing {expected:?} in {error:?}"
+                            ));
+                        }
+                        if !error.contains("Accepted:") {
+                            failures.push(format!(
+                                "{family} {typo:?}: missing Accepted list in {error:?}"
+                            ));
+                        }
+                    }
+                    Ok(()) => failures.push(format!(
+                        "{family} accepted distance-1 typo {typo:?} for {child}"
+                    )),
+                }
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "slice B nested typo suggestions: {failures:?}"
+        );
+    }
 }

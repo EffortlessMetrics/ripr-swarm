@@ -136,7 +136,7 @@ mod tests {
         assert_eq!(
             execute(CliCommand::Policy(args(&["unknown"]))),
             Err(CommandError::Failure(
-                "unknown policy subcommand \"unknown\"; expected `readiness`, `operations`, `history`, `promote`, `preview-promote`, `waiver-aging`, or `suppression-health`"
+                "unknown policy subcommand \"unknown\". Accepted: readiness, operations, history, promote, preview-promote, waiver-aging, suppression-health."
                     .to_string()
             ))
         );
@@ -244,7 +244,7 @@ mod tests {
         assert_eq!(
             execute(CliCommand::Receipt(args(&["unknown"]))),
             Err(CommandError::Failure(
-                "unknown receipt subcommand \"unknown\"; expected `write` or `check`".to_string()
+                "unknown receipt subcommand \"unknown\". Accepted: write, check.".to_string()
             ))
         );
         assert_eq!(
