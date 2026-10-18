@@ -550,6 +550,16 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
 // [`macro_binding_candidates`] is a stored over-approximation of this scan:
 // a new site kind, or a wider existing one, must widen it too and bump
 // `FILE_FACT_CACHE_SCHEMA_VERSION`, or cached candidates hide the new sites.
+fn macro_binding_scan_needed(source: &str, trusted: &[&str]) -> bool {
+    trusted.contains(&"json") && source.contains("serde_json")
+        || source.contains("macro")
+        || source.contains("use")
+        || source.contains("no_implicit_prelude")
+        || source.contains('!')
+}
+
+type NamedMacroSites = Vec<(String, MacroBindingSite)>;
+
 fn macro_binding_ambiguities(
     source: &str,
     packages: &BTreeSet<String>,
@@ -558,15 +568,103 @@ fn macro_binding_ambiguities(
     module_resolved: &dyn Fn(usize, &str) -> bool,
     drop_in_verified: &dyn Fn(&str) -> bool,
 ) -> Vec<(String, MacroBindingSite)> {
-    let mut ambiguous = Vec::new();
-    if !(trusted.contains(&"json") && source.contains("serde_json")
-        || source.contains("macro")
-        || source.contains("use")
-        || source.contains("no_implicit_prelude")
-        || source.contains('!'))
-    {
-        return ambiguous;
+    macro_binding_ambiguity_sets(
+        source,
+        packages,
+        trusted,
+        allowed_empty,
+        module_resolved,
+        drop_in_verified,
+        None,
+    )
+    .0
+}
+
+/// Returns the admission union and per-name disclosure queries. Their trust
+/// contexts differ; only the parse and binding-free wrapper index are shared.
+pub(crate) fn trusted_macro_binding_site_sets(
+    source: &str,
+    packages: &BTreeSet<String>,
+    trusted: &[&str],
+    singleton_names: &[&str],
+    module_resolved: &dyn Fn(usize, &str) -> bool,
+    drop_in_verified: &dyn Fn(&str) -> bool,
+) -> (NamedMacroSites, NamedMacroSites) {
+    macro_binding_ambiguity_sets(
+        source,
+        packages,
+        trusted,
+        &BTreeSet::new(),
+        module_resolved,
+        drop_in_verified,
+        Some(singleton_names),
+    )
+}
+
+fn macro_binding_ambiguity_sets(
+    source: &str,
+    packages: &BTreeSet<String>,
+    trusted: &[&str],
+    allowed_empty: &BTreeSet<String>,
+    module_resolved: &dyn Fn(usize, &str) -> bool,
+    drop_in_verified: &dyn Fn(&str) -> bool,
+    singleton_names: Option<&[&str]>,
+) -> (NamedMacroSites, NamedMacroSites) {
+    if !macro_binding_scan_needed(source, trusted) {
+        return (Vec::new(), Vec::new());
     }
+    let Some(parse) = parse_clean_source_file(source) else {
+        let site = MacroBindingSite {
+            line: 0,
+            kind: MacroBindingKind::Unparsed,
+            scope: None,
+            crate_local: false,
+        };
+        let union: NamedMacroSites = trusted
+            .iter()
+            .map(|name| ((*name).to_string(), site.clone()))
+            .collect();
+        let singletons = singleton_names
+            .into_iter()
+            .flatten()
+            .filter(|name| macro_binding_scan_needed(source, &[name]))
+            .map(|name| ((*name).to_string(), site.clone()))
+            .collect();
+        return (union, singletons);
+    };
+    let tree = parse.tree();
+    let binding_free = BindingFreeFileIndex::collect(tree.syntax());
+    let scan = |names: &[&str]| {
+        macro_binding_sites_in_tree(
+            source,
+            packages,
+            names,
+            allowed_empty,
+            module_resolved,
+            drop_in_verified,
+            (&tree, &binding_free),
+        )
+    };
+    let union = scan(trusted);
+    let singletons = singleton_names
+        .into_iter()
+        .flatten()
+        .filter(|name| macro_binding_scan_needed(source, &[name]))
+        .flat_map(|name| scan(&[name]))
+        .collect();
+    (union, singletons)
+}
+
+fn macro_binding_sites_in_tree(
+    source: &str,
+    packages: &BTreeSet<String>,
+    trusted: &[&str],
+    allowed_empty: &BTreeSet<String>,
+    module_resolved: &dyn Fn(usize, &str) -> bool,
+    drop_in_verified: &dyn Fn(&str) -> bool,
+    (tree, binding_free): (&ast::SourceFile, &BindingFreeFileIndex),
+) -> NamedMacroSites {
+    let mut ambiguous = Vec::new();
     let all = |line: usize, kind: MacroBindingKind, crate_local: bool| {
         trusted
             .iter()
@@ -583,14 +681,6 @@ fn macro_binding_ambiguities(
             })
             .collect::<Vec<_>>()
     };
-    let Some(parse) = parse_clean_source_file(source) else {
-        return all(0, MacroBindingKind::Unparsed, false);
-    };
-    let tree = parse.tree();
-    // `binding_free_local_wrapper` used to walk every descendant for each
-    // untrusted macro. On a 20k-line test file that is macros × file size
-    // and hung PR evidence after the unseen-reach cache landed.
-    let binding_free = BindingFreeFileIndex::collect(tree.syntax());
     // Built only when a binding site is found, which most files lack.
     let lines = std::cell::OnceCell::new();
     let line_of = |node: &SyntaxNode| {
@@ -617,7 +707,7 @@ fn macro_binding_ambiguities(
         packages
             .iter()
             .any(|package| package.replace('-', "_") == root)
-            || parse.tree().syntax().descendants().any(|node| {
+            || tree.syntax().descendants().any(|node| {
                 ast::Rename::cast(node.clone())
                     .and_then(|rename| rename.name())
                     .is_some_and(named)
@@ -627,7 +717,7 @@ fn macro_binding_ambiguities(
                             .is_some_and(named)
             })
     };
-    for node in parse.tree().syntax().descendants() {
+    for node in tree.syntax().descendants() {
         // An extern-crate alias or module in another file can defeat this
         // import's root even when that file never mentions `json` itself.
         if trusted.contains(&"json") && json_namespace_rebound(&node) {
@@ -805,7 +895,7 @@ fn macro_binding_ambiguities(
             // tests then use it. The one exception is a wrapper whose only
             // definition this file shows and whose expansion cannot bind a
             // name at all (#6648).
-            if binding_free_local_wrapper(&binding_free, &call, &tokens, trusted) {
+            if binding_free_local_wrapper(binding_free, &call, &tokens, trusted) {
                 continue;
             }
             for token in &tokens {
@@ -916,7 +1006,7 @@ fn macro_binding_ambiguities(
     // are no `MacroCall` nodes: the parser keeps `vec ! (..)` flat beside a
     // nested tree. They count as calls of their bare name too (#8446).
     let mut sites = Vec::new();
-    for node in parse.tree().syntax().descendants() {
+    for node in tree.syntax().descendants() {
         if let Some(call) = ast::MacroCall::cast(node.clone()) {
             if let (Some(path), Some(tree)) = (call.path(), call.token_tree()) {
                 sites.push((
@@ -964,7 +1054,7 @@ fn macro_binding_ambiguities(
             // A nested call has no node to locate that definition from, so
             // it never takes the exemption.
             if call.as_ref().is_some_and(|call| {
-                binding_free_local_wrapper(&binding_free, call, &tokens, trusted)
+                binding_free_local_wrapper(binding_free, call, &tokens, trusted)
             }) {
                 continue;
             }

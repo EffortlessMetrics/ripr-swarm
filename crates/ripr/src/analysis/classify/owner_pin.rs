@@ -73,7 +73,8 @@ use crate::analysis::syntax::{
     attribute_settles_test_outcome, drop_in_assertion_leaf, empty_macro_binding_ambiguities,
     err_return_guard_key, generated_test_pins, local_empty_macro_names, macro_binding_scan,
     owner_pin_assertions, parse_clean_source_file, pattern_pins, returns_leave_the_function,
-    source_binds_value_name, source_declares_value_name, trusted_macro_binding_sites,
+    source_binds_value_name, source_declares_value_name, trusted_macro_binding_site_sets,
+    trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
@@ -860,8 +861,8 @@ impl OwnerPinSyntax {
         self.complete_workspace_site_scan(index);
         let scan = self.workspace_site_scan.borrow();
         let retained = scan.as_ref()?;
-        let mut rebinding: Option<&(PathBuf, MacroBindingSite)> = None;
-        let mut may_rebind: Option<&(PathBuf, MacroBindingSite)> = None;
+        let mut rebinding: Option<&OrderedMacroSite> = None;
+        let mut may_rebind: Option<&OrderedMacroSite> = None;
         if let Some(rank) = retained.global.get(name) {
             merge_macro_site_rank(&mut rebinding, &mut may_rebind, rank);
         }
@@ -881,7 +882,9 @@ impl OwnerPinSyntax {
                 }
             }
         }
-        rebinding.cloned().or_else(|| may_rebind.cloned())
+        rebinding
+            .or(may_rebind)
+            .map(|site| (site.path.clone(), site.site.clone()))
     }
 
     /// #8255: finish the retained-site scan the ambiguity pass skipped. It
@@ -923,28 +926,7 @@ impl OwnerPinSyntax {
         if retained.complete {
             return;
         }
-        for (path, name, site) in sites {
-            match site.crate_local.then(|| roots.root(&path, index)).flatten() {
-                Some(root) => {
-                    retained
-                        .by_root
-                        .entry(root)
-                        .or_default()
-                        .entry(name)
-                        .or_default()
-                        .absorb(&path, &site);
-                }
-                // A site whose file has no recognized root reaches tests of
-                // every root, exactly as the reach rule reads it.
-                None => {
-                    retained
-                        .global
-                        .entry(name)
-                        .or_default()
-                        .absorb(&path, &site);
-                }
-            }
-        }
+        retain_macro_sites(sites.retained, retained, roots, index);
         retained.complete = true;
         #[cfg(test)]
         self.workspace_scan_passes
@@ -1329,43 +1311,56 @@ struct WorkspaceMacroSiteIndex {
 /// site.
 #[derive(Clone, Debug, Default)]
 struct MacroSiteRank {
-    rebinding: Option<(PathBuf, MacroBindingSite)>,
-    may_rebind: Option<(PathBuf, MacroBindingSite)>,
+    rebinding: Option<OrderedMacroSite>,
+    may_rebind: Option<OrderedMacroSite>,
 }
 
+/// Producer position, rather than line number, preserves same-line order
+/// when global and crate-local buckets are merged.
+#[derive(Clone, Debug)]
+struct OrderedMacroSite {
+    path: PathBuf,
+    position: usize,
+    site: MacroBindingSite,
+}
+
+impl OrderedMacroSite {
+    fn precedes(&self, other: &Self) -> bool {
+        (&self.path, self.position) < (&other.path, other.position)
+    }
+}
 impl MacroSiteRank {
-    /// Keep the earlier of the retained and a fresh site. Sites arrive in
-    /// path order within one scan pass, so equal paths keep the
-    /// first-in-source-order site.
-    fn absorb(&mut self, path: &Path, site: &MacroBindingSite) {
+    fn absorb(&mut self, path: &Path, position: usize, site: &MacroBindingSite) {
         let slot = if rebinds(site) {
             &mut self.rebinding
         } else {
             &mut self.may_rebind
         };
-        if slot.as_ref().is_none_or(|(kept, _)| path < kept) {
-            *slot = Some((path.to_path_buf(), site.clone()));
+        if slot
+            .as_ref()
+            .is_none_or(|kept| (path, position) < (kept.path.as_path(), kept.position))
+        {
+            *slot = Some(OrderedMacroSite {
+                path: path.to_path_buf(),
+                position,
+                site: site.clone(),
+            });
         }
     }
 }
-
-/// Keep the earlier of a retained site reference and a candidate, by path.
 fn keep_earliest_site<'a>(
-    slot: &mut Option<&'a (PathBuf, MacroBindingSite)>,
-    candidate: Option<&'a (PathBuf, MacroBindingSite)>,
+    slot: &mut Option<&'a OrderedMacroSite>,
+    candidate: Option<&'a OrderedMacroSite>,
 ) {
     if let Some(candidate) = candidate
-        && slot.as_ref().is_none_or(|(kept, _)| candidate.0 < *kept)
+        && slot.as_ref().is_none_or(|kept| candidate.precedes(kept))
     {
         *slot = Some(candidate);
     }
 }
-
-/// Fold one name's retained sites into the running earliest rebinding and
-/// may-rebind candidates of a lookup.
 fn merge_macro_site_rank<'a>(
-    rebinding: &mut Option<&'a (PathBuf, MacroBindingSite)>,
-    may_rebind: &mut Option<&'a (PathBuf, MacroBindingSite)>,
+    rebinding: &mut Option<&'a OrderedMacroSite>,
+    may_rebind: &mut Option<&'a OrderedMacroSite>,
     rank: &'a MacroSiteRank,
 ) {
     keep_earliest_site(rebinding, rank.rebinding.as_ref());
@@ -1987,26 +1982,36 @@ fn partition_macro_scan_files(
         .partition(|(_, source, _)| may_saturate_macro_ambiguity(source))
 }
 
-/// Every trusted name's sites in `files`, in path then source order. Files
-/// whose stored candidates rule out every trusted name are not parsed.
+#[derive(Default)]
+struct ScannedMacroSites {
+    ambiguities: Vec<(PathBuf, String, MacroBindingSite)>,
+    retained: Vec<(PathBuf, String, usize, MacroBindingSite)>,
+}
+
+/// One parse per candidate file in the bounded pass. Singleton queries share
+/// that tree/index, and stored candidates prune impossible names.
 fn scan_macro_sites(
     files: &[MacroScanFile<'_>],
     index: &RustIndex,
     module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
-) -> Vec<(PathBuf, String, MacroBindingSite)> {
-    let context_macros = assertion_context_macros();
-    files
+) -> ScannedMacroSites {
+    let names = assertion_context_macros();
+    let per_file: Vec<_> = files
         .par_iter()
-        // A file whose stored candidates rule out every trusted name
-        // reports no site, so it is not parsed.
         .filter(|(_, _, candidates)| {
             candidates.is_none_or(MacroBindingCandidates::may_bind_any_trusted)
         })
-        .flat_map_iter(|(path, source, _)| {
-            trusted_macro_binding_sites(
+        .map(|(path, source, candidates)| {
+            let singleton_names: Vec<_> = names
+                .iter()
+                .copied()
+                .filter(|name| candidates.is_none_or(|c| c.may_bind(name)))
+                .collect();
+            let (union, singleton) = trusted_macro_binding_site_sets(
                 source,
                 index.macro_scope_crates(),
-                &context_macros,
+                &names,
+                &singleton_names,
                 &|line, declaration| module_resolved(path, line, declaration),
                 &|krate| {
                     if krate == "serde_json" {
@@ -2015,11 +2020,47 @@ fn scan_macro_sites(
                         index.drop_in_manifests.verified(path, krate)
                     }
                 },
-            )
-            .into_iter()
-            .map(|(name, site)| ((*path).clone(), name, site))
+            );
+            (*path, union, singleton)
         })
-        .collect()
+        .collect();
+    let mut scanned = ScannedMacroSites::default();
+    for (path, union, singleton) in per_file {
+        scanned.ambiguities.extend(
+            union
+                .into_iter()
+                .map(|(name, site)| (path.clone(), name, site)),
+        );
+        scanned.retained.extend(
+            singleton
+                .into_iter()
+                .enumerate()
+                .map(|(position, (name, site))| (path.clone(), name, position, site)),
+        );
+    }
+    scanned
+}
+
+/// Both initial absorption and deferred completion exclude every scoped site.
+fn retain_macro_sites(
+    sites: Vec<(PathBuf, String, usize, MacroBindingSite)>,
+    retained: &mut WorkspaceMacroSiteIndex,
+    roots: &TargetRoots,
+    index: &RustIndex,
+) {
+    for (path, name, position, site) in sites {
+        if site.scope.is_some() {
+            continue;
+        }
+        let names = match site.crate_local.then(|| roots.root(&path, index)).flatten() {
+            Some(root) => retained.by_root.entry(root).or_default(),
+            None => &mut retained.global,
+        };
+        names
+            .entry(name)
+            .or_default()
+            .absorb(&path, position, &site);
+    }
 }
 
 /// Route scanned sites into the ambiguity name sets, the scoped-site map,
@@ -2031,7 +2072,7 @@ fn scan_macro_sites(
     reason = "one ordered fold over four run-scoped ambiguity outputs and the retention index"
 )]
 fn absorb_macro_sites(
-    sites: Vec<(PathBuf, String, MacroBindingSite)>,
+    sites: ScannedMacroSites,
     global: &mut BTreeSet<String>,
     scoped: &mut ScopedMacroBindings,
     by_root: &mut CrateMacroBindings,
@@ -2039,28 +2080,17 @@ fn absorb_macro_sites(
     roots: &TargetRoots,
     index: &RustIndex,
 ) {
-    for (path, name, site) in sites {
+    retain_macro_sites(sites.retained, retained, roots, index);
+    for (path, name, site) in sites.ambiguities {
         if site.scope.is_some() {
             scoped.entry(path).or_default().push((name, site));
             continue;
         }
         match site.crate_local.then(|| roots.root(&path, index)).flatten() {
             Some(root) => {
-                retained
-                    .by_root
-                    .entry(root.clone())
-                    .or_default()
-                    .entry(name.clone())
-                    .or_default()
-                    .absorb(&path, &site);
                 by_root.entry(root).or_default().insert(name);
             }
             None => {
-                retained
-                    .global
-                    .entry(name.clone())
-                    .or_default()
-                    .absorb(&path, &site);
                 global.insert(name);
             }
         }
