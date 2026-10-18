@@ -220,6 +220,11 @@ pub(super) struct Backend {
     /// omission locally instead of dropping it silently. Reflects the most
     /// recent disclosure attempt.
     initialize_failure_disclosure_omitted: AtomicBool,
+    /// Whether a generic client has already been shown one `window/showMessage`
+    /// for a refresh failure (#8583). Cleared when a refresh publishes so the
+    /// next transition into failure can warn again. The VS Code path never
+    /// consults this flag.
+    refresh_failure_shown: AtomicBool,
     refresh_scheduler: RefreshScheduler,
     workspace_revision: Mutex<u64>,
     /// One in-flight interactive debounce window (#8528). A trigger that
@@ -356,6 +361,7 @@ impl Backend {
             last_component_degradation: Mutex::new(None),
             last_analysis_failure_shown: Mutex::new(None),
             initialize_failure_disclosure_omitted: AtomicBool::new(false),
+            refresh_failure_shown: AtomicBool::new(false),
             refresh_scheduler: RefreshScheduler::default(),
             workspace_revision: Mutex::new(0),
             interactive_debounce_window_open: AtomicBool::new(false),
@@ -1048,7 +1054,45 @@ impl Backend {
             )
             .await;
         self.mark_attempt_failed(request, kind, &message);
+        // The refresh path owns the on-screen warning for this failure
+        // (once per transition into failure). Record its signature before
+        // the status publication so the generic analysis-failure
+        // disclosure does not show the same failure a second time (#8583).
+        self.disclose_refresh_failure_to_generic_client(&message)
+            .await;
+        self.note_analysis_failure_disclosed();
         self.publish_analysis_status().await;
+    }
+
+    /// The warning always goes to the log and `ripr/analysisStatus`; clients
+    /// without the `riprEditor` integration also get one `window/showMessage`
+    /// per transition into failure (#8583). Generic editors do not render the
+    /// custom status notification, so without this a failed analysis looks
+    /// like silence. The VS Code extension renders the failure from
+    /// `ripr/analysisStatus`. Repeated failures do not flood the editor;
+    /// a successful publish clears the latch.
+    async fn disclose_refresh_failure_to_generic_client(&self, message: &str) {
+        let generic_client = self
+            .client_features
+            .lock()
+            .map(|features| features.ripr_editor.is_none())
+            .unwrap_or(true);
+        if !generic_client {
+            return;
+        }
+        if self.refresh_failure_shown.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        // Detach from the refresh worker: `Client` uses a capacity-1 channel,
+        // and the preceding `window/logMessage` may still occupy it. A live
+        // transport loop drains that slot; awaiting here would stall any
+        // in-process caller that has not yet polled the socket. The spawned
+        // warning is still the retained `Client::show_message` path.
+        let client = self.client.clone();
+        let shown = refresh_failure_notice(message);
+        let _delivery = tokio::spawn(async move {
+            client.show_message(MessageType::WARNING, shown).await;
+        });
     }
 
     #[cfg(test)]
@@ -1914,6 +1958,7 @@ impl Backend {
         health.requested_scope = Some(request.scope.as_str().to_string());
         match outcome {
             RefreshAttemptOutcome::Published => {
+                self.refresh_failure_shown.store(false, Ordering::Release);
                 health.state = AnalysisAttemptState::Succeeded;
                 health.failure = None;
                 let snapshot_id = snapshot_id_for_generation(request.generation);
@@ -4651,12 +4696,22 @@ fn config_failure_notice(error: &str) -> String {
     )
 }
 
+/// On-screen refresh-failure notice for clients without `riprEditor` (#8583).
+/// The body is path-redacted and length-bounded by the same owner as
+/// `ripr/analysisStatus` `failure.message` (#8584 / #8604).
+fn refresh_failure_notice(message: &str) -> String {
+    bounded_failure_message(&format!("ripr analysis failed: {message}"))
+}
+
 fn bounded_failure_message(message: &str) -> String {
     // Single-source bounding/redaction for LSP client-visible error text
     // (#1997): the implementation lives in the component-outcome module so
     // health failures and component outcomes are governed identically.
     super::component_outcome::bounded_message(message)
 }
+
+#[cfg(test)]
+mod refresh_failure_show_message_tests;
 
 #[cfg(test)]
 mod interactive_debounce_fold_tests;
