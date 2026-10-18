@@ -1532,10 +1532,12 @@ suite('Extension Smoke', () => {
     const context = createControllerTestContext({});
     try {
       await context.controller.start();
+      // The free-text log line never selects the baseRef step by wording.
       context.client.emitNotification('window/logMessage', {
         message: 'ripr analysis refresh failed: the base `origin/main` does not resolve to a commit'
       });
-      assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
+      assert.ok(!String(context.status.tooltip).includes('Set ripr.baseRef'));
+      assert.ok(String(context.status.tooltip).includes('Show Output'));
 
       context.client.emitNotification('ripr/analysisStatus', {
         schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
@@ -1547,7 +1549,7 @@ suite('Extension Smoke', () => {
       context.client.emitNotification('ripr/analysisStatus', {
         schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
         retry_command: 'ripr.refresh',
-        failure: { kind: 'analysis_error', message: 'the base `origin/main` does not resolve to a commit. Fetch the ref or pass --base <ref>.' }
+        failure: { kind: 'base_unresolvable', message: 'a reworded server diagnostic that names no ref' }
       });
       assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
       assert.ok(String(context.status.tooltip).includes('ripr: Refresh Diagnostics'));
@@ -1555,7 +1557,23 @@ suite('Extension Smoke', () => {
       context.client.emitNotification('ripr/analysisStatus', {
         schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
         retry_command: 'ripr.refresh',
-        failure: { kind: 'analysis_error', message: 'could not resolve a default base (no origin/main, origin/master, or local main/master found). Pass `--base <ref>`.' }
+        failure: { kind: 'base_unresolvable', message: 'could not resolve a default base (no origin/main, origin/master, or local main/master found). Pass `--base <ref>`.' }
+      });
+      assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
+
+      // Wording alone is not the contract: the old phrases under another kind stay generic.
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
+        retry_command: 'ripr.refresh',
+        failure: { kind: 'analysis_error', message: 'the base `origin/main` does not resolve to a commit. could not resolve a default base' }
+      });
+      assert.ok(!String(context.status.tooltip).includes('Set ripr.baseRef'));
+      assert.ok(String(context.status.tooltip).includes('Run ripr: Refresh Diagnostics to retry'));
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
+        retry_command: 'ripr.refresh',
+        failure: { kind: 'base_unresolvable', message: 'x' }
       });
       assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
 

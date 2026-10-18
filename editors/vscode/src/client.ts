@@ -1788,14 +1788,13 @@ export class RiprClientController {
       return;
     }
     if (message.startsWith('ripr analysis refresh failed')) {
-      const baseRefFailure = isUnresolvableBaseRefFailure(message);
+      // The log line is free text; the typed `ripr/analysisStatus` failure
+      // kind that follows it owns the ripr.baseRef next step (#6740).
       this.updateStatus({
         kind: 'analysisFailed',
         summary: 'ripr analysis refresh failed.',
         detail: message,
-        nextStep: baseRefFailure
-          ? 'Set ripr.baseRef to a ref this repository has (for example main), then run ripr: Refresh Diagnostics.'
-          : 'Open ripr: Show Output, fix the reported issue, then run ripr: Refresh Diagnostics.'
+        nextStep: 'Open ripr: Show Output, fix the reported issue, then run ripr: Refresh Diagnostics.'
       });
     }
   }
@@ -1863,7 +1862,7 @@ export class RiprClientController {
           kind: 'analysisFailed',
           summary: 'ripr analysis failed; last-known-good evidence is retained.',
           detail: `${analysisStatusDetail(status)}\n${failureMessage}${retained}`,
-          nextStep: isUnresolvableBaseRefFailure(failureMessage)
+          nextStep: failure?.kind === BASE_UNRESOLVABLE_FAILURE_KIND
             ? 'Set ripr.baseRef to a ref this repository has (for example main), then run ripr: Refresh Diagnostics.'
             : `Run ${retry} to retry the saved-workspace analysis.`
         });
@@ -3897,12 +3896,11 @@ function serverLogMessage(params: unknown): string | undefined {
   return typeof message === 'string' ? message : undefined;
 }
 
-// Both the explicit-ref failure and the default-branch failure (an empty
-// ripr.baseRef in a repository without origin/HEAD, main or master) are fixed
-// by setting ripr.baseRef; the server's own wording names CLI flags instead.
-function isUnresolvableBaseRefFailure(message: string): boolean {
-  return /the base `[^`]+` does not resolve to a commit|could not resolve a default base/.test(message);
-}
+// The server names an unresolvable base (explicit ref, empty or option-like
+// ref, or no default branch) with this stable `failure.kind` on the
+// `ripr/analysisStatus` payload (#6740). The extension branches on it rather
+// than on message wording; all of those cases are fixed by ripr.baseRef.
+const BASE_UNRESOLVABLE_FAILURE_KIND = 'base_unresolvable';
 
 /**
  * One typed per-component outcome record from the server's

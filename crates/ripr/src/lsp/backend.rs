@@ -610,9 +610,9 @@ impl Backend {
                 if self.refresh_request_is_current(request) && !cancelled {
                     self.report_refresh_failure_after(
                         request,
-                        err,
+                        err.message,
                         started.elapsed(),
-                        AnalysisFailureKind::AnalysisError,
+                        err.kind,
                     )
                     .await;
                     return RefreshAttemptOutcome::Failed;

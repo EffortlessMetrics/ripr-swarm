@@ -421,6 +421,11 @@ impl AnalysisAttemptState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum AnalysisFailureKind {
     AnalysisError,
+    /// The configured or default base ref does not resolve to a commit
+    /// (`CheckFailureKind::BaseUnresolvable`). The client branches on this
+    /// wire name to offer the `ripr.baseRef` next step (#6740) instead of
+    /// matching message wording.
+    BaseUnresolvable,
     TaskFailure,
     RootProjection,
     SnapshotCommitFailure,
@@ -435,6 +440,7 @@ impl AnalysisFailureKind {
     pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::AnalysisError => "analysis_error",
+            Self::BaseUnresolvable => "base_unresolvable",
             Self::TaskFailure => "task_failure",
             Self::RootProjection => "root_projection",
             Self::SnapshotCommitFailure => "snapshot_commit_failure",
@@ -1888,6 +1894,7 @@ mod tests {
     fn analysis_failure_kinds_keep_stable_wire_names() {
         let cases = [
             (AnalysisFailureKind::AnalysisError, "analysis_error"),
+            (AnalysisFailureKind::BaseUnresolvable, "base_unresolvable"),
             (AnalysisFailureKind::TaskFailure, "task_failure"),
             (AnalysisFailureKind::RootProjection, "root_projection"),
             (
