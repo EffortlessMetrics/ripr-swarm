@@ -123,6 +123,9 @@ fn validate_fast_report(files: &[String], report: &str) -> Result<(), String> {
     if categories.support_tiers {
         required.push("check-support-tiers");
     }
+    if categories.cli_help {
+        required.push(crate::check_fast_cli::GATE);
+    }
     if categories.rust_src {
         required.extend([
             "check-no-panic-family",
@@ -367,6 +370,68 @@ mod tests {
     #[test]
     fn selected_manifest_and_lock_require_rust_gate_receipts() -> Result<(), String> {
         require_rust_receipts(&["tools/repo-policy/Cargo.toml", "Cargo.lock"])
+    }
+
+    #[test]
+    fn selected_cli_parser_owners_require_runtime_parity_receipt() -> Result<(), String> {
+        for path in [
+            "crates/ripr/src/cli/commands/check.rs",
+            "crates/ripr/src/cli/help.rs",
+            "crates/ripr/src/cli.rs",
+            "crates/ripr/src/app.rs",
+            "crates/ripr/src/app/pr_summary/mod.rs",
+            "crates/ripr/src/app/annotations.rs",
+            "crates/ripr/src/app/pr_evidence.rs",
+            "crates/ripr/src/app/impacted_evidence.rs",
+            "crates/ripr/src/app/ripr_plus.rs",
+            "crates/ripr/src/mcp.rs",
+            "crates/ripr/src/mcp/mod.rs",
+            "crates/ripr/src/output/first_pr.rs",
+            "crates/ripr/src/output/first_pr/options.rs",
+        ] {
+            let rust = RUST_GATES.map(|gate| format!("- {gate}")).join("\n");
+            let report =
+                EMPTY_FAST_REPORT.replace("\n\nSkipped:\n", &format!("\n{rust}\n\nSkipped:\n"));
+            for incomplete in [
+                report.clone(),
+                report.replace("Skipped:\n", "Skipped:\n- cli-help-parity\n"),
+            ] {
+                let (result, receipt) = selected_receipt(&[path], &incomplete);
+                let error = result
+                    .err()
+                    .ok_or_else(|| format!("missing runtime parity receipt passed for {path}"))?;
+                if !error.contains("cli-help-parity")
+                    || !receipt.contains("Selector: fast_report_mismatch")
+                {
+                    return Err(format!(
+                        "missing parity was not diagnosed: {error}; {receipt}"
+                    ));
+                }
+            }
+            let complete = report.replace("\n\nSkipped:\n", "\n- cli-help-parity\n\nSkipped:\n");
+            selected_receipt(&[path], &complete).0?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unrelated_and_near_match_paths_do_not_select_cli_parity() {
+        for paths in [
+            vec![],
+            vec!["docs/guide.md"],
+            vec!["crates/ripr/src/analysis/mod.rs"],
+            vec!["crates/ripr/src/output/human.rs"],
+            vec!["crates/ripr/src/cli-not/check.rs"],
+            vec!["crates/ripr/src/app.rs.bak"],
+            vec!["crates/ripr/src/mcp/help.txt"],
+            vec!["crates/ripr/src/output/first_pr_not/options.rs"],
+        ] {
+            let paths = paths.into_iter().map(str::to_string).collect::<Vec<_>>();
+            assert!(
+                !crate::categorize_changed_files(&paths).cli_help,
+                "{paths:?}"
+            );
+        }
     }
 
     #[test]
