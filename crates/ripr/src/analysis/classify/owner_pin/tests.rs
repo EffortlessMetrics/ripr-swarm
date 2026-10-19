@@ -2626,6 +2626,11 @@ fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_const
             "e",
         ),
         (
+            "static EXPECTED: AtomicUsize = AtomicUsize::new(weight(4));",
+            "EXPECTED.store(6, Ordering::SeqCst);\nassert_eq!(weight(4), EXPECTED);",
+            "EXPECTED",
+        ),
+        (
             "static mut EXPECTED: u32 = weight(4);",
             "unsafe { EXPECTED = 6; }\nassert_eq!(weight(4), unsafe { EXPECTED });",
             "EXPECTED",
