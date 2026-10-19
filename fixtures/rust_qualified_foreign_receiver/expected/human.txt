@@ -1,0 +1,35 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_qualified_foreign_receiver/input
+
+Summary: 1 probe (0 exposed, 1 weak, 0 unrevealed, 0 no path); 1 of 1 finding unsuppressed
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+Start here:
+  State: a test gap to inspect or repair
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  File: ./src/lib.rs:18
+  Static exposure: weak (severity: warning, confidence 0.66)
+  Why weak: a related test reaches this change, but the static evidence path is partially complete — see full form for details
+  Canonical gap: gap:rust:src/lib.rs:impl Iterator for WhileSome::size_hint:return_value:return_value:0_some_self.remaining
+  Changed behavior: (0, Some(self.remaining))
+  Related test (1 of 4 matched rows): tests/size_hints.rs:2 foreign_size_hint_is_observed
+  Next step: The indexed related tests do not establish a call to the changed owner. Inspect
+    existing tests, doctests and examples before changing assertions; they may already constrain the
+    changed behavior. Add or strengthen a test only if that inspection finds a gap
+  Evidence: reach weak · infection yes · propagation yes · observation yes · discriminator not established
+    - reach weak: No test is seen calling size_hint; tests share only its file or a name token: foreign_size_hint_is_observed, unicode_module_receiver_is_not_the_local_type
+    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - 13 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/rust_qualified_foreign_receiver/input --diff <cwd>/fixtures/rust_qualified_foreign_receiver/diff.patch --mode fast probe:src_lib.rs:return_value:c861ec7a
+  ripr context --root <cwd>/fixtures/rust_qualified_foreign_receiver/input --diff <cwd>/fixtures/rust_qualified_foreign_receiver/diff.patch --mode fast --at probe:src_lib.rs:return_value:c861ec7a
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/rust_qualified_foreign_receiver/input --at src/lib.rs:18 --kind return_value
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

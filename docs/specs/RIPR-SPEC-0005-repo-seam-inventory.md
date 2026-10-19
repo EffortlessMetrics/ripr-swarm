@@ -72,6 +72,17 @@ The seam inventory should be deterministic: two runs over the same source tree
 with the same analyzer version and configuration must produce the same seam IDs
 in the same order.
 
+When competing methods need receiver identity, a compact impl type name does
+not establish the module of a qualified initializer or type annotation
+(#8782). `foreign::Type { .. }`, `foreign::Type(..)`,
+`foreign::Type::new(..)` and `let x: foreign::Type = ..` remain unresolved
+in that matcher. Whitespace and raw identifiers cannot erase the qualifier.
+Bare type heads and enum variants retain their existing bounded handling;
+an independent supported local call can still establish the relation.
+Owner-aware direct call paths keep their existing authority. This rule adds
+no general type resolution, factory-return inference, unique-name receiver
+proof or borrowed-helper context expansion.
+
 When the analyzed root is the repository root, repo automation and fixture data
 are outside the product seam surface. The walker excludes `xtask/` and the
 top-level `fixtures/` tree so repo-scoped public signals describe the published

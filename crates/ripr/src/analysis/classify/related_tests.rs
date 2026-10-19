@@ -2319,6 +2319,10 @@ fn ident_ending_at(text: &str, end_exclusive: usize) -> Option<&str> {
     (start < end).then(|| &text[start..end])
 }
 
+fn qualified_head_prefix(prefix: &str) -> bool {
+    prefix.ends_with("::") || prefix.ends_with('#')
+}
+
 /// The primitive type a suffixed numeric literal names (`5f64`, `0xffu8`,
 /// `1_000usize`, `2e3f32`), or `None` for anything else. An unsuffixed
 /// literal gets its type from inference, which ripr does not run, so it stays
@@ -2510,7 +2514,16 @@ fn let_statement_type_head(stmt: &str) -> Option<&str> {
     let eq = stmt.find('=')?;
     let pattern = &stmt[..eq];
     if let Some(colon) = pattern.find(':') {
-        return type_head(&pattern[colon + 1..]).map(|(segments, _)| segments.last().copied())?;
+        let annotation = &pattern[colon + 1..];
+        let (segments, next) = type_head(annotation)?;
+        return match (segments.as_slice(), next) {
+            ([name], None) => Some(name),
+            ([name], Some(b'<')) => {
+                let end = skip_generic_args(annotation.as_bytes(), annotation.find('<')?)?;
+                annotation[end..].trim().is_empty().then_some(*name)
+            }
+            _ => None,
+        };
     }
     let init = &stmt[eq + 1..];
     initializer_is_one_head_expr(init)
@@ -2557,21 +2570,23 @@ fn initializer_is_one_head_expr(init: &str) -> bool {
 /// and fails closed. The `new_*`/`from_*`/`with_*` prefixes are a naming
 /// convention, not a return type: `Site::with_cache()` still reads as `Site`
 /// even if it returns a `Cache`; there is no return-type lookup here.
+/// Module-qualified heads stay unresolved: this matcher receives only a
+/// compact impl name, so the final segment cannot establish type identity.
 fn initializer_type_head(expr: &str) -> Option<&str> {
     let (segments, next) = type_head(expr)?;
     match (segments.as_slice(), next) {
-        // `m::Site(1)` / `crate::m::Site(1)`: a CamelCase call after a module
-        // segment is a tuple struct, not a variant of the module.
+        // A CamelCase call after a module segment is a qualified tuple
+        // struct, whose root cannot be resolved from the compact impl name.
         ([.., module, call], Some(b'('))
             if is_variant_name(call) && module.starts_with(|c: char| c.is_ascii_lowercase()) =>
         {
-            Some(call)
+            None
         }
-        ([.., ty, call], Some(b'(')) => {
+        ([ty, call], Some(b'(')) => {
             (is_constructor_name(call) || is_variant_name(call)).then_some(*ty)
         }
-        ([last], Some(b'(')) | ([.., last], Some(b'{')) => Some(last),
-        ([.., ty, _assoc], _) => Some(ty),
+        ([last], Some(b'(') | Some(b'{')) => Some(last),
+        ([ty, _assoc], None) => Some(ty),
         _ => None,
     }
 }
@@ -2607,6 +2622,11 @@ fn type_head(text: &str) -> Option<(Vec<&str>, Option<u8>)> {
             Some(next) => rest = next,
             None => break,
         }
+    }
+    // Absolute paths, including suffixes left after a Unicode path prefix
+    // was truncated by the ASCII-only backward scanner, are not bare types.
+    if rest.starts_with("::") {
+        return None;
     }
     let bytes = rest.as_bytes();
     let mut segments = Vec::new();
@@ -2930,7 +2950,13 @@ fn bracketed_expr_has_type(
             whole = true;
             continue;
         }
-        if before > 0 && bytes[before - 1] == b'.' {
+        if (before > 0 && bytes[before - 1] == b'.')
+            || qualified_head_prefix(&text[..before])
+            || text[..start]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| !ch.is_ascii() && !ch.is_whitespace())
+        {
             return false;
         }
         return initializer_type_head(&text[start..=close]).is_some_and(|head| head == impl_type);
@@ -5024,7 +5050,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             ("Render::render(&Site::new().cache());", false),
             ("Render::render(&Site::default());", false),
             ("Render::render(&Site::CACHE);", false),
-            ("Render::render(&m::Site(1));", true),
+            ("Render::render(&m::Site(1));", false),
             ("Render::render(&Kind::Site(1));", false),
             ("let s = Site::new(); Render::render(&s);", false),
             ("let s: Site = Site::new(); Render::render(&s);", true),
@@ -9784,8 +9810,8 @@ let r = try_parse_summary(\"x\");",
                 "let s = Cache::new(); let s = Site::new(); s.build();",
                 true,
             ),
-            ("m::Site(1).build();", true),
-            ("crate::m::Site(1).build();", true),
+            ("m::Site(1).build();", false),
+            ("crate::m::Site(1).build();", false),
             ("m::Cache(1).build();", false),
             (
                 "let s = Cache::new(); let s = Site { x: s.build() };",
@@ -9794,7 +9820,7 @@ let r = try_parse_summary(\"x\");",
             ("let s = Cache::new(); let s = Site::new(s.build());", false),
             ("let c = Site::new().cache(); c.build();", false),
             ("let c = Site::new()?; c.build();", false),
-            ("let s = m::Site(1); s.build();", true),
+            ("let s = m::Site(1); s.build();", false),
             ("let s = Site { langs: 1 }; s.build();", true),
             ("$ /* c */ return (Site::new()).build();", false),
             ("loop { break $ break (Site::new()).build(); }", false),
@@ -9807,6 +9833,64 @@ let r = try_parse_summary(\"x\");",
             assert_eq!(
                 method_call_resolves_to_impl_type(&summary, "build", "Site"),
                 expected,
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn qualified_receiver_initializers_cannot_resolve_from_a_compact_type_name() {
+        for body in [
+            "foreign::Site { langs: 1 }.build();",
+            "foreign :: Site { langs: 1 }.build();",
+            "foreign::Site(1).build();",
+            "foreign:: Site(1).build();",
+            "foreign::r#Site(1).build();",
+            "foreign::r#Site { langs: 1 }.build();",
+            "é::Site { langs: 1 }.build();",
+            "foreign::é::Site(1).build();",
+            "éSite { langs: 1 }.build();",
+            "e\u{301}Site { langs: 1 }.build();",
+            "éSite(1).build();",
+            "éSite::new().build();",
+            "::Site { langs: 1 }.build();",
+            "foreign::Site::new().build();",
+            "(foreign :: Site::new()).build();",
+            "let s = foreign::Site { langs: 1 }; s.build();",
+            "let s = foreign::Site(1); (s).build();",
+            "let s = foreign::Site::new(); s.build();",
+            "let s: foreign::Site = make(); s.build();",
+            "let s: ::Site = make(); s.build();",
+            "let s: Site :: Foreign = make(); s.build();",
+            "let s: Site<u8> :: Foreign = make(); s.build();",
+            "Render::build(&foreign::Site { langs: 1 });",
+            "Render::build(&foreign::Site(1));",
+        ] {
+            let summary = test("tests/site.rs", "foreign_only", body);
+            assert!(
+                !method_call_resolves_to_impl(&summary, "build", "Site", Some("Render")),
+                "a compact Site name cannot identify the qualified receiver: {body}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_independent_bare_receiver_still_resolves_beside_a_foreign_call() {
+        for body in [
+            "foreign::Site { langs: 1 }.build(); Site { langs: 2 }.build();",
+            "let s = foreign::Site(1); s.build(); let s = Site(2); s.build();",
+            "foreign::Site::new().build(); Site::new().build();",
+            "foreign::Site::new().build(); Shape::Circle(1).build();",
+            "let s: Site<u8> = make(); s.build();",
+        ] {
+            let summary = test("tests/site.rs", "mixed", body);
+            let impl_type = if body.contains("Shape::Circle") {
+                "Shape"
+            } else {
+                "Site"
+            };
+            assert!(
+                method_call_resolves_to_impl_type(&summary, "build", impl_type),
                 "{body}"
             );
         }
@@ -9963,7 +10047,7 @@ let r = try_parse_summary(\"x\");",
             ("let x: Site = make()", Some("Site")),
             ("let x: &mut Site = make()", Some("Site")),
             ("let mut x = Site::new()", Some("Site")),
-            ("let x = crate::m::Site::new()", Some("Site")),
+            ("let x = crate::m::Site::new()", None),
             ("let x = Site { langs: Vec::new() }", Some("Site")),
             ("let x = Site(1)", Some("Site")),
             ("let x = &Site::default()", Some("Site")),

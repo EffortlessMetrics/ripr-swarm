@@ -1,0 +1,10 @@
+[package]
+name = "rust_qualified_foreign_receiver_fixture"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+members = ["foreign"]
+
+[dev-dependencies]
+foreign = { path = "foreign" }
