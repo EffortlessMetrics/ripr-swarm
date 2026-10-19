@@ -136,6 +136,25 @@ fn inspection_discovery_discloses_observed_cache_writes() -> Result<(), String> 
                 .iter()
                 .any(|v| v == output)
         );
+        assert!(
+            workflow["artifacts_written"]
+                .as_array()
+                .ok_or("workflow artifact summary missing")?
+                .iter()
+                .any(|v| v == output),
+            "inspect-change JSON summary omits {verb} cache output"
+        );
+        let workflow_help = run_ripr_env(&cwd.root, &["help", "workflow", "inspect-change"], &[])?;
+        assert_exit(&workflow_help, 0, "inspect-change help");
+        let rendered_workflow = stdout_text(&workflow_help);
+        let summary = rendered_workflow
+            .lines()
+            .find(|line| line.trim_start().starts_with("writes: "))
+            .ok_or("workflow help artifact summary missing")?;
+        assert!(
+            summary.contains(output),
+            "inspect-change help summary omits {verb} cache output"
+        );
     }
     Ok(())
 }

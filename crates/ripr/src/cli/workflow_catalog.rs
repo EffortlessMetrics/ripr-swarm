@@ -232,6 +232,7 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
         artifacts_written: &[
             "stdout findings (redirect to target/ripr/reports/ when a file is needed)",
             "--write-artifact PATH reusable findings artifact",
+            INSPECTION_CACHE_OUTPUT,
             "target/ripr/pilot packet (--out overrides) with the optional pilot step",
         ],
         recovery: &[
