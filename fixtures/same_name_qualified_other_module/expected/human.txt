@@ -28,6 +28,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/same_name_qualified_other_module/input --diff <cwd>/fixtures/same_name_qualified_other_module/diff.patch --mode fast probe:src_lib.rs:return_value:7a1193ba
   ripr context --root <cwd>/fixtures/same_name_qualified_other_module/input --diff <cwd>/fixtures/same_name_qualified_other_module/diff.patch --mode fast --at probe:src_lib.rs:return_value:7a1193ba
+  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:return_value:7a1193ba --root <cwd>/fixtures/same_name_qualified_other_module/input` for the full gate's answer
 No test stub here: the owner is in a nested module with no inline test module of its own
 
 More:

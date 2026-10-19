@@ -32,6 +32,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_oracle_helper_gated/input --diff <cwd>/fixtures/typescript_oracle_helper_gated/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:0335115b
   ripr context --root <cwd>/fixtures/typescript_oracle_helper_gated/input --diff <cwd>/fixtures/typescript_oracle_helper_gated/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:0335115b
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_pricing.ts:typescript_preview:0335115b --root <cwd>/fixtures/typescript_oracle_helper_gated/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

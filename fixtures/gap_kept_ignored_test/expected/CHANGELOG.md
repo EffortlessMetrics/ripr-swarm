@@ -95,3 +95,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — gap_kept_ignored_test (9)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless gap_kept_ignored_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

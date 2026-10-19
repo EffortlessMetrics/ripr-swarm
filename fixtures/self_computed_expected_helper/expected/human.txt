@@ -26,6 +26,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/self_computed_expected_helper/input --diff <cwd>/fixtures/self_computed_expected_helper/diff.patch --mode fast probe:src_lib.rs:return_value:df11903a
   ripr context --root <cwd>/fixtures/self_computed_expected_helper/input --diff <cwd>/fixtures/self_computed_expected_helper/diff.patch --mode fast --at probe:src_lib.rs:return_value:df11903a
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:return_value:df11903a --root <cwd>/fixtures/self_computed_expected_helper/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/self_computed_expected_helper/input --at src/lib.rs:2 --kind return_value
 

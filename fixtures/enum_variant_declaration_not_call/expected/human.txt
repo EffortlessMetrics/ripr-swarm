@@ -28,6 +28,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/enum_variant_declaration_not_call/input --diff <cwd>/fixtures/enum_variant_declaration_not_call/diff.patch --mode fast probe:src_lib.rs:call_deletion:5804086e
   ripr context --root <cwd>/fixtures/enum_variant_declaration_not_call/input --diff <cwd>/fixtures/enum_variant_declaration_not_call/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:5804086e
+  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:call_deletion:5804086e --root <cwd>/fixtures/enum_variant_declaration_not_call/input` for the full gate's answer
 No test stub here: the change shows up as a side effect or call, which needs an observer or mock ripr cannot write
 
 Hidden:
