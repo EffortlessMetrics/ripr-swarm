@@ -13,21 +13,39 @@
 
 use super::*;
 
+/// Text after skipping whitespace and `/* */` comments.
+fn skip_trivia(mut text: &str) -> &str {
+    loop {
+        text = text.trim_start();
+        match text
+            .strip_prefix("/*")
+            .and_then(|inner| inner.split_once("*/"))
+        {
+            Some((_, after)) => text = after,
+            None => return text,
+        }
+    }
+}
+
 /// Snapshot matcher calls in `text`: `Snapshot` followed, after optional
-/// whitespace, by `(`, by a type-argument list (`<`), by a bracket-access
-/// close (`"]`, `']`, `` `] ``) or by `.call` / `.apply` / `.bind` (#8031).
-/// Each such call advances the runner's per-title counter, so it is counted
-/// whether or not it writes to the committed file; comments and strings only
-/// over-count, which refuses.
+/// whitespace and block comments, by `(`, `?.`, `!`, a type-argument list
+/// (`<`), a bracket-access close (`"]`, `']`, `` `] ``, with optional
+/// whitespace or comments before the `]`) or by `.call` / `.apply` / `.bind`
+/// (#8031). Each such call advances the runner's per-title counter, so it is
+/// counted whether or not it writes to the committed file; comments and
+/// strings only over-count, which refuses.
 fn snapshot_calls(text: &str) -> usize {
     text.match_indices("Snapshot")
         .filter(|(index, matched)| {
             text.get(index + matched.len()..).is_some_and(|rest| {
-                let rest = rest.trim_start();
-                rest.starts_with(['(', '<'])
-                    || ["\"]", "']", "`]", ".call", ".apply", ".bind"]
+                let rest = skip_trivia(rest);
+                rest.starts_with(['(', '<', '!'])
+                    || [".call", ".apply", ".bind", "?."]
                         .iter()
                         .any(|tail| rest.starts_with(tail))
+                    || rest
+                        .strip_prefix(['"', '\'', '`'])
+                        .is_some_and(|after| skip_trivia(after).starts_with(']'))
             })
         })
         .count()
