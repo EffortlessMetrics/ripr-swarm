@@ -54,6 +54,12 @@ The default contract is:
   initialize or overwrite that directory. Real and dry runs retain the same
   refusal. If no lossless root spelling exists, omit executable retries and
   name the UTF-8-parent/alias remedy while leaving existing files intact.
+- Workflow refresh advisories from `init` and `doctor` also bind executable
+  refresh commands to the selected root, including after an upgrade and during
+  an init dry run. Preserve config customizations and provide PowerShell quoting
+  when needed. Commands remain byte-preserving after terminal sanitization,
+  including roots with literal line breaks or tabs. If no lossless command root exists, retain the advisory but omit
+  the refresh command with the same UTF-8-parent/alias remedy.
 - A missing `ripr.toml` and a freshly generated `ripr.toml` should produce
   equivalent default policy behavior, except for filesystem artifacts
   intentionally created by `init` or other commands.
@@ -728,6 +734,10 @@ Current tests and reports that support the contract:
 - `crates/ripr/tests/cli_smoke/init_ci_guidance.rs::init_ci_followup_does_not_claim_adoption_for_config_only_or_preview`
 - `crates/ripr/tests/cli_smoke/init_followups.rs::init_followups_replay_the_selected_root_from_foreign_cwd`
 - `crates/ripr/tests/cli_smoke/init_followups.rs::init_refusal_retries_replay_the_selected_root`
+- `crates/ripr/tests/cli_smoke/init_followups.rs::init_upgrade_warning_refresh_replays_selected_root`
+- `crates/ripr/tests/cli_smoke/init_followups.rs::doctor_workflow_warning_refresh_replays_selected_root`
+- `crates/ripr/tests/cli_smoke/init_followups.rs::workflow_warning_omits_refresh_for_unrepresentable_root`
+- `crates/ripr/tests/cli_smoke/init_followups.rs::workflow_refresh_control_roots_replay_without_touching_escaped_siblings`
 - `crates/ripr/tests/cli_smoke/init_followups.rs::init_refusal_omits_retries_for_an_unrepresentable_root`
 - `crates/ripr/tests/cli_smoke/init_followups.rs::init_omits_followups_for_an_unrepresentable_implicit_root`
 - `crates/ripr/tests/cli_smoke/init_followups.rs::init_followups_replay_a_utf8_alias_to_a_non_utf8_root`

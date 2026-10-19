@@ -45,8 +45,9 @@ pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
         let generator = env!("CARGO_PKG_VERSION");
         let pinned = workflow_install_version(generator);
         if pinned != generator {
+            let refresh = workflow_refresh_guidance(&options.root);
             eprintln!(
-                "ripr: warning: this ripr ({generator}) is not released, so the generated workflow pins the latest release ({pinned}) instead of the generator. After upgrading ripr, refresh with `ripr init --ci github --force` and review the diff before committing."
+                "ripr: warning: this ripr ({generator}) is not released, so the generated workflow pins the latest release ({pinned}) instead of the generator. After upgrading ripr, {refresh}"
             );
         }
     }
@@ -409,6 +410,38 @@ fn init_command_root(root: &Path) -> Result<String, String> {
         })?;
         output::path::command_root_display(root, &resolved)
     })
+}
+
+/// Init and doctor prescribe the same workflow write. Bind it to the selected
+/// root just like init's successful follow-ups and existing-file retries.
+pub(super) fn workflow_refresh_guidance(root: &Path) -> String {
+    let root_display = match init_command_root(root) {
+        Ok(root) => root,
+        Err(error) => return format!("refresh command omitted: {error}."),
+    };
+    let root_arg = if root_display.chars().any(|ch| matches!(ch, '\n' | '\t')) {
+        // Doctor sanitizes raw LF/TAB. Encode the complete directory spelling
+        // as one argument; `/.` prevents POSIX command substitution from
+        // stripping trailing newlines while selecting the same directory.
+        // Keep this directory-only projection with init's root authority:
+        // appending `/.` would be incorrect for an arbitrary file argument.
+        let octal: String = root_display
+            .bytes()
+            .chain(b"/.".iter().copied())
+            .map(|byte| format!("\\{byte:03o}"))
+            .collect();
+        format!("\"$(printf '{octal}')\"")
+    } else {
+        crate::agent::loop_commands::shell_arg(&root_display)
+    };
+    let command = format!("ripr init --ci github --force --root {root_arg}");
+    let mut guidance = format!("refresh with `{command}` and review the diff before committing.");
+    if let Some(powershell) = output::markdown::powershell_text_variant(&command) {
+        // Doctor escapes control characters in advisory evidence. Keep both
+        // copyable spellings inline rather than inserting a rendered escape.
+        guidance.push_str(&format!(" (PowerShell) `{powershell}`"));
+    }
+    guidance
 }
 
 /// Is anything at all sitting at `path`?

@@ -130,6 +130,10 @@ refreshing the workflow. These commands can be pasted from another directory.
 If the root cannot be represented losslessly, the refusal omits executable
 retries and names the UTF-8-parent/alias remedy; existing files remain intact.
 Where quoting differs, a labeled PowerShell form accompanies the command.
+Workflow refresh warnings from `init` and `doctor` follow the same root and
+quoting rules, including the upgrade instruction emitted by an unreleased
+generator. If the selected root cannot be represented losslessly, the warning
+remains but its executable refresh command is omitted.
 
 | Flag | Default | Notes |
 | --- | --- | --- |
