@@ -5235,6 +5235,24 @@ mod tests {
             let lines = format!("{setup}\n    {rewrite}");
             assert!(!confirms(Vec::new(), &lines, read), "{rewrite}");
         }
+        // An owner call on the assertion's own line is never accepted
+        // (`owner_calls_before_read` needs an earlier line), so a rewrite
+        // between them cannot be credited either (#8866 review).
+        let on_line = |middle: &str| {
+            let test = TestSummary {
+                start_line: 1,
+                ..test_with_body_assertions(
+                    "t",
+                    &format!(
+                        "fn t() {{\n    let mut o = Ob::new(); o.add(4); {middle}assert_eq!(o.entries(), &[4]);\n}}"
+                    ),
+                    Vec::new(),
+                )
+            };
+            owner_call_reaches_read_unrewritten(&test, "o", "add", 2, Some("entries"), "log")
+        };
+        assert!(!on_line(""));
+        assert!(!on_line("o.reset_to(&[4]); "));
         // A second owner call after the rewrite is observed again.
         let again = format!("{setup}\n    o.reset_to(&[]);\n    o.add(4);");
         assert!(confirms(Vec::new(), &again, read));
