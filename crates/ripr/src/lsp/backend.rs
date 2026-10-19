@@ -178,6 +178,11 @@ pub(super) struct Backend {
     /// later with `root_changed == false`) is still caught.
     config_pull_scope_root: Mutex<Option<PathBuf>>,
     last_diagnostic_uris: Mutex<BTreeSet<Uri>>,
+    /// URIs whose latest push publication is the analysis-pending marker
+    /// rather than committed diagnostics (#8732): the first snapshot commit
+    /// (or a root/shutdown clear) must retract the marker with the
+    /// established empty-clear so the pending state never outlives it.
+    pending_push_marker_uris: Mutex<BTreeSet<Uri>>,
     last_diagnostics: Mutex<BTreeMap<Uri, Vec<Diagnostic>>>,
     latest_analysis: Mutex<Option<Arc<AnalysisSnapshot>>>,
     diagnostic_result_ids: Mutex<Option<Arc<DiagnosticResultIdCache>>>,
@@ -341,6 +346,7 @@ impl Backend {
             config_pull_coordinator: Mutex::new(ConfigPullCoordinator::default()),
             config_pull_scope_root: Mutex::new(None),
             last_diagnostic_uris: Mutex::new(BTreeSet::new()),
+            pending_push_marker_uris: Mutex::new(BTreeSet::new()),
             last_diagnostics: Mutex::new(BTreeMap::new()),
             latest_analysis: Mutex::new(None),
             diagnostic_result_ids: Mutex::new(None),
@@ -420,6 +426,15 @@ impl Backend {
     ///
     /// See RIPR-SPEC-0105 for the design rationale.
     pub(super) async fn refresh_diagnostics(&self, scope: RefreshScope, reason: RefreshReason) {
+        // #8732: a push client that has never received diagnostics cannot
+        // distinguish "not analyzed yet" or "analysis is paused" from a
+        // clean run, so publish the typed pending marker for tracked
+        // documents before any blocked/no-snapshot early return. Once a
+        // snapshot commits (and no failure is latched) real payloads own
+        // the client state and this is a no-op decision-wise.
+        if self.configuration_failure().is_some() || self.latest_pull_snapshot().is_none() {
+            self.publish_analysis_pending_push_markers().await;
+        }
         if self.configuration_failure().is_some() {
             return;
         }
@@ -976,6 +991,45 @@ impl Backend {
             .await;
             return RefreshAttemptOutcome::Failed;
         };
+        // #8732: retract every analysis-pending marker published to a push
+        // client while no snapshot existed (or a blocking failure was
+        // latched). A URI the commit just published real payloads for is
+        // already reconciled, and a URI the plan cleared is already emptied;
+        // every other tracked marker URI is re-served from the committed
+        // baseline — the established empty-clear retraction when the
+        // document has no findings, so the pending state never outlives the
+        // first real snapshot.
+        if !self.pull_diagnostics_enabled() {
+            let published: BTreeSet<&Uri> = plan
+                .publish_batches
+                .iter()
+                .map(|batch| &batch.uri)
+                .collect();
+            let cleared: BTreeSet<&Uri> = plan.clear_uris.iter().collect();
+            for uri in self.take_pending_push_marker_uris() {
+                if published.contains(&&uri) || cleared.contains(&&uri) {
+                    continue;
+                }
+                let diagnostics = self.committed_served_diagnostics_for_uri(&uri);
+                let version = if diagnostics.is_empty() {
+                    Self::clear_version()
+                } else {
+                    let raw_version = self
+                        .with_document_state(&uri, |state| {
+                            if state.buffer_authority_unknown {
+                                None
+                            } else {
+                                state.version
+                            }
+                        })
+                        .flatten();
+                    self.negotiated_version(raw_version)
+                };
+                self.client
+                    .publish_diagnostics(uri, diagnostics, version)
+                    .await;
+            }
+        }
         // Release the transition guard now that the terminal check, publish,
         // and commit are done. Everything below is post-commit disclosure:
         // log notifications plus `workspace/diagnostic/refresh` and code-lens
@@ -1350,7 +1404,69 @@ impl Backend {
         if let Ok(mut diagnostic_result_ids) = self.diagnostic_result_ids.lock() {
             *diagnostic_result_ids = None;
         }
-        take_all_uris(&mut last_diagnostic_uris)
+        let mut uris = take_all_uris(&mut last_diagnostic_uris);
+        // #8732: a root transition or shutdown must also retract any
+        // analysis-pending marker published to a push client while no
+        // snapshot existed (or a blocking failure was latched).
+        if let Ok(mut pending) = self.pending_push_marker_uris.lock() {
+            uris.extend(std::mem::take(&mut *pending));
+        }
+        uris.sort();
+        uris.dedup();
+        uris
+    }
+
+    /// Publish the typed analysis-pending marker to every tracked document
+    /// for a push client (#8732): without pull diagnostics, the
+    /// pre-analysis and blocked states used to publish nothing, which a
+    /// generic editor cannot distinguish from "analysis ran and found
+    /// nothing" — the exact ambiguity the pull marker (#7774) already
+    /// refuses. The marker reuses the pull recovery routes, so both
+    /// transports promise identical recovery, and rides the withdrawal
+    /// payload when a committed snapshot is being withdrawn (#8731).
+    /// Retraction rides the first snapshot commit (or the root/shutdown
+    /// clear) via `pending_push_marker_uris`.
+    async fn publish_analysis_pending_push_markers(&self) {
+        if self.pull_diagnostics_enabled() {
+            return;
+        }
+        let recovery = self.analysis_pending_recovery();
+        let withdrawn = self.latest_pull_snapshot().is_some();
+        let items = if withdrawn {
+            analysis_pending_withdrawal_diagnostics(recovery)
+        } else {
+            analysis_pending_diagnostics(recovery)
+        };
+        let uris = self
+            .documents
+            .lock()
+            .map(|documents| documents.documents.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        for uri in uris {
+            let raw_version = self
+                .with_document_state(&uri, |state| {
+                    if state.buffer_authority_unknown {
+                        None
+                    } else {
+                        state.version
+                    }
+                })
+                .flatten();
+            let version = self.negotiated_version(raw_version);
+            if let Ok(mut pending) = self.pending_push_marker_uris.lock() {
+                pending.insert(uri.clone());
+            }
+            self.client
+                .publish_diagnostics(uri, items.clone(), version)
+                .await;
+        }
+    }
+
+    fn take_pending_push_marker_uris(&self) -> Vec<Uri> {
+        self.pending_push_marker_uris
+            .lock()
+            .map(|mut pending| std::mem::take(&mut *pending).into_iter().collect())
+            .unwrap_or_default()
     }
 
     #[cfg(test)]
@@ -2844,6 +2960,12 @@ impl Backend {
                 // same failure a second time (#8583).
                 self.note_analysis_failure_disclosed();
                 self.publish_analysis_status().await;
+                // #8732: withdraw the served push payloads for tracked
+                // documents the same moment the failure latches; a push
+                // client otherwise keeps the last published diagnostics
+                // indefinitely (the refresh guard below returns before any
+                // re-analysis can replace them).
+                self.publish_analysis_pending_push_markers().await;
                 if !repeated {
                     self.disclose_configuration_reload_failure(warning, shown)
                         .await;
@@ -5734,9 +5856,15 @@ impl LanguageServer for Backend {
         let session_has_analysis = self.refresh_scheduler_has_analysis_state();
         self.handle_document_quarantine_transition(&uri, transition, decision_version)
             .await;
+        // A latched configuration failure falls through to the refresh path
+        // even when the open matches the persisted state: the refresh guard
+        // returns before scheduling, but its entry publishes the typed
+        // pending marker (#8732) so a push client opening a document mid-
+        // failure does not see silence or a stale restore.
         if open_matches_saved
             && session_has_analysis
             && !self.opened_file_differs_from_committed_snapshot(&uri)
+            && self.configuration_failure().is_none()
         {
             return;
         }
@@ -5783,6 +5911,12 @@ impl LanguageServer for Backend {
         .await;
         if let Ok(mut digests) = self.saved_content_digests.lock() {
             digests.remove(&params.text_document.uri);
+        }
+        // #8732: the closing client clears its own view; drop the URI from
+        // the pending-marker set so a later commit or shutdown does not
+        // publish a retraction for a document nobody tracks.
+        if let Ok(mut pending) = self.pending_push_marker_uris.lock() {
+            pending.remove(&params.text_document.uri);
         }
         self.close_document(params);
         self.advance_workspace_revision();
