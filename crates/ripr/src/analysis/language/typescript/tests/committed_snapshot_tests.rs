@@ -76,6 +76,56 @@ fn generic_or_bracket_snapshot_calls_are_counted_and_refuse() -> Result<(), Stri
     Ok(())
 }
 
+#[test]
+fn line_comment_value_reference_and_alias_snapshot_spellings_refuse() -> Result<(), String> {
+    // #8895: each spelling is its own check so one pass cannot hide another.
+    let snap = jest_snap(&[("price 1", "140")]);
+    let seconds = [
+        "expect(price(90)).toMatchSnapshot // c\n();",
+        "(expect(price(90)).toMatchSnapshot)();",
+        "(expect(price(90)).toMatchSnapshot as any)();",
+        "(expect(price(90)).toMatchSnapshot satisfies Fn)();",
+        "const f = expect(price(90)).toMatchSnapshot; f();",
+        "const { toMatchSnapshot: g } = expect(price(90)); g();",
+    ];
+    for second in seconds {
+        let source = format!(
+            "import {{ price }} from \"../src/price\";\n\ntest(\"price\", () => {{\n  expect(price(150)).toMatchSnapshot();\n  {second}\n}});\n"
+        );
+        let got = strengths("snap-undercount", &source, &[(SNAP_PATH, &snap)])?;
+        assert!(
+            got.iter()
+                .all(|strength| *strength != OracleStrength::Strong),
+            "{second}: {got:?}"
+        );
+    }
+    // Control: the one honest call stays strong.
+    assert_eq!(
+        strengths("snap-undercount-ok", PRICE_TEST, &[(SNAP_PATH, &snap)])?,
+        vec![OracleStrength::Strong]
+    );
+    Ok(())
+}
+
+#[test]
+fn snapshot_calls_counts_each_spelling() {
+    let cases: [(&str, usize); 10] = [
+        ("a.toMatchSnapshot()", 1),
+        ("a.toMatchSnapshot // c\n()", 1),
+        ("(a.toMatchSnapshot)()", 2),
+        ("(a.toMatchSnapshot as any)()", 2),
+        ("(a.toMatchSnapshot satisfies F)()", 2),
+        ("const f = a.toMatchSnapshot; f()", 2),
+        ("toMatchSnapshotLike", 0),
+        ("see the Snapshot docs", 0),
+        ("a.toMatchSnapshot // c", 2),
+        ("a.toMatchSnapshot(); b.toMatchSnapshot()", 2),
+    ];
+    for (text, want) in cases {
+        assert_eq!(snapshot_calls(text), want, "{text}");
+    }
+}
+
 const SNAP_PATH: &str = "test/__snapshots__/price.test.ts.snap";
 
 #[test]

@@ -13,42 +13,70 @@
 
 use super::*;
 
-/// Text after skipping whitespace and `/* */` comments.
+/// Text after skipping whitespace, `/* */` comments and `//` line comments.
 fn skip_trivia(mut text: &str) -> &str {
     loop {
         text = text.trim_start();
-        match text
+        if let Some(inner) = text.strip_prefix("//") {
+            // A line comment ends at the line break (#8895).
+            text = inner.split_once('\n').map_or("", |(_, after)| after);
+        } else if let Some((_, after)) = text
             .strip_prefix("/*")
             .and_then(|inner| inner.split_once("*/"))
         {
-            Some((_, after)) => text = after,
-            None => return text,
+            text = after;
+        } else {
+            return text;
         }
     }
 }
 
+fn is_identifier_char(c: char) -> bool {
+    c.is_alphanumeric() || matches!(c, '_' | '$')
+}
+
 /// Snapshot matcher calls in `text`: `Snapshot` followed, after optional
-/// whitespace and block comments, by `(`, `?.`, `!`, a type-argument list
-/// (`<`), a bracket-access close (`"]`, `']`, `` `] ``, with optional
-/// whitespace or comments before the `]`) or by `.call` / `.apply` / `.bind`
-/// (#8031). Each such call advances the runner's per-title counter, so it is
-/// counted whether or not it writes to the committed file; comments and
-/// strings only over-count, which refuses.
-fn snapshot_calls(text: &str) -> usize {
+/// whitespace, block comments and line comments, by `(`, `?.`, `!`, a
+/// type-argument list (`<`), a bracket-access close (`"]`, `']`, `` `] ``,
+/// with optional whitespace or comments before the `]`) or by `.call` /
+/// `.apply` / `.bind` (#8031). Each such call advances the runner's per-title
+/// counter, so it is counted whether or not it writes to the committed file.
+/// A matcher name that is used as a value instead of called in place (the
+/// parenthesised `(a.toMatchSnapshot)()`, a cast `as` / `satisfies`, an
+/// alias `const f = a.toMatchSnapshot`, an argument or destructuring) may be
+/// called any number of times later, so it counts as two: it is never
+/// credited as the one call and refuses (#8895). Only a word that merely
+/// begins with `Snapshot`, or a standalone `Snapshot` that is not a matcher
+/// name, is not counted. Comments and strings only over-count, which refuses.
+pub(super) fn snapshot_calls(text: &str) -> usize {
     text.match_indices("Snapshot")
-        .filter(|(index, matched)| {
-            text.get(index + matched.len()..).is_some_and(|rest| {
-                let rest = skip_trivia(rest);
-                rest.starts_with(['(', '<', '!'])
-                    || [".call", ".apply", ".bind", "?."]
-                        .iter()
-                        .any(|tail| rest.starts_with(tail))
-                    || rest
-                        .strip_prefix(['"', '\'', '`'])
-                        .is_some_and(|after| skip_trivia(after).starts_with(']'))
-            })
+        .map(|(index, matched)| {
+            let Some(raw) = text.get(index + matched.len()..) else {
+                return 0;
+            };
+            if raw.starts_with(is_identifier_char) {
+                return 0;
+            }
+            let rest = skip_trivia(raw);
+            let called = rest.starts_with(['(', '<', '!'])
+                || [".call", ".apply", ".bind", "?."]
+                    .iter()
+                    .any(|tail| rest.starts_with(tail))
+                || rest
+                    .strip_prefix(['"', '\'', '`'])
+                    .is_some_and(|after| skip_trivia(after).starts_with(']'));
+            let matcher_name = text
+                .get(..index)
+                .is_some_and(|before| before.ends_with(is_identifier_char));
+            if called {
+                1
+            } else if matcher_name {
+                2
+            } else {
+                0
+            }
         })
-        .count()
+        .sum()
 }
 
 /// The hint of the body's one `toMatchSnapshot("<hint>")` call, when it is a

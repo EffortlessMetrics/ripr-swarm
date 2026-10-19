@@ -112,10 +112,19 @@ runner's entry for it can be named and is committed:
   from `HEAD` (edited, deleted, untracked or ignored): the test file is read
   at `HEAD`, so its entry must be the one `HEAD` holds;
 - every snapshot matcher call in the test file sits in a test body (text
-  `Snapshot`, then after optional whitespace and block comments `(`, `<`,
-  `!`, `?.`, `.call`, `.apply`, `.bind`, or a quoted bracket access closed
-  by `]`; counting inline snapshots, which advance the same counter; comments
-  and strings only over-count, which refuses),
+  `Snapshot`, then after optional whitespace, block comments and `//` line
+  comments `(`, `<`, `!`, `?.`, `.call`, `.apply`, `.bind`, or a quoted
+  bracket access closed by `]`, counts one; counting inline snapshots, which
+  advance the same counter; comments and strings only over-count, which
+  refuses). A matcher name (a word ending in `Snapshot`) used any other way
+  is a value reference that may be called any number of times later, and
+  counts as two so it is never credited as the one call: the parenthesised
+  `(a.toMatchSnapshot)()`, a cast `a.toMatchSnapshot as any`, `satisfies`,
+  an alias `const f = a.toMatchSnapshot; f()`, an argument or a
+  destructuring (#8895). This is refuse-on-presence rather than call
+  tracking: the lexical counter does not follow `f()`, so the reference
+  itself refuses. A word that only begins with `Snapshot` and a standalone
+  `Snapshot` that is not a matcher name count zero,
   so no hook or helper advances the counter;
 - the test body holds exactly one such call, and this assertion is its
   only `toMatchSnapshot`, with no argument or with the rule 2 hint;
@@ -279,7 +288,8 @@ RIPR-SPEC-0243 ladder, including the observation guard.
   `snapshot_location_or_update_override_stays_medium` pins example 5;
   `snapshot_input_differing_from_head_stays_medium` pins example 6;
   `generic_or_bracket_snapshot_calls_are_counted_and_refuse` pins the
-  counted spellings of rule 1;
+  counted spellings of rule 1; `line_comment_value_reference_and_alias_snapshot_spellings_refuse`
+  and `snapshot_calls_counts_each_spelling` pin the #8895 spellings;
   `config_passed_by_path_or_custom_named_stays_medium`,
   `config_above_the_analysis_root_is_read_up_to_the_repository`,
   `config_above_the_root_is_read_only_within_reach_of_the_marker`,
