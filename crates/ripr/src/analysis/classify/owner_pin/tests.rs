@@ -8652,8 +8652,17 @@ fn an_expected_value_a_macro_or_a_static_rebinds_from_the_owner_is_not_a_pin() {
         ),
         // #8795 review: a struct of literals may `Deref` to an atomic.
         (
-            "struct E {\n    tag: u32,\n    cell: AtomicU32,\n}\nimpl std::ops::Deref for E {\n    type Target = AtomicU32;\n    fn deref(&self) -> &AtomicU32 {\n        &self.cell\n    }\n}\n\n",
+            "use std::sync::atomic::{AtomicU32, Ordering};\nstruct E {\n    tag: u32,\n}\nstatic VALUE: AtomicU32 = AtomicU32::new(0);\nimpl std::ops::Deref for E {\n    type Target = AtomicU32;\n    fn deref(&self) -> &Self::Target {\n        &VALUE\n    }\n}\n\n",
             "let expected = E { tag: 0 };\n        AtomicU32::store(&expected, crate::weight(4), Ordering::SeqCst);\n        assert_eq!(crate::weight(4), expected.load(Ordering::SeqCst));",
+        ),
+        // #8795 review: a loop label before `[` is not an indexed place.
+        (
+            "",
+            "let mut expected = 0;\n        let mut o = 0;\n        'a: {\n            break 'a [expected, o] = [crate::weight(4), 0];\n        }\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        (
+            "",
+            "let mut expected = 0;\n        let mut o = 0;\n        'a: loop {\n            break 'a [expected, o] = [crate::weight(4), 0];\n        }\n        assert_eq!(crate::weight(4), expected);",
         ),
         // #8795 review: a keyword before `[` starts an array pattern, not an index.
         (
@@ -8874,6 +8883,8 @@ fn written_by_test_reads_operators_and_let_boundaries() {
         "match [EXPECTED, o] = p { _ => {} }",
         "return [EXPECTED, o] = p;",
         "break [EXPECTED, o] = p;",
+        "break 'a [EXPECTED, o] = p;",
+        "continue 'a [EXPECTED, o] = p;",
         "(EXPECTED, v[0]) = p;",
         "EXPECTED.replace(f(4));",
         "EXPECTED.take();",

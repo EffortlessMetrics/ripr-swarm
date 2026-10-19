@@ -10449,7 +10449,11 @@ fn index_operand(before: &str) -> bool {
                 let word_start = head
                     .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
                     .map_or(0, |at| at + 1);
-                if NEGATING_KEYWORDS.contains(&&head[word_start..]) {
+                // A label (`break 'a [e, o] = p`, `continue 'a [..]`) is not an
+                // indexed place either.
+                if head[..word_start].ends_with('\'')
+                    || NEGATING_KEYWORDS.contains(&&head[word_start..])
+                {
                     return false;
                 }
                 return head.chars().next_back().is_some_and(|prev| {
