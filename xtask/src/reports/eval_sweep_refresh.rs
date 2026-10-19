@@ -3334,9 +3334,11 @@ mod python_eval_sweep_refresh {
         let Some(counts) = counts else {
             // A process that bypasses mode bits (typically euid 0) cannot
             // produce the denial; say so rather than passing silently (#8867).
-            eprintln!(
-                "SKIPPED real_unreadable_subtree_marks_corpus_selection_incomplete: \
-                 this process can still list a mode-000 directory"
+            // Direct handle write: libtest captures `eprintln!` of passing tests.
+            let _ = std::io::Write::write_all(
+                &mut std::io::stderr(),
+                b"SKIPPED real_unreadable_subtree_marks_corpus_selection_incomplete: \
+                  this process can still list a mode-000 directory\n",
             );
             return Ok(());
         };

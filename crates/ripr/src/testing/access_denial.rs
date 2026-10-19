@@ -5,7 +5,10 @@
 //! asks the filesystem directly instead of guessing from the uid, so the test
 //! still runs wherever the denial is real. Where it is not, the skip names the
 //! reason on stderr; a silent pass would read as a green control that never ran.
+//! The notice writes to the process stderr handle directly: libtest captures
+//! `eprintln!` output of passing tests, which would hide the skip.
 
+use std::io::Write as _;
 use std::path::Path;
 
 /// Prints a visible skip notice and returns `true` when `denied` is false.
@@ -13,7 +16,8 @@ use std::path::Path;
 /// Call after building the stimulus: `if skip_unless_denied(name, denied) { return Ok(()); }`.
 pub(crate) fn skip_unless_denied(test: &str, denied: bool) -> bool {
     if !denied {
-        eprintln!(
+        let _ = writeln!(
+            std::io::stderr(),
             "SKIPPED {test}: this process bypasses file mode bits (typically euid 0), \
              so the permission-denial stimulus cannot occur"
         );

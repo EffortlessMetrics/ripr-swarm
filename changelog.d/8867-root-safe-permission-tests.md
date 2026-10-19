@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- Nine unit tests that build a permission denial with `chmod 000` or a read-only directory now probe whether the denial is real and skip with a visible `SKIPPED` message when the process bypasses mode bits (typically root), instead of failing; they still run unchanged for unprivileged users (#8867).
+- Ten unit tests that build a permission denial with `chmod 000` or a read-only directory now probe whether the denial is real and skip with a visible `SKIPPED` message when the process bypasses mode bits (typically root), instead of failing; they still run unchanged for unprivileged users (#8867). The skip notice is written straight to stderr so libtest does not swallow it.

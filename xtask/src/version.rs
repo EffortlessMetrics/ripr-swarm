@@ -720,9 +720,11 @@ mod tests {
                     use std::os::unix::fs::PermissionsExt;
                     let _ = fs::set_permissions(&launcher_path, fs::Permissions::from_mode(0o644));
                 }
-                eprintln!(
-                    "SKIPPED rolls_back_all_files_when_launcher_write_fails: \
-                     this process can write a read-only file (typically euid 0)"
+                // Direct handle write: libtest captures `eprintln!` of passing tests.
+                let _ = std::io::Write::write_all(
+                    &mut std::io::stderr(),
+                    b"SKIPPED rolls_back_all_files_when_launcher_write_fails: \
+                      this process can write a read-only file (typically euid 0)\n",
                 );
                 return Ok(());
             }

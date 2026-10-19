@@ -788,6 +788,10 @@ mod tests {
                 // A privileged process can still traverse mode 000. Skip rather
                 // than fail the production behavior that remains correct for
                 // unprivileged users.
+                crate::testing::access_denial::skip_unless_denied(
+                    "unreadable_ripr_toml_lookup_is_not_built_in_defaults",
+                    false,
+                );
                 Ok(())
             }
             Err(error) if error.contains("ripr.toml") => Ok(()),
