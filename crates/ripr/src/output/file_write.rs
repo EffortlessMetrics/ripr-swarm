@@ -254,6 +254,11 @@ mod tests {
         const PREVIOUS: &[u8] = b"{\"status\":\"passed\",\"run\":\"previous\"}\n";
         const PREFIX: &[u8] = b"{\"status\":\"passed\",\"run\":\"replacement\"}\n";
         const COMPLETE: &[u8] = b"{\"status\":\"passed\",\"run\":\"replacement\"}\n \n";
+        for bytes in [PREVIOUS, PREFIX, COMPLETE] {
+            let record: serde_json::Value =
+                serde_json::from_slice(bytes).map_err(|err| format!("JSON setup: {err}"))?;
+            assert_eq!(record["status"], "passed");
+        }
         let dir = fresh_dir("failed-success-looking-json")?;
         let result = (|| {
             for existing in [false, true] {
@@ -266,7 +271,7 @@ mod tests {
                     fs::write(&path, PREVIOUS).map_err(|err| format!("seed: {err}"))?;
                 }
                 let fill = |file: &mut std::fs::File, inject_failure: bool| {
-                    // This prefix alone parses as a successful receipt. Error
+                    // This prefix alone is valid JSON claiming success. Error
                     // handling must keep even valid-looking partial output private.
                     file.write_all(PREFIX)?;
                     if inject_failure {

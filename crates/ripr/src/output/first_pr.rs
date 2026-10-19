@@ -266,10 +266,13 @@ fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
     let markdown_path = out_dir.join(START_HERE_MD);
     let json_text = serde_json::to_string_pretty(&packet)
         .map_err(|err| format!("failed to serialize first-pr packet: {err}"))?;
-    fs::write(&json_path, format!("{json_text}\n"))
+    crate::output::file_write::write(&json_path, format!("{json_text}\n").as_bytes())
         .map_err(|err| crate::output::file_write::write_failure_message(&json_path, &err))?;
-    fs::write(&markdown_path, render_start_here_markdown(&packet))
-        .map_err(|err| crate::output::file_write::write_failure_message(&markdown_path, &err))?;
+    crate::output::file_write::write(
+        &markdown_path,
+        render_start_here_markdown(&packet).as_bytes(),
+    )
+    .map_err(|err| crate::output::file_write::write_failure_message(&markdown_path, &err))?;
     validate_start_here_packet(&json_path, &markdown_path)?;
     print!(
         "{}",
@@ -658,14 +661,14 @@ fn materialize_check_output_gap_ledger(
         fs::create_dir_all(parent)
             .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
     }
-    fs::write(&gap_ledger_path, json)
+    crate::output::file_write::write(&gap_ledger_path, json.as_bytes())
         .map_err(|err| crate::output::file_write::write_failure_message(&gap_ledger_path, &err))?;
     let gap_ledger_markdown = resolve_path(root, &with_extension(&options.gap_ledger, "md"));
     if let Some(parent) = gap_ledger_markdown.parent() {
         fs::create_dir_all(parent)
             .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
     }
-    fs::write(&gap_ledger_markdown, markdown).map_err(|err| {
+    crate::output::file_write::write(&gap_ledger_markdown, markdown.as_bytes()).map_err(|err| {
         crate::output::file_write::write_failure_message(&gap_ledger_markdown, &err)
     })?;
     Ok(())
