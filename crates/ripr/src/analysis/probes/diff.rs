@@ -75,8 +75,18 @@ pub(crate) fn probes_for_file_with_relations(
     let mut guard_edit_counterparts = Vec::<usize>::new();
     let mut skip_added = structural_lines_covered_by_run(&changed.added_lines);
     let mut skip_removed = structural_lines_covered_by_run(&changed.removed_lines);
-    // A positional replacement that is only an elided-lifetime or primitive
-    // constant path respelling changes no behavior: no probe on either side.
+    // Rebuilt once per file and shared by every reader of the old file (#7637).
+    let old_source = super::classify::old_source(index, changed);
+    let old_source = old_source.as_deref();
+    // A positional replacement, or a rewrapped block, that is only an
+    // elided-lifetime or primitive constant path respelling changes no
+    // behavior: no probe on either side. String and comment text is output or
+    // prose, so a line inside either (including a continuation line of a
+    // multi-line literal) is never a respelling.
+    let added_prose = find_file_facts(index, &changed.path)
+        .map(|facts| prose_lines(&facts.source))
+        .unwrap_or_default();
+    let removed_prose = old_source.map(prose_lines).unwrap_or_default();
     let added_at = changed
         .added_lines
         .iter()
@@ -95,14 +105,49 @@ pub(crate) fn probes_for_file_with_relations(
         else {
             continue;
         };
-        if is_behavior_neutral_respelling(&changed.added_lines[added_index].text, &removed.text) {
+        if !added_prose.contains(&new_side_line)
+            && !removed_prose.contains(&removed.line)
+            && is_behavior_neutral_respelling(&changed.added_lines[added_index].text, &removed.text)
+        {
             skip_added[added_index] = true;
             skip_removed[removed_index] = true;
         }
     }
-    // Rebuilt once per file and shared by every reader of the old file (#7637).
-    let old_source = super::classify::old_source(index, changed);
-    let old_source = old_source.as_deref();
+    for (new_side_lines, removed) in changed.uneven_replacement_blocks() {
+        let added_indexes = new_side_lines
+            .iter()
+            .filter_map(|line| added_at.get(line).copied())
+            .collect::<Vec<_>>();
+        let removed_indexes = removed
+            .iter()
+            .filter_map(|line| removed_at.get(&line.line).copied())
+            .collect::<Vec<_>>();
+        if added_indexes.len() != new_side_lines.len()
+            || removed_indexes.len() != removed.len()
+            || new_side_lines.iter().any(|line| added_prose.contains(line))
+            || removed
+                .iter()
+                .any(|line| removed_prose.contains(&line.line))
+        {
+            continue;
+        }
+        let after = added_indexes
+            .iter()
+            .map(|&index| changed.added_lines[index].text.as_str())
+            .collect::<Vec<_>>();
+        let before = removed
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect::<Vec<_>>();
+        if is_behavior_neutral_rewrap(&after, &before) {
+            for index in added_indexes {
+                skip_added[index] = true;
+            }
+            for index in removed_indexes {
+                skip_removed[index] = true;
+            }
+        }
+    }
     // Block-comment content is prose, not behavior: `name: value` or `x < y`
     // inside `/* .. */` or `/*! .. */` must not seed probes. Line comments are
     // already skipped by prefix.
@@ -650,6 +695,69 @@ fn is_behavior_neutral_respelling(after: &str, before: &str) -> bool {
         && !prose(before)
         && after != before
         && neutral_spelling(after) == neutral_spelling(before)
+}
+
+/// Whether a block of added lines only rewraps and respells the block of
+/// removed lines it replaced: the same statement joined or split across a
+/// different number of lines (`= \n Index::new(core::isize::MAX - 1);` joined
+/// onto one line as `isize::MAX`). Each side is joined with whitespace
+/// normalized, and some respelling must actually differ, so a pure reformat
+/// is left to the rest of the analysis. Blocks beyond `MAX_REWRAP_LINES` stay
+/// probed.
+fn is_behavior_neutral_rewrap(after: &[&str], before: &[&str]) -> bool {
+    const MAX_REWRAP_LINES: usize = 8;
+    if after.len() > MAX_REWRAP_LINES || before.len() > MAX_REWRAP_LINES {
+        return false;
+    }
+    let prose = |line: &&str| line.contains('"') || line.contains("//") || line.contains("/*");
+    if after.iter().any(prose) || before.iter().any(prose) {
+        return false;
+    }
+    let (after, before) = (join_tokens(after), join_tokens(before));
+    let respelled = neutral_spelling(&before) != before || neutral_spelling(&after) != after;
+    respelled && neutral_spelling(&after) == neutral_spelling(&before)
+}
+
+/// `lines` joined with whitespace collapsed, and dropped beside punctuation so
+/// a wrap point does not matter (`=\n  x` and `= x` read alike).
+fn join_tokens(lines: &[&str]) -> String {
+    let joined = lines
+        .iter()
+        .map(|line| line.trim())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let chars = joined.chars().collect::<Vec<_>>();
+    let mut out = String::with_capacity(joined.len());
+    let mut previous: Option<char> = None;
+    for (at, &ch) in chars.iter().enumerate() {
+        if ch.is_whitespace() {
+            let next = chars[at + 1..].iter().find(|c| !c.is_whitespace());
+            let between_words = previous.is_some_and(word) && next.is_some_and(|next| word(*next));
+            if between_words && previous != Some(' ') {
+                out.push(' ');
+                previous = Some(' ');
+            }
+            continue;
+        }
+        out.push(ch);
+        previous = Some(ch);
+    }
+    out
+}
+
+/// 1-based lines of `source` that hold string, character or comment text,
+/// read from the whole file so a continuation line inside a multi-line
+/// literal counts (the per-line quote check cannot see it).
+fn prose_lines(source: &str) -> std::collections::BTreeSet<usize> {
+    let masked = mask_comments_and_strings(source);
+    source
+        .lines()
+        .zip(masked.lines())
+        .enumerate()
+        .filter(|(_, (original, masked))| original != masked)
+        .map(|(at, _)| at + 1)
+        .collect()
 }
 
 fn neutral_spelling(line: &str) -> String {
@@ -1898,6 +2006,121 @@ mod tests {
             "{probes:?}"
         );
         assert!(!probes.is_empty(), "the changed pair keeps its probe");
+    }
+
+    /// Probes for `source` (the new file) with the given added
+    /// `(new_side_line, text)` and removed `(old_line, new_side_line, text)`.
+    fn block_probes(
+        source: &str,
+        added: &[(usize, &str)],
+        removed: &[(usize, usize, &str)],
+    ) -> Vec<Probe> {
+        let path = PathBuf::from("src/lib.rs");
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: added
+                .iter()
+                .map(|&(line, text)| ChangedLine {
+                    line,
+                    new_side_line: line,
+                    text: text.to_string(),
+                })
+                .collect(),
+            removed_lines: removed
+                .iter()
+                .map(|&(line, new_side_line, text)| ChangedLine {
+                    line,
+                    new_side_line,
+                    text: text.to_string(),
+                })
+                .collect(),
+        };
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: BTreeMap::from([(
+                path.clone(),
+                FileFacts {
+                    path: path.clone(),
+                    source: source.into(),
+                    ..FileFacts::default()
+                },
+            )]),
+            ..Default::default()
+        });
+        probes_for_file(Path::new("workspace"), &changed, &index)
+    }
+
+    /// #8747: two removed lines joined onto one added line, with the same
+    /// respelling, pair nothing by position yet change no behavior.
+    #[test]
+    fn a_rewrapped_respelling_seeds_no_probe_but_a_rewrapped_change_does() {
+        let source = "pub const MAX: SmallIndex = SmallIndex::new_unchecked(isize::MAX - 1);\n";
+        let neutral = block_probes(
+            source,
+            &[(
+                1,
+                "pub const MAX: SmallIndex = SmallIndex::new_unchecked(isize::MAX - 1);",
+            )],
+            &[
+                (7, 1, "pub const MAX: SmallIndex ="),
+                (8, 1, "    SmallIndex::new_unchecked(core::isize::MAX - 1);"),
+            ],
+        );
+        assert!(neutral.is_empty(), "{neutral:?}");
+        let changed_source =
+            "pub const MAX: SmallIndex = SmallIndex::new_unchecked(isize::MAX - 2);\n";
+        let changed = block_probes(
+            changed_source,
+            &[(
+                1,
+                "pub const MAX: SmallIndex = SmallIndex::new_unchecked(isize::MAX - 2);",
+            )],
+            &[
+                (7, 1, "pub const MAX: SmallIndex ="),
+                (8, 1, "    SmallIndex::new_unchecked(core::isize::MAX - 1);"),
+            ],
+        );
+        assert!(!changed.is_empty(), "a changed value keeps its probe");
+    }
+
+    #[test]
+    fn rewrap_normalization_keeps_word_boundaries() {
+        assert!(is_behavior_neutral_rewrap(
+            &["let max = i32::MAX;"],
+            &["let max =", "    core::i32::MAX;"],
+        ));
+        // Joining `let` and `max` into one word is a different program text.
+        assert!(!is_behavior_neutral_rewrap(
+            &["letmax = i32::MAX;"],
+            &["let", "max = core::i32::MAX;"],
+        ));
+        // A pure reformat holds no respelling.
+        assert!(!is_behavior_neutral_rewrap(
+            &["let a = b;"],
+            &["let a =", "b;"]
+        ));
+    }
+
+    /// A continuation line of a multi-line string literal carries no quote on
+    /// that line, yet it is output text, not code.
+    #[test]
+    fn a_respelling_inside_a_multiline_string_literal_is_not_neutral() {
+        let source =
+            "fn f() -> String {\n    format!(\"range\n        limit i32::MAX\n        end\")\n}\n";
+        let prose = prose_lines(source);
+        assert!(prose.contains(&3), "{prose:?}");
+        assert!(!prose.contains(&1) && !prose.contains(&5), "{prose:?}");
+        let inside = block_probes(
+            source,
+            &[(3, "        limit i32::MAX")],
+            &[(3, 3, "        limit core::i32::MAX")],
+        );
+        let code = block_probes(
+            "let a = i32::MAX;\n",
+            &[(1, "let a = i32::MAX;")],
+            &[(1, 1, "let a = core::i32::MAX;")],
+        );
+        assert!(code.is_empty(), "{code:?}");
+        assert!(!inside.is_empty(), "string text keeps its probe");
     }
 
     #[test]
