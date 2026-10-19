@@ -507,21 +507,7 @@ pub(crate) fn check_repair_route(
     // `ripr repair` confines a production-file target to its inline test
     // module and starts only from the committed file. Ask the edit cage's own
     // predicate so the check screen never offers a start the attempt refuses.
-    let uncommitted_target = repair_packet_eligibility(entry)
-        .readiness
-        .test_target
-        .as_ref()
-        .map(|target| {
-            let file = target.file();
-            let relative = file.strip_prefix(root).unwrap_or(file);
-            relative.to_string_lossy().replace('\\', "/")
-        })
-        .filter(|file| !Path::new(file).is_absolute())
-        .filter(|file| {
-            !crate::analysis::is_test_surface_path(file)
-                && Path::new(file).extension().is_some_and(|ext| ext == "rs")
-                && crate::edit_cage::inline_target_is_uncommitted(root, file)
-        });
+    let uncommitted_target = held_inline_target(root, &repair_packet_eligibility(entry).readiness);
     CheckRepairRoute::Route(crate::app::RepairRoute {
         finding_id: finding.id.clone(),
         seam_id: entry.seam.id().as_str().to_string(),
@@ -784,9 +770,109 @@ fn pick_reusable_attempt<'a>(
         })
 }
 
+/// The production file whose uncommitted changes would make `ripr repair`
+/// refuse this seam: the selected edit target (an existing test target or a
+/// producer-owned proposal, the same selection the repair packet's
+/// recommended test file uses), when it is a non-test-surface Rust file that
+/// differs from HEAD.
+fn held_inline_target(
+    root: &Path,
+    readiness: &crate::analysis::repair_route::RepairRouteReadiness,
+) -> Option<String> {
+    use crate::analysis::repair_route::RepairTargetSelection;
+    let file = match &readiness.target_selection {
+        RepairTargetSelection::Existing(target) => target.file(),
+        RepairTargetSelection::Proposed(proposal) => proposal.file.as_path(),
+        RepairTargetSelection::Missing => return None,
+    };
+    let relative = file.strip_prefix(root).unwrap_or(file);
+    let relative = relative.to_string_lossy().replace('\\', "/");
+    (!Path::new(&relative).is_absolute()
+        && !crate::analysis::is_test_surface_path(&relative)
+        && Path::new(&relative)
+            .extension()
+            .is_some_and(|ext| ext == "rs")
+        && crate::edit_cage::inline_target_is_uncommitted(root, &relative))
+    .then_some(relative)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn proposed_readiness(
+        kind: crate::analysis::new_test_target::NewTestKind,
+        file: &str,
+    ) -> crate::analysis::repair_route::RepairRouteReadiness {
+        use crate::analysis::new_test_target::{NewTestProposalProvenance, NewTestTargetProposal};
+        use crate::analysis::repair_route::{
+            RepairRouteReadiness, RepairRouteState, RepairTargetSelection,
+        };
+        RepairRouteReadiness {
+            state: RepairRouteState::Ready,
+            seam_id: String::new(),
+            canonical_gap_id: None,
+            required_evidence: Vec::new(),
+            present_evidence: Vec::new(),
+            missing_evidence: Vec::new(),
+            target_selection: RepairTargetSelection::Proposed(NewTestTargetProposal {
+                kind,
+                file: std::path::PathBuf::from(file),
+                owner: "price".to_string(),
+                provenance: NewTestProposalProvenance::ProducerOwned,
+            }),
+            test_target: None,
+            proposed_oracle: None,
+            current_oracle: None,
+            authority_boundary: "",
+        }
+    }
+
+    /// A producer-proposed inline-unit target (no existing test target) names
+    /// its production file as the edit target, so a dirty one is held while a
+    /// clean one, an integration proposal and a missing target are not.
+    #[test]
+    fn held_inline_target_follows_the_selected_proposal_file() -> Result<(), String> {
+        use crate::analysis::new_test_target::NewTestKind;
+        use crate::analysis::repair_route::RepairTargetSelection;
+        use crate::testing::fixture_git::fixture_git_ok as git_ok;
+        let root = std::env::temp_dir().join(format!(
+            "ripr-held-inline-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|err| err.to_string())?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn price() {}\n")
+            .map_err(|err| err.to_string())?;
+        git_ok(&root, &["-c", "init.templateDir=", "init", "-q"])?;
+        git_ok(&root, &["config", "user.email", "ripr@example.invalid"])?;
+        git_ok(&root, &["config", "user.name", "RIPR Test"])?;
+        git_ok(&root, &["config", "commit.gpgSign", "false"])?;
+        git_ok(&root, &["add", "."])?;
+        git_ok(&root, &["commit", "-qm", "base"])?;
+        let inline = proposed_readiness(NewTestKind::InlineUnit, "src/lib.rs");
+
+        // Clean control: the committed proposed target is not held.
+        assert_eq!(held_inline_target(&root, &inline), None);
+
+        std::fs::write(root.join("src/lib.rs"), "pub fn price() { }\n")
+            .map_err(|err| err.to_string())?;
+        assert_eq!(
+            held_inline_target(&root, &inline).as_deref(),
+            Some("src/lib.rs")
+        );
+        // Not an inline production target: integration proposals live in tests/.
+        let integration = proposed_readiness(NewTestKind::Integration, "tests/price.rs");
+        assert_eq!(held_inline_target(&root, &integration), None);
+        let mut missing = proposed_readiness(NewTestKind::InlineUnit, "src/lib.rs");
+        missing.target_selection = RepairTargetSelection::Missing;
+        assert_eq!(held_inline_target(&root, &missing), None);
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
     /// #8728 follow-up: the displayed reason list bounds at three, but the
     /// disclosed total counts distinct reasons across the whole inventory.
     /// A fourth reason repeated by later seams must not inflate the total:

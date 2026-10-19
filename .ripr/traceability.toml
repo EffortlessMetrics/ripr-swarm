@@ -9652,9 +9652,14 @@ tests = [
   "crates/ripr/src/analysis/probes/diff.rs::tests::removed_span_of_shape_cuts_only_when_the_edit_is_inside_the_shape",
   "crates/ripr/src/analysis/probes/diff.rs::tests::return_value_before_is_cut_to_the_parser_shape_span",
   "crates/ripr/src/analysis/probes/diff.rs::tests::call_deletion_before_is_cut_to_the_parser_shape_span",
+  "crates/ripr/src/edit_cage/mod.rs::tests::inline_target_uncommitted_predicate_agrees_with_the_attempt_refusal",
+  "crates/ripr/src/app/task_first.rs::tests::held_inline_target_follows_the_selected_proposal_file",
+  "crates/ripr/src/output/human.rs::tests::bounded_human_output_prints_repair_only_for_the_routed_top_finding",
 ]
 fixtures = ["fixtures/human_full_shared_parse_port"]
 code = [
+  "crates/ripr/src/edit_cage/mod.rs",
+  "crates/ripr/src/app/task_first.rs",
   "crates/ripr/src/analysis/probes/diff.rs",
   "crates/ripr/src/cli/commands.rs",
   "crates/ripr/src/cli/help/core.rs",
