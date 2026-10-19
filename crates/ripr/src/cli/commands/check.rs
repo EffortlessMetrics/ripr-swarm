@@ -312,8 +312,10 @@ pub(super) fn bind_member_selector_file(
     ))
 }
 
-/// [`bind_member_selector_file`] for a `file:line` repair item; seam ids, gap
-/// ids and probe ids have no path-shaped prefix and pass through unchanged.
+/// [`bind_member_selector_file`] for a `file:line` repair item. Seam ids and
+/// structured ids (`gap:rust:...:3`, `repo-probe:src/lib.rs:predicate:12345678`)
+/// are not file selectors: a file path never contains `:`, so any item whose
+/// pre-line part does is passed through unchanged for the id resolvers.
 pub(super) fn bind_member_selector_item(
     prefix: Option<&str>,
     root: &Path,
@@ -321,7 +323,9 @@ pub(super) fn bind_member_selector_item(
 ) -> Result<String, String> {
     match item.rsplit_once(':') {
         Some((file, line))
-            if line.parse::<usize>().is_ok() && (file.contains('/') || file.contains('.')) =>
+            if line.parse::<usize>().is_ok()
+                && !file.contains(':')
+                && (file.contains('/') || file.contains('.')) =>
         {
             Ok(format!(
                 "{}:{line}",

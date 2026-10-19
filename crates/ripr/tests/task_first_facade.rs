@@ -695,6 +695,22 @@ fn member_relative_selector_never_reaches_a_sibling_members_file() -> Result<(),
     assert!(attempt_ids(&outer).is_empty(), "no attempt on the sibling");
     assert_eq!(tree_snapshot(&gap)?, before);
 
+    // Structured ids ending in digits are not file selectors: they must reach
+    // the id resolvers, never the member-selector refusal.
+    for id in [
+        "repo-probe:src/lib.rs:predicate:12345678",
+        "probe:src/lib.rs:predicate:12345678",
+        "gap:rust:src/lib.rs:price:predicate:3",
+    ] {
+        let output = run_ripr(&quiet, &["repair", id])?;
+        assert!(
+            !stderr_text(&output).contains("names no file under the invocation directory"),
+            "{id} must not be refused as a file selector:\n{}",
+            stderr_text(&output)
+        );
+    }
+    assert!(attempt_ids(&outer).is_empty());
+
     // Positive control: the same selector typed from the member that owns the gap.
     let owned = run_ripr(&gap, &["repair", "src/lib.rs:2"])?;
     assert_exit(&owned, 0, "repair from the member that owns the gap");
