@@ -752,7 +752,9 @@ fn derived(id: &str, r: &Receipts) -> Result<Option<Derived>, String> {
         | "first_run.failed_steps"
         | "first_run.over_budget_steps"
         | "first_run.over_budget_workflows"
-        | "first_run.walk_secs" => Some(first_run("first-run receipts")?),
+        | "first_run.walk_secs" => Some(first_run(
+            "first-run receipts, recomputed by this page; the nightly ingest does not feed this bar",
+        )?),
         _ => None,
     })
 }
@@ -942,7 +944,14 @@ fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
         let mut basis = text(metric, "source");
         let mut is_derived = false;
         let mut status_src = metric;
-        if let Some(derived) = derived(&id, r)? {
+        // A first-run recomputation only fills in for a metric the scoreboard
+        // receipt did not measure: the day the nightly ingest lands a
+        // first-run value, the producer's reviewed number owns the bar
+        // (mirrors the workflows guard below). A failed instrument also keeps
+        // its own status instead of being masked by a recomputation. Trust
+        // bars keep their existing unconditional derivation (#8721).
+        let derive = !id.starts_with("first_run.") || metric_lacks_number(metric);
+        if derive && let Some(derived) = derived(&id, r)? {
             is_derived = true;
             value = derived.value;
             trend = derived.trend;
@@ -1025,7 +1034,10 @@ fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
     // never sees `first_run.over_budget_workflows`; derive it from the raw
     // first-run receipts rather than leaving the split half-done. Once a
     // scoreboard receipt ingests the metric, the loop owns the bar and this
-    // fallback stays out of the way. Target and wording mirror scoreboards.toml.
+    // fallback stays out of the way. The in-loop derivation of the other
+    // first-run ids is guarded the same way (metric_lacks_number), so an
+    // ingested producer value owns any of those bars too (#8721).
+    // Target and wording mirror scoreboards.toml.
     if !out
         .iter()
         .any(|bar| bar.id == "first_run.over_budget_workflows")
@@ -2277,6 +2289,12 @@ fn scoreboard_summary(
     if from_lane {
         line.push_str(" Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them.");
     }
+    if bars
+        .iter()
+        .any(|bar| bar.basis.contains("recomputed by this page"))
+    {
+        line.push_str(" First-run bars are recomputed by this page from the raw walk receipts; an ingested scoreboard value owns its bar once one lands.");
+    }
     line
 }
 
@@ -3187,6 +3205,41 @@ mod tests {
         assert!(
             !bar.basis.contains("corpus-full-baseline"),
             "basis was {}",
+            bar.basis
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ingested_first_run_value_outranks_the_renderer_recomputation() -> Result<(), String> {
+        let mut receipts = load(&workspace_root())?;
+        set_metric(&mut receipts, "first_run.unknown_verdicts", |metric| {
+            metric["value"] = serde_json::json!(2.0);
+            metric["status"] = Value::from("below_target");
+            metric["reason"] = Value::from("");
+            metric["source"] = Value::from("ingest:first-run (nightly)");
+        });
+        let bar = bar_named(&receipts, "first_run.unknown_verdicts")?;
+        assert_eq!(
+            bar.value,
+            Some(2.0),
+            "the producer's ingested value must own the bar"
+        );
+        assert!(
+            bar.basis.contains("ingest:first-run"),
+            "ingested basis was {}",
+            bar.basis
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn renderer_derived_first_run_bars_disclose_their_recomputation() -> Result<(), String> {
+        let receipts = load(&workspace_root())?;
+        let bar = bar_named(&receipts, "first_run.unknown_verdicts")?;
+        assert!(
+            bar.basis.contains("recomputed by this page"),
+            "derived basis was {}",
             bar.basis
         );
         Ok(())
