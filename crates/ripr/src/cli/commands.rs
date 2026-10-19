@@ -3247,12 +3247,17 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     let prefix = resolve_implicit_command_root(&mut input.root, root_explicitly_provided)?;
     // With `--from` or `--diff` the named file need not exist in the working
     // tree (for example a file the diff deletes), so a selector that binds to
-    // nothing is passed through as typed instead of refused.
+    // nothing is not refused. It is anchored to the invocation directory
+    // instead (never left as a bare suffix that could match a sibling member's
+    // finding); with an unmoved root it is used as typed.
     let replay = from_artifact.is_some() || input.diff_file.is_some();
     let selector = selector
         .map(
             |item| match check::bind_member_selector_item(prefix.as_deref(), &input.root, &item) {
-                Err(_) if replay => Ok(item),
+                Err(_) if replay => Ok(match prefix.as_deref() {
+                    Some(prefix) => format!("{prefix}/{}", item.trim_start_matches("./")),
+                    None => item,
+                }),
                 bound => bound,
             },
         )

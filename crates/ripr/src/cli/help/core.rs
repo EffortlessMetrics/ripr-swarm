@@ -452,7 +452,8 @@ Options:
                walks up to the enclosing workspace or package, or the git
                top level; `--root .` pins this directory. A member-relative
                `file:line` selector binds to the directory you ran from (with
-               --from or --diff, a selector naming no file is used as typed).
+               --from or --diff, a selector naming no file is anchored to that
+               directory).
   --quiet      Suppress analysis progress and heartbeats on stderr, like
                `ripr check --quiet`. Does not change stdout, exit codes, or
                error reporting.
