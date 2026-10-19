@@ -251,17 +251,52 @@ mod tests {
         std::fs::remove_dir_all(root).map_err(|error| error.to_string())
     }
 
+    fn home_authority_fixture_root(stamp: u128) -> Result<PathBuf, String> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
+        let parent = std::env::temp_dir();
+        std::fs::create_dir_all(&parent).map_err(|error| error.to_string())?;
+        let root = parent.join(format!(
+            "ripr-home-authority-{}-{stamp}-{}",
+            std::process::id(),
+            NEXT_ROOT.fetch_add(1, Ordering::Relaxed)
+        ));
+        // Parallel controls can observe the same timestamp. Claim each root
+        // exclusively before creating or editing its configuration files.
+        std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+        Ok(root)
+    }
+
+    #[test]
+    fn cargo_home_authority_fixtures_stay_isolated_at_the_same_timestamp() -> Result<(), String> {
+        let first = home_authority_fixture_root(0)?;
+        let second = home_authority_fixture_root(0)?;
+        assert_ne!(first, second, "live fixtures need distinct roots");
+        std::fs::write(first.join("config.toml"), "[build]\njobs=1\n")
+            .map_err(|error| error.to_string())?;
+        std::fs::write(second.join("config.toml"), "[build]\njobs=2\n")
+            .map_err(|error| error.to_string())?;
+        std::fs::write(first.join("config.toml"), "[build]\njobs=3\n")
+            .map_err(|error| error.to_string())?;
+        let read_second = || {
+            std::fs::read_to_string(second.join("config.toml")).map_err(|error| error.to_string())
+        };
+        assert_eq!(read_second()?, "[build]\njobs=2\n");
+        std::fs::remove_dir_all(first).map_err(|error| error.to_string())?;
+        assert_eq!(read_second()?, "[build]\njobs=2\n");
+        std::fs::remove_dir_all(second).map_err(|error| error.to_string())
+    }
+
     fn check_home_directory_authority(
         aliases: impl FnOnce(&Path) -> Result<Vec<PathBuf>, String>,
     ) -> Result<(), String> {
-        let root = std::env::temp_dir().join(format!(
-            "ripr-home-authority-{}-{}",
-            std::process::id(),
+        let root = home_authority_fixture_root(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_err(|error| error.to_string())?
-                .as_nanos()
-        ));
+                .as_nanos(),
+        )?;
         for directory in ["home", "other-home", "anchor"] {
             std::fs::create_dir_all(root.join(directory)).map_err(|error| error.to_string())?;
         }
