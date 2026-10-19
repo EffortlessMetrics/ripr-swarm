@@ -603,6 +603,11 @@ fn friction_of(step: &Value) -> &[Value] {
     items(step, "friction")
 }
 
+#[cfg(test)]
+pub(crate) fn first_run_value_for_test(id: &str, receipt: &Value) -> Result<Option<f64>, String> {
+    first_run_value(id, receipt, "first-run ingestion regression")
+}
+
 /// First-run bars computed from a raw `first_run.v1` receipt, so they stay
 /// comparable across the two receipts the page shows.
 fn first_run_value(id: &str, receipt: &Value, ctx: &str) -> Result<Option<f64>, String> {

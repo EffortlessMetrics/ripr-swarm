@@ -22,6 +22,9 @@ use serde_json::{Value, json};
 
 mod archive;
 
+#[cfg(test)]
+mod budget_ingest_tests;
+
 use crate::run::{CapturedOutput, capture_output_in_dir, capture_output_in_dir_with_envs};
 
 const DEFAULT_OUT: &str = "target/ripr/first-run";

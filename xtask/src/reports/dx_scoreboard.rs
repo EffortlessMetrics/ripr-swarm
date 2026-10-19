@@ -27,7 +27,7 @@ mod population;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -793,8 +793,8 @@ fn is_source_install_step(name: &str) -> bool {
 ///
 /// - failed steps: `exit` rows that are not 0, and steps with rows but no
 ///   `exit` row (a walk cut off mid-step);
-/// - over-budget steps: `secs` and `stdout_lines` rows over the row's
-///   `budget`;
+/// - over-budget steps: each step occurrence with `secs` or `stdout_lines`
+///   over the row's `budget`, retaining every breached row as evidence;
 /// - over-budget workflows: `workflow_lines` rows over the row's `budget`,
 ///   counted apart because file size says nothing about step speed;
 /// - walk seconds per case (setup excluded), compared per case at 50% plus
@@ -833,6 +833,8 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
     }
     let mut steps: Vec<Step> = Vec::new();
     let mut over = Vec::new();
+    let mut budget_occurrences = BTreeMap::new();
+    let mut over_steps = BTreeSet::new();
     let mut over_workflow = Vec::new();
     let mut friction = 0.0;
     let mut verdicts = Vec::new();
@@ -908,11 +910,21 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
             }
             _ => {}
         }
-        if FIRST_RUN_BUDGETED.contains(&metric)
-            && let Some(budget) = row["budget"].as_f64()
-            && value > budget
-        {
-            over.push(format!("{case}/{step} {metric} {value} > {budget}"));
+        if FIRST_RUN_BUDGETED.contains(&metric) {
+            // Like secs/exit pairing, the nth row of each metric belongs to
+            // the nth occurrence of this case/step. Advance even for rows
+            // within budget: later breaches must not collapse into earlier
+            // runs. Other metrics do not affect occurrence identity.
+            let occurrence = budget_occurrences
+                .entry((case, step, metric))
+                .or_insert(0_usize);
+            if let Some(budget) = row["budget"].as_f64()
+                && value > budget
+            {
+                over_steps.insert((case, step, *occurrence));
+                over.push(format!("{case}/{step} {metric} {value} > {budget}"));
+            }
+            *occurrence += 1;
         }
         if metric == FIRST_RUN_WORKFLOW_LINES
             && let Some(budget) = row["budget"].as_f64()
@@ -966,7 +978,7 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
     let unknown = verdicts.iter().filter(|v| v.ends_with("_unknown")).count();
     let mut out = vec![
         json!({"id": "first_run.failed_steps", "value": failed.len(), "evidence": list(&failed)}),
-        json!({"id": "first_run.over_budget_steps", "value": over.len(), "evidence": list(&over)}),
+        json!({"id": "first_run.over_budget_steps", "value": over_steps.len(), "evidence": list(&over)}),
         json!({"id": "first_run.over_budget_workflows", "value": over_workflow.len(), "evidence": list(&over_workflow)}),
     ];
     // An install-only walk ran no cases, so a zero here would read as "no
