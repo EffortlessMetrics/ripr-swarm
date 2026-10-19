@@ -1007,19 +1007,35 @@ impl Backend {
                 if published.contains(&&uri) || cleared.contains(&&uri) {
                     continue;
                 }
+                // Mirror the transaction publisher's quarantine projection
+                // (#1970, review of #8732): a quarantined document's buffer
+                // moved under the saved-state line identity, so it receives
+                // the quarantine marker, never the committed findings — the
+                // plan above compared raw batches against the committed
+                // baseline and cannot know the client's view was a pending
+                // marker all along.
+                let (quarantine, raw_version) = self
+                    .with_document_state(&uri, |state| {
+                        let quarantine = quarantine_from_state(state);
+                        let version = if state.buffer_authority_unknown {
+                            None
+                        } else {
+                            state.version
+                        };
+                        (quarantine, version)
+                    })
+                    .unwrap_or((None, None));
+                if let Some((_, reason)) = quarantine {
+                    let version = self.negotiated_version(raw_version);
+                    self.client
+                        .publish_diagnostics(uri, withdrawn_quarantine_diagnostics(reason), version)
+                        .await;
+                    continue;
+                }
                 let diagnostics = self.committed_served_diagnostics_for_uri(&uri);
                 let version = if diagnostics.is_empty() {
                     Self::clear_version()
                 } else {
-                    let raw_version = self
-                        .with_document_state(&uri, |state| {
-                            if state.buffer_authority_unknown {
-                                None
-                            } else {
-                                state.version
-                            }
-                        })
-                        .flatten();
                     self.negotiated_version(raw_version)
                 };
                 self.client
@@ -1423,13 +1439,25 @@ impl Backend {
     /// payload when a committed snapshot is being withdrawn (#8731).
     /// Retraction rides the first snapshot commit (or the root/shutdown
     /// clear) via `pending_push_marker_uris`.
+    ///
+    /// The publication serializes on the same root-transition guard as
+    /// snapshot publication/commit and the terminal clears, and re-reads
+    /// the blocking state inside that guard: a commit that landed after
+    /// the caller sampled the state owns the client surface, and a late
+    /// marker must not overwrite completed diagnostics or resurrect
+    /// cleared ones (#8732 review).
     async fn publish_analysis_pending_push_markers(&self) {
         if self.pull_diagnostics_enabled() {
             return;
         }
+        let _transition = self.workspace_root_transition.lock().await;
+        let failure = self.configuration_failure();
+        let has_snapshot = self.latest_pull_snapshot().is_some();
+        if failure.is_none() && has_snapshot {
+            return;
+        }
         let recovery = self.analysis_pending_recovery();
-        let withdrawn = self.latest_pull_snapshot().is_some();
-        let items = if withdrawn {
+        let items = if has_snapshot {
             analysis_pending_withdrawal_diagnostics(recovery)
         } else {
             analysis_pending_diagnostics(recovery)
@@ -3614,6 +3642,33 @@ impl Backend {
         was_disclosed: bool,
         decision_version: Option<i32>,
     ) {
+        // #8731/#8732 review: a quarantine exit re-serves the retained
+        // snapshot, but a latched configuration failure has withdrawn it
+        // from service — publishing here would revive pre-failure findings
+        // the withdrawal marker replaced (a dirty-then-clean edit would
+        // otherwise bring the stale payload back mid-failure). Republish
+        // the withdrawal marker under the same guard that serializes
+        // commit retraction, and keep the URI tracked so the first
+        // post-repair commit retracts it. The committed baseline stays
+        // untouched: the client's view is the marker, not these findings.
+        if !self.pull_diagnostics_enabled() {
+            let transition = self.workspace_root_transition.lock().await;
+            if self.configuration_failure().is_some() {
+                let items = analysis_pending_withdrawal_diagnostics(
+                    AnalysisPendingRecovery::FixConfiguration,
+                );
+                let version = self.negotiated_version(decision_version);
+                if let Ok(mut pending) = self.pending_push_marker_uris.lock() {
+                    pending.insert(uri.clone());
+                }
+                self.client
+                    .publish_diagnostics(uri.clone(), items, version)
+                    .await;
+                drop(transition);
+                return;
+            }
+            drop(transition);
+        }
         let diagnostics = self.committed_served_diagnostics_for_uri(uri);
         if !self.pull_diagnostics_enabled() {
             let version = self.negotiated_version(decision_version);
