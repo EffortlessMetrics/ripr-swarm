@@ -188,11 +188,14 @@ impl ChangedFile {
                 if text.starts_with(['.', '?', '&', '|', '+', '-', '*', '/', '=', '<', '>']) {
                     continue;
                 }
-                let added_count = added.iter().filter(|l| l.text.trim() == text).count();
+                // Leading whitespace is kept: inside a multiline string it is
+                // content, so a re-indented string line is an edit.
+                let exact = line.text.trim_end();
+                let added_count = added.iter().filter(|l| l.text.trim_end() == exact).count();
                 let mut matches = removed
                     .iter()
                     .enumerate()
-                    .filter(|(_, l)| l.text.trim() == text);
+                    .filter(|(_, l)| l.text.trim_end() == exact);
                 let (1, Some((removed_position, old)), None) =
                     (added_count, matches.next(), matches.next())
                 else {
@@ -236,6 +239,22 @@ impl ChangedFile {
                     .enumerate()
                     .any(|(i, l)| !paired_removed.contains(&i) && unbalanced(&l.text))
             {
+                continue;
+            }
+            // An identical call that crosses an edited statement changed its
+            // order relative to that statement (`update(1); report();` ->
+            // `report(); update(2);`), so unpaired removed lines before a pair
+            // with unpaired added lines after it (or the reverse) is an edit.
+            let unpaired = |paired: &BTreeSet<usize>, range: std::ops::Range<usize>| {
+                range.filter(|i| !paired.contains(i)).count()
+            };
+            if candidates.iter().any(|c| {
+                let removed_before = unpaired(&paired_removed, 0..c.1);
+                let removed_after = unpaired(&paired_removed, c.1 + 1..removed.len());
+                let added_before = unpaired(&paired_added, 0..c.0);
+                let added_after = unpaired(&paired_added, c.0 + 1..added.len());
+                (removed_before > 0 && added_after > 0) || (removed_after > 0 && added_before > 0)
+            }) {
                 continue;
             }
             pairs.extend(candidates.iter().map(|c| (c.2, c.3)));
