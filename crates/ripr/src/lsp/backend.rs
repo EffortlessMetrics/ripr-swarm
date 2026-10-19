@@ -182,7 +182,7 @@ pub(super) struct Backend {
     /// rather than committed diagnostics (#8732): the first snapshot commit
     /// (or a root/shutdown clear) must retract the marker with the
     /// established empty-clear so the pending state never outlives it.
-    pending_push_marker_uris: Mutex<BTreeSet<Uri>>,
+    pending_push_marker_uris: Mutex<BTreeMap<Uri, String>>,
     last_diagnostics: Mutex<BTreeMap<Uri, Vec<Diagnostic>>>,
     latest_analysis: Mutex<Option<Arc<AnalysisSnapshot>>>,
     diagnostic_result_ids: Mutex<Option<Arc<DiagnosticResultIdCache>>>,
@@ -346,7 +346,7 @@ impl Backend {
             config_pull_coordinator: Mutex::new(ConfigPullCoordinator::default()),
             config_pull_scope_root: Mutex::new(None),
             last_diagnostic_uris: Mutex::new(BTreeSet::new()),
-            pending_push_marker_uris: Mutex::new(BTreeSet::new()),
+            pending_push_marker_uris: Mutex::new(BTreeMap::new()),
             last_diagnostics: Mutex::new(BTreeMap::new()),
             latest_analysis: Mutex::new(None),
             diagnostic_result_ids: Mutex::new(None),
@@ -1422,7 +1422,7 @@ impl Backend {
         // analysis-pending marker published to a push client while no
         // snapshot existed (or a blocking failure was latched).
         if let Ok(mut pending) = self.pending_push_marker_uris.lock() {
-            uris.extend(std::mem::take(&mut *pending));
+            uris.extend(std::mem::take(&mut *pending).into_keys());
         }
         uris.sort();
         uris.dedup();
@@ -1457,11 +1457,13 @@ impl Backend {
             return;
         }
         let recovery = self.analysis_pending_recovery();
-        let items = if has_snapshot {
+        let withdrawn = has_snapshot;
+        let items = if withdrawn {
             analysis_pending_withdrawal_diagnostics(recovery)
         } else {
             analysis_pending_diagnostics(recovery)
         };
+        let signature = Self::pending_push_marker_signature(&recovery, withdrawn);
         let uris = self
             .documents
             .lock()
@@ -1479,7 +1481,12 @@ impl Backend {
                 .flatten();
             let version = self.negotiated_version(raw_version);
             if let Ok(mut pending) = self.pending_push_marker_uris.lock() {
-                pending.insert(uri.clone());
+                // Skip the publish when the URI already carries this exact
+                // payload signature; update the tracked signature otherwise.
+                if pending.get(&uri) == Some(&signature) {
+                    continue;
+                }
+                pending.insert(uri.clone(), signature.clone());
             }
             self.client
                 .publish_diagnostics(uri, items.clone(), version)
@@ -1490,8 +1497,22 @@ impl Backend {
     fn take_pending_push_marker_uris(&self) -> Vec<Uri> {
         self.pending_push_marker_uris
             .lock()
-            .map(|mut pending| std::mem::take(&mut *pending).into_iter().collect())
+            .map(|mut pending| std::mem::take(&mut *pending).into_keys().collect())
             .unwrap_or_default()
+    }
+
+    /// Signature of the marker payload a pending URI currently carries
+    /// (#8732 review): session restore and repeated blocked-state refreshes
+    /// can call the publisher back-to-back for the same URI, and republishing
+    /// an identical marker is N² traffic on a large session for zero client
+    /// effect. The signature folds in the recovery route and the withdrawn
+    /// flag so a genuinely changed marker (for example configuration breaking
+    /// after a snapshot committed) still republishes.
+    fn pending_push_marker_signature(
+        recovery: &AnalysisPendingRecovery,
+        withdrawn: bool,
+    ) -> String {
+        format!("{}:{withdrawn}", recovery.recovery_id())
     }
 
     #[cfg(test)]
@@ -3658,8 +3679,16 @@ impl Backend {
                     AnalysisPendingRecovery::FixConfiguration,
                 );
                 let version = self.negotiated_version(decision_version);
+                let signature = Self::pending_push_marker_signature(
+                    &AnalysisPendingRecovery::FixConfiguration,
+                    true,
+                );
                 if let Ok(mut pending) = self.pending_push_marker_uris.lock() {
-                    pending.insert(uri.clone());
+                    if pending.get(uri) == Some(&signature) {
+                        drop(transition);
+                        return;
+                    }
+                    pending.insert(uri.clone(), signature);
                 }
                 self.client
                     .publish_diagnostics(uri.clone(), items, version)
@@ -5966,9 +5995,23 @@ impl LanguageServer for Backend {
         }
         // #8732: the closing client clears its own view; drop the URI from
         // the pending-marker set so a later commit or shutdown does not
-        // publish a retraction for a document nobody tracks.
+        // publish a retraction for a document nobody tracks. Push clients
+        // (publishDiagnostics transport) keep showing published diagnostics
+        // for closed files in the Problems view, so when a pending marker
+        // was actually in flight for this URI, retract it with an empty
+        // clear instead of only forgetting it.
+        let mut pending_marker_was_tracked = false;
         if let Ok(mut pending) = self.pending_push_marker_uris.lock() {
-            pending.remove(&params.text_document.uri);
+            pending_marker_was_tracked = pending.remove(&params.text_document.uri).is_some();
+        }
+        if pending_marker_was_tracked && !self.pull_diagnostics_enabled() {
+            self.client
+                .publish_diagnostics(
+                    params.text_document.uri.clone(),
+                    Vec::new(),
+                    Self::clear_version(),
+                )
+                .await;
         }
         self.close_document(params);
         self.advance_workspace_revision();
@@ -7526,6 +7569,16 @@ fn analysis_pending_result_id(recovery: &AnalysisPendingRecovery) -> String {
     format!("ripr:analysis-pending:{}", recovery.recovery_id())
 }
 
+/// The withdrawal variant identity (#8731 review): the pre-analysis marker
+/// and the withdrawal marker share the recovery route but differ in payload,
+/// so a client that already holds the pre-analysis payload must not answer
+/// `unchanged` for the withdrawal marker — a second failure arriving while
+/// the pre-analysis marker is still shown would otherwise leave the client
+/// holding stale route text behind the unchanged contract.
+fn analysis_pending_withdrawal_result_id(recovery: &AnalysisPendingRecovery) -> String {
+    format!("{}:withdrawn", analysis_pending_result_id(recovery))
+}
+
 /// The recovery route the pre-analysis marker may promise (#7774 review):
 /// `refresh_diagnostics` returns before analysis when configuration has
 /// failed or the workspace root authority does not admit analysis, so a
@@ -7569,7 +7622,11 @@ fn analysis_pending_document_report_for(
     recovery: AnalysisPendingRecovery,
     withdrawn: bool,
 ) -> DocumentDiagnosticReport {
-    let result_id = analysis_pending_result_id(&recovery);
+    let result_id = if withdrawn {
+        analysis_pending_withdrawal_result_id(&recovery)
+    } else {
+        analysis_pending_result_id(&recovery)
+    };
     if previous_result_id.as_deref() == Some(result_id.as_str()) {
         return DocumentDiagnosticReport::Unchanged(RelatedUnchangedDocumentDiagnosticReport {
             related_documents: None,
@@ -7619,7 +7676,11 @@ fn analysis_pending_workspace_report_for(
     recovery: AnalysisPendingRecovery,
     withdrawn: bool,
 ) -> WorkspaceDiagnosticReport {
-    let result_id = analysis_pending_result_id(&recovery);
+    let result_id = if withdrawn {
+        analysis_pending_withdrawal_result_id(&recovery)
+    } else {
+        analysis_pending_result_id(&recovery)
+    };
     let items = if withdrawn {
         analysis_pending_withdrawal_diagnostics(recovery)
     } else {

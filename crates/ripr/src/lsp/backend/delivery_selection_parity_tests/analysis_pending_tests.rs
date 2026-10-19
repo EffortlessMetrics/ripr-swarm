@@ -256,7 +256,8 @@ fn analysis_pending_blocked_root_names_its_own_recovery_route() -> Result<(), St
     assert_pending_marker(&restored["items"])
 }
 
-const FIX_CONFIGURATION_RESULT_ID: &str = "ripr:analysis-pending:fix_configuration";
+const WITHDRAWN_FIX_CONFIGURATION_RESULT_ID: &str =
+    "ripr:analysis-pending:fix_configuration:withdrawn";
 
 /// The #8731 withdrawal marker: a configuration failure latched after a
 /// snapshot committed must serve a typed marker that names the pause, not
@@ -338,7 +339,7 @@ fn analysis_pending_document_pull_withdraws_committed_snapshot_when_configuratio
     )?;
     let served = document_report(&harness, &uri, None)?;
     let served_id = result_id(&served)?;
-    if served_id == FIX_CONFIGURATION_RESULT_ID {
+    if served_id == WITHDRAWN_FIX_CONFIGURATION_RESULT_ID {
         return Err(format!(
             "pre-failure serving must not use the pending identity: {served_id}"
         ));
@@ -349,14 +350,20 @@ fn analysis_pending_document_pull_withdraws_committed_snapshot_when_configuratio
         .inner()
         .set_configuration_failure("changed ripr.toml input is invalid");
     let withdrawn = document_report(&harness, &uri, None)?;
-    assert_eq!(result_id(&withdrawn)?, FIX_CONFIGURATION_RESULT_ID);
+    assert_eq!(
+        result_id(&withdrawn)?,
+        WITHDRAWN_FIX_CONFIGURATION_RESULT_ID
+    );
     assert_withdrawal_marker(&withdrawn["items"])?;
     // The stale served identity must not answer `unchanged` behind the
     // withdrawal: the client re-renders the marker instead of keeping the
     // pre-failure payload.
     let transitioned = document_report(&harness, &uri, Some(served_id))?;
     assert_eq!(transitioned["kind"], "full");
-    assert_eq!(result_id(&transitioned)?, FIX_CONFIGURATION_RESULT_ID);
+    assert_eq!(
+        result_id(&transitioned)?,
+        WITHDRAWN_FIX_CONFIGURATION_RESULT_ID
+    );
     Ok(())
 }
 
@@ -400,7 +407,7 @@ fn analysis_pending_workspace_pull_withdraws_committed_snapshot_when_configurati
     }
     assert_eq!(
         items[0]["resultId"],
-        serde_json::json!(FIX_CONFIGURATION_RESULT_ID)
+        serde_json::json!(WITHDRAWN_FIX_CONFIGURATION_RESULT_ID)
     );
     assert_withdrawal_marker(&items[0]["items"])?;
 
@@ -408,7 +415,7 @@ fn analysis_pending_workspace_pull_withdraws_committed_snapshot_when_configurati
         &harness,
         vec![PreviousResultId {
             uri: uri.clone(),
-            value: FIX_CONFIGURATION_RESULT_ID.to_string(),
+            value: WITHDRAWN_FIX_CONFIGURATION_RESULT_ID.to_string(),
         }],
     )?;
     let cached_items = cached["items"]
