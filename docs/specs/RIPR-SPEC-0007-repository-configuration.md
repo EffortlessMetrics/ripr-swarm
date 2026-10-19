@@ -122,6 +122,10 @@ Repository configuration evidence should cover:
 - unsafe relative-path shapes being rejected where paths are configurable;
 - escaped NUL characters in relative paths being rejected before filesystem
   use, while Unicode, spaces, and existing path normalization remain supported;
+- empty or NUL-bearing `perl.executable` values failing shared configuration
+  validation with a key-named diagnostic that does not echo the path; omitted
+  values keep the default and valid paths retain exact spelling and the existing
+  user opt-in boundary, without existence or execution probes;
 - `ripr doctor` reporting loaded config path, missing-config defaults, and
   malformed config errors without printing config source text;
 - `ripr doctor` separating installed-binary analysis readiness (the default
@@ -395,12 +399,16 @@ Current tests:
 - `crates/ripr/src/config.rs::tests::relative_config_paths_reject_nul_before_filesystem_use`
 - `crates/ripr/src/config.rs::tests::relative_config_paths_preserve_normalization_spaces_and_unicode`
 - `crates/ripr/src/cli/commands/config.rs::tests::validate_rejects_a_nul_path_in_valid_toml`
+- `crates/ripr/src/config/perl_executable_tests.rs::perl_executable_rejects_an_empty_path`
+- `crates/ripr/src/config/perl_executable_tests.rs::perl_executable_rejects_nul_without_echoing_the_path`
+- `crates/ripr/src/config/perl_executable_tests.rs::perl_executable_preserves_valid_paths_and_the_opt_in_boundary`
+- `crates/ripr/src/cli/commands/config.rs::tests::validate_rejects_unusable_perl_executable_paths`
 - `crates/ripr/src/config.rs::tests::oracle_policy_rewrites_configurable_oracle_strengths`
 - `crates/ripr/src/lsp/config.rs::tests::repo_config_sets_defaults_when_initialization_options_are_missing`
 - `crates/ripr/src/lsp/config.rs::tests::initialization_options_override_repo_config_defaults`
 - `crates/ripr/src/lsp/config.rs::tests::pulled_settings_override_initialization_options_for_returned_keys`
 - `crates/ripr/src/lsp/config.rs::tests::repository_reload_preserves_pulled_overrides`
-- `crates/ripr/src/app.rs::tests::configured_finding_severity_applies_to_human_json_and_github`
+- `crates/ripr/src/app/tests/rendering_contracts.rs::configured_finding_severity_applies_to_human_json_and_github`
 - `crates/ripr/src/lsp/diagnostics.rs::seam_diagnostic_tests::configured_seam_severity_can_disable_a_class`
 - `crates/ripr/tests/cli_smoke.rs::doctor_reports_missing_config_defaults`
 - `crates/ripr/tests/cli_smoke.rs::doctor_reports_loaded_config_path`
