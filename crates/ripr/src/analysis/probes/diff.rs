@@ -877,7 +877,13 @@ fn token_macro_lines(source: &str) -> std::collections::BTreeSet<usize> {
         .collect::<Vec<_>>();
     let line_of = |at: usize| newlines.partition_point(|&newline| newline < at) + 1;
     let mut lines = std::collections::BTreeSet::new();
-    for (at, mut cursor) in token_macro_bangs(&masked) {
+    let mut bangs = token_macro_bangs(&masked);
+    bangs.sort_unstable();
+    let mut covered_to = 0usize;
+    for (at, mut cursor) in bangs {
+        if at < covered_to {
+            continue;
+        }
         while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
             cursor += 1;
         }
@@ -900,6 +906,12 @@ fn token_macro_lines(source: &str) -> std::collections::BTreeSet<usize> {
             }
         }
         lines.extend(line_of(at)..=line_of(end));
+        if end == bytes.len() {
+            // Unclosed: it already runs to the end of the file, so every later
+            // invocation is covered and rescanning would be quadratic.
+            break;
+        }
+        covered_to = end;
     }
     lines
 }
@@ -2418,6 +2430,8 @@ mod tests {
             !probes.is_empty(),
             "continuation-only change keeps its probe"
         );
+        let unclosed = "assert!(x == 1;\n".repeat(2000);
+        assert!(token_macro_lines(&unclosed).len() >= 2000);
         let combining = "fn f() {\n    e\u{301}assert!(\n        x\n    );\n}\n";
         assert!(token_macro_lines(combining).is_empty());
     }
