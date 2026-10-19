@@ -137,6 +137,8 @@ fn spec_0231_rule_8_code_after_divergence_is_unreached() {
         "std::panic!(\"stop\");",
         "unreachable!();",
         "todo!();",
+        "unimplemented!();",
+        "core::panic!(\"stop\");",
         "std::process::exit(0);",
         "process::exit(0);",
     ] {
