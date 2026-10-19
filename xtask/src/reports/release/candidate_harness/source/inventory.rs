@@ -61,6 +61,7 @@ pub(super) fn git_capture(
                 "GIT_DIR",
                 "GIT_WORK_TREE",
                 "GIT_INDEX_FILE",
+                "GIT_CONFIG",
                 "GIT_CONFIG_COUNT",
                 "GIT_CONFIG_PARAMETERS",
             ],
