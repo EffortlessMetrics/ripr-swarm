@@ -3873,9 +3873,11 @@ fn context_json_missing_artifact_emits_refusal_envelope() -> Result<(), String> 
         "--from",
         "nope-7331.json",
     ]);
+    // #8743: the refusal envelope is keyed with the context packet's own
+    // version, now 1.1.
     let value = assert_json_refusal_envelope(
         &output,
-        "1.0",
+        "1.1",
         "diff",
         "check_artifact_unusable",
         "analysis/check-artifact",
@@ -4042,9 +4044,11 @@ fn context_json_refusal_reports_configured_mode() -> Result<(), String> {
         "--from",
         "nope-7331.json",
     ]);
+    // #8743: the refusal envelope is keyed with the context packet's own
+    // version, now 1.1.
     let value = assert_json_refusal_envelope(
         &output,
-        "1.0",
+        "1.1",
         "diff",
         "check_artifact_unusable",
         "analysis/check-artifact",
@@ -4117,9 +4121,11 @@ fn context_json_scope_mismatch_refuses_as_artifact_unusable() -> Result<(), Stri
             "--at",
             "src/lib.rs:1",
         ]);
+        // #8743: the refusal envelope is keyed with the context packet's
+        // own version, now 1.1.
         let value = assert_json_refusal_envelope(
             &output,
-            "1.0",
+            "1.1",
             "diff",
             "check_artifact_unusable",
             "analysis/check-artifact",
