@@ -4777,7 +4777,14 @@ mod tests {
         assert_eq!(
             parse_policy_promotion_options(&args(&["--to", "strict"])),
             Err(
-                "unknown policy promotion target \"strict\"; expected `visible-only`, `acknowledgeable`, `baseline-check`, or `calibrated-gate`"
+                "unknown policy promotion target \"strict\". Accepted: visible-only, acknowledgeable, baseline-check, calibrated-gate."
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            parse_policy_promotion_options(&args(&["--to", "visble-only"])),
+            Err(
+                "unknown policy promotion target \"visble-only\". Did you mean `visible-only`? Accepted: visible-only, acknowledgeable, baseline-check, calibrated-gate."
                     .to_string()
             )
         );
@@ -4803,7 +4810,14 @@ mod tests {
         assert_eq!(
             parse_policy_preview_promotion_options(&args(&["--language", "ruby"])),
             Err(
-                "unknown preview promotion language \"ruby\"; expected `typescript` or `python`"
+                "unknown preview promotion language \"ruby\". Accepted: typescript, python."
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            parse_policy_preview_promotion_options(&args(&["--language", "pythn"])),
+            Err(
+                "unknown preview promotion language \"pythn\". Did you mean `python`? Accepted: typescript, python."
                     .to_string()
             )
         );

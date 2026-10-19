@@ -1478,6 +1478,30 @@ mod tests {
     }
 
     #[test]
+    fn agent_subcommand_typos_suggest_every_catalog_child() -> Result<(), String> {
+        let children = catalog_children("agent");
+        assert!(!children.is_empty());
+        for child in children {
+            // A trailing extra character is one edit, without prefix matching.
+            let typo = format!("{child}x");
+            let error = match parse_agent_args(&args(&[&typo])) {
+                Err(error) => error,
+                Ok(command) => return Err(format!("agent {typo} was accepted: {command:?}")),
+            };
+            assert!(
+                error.contains(&format!("Did you mean `{child}`?")),
+                "agent {typo}: {error}"
+            );
+            // Mine the production error through the same catalog consumer used
+            // by the far-miss parity sweep below, including suggested errors.
+            let accepted = expected_subcommands_from_unknown_error(&error)?;
+            let accepted_refs: Vec<&str> = accepted.iter().map(String::as_str).collect();
+            assert!(two_way_path_violations(&catalog_children("agent"), &accepted_refs).is_empty());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn nested_parser_families_have_two_way_parity_with_the_catalog() {
         let mut failures = Vec::new();
         type NestedParse = fn(&[String]) -> Result<(), String>;

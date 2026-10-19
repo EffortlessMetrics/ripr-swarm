@@ -67,6 +67,63 @@ fn init_ci_provider_valid_preview_keeps_workflow_contract() -> Result<(), String
     Ok(())
 }
 
+#[test]
+fn agent_subcommand_typos_render_scoped_recovery() -> Result<(), String> {
+    let accepted = "start, brief, packet, card, stub, verify, verify-execute, receipt, status, review-summary, repair";
+    for (typo, suggestion) in [("brief2", "brief"), ("verify-execue", "verify-execute")] {
+        let output = run_ripr(&["agent", typo])?;
+        assert_eq!(output.status.code(), Some(2), "agent {typo}");
+        assert!(output.stdout.is_empty(), "agent {typo} wrote stdout");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr).trim_end(),
+            format!(
+                "ripr: unknown agent subcommand {typo:?}. Did you mean `{suggestion}`? Accepted: {accepted}."
+            )
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn agent_subcommand_far_and_sibling_misses_render_no_suggestion() -> Result<(), String> {
+    // `ingest` belongs to swarm and must not leak into agent recovery.
+    for value in ["zzzzzzzzzzzz", "ingest"] {
+        let output = run_ripr(&["agent", value])?;
+        assert_eq!(output.status.code(), Some(2), "agent {value}");
+        assert!(output.stdout.is_empty(), "agent {value} wrote stdout");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr).trim_end(),
+            format!(
+                "ripr: unknown agent subcommand {value:?}. Accepted: start, brief, packet, card, stub, verify, verify-execute, receipt, status, review-summary, repair."
+            )
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn agent_recovery_preserves_group_and_child_help() -> Result<(), String> {
+    let group = run_ripr(&["agent", "--help"])?;
+    assert!(group.status.success());
+    assert!(group.stderr.is_empty());
+    assert!(!group.stdout.is_empty());
+    for args in [["agent"].as_slice(), ["help", "agent"].as_slice()] {
+        let output = run_ripr(args)?;
+        assert!(output.status.success(), "{args:?}");
+        assert!(output.stderr.is_empty(), "{args:?}");
+        assert_eq!(output.stdout, group.stdout, "{args:?}");
+    }
+    let child = run_ripr(&["agent", "brief", "--help"])?;
+    assert!(child.status.success());
+    assert!(child.stderr.is_empty());
+    assert_contains(
+        "agent brief help",
+        &String::from_utf8_lossy(&child.stdout),
+        "Usage: ripr agent brief",
+    )?;
+    Ok(())
+}
+
 const BARE_HELP_GROUPS: &[&str] = &[
     "cache",
     "baseline",
