@@ -203,11 +203,45 @@ A panicking macro inside a nested `fn`, closure or `macro_rules!` in the
 owner still counts; that over-reads toward `static_unknown`, never toward a
 gap or credit.
 
+### Framework oracles ripr does not evaluate
+
+Four test idioms check a changed value through machinery ripr reads only at
+the surface, and each used to leave a certain `weakly_exposed` claim.
+`framework_oracle::withhold_framework_oracle_gap` withholds a
+`weakly_exposed` or `reachable_unrevealed` finding with no
+`static_limit_kind` under `rust_framework_oracle_unresolved` when a
+non-ignored related test matches one of these shapes:
+
+- **environment**: a `match_arm`, `predicate` or `error_path` probe, a
+  `direct_owner_call` test with a strong assertion that calls `set_var` or
+  `remove_var`, and an owner body that calls `env::var(` or `env::var_os(`.
+  The assertion may well decide the changed arm, but ripr does not follow the
+  environment to it. A relational-only test keeps the gap
+  (`lib-serial-test-batch-default-relational`).
+- **mock closure**: a test with a strong assertion and an `expect_*` call whose
+  `.returning(|..|)` closure uses one of its named (non-`_`) parameters in the
+  rest of its statement. A closure that ignores its arguments keeps the gap.
+- **expect-test**: a `direct_owner_call` test comparing a non-empty
+  `expect![[..]]` literal with `.assert_debug_eq(..)`.
+- **insta**: a `direct_owner_call` test whose insta snapshot macros have no
+  inline `@` literal, on a changed `field:` initializer that no redaction
+  selector (`".id"`) names. Any other changed line keeps the gap (the
+  `snapshot_oracle` fixture's changed predicate), and so does a redacted field
+  (`lib-insta-json-redacted-id`).
+
+It runs after the should-panic rule and before `withhold_unsupported_gap`,
+and writes the finding the same way. Nothing is credited. Corpus effect:
+`lib-serial-test-retries-default-arm`, `lib-mockall-recipient-predicate`,
+`lib-expect-test-assert-debug-eq-variant-payload` and
+`lib-insta-json-unredacted-sibling-field` move from `false_actionable` to
+`abstained`, which their cases accept.
+
 ## Scope boundary
 
 - Rust check findings only. The pilot seam rule is RIPR-SPEC-0230 (#5569).
-- `weakly_exposed` findings are out of scope: a credited weak oracle is read
-  evidence even when a stronger assertion was refused.
+- `weakly_exposed` findings are out of scope except for the framework
+  oracles above: a credited weak oracle is read evidence even when a stronger
+  assertion was refused.
 - Two broader rules were built and dropped. Withholding every refused-context
   gap hid the runtime-controlled gaps above. Withholding `weakly_exposed` when
   a strong oracle's text does not name the changed arm hid the sibling-arm
@@ -278,6 +312,14 @@ Tests in `crates/ripr/src/analysis/classify/gap_admission.rs`:
 - `withholding_twice_adds_one_stop_reason`
 - `a_panic_macro_is_read_by_its_own_name`
 - `a_should_panic_test_expects_the_owner_panic_only_when_the_message_matches`
+
+Tests in `crates/ripr/src/analysis/classify/framework_oracle.rs` and
+`crates/ripr/tests/framework_oracle_limit.rs`:
+
+- `a_mock_closure_counts_only_when_it_reads_a_named_argument`
+- `an_arm_chosen_by_the_environment_is_withheld` and its keeps-the-gap control
+- `an_expect_debug_literal_is_withheld` and its keeps-the-gap control
+- `an_unredacted_insta_field_is_withheld` and its keeps-the-gap control
 
 Tests in `crates/ripr/src/analysis/classify/owner_pin/tests.rs`:
 

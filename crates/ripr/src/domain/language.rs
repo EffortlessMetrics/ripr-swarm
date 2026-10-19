@@ -434,6 +434,13 @@ pub enum StaticLimitKind {
     /// expects. The gap is withheld and the class is `static_unknown`. See
     /// RIPR-SPEC-0240.
     RustPanicOutcomeUnresolved,
+    /// A related test checks the changed code through a test-framework idiom
+    /// ripr does not evaluate: an environment-activated branch asserted after
+    /// `set_var`/`remove_var`, a mockall `returning` closure that reads its
+    /// arguments, an expect-test `assert_debug_eq` literal, or an insta
+    /// snapshot of a field no redaction names. The gap is withheld and the
+    /// class is `static_unknown`. See RIPR-SPEC-0240.
+    RustFrameworkOracleUnresolved,
 }
 
 impl StaticLimitKind {
@@ -491,6 +498,7 @@ impl StaticLimitKind {
             StaticLimitKind::RustAssertionContextUnresolved => "rust_assertion_context_unresolved",
             StaticLimitKind::RustLogCaptureUnresolved => "rust_log_capture_unresolved",
             StaticLimitKind::RustPanicOutcomeUnresolved => "rust_panic_outcome_unresolved",
+            StaticLimitKind::RustFrameworkOracleUnresolved => "rust_framework_oracle_unresolved",
         }
     }
 
@@ -611,6 +619,14 @@ impl StaticLimitKind {
                  ripr does not resolve whether the panic comes from the changed code or from an \
                  earlier call. ripr does not claim a gap; this is a named limitation, not a \
                  coverage claim."
+            }
+            StaticLimitKind::RustFrameworkOracleUnresolved => {
+                "A related Rust test checks this code through a test-framework idiom that ripr \
+                 does not evaluate (an environment variable the test sets or removes, a mockall \
+                 closure that reads the call's arguments, an expect-test debug literal, or an \
+                 insta snapshot kept outside the source), so ripr cannot say whether the check \
+                 notices the change. ripr does not claim a gap; this is a named limitation, not \
+                 a coverage claim."
             }
         }
     }
@@ -923,6 +939,10 @@ mod tests {
             StaticLimitKind::RustPanicOutcomeUnresolved.as_str(),
             "rust_panic_outcome_unresolved"
         );
+        assert_eq!(
+            StaticLimitKind::RustFrameworkOracleUnresolved.as_str(),
+            "rust_framework_oracle_unresolved"
+        );
     }
 
     #[test]
@@ -951,6 +971,7 @@ mod tests {
             StaticLimitKind::RustAssertionContextUnresolved,
             StaticLimitKind::RustLogCaptureUnresolved,
             StaticLimitKind::RustPanicOutcomeUnresolved,
+            StaticLimitKind::RustFrameworkOracleUnresolved,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by
