@@ -120,7 +120,7 @@ pub(crate) fn resolve_test_stub(
                 .find(|entry| entry.seam.id().as_str() == id)
                 .ok_or_else(|| TestStubError::NotFound(format!("seam_id {id} was not found")))?;
             let source = read_owner_source(root, &entry.seam)?;
-            Ok(resolution_for(entry, source))
+            Ok(resolution_for(root, entry, source))
         }
         TestStubSelector::At { file, line, kind } => {
             let mut resolution = resolve_at_location(root, config, file, *line, kind.as_deref())?;
@@ -220,7 +220,7 @@ impl<'a> AtCandidate<'a> {
         }
     }
 
-    fn resolution(self, source: String) -> TestStubResolution {
+    fn resolution(self, root: &Path, source: String) -> TestStubResolution {
         match self {
             Self::Shape(seam) => {
                 let outcome = rust_test_stub(seam, None, &source);
@@ -233,7 +233,7 @@ impl<'a> AtCandidate<'a> {
                     at_note: None,
                 }
             }
-            Self::Classified(entry) => resolution_for(entry, source),
+            Self::Classified(entry) => resolution_for(root, entry, source),
         }
     }
 }
@@ -759,7 +759,7 @@ fn resolve_at(
     let mut first_refusal = None;
     for candidate in candidates {
         let seam_line = candidate.seam().display_line();
-        let mut resolution = candidate.resolution(source.clone());
+        let mut resolution = candidate.resolution(root, source.clone());
         // A finding line is the changed line, which need not hold a gap of
         // its own; when the stub is for a different line, say so (#6298).
         if seam_line != line {
@@ -815,8 +815,8 @@ fn read_owner_source(root: &Path, seam: &RepoSeam) -> Result<String, TestStubErr
     })
 }
 
-fn resolution_for(entry: &ClassifiedSeam, source: String) -> TestStubResolution {
-    let outcome = rust_test_stub_for_classified_seam(entry, &source);
+fn resolution_for(root: &Path, entry: &ClassifiedSeam, source: String) -> TestStubResolution {
+    let outcome = rust_test_stub_for_classified_seam(root, entry, &source);
     TestStubResolution {
         seam_id: entry.seam.id().as_str().to_string(),
         owner: entry.seam.owner().to_string(),
@@ -908,6 +908,17 @@ pub(crate) fn write_test_stub(
             let updated = format!("{head}{text}{tail}");
             crate::atomic_file::write(&path, updated.as_bytes(), "test stub")?;
         }
+        TestStubPlacement::ExistingIntegrationFile { .. } => {
+            let current = std::fs::read_to_string(&path)
+                .map_err(|error| format!("failed to read {}: {error}", relative.display()))?;
+            let separator = if current.ends_with('\n') || current.is_empty() {
+                ""
+            } else {
+                "\n"
+            };
+            let updated = format!("{current}{separator}{}", stub.text);
+            crate::atomic_file::write(&path, updated.as_bytes(), "test stub")?;
+        }
         TestStubPlacement::NewIntegrationFile { .. } => {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)
@@ -955,7 +966,8 @@ pub(crate) fn package_manifest_for(root: &Path, stub: &RustTestStub) -> Option<P
 /// `manifest` is the package manifest as the caller should spell it.
 pub(crate) fn run_command(manifest: &str, stub: &RustTestStub) -> String {
     match &stub.placement {
-        TestStubPlacement::NewIntegrationFile { file } => {
+        TestStubPlacement::NewIntegrationFile { file }
+        | TestStubPlacement::ExistingIntegrationFile { file } => {
             let target = file
                 .file_stem()
                 .map(|stem| stem.to_string_lossy().to_string())

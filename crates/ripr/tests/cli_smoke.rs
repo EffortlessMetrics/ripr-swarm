@@ -5575,9 +5575,10 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     );
 
     // The repair transaction accepts the finding-ID namespace too (#8166
-    // residual): an unmapped probe ID refuses through the packet surface's
-    // family-named hint, which now names the equivalent `ripr repair`
-    // command, and starts no attempt.
+    // residual): an unmapped probe ID refuses in this command's own terms
+    // naming the stale state and the pilot listing route (#8685) — not the
+    // packet surface's hint, which would promise the resolution that just
+    // failed — and starts no attempt.
     let repair = run_ripr(&[
         "agent",
         "repair",
@@ -5591,11 +5592,22 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     ]);
     assert!(!repair.status.success());
     let stderr = String::from_utf8_lossy(&repair.stderr);
-    assert!(stderr.contains("not a seam ID"), "{stderr}");
+    // #8685: the translating surface refuses in its own terms and names the
+    // stale state; it must not repeat the `ripr repair <finding-id>` route
+    // the shared resolver just ran and failed, and must not borrow the
+    // packet surface's `agent packet` wording.
     assert!(
-        stderr.contains("`ripr repair <finding-id> --root ")
-            && stderr.contains("agent-packet-unknown-seam"),
-        "the hint must name the equivalent command for the failing root:\n{stderr}"
+        stderr.contains("agent repair --seam-id")
+            && stderr.contains("the `ripr check` finding ID is stale or maps to no current seam"),
+        "the refusal must name the stale state in this command's terms:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("agent packet"),
+        "the translating surface must not borrow the packet wording:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("ripr repair <finding-id>"),
+        "the circular resolution route must not be promised:\n{stderr}"
     );
     assert!(
         stderr.contains("ripr pilot --root ") && stderr.contains("agent-packet-unknown-seam"),

@@ -1,195 +1,4 @@
 # Golden Output Changes
-
-## Pending
-
-Reason:
-new fixture: a changed default value is not exposed when every strong related call overrides the parameter (#1289 trap 45)
-
-Command:
-`cargo xtask goldens bless python_adversarial_default_value_overridden --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-
-## Pending
-
-Reason:
-Populate structured missing_discriminators for the changed-default override downgrade (#1289 trap 45 review fix): the def-header path previously emitted an empty missing_discriminators array, so the repair card and recommended_next_step lost the actionable 'call render without verbose' omission guidance. The downgrade now emits a structured MissingDiscriminatorFact that propagates into the repair card, recommended_next_step, and suggested_assertion.
-
-Command:
-`cargo xtask goldens bless python_adversarial_default_value_overridden --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-
-## Pending
-
-Reason:
-bound default human output to start-here triage; human-full preserves exhaustive evidence
-
-Command:
-`cargo xtask goldens bless python_adversarial_default_value_overridden --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-
-## Pending
-
-Reason:
-add human-full golden for exhaustive evidence-promotion projection while default human stays bounded
-
-Command:
-cargo xtask goldens check
-
-Updated:
-- `expected/human-full.txt`
-
-## Pending
-
-Reason:
-#2103: additive changed_files_by_language field and changed_rust_files now Rust-only count
-
-Command:
-`cargo xtask goldens bless python_adversarial_default_value_overridden --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending
-
-Reason:
-#2567: default human render no longer prints a 'Hidden: 0 lower-priority finding(s) omitted' block when nothing was omitted; the format pointers now sit under a 'More:' heading. Formatting-only drift; no evidence, class, or JSON change.
-
-Command:
-`cargo xtask goldens bless python_adversarial_default_value_overridden --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending
-
-Reason:
-Issue #2598: default human output now exposes bounded explain and context follow-up commands for the selected finding.
-
-Command:
-`cargo xtask goldens bless python_adversarial_default_value_overridden --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending
-
-Reason:
-show preview language metadata in human finding digests
-
-Command:
-`cargo xtask goldens bless python_adversarial_default_value_overridden --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending
-
-Reason:
-Issue #2659: finding navigation commands now preserve the analyzed root, diff or artifact scope and shell-safe identity.
-
-Command:
-`cargo xtask goldens bless python_adversarial_default_value_overridden --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending
-
-Reason:
-RIPR-SPEC-0147: publish typed analysis outcome in human and JSON output.
-
-Command:
-`cargo xtask goldens bless python_adversarial_default_value_overridden --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending
-
-Reason:
-RIPR-SPEC-0147: align fixture outputs with the typed incomplete-outcome and unquoted human outcome contract.
-
-Command:
-`cargo xtask goldens bless python_adversarial_default_value_overridden --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending
-
-Reason:
-RIPR-SPEC-0023: classification hint added to digest (#2614)
-
-Command:
-`cargo xtask goldens bless python_adversarial_default_value_overridden --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending
-
-Reason:
-RIPR-SPEC-0151: additive per-finding source_currentness disposition (#3280); removed-only Rust probes record the base-side line coordinate
-
-Command:
-`cargo xtask goldens bless python_adversarial_default_value_overridden --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending
-
-Reason:
-RIPR-SPEC-0152: preview findings resolve candidate_current from head-side delta evidence; base-deleted findings gain the human revision label and leave actionable projections
-
-Command:
-`cargo xtask goldens bless python_adversarial_default_value_overridden --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending
-
-Reason:
-RIPR-SPEC-0160: the additive git_candidate_subject identity field (null for ordinary runs) in the check JSON identity block
-
-Command:
-`cargo xtask goldens bless python_adversarial_default_value_overridden --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
 ## Pending — python_adversarial_default_value_overridden (1)
 
 Reason:
@@ -331,7 +140,7 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
-## Pending — python_adversarial_default_value_overridden (10)
+## Pending — python_adversarial_default_value_overridden (12)
 
 Reason:
 RIPR-SPEC-0122: #4321 additive per-finding id lines in human-full (drill-in identifiers)
@@ -344,7 +153,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — python_adversarial_default_value_overridden (12)
+## Pending — python_adversarial_default_value_overridden (13)
 
 Reason:
 RIPR-SPEC-0122: #4322 summary header names all seven classes with canonical tokens and a shown/total denominator
@@ -356,7 +165,7 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
-## Pending — python_adversarial_default_value_overridden (13)
+## Pending — python_adversarial_default_value_overridden (14)
 
 Reason:
 RIPR-SPEC-0140: issue 5988 populates identity.config_identity from the canonical finding-affecting config fingerprint whenever a ripr.toml is loaded, so fixtures that load one record it (single-field intended flip, formatting-only 1-line drift)
@@ -369,7 +178,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — python_adversarial_default_value_overridden (14)
+## Pending — python_adversarial_default_value_overridden (15)
 
 Reason:
 RIPR-SPEC-0140: issue 5988 review repair publishes the fingerprint of the exact loaded ripr.toml text in identity.config_identity, so fixtures that load one record the text fingerprint (single-field intended flip, formatting-only 1-line drift)
@@ -382,23 +191,10 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — python_adversarial_default_value_overridden (15)
-
-Reason:
-RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
-
-Command:
-`cargo xtask goldens bless python_adversarial_default_value_overridden --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
 ## Pending — python_adversarial_default_value_overridden (16)
 
 Reason:
-RIPR-SPEC-0255: check discloses the loaded ripr.toml - human header gains a config: line and check JSON gains a top-level config_path member exactly when a config file loaded; fixture inputs carry ripr.toml, so both surfaces add the disclosure (#7536)
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
 
 Command:
 `cargo xtask goldens bless python_adversarial_default_value_overridden --reason "..."`
@@ -464,6 +260,18 @@ Updated:
 
 Reason:
 RIPR-SPEC-0268: human evidence window glosses the unknown-sink row with its meaning (#8744)
+
+Command:
+`cargo xtask goldens bless python_adversarial_default_value_overridden --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+## Pending — python_adversarial_default_value_overridden (22)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
 
 Command:
 `cargo xtask goldens bless python_adversarial_default_value_overridden --reason "..."`

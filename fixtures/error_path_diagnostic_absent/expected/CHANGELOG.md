@@ -1,5 +1,4 @@
 # Golden Output Changes
-
 ## Pending — error_path_diagnostic_absent (1)
 
 Reason:
@@ -243,6 +242,18 @@ Updated:
 
 Reason:
 RIPR-SPEC-0268: human evidence window glosses the unknown-sink row with its meaning (#8744)
+
+Command:
+`cargo xtask goldens bless error_path_diagnostic_absent --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+## Pending — error_path_diagnostic_absent (20)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
 
 Command:
 `cargo xtask goldens bless error_path_diagnostic_absent --reason "..."`

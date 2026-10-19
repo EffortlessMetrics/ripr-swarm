@@ -29,6 +29,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_uncalled_owner_same_file_tests/input --diff <cwd>/fixtures/rust_uncalled_owner_same_file_tests/diff.patch --mode fast probe:src_lib.rs:return_value:672a64b9
   ripr context --root <cwd>/fixtures/rust_uncalled_owner_same_file_tests/input --diff <cwd>/fixtures/rust_uncalled_owner_same_file_tests/diff.patch --mode fast --at probe:src_lib.rs:return_value:672a64b9
+  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:return_value:672a64b9 --root <cwd>/fixtures/rust_uncalled_owner_same_file_tests/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_uncalled_owner_same_file_tests/input --at src/lib.rs:6 --kind return_value
 
