@@ -212,6 +212,16 @@ fn an_environment_shape_that_differs_keeps_the_gap() -> Result<(), String> {
         &edit,
         4,
         "relational oracle",
+    )?;
+    // The write follows the only call, so it activates nothing.
+    keeps_gap(
+        &env_source(
+            "std::env::var(\"APP_RETRIES\")",
+            "assert_eq!(retries(), 3);\n        std::env::set_var(\"APP_RETRIES\", \"7\");",
+        ),
+        &edit,
+        4,
+        "write after the call",
     )
 }
 
@@ -375,6 +385,15 @@ fn an_expect_shape_that_differs_keeps_the_gap() -> Result<(), String> {
         &edit,
         3,
         "no expectation",
+    )?;
+    // The literal checks a value the owner did not produce.
+    keeps_gap(
+        &expect_source(
+            "let other = vec![1u32];\n        expect![[\"[1]\"]].assert_debug_eq(&other);",
+        ),
+        &edit,
+        3,
+        "operand not from the owner",
     )
 }
 
@@ -454,5 +473,29 @@ fn an_insta_shape_that_differs_keeps_the_gap() -> Result<(), String> {
         &items,
         9,
         "inline snapshot",
+    )?;
+    // A snapshot of a value the owner did not produce.
+    keeps_gap(
+        &insta_source("let other = 5;\n        insta::assert_debug_snapshot!(other);"),
+        &items,
+        9,
+        "operand not from the owner",
+    )
+}
+
+#[test]
+fn a_later_qualifying_snapshot_counts_after_one_that_does_not() -> Result<(), String> {
+    let edit = diff(
+        9,
+        "        items: items.len(),",
+        "        items: items.iter().count(),",
+    );
+    withheld(
+        &insta_source(
+            "insta::assert_debug_snapshot!(record, @\"Record\");\n        insta::assert_debug_snapshot!(record);",
+        ),
+        &edit,
+        9,
+        "inline then external",
     )
 }

@@ -124,9 +124,9 @@ pub(in crate::analysis) fn withhold_framework_oracle_gap(
                 Idiom::Environment
             } else if strong && mock_closure_reads_arguments(test, changed_text) {
                 Idiom::MockClosure
-            } else if direct && expect_debug_literal(test) {
+            } else if direct && expect_debug_literal(test, &owner.name) {
                 Idiom::ExpectDebug
-            } else if direct && insta_leaves_field_unredacted(test, changed_text) {
+            } else if direct && insta_leaves_field_unredacted(test, changed_text, &owner.name) {
                 Idiom::InstaSnapshot
             } else {
                 return None;
@@ -190,21 +190,43 @@ fn contains_name(text: &str, needle: &str) -> bool {
     })
 }
 
-/// The owner reads an environment variable by a literal name and the test
-/// sets or removes a variable of that same name.
+/// The owner reads an environment variable by a literal name, the test sets
+/// or removes a variable of that same name, and the owner is called after
+/// that write: a write that follows the call activates nothing.
 fn env_activated(test: &TestFact, owner: &FunctionFact) -> bool {
     let body: &str = &test.body;
     if !(body.contains("set_var(") || body.contains("remove_var(")) {
         return false;
     }
     let read = literal_call_names(&owner.body, &["env::var", "env::var_os"]);
-    let written = literal_call_names(body, &["set_var", "remove_var"]);
-    read.iter().any(|name| written.contains(name))
+    literal_call_sites(body, &["set_var", "remove_var"])
+        .iter()
+        .filter(|(name, _)| read.contains(name))
+        .map(|(_, at)| *at)
+        .min()
+        .is_some_and(|first_write| calls(&body[first_write..], &owner.name))
+}
+
+/// Whether `text` calls `name` (`name(` as a whole identifier).
+fn calls(text: &str, name: &str) -> bool {
+    !name.is_empty()
+        && text.match_indices(name).any(|(at, _)| {
+            text[..at].chars().next_back().is_none_or(boundary)
+                && text[at + name.len()..].trim_start().starts_with('(')
+        })
 }
 
 /// The string literals passed first to each `callee("..` call in `text`,
 /// where `callee` is not the tail of a longer identifier (`reset_var`).
 fn literal_call_names(text: &str, callees: &[&str]) -> Vec<String> {
+    literal_call_sites(text, callees)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect()
+}
+
+/// Like [`literal_call_names`], with the byte offset of each call.
+fn literal_call_sites(text: &str, callees: &[&str]) -> Vec<(String, usize)> {
     let mut names = Vec::new();
     for callee in callees {
         for (at, _) in text.match_indices(callee) {
@@ -222,11 +244,70 @@ fn literal_call_names(text: &str, callees: &[&str]) -> Vec<String> {
                 continue;
             };
             if let Some(end) = literal.find('"') {
-                names.push(literal[..end].to_string());
+                names.push((literal[..end].to_string(), at));
             }
         }
     }
     names
+}
+
+/// The asserted operand is the owner's result: a call to the owner, or a
+/// local bound by `let [mut] name = ..owner(..);`.
+fn derives_from_owner(body: &str, operand: &str, owner: &str) -> bool {
+    let operand = operand.trim().trim_start_matches('&').trim();
+    if calls(operand, owner) {
+        return true;
+    }
+    if !is_ident(operand) {
+        return false;
+    }
+    body.match_indices("let ").any(|(at, _)| {
+        if !body[..at].chars().next_back().is_none_or(boundary) {
+            return false;
+        }
+        let rest = body[at + "let ".len()..].trim_start();
+        let rest = rest.strip_prefix("mut ").unwrap_or(rest).trim_start();
+        let Some(rest) = rest.strip_prefix(operand) else {
+            return false;
+        };
+        if !rest.chars().next().is_none_or(boundary) {
+            return false;
+        }
+        let Some((_, value)) = rest.split_once('=') else {
+            return false;
+        };
+        calls(value.split(';').next().unwrap_or(value), owner)
+    })
+}
+
+/// The top-level, comma-separated arguments of a macro or call.
+fn split_arguments(arguments: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let (mut depth, mut start) = (0usize, 0usize);
+    let (mut in_string, mut escaped) = (false, false);
+    for (offset, ch) in arguments.char_indices() {
+        if in_string {
+            match (escaped, ch) {
+                (true, _) => escaped = false,
+                (false, '\\') => escaped = true,
+                (false, '"') => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&arguments[start..offset]);
+                start = offset + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&arguments[start..]);
+    parts
 }
 
 /// A mockall expectation whose `returning` closure uses one of its named
@@ -293,7 +374,7 @@ fn mock_closure_reads_arguments(test: &TestFact, changed_text: &str) -> bool {
 
 /// `expect![[".."]]....assert_debug_eq(..)` with a non-empty literal. The
 /// literal is the expectation, so an empty one is another rule's case.
-fn expect_debug_literal(test: &TestFact) -> bool {
+fn expect_debug_literal(test: &TestFact, owner: &str) -> bool {
     let body: &str = &test.body;
     let Some(call) = body.find(".assert_debug_eq(") else {
         return false;
@@ -301,6 +382,13 @@ fn expect_debug_literal(test: &TestFact) -> bool {
     let Some(open) = body[..call].rfind("expect![") else {
         return false;
     };
+    // The asserted value must be the owner's result.
+    let Some(operand) = macro_arguments(&body[call + ".assert_debug_eq(".len()..]) else {
+        return false;
+    };
+    if !derives_from_owner(body, operand, owner) {
+        return false;
+    }
     body[open + "expect![".len()..call]
         .trim_start_matches(|ch: char| matches!(ch, '[' | 'r' | '#' | '"') || ch.is_whitespace())
         .starts_with(|ch: char| ch.is_alphanumeric() || matches!(ch, '[' | '(' | '{' | '-'))
@@ -309,7 +397,7 @@ fn expect_debug_literal(test: &TestFact) -> bool {
 /// An insta snapshot macro with no inline `@` literal, on a changed struct
 /// field initializer that no redaction names. Any other changed line keeps
 /// the gap.
-fn insta_leaves_field_unredacted(test: &TestFact, changed_text: &str) -> bool {
+fn insta_leaves_field_unredacted(test: &TestFact, changed_text: &str, owner: &str) -> bool {
     let body: &str = &test.body;
     // Redactions and filters set outside the macro are not read.
     if ["add_redaction", "with_settings", "Settings"]
@@ -330,22 +418,32 @@ fn insta_leaves_field_unredacted(test: &TestFact, changed_text: &str) -> bool {
                 .strip_prefix('(')
                 .and_then(|rest| macro_arguments(rest))
             else {
-                return false;
+                continue;
             };
             if arguments.contains('@') {
-                return false;
+                continue;
+            }
+            // The snapshotted value follows an optional literal name.
+            let parts = split_arguments(arguments);
+            let value = match parts.as_slice() {
+                [first, second, ..] if first.trim_start().starts_with('"') => second,
+                [first, ..] => first,
+                [] => continue,
+            };
+            if !derives_from_owner(body, value, owner) {
+                continue;
             }
             // Only a struct field the snapshot serializes: a changed
             // predicate or arm shapes the whole rendering, which the
             // snapshot weakly checks as before.
             let Some(field) = field_name(changed_text) else {
-                return false;
+                continue;
             };
             if redaction_selectors(arguments)
                 .iter()
                 .any(|selector| selector.split(boundary).any(|s| s == field))
             {
-                return false;
+                continue;
             }
             found = true;
         }
@@ -513,6 +611,24 @@ mod tests {
             vec!["A".to_string(), "B".to_string()]
         );
         assert!(literal_call_names("reset_var(\"A\"); set_var(NAME, 1)", &["set_var"]).is_empty());
+    }
+
+    #[test]
+    fn an_operand_derives_from_the_owner_by_call_or_binding() {
+        let body = "let out = row(1); let other = 5;";
+        assert!(derives_from_owner(body, "row(2)", "row"));
+        assert!(derives_from_owner(body, "&out", "row"));
+        assert!(!derives_from_owner(body, "other", "row"));
+        assert!(!derives_from_owner(body, "unbound", "row"));
+        assert!(!derives_from_owner(body, "prefix_row(2)", "row"));
+    }
+
+    #[test]
+    fn arguments_split_at_top_level_commas_only() {
+        assert_eq!(
+            split_arguments("\"a,b\", f(x, y), {\".id\" => \"[id]\"}"),
+            vec!["\"a,b\"", " f(x, y)", " {\".id\" => \"[id]\"}"]
+        );
     }
 
     #[test]
