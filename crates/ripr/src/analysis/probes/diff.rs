@@ -2192,6 +2192,11 @@ mod tests {
             &[(20, "second(),"), (21, "third(),")],
         );
         assert!(arm_order.identical_replacement_lines().is_empty());
+        let non_ascii = replacement(
+            &[(10, "é: x,"), (11, "a();")],
+            &[(20, "b();"), (21, "é: x,")],
+        );
+        let _ = non_ascii.identical_replacement_lines();
         let reindented_string_line = replacement(&[(10, "payload")], &[(20, "    payload")]);
         assert!(
             reindented_string_line

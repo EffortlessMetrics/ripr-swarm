@@ -385,19 +385,16 @@ impl ChangedFile {
     }
 }
 
-/// The nearest earlier line of `lines` that opens a block or a bound list
-/// (ends with `{`, `(` or `[`, or is a `where` clause), trimmed. Two equal
-/// lines are only the same line when they sit under the same opener.
 /// `name: value,` struct-literal field line; the one kind of line that may
 /// move within its literal without changing meaning.
 fn is_field_line(text: &str) -> bool {
-    let name_len = text
-        .chars()
-        .take_while(|c| c.is_alphanumeric() || *c == '_')
-        .count();
-    name_len > 0 && text[name_len..].starts_with(": ") && text.ends_with(',')
+    let rest = text.trim_start_matches(|c: char| c.is_alphanumeric() || c == '_');
+    rest.len() < text.len() && rest.starts_with(": ") && text.ends_with(',')
 }
 
+/// The nearest earlier line of `lines` that opens a block or a bound list
+/// (ends with `{`, `(` or `[`, or is a `where` clause), trimmed. Two equal
+/// lines are only the same line when they sit under the same opener.
 fn enclosing_opener<'a>(lines: &[&'a ChangedLine], position: usize) -> Option<&'a str> {
     lines[..position].iter().rev().find_map(|line| {
         let text = line.text.trim();
