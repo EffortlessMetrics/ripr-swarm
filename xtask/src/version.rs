@@ -707,6 +707,25 @@ mod tests {
                 fs::set_permissions(&launcher_path, permissions)
                     .map_err(|error| error.to_string())?;
             }
+            // A process that bypasses mode bits (typically euid 0) can still
+            // write the read-only manifest, so the injected failure cannot
+            // occur. Probe the stimulus and skip visibly (#8867).
+            let write_denied = fs::OpenOptions::new()
+                .append(true)
+                .open(&launcher_path)
+                .is_err();
+            if !write_denied {
+                #[cfg(not(windows))]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = fs::set_permissions(&launcher_path, fs::Permissions::from_mode(0o644));
+                }
+                eprintln!(
+                    "SKIPPED rolls_back_all_files_when_launcher_write_fails: \
+                     this process can write a read-only file (typically euid 0)"
+                );
+                return Ok(());
+            }
             let bump_result = bump_version(&["0.11.0".to_string()]);
             #[cfg(windows)]
             {

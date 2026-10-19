@@ -7317,6 +7317,12 @@ mod tests {
         use crate::testing::unwritable_output::OutputDirFixture;
 
         let env = OutputDirFixture::unwritable("first-pr-ro", "reports")?;
+        if crate::testing::access_denial::skip_unless_denied(
+            "unwritable_out_dir_names_out_dir_not_out",
+            env.denies_creation(),
+        ) {
+            return Ok(());
+        }
         let root = OutputDirFixture::path_arg(&env.root)?;
         let out = OutputDirFixture::path_arg(&env.target)?;
         let error = match first_pr(&first_pr_args(root, out)) {

@@ -5,6 +5,7 @@
 //! `pub(crate)` items; their harness-local mirror lives in
 //! `tests/common/fixture_git.rs` and keeps the same contract.
 
+pub(crate) mod access_denial;
 pub(crate) mod cwd_lock;
 pub(crate) mod cwd_placeholder;
 pub(crate) mod fixture_git;

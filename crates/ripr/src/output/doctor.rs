@@ -3450,6 +3450,14 @@ mod tests {
                 .map_err(|err| format!("restore parent mode {mode:#o}: {err}"))
         };
         restore(0o000)?;
+        if crate::testing::access_denial::skip_unless_denied(
+            "an_unreadable_root_is_not_reported_as_missing",
+            std::fs::metadata(&child).is_err(),
+        ) {
+            restore(0o755)?;
+            let _ = std::fs::remove_dir_all(&parent);
+            return Ok(());
+        }
         let classified = DoctorRootPath::classify(&child);
         let (report, probed) = evaluate_without_rust_toolchain(&child, &[LanguageId::Rust]);
         restore(0o755)?;
@@ -3487,6 +3495,14 @@ mod tests {
                 .map_err(|err| format!("restore jail mode {mode:#o}: {err}"))
         };
         restore(0o000)?;
+        if crate::testing::access_denial::skip_unless_denied(
+            "a_symlink_into_an_unreadable_directory_is_not_reported_as_a_file",
+            std::fs::metadata(&link).is_err(),
+        ) {
+            restore(0o755)?;
+            let _ = std::fs::remove_dir_all(&parent);
+            return Ok(());
+        }
         let classified = DoctorRootPath::classify(&link);
         let (report, probed) = evaluate_without_rust_toolchain(&link, &[LanguageId::Rust]);
         restore(0o755)?;

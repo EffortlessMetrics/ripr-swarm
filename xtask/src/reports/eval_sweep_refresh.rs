@@ -3331,9 +3331,15 @@ mod python_eval_sweep_refresh {
             .map_err(|error| format!("restore sealed permissions: {error}"))?;
         super::discard_partial_dir(&dir);
 
-        let counts = counts.ok_or_else(|| {
-            "NOT_ESTABLISHED: this process can still list a mode-000 directory".to_string()
-        })?;
+        let Some(counts) = counts else {
+            // A process that bypasses mode bits (typically euid 0) cannot
+            // produce the denial; say so rather than passing silently (#8867).
+            eprintln!(
+                "SKIPPED real_unreadable_subtree_marks_corpus_selection_incomplete: \
+                 this process can still list a mode-000 directory"
+            );
+            return Ok(());
+        };
         assert!(!counts.complete);
         assert!(
             counts

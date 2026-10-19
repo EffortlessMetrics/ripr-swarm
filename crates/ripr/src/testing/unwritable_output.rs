@@ -63,6 +63,12 @@ impl OutputDirFixture {
         })
     }
 
+    /// Whether this process is actually denied creation under the read-only parent.
+    #[cfg(unix)]
+    pub(crate) fn denies_creation(&self) -> bool {
+        crate::testing::access_denial::dir_creation_denied(&self.parent)
+    }
+
     pub(crate) fn path_arg(path: &Path) -> Result<&str, String> {
         path.to_str()
             .ok_or_else(|| format!("path is not UTF-8: {}", path.display()))

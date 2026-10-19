@@ -526,6 +526,12 @@ mod output_dir_tests {
     #[test]
     fn unwritable_parent_create_names_the_flag() -> Result<(), String> {
         let env = OutputDirFixture::unwritable("helper", "pilot")?;
+        if crate::testing::access_denial::skip_unless_denied(
+            "unwritable_parent_create_names_the_flag",
+            env.denies_creation(),
+        ) {
+            return Ok(());
+        }
         let error = match create_output_dir(&env.target, "--out") {
             Err(error) => error,
             Ok(()) => return Err("unwritable parent must fail".to_string()),
