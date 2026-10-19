@@ -62,11 +62,12 @@ impl SourceAuthority {
                 ],
             )?;
             let origin = std::str::from_utf8(&origin)
-                .map_err(|error| format!("source origin UTF-8: {error}"))?
-                .trim();
-            if origin.contains('\n') {
-                return Err("direct manifest source origin is ambiguous: remote.origin.url has multiple values".to_string());
+                .map_err(|error| format!("source origin UTF-8: {error}"))?;
+            // Count before trimming so an empty extra value cannot hide.
+            if origin.lines().count() != 1 {
+                return Err("direct manifest source origin is ambiguous: remote.origin.url must have exactly one value".to_string());
             }
+            let origin = origin.trim();
             if !matches!(
                 origin,
                 "https://github.com/EffortlessMetrics/ripr-swarm.git"
