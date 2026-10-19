@@ -562,6 +562,55 @@ fn detect_python_test_frameworks_scan_is_starvation_free_and_deterministic() -> 
     Ok(())
 }
 
+#[test]
+fn detect_python_test_frameworks_ignores_imports_inside_string_literals() -> Result<(), String> {
+    // #8707: `tests.py` / `test.py` modules are admitted by file name alone
+    // (#7706), so a helper module whose docstring shows a usage example must
+    // not report the example's `import unittest` as framework evidence.
+    let root = unique_test_root("docstring-unittest");
+    let blog = root.join("blog");
+    std::fs::create_dir_all(&blog).map_err(|err| format!("create blog dir: {err}"))?;
+    std::fs::write(
+        blog.join("tests.py"),
+        "\"\"\"Blog helpers.\n\nUsage example:\n    import unittest\n\"\"\"\n",
+    )
+    .map_err(|err| format!("write tests.py: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        Vec::<&str>::new()
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    // The same discipline for pytest-shaped example text.
+    let root = unique_test_root("docstring-pytest");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test_example.py"),
+        "'''Example:\nimport pytest\n'''\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        Vec::<&str>::new()
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    // Positive control: a real import after the docstring still counts — the
+    // scan must resume at code when the string closes.
+    let root = unique_test_root("docstring-then-import");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test_pricing.py"),
+        "\"\"\"Pricing tests.\"\"\"\nimport unittest\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
 use super::super::super::diff::ChangedLine;
 use super::bounded_read::{
     DEFAULT_PYTHON_MAX_FILE_READ_BYTES, DEFAULT_PYTHON_MAX_WORKSPACE_FILES,

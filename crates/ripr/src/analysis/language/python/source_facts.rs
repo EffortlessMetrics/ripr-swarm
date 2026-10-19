@@ -173,10 +173,13 @@ pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
             let Some(text) = read_framework_evidence_prefix(path) else {
                 continue;
             };
-            if !saw_pytest && text.lines().any(is_pytest_import_line) {
+            // #8707: docstrings and usage-example strings that merely SHOW an
+            // import are not framework evidence; only code lines count.
+            let code = code_lines_outside_triple_quoted_strings(&text);
+            if !saw_pytest && code.lines().any(is_pytest_import_line) {
                 saw_pytest = true;
             }
-            if !saw_unittest && text_has_unittest_framework_import(&text) {
+            if !saw_unittest && text_has_unittest_framework_import(&code) {
                 saw_unittest = true;
             }
             if saw_pytest && saw_unittest {
@@ -243,6 +246,81 @@ const PYTHON_FRAMEWORK_EVIDENCE_PREFIX_BYTES: u64 = 4096;
 /// counts candidates after the `.py` / test-path admission filter, never raw
 /// directory entries, so non-test files cannot starve the scan (#8706).
 const PYTHON_FRAMEWORK_SCAN_DIR_ENTRY_CAP: usize = 64;
+
+/// Lines of `text` that are code — every line that does not fall inside a
+/// triple-quoted string literal. Docstrings and usage-example strings that
+/// merely SHOW an `import unittest` / `import pytest` line are not framework
+/// evidence (#8707); a `tests.py` / `test.py` module is admitted by file name
+/// alone (#7706), so string awareness is what keeps a helper module's
+/// example text from reporting a confirmed framework. Tracking the dominant
+/// triple-quote state covers the failure mode honestly without claiming a
+/// full tokenization; single-line strings cannot place an import at line
+/// start, and the import matchers already reject lookalike tokens.
+fn code_lines_outside_triple_quoted_strings(text: &str) -> String {
+    let mut out = String::new();
+    let mut open: Option<char> = None;
+    for line in text.lines() {
+        if open.is_none() {
+            out.push_str(line);
+        }
+        out.push('\n');
+        update_triple_quote_state(line, &mut open);
+    }
+    out
+}
+
+/// Advance the triple-quote state across one line. Every unescaped `"""` or
+/// `'''` occurrence toggles the state; quotes of the other delimiter inside
+/// a string are ordinary content, and escaped quotes never toggle.
+fn update_triple_quote_state(line: &str, open: &mut Option<char>) {
+    let mut rest = line;
+    while let Some(position) = rest.find(['\'', '"']) {
+        let (before, from) = rest.split_at(position);
+        // A quote preceded by an odd run of backslashes is escaped.
+        let backslashes = before.chars().rev().take_while(|ch| *ch == '\\').count();
+        if backslashes % 2 == 1 {
+            rest = &from[1..];
+            continue;
+        }
+        let delimiter = if from.starts_with("\"\"\"") {
+            Some('"')
+        } else if from.starts_with("'''") {
+            Some('\'')
+        } else {
+            None
+        };
+        match (open.take(), delimiter) {
+            // The matching delimiter closes the string; code may resume
+            // later on the same line, so keep scanning the remainder.
+            (Some(current), Some(found)) if current == found => {
+                rest = &from[3..];
+            }
+            // Any other quote inside a string is content.
+            (Some(current), _) => {
+                *open = Some(current);
+                rest = &from[1..];
+            }
+            (None, Some(found)) => {
+                match from[3..].find(if found == '"' { "\"\"\"" } else { "'''" }) {
+                    // A triple-quoted string that opens and closes on one line
+                    // hides only its own interior.
+                    Some(close) => {
+                        rest = &from[3 + close + 3..];
+                    }
+                    None => {
+                        *open = Some(found);
+                        return;
+                    }
+                }
+            }
+            // Outside a string an ordinary quote starts nothing the scan
+            // tracks; skip it.
+            (None, None) => {
+                rest = &from[1..];
+            }
+        }
+    }
+}
 
 fn read_framework_evidence_prefix(path: &Path) -> Option<String> {
     let file = std::fs::File::open(path).ok()?;
