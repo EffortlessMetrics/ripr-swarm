@@ -2295,7 +2295,9 @@ assertions. This repair shares the existing callback without that larger migrati
   `owner_pin_closure_call_must_share_the_bindings_live_scope`, and
   `shared_return_admission_uses_the_outer_invocation_identity`,
   `serial_test_locks_keep_the_pin_and_other_attributes_refuse_it`,
-  `a_rebound_test_attribute_refuses_the_pin_and_the_builtin_keeps_it`, and
+  `a_rebound_test_attribute_refuses_the_pin_and_the_builtin_keeps_it` (with the
+  honesty-corpus control `rust_owner_pin_rebound_test_attribute`, fixture
+  `owner_return_pin_rebound_test_attribute`), and
   `owner_pin_requires_test_item_ancestry_and_enabled_cfg` in the same test module.
 - Bitwise tails (#6675): `a_bitwise_or_tail_is_unconditional_but_closures_and_lazy_or_are_not`
   and `bitwise_pipe_reading_distinguishes_operand_position`; the public-API

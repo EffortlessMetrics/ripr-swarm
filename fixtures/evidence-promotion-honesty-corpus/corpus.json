@@ -6824,6 +6824,34 @@
       ]
     },
     {
+      "id": "rust_owner_pin_rebound_test_attribute",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_rebound_test_attribute",
+      "vector": "owner_return_pin_rebound_test_attribute",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "static_unknown"
+        },
+        {
+          "type": "maximum_class",
+          "class": "static_unknown"
+        }
+      ]
+    },
+    {
       "id": "rust_owner_pin_unpolled_async",
       "language": "rust",
       "tier": "pure",
