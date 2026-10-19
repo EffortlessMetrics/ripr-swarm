@@ -13,6 +13,8 @@ use std::path::{Component, Path, PathBuf};
 
 mod diagnostic;
 mod model;
+#[cfg(test)]
+mod perl_executable_tests;
 mod python;
 mod toolchain_file;
 #[cfg(feature = "lang-typescript")]
@@ -800,6 +802,16 @@ impl RiprConfig {
                 }
                 None => None,
             };
+            if let Some(executable) = &perl.executable {
+                if executable.contains('\0') {
+                    return Err("perl.executable must not contain NUL characters"
+                        .to_string()
+                        .into());
+                }
+                if executable.is_empty() {
+                    return Err("perl.executable must not be empty; remove the key to use the default exporter".to_string().into());
+                }
+            }
             config.perl = PerlConfig {
                 producer,
                 executable: perl.executable.map(PathBuf::from),
