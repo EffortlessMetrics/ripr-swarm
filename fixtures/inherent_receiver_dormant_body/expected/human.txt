@@ -1,0 +1,38 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/inherent_receiver_dormant_body/input
+
+Summary: 2 probes (0 exposed, 2 weak, 0 unrevealed, 0 no path); 2 of 2 findings unsuppressed
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+
+Start here:
+  State: a test gap to inspect or repair
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  File: ./src/lib.rs:6
+  Static exposure: weak (severity: warning, confidence 0.66)
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:rust:src/lib.rs:impl JsonValue::as_object:match_arm:match_arm:self_object_value
+  Changed behavior: Self::Object(value) =>
+  Missing discriminator: No strong discriminator was detected
+  Related test (1 of 2 matched rows): src/lib.rs:12 decoy (ripr could not confirm that this assertion observes the changed behavior)
+  Next step: The indexed related tests do not establish a call to the changed owner. Inspect
+    existing tests, doctests and examples before changing assertions; they may already constrain the
+    changed behavior. Add or strengthen a test only if that inspection finds a gap
+  Evidence: reach weak · infection yes · propagation yes · observation yes · discriminator weak
+    - reach weak: No test is seen calling as_object; tests share only its file or a name token: decoy
+    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - 8 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/inherent_receiver_dormant_body/input --diff <cwd>/fixtures/inherent_receiver_dormant_body/diff.patch --mode fast probe:src_lib.rs:match_arm:f9032269
+  ripr context --root <cwd>/fixtures/inherent_receiver_dormant_body/input --diff <cwd>/fixtures/inherent_receiver_dormant_body/diff.patch --mode fast --at probe:src_lib.rs:match_arm:f9032269
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/inherent_receiver_dormant_body/input --at src/lib.rs:6 --kind match_arm
+
+Hidden:
+  1 lower-priority finding(s) omitted from default human output.
+    - ./src/lib.rs:6 (weak)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
