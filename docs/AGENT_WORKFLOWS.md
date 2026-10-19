@@ -313,7 +313,10 @@ local to a function body or `const` block, is refused as `owner_unsupported`.
 The expected value is a labelled `todo!()`, so the test fails until it is
 written. `--write` applies it; `--json` emits the `rust_test_stub` document.
 Its `run_command` runs only that test through the owning package's
-`--manifest-path`, and is `null` when no Cargo package owns the file. A
+`--manifest-path` and, for an integration file, the effective cargo target
+name (an explicit `[[test]]` name wins over the file stem). It is `null` when
+no Cargo package owns the file or that target name cannot be established
+(for example `autotests = false` without an explicit entry). A
 `--at` path that matches files with gaps in several crates is refused; pass
 the full path or the seam ID.
 

@@ -10,8 +10,8 @@ use crate::analysis::seams::SeamGripClass;
 use crate::analysis::test_stub::TestStubPlacement;
 use crate::app::agent_brief::AgentBriefPolicy;
 use crate::app::test_stub::{
-    TestStubError, TestStubSelector, line_of_offset, package_manifest_for, resolve_test_stub,
-    run_command, write_test_stub,
+    TestStubError, TestStubSelector, integration_target_name, line_of_offset, package_manifest_for,
+    resolve_test_stub, run_command, write_test_stub,
 };
 use crate::cli::CommandError;
 use crate::cli::agent::AgentStubOptions;
@@ -105,14 +105,16 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
         .display()
         .to_string()
         .replace('\\', "/");
-    let run = package_manifest_for(&options.root, stub).map(|manifest| {
+    let owning_manifest = package_manifest_for(&options.root, stub);
+    let run = owning_manifest.as_ref().and_then(|manifest| {
+        let target = integration_target_name(&options.root, manifest, stub);
         let manifest = options.root.join(manifest);
         let manifest = manifest
             .strip_prefix(".")
             .unwrap_or(&manifest)
             .to_string_lossy()
             .replace('\\', "/");
-        run_command(&shell_arg(&manifest), stub)
+        run_command(&shell_arg(&manifest), stub, target.as_deref())
     });
 
     if options.json {
@@ -181,6 +183,9 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
     }
     match &run {
         Some(run) => println!("Run it: {run}"),
+        None if owning_manifest.is_some() => println!(
+            "Run it: cargo target name for {file} is not established (check [[test]] entries and autotests in Cargo.toml); run its tests by that target."
+        ),
         None => {
             println!("Run it: no Cargo package owns {file}; add it to one, then run its tests.")
         }

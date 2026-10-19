@@ -962,22 +962,123 @@ pub(crate) fn package_manifest_for(root: &Path, stub: &RustTestStub) -> Option<P
     })
 }
 
-/// The command that runs just this test after the stub is in place.
-/// `manifest` is the package manifest as the caller should spell it.
-pub(crate) fn run_command(manifest: &str, stub: &RustTestStub) -> String {
-    match &stub.placement {
-        TestStubPlacement::NewIntegrationFile { file }
-        | TestStubPlacement::ExistingIntegrationFile { file } => {
-            let target = file
-                .file_stem()
-                .map(|stem| stem.to_string_lossy().to_string())
-                .unwrap_or_default();
-            format!(
-                "cargo test --manifest-path {manifest} --test {target} {}",
-                stub.test_name
-            )
+/// The cargo target name that runs the integration file `stub` is placed in:
+/// an explicit `[[test]]` entry whose `path` is that file (its `name` wins, so
+/// `name = "pricing"` for `tests/discount.rs` yields `pricing`), otherwise the
+/// auto-discovered name (`tests/<stem>.rs` or `tests/<dir>/main.rs`) when
+/// `autotests` is not disabled. `None` when the name cannot be established:
+/// non-integration placement, no owning package, an unparsable manifest,
+/// `autotests = false` without an explicit entry, an explicit entry that
+/// shadows the inferred name, or `required-features` that a bare
+/// `cargo test --test` would not enable.
+pub(crate) fn integration_target_name(
+    root: &Path,
+    manifest: &Path,
+    stub: &RustTestStub,
+) -> Option<String> {
+    let (TestStubPlacement::NewIntegrationFile { file }
+    | TestStubPlacement::ExistingIntegrationFile { file }) = &stub.placement
+    else {
+        return None;
+    };
+    let text = std::fs::read_to_string(root.join(manifest)).ok()?;
+    let parsed = text.parse::<toml::Table>().ok()?;
+    let package = parsed.get("package")?.as_table()?;
+    let package_dir = manifest.parent().unwrap_or(Path::new(""));
+    let relative = normalize_components(file.strip_prefix(package_dir).ok()?)?;
+    let explicit: Vec<&toml::Table> = parsed
+        .get("test")
+        .and_then(toml::Value::as_array)
+        .map(|entries| entries.iter().filter_map(toml::Value::as_table).collect())
+        .unwrap_or_default();
+    let entry_name = |entry: &toml::Table| -> Option<String> {
+        entry
+            .get("name")
+            .and_then(toml::Value::as_str)
+            .map(ToOwned::to_owned)
+    };
+    let entry_path = |entry: &toml::Table| -> Option<String> {
+        match entry.get("path").and_then(toml::Value::as_str) {
+            Some(path) => normalize_components(Path::new(path)),
+            None => normalize_components(Path::new(&format!("tests/{}.rs", entry_name(entry)?))),
         }
-        _ => format!("cargo test --manifest-path {manifest} {}", stub.test_name),
+    };
+    let enabled = |entry: &toml::Table| {
+        entry
+            .get("required-features")
+            .and_then(toml::Value::as_array)
+            .is_none_or(Vec::is_empty)
+    };
+    if let Some(entry) = explicit
+        .iter()
+        .find(|entry| entry_path(entry).as_deref() == Some(relative.as_str()))
+    {
+        return entry_name(entry)
+            .filter(|name| !name.trim().is_empty())
+            .filter(|_| enabled(entry));
+    }
+    if package
+        .get("autotests")
+        .and_then(toml::Value::as_bool)
+        .is_some_and(|enabled| !enabled)
+    {
+        return None;
+    }
+    let inferred = match relative
+        .strip_prefix("tests/")?
+        .split('/')
+        .collect::<Vec<_>>()[..]
+    {
+        [name] => name.strip_suffix(".rs")?,
+        [dir, "main.rs"] => dir,
+        _ => return None,
+    };
+    // An explicit entry with the inferred name but another path replaces the
+    // auto-discovered target, so this file is not reachable under that name.
+    if inferred.is_empty()
+        || explicit
+            .iter()
+            .any(|entry| entry_name(entry).as_deref() == Some(inferred))
+    {
+        return None;
+    }
+    Some(inferred.to_string())
+}
+
+/// `/`-joined normal components of a relative path; `None` for `..`, roots
+/// or prefixes, which no manifest-relative target path can legitimately use.
+fn normalize_components(path: &Path) -> Option<String> {
+    let mut parts = Vec::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(part) => parts.push(part.to_str()?.to_string()),
+            std::path::Component::CurDir => {}
+            _ => return None,
+        }
+    }
+    Some(parts.join("/"))
+}
+
+/// The command that runs just this test after the stub is in place.
+/// `manifest` is the package manifest as the caller should spell it and
+/// `target` the effective cargo test target from [`integration_target_name`].
+/// `None` when an integration stub's target name is not established: a
+/// command naming the file stem could fail, so none is offered.
+pub(crate) fn run_command(
+    manifest: &str,
+    stub: &RustTestStub,
+    target: Option<&str>,
+) -> Option<String> {
+    match &stub.placement {
+        TestStubPlacement::NewIntegrationFile { .. }
+        | TestStubPlacement::ExistingIntegrationFile { .. } => Some(format!(
+            "cargo test --manifest-path {manifest} --test {} {}",
+            target?, stub.test_name
+        )),
+        _ => Some(format!(
+            "cargo test --manifest-path {manifest} {}",
+            stub.test_name
+        )),
     }
 }
 
@@ -1237,14 +1338,89 @@ mod tests {
         );
         assert_eq!(orphan_manifest, None);
         assert_eq!(
-            run_command("crates/a/Cargo.toml", &inline),
-            "cargo test --manifest-path crates/a/Cargo.toml owner_boundary"
+            run_command("crates/a/Cargo.toml", &inline, None).as_deref(),
+            Some("cargo test --manifest-path crates/a/Cargo.toml owner_boundary")
         );
         assert_eq!(
-            run_command("crates/a/Cargo.toml", &integration),
-            "cargo test --manifest-path crates/a/Cargo.toml --test owner owner_boundary"
+            run_command("crates/a/Cargo.toml", &integration, Some("owner")).as_deref(),
+            Some("cargo test --manifest-path crates/a/Cargo.toml --test owner owner_boundary")
         );
+        assert_eq!(run_command("crates/a/Cargo.toml", &integration, None), None);
         Ok(())
+    }
+
+    #[test]
+    fn integration_target_name_follows_cargo_target_registration() -> Result<(), String> {
+        use crate::analysis::test_stub::TestStubPlacement;
+        let root = std::env::temp_dir().join(format!(
+            "ripr-stub-target-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("pkg")).map_err(|error| error.to_string())?;
+        let stub = |file: &str| RustTestStub {
+            placement: TestStubPlacement::ExistingIntegrationFile {
+                file: PathBuf::from(file),
+            },
+            test_name: "t".to_string(),
+            text: String::new(),
+            fill_ins: Vec::new(),
+            derived_inputs: Vec::new(),
+        };
+        let got = |tail: &str, file: &str| -> Result<Option<String>, String> {
+            std::fs::write(
+                root.join("pkg/Cargo.toml"),
+                format!("[package]\nname = \"pkg\"\n{tail}"),
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(integration_target_name(
+                &root,
+                Path::new("pkg/Cargo.toml"),
+                &stub(file),
+            ))
+        };
+        let some = |name: &str| Some(name.to_string());
+        let result = (|| {
+            // auto-discovered: file stem, or the directory of `main.rs`
+            assert_eq!(got("", "pkg/tests/discount.rs")?, some("discount"));
+            assert_eq!(got("", "pkg/tests/grp/main.rs")?, some("grp"));
+            assert_eq!(got("", "pkg/tests/grp/helper.rs")?, None);
+            assert_eq!(got("", "pkg/src/lib.rs")?, None);
+            // an explicit entry renames the target: its name, not the stem
+            let renamed = "[[test]]\nname = \"pricing\"\npath = \"tests/discount.rs\"\n";
+            assert_eq!(got(renamed, "pkg/tests/discount.rs")?, some("pricing"));
+            // path spelling is normalized
+            let dotted = "[[test]]\nname = \"pricing\"\npath = \"./tests/discount.rs\"\n";
+            assert_eq!(got(dotted, "pkg/tests/discount.rs")?, some("pricing"));
+            // an entry without `path` defaults to tests/<name>.rs
+            let default_path = "[[test]]\nname = \"discount\"\n";
+            assert_eq!(
+                got(default_path, "pkg/tests/discount.rs")?,
+                some("discount")
+            );
+            // a sibling file keeps its own stem when another file is renamed
+            assert_eq!(got(renamed, "pkg/tests/other.rs")?, some("other"));
+            // `autotests = false`: only an explicit entry registers a target
+            let off = "autotests = false\n";
+            assert_eq!(got(off, "pkg/tests/discount.rs")?, None);
+            let off_explicit = format!("{off}{renamed}");
+            assert_eq!(
+                got(&off_explicit, "pkg/tests/discount.rs")?,
+                some("pricing")
+            );
+            // an explicit entry stealing the inferred name leaves the file unreachable
+            let stolen = "[[test]]\nname = \"discount\"\npath = \"tests/elsewhere.rs\"\n";
+            assert_eq!(got(stolen, "pkg/tests/discount.rs")?, None);
+            // a target that needs features is not runnable by a bare command
+            let gated = format!("{renamed}required-features = [\"extra\"]\n");
+            assert_eq!(got(&gated, "pkg/tests/discount.rs")?, None);
+            Ok::<(), String>(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
     }
 
     #[test]

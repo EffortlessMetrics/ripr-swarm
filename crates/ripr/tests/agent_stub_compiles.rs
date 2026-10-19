@@ -2352,6 +2352,71 @@ fn assert_not_appended(
     scratch.cleanup()
 }
 
+/// #8794: `[[test]] name = "pricing" path = "tests/discount.rs"` registers the
+/// file as `pricing`, so the printed command must say `--test pricing` and,
+/// executed, must reach the stub's own todo (not "no test target named").
+/// With `autotests = false` the explicit entry is still honored; without one
+/// the file is no target at all and no command is printed.
+#[test]
+fn run_command_uses_the_effective_cargo_target_name() -> Result<(), String> {
+    let renamed = "\n[[test]]\nname = \"pricing\"\npath = \"tests/discount.rs\"\n";
+    for tail in [renamed.to_string(), format!("autotests = false\n{renamed}")] {
+        let scratch = existing_target_scratch(
+            &tail,
+            "src/lib.rs",
+            EXISTING_LIB,
+            "tests/discount.rs",
+            EXISTING_TEST,
+        )?;
+        let root = scratch.directory.clone();
+        let document = stub_json(&root, "src/lib.rs:2")?;
+        assert_eq!(
+            document["placement"]["kind"], "existing_integration_file",
+            "{document}"
+        );
+        let run = document["run_command"]
+            .as_str()
+            .ok_or_else(|| format!("run_command: {document}"))?;
+        assert!(
+            run.contains("--test pricing ") && !run.contains("--test discount"),
+            "{run}"
+        );
+        let cargo = cargo_from_run_command(run, &root)?;
+        let out = run_bounded(cargo, &root, "cargo-test", Duration::from_mins(2))?;
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            !out.status.success() && text.contains("not yet implemented: ripr:"),
+            "the emitted command must run the stub under its renamed target:\n{text}"
+        );
+        scratch.cleanup()?;
+    }
+
+    // The target name cannot be established: omit the command rather than
+    // print one (`--test discount`) that cargo would reject.
+    let scratch = existing_target_scratch(
+        "autotests = false\n",
+        "src/lib.rs",
+        EXISTING_LIB,
+        "tests/discount.rs",
+        EXISTING_TEST,
+    )?;
+    let root = scratch.directory.clone();
+    let document = stub_json(&root, "src/lib.rs:2")?;
+    assert_eq!(
+        document["placement"]["kind"], "existing_integration_file",
+        "{document}"
+    );
+    assert!(
+        document["run_command"].is_null(),
+        "no command when the target is not registered: {document}"
+    );
+    scratch.cleanup()
+}
+
 #[test]
 fn stub_for_an_unservable_existing_target_keeps_the_old_placement() -> Result<(), String> {
     assert_not_appended(
