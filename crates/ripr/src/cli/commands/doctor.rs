@@ -2761,10 +2761,10 @@ fn generated_workflow_advisory(root: &Path) -> Option<String> {
     let workflow =
         crate::bounded_input::read_to_string_with_limit(&path, GENERATED_WORKFLOW_MAX_BYTES)
             .ok()?;
-    generated_workflow_line(&workflow, env!("CARGO_PKG_VERSION"))
+    generated_workflow_line(root, &workflow, env!("CARGO_PKG_VERSION"))
 }
 
-fn generated_workflow_line(workflow: &str, current_version: &str) -> Option<String> {
+fn generated_workflow_line(root: &Path, workflow: &str, current_version: &str) -> Option<String> {
     let install = workflow.lines().find_map(|line| {
         let command = line.trim().trim_start_matches("run:").trim();
         let rest = command.strip_prefix("cargo install ripr")?;
@@ -2780,8 +2780,7 @@ fn generated_workflow_line(workflow: &str, current_version: &str) -> Option<Stri
                 .iter()
                 .find_map(|word| word.strip_prefix("--version="))
         });
-    let refresh =
-        "refresh it with `ripr init --ci github --force` and review the diff before committing";
+    let refresh = super::init::workflow_refresh_guidance(root);
     match pinned {
         None => Some(format!(
             "{GENERATED_WORKFLOW_PATH} installs ripr without a version (the ripr 0.10-and-earlier template), so CI runs whatever release is newest against these steps; {refresh}"
@@ -4185,7 +4184,7 @@ mod tests {
         let v010 = "      - name: Install ripr\n        run: cargo install ripr --locked\n";
         let pinned = "      - name: Install ripr\n        run: cargo install ripr --version 0.11.0 --locked\n";
 
-        let unpinned = generated_workflow_line(v010, "0.11.0");
+        let unpinned = generated_workflow_line(Path::new("."), v010, "0.11.0");
         assert!(
             unpinned
                 .as_deref()
@@ -4210,17 +4209,27 @@ mod tests {
         let stale_workflow = format!(
             "      - name: Install ripr\n        run: cargo install ripr --version {stale} --locked\n"
         );
-        let older = generated_workflow_line(&stale_workflow, current);
+        let older = generated_workflow_line(Path::new("."), &stale_workflow, current);
         assert!(
             older.as_deref().is_some_and(|line| line.contains(&format!(
                 "installs ripr {stale}, but this is ripr {current}"
             ))),
             "{older:?}"
         );
-        assert_eq!(generated_workflow_line(pinned, "0.11.0"), None);
-        assert_eq!(generated_workflow_line("jobs: {}\n", "0.11.0"), None);
         assert_eq!(
-            generated_workflow_line("        run: cargo install ripr-tools --locked\n", "0.11.0"),
+            generated_workflow_line(Path::new("."), pinned, "0.11.0"),
+            None
+        );
+        assert_eq!(
+            generated_workflow_line(Path::new("."), "jobs: {}\n", "0.11.0"),
+            None
+        );
+        assert_eq!(
+            generated_workflow_line(
+                Path::new("."),
+                "        run: cargo install ripr-tools --locked\n",
+                "0.11.0"
+            ),
             None
         );
     }
@@ -4239,7 +4248,7 @@ mod tests {
         let workflow = format!(
             "      - name: Install ripr\n        run: cargo install ripr --version {fallback} --locked\n"
         );
-        let line = generated_workflow_line(&workflow, current);
+        let line = generated_workflow_line(Path::new("."), &workflow, current);
         assert!(
             line.as_deref().is_some_and(|line| {
                 line.contains("latest-release fallback pin")

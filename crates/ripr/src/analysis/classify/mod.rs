@@ -70,6 +70,8 @@ pub(in crate::analysis) use helper_transfer::{
 };
 pub(in crate::analysis) use infection::infection_evidence_for_owner;
 pub(in crate::analysis) use operand_pin::operand_only_pin;
+#[cfg(test)]
+pub(in crate::analysis) use owner_pin::nested_parallelism_allowed;
 pub(in crate::analysis) use owner_pin::{
     AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, direct_call_name,
     expected_operand_value, function_declaration_is_async, helper_pins_owner_call,
@@ -123,7 +125,7 @@ pub(in crate::analysis) use text::{
 // RIPR-SPEC-0115: the walk now returns a witness so the limitation can name the
 // witnessing test (file:line) and the entry public-API symbol.
 pub(in crate::analysis) use transitive_reach::{
-    MAX_TRANSITIVE_DEPTH, MacroReachWitness, RUST_MACRO_REACH_MESSAGE,
+    InheritedGraphCounter, MAX_TRANSITIVE_DEPTH, MacroReachWitness, RUST_MACRO_REACH_MESSAGE,
     RUST_TRANSITIVE_REACH_MESSAGE, TransitiveReachIndex, TransitiveWitness, calls_after_definition,
     macro_reach_limit_kind, macro_reach_limitation_detail_lines, macro_reach_witness_pointer,
     transitive_reach_limit_kind, transitive_reach_limitation_detail_lines,

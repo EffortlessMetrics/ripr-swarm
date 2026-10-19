@@ -1,0 +1,60 @@
+{
+  "case_id": "perl-0235-ex09-oracle-without-owner",
+  "subject_id": "authored-perl-test2-ledger",
+  "diff": "cases/perl-0235-ex09-oracle-without-owner.diff",
+  "anchor": {
+    "file": "lib/Ledger.pm",
+    "line": 39
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "test2_isnt_single_value",
+  "hard_case": "RIPR-SPEC-0235 example 9: the owner's oracle has target_owner_id null.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "return 0.02 * $amount;",
+        "mutated_line": "return 0.02 * $amount;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the fee doubles"
+      },
+      {
+        "replacement": "return 0.001 * $amount;",
+        "mutated_line": "return 0.001 * $amount;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the fee drops tenfold"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0235 example 9: the owner's oracle has target_owner_id null. The rewrite and run truth are those of perl-test2-fee-isnt-zero (not_discriminated); the packet edit changes which facts ripr reads, not what prove -l t does with the rewrite.",
+  "labeling_observation": {
+    "ripr_commit": "4f48195",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-0235-ex09-oracle-without-owner.json",
+    "sha256": "51f4a6585676dd6b15650064ee6bfa1f972d0e84db456d7bd46601dea442eda0",
+    "provenance": "edited_producer",
+    "edits": "Started from the producer packet of perl-test2-fee-isnt-zero, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"target_owner_id\": null}; the packet fingerprint was recomputed."
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0235#9"
+  ]
+}

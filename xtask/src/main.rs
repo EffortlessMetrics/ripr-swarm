@@ -21641,6 +21641,12 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
         );
     }
 
+    if path.starts_with(".github/actions/pr-candidate-admission/") && path.ends_with(".py") {
+        return Some(
+            "Pre-allocation admission runs before any Rust build exists, so its pure decision logic is stdlib Python on the hosted runner, kept out of embedded YAML shell (#5391, #2022).",
+        );
+    }
+
     if path.starts_with("fixtures/")
         && (path.ends_with(".ts")
             || path.ends_with(".tsx")

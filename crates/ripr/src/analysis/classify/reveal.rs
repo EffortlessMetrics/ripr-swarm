@@ -3883,17 +3883,21 @@ fn crate_identifier(name: &str) -> String {
 /// `ripr check` on this repository. The memo must not outlive the index it was filled from.
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct FileUseStatements {
-    by_file: std::cell::RefCell<std::collections::BTreeMap<std::path::PathBuf, Vec<String>>>,
+    by_file: crate::analysis::sync_memo::SyncMemo<
+        std::collections::BTreeMap<std::path::PathBuf, Vec<String>>,
+    >,
     /// #7985: per file and name, whether a macro invocation may define an
     /// item of that name.
-    macro_defined:
-        std::cell::RefCell<std::collections::BTreeMap<(std::path::PathBuf, String), bool>>,
+    macro_defined: crate::analysis::sync_memo::SyncMemo<
+        std::collections::BTreeMap<(std::path::PathBuf, String), bool>,
+    >,
     /// Each file's macro sites, parsed once however many names ask.
-    macro_sites: std::cell::RefCell<
+    macro_sites: crate::analysis::sync_memo::SyncMemo<
         std::collections::BTreeMap<
             std::path::PathBuf,
-            std::rc::Rc<super::macro_item_names::MacroSites>,
+            std::sync::Arc<super::macro_item_names::MacroSites>,
         >,
+
     >,
 }
 
@@ -3911,12 +3915,12 @@ impl FileUseStatements {
         if let Some(known) = self.macro_defined.borrow().get(&key) {
             return *known;
         }
-        let sites = std::rc::Rc::clone(
+        let sites = std::sync::Arc::clone(
             self.macro_sites
                 .borrow_mut()
                 .entry(file.to_path_buf())
                 .or_insert_with(|| {
-                    std::rc::Rc::new(super::macro_item_names::MacroSites::scan(source))
+                    std::sync::Arc::new(super::macro_item_names::MacroSites::scan(source))
                 }),
         );
         let defined = sites.may_define(callee);

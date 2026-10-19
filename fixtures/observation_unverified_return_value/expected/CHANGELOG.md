@@ -308,3 +308,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — observation_unverified_return_value (27)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless observation_unverified_return_value --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

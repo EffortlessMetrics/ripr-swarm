@@ -1,0 +1,13 @@
+diff --git a/lib/Shop/Pricing.pm b/lib/Shop/Pricing.pm
+index 2bfb0c0..8fc836f 100644
+--- a/lib/Shop/Pricing.pm
++++ b/lib/Shop/Pricing.pm
+@@ -28,7 +28,7 @@ sub shipping_fee {
+ 
+ sub tier_label {
+     my ($points) = @_;
+-    return 'gold' if $points >= 1000;
++    return 'gold' if 1000 <= $points;
+     return 'silver' if $points >= 500;
+     return 'bronze';
+ }

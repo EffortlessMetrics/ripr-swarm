@@ -329,10 +329,14 @@ jobs:
           DOCS_DETECT_RESULT: ${{ needs.detect-docs-only.result }}
           DOCS_ONLY: ${{ needs.detect-docs-only.outputs.docs_only }}
           DOCS_GATE_RESULT: ${{ needs.docs-gate.result }}
+          WORKFLOW_REF: ${{ github.ref }}
         run: |
           status=pass
           message="selected implementation job succeeded"
-          if [ "$ADMISSION_RESULT" != "success" ]; then
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$WORKFLOW_REF" != "refs/heads/main" ] && [ "$WORKFLOW_REF" != "refs/heads/master" ]; then
+            status=fail
+            message="branch/tag dispatch is diagnostic-only; PR qualification requires the Draft to Ready handoff"
+          elif [ "$ADMISSION_RESULT" != "success" ]; then
             status=fail
             message="candidate admission result was $ADMISSION_RESULT"
           elif [ "$ADMISSION_STATUS" != "admitted" ] && [ "$ADMISSION_STATUS" != "not_applicable" ]; then

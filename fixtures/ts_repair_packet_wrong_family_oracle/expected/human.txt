@@ -32,6 +32,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_repair_packet_wrong_family_oracle/input --diff <cwd>/fixtures/ts_repair_packet_wrong_family_oracle/diff.patch --mode fast probe:src_limiter.ts:typescript_preview:aa93aed4
   ripr context --root <cwd>/fixtures/ts_repair_packet_wrong_family_oracle/input --diff <cwd>/fixtures/ts_repair_packet_wrong_family_oracle/diff.patch --mode fast --at probe:src_limiter.ts:typescript_preview:aa93aed4
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_limiter.ts:typescript_preview:aa93aed4 --root <cwd>/fixtures/ts_repair_packet_wrong_family_oracle/input` for the full gate's answer
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).

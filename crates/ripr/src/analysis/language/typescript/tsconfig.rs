@@ -3,6 +3,10 @@
 //! This module is SINGLE-HOP and FAIL-CLOSED:
 //!
 //! - Only `compilerOptions.baseUrl` and `compilerOptions.paths` are read.
+//! - Discovery reads ONLY `<workspace-root>/tsconfig.json` and
+//!   `<workspace-root>/jsconfig.json`; package-level tsconfigs are out of
+//!   scope, and the load-gap advice says so instead of implying the project
+//!   lacks config (#8715).
 //! - `extends` and `references` are NOT followed.
 //! - Resolution succeeds ONLY when a specifier matches a SINGLE existing
 //!   workspace file (.ts/.tsx/.js/.jsx/.mts/.cts/.mjs/.cjs).
@@ -191,8 +195,8 @@ impl TsAliasMapLoadGap {
     pub(crate) fn parts(&self) -> (String, String) {
         match self {
             Self::ConfigMissing => (
-                "no tsconfig.json or jsconfig.json exists at the workspace root".to_string(),
-                "add a tsconfig.json with compilerOptions.baseUrl and compilerOptions.paths for credit"
+                "no tsconfig.json or jsconfig.json exists at the workspace root; discovery reads only those two workspace-root configs, so package-level tsconfigs cannot anchor aliases".to_string(),
+                "add a tsconfig.json (or jsconfig.json) with compilerOptions.baseUrl and compilerOptions.paths at the workspace root for credit; package-level tsconfigs are out of scope"
                     .to_string(),
             ),
             Self::ConfigUnparseable { config, detail } => (
@@ -206,7 +210,7 @@ impl TsAliasMapLoadGap {
                     "the {config} at the workspace root uses `extends`/`references`, which single-hop alias resolution deliberately does not follow"
                 ),
                 format!(
-                    "inline the extended compilerOptions.paths into {config} for credit"
+                    "inline the extended compilerOptions.paths into the workspace-root {config} for credit; discovery reads only the workspace-root config and never follows extends chains"
                 ),
             ),
             Self::IncompleteConfig { config } => (
@@ -861,6 +865,34 @@ mod tests {
     fn returns_none_when_no_config_file_present() {
         let root = temp_dir("no-config");
         assert!(load_alias_map(&root).is_none());
+    }
+
+    #[test]
+    fn config_missing_advice_discloses_discovery_scope() {
+        // #8715: a monorepo with only package-level tsconfigs hits
+        // ConfigMissing; the advice must state that discovery reads only the
+        // workspace-root configs instead of implying the project lacks config.
+        let (why, recovery) = TsAliasMapLoadGap::ConfigMissing.parts();
+        assert!(
+            why.contains("only those two workspace-root configs"),
+            "why must name the discovery scope: {why}"
+        );
+        assert!(
+            recovery.contains("package-level tsconfigs are out of scope"),
+            "recovery must name the scope boundary: {recovery}"
+        );
+        let (why, recovery) = TsAliasMapLoadGap::ExtendsUnsupported {
+            config: "tsconfig.json",
+        }
+        .parts();
+        assert!(
+            recovery.contains("never follows extends chains"),
+            "extends recovery must name the scope boundary: {recovery}"
+        );
+        assert!(
+            why.contains("workspace root"),
+            "extends why must name the workspace-root config: {why}"
+        );
     }
 
     #[test]
