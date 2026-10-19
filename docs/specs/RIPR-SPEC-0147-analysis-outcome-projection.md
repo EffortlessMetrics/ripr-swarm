@@ -43,10 +43,11 @@ hunkless gitlink or binary section does not suppress truncation detection
 elsewhere in the same diff; a truncation observed beside an adapter
 limitation is independent evidence and survives into the typed outcome.
 
-A recognized binary/mode-only diff remains `unsupported_input` when rename
-metadata registers a changed file without text hunks. A registered path alone
-does not establish analyzable content. Pure rename-only input without content
-or mode changes retains complete `no_changed_lines`.
+A standalone edited binary rename admitted by the non-text limitation guard
+remains `unsupported_input`, even though rename metadata registered a changed
+path without text hunks. The existing deletion, submodule, artifact and
+prior-limitation guard conditions are unchanged. Pure rename-only input without
+content or mode changes retains complete `no_changed_lines`.
 
 For ordinary two-way hunks, malformed input includes invalid numeric ranges
 and a body that disagrees with the declared old/new line counts at EOF or a
