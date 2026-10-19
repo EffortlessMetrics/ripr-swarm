@@ -524,12 +524,30 @@ pub(crate) fn is_item_header(text: &str) -> bool {
     // A trailing comment (`// fn go`) must not read as a body.
     let masked = crate::analysis::extract::mask_comments_and_strings(text);
     let text = masked.trim();
-    let text = text.strip_prefix("unsafe ").unwrap_or(text);
+    let text = text
+        .strip_prefix("unsafe")
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+        .map_or(text, str::trim_start);
     let word_after = |word: &str| {
-        text.strip_prefix(word)
-            .is_some_and(|rest| rest.starts_with([' ', '<']) || rest.is_empty())
+        text.strip_prefix(word).is_some_and(|rest| {
+            rest.is_empty() || rest.starts_with('<') || rest.starts_with(char::is_whitespace)
+        })
     };
-    if text.contains("fn ") || text.contains(';') {
+    // A `;` inside brackets (`where [u8; 4]: Copy`) is an array type, not a body.
+    let mut depth = 0usize;
+    let body_semicolon = text.chars().any(|c| match c {
+        '[' | '(' => {
+            depth += 1;
+            false
+        }
+        ']' | ')' => {
+            depth = depth.saturating_sub(1);
+            false
+        }
+        ';' => depth == 0,
+        _ => false,
+    });
+    if text.contains("fn ") || body_semicolon {
         return false;
     }
     word_after("impl") && (text.ends_with('{') || text.contains(" where"))
@@ -570,6 +588,8 @@ mod tests {
             "impl Tr for K where Self: Sized { // fn go",
             "impl Tr for K where Self: Sized { // x;",
             "impl<T: Fn(u8)> Tr for K<T> where Self: Sized {",
+            "impl\tTr for K where Self: Sized {",
+            "unsafe\timpl Tr for K where [u8; 4]: Copy {",
             "unsafe impl Send for K {",
             "impl<T: Iterator<Item = u32>> Tr for K<T> {",
         ] {

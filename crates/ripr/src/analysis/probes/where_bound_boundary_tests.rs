@@ -941,6 +941,8 @@ fn impl_header_with_fn_bound_or_comment_is_static_unknown() -> Result<(), String
         "impl<T: Fn(u8)> Tr for K<T> where Self: Sized {",
         "impl Tr for K where Self: Sized { // fn go",
         "impl Tr for K where Self: Sized { // x;",
+        "impl Tr for K where [u8; 4]: Copy {",
+        "impl\tTr for K where Self: Sized {",
     ] {
         let source = format!("pub struct K;\n{header}\n    fn go(&self) -> u32 {{ 1 }}\n}}\n");
         let result = probes(
