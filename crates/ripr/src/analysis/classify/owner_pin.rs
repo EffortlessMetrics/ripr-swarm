@@ -10273,9 +10273,10 @@ fn expected_binding_calls_owner(test: &TestSummary, expected: &str, name: &str) 
 ///
 /// `plain` (#8795): every binding of `name` is a `let` of a plain value
 /// (`plain_let_values`), which holds no interior mutability and no callee can
-/// write through a shared borrow of it, so `&name` passed to a call and a
-/// non-mutating `replace`/`take` shape are reads. A static, a const or any
-/// other binding is never plain.
+/// write through a shared borrow of it, so `&name` passed to a call is a
+/// read. Method names stay mutators regardless (a test-local type may define
+/// any `replace`/`take`). A static, a const or any other binding, and any
+/// constructor call (it may be test-local), is never plain.
 fn written_by_test(masked: &str, name: &str, plain: bool) -> bool {
     whole_word_offsets(masked, name).into_iter().any(|offset| {
         let before = masked[..offset].trim_end();
@@ -10300,7 +10301,7 @@ fn written_by_test(masked: &str, name: &str, plain: bool) -> bool {
         before.ends_with("write!(")
             || before.ends_with("writeln!(")
             || (!plain && borrowed_into_path_call(before))
-            || place_is_written(&masked[offset + name.len()..], plain)
+            || place_is_written(&masked[offset + name.len()..])
             || (destructured_into(&masked[offset + name.len()..]) && !index_operand(before))
     })
 }
@@ -10414,9 +10415,13 @@ fn index_operand(before: &str) -> bool {
                     continue;
                 }
                 return character == '['
-                    && before[..at].chars().next_back().is_some_and(|prev| {
-                        prev.is_ascii_alphanumeric() || matches!(prev, '_' | ')' | ']')
-                    });
+                    && before[..at]
+                        .trim_end()
+                        .chars()
+                        .next_back()
+                        .is_some_and(|prev| {
+                            prev.is_ascii_alphanumeric() || matches!(prev, '_' | ')' | ']')
+                        });
             }
             ';' if depth == 0 => return false,
             _ => {}
@@ -10470,26 +10475,20 @@ fn is_plain_value(expression: &str) -> bool {
     if expression.len() >= 3 && expression.starts_with('\'') && expression.ends_with('\'') {
         return !expression[1..expression.len() - 1].contains('\'');
     }
+    if let Some((element, length)) =
+        group_inner(expression, '[', ']').and_then(|inner| inner.split_once(';'))
+    {
+        let length = length.trim();
+        return is_plain_value(element)
+            && !length.is_empty()
+            && length.chars().all(|c| c.is_ascii_digit() || c == '_');
+    }
     if let Some(inner) =
         group_inner(expression, '(', ')').or_else(|| group_inner(expression, '[', ']'))
     {
         return split_top_level(inner)
             .iter()
             .all(|part| part.trim().is_empty() || is_plain_value(part));
-    }
-    for suffix in [".to_string()", ".to_owned()"] {
-        if let Some(literal) = expression.strip_suffix(suffix) {
-            return is_string_literal(literal.trim());
-        }
-    }
-    if expression == "String::new()" {
-        return true;
-    }
-    if let Some(argument) = expression
-        .strip_prefix("String::from(")
-        .and_then(|rest| rest.strip_suffix(')'))
-    {
-        return is_string_literal(argument.trim());
     }
     let Some(open) = expression.find(['(', '{']) else {
         return false;
@@ -10503,12 +10502,10 @@ fn is_plain_value(expression: &str) -> bool {
     {
         return false;
     }
-    if expression.as_bytes()[open] == b'(' {
-        return group_inner(&expression[open..], '(', ')').is_some_and(|inner| {
-            split_top_level(inner)
-                .iter()
-                .all(|part| part.trim().is_empty() || is_plain_value(part))
-        });
+    // Only a struct literal: a parenthesized uppercase call may be a
+    // test-local function, which can return an interior-mutable value.
+    if expression.as_bytes()[open] != b'{' {
+        return false;
     }
     group_inner(&expression[open..], '{', '}').is_some_and(|inner| {
         split_top_level(inner).iter().all(|field| {
@@ -10562,7 +10559,7 @@ fn split_top_level(text: &str) -> Vec<&str> {
 /// Whether the place expression that continues `rest` (a chain of `.field`,
 /// `.0`, `[..]` and calls) is assigned, or ends in a mutating call. An
 /// unreadable chain fails closed.
-fn place_is_written(rest: &str, plain: bool) -> bool {
+fn place_is_written(rest: &str) -> bool {
     let mut rest = rest.trim_start();
     loop {
         if let Some(call) = rest.strip_prefix('.') {
@@ -10580,7 +10577,7 @@ fn place_is_written(rest: &str, plain: bool) -> bool {
                 return true;
             }
             if rest.starts_with('(') {
-                if is_mutating_method(&method) && !(plain && pure_with_arguments(&method, rest)) {
+                if is_mutating_method(&method) {
                     return true;
                 }
                 match skip_balanced(rest, '(', ')') {
@@ -10600,32 +10597,6 @@ fn place_is_written(rest: &str, plain: bool) -> bool {
         }
     }
     assignment_operator_at(rest)
-}
-
-/// On a plain value (#8795), `replace` with two arguments is
-/// `str::replace(from, to)` and `take` with an argument is
-/// `Iterator::take(n)`: both return a new value. The one-argument
-/// `Cell`/`Option`/`RefCell::replace` and the argument-free `take` stay
-/// mutators. `args` starts at the call's `(`.
-fn pure_with_arguments(method: &str, args: &str) -> bool {
-    let Some(inner) = group_inner_prefix(args) else {
-        return false;
-    };
-    let count = split_top_level(inner)
-        .iter()
-        .filter(|part| !part.trim().is_empty())
-        .count();
-    match method {
-        "replace" => count >= 2,
-        "take" => count >= 1,
-        _ => false,
-    }
-}
-
-/// The inside of the paren group `text` opens with.
-fn group_inner_prefix(text: &str) -> Option<&str> {
-    let after = skip_balanced(text, '(', ')')?;
-    Some(&text[1..text.len() - after.len() - 1])
 }
 
 /// Whether the name sits in a pattern that is the left side of an assignment

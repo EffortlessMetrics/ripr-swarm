@@ -8630,6 +8630,21 @@ fn an_expected_value_a_macro_or_a_static_rebinds_from_the_owner_is_not_a_pin() {
             "struct S { f: u32, g: u32 }\n\n",
             "let mut expected = 0;\n        S { f: expected, .. } = S { f: crate::weight(4), g: 0 };\n        assert_eq!(crate::weight(4), expected);",
         ),
+        // #8795 review: a test-local type may define `replace` / `take`
+        // with any arity and mutate the value with the owner's result, and
+        // a test-local `String` may hold a `Cell`.
+        (
+            "struct Counter(u32);\nimpl Counter {\n    fn replace(&mut self, value: u32, _: u32) {\n        self.0 = value;\n    }\n}\n\n",
+            "let mut expected = Counter(0);\n        expected.replace(crate::weight(4), 0);\n        assert_eq!(crate::weight(4), expected.0);",
+        ),
+        (
+            "struct Counter(u32);\nimpl Counter {\n    fn take(&mut self, value: u32) {\n        self.0 = value;\n    }\n}\n\n",
+            "let mut expected = Counter(0);\n        expected.take(crate::weight(4));\n        assert_eq!(crate::weight(4), expected.0);",
+        ),
+        (
+            "struct String(Cell<u32>);\nimpl String {\n    fn new() -> Self {\n        Self(Cell::new(0))\n    }\n}\n\n",
+            "let expected = String::new();\n        Cell::set(&expected.0, crate::weight(4));\n        assert_eq!(crate::weight(4), expected.0.get());",
+        ),
         // #8795 negative controls: a non-plain value still refuses a shared
         // borrow, the one-argument `replace` and the argument-free `take`
         // still write, and a pattern is not an annotation.
@@ -8711,6 +8726,14 @@ fn an_expected_value_a_macro_or_a_static_rebinds_from_the_owner_is_not_a_pin() {
         // #8795: the name only indexes another place.
         (
             "",
+            "let expected = 12;\n        let mut v = [0; 16];\n        v [expected] = 7;\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        (
+            "",
+            "let expected = [12; 2];\n        let _ = Some(&expected);\n        assert_eq!(crate::weight(4), expected[0]);",
+        ),
+        (
+            "",
             "let expected = 12;\n        let mut v = [0; 16];\n        v[expected] = 7;\n        assert_eq!(crate::weight(4), expected);",
         ),
         (
@@ -8775,6 +8798,7 @@ fn written_by_test_reads_operators_and_let_boundaries() {
         // #8795: the name indexes another place.
         "v[EXPECTED] = 1;",
         "v[i][EXPECTED] += 1;",
+        "v [EXPECTED] = 1;",
         "f(a)[EXPECTED] = 1;",
     ] {
         assert!(!super::written_by_test(read, "EXPECTED", false), "{read}");
@@ -8833,14 +8857,14 @@ fn written_by_test_reads_operators_and_let_boundaries() {
         "Some(&EXPECTED);",
         "Ok(&EXPECTED);",
         "helper(f(4), &EXPECTED);",
-        "EXPECTED.replace(\"a\", \"b\");",
-        "EXPECTED.take(2);",
     ] {
         assert!(!super::written_by_test(read, "EXPECTED", true), "{read}");
     }
     for write in [
         "EXPECTED.replace(f(4));",
+        "EXPECTED.replace(1, 2);",
         "EXPECTED.take();",
+        "EXPECTED.take(2);",
         "g(&mut EXPECTED);",
         "EXPECTED = 1;",
         "EXPECTED.lock();",
@@ -8854,11 +8878,8 @@ fn written_by_test_reads_operators_and_let_boundaries() {
         " = \"x\";",
         " = (1, \"a\");",
         " = [1, 2];",
-        " = String::from(\"x\");",
-        " = \"x\".to_string();",
-        " = Config { retries: 3, name: \"a\".to_owned() };",
-        " = Some(3);",
-        ": &Config = Config(1, 2);",
+        " = [12; 2];",
+        " = Config { retries: 3, name: \"a\" };",
     ] {
         assert!(super::plain_let_values(&[init]), "{init}");
     }
@@ -8872,6 +8893,14 @@ fn written_by_test_reads_operators_and_let_boundaries() {
         " = Config { retries: 1, ..Default::default() };",
         " = &mut v;",
         " = [1, f(2)];",
+        " = String::from(\"x\");",
+        " = String::new();",
+        " = \"x\".to_string();",
+        " = Some(3);",
+        " = Config(1, 2);",
+        " = [f(1); 2];",
+        " = [1; n];",
+        " = Config { name: String::new() };",
         ";",
     ] {
         assert!(!super::plain_let_values(&[init]), "{init}");
