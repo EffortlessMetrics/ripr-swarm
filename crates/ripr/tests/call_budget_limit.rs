@@ -214,3 +214,34 @@ fn an_independently_established_positive_keeps_its_class() -> Result<(), String>
     assert_eq!(limit(&noisy), None);
     Ok(())
 }
+
+#[test]
+fn a_saturated_test_past_the_related_row_cap_still_withholds_the_gap() -> Result<(), String> {
+    // Eight plain reaching tests fill the render window; the ninth, sorted
+    // last by name, carries the only saturated line and is not a retained row.
+    let plain = |count: usize| {
+        (0..count)
+            .map(|i| format!("    #[test]\n    fn plain_{i}() {{\n        row(100);\n    }}\n"))
+            .collect::<String>()
+    };
+    let wide = format!(
+        "    #[test]\n    fn zzz_wide() {{\n        {}\n    }}\n",
+        noisy_line(299)
+    );
+    // Control: nine plain reaching tests keep the gap.
+    let control = guard_finding(&source("row(100);", &plain(8)))?;
+    assert_eq!(control.class, ExposureClass::ReachableUnrevealed);
+    assert_eq!(limit(&control), None);
+    let finding = guard_finding(&source("row(100);", &format!("{}{wide}", plain(7))))?;
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .all(|related| related.name != "zzz_wide"),
+        "premise: the saturated test is past the cap: {:?}",
+        finding.related_tests
+    );
+    assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    assert_eq!(limit(&finding), Some("rust_call_fact_budget"));
+    Ok(())
+}
