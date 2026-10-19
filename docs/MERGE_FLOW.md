@@ -47,20 +47,22 @@ local `git merge-tree` runs of open PR heads against `main`:
 - If a rebase drops or rewrites a hunk, keep `main`'s version of any file
   another PR has already fixed; do not carry an old copy of it.
 
-## Required check only on Draft to Ready (#4986)
+## Required check only on the merge-ready request (#4986)
 
-`Ripr Rust Small Result` runs only when a PR moves from Draft to Ready.
+`Ripr Rust Small Result` runs only when the `merge-ready` label is applied to a
+PR. Ready is review state and requests nothing; any other label posts only
+`Merge-ready Nonrequest`.
 
 - Open PRs as Draft and apply the shared
   [Draft to Ready handoff](PR_AUTOMATION.md#draft-to-ready-handoff) before
-  requesting required qualification.
-- If the current head lacks its required check after a direct Ready opening or
-  post-Ready push, return through that same handoff before another Ready
-  transition. Preserve a queued or running Ready-triggered `routed-rust.yml`
-  run on the unchanged head; re-toggling cancels it.
+  requesting required qualification with `merge-ready`.
+- If the current head lacks its required check after a push following the
+  request, refresh affected proof and review, then remove and re-apply
+  `merge-ready`. Preserve a queued or running `routed-rust.yml` run on the
+  unchanged head; re-applying the label cancels it.
 - Re-check auto-merge against the current exact-head prerequisites after a
   transition.
-- Labels such as `full-ci` take effect at the next Ready transition.
+- Labels such as `full-ci` must be present when `merge-ready` is applied; add them first.
 - Do not `workflow_dispatch` `routed-rust.yml` on a PR branch (#5394).
 
 ## Combined-tree check

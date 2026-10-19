@@ -2838,7 +2838,8 @@ enum DiffReportFormat {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct DiffOptions {
     root: PathBuf,
-    /// `--root` was typed, so the root is used as given (#8872).
+    /// `true` when `--root` was typed, so implicit workspace-root resolution
+    /// must not rewrite `.` (#8872). Same opt-out as `ripr check`.
     root_explicit: bool,
     /// `None` when `--base` was omitted; resolved by the loader's base
     /// authority at run time, never defaulted to a literal branch here.
