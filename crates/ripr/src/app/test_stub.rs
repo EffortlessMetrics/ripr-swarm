@@ -997,20 +997,26 @@ pub(crate) fn integration_target_name(
             .and_then(toml::Value::as_str)
             .map(ToOwned::to_owned)
     };
-    let entry_path = |entry: &toml::Table| -> Option<String> {
-        match entry.get("path").and_then(toml::Value::as_str) {
-            Some(path) => normalize_components(Path::new(path)),
-            None => None,
-        }
+    // Cargo prefers tests/<n>.rs over tests/<n>/main.rs when both exist.
+    let sibling_file_exists = |name: &str| {
+        root.join(package_dir)
+            .join("tests")
+            .join(format!("{name}.rs"))
+            .is_file()
     };
-    // Without `path`, cargo looks for tests/<name>.rs, then tests/<name>/main.rs.
+    // A present `path` is the only candidate (an unusable one matches
+    // nothing); the name-based default applies only when `path` is absent.
     let entry_matches = |entry: &toml::Table| -> bool {
-        if let Some(path) = entry_path(entry) {
-            return path == relative;
+        match entry.get("path") {
+            Some(path) => path
+                .as_str()
+                .and_then(|path| normalize_components(Path::new(path)))
+                .is_some_and(|path| path == relative),
+            None => entry_name(entry).is_some_and(|name| {
+                relative == format!("tests/{name}.rs")
+                    || (relative == format!("tests/{name}/main.rs") && !sibling_file_exists(&name))
+            }),
         }
-        entry_name(entry).is_some_and(|name| {
-            relative == format!("tests/{name}.rs") || relative == format!("tests/{name}/main.rs")
-        })
     };
     let runnable = |entry: &toml::Table| {
         // `harness = false` targets are not run by a plain test command.
@@ -1034,7 +1040,7 @@ pub(crate) fn integration_target_name(
     // 2015 any explicit `[[test]]` turns legacy auto-discovery off unless
     // `autotests = true` is written. Uncertain edition fails closed.
     let autotests = match package.get("autotests") {
-        None => package_edition(root, manifest, package)? >= 2018 || explicit.is_empty(),
+        None => explicit.is_empty() || package_edition(root, manifest, package)? >= 2018,
         Some(value) => value.as_bool()?,
     };
     if !autotests {
@@ -1046,7 +1052,7 @@ pub(crate) fn integration_target_name(
         .collect::<Vec<_>>()[..]
     {
         [name] => name.strip_suffix(".rs")?,
-        [dir, "main.rs"] => dir,
+        [dir, "main.rs"] if !sibling_file_exists(dir) => dir,
         _ => return None,
     };
     // An explicit entry with the inferred name but another path replaces the
@@ -1071,7 +1077,8 @@ fn package_edition(root: &Path, manifest: &Path, package: &toml::Table) -> Optio
         Some(value @ toml::Value::String(_)) => parse(value),
         Some(toml::Value::Table(table)) if table.get("workspace")?.as_bool()? => {
             let start = manifest.parent().unwrap_or(Path::new(""));
-            start.ancestors().skip(1).find_map(|dir| {
+            // The manifest's own `[workspace.package]` first, then ancestors.
+            start.ancestors().find_map(|dir| {
                 let text = std::fs::read_to_string(root.join(dir).join("Cargo.toml")).ok()?;
                 let parsed = text.parse::<toml::Table>().ok()?;
                 let workspace = parsed.get("workspace")?.as_table()?;
@@ -1502,6 +1509,40 @@ mod tests {
             // unresolvable inheritance fails closed
             std::fs::remove_file(root.join("Cargo.toml")).map_err(|error| error.to_string())?;
             assert_eq!(got(&inherit, "pkg/tests/discount.rs")?, None);
+            // an unusable `path` matches nothing: never fall back to the name
+            for bad in ["../shared/d.rs", "/abs/d.rs"] {
+                let entry = format!("[[test]]\nname = \"discount\"\npath = \"{bad}\"\n");
+                assert_eq!(got(&entry, "pkg/tests/discount.rs")?, None);
+            }
+            // an unparseable edition only matters when explicit entries exist
+            let future = "edition = \"future\"\n";
+            assert_eq!(got(future, "pkg/tests/discount.rs")?, some("discount"));
+            assert_eq!(
+                got(&format!("{future}{other}"), "pkg/tests/discount.rs")?,
+                None
+            );
+            // autotests = false decides without needing the edition
+            let off_inherit = format!("edition.workspace = true\nautotests = false\n{other}");
+            assert_eq!(got(&off_inherit, "pkg/tests/discount.rs")?, None);
+            // a root package inheriting from its own manifest's [workspace.package]
+            std::fs::write(
+                root.join("Cargo.toml"),
+                format!(
+                    "[package]\nname = \"rootpkg\"\nedition.workspace = true\n{other}[workspace]\n[workspace.package]\nedition = \"2021\"\n"
+                ),
+            )
+            .map_err(|error| error.to_string())?;
+            let root_stub = stub("tests/discount.rs");
+            assert_eq!(
+                integration_target_name(&root, Path::new("Cargo.toml"), &root_stub),
+                some("discount")
+            );
+            // tests/<n>.rs wins over tests/<n>/main.rs when both exist
+            std::fs::create_dir_all(root.join("pkg/tests/grp"))
+                .map_err(|error| error.to_string())?;
+            std::fs::write(root.join("pkg/tests/grp.rs"), "").map_err(|error| error.to_string())?;
+            assert_eq!(got("", "pkg/tests/grp/main.rs")?, None);
+            assert_eq!(got("", "pkg/tests/grp.rs")?, some("grp"));
             Ok::<(), String>(())
         })();
         let _ = std::fs::remove_dir_all(&root);
