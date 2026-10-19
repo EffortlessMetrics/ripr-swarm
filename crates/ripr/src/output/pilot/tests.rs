@@ -1201,6 +1201,21 @@ fn pilot_human_surfaces_strip_verbatim_config_prefix_natively_on_windows() {
         "markdown must render the plain config spelling:\n{md}"
     );
     assert!(!md.contains("/?/"), "{md}");
+
+    // The timed-out pilot uses its own renderers; they carry the same rule
+    // so a partial run does not resurrect the raw prefix.
+    let timeout_terminal = render_pilot_timeout_terminal(context);
+    assert!(
+        timeout_terminal.contains(&format!("  loaded: {drive}/tmp/demo/ripr.toml")),
+        "timeout terminal must render the plain config spelling:\n{timeout_terminal}"
+    );
+    assert!(!timeout_terminal.contains("/?/"), "{timeout_terminal}");
+    let timeout_md = render_pilot_timeout_summary_md(context);
+    assert!(
+        timeout_md.contains(&format!("- Config: loaded `{drive}/tmp/demo/ripr.toml`")),
+        "timeout markdown must render the plain config spelling:\n{timeout_md}"
+    );
+    assert!(!timeout_md.contains("/?/"), "{timeout_md}");
 }
 
 /// The Unix-native counterpart of the #8696 control: a verbatim-looking
@@ -1224,6 +1239,16 @@ fn pilot_human_surfaces_keep_verbatim_looking_config_spelling_natively_on_unix()
     assert!(
         md.contains(&format!("- Config: loaded `{verbatim}`")),
         "unix keeps the verbatim-looking filename spelling:\n{md}"
+    );
+    let timeout_terminal = render_pilot_timeout_terminal(context);
+    assert!(
+        timeout_terminal.contains(&format!("  loaded: {verbatim}")),
+        "unix keeps the verbatim-looking filename spelling:\n{timeout_terminal}"
+    );
+    let timeout_md = render_pilot_timeout_summary_md(context);
+    assert!(
+        timeout_md.contains(&format!("- Config: loaded `{verbatim}`")),
+        "unix keeps the verbatim-looking filename spelling:\n{timeout_md}"
     );
 }
 
