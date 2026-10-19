@@ -762,11 +762,17 @@ fn only_field_reads_between(
             .iter()
             .any(|read| method.starts_with(read)),
             None => {
-                // `binding.path = ..` or `binding.path += ..` rewrites it.
+                // Allowlist what may follow a bare `binding.path`: a
+                // statement or argument end, or a comparison. Indexing,
+                // assignment and compound assignment may rewrite it, and a
+                // `&mut binding.path` borrow can be mutated through an alias.
                 let next = rest.trim_start();
-                !((next.starts_with('=') && !next.starts_with("=="))
-                    || next.starts_with("+=")
-                    || next.starts_with("-="))
+                !window[..at].trim_end().ends_with("&mut")
+                    && [";", ",", ")", "}", "==", "!=", "<", ">"]
+                        .iter()
+                        .any(|ok| next.starts_with(ok))
+                    && !next.starts_with("<=")
+                    && !next.starts_with(">=")
             }
         }
     })
@@ -5216,6 +5222,15 @@ mod tests {
             "o.log.clear();",
             "o.log += 1;",
             "touch(&mut o);",
+        ] {
+            let lines = format!("{setup}\n    {rewrite}");
+            assert!(!confirms(Vec::new(), &lines, read), "{rewrite}");
+        }
+        for rewrite in [
+            "let v = &mut o.log; v.clear(); v.push(4);",
+            "std::mem::take(&mut o.log);",
+            "o.log[0] = 4;",
+            "o.log[0] += 1;",
         ] {
             let lines = format!("{setup}\n    {rewrite}");
             assert!(!confirms(Vec::new(), &lines, read), "{rewrite}");
