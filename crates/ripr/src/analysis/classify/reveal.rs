@@ -3897,7 +3897,6 @@ pub(in crate::analysis) struct FileUseStatements {
             std::path::PathBuf,
             std::sync::Arc<super::macro_item_names::MacroSites>,
         >,
-
     >,
 }
 
