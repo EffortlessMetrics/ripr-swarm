@@ -433,15 +433,21 @@ pub(crate) fn inline_target_is_uncommitted(root: &Path, path: &str) -> bool {
     let Ok(listing) = git_text(&root, &["ls-tree", &head, "--", path]) else {
         return false;
     };
-    let Some(committed) = listing
-        .split_ascii_whitespace()
-        .nth(2)
-        .map(str::to_string)
-        .filter(|_| !listing.is_empty())
-    else {
+    if listing.is_empty() {
         // HEAD exists but does not carry the file: the attempt refuses it too.
         return true;
+    }
+    // Only a regular-file blob is comparable with `hash-object`; a symlink,
+    // directory or submodule entry defers to the attempt.
+    let mut fields = listing.split_ascii_whitespace();
+    let (Some(mode), Some("blob"), Some(committed)) = (fields.next(), fields.next(), fields.next())
+    else {
+        return false;
     };
+    if mode == "120000" {
+        return false;
+    }
+    let committed = committed.to_string();
     let worktree = match fs::symlink_metadata(root.join(path)) {
         // Deleted from the worktree: differs from HEAD, and the attempt
         // refuses it as well.
@@ -2633,6 +2639,15 @@ mod tests {
         // A path HEAD does not carry is uncommitted; a repository with no
         // HEAD fails open to the attempt's own refusal.
         assert!(inline_target_is_uncommitted(&fixture.root, "src/new.rs"));
+        // A committed symlink is not a comparable regular-file blob: defer.
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("pricing.rs", fixture.root.join("src/link.rs"))
+                .map_err(|err| format!("symlink: {err}"))?;
+            git_ok(&fixture.root, &["add", "src/link.rs"])?;
+            git_ok(&fixture.root, &["commit", "-qm", "symlink"])?;
+            assert!(!inline_target_is_uncommitted(&fixture.root, "src/link.rs"));
+        }
         // A subdirectory of the top-level is not an attempt root: defer to the
         // attempt (false) rather than resolving HEAD paths from the wrong base.
         fs::create_dir_all(fixture.root.join("sub"))

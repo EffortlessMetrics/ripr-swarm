@@ -23,6 +23,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/match_arm_proximity_wrapper_confirms/input --diff <cwd>/fixtures/match_arm_proximity_wrapper_confirms/diff.patch --mode fast probe:src_lib.rs:match_arm:9e71545f
   ripr context --root <cwd>/fixtures/match_arm_proximity_wrapper_confirms/input --diff <cwd>/fixtures/match_arm_proximity_wrapper_confirms/diff.patch --mode fast --at probe:src_lib.rs:match_arm:9e71545f
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:match_arm:9e71545f --root <cwd>/fixtures/match_arm_proximity_wrapper_confirms/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

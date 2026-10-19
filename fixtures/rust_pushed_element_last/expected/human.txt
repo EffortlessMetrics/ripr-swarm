@@ -23,6 +23,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_pushed_element_last/input --diff <cwd>/fixtures/rust_pushed_element_last/diff.patch --mode fast probe:src_lib.rs:call_deletion:c581181e
   ripr context --root <cwd>/fixtures/rust_pushed_element_last/input --diff <cwd>/fixtures/rust_pushed_element_last/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:c581181e
+  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:call_deletion:c581181e --root <cwd>/fixtures/rust_pushed_element_last/input` for the full gate's answer
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

@@ -417,6 +417,37 @@ mod tests {
         );
     }
 
+    /// The memo covers exactly `MEMO_MIN_BYTES..=MEMO_MAX_BYTES`: a text one
+    /// byte outside either end is scanned every time without touching it,
+    /// and a text at either end is remembered.
+    #[test]
+    fn memo_bounds_are_inclusive_and_outside_texts_bypass_it() {
+        let misses = || MASK_MEMO_MISSES.with(std::cell::Cell::get);
+        let sized = |len: usize| "y".repeat(len);
+        for len in [MEMO_MIN_BYTES - 1, MEMO_MAX_BYTES + 1] {
+            let text = sized(len);
+            let before = misses();
+            for _ in 0..2 {
+                assert_eq!(
+                    mask_comments_and_strings(&text),
+                    mask_with_char_literals(&text).0
+                );
+            }
+            assert_eq!(misses(), before, "{len} bytes bypasses the memo");
+        }
+        for len in [MEMO_MIN_BYTES, MEMO_MAX_BYTES] {
+            let text = sized(len);
+            let before = misses();
+            for _ in 0..2 {
+                assert_eq!(
+                    mask_comments_and_strings(&text),
+                    mask_with_char_literals(&text).0
+                );
+            }
+            assert_eq!(misses() - before, 1, "{len} bytes is remembered");
+        }
+    }
+
     #[test]
     fn block_comments_and_strings_are_masked_with_lines_preserved() {
         let text = "fn check() {\n    /* other_call(9); */\n    let note = \"value 7\";\n    live_call(3); // trailing 5\n}";

@@ -29,6 +29,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/guarded_result_match_fail_closed/input --diff <cwd>/fixtures/guarded_result_match_fail_closed/diff.patch --mode fast probe:src_lib.rs:error_path:09b3885a
   ripr context --root <cwd>/fixtures/guarded_result_match_fail_closed/input --diff <cwd>/fixtures/guarded_result_match_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:error_path:09b3885a
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:error_path:09b3885a --root <cwd>/fixtures/guarded_result_match_fail_closed/input` for the full gate's answer
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

@@ -468,3 +468,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_limitation_custom_matcher (20)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless typescript_limitation_custom_matcher --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

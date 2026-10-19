@@ -7011,3 +7011,188 @@ fn empty_sink_tokens_keep_ordinary_module_imports_conservative() -> Result<(), S
     }
     Ok(())
 }
+
+/// Classify the `if not dims:` guard of a generator owner against `test_src`.
+fn classify_generator_guard(test_src: &str) -> Result<crate::domain::Finding, String> {
+    let file = Path::new("src/gen.py");
+    let owners = extract_owners(
+        file,
+        "def interleave_evenly(dims):\n    if not dims:\n        return\n    yield dims[0]\n",
+    );
+    let tests = extract_tests(Path::new("tests/test_gen.py"), test_src);
+    assert_eq!(tests.len(), 1, "the fixture must parse exactly one test");
+    classify_change_with_old(
+        file,
+        2,
+        "    if not dims:",
+        Some("    if dims:"),
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "the generator guard change must yield a finding".to_string())
+}
+
+#[test]
+fn materializer_around_module_owner_call_is_transparent_to_sink_alignment() -> Result<(), String> {
+    let finding = classify_generator_guard(
+        "import src.gen as mi\n\n\ndef test_empty():\n    assert list(mi.interleave_evenly([])) == []\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert_eq!(finding.oracle_alignment.as_deref(), Some("direct"));
+    Ok(())
+}
+
+#[test]
+fn materializer_around_owner_call_local_is_transparent_to_sink_alignment() -> Result<(), String> {
+    let finding = classify_generator_guard(
+        "from src.gen import interleave_evenly\n\n\ndef test_empty():\n    actual = list(interleave_evenly([]))\n    assert actual == []\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert_eq!(finding.oracle_alignment.as_deref(), Some("direct"));
+    Ok(())
+}
+
+#[test]
+fn opaque_wrapper_around_owner_call_stays_unaligned() -> Result<(), String> {
+    for test_src in [
+        "import src.gen as mi\n\n\ndef test_empty():\n    assert always_true(list(mi.interleave_evenly([]))) == True\n",
+        "import src.gen as mi\n\n\ndef test_empty():\n    assert list(always_true(mi.interleave_evenly([]))) == []\n",
+        "from src.gen import interleave_evenly\n\n\ndef test_empty():\n    actual = always_true(interleave_evenly([]))\n    assert actual == True\n",
+        "from src.gen import interleave_evenly\n\n\ndef test_empty():\n    actual = list(interleave_evenly([]), 1)\n    assert actual == []\n",
+        "import src.gen as mi\n\n\ndef test_empty():\n    assert list(mi.interleave_evenly([]), 1) == []\n",
+        "import src.gen as mi\n\n\ndef test_empty():\n    assert sorted(mi.interleave_evenly([]), key=str) == []\n",
+    ] {
+        let finding = classify_generator_guard(test_src)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{test_src}");
+        assert_eq!(
+            finding.oracle_alignment.as_deref(),
+            Some("orthogonal"),
+            "{test_src}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn every_materializing_wrapper_is_transparent_to_sink_alignment() -> Result<(), String> {
+    for wrapper in ["list", "tuple", "set", "frozenset", "sorted"] {
+        for test_src in [
+            format!(
+                "import src.gen as mi\n\n\ndef test_empty():\n    assert {wrapper}(mi.interleave_evenly([])) == []\n"
+            ),
+            format!(
+                "from src.gen import interleave_evenly\n\n\ndef test_empty():\n    actual = {wrapper}(interleave_evenly([]))\n    assert actual == []\n"
+            ),
+        ] {
+            let finding = classify_generator_guard(&test_src)?;
+            assert_eq!(finding.class, ExposureClass::Exposed, "{test_src}");
+            assert_eq!(
+                finding.oracle_alignment.as_deref(),
+                Some("direct"),
+                "{test_src}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Classifies a changed `x > 5` predicate of `price(x, k)` against one pytest
+/// test whose body is `body`, importing `price` from its package.
+fn classify_price_boundary_with_test_body(body: &str) -> Result<crate::domain::Finding, String> {
+    let owner_file = "src/pkg/mod.py";
+    let owners = extract_owners(
+        Path::new(owner_file),
+        "def price(x, k):\n    if x > 5:\n        return 1\n    return 0\n",
+    );
+    let tests = extract_tests(
+        Path::new("tests/test_mod.py"),
+        &format!("from pkg.mod import price\n\n\ndef test_price():\n{body}\n"),
+    );
+    assert_eq!(tests.len(), 1, "fixture must parse exactly one pytest test");
+    classify_change(Path::new(owner_file), 2, "    if x > 5:", &owners, &tests)
+        .ok_or_else(|| "changed predicate should classify".to_string())
+}
+
+#[test]
+fn boundary_call_row_keeps_an_ordinary_assert_line_whole() -> Result<(), String> {
+    let line = "    assert price(5, 2) == 0";
+    let finding = classify_price_boundary_with_test_body(line)?;
+    assert!(
+        finding
+            .activation
+            .observed_values
+            .iter()
+            .any(|fact| fact.text == line.trim()),
+        "an ordinary line is shown whole: {:?}",
+        finding.activation.observed_values
+    );
+    Ok(())
+}
+
+#[test]
+fn boundary_call_rows_of_one_long_assert_chain_stay_linear() -> Result<(), String> {
+    // A single `assert price(0,2)==1 and price(1,2)==1 and ...` line holds one
+    // owner call per term. Each call is a boundary row and each row's text is
+    // cloned into the value facts of its bindings, so keeping the whole physical
+    // line made the evidence O(calls x line length): ~1 GB at 4000 terms. The
+    // structural bound is per fact, so the total scales with the term count.
+    const TERMS: usize = 1500;
+    let chain = (0..TERMS)
+        .map(|index| format!("price({index},2)==1"))
+        .collect::<Vec<_>>()
+        .join(" and ");
+    let finding = classify_price_boundary_with_test_body(&format!("    assert {chain}"))?;
+    assert!(
+        finding.activation.observed_values.len() >= TERMS,
+        "fixture must bind a row per term, got {}",
+        finding.activation.observed_values.len()
+    );
+    let longest = finding
+        .activation
+        .observed_values
+        .iter()
+        .map(|fact| fact.text.len())
+        .max()
+        .unwrap_or(0);
+    assert!(
+        longest <= 400, // 246-byte excerpt plus the bounded provenance suffix
+        "a fact's text must not carry the whole {}-byte line, longest was {longest}",
+        chain.len()
+    );
+    // The window still names the call it is evidence for.
+    assert!(
+        finding
+            .activation
+            .observed_values
+            .iter()
+            .any(|fact| fact.text.contains("price(700,2)==1")),
+        "the window keeps the call it evidences"
+    );
+    Ok(())
+}
+
+#[test]
+fn boundary_call_row_window_keeps_a_call_that_fits_whole() -> Result<(), String> {
+    // A 181-240 byte call on a cut line must keep its closing parenthesis, or
+    // the value facts would name bindings the excerpt does not show.
+    let argument = "x".repeat(200);
+    let lead = "price(0,2)==1 and ".repeat(10);
+    let line = format!("    assert {lead}price(5,'{argument}')==1");
+    assert!(line.len() > 240, "fixture line must be cut: {}", line.len());
+    let finding = classify_price_boundary_with_test_body(&line)?;
+    let call = format!("price(5,'{argument}')");
+    assert!(
+        (181..=240).contains(&call.len()),
+        "fixture call length {}",
+        call.len()
+    );
+    assert!(
+        finding
+            .activation
+            .observed_values
+            .iter()
+            .any(|fact| fact.text.contains(&call)),
+        "the excerpt keeps the whole call"
+    );
+    Ok(())
+}

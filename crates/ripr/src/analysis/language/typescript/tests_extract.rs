@@ -61,14 +61,35 @@ fn statement_call<'s, 'a>(stmt: &'s Statement<'a>) -> Option<&'s oxc_ast::ast::C
     }
 }
 
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "unit-test extraction surface; the analysis path uses extract_tests_and_conditional_credit_gap for one parse per file"
+    )
+)]
 pub(crate) fn extract_tests(file: &Path, source: &str) -> Vec<TypeScriptTest> {
+    extract_tests_and_conditional_credit_gap(file, source).0
+}
+
+/// Extraction plus the conditional-assertion-credit gap in ONE parse
+/// (review on #8714): the deep-analysis path needs both, and re-parsing each
+/// recognized test file doubles the parse cost of the run. The gap is
+/// `None` whenever `detect_conditional_assertion_credit` would stay silent:
+/// parse errors (the parse-error disclosure owns that case) and files where
+/// no extracted assertion was credited. Other callers keep the cheap
+/// `extract_tests` wrapper.
+pub(crate) fn extract_tests_and_conditional_credit_gap(
+    file: &Path,
+    source: &str,
+) -> (Vec<TypeScriptTest>, Option<TypeScriptConditionalCreditGap>) {
     // Same guard as owner extraction (#4101): a file under the nesting
-    // budget can still overflow the caller stack, so the second parse must
+    // budget can still overflow the caller stack, so the parse must
     // not run on the main thread.
-    let Ok(tests) = parse_on_worker(file, source, |file, source, allocator| {
+    let Ok(out) = parse_on_worker(file, source, |file, source, allocator| {
         let ret = Parser::new(allocator, source, source_type_for(file)).parse();
         if !ret.errors.is_empty() {
-            return Vec::new();
+            return (Vec::new(), None);
         }
         let imports = extract_imports_for_test_file(&ret.program.body);
         let mocks = extract_mocks_from_statements(&ret.program.body, &imports);
@@ -120,11 +141,25 @@ pub(crate) fn extract_tests(file: &Path, source: &str) -> Vec<TypeScriptTest> {
                 test.mock_factories_in_file = factories.clone();
             }
         }
-        tests
+        // Same silence conditions as `detect_conditional_assertion_credit`:
+        // no credited assertion means the walker cannot disclose anything.
+        let conditional_credit_gap = if tests.iter().any(|test| !test.assertions.is_empty()) {
+            let source_text = SourceText::new(source);
+            let mut sample = None;
+            find_conditional_assertion_credit(&ret.program.body, &source_text, source, &mut sample);
+            sample.map(|(sample_line, condition)| TypeScriptConditionalCreditGap {
+                file: file.to_path_buf(),
+                sample_line,
+                condition,
+            })
+        } else {
+            None
+        };
+        (tests, conditional_credit_gap)
     }) else {
-        return Vec::new();
+        return (Vec::new(), None);
     };
-    tests
+    out
 }
 
 /// Walk a list of statements and collect every syntactic owner-module mock
@@ -3218,5 +3253,455 @@ pub(crate) fn snippet_for_span(source: &str, start: usize, end: usize) -> String
         format!("{}...", collapsed.chars().take(77).collect::<String>())
     } else {
         collapsed
+    }
+}
+/// Detect a conditional or loop branch that holds an extracted assertion
+/// under a condition static analysis cannot evaluate (#8714), e.g.
+/// `if (featureFlag) { expect(cart()).toBe(5); }`. Constant-literal
+/// conditions are decidable: `if (true)` always runs (benign), and a
+/// constant-falsy branch never runs (its assertions are withheld at
+/// collection, so nothing credited sits inside it). Only an honestly
+/// unevaluated condition with a collected assertion inside produces a gap.
+/// Classification-neutral, additive disclosure only — the branch recursion is
+/// deliberate; the gap carries the caveat so a credited oracle is known to
+/// possibly never execute.
+///
+/// The deep-analysis path gets this gap from
+/// `extract_tests_and_conditional_credit_gap` (one parse per file); this
+/// standalone entry point stays as the tested contract and shares the same
+/// walker and silence conditions.
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "tested standalone contract; production consumes the gap from extract_tests_and_conditional_credit_gap"
+    )
+)]
+pub(crate) fn detect_conditional_assertion_credit(
+    file: &Path,
+    source: &str,
+    extracted: &[TypeScriptTest],
+) -> Option<TypeScriptConditionalCreditGap> {
+    let assertion_lines = extracted
+        .iter()
+        .flat_map(|test| test.assertions.iter().map(|assertion| assertion.line))
+        .collect::<Vec<_>>();
+    if assertion_lines.is_empty() {
+        return None;
+    }
+    let Ok(gap) = parse_on_worker(file, source, move |file, source, allocator| {
+        let ret = Parser::new(allocator, source, source_type_for(file)).parse();
+        if !ret.errors.is_empty() {
+            // Parse-error disclosure owns this case; do not double-report.
+            return None;
+        }
+        let source = SourceText::new(source);
+        let mut sample = None;
+        find_conditional_assertion_credit(&ret.program.body, &source, &source, &mut sample);
+        sample.map(|(sample_line, condition)| TypeScriptConditionalCreditGap {
+            file: file.to_path_buf(),
+            sample_line,
+            condition,
+        })
+    }) else {
+        return None;
+    };
+    gap
+}
+
+/// Whether the branch body actually collects an assertion. Probed with the
+/// real collector (`statements_collect_assertion_probe`) instead of a
+/// first/last-line range (#8714 review): a line-range check credits
+/// `if (flag) {} expect(...)` when the empty branch and the assertion share
+/// one line, while the probe reads the branch body's real content.
+fn branch_statements_hold_assertion(statements: &[Statement<'_>], source: &SourceText<'_>) -> bool {
+    statements_collect_assertion_probe(statements, source)
+}
+
+/// Recursive statement walk mirroring the collection walker: blocks,
+/// `if`/`else`, loops, labels, `switch`, `try`/`catch`/`finally` and `with`.
+/// Records the first branch (in source order) whose condition is not a
+/// constant literal and whose body the collector would credit an assertion
+/// from (`branch_statements_hold_assertion`, a structural probe — not a
+/// check against the extracted assertion lines; constant-condition branch
+/// selection mirrors the collector's withholding, review on #8714).
+fn find_conditional_assertion_credit(
+    statements: &[Statement<'_>],
+    source: &SourceText<'_>,
+    raw: &str,
+    sample: &mut Option<(usize, String)>,
+) {
+    if sample.is_some() {
+        return;
+    }
+    for stmt in statements {
+        match stmt {
+            Statement::BlockStatement(block) => {
+                find_conditional_assertion_credit(&block.body, source, raw, sample)
+            }
+            Statement::IfStatement(if_stmt) => {
+                match constant_condition_value(&if_stmt.test) {
+                    // A constant-falsy condition never runs its consequent and
+                    // the collector withholds it, so only the alternate can
+                    // hold a live nested condition (review on #8714).
+                    Some(false) => {
+                        if let Some(alternate) = &if_stmt.alternate {
+                            find_conditional_assertion_credit(
+                                std::slice::from_ref(alternate),
+                                source,
+                                raw,
+                                sample,
+                            );
+                        }
+                    }
+                    // A constant-truthy condition runs its consequent; the
+                    // alternate is the dead branch.
+                    Some(true) => find_conditional_assertion_credit(
+                        std::slice::from_ref(&if_stmt.consequent),
+                        source,
+                        raw,
+                        sample,
+                    ),
+                    None => {
+                        let consequent_holds = branch_statements_hold_assertion(
+                            std::slice::from_ref(&if_stmt.consequent),
+                            source,
+                        );
+                        let alternate_holds = if_stmt.alternate.as_ref().is_some_and(|alternate| {
+                            branch_statements_hold_assertion(
+                                std::slice::from_ref(alternate),
+                                source,
+                            )
+                        });
+                        if consequent_holds || alternate_holds {
+                            let condition = snippet_for_span(
+                                raw,
+                                if_stmt.test.span().start as usize,
+                                if_stmt.test.span().end as usize,
+                            );
+                            *sample = Some((
+                                source.line_for_offset(if_stmt.span().start as usize),
+                                condition,
+                            ));
+                            return;
+                        }
+                        find_conditional_assertion_credit(
+                            std::slice::from_ref(&if_stmt.consequent),
+                            source,
+                            raw,
+                            sample,
+                        );
+                        if let Some(alternate) = &if_stmt.alternate {
+                            find_conditional_assertion_credit(
+                                std::slice::from_ref(alternate),
+                                source,
+                                raw,
+                                sample,
+                            );
+                        }
+                    }
+                }
+            }
+            Statement::WhileStatement(while_stmt) => {
+                // `while (false)` never runs: the collector withholds the
+                // body, so the walker must not discover nested conditions
+                // inside it either (review on #8714).
+                // `while (false)` never runs: the collector withholds the
+                // body, so the walker must not discover nested conditions
+                // inside it either (review on #8714).
+                if constant_condition_value(&while_stmt.test) == Some(false) {
+                    continue;
+                }
+                if constant_condition_value(&while_stmt.test).is_none()
+                    && branch_statements_hold_assertion(
+                        std::slice::from_ref(&while_stmt.body),
+                        source,
+                    )
+                {
+                    let condition = snippet_for_span(
+                        raw,
+                        while_stmt.test.span().start as usize,
+                        while_stmt.test.span().end as usize,
+                    );
+                    *sample = Some((
+                        source.line_for_offset(while_stmt.span().start as usize),
+                        condition,
+                    ));
+                    return;
+                }
+                find_conditional_assertion_credit(
+                    std::slice::from_ref(&while_stmt.body),
+                    source,
+                    raw,
+                    sample,
+                );
+            }
+            // A do-while body runs at least once whatever the test evaluates
+            // to, so it never earns this disclosure.
+            Statement::DoWhileStatement(do_while) => find_conditional_assertion_credit(
+                std::slice::from_ref(&do_while.body),
+                source,
+                raw,
+                sample,
+            ),
+            Statement::ForStatement(for_stmt) => {
+                // `for (;false;)` never runs: the collector withholds the
+                // body, so the walker must not discover nested conditions
+                // inside it either (review on #8714).
+                if for_stmt.test.as_ref().and_then(constant_condition_value) == Some(false) {
+                    continue;
+                }
+                // `for (;;)` has no test: the body always runs (benign). Only
+                // a present, non-constant test is unevaluated.
+                let unevaluated = for_stmt
+                    .test
+                    .as_ref()
+                    .is_some_and(|test| constant_condition_value(test).is_none());
+                if unevaluated
+                    && branch_statements_hold_assertion(
+                        std::slice::from_ref(&for_stmt.body),
+                        source,
+                    )
+                {
+                    let condition = for_stmt
+                        .test
+                        .as_ref()
+                        .map(|test| {
+                            snippet_for_span(
+                                raw,
+                                test.span().start as usize,
+                                test.span().end as usize,
+                            )
+                        })
+                        .unwrap_or_default();
+                    *sample = Some((
+                        source.line_for_offset(for_stmt.span().start as usize),
+                        condition,
+                    ));
+                    return;
+                }
+                find_conditional_assertion_credit(
+                    std::slice::from_ref(&for_stmt.body),
+                    source,
+                    raw,
+                    sample,
+                );
+            }
+            Statement::ForInStatement(for_stmt) => find_conditional_assertion_credit(
+                std::slice::from_ref(&for_stmt.body),
+                source,
+                raw,
+                sample,
+            ),
+            Statement::ForOfStatement(for_stmt) => find_conditional_assertion_credit(
+                std::slice::from_ref(&for_stmt.body),
+                source,
+                raw,
+                sample,
+            ),
+            Statement::LabeledStatement(labeled) => find_conditional_assertion_credit(
+                std::slice::from_ref(&labeled.body),
+                source,
+                raw,
+                sample,
+            ),
+            Statement::SwitchStatement(switch) => {
+                for case in &switch.cases {
+                    find_conditional_assertion_credit(&case.consequent, source, raw, sample);
+                    if sample.is_some() {
+                        return;
+                    }
+                }
+            }
+            Statement::TryStatement(try_stmt) => {
+                find_conditional_assertion_credit(&try_stmt.block.body, source, raw, sample);
+                if sample.is_some() {
+                    return;
+                }
+                if let Some(handler) = &try_stmt.handler {
+                    find_conditional_assertion_credit(&handler.body.body, source, raw, sample);
+                    if sample.is_some() {
+                        return;
+                    }
+                }
+                if let Some(finalizer) = &try_stmt.finalizer {
+                    find_conditional_assertion_credit(&finalizer.body, source, raw, sample);
+                }
+            }
+            Statement::WithStatement(with) => find_conditional_assertion_credit(
+                std::slice::from_ref(&with.body),
+                source,
+                raw,
+                sample,
+            ),
+            Statement::FunctionDeclaration(func) => {
+                if let Some(body) = &func.body {
+                    find_conditional_assertion_credit(&body.statements, source, raw, sample);
+                }
+            }
+            Statement::VariableDeclaration(var) => {
+                for declarator in &var.declarations {
+                    if let Some(init) = &declarator.init {
+                        find_conditional_assertion_credit_in_expression(init, source, raw, sample);
+                        if sample.is_some() {
+                            return;
+                        }
+                    }
+                }
+            }
+            Statement::ReturnStatement(ret) => {
+                if let Some(argument) = &ret.argument {
+                    find_conditional_assertion_credit_in_expression(argument, source, raw, sample);
+                }
+            }
+            Statement::ExpressionStatement(expr_stmt) => {
+                find_conditional_assertion_credit_in_expression(
+                    &expr_stmt.expression,
+                    source,
+                    raw,
+                    sample,
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Statement-carrying expression containers, so a branch inside a test
+/// callback (the realistic shape: `test(..., () => { if (flag) ... })`) or a
+/// hook/helper body is reached from the program-level walk. Non-container
+/// expressions (identifiers, literals, member chains) hold no statements and
+/// are ignored.
+fn find_conditional_assertion_credit_in_expression(
+    expression: &Expression<'_>,
+    source: &SourceText<'_>,
+    raw: &str,
+    sample: &mut Option<(usize, String)>,
+) {
+    if sample.is_some() {
+        return;
+    }
+    match expression {
+        Expression::ArrowFunctionExpression(arrow) => {
+            find_conditional_assertion_credit(&arrow.body.statements, source, raw, sample);
+        }
+        Expression::FunctionExpression(func) => {
+            if let Some(body) = &func.body {
+                find_conditional_assertion_credit(&body.statements, source, raw, sample);
+            }
+        }
+        Expression::CallExpression(call) => {
+            for argument in &call.arguments {
+                if let Some(expr) = argument.as_expression() {
+                    find_conditional_assertion_credit_in_expression(expr, source, raw, sample);
+                }
+                if sample.is_some() {
+                    return;
+                }
+            }
+        }
+        Expression::NewExpression(call) => {
+            for argument in &call.arguments {
+                if let Some(expr) = argument.as_expression() {
+                    find_conditional_assertion_credit_in_expression(expr, source, raw, sample);
+                }
+                if sample.is_some() {
+                    return;
+                }
+            }
+        }
+        Expression::AwaitExpression(awaited) => {
+            find_conditional_assertion_credit_in_expression(&awaited.argument, source, raw, sample);
+        }
+        Expression::SequenceExpression(sequence) => {
+            for expr in &sequence.expressions {
+                find_conditional_assertion_credit_in_expression(expr, source, raw, sample);
+                if sample.is_some() {
+                    return;
+                }
+            }
+        }
+        Expression::LogicalExpression(logical) => {
+            find_conditional_assertion_credit_in_expression(&logical.left, source, raw, sample);
+            find_conditional_assertion_credit_in_expression(&logical.right, source, raw, sample);
+        }
+        Expression::ConditionalExpression(conditional) => {
+            find_conditional_assertion_credit_in_expression(
+                &conditional.consequent,
+                source,
+                raw,
+                sample,
+            );
+            find_conditional_assertion_credit_in_expression(
+                &conditional.alternate,
+                source,
+                raw,
+                sample,
+            );
+        }
+        Expression::AssignmentExpression(assign) => {
+            find_conditional_assertion_credit_in_expression(&assign.right, source, raw, sample);
+        }
+        Expression::ParenthesizedExpression(paren) => {
+            find_conditional_assertion_credit_in_expression(&paren.expression, source, raw, sample);
+        }
+        Expression::ChainExpression(chain) => {
+            if let oxc_ast::ast::ChainElement::CallExpression(call) = &chain.expression {
+                for argument in &call.arguments {
+                    if let Some(expr) = argument.as_expression() {
+                        find_conditional_assertion_credit_in_expression(expr, source, raw, sample);
+                    }
+                    if sample.is_some() {
+                        return;
+                    }
+                }
+            }
+        }
+        Expression::TSAsExpression(cast) => {
+            find_conditional_assertion_credit_in_expression(&cast.expression, source, raw, sample);
+        }
+        Expression::TSSatisfiesExpression(cast) => {
+            find_conditional_assertion_credit_in_expression(&cast.expression, source, raw, sample);
+        }
+        Expression::TSTypeAssertion(cast) => {
+            find_conditional_assertion_credit_in_expression(&cast.expression, source, raw, sample);
+        }
+        Expression::TSNonNullExpression(cast) => {
+            find_conditional_assertion_credit_in_expression(&cast.expression, source, raw, sample);
+        }
+        Expression::ArrayExpression(array) => {
+            for element in &array.elements {
+                if let Some(expr) = element.as_expression() {
+                    find_conditional_assertion_credit_in_expression(expr, source, raw, sample);
+                }
+                if sample.is_some() {
+                    return;
+                }
+            }
+        }
+        Expression::ObjectExpression(object) => {
+            for property in &object.properties {
+                if let ObjectPropertyKind::ObjectProperty(prop) = property {
+                    find_conditional_assertion_credit_in_expression(
+                        &prop.value,
+                        source,
+                        raw,
+                        sample,
+                    );
+                }
+                if sample.is_some() {
+                    return;
+                }
+            }
+        }
+        Expression::UnaryExpression(unary) => {
+            find_conditional_assertion_credit_in_expression(&unary.argument, source, raw, sample);
+        }
+        Expression::YieldExpression(yield_expr) => {
+            if let Some(argument) = &yield_expr.argument {
+                find_conditional_assertion_credit_in_expression(argument, source, raw, sample);
+            }
+        }
+        _ => {}
     }
 }

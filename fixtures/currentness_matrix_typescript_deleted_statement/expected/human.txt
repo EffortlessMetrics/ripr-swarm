@@ -29,6 +29,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/currentness_matrix_typescript_deleted_statement/input --diff <cwd>/fixtures/currentness_matrix_typescript_deleted_statement/diff.patch --mode fast probe:src_cart.ts:typescript_preview:7b9c7c82
   ripr context --root <cwd>/fixtures/currentness_matrix_typescript_deleted_statement/input --diff <cwd>/fixtures/currentness_matrix_typescript_deleted_statement/diff.patch --mode fast --at probe:src_cart.ts:typescript_preview:7b9c7c82
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_cart.ts:typescript_preview:7b9c7c82 --root <cwd>/fixtures/currentness_matrix_typescript_deleted_statement/input` for the full gate's answer
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets (TypeScript preview: 2).

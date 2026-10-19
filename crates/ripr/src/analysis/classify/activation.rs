@@ -11,6 +11,7 @@ use super::arm_selection::{may_declare_items_in_owner_scope, may_name_constant};
 use super::text::{
     delimited_contents_at, enum_variant_values, exact_error_variant, path_value_is_constant,
 };
+use crate::analysis::sync_memo::SyncMemo;
 use crate::domain::*;
 
 #[cfg(test)]
@@ -167,8 +168,8 @@ type TestOwnerSlot = (usize, Option<usize>);
 
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct TestValueFacts {
-    index_identity: std::cell::Cell<Option<(usize, usize, u64)>>,
-    by_slot: std::cell::RefCell<std::collections::BTreeMap<TestOwnerSlot, Vec<ValueFact>>>,
+    index_identity: SyncMemo<Option<(usize, usize, u64)>>,
+    by_slot: SyncMemo<std::collections::BTreeMap<TestOwnerSlot, Vec<ValueFact>>>,
 }
 
 impl TestValueFacts {
@@ -197,10 +198,13 @@ impl TestValueFacts {
         owner_fn: Option<&FunctionSummary>,
     ) -> Option<TestOwnerSlot> {
         let identity = index.storage_identity();
-        match self.index_identity.get() {
-            None => self.index_identity.set(Some(identity)),
-            Some(bound) if bound != identity => return None,
-            Some(_) => {}
+        {
+            let mut bound = self.index_identity.borrow_mut();
+            match *bound {
+                None => *bound = Some(identity),
+                Some(bound) if bound != identity => return None,
+                Some(_) => {}
+            }
         }
         let test_slot = index.test_slot(test)?;
         let owner_slot = match owner_fn {
@@ -1367,9 +1371,9 @@ fn sequence_runs(
             let arguments = owner_name_call_text(&call.text, name, free)
                 .and_then(|text| call_arguments(text, &call.name))?;
             let argument = arguments.get(position)?;
-            for elements in
-                super::owner_pin::closure_adaptor::argument_sequences(test, None, argument)?
-            {
+            for elements in super::owner_pin::closure_adaptor::argument_sequences(
+                test, None, argument, &call.text,
+            )? {
                 runs.push(ElementRun {
                     line: call.line,
                     text: call.text.to_string(),
@@ -2012,7 +2016,7 @@ fn read_macro_name_rebound(index: &crate::analysis::rust_index::RustIndex) -> bo
             index.macro_scope_crates(),
             READ_MACROS,
             &|_, _| false,
-            &|krate| index.drop_in_manifests.verified(path, krate),
+            &|krate| index.drop_in_manifests.verified_root(path, krate),
         )
         .is_empty()
     })
@@ -3278,13 +3282,18 @@ fn observed_parameter_values(rows: &[Vec<ParameterValue>], parameter: &str) -> V
     values
 }
 
+/// Parameter names of `function`, read from its whole signature so a
+/// rustfmt-wrapped parameter list is still seen (#7840). Each name is the
+/// text before the parameter's first `:`, so a destructuring pattern is not
+/// widened into its field names (unlike `signature_parameters`).
 pub(crate) fn function_parameters(function: &FunctionSummary) -> Vec<String> {
-    let signature = function
-        .body
-        .lines()
-        .next()
-        .unwrap_or(function.body.as_str());
-    parameters_in_signature(signature)
+    let body = function.body.as_str();
+    let Some(arguments) =
+        parameter_list_open(body).and_then(|open| delimited_contents_at(body, open))
+    else {
+        return Vec::new();
+    };
+    parameters_in_arguments(&arguments)
 }
 
 /// Parameter names of `function` read from its whole signature, so a
@@ -3391,11 +3400,8 @@ fn pattern_bindings(pattern: &str) -> Vec<String> {
         .collect()
 }
 
-fn parameters_in_signature(signature: &str) -> Vec<String> {
-    let Some(arguments) = delimited_contents_after(signature, '(') else {
-        return Vec::new();
-    };
-    split_top_level_args(&arguments)
+fn parameters_in_arguments(arguments: &str) -> Vec<String> {
+    split_top_level_args(arguments)
         .into_iter()
         .filter_map(|argument| {
             argument
@@ -4049,11 +4055,6 @@ fn macro_arguments(text: &str) -> Option<Vec<String>> {
     let start = text.find("!(")? + 1;
     let contents = delimited_contents_at(text, start)?;
     Some(split_top_level_args(&contents))
-}
-
-fn delimited_contents_after(text: &str, delimiter: char) -> Option<String> {
-    let start = text.find(delimiter)?;
-    delimited_contents_at(text, start)
 }
 
 fn split_top_level_args(text: &str) -> Vec<String> {
@@ -4887,6 +4888,25 @@ mod tests {
             "p",
             "points"
         ));
+    }
+
+    #[test]
+    fn function_parameters_read_a_wrapped_signature_without_widening_patterns() {
+        // #7840: a rustfmt-wrapped parameter list is seen, a destructuring
+        // pattern keeps its pre-colon text, and a body-only `(` is no list.
+        let wrapped =
+            function("pub fn tier(\n    points: i64,\n    bonus: u8,\n) -> u8 {\n    0\n}");
+        assert_eq!(function_parameters(&wrapped), vec!["points", "bonus"]);
+        let one_line = function("pub fn tier(points: i64) -> u8 {\n    0\n}");
+        assert_eq!(function_parameters(&one_line), vec!["points"]);
+        let destructured =
+            function("pub fn total(\n    Input { subtotal }: Input,\n) -> u8 {\n    0\n}");
+        assert_eq!(
+            function_parameters(&destructured),
+            vec!["Input { subtotal }"]
+        );
+        let no_params = function("pub fn zero() -> u8 {\n    f(1)\n}");
+        assert!(function_parameters(&no_params).is_empty());
     }
 
     #[test]

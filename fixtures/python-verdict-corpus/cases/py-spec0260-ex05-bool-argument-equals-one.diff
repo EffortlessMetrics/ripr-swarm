@@ -1,0 +1,9 @@
+diff --git a/guards/flag_quote.py b/guards/flag_quote.py
+--- a/guards/flag_quote.py
++++ b/guards/flag_quote.py
+@@ -1,4 +1,4 @@
+ def quote_flag(flag):
+     if flag == 1:
+-        return 20
++        return 21
+     return 10

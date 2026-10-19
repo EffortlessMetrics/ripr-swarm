@@ -300,6 +300,9 @@ struct PythonTest {
     /// pass (`fixtures.rs`); empty until then.
     fixture_defs: Vec<PythonFixtureDef>,
     parametrized: bool,
+    /// Argnames a pytest parametrize decorator supplies directly (not routed
+    /// to a fixture by `indirect=`); never resolved as fixtures (#4563).
+    direct_parametrized: Vec<String>,
     /// Literal `@pytest.mark.parametrize` cases, when statically certain (#4559).
     parametrize: Option<parametrize::PythonParametrizeCases>,
     /// Parameters Hypothesis `@given(...)` supplies (#6601); never fixtures.

@@ -7,6 +7,7 @@
 
 use crate::agent::loop_commands::{bound_root, shell_arg};
 use crate::analysis::seams::SeamGripClass;
+use crate::analysis::test_stub::TestStubPlacement;
 use crate::app::agent_brief::AgentBriefPolicy;
 use crate::app::test_stub::{
     TestStubError, TestStubSelector, line_of_offset, package_manifest_for, resolve_test_stub,
@@ -140,6 +141,13 @@ pub(super) fn run_agent_stub(options: AgentStubOptions) -> Result<(), CommandErr
             "{file}:{line} ({})",
             stub.placement.kind_str().replace('_', " ")
         ),
+        None if matches!(
+            stub.placement,
+            TestStubPlacement::ExistingIntegrationFile { .. }
+        ) =>
+        {
+            format!("{file} (end of existing integration test file)")
+        }
         None => format!("{file} (new file)"),
     };
     for warning in &disclosure.warnings {

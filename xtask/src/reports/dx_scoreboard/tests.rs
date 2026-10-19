@@ -1174,6 +1174,107 @@ fn the_nightly_row_receipt_gates_a_slower_walk_and_a_failed_step() -> Result<(),
 }
 
 #[test]
+fn the_nightly_row_receipt_gates_a_slower_install() -> Result<(), String> {
+    // The nightly lane ingests first-run-rows.jsonl. The summary-receipt
+    // test already gates a slower install; this one uses the row converter
+    // the lane actually reads. Slack is max(baseline * regression_pct/100,
+    // regression_floor) from the committed first_run.install_seconds row.
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
+    ))?;
+    let install = config
+        .metric
+        .iter()
+        .find(|metric| metric.id == "first_run.install_seconds")
+        .ok_or("first_run.install_seconds missing from scoreboards.toml")?;
+    if install.regression_additive {
+        return Err(
+            "first_run.install_seconds uses additive slack; this test derives max(pct, floor)"
+                .to_string(),
+        );
+    }
+    if !install.runner_dependent {
+        return Err("first_run.install_seconds must be runner_dependent".to_string());
+    }
+    let pct = install.regression_pct;
+    let floor = install.regression_floor;
+    // The row converter also emits time_to_first_useful_result_s, which moves
+    // with install duration. Gate only the parsed install metric so a larger
+    // install slack cannot fail the other row.
+    let mut gate_config = config.clone();
+    gate_config
+        .metric
+        .retain(|metric| metric.id == "first_run.install_seconds");
+    let boards = vec!["first_run".to_string()];
+    let rows = |install_secs: f64| -> Result<Vec<Sample>, String> {
+        let text = [
+            format!(r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"_setup","step":"install_published","metric":"secs","value":{install_secs},"budget":null,"better":"lower"}}"#),
+            r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"_setup","step":"install_published","metric":"exit","value":0,"budget":0,"better":"equal"}"#.to_string(),
+            r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"secs","value":5.0,"budget":60,"better":"lower"}"#.to_string(),
+            r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"exit","value":0,"budget":0,"better":"equal"}"#.to_string(),
+        ]
+        .join("\n");
+        parse_ingest(&parse_ingest_text(&text)?, &config)
+    };
+    let baseline_samples = rows(40.0)?;
+    let baseline_secs = baseline_samples
+        .iter()
+        .find(|sample| sample.metric == "first_run.install_seconds")
+        .and_then(|sample| match sample.outcome {
+            SampleOutcome::Value(value) => Some(value),
+            _ => None,
+        })
+        .ok_or("first-run rows did not yield a completed install_seconds sample")?;
+    let slack = (baseline_secs * pct / 100.0).max(floor);
+    if slack < 1.0 {
+        return Err(
+            "first_run.install_seconds slack is under 1 s; cannot place \
+             just-inside/just-outside samples"
+                .to_string(),
+        );
+    }
+    // Stay 1 s off the allowed worsening so an exact-boundary sample cannot
+    // fail from floating-point rounding of pct * baseline.
+    let inside = baseline_secs + slack - 1.0;
+    let outside = baseline_secs + slack + 1.0;
+    let baseline = build_report(
+        &gate_config,
+        &boards,
+        &baseline_samples,
+        &context("runner-a"),
+        None,
+        false,
+    );
+    let gate = |secs: f64, runner: &str| -> Result<Value, String> {
+        Ok(build_report(
+            &gate_config,
+            &boards,
+            &rows(secs)?,
+            &context(runner),
+            Some(&baseline),
+            true,
+        ))
+    };
+    assert_eq!(
+        gate(inside, "runner-a")?["gate"]["status"].as_str(),
+        Some("pass")
+    );
+    let slower = gate(outside, "runner-a")?;
+    assert_eq!(slower["gate"]["status"].as_str(), Some("fail"));
+    assert!(
+        gate_failure_message(&slower).contains("first_run.install_seconds"),
+        "{}",
+        gate_failure_message(&slower)
+    );
+    // A different runner class is never compared for a wall-time metric.
+    assert_eq!(
+        gate(outside, "runner-b")?["gate"]["status"].as_str(),
+        Some("pass")
+    );
+    Ok(())
+}
+
+#[test]
 fn first_run_rows_map_to_gates_and_list_verdicts() {
     let text = [
         r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"_setup","step":"install_published","metric":"secs","value":40.0,"budget":null,"better":"lower"}"#,
