@@ -44,7 +44,8 @@ pub(super) fn git_capture(
         .collect::<Vec<_>>();
     // Source identity must not vary with the operator's Git configuration: a
     // user/system `url.<base>.insteadOf` rewrite would change the origin the
-    // admission check sees. Repository-local config stays in effect.
+    // admission check sees. Repository-local config stays in effect. Removing
+    // `GIT_CONFIG_COUNT` also makes any `GIT_CONFIG_KEY_n/VALUE_n` inert.
     let null_config = if cfg!(windows) { "NUL" } else { "/dev/null" };
     capture_bytes_in_dir_with_budget_envs(
         Path::new("git"),

@@ -194,3 +194,54 @@ fn batch_size_identity_cannot_expand_the_reviewed_source_inventory() -> Result<(
         "identity/type/size differs",
     )
 }
+
+/// Negative experiment for the config isolation in `git_capture` (#8868).
+/// Process env cannot be set in-process (`unsafe_code` is forbidden), so the
+/// test re-runs itself as a child carrying a hostile `insteadOf` rewrite.
+#[test]
+fn git_capture_ignores_ambient_git_config_rewrites() -> Result<(), String> {
+    const PROBE: &str = "RIPR_GIT_CAPTURE_CONFIG_PROBE";
+    const RAW_ORIGIN: &str = "ssh://probe.invalid/ripr.git";
+    if std::env::var_os(PROBE).is_some() {
+        let repo = Repo::new()?;
+        git(&repo.0, &["remote", "add", "origin", RAW_ORIGIN])?;
+        let seen = git_capture(
+            &repo.0,
+            &["remote", "get-url", "origin"],
+            None,
+            4096,
+            "config isolation probe",
+        )?;
+        let seen = String::from_utf8_lossy(&seen.stdout);
+        return if seen.trim() == RAW_ORIGIN {
+            Ok(())
+        } else {
+            Err(format!("ambient insteadOf rewrote the origin: {seen}"))
+        };
+    }
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let args = [
+        "git_capture_ignores_ambient_git_config_rewrites".to_string(),
+        "--test-threads=1".to_string(),
+    ];
+    // `git remote get-url` applies insteadOf, so without isolation the child
+    // would see the rewritten https URL instead of RAW_ORIGIN.
+    let stdout = crate::run::run_output_owned_with_envs(
+        &exe.display().to_string(),
+        &args,
+        &[
+            (PROBE, "1"),
+            ("GIT_CONFIG_COUNT", "1"),
+            (
+                "GIT_CONFIG_KEY_0",
+                "url.https://rewritten.invalid/.insteadOf",
+            ),
+            ("GIT_CONFIG_VALUE_0", "ssh://probe.invalid/"),
+        ],
+    )?;
+    if stdout.contains("1 passed") {
+        Ok(())
+    } else {
+        Err(format!("probe child did not run the test: {stdout}"))
+    }
+}
