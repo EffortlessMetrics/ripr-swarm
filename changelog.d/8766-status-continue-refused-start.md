@@ -8,3 +8,8 @@
   related test by hand. `ripr repair <seam>` on an already-exposed seam now
   says the existing tests already grip it, and a `ripr pilot` run that ranked
   nothing no longer prints "Run after adding the focused test" (#8766).
+  The same gate now also guards the per-attempt `repair_attempts[].command`
+  in status JSON and the start `ripr pilot` recorded, withholds a start it
+  cannot verify (for example a seam id that moved) instead of printing it, and
+  explains an already-gripped seam as a static reading rather than telling the
+  reader to strengthen a test.

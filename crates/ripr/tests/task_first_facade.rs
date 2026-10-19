@@ -3123,6 +3123,8 @@ fn status_and_continue_do_not_offer_a_start_the_repair_gate_refuses() -> Result<
         stderr_text(&refused)
     );
 
+    // The witness seam is already gripped: the note must say so as a
+    // static reading and must not tell the reader to strengthen a test.
     let withheld = |label: &str, text: &str| {
         assert!(
             !text.contains("--phase before")
@@ -3132,8 +3134,10 @@ fn status_and_continue_do_not_offer_a_start_the_repair_gate_refuses() -> Result<
             "{label} printed a start the same build refuses:\n{text}"
         );
         assert!(
-            text.contains("by hand"),
-            "{label} must say the remaining work is by hand:\n{text}"
+            text.contains("already grip it (exposed)")
+                && text.contains("not a runtime-verified result")
+                && !text.contains("by hand"),
+            "{label} must say the seam is already gripped on static evidence:\n{text}"
         );
     };
     let status = run_ripr(root, &["status", "--root", &root_arg])?;
@@ -3160,6 +3164,29 @@ fn status_and_continue_do_not_offer_a_start_the_repair_gate_refuses() -> Result<
         doc["next_action"].is_null(),
         "attempt status JSON must carry no restart: {doc}"
     );
+    assert!(
+        !stdout_text(&status_json).contains("--phase before"),
+        "attempt status JSON printed a start the same build refuses: {doc}"
+    );
+    // The inventory JSON carries each attempt's `command`; a restart the
+    // gate refuses is `null` there too.
+    let inventory_json = run_ripr(root, &["status", "--root", &root_arg, "--json"])?;
+    let inventory: serde_json::Value =
+        serde_json::from_str(&stdout_text(&inventory_json)).map_err(|e| e.to_string())?;
+    let attempts = inventory["repair_attempts"]
+        .as_array()
+        .ok_or_else(|| format!("repair_attempts missing: {inventory}"))?;
+    assert!(!attempts.is_empty(), "precondition: the attempt is listed");
+    for attempt in attempts {
+        assert!(
+            attempt["command"].is_null(),
+            "repair_attempts[].command printed a refused start: {attempt}"
+        );
+    }
+    assert!(
+        !stdout_text(&inventory_json).contains("--phase before"),
+        "inventory JSON printed a start the same build refuses: {inventory}"
+    );
     let cont = run_ripr(
         root,
         &["continue", "--attempt", &attempt_id, "--root", &root_arg],
@@ -3167,10 +3194,119 @@ fn status_and_continue_do_not_offer_a_start_the_repair_gate_refuses() -> Result<
     assert_exit(&cont, 3, "continue on the failed attempt");
     withheld("continue --attempt", &stderr_text(&cont));
     let bare = run_ripr(root, &["continue", "--root", &root_arg])?;
+    assert_exit(&bare, 3, "bare continue with nothing to continue");
     let bare_text = stderr_text(&bare);
     assert!(
-        !bare_text.contains("start with `ripr repair --root"),
+        !bare_text.contains("start with `ripr repair --root")
+            && bare_text.contains("starts nothing right now"),
         "bare continue offered `ripr repair`, which refuses:\n{bare_text}"
+    );
+    Ok(())
+}
+
+/// #8766: a seam id the current inventory no longer names (ids move with
+/// byte offsets) cannot be verified, so `status` and `continue` print no
+/// start for it and say it could not be verified.
+#[test]
+fn status_and_continue_do_not_offer_a_start_for_a_stale_seam_id() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-stale-seam")?;
+    let (attempt_id, root_arg) = attempt_with_focused_edit(&fixture, FIXTURE_OFF_BOUNDARY_TEST)?;
+    let root = &fixture.root;
+    patch_manifest(root, &attempt_id, &serde_json::json!({ "state": "failed" }))?;
+    // Shift the production code so the seam's id (which moves with its byte
+    // offset) no longer matches the id the attempt recorded.
+    let lib_path = root.join("src/lib.rs");
+    let lib = std::fs::read_to_string(&lib_path).map_err(|error| format!("read lib: {error}"))?;
+    std::fs::write(&lib_path, format!("// shifted\n\n{lib}"))
+        .map_err(|error| format!("shift lib: {error}"))?;
+    let moved = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert!(
+        stderr_text(&moved).contains("unknown") || stderr_text(&moved).contains("no seam"),
+        "precondition: the recorded seam id no longer resolves:\n{}",
+        stderr_text(&moved)
+    );
+
+    let unverified = |label: &str, text: &str| {
+        assert!(
+            !text.contains("--phase before")
+                && !text.contains("start a new attempt")
+                && !text.contains("start fresh")
+                && text.contains("could not verify"),
+            "{label} must withhold the start and say it could not verify:\n{text}"
+        );
+    };
+    let status = run_ripr(root, &["status", "--root", &root_arg])?;
+    unverified("status", &stdout_text(&status));
+    let attempt_status = run_ripr(
+        root,
+        &["status", "--root", &root_arg, "--attempt", &attempt_id],
+    )?;
+    unverified("attempt status", &stdout_text(&attempt_status));
+    let cont = run_ripr(
+        root,
+        &["continue", "--attempt", &attempt_id, "--root", &root_arg],
+    )?;
+    assert_exit(&cont, 3, "continue on the failed attempt");
+    unverified("continue --attempt", &stderr_text(&cont));
+    Ok(())
+}
+
+/// #8766: the start `ripr pilot` recorded for its top seam is repeated by
+/// `ripr status` only while the repair gate still admits that seam. After
+/// the exact boundary assertion lands, `ripr repair <seam>` refuses (the seam
+/// is already gripped on static evidence), so `status` must stop advertising
+/// the recorded `agent repair --phase before` start. The first half is the
+/// admitted-start control on the same workspace.
+#[test]
+fn status_drops_the_pilot_recorded_start_once_the_seam_is_gripped() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-pilot-then-strengthen")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+
+    let pilot = run_ripr(root, &["pilot", "--root", &root_arg, "--quiet"])?;
+    assert_exit(&pilot, 0, "ripr pilot");
+    let summary: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("target/ripr/pilot/pilot-summary.json"))
+            .map_err(|error| format!("read pilot summary: {error}"))?,
+    )
+    .map_err(|error| error.to_string())?;
+    assert_eq!(
+        summary["top_actionable_seams"][0]["seam_id"], FIXTURE_SEAM,
+        "precondition: pilot ranked the fixture seam: {summary}"
+    );
+    assert!(
+        summary["next"]["repair_command"]
+            .as_str()
+            .is_some_and(|command| command.contains("--phase before")),
+        "precondition: pilot recorded a repair start: {summary}"
+    );
+
+    // Control: the seam is still admitted, so status repeats the start.
+    let before = run_ripr(root, &["status", "--root", &root_arg, "--json"])?;
+    let before_text = stdout_text(&before);
+    assert!(
+        before_text.contains("--phase before") && !before_text.contains("repair_start_withheld"),
+        "an admitted pilot start is kept:\n{before_text}"
+    );
+
+    // Strengthen the test with the exact boundary assertion.
+    let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+        .map_err(|error| format!("read pricing tests: {error}"))?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{pricing}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|error| format!("write boundary test: {error}"))?;
+    let refused = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&refused, 3, "ripr repair on the now-gripped seam");
+
+    let after = run_ripr(root, &["status", "--root", &root_arg, "--json"])?;
+    let after_text = stdout_text(&after);
+    assert!(
+        !after_text.contains("--phase before")
+            && after_text.contains("repair_start_withheld")
+            && after_text.contains("already grip it (exposed)"),
+        "status advertised a pilot start the same build refuses:\n{after_text}"
     );
     Ok(())
 }

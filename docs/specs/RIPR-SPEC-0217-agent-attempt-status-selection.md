@@ -125,22 +125,33 @@ receipt strength, and currentness as separate facts:
   non-claims.
 
 - A restart or fresh-start route is named only when the shared repair
-  admission gate (`repair_refusal_reason`, the gate `ripr repair` and
-  `ripr agent repair --phase before` apply) admits the seam (#8766). When it
+  eligibility gate admits the seam (#8766): `repair_refusal_reason` (the gate
+  `ripr repair` applies), the recommended-test edit-target predicate and the
+  held-inline-target check (the checks the before phase applies to the
+  packet). The before phase's dirty-premise check over the rest of the
+  tracked tree is state-dependent and is not re-derived; the start itself
+  still re-checks it. This covers `next_action`, the canonical decision, the
+  per-attempt `repair_attempts[].command` (`null` while withheld), the
+  multi-seam list, the legacy seam start and the recorded pilot start. When it
   refuses the seam, for example `repair route not ready` after the input is
   covered but the producer-owned discriminator fact is missing, `next_action`
   is absent, the canonical decision does not recommend a restart, and the
   claim boundary (selected attempt) or a `repair_start_withheld` warning
   (inventory) states that the remaining work is strengthening the oracle of
   the named related test by hand. `ripr continue` applies the same gate to
-  its start-fresh tails. When the gate cannot decide (unreadable config,
-  truncated inventory, seam no longer in the inventory) the recorded route is
-  kept, because the start re-checks admission itself.
+  its start-fresh tails. When the gate cannot decide (unreadable config, an
+  inventory that cannot be built, a seam no longer in the inventory because
+  seam ids move with the code, or a seam beyond a truncated inventory) no
+  start is printed: the same warning kind or claim-boundary line says the
+  seam could not be verified and names `ripr check` to re-read the seams.
 
 The command remains read-only end to end: it executes nothing a returned
-route names, writes no file, and introduces no execution or mutation
-authority. Its only analysis is the seam-eligibility re-check above, run
-solely before a restart route would be named.
+route names, writes no workflow or attempt file, and introduces no execution
+or mutation authority. Its only analysis is the seam-eligibility re-check
+above, run solely before a restart route would be named. That check loads
+the seam inventory once per read, which may refresh the repo-seam-facts cache
+under `target/`; it never writes under `target/ripr/workflow/` or the attempt
+store.
 
 ## Required Evidence
 

@@ -607,7 +607,17 @@ fn start_with_repair_clause(root: &std::path::Path, root_arg: &str) -> String {
             "`ripr repair` starts nothing right now: {}",
             no_eligible_seam_message(root, total_seams, &reasons, reasons_total)
         ),
-        _ => format!("start with `ripr repair --root {root_arg}`"),
+        Ok(RepairStartDecision::Start { .. }) => {
+            format!("start with `ripr repair --root {root_arg}`")
+        }
+        // The auto selector needs a named seam: `ripr repair` alone would
+        // not start one, so it is not printed as the start.
+        Ok(RepairStartDecision::Action(_)) => format!(
+            "`ripr repair` cannot choose a start by itself right now; run `ripr pilot --root {root_arg}` to list current seam IDs and name one"
+        ),
+        Err(error) => format!(
+            "could not verify a repair start ({error}); rerun `ripr check --root {root_arg}` to re-read the current seams"
+        ),
     }
 }
 

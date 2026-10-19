@@ -13978,7 +13978,8 @@ Field contract:
   `receipt`, and `last_after_refusal`. A `ready_to_finish` attempt reads
   `finished` only when its receipt is `advisory` with movement `improved`;
   `gap_open` when its receipt shows movement `unchanged`, `changed`, or
-  `regressed` (the seam is restarted); otherwise `unconfirmed` (no restart; a
+  `regressed` (the seam is restarted unless the repair eligibility gate refuses it, in
+  which case `command` is `null`); otherwise `unconfirmed` (no restart; a
   `repair_receipt_unconfirmed` warning says why). An attempt awaiting its
   edit reads `prepared_at_other_head` when its after phase would not evaluate
   the current `HEAD`: a trust-bound attempt whose `HEAD` moved, or an ordinary
@@ -14045,8 +14046,12 @@ Field contract:
   `multiple_open_repair_seams`, `repair_attempt_head_unknown`,
   `pilot_found_no_repair_target`,
   `pilot_withheld_static_limitations_no_repair_target`,
-  `pilot_routed_to_check_no_repair_target`) then names the choices. The
-  withheld warning names `target/ripr/pilot/repo-exposure.md`; when that
+  `pilot_routed_to_check_no_repair_target`) then names the choices. A seam
+  the repair eligibility gate refuses (or cannot verify) is not offered a
+  start: `repair_start_withheld` names it, states that the remaining work is
+  strengthening the oracle of the related test by hand (or that the seam
+  could not be verified, naming `ripr check`), and the matching
+  `repair_attempts[].command` is `null`. The withheld warning names `target/ripr/pilot/repo-exposure.md`; when that
   run's `repo-exposure.json` reports `run_status: seam_limit_applied` it
   reads the count as "at least N" and names raising the seam limits and
   rerunning pilot, since seams past the cut may hold gaps. The last names the recorded check command and the
@@ -14189,7 +14194,12 @@ Field contract:
   non-claim, the retained-evidence non-claim (a finished result does not
   establish the repair is correct or that any project test ran), the
   manifest's own limitations and non-claims, and the store resolver's
-  non-claims. The Markdown rendering prints the same fields.
+  non-claims. When a restart would be recommended but the repair eligibility
+  gate refuses the seam (or cannot verify it), `next_action` is absent and
+  `claim_boundary` carries the `restart_withheld` line naming the by-hand
+  work. The MCP durable attempt document carries the same line in its
+  `limitations` and likewise omits `next_command`. The Markdown rendering
+  prints the same fields.
 
 ## Agent Review Summary
 
