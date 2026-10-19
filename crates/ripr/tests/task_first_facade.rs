@@ -2719,3 +2719,6 @@ fn repair_skips_severity_off_seams_with_named_omission() -> Result<(), String> {
 // not here: the attempt commitment forbids staging a binding by editing
 // a manifest, and the full trust ceremony belongs to the binding
 // authority's own suite (`python_repair_attempt.rs`).
+
+#[path = "task_first_facade/inspection_cache_disclosure.rs"]
+mod inspection_cache_disclosure;
