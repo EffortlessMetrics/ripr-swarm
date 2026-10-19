@@ -3524,6 +3524,18 @@ fn member_explain_diff_replay_selector_never_reaches_a_sibling_finding() -> Resu
         stderr_text(&relative)
     );
 
+    // `./` is normalized before the prefix check.
+    let dotted = run_ripr(
+        &member,
+        &["explain", "--diff", &sibling_arg, "./pkg/src/lib.rs:2"],
+    )?;
+    assert_ne!(dotted.status.code(), Some(0), "{}", stderr_text(&dotted));
+    assert!(
+        stderr_text(&dotted).contains("no finding matched \"pkg/src/lib.rs:2\""),
+        "{}",
+        stderr_text(&dotted)
+    );
+
     // Positive control: with the member's file back, the same selector explains
     // the member's own finding, never the sibling's.
     std::fs::write(member.join("src/lib.rs"), FIXTURE_LIB.replace(">=", ">"))
@@ -3578,6 +3590,91 @@ fn advanced_agent_repair_unbindable_selector_exits_2_on_both_routes() -> Result<
             stderr_text(&output)
         );
         assert!(attempt_ids(&outer).is_empty(), "{phase}: no attempt");
+    }
+    Ok(())
+}
+
+/// #8872 review: the shared `file:line` matcher accepts path suffixes, so a
+/// selector bound to `pkg/src/lib.rs` would also match a workspace-root
+/// package's `src/lib.rs` at the same line. Such a selector is refused for
+/// `repair`, `agent repair` and `explain` whether the root package has the
+/// only gap or both packages do, and nothing is published.
+#[cfg(unix)]
+#[test]
+fn member_selector_shadowed_by_a_root_package_file_is_refused() -> Result<(), String> {
+    for member_has_gap in [false, true] {
+        let fixture = Fixture::dir("member-selector-root-shadow")?;
+        let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+        let member = outer.join("pkg");
+        for dir in [&outer, &member] {
+            std::fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
+            std::fs::create_dir_all(dir.join("tests")).map_err(|e| e.to_string())?;
+        }
+        // Root package (with the workspace) and one member, same src/lib.rs.
+        std::fs::write(
+            outer.join("Cargo.toml"),
+            format!("{FIXTURE_CARGO_TOML}\n[workspace]\nmembers = [\"pkg\"]\n"),
+        )
+        .map_err(|e| e.to_string())?;
+        std::fs::write(outer.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+        std::fs::write(outer.join("tests/pricing.rs"), FIXTURE_WEAK_TEST)
+            .map_err(|e| e.to_string())?;
+        std::fs::write(
+            member.join("Cargo.toml"),
+            "[package]\nname = \"member_pkg\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|e| e.to_string())?;
+        let member_lib = if member_has_gap {
+            FIXTURE_LIB
+        } else {
+            "pub const NAME: &str = \"member\";\n\n\n"
+        };
+        std::fs::write(member.join("src/lib.rs"), member_lib).map_err(|e| e.to_string())?;
+        init_repo(&outer)?;
+        run_git(&outer, &["add", "."])?;
+        git_commit(&outer, "root and member share src/lib.rs")?;
+        if member_has_gap {
+            weaken_boundary_predicate(&member)?;
+        }
+        weaken_boundary_predicate(&outer)?;
+
+        for args in [
+            &["repair", "src/lib.rs:2"][..],
+            &[
+                "agent",
+                "repair",
+                "--phase",
+                "before",
+                "--seam-id",
+                "src/lib.rs:2",
+            ][..],
+            &["explain", "--worktree", "src/lib.rs:2"][..],
+        ] {
+            let output = run_ripr(&member, args)?;
+            let label = format!("member_has_gap={member_has_gap} {args:?}");
+            assert_ne!(output.status.code(), Some(0), "{label}");
+            assert!(
+                stderr_text(&output).contains("also matches the workspace-root file"),
+                "{label}:\n{}",
+                stderr_text(&output)
+            );
+            assert!(
+                !stdout_text(&output).contains("src/lib.rs:2"),
+                "{label} must not explain either file:\n{}",
+                stdout_text(&output)
+            );
+            assert!(attempt_ids(&outer).is_empty(), "{label}: no attempt");
+        }
+        // Control: `--root .` analyzes the member alone and is not refused as shadowed.
+        let pinned = run_ripr(
+            &member,
+            &["explain", "--worktree", "src/lib.rs:2", "--root", "."],
+        )?;
+        assert!(
+            !stderr_text(&pinned).contains("also matches the workspace-root file"),
+            "{}",
+            stderr_text(&pinned)
+        );
     }
     Ok(())
 }

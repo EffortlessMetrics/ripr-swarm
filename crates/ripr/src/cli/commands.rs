@@ -3254,12 +3254,25 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     let selector = selector
         .map(
             |item| match check::bind_member_selector_item(prefix.as_deref(), &input.root, &item) {
-                Err(_) if replay => Ok(match prefix.as_deref() {
-                    // Already workspace-relative (typed with the member prefix).
-                    Some(prefix) if item.starts_with(&format!("{prefix}/")) => item,
-                    Some(prefix) => format!("{prefix}/{}", item.trim_start_matches("./")),
-                    None => item,
-                }),
+                Err(_) if replay => match prefix.as_deref() {
+                    Some(prefix) => {
+                        // Normalize `./` first so `./pkg/x.rs:2` is not prefixed twice.
+                        let bare = item.trim_start_matches("./");
+                        let anchored = if bare.starts_with(&format!("{prefix}/")) {
+                            bare.to_string()
+                        } else {
+                            format!("{prefix}/{bare}")
+                        };
+                        match anchored.rsplit_once(':') {
+                            Some((file, _)) => {
+                                check::refuse_root_shadowed_selector(&input.root, file)
+                                    .map(|()| anchored)
+                            }
+                            None => Ok(anchored),
+                        }
+                    }
+                    None => Ok(item),
+                },
                 bound => bound,
             },
         )
