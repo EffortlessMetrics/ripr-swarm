@@ -430,6 +430,9 @@ Defaults-first adoption evidence should cover:
 - implicit-root saved-diff analysis beneath invalid Git markers matching the
   explicit-root and genuine-repository positives with nonzero changed files,
   probes, findings and related tests;
+- implicit-root parity for the task-first commands (`repair`, `pilot`, `status`,
+  `continue`, `agent stub`) from a workspace member directory, including
+  member-relative `file:line` selectors that must not reach a sibling member;
 - shared cache-root parity, real nested and linked-worktree boundaries,
   inherited-selector isolation, and the gitless saved-diff route;
 - built-in missing-config behavior matching the generated init profile's

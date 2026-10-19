@@ -27,7 +27,9 @@ pub(in crate::cli) const REPAIR_HELP: &str = r#"Start a repair attempt for one g
 Usage: ripr repair [<item>] [--root PATH]
 
 Options:
-  --root PATH      Workspace root. Defaults to current directory.
+  --root PATH      Workspace root. Defaults to the current directory, then
+                   walks up to the enclosing workspace or package, or the git
+                   top level; `--root .` pins this directory.
 
 Without an item, repair starts only when exactly one repair-eligible seam
 is visible under the selected root. Several eligible seams print a bounded
@@ -56,7 +58,9 @@ Usage: ripr continue [--attempt ID] [--root PATH]
 
 Options:
   --attempt ID     Select one repair attempt by ID.
-  --root PATH      Workspace root. Defaults to current directory.
+  --root PATH      Workspace root. Defaults to the current directory, then
+                   walks up to the enclosing workspace or package, or the git
+                   top level; `--root .` pins this directory.
 
 Without an ID, continue runs only when exactly one current attempt is
 eligible under the selected root. Several current attempts print a bounded
@@ -87,7 +91,9 @@ Options:
                    recovery action. Without it, status lists every attempt in
                    the store and selects a next command only when that choice
                    is unambiguous.
-  --root PATH      Workspace root. Defaults to current directory.
+  --root PATH      Workspace root. Defaults to the current directory, then
+                   walks up to the enclosing workspace or package, or the git
+                   top level; `--root .` pins this directory.
   --json           Emit the machine-readable status report. Human Markdown is the default.
 
 Status projects the repair-attempt state with its canonical next action.
@@ -100,18 +106,24 @@ This is the ordinary route to repair state. The advanced spelling
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct RepairFacadeOptions {
     pub(super) root: PathBuf,
+    /// `--root` was typed, so the root is used as given (#8767).
+    pub(super) root_explicit: bool,
     pub(super) item: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct ContinueFacadeOptions {
     pub(super) root: PathBuf,
+    /// `--root` was typed, so the root is used as given (#8767).
+    pub(super) root_explicit: bool,
     pub(super) attempt_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct StatusFacadeOptions {
     pub(super) root: PathBuf,
+    /// `--root` was typed, so the root is used as given (#8767).
+    pub(super) root_explicit: bool,
     pub(super) attempt_id: Option<String>,
     pub(super) json: bool,
 }
@@ -139,6 +151,7 @@ pub(super) fn parse_repair_args(args: &[String]) -> Result<RepairFacadeCommand, 
         return Ok(RepairFacadeCommand::Help);
     }
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut item: Option<String> = None;
     let mut index = 0usize;
     while index < args.len() {
@@ -146,6 +159,7 @@ pub(super) fn parse_repair_args(args: &[String]) -> Result<RepairFacadeCommand, 
             "--root" => {
                 index += 1;
                 root = PathBuf::from(expect_value(args, index, "--root")?);
+                root_explicit = true;
             }
             other if other.starts_with('-') => {
                 return Err(unknown_argument("repair", other));
@@ -167,6 +181,7 @@ pub(super) fn parse_repair_args(args: &[String]) -> Result<RepairFacadeCommand, 
     }
     Ok(RepairFacadeCommand::Repair(RepairFacadeOptions {
         root,
+        root_explicit,
         item,
     }))
 }
@@ -176,6 +191,7 @@ pub(super) fn parse_continue_args(args: &[String]) -> Result<ContinueFacadeComma
         return Ok(ContinueFacadeCommand::Help);
     }
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut attempt_id: Option<String> = None;
     let mut index = 0usize;
     while index < args.len() {
@@ -183,6 +199,7 @@ pub(super) fn parse_continue_args(args: &[String]) -> Result<ContinueFacadeComma
             "--root" => {
                 index += 1;
                 root = PathBuf::from(expect_value(args, index, "--root")?);
+                root_explicit = true;
             }
             "--attempt" => {
                 index += 1;
@@ -198,6 +215,7 @@ pub(super) fn parse_continue_args(args: &[String]) -> Result<ContinueFacadeComma
     }
     Ok(ContinueFacadeCommand::Continue(ContinueFacadeOptions {
         root,
+        root_explicit,
         attempt_id,
     }))
 }
@@ -207,6 +225,7 @@ pub(super) fn parse_status_args(args: &[String]) -> Result<StatusFacadeCommand, 
         return Ok(StatusFacadeCommand::Help);
     }
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut attempt_id: Option<String> = None;
     let mut json = false;
     let mut index = 0usize;
@@ -215,6 +234,7 @@ pub(super) fn parse_status_args(args: &[String]) -> Result<StatusFacadeCommand, 
             "--root" => {
                 index += 1;
                 root = PathBuf::from(expect_value(args, index, "--root")?);
+                root_explicit = true;
             }
             "--attempt" => {
                 index += 1;
@@ -231,6 +251,7 @@ pub(super) fn parse_status_args(args: &[String]) -> Result<StatusFacadeCommand, 
     }
     Ok(StatusFacadeCommand::Status(StatusFacadeOptions {
         root,
+        root_explicit,
         attempt_id,
         json,
     }))
@@ -266,11 +287,16 @@ pub(in crate::cli) fn status(args: &[String]) -> Result<(), CommandError> {
     }
 }
 
-fn run_facade_repair(options: RepairFacadeOptions) -> Result<(), CommandError> {
+fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandError> {
+    // #8767: same implicit root `ripr check` uses; `--root .` opts out.
+    let prefix =
+        super::check::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
     ensure_command_root(&options.root, "repair")?;
     let seam_id = match options.item.as_deref() {
         Some(item) => {
-            match resolve_repair_subject(&options.root, item).map_err(CommandError::from)? {
+            let item =
+                super::check::bind_member_selector_item(prefix.as_deref(), &options.root, item)?;
+            match resolve_repair_subject(&options.root, &item).map_err(CommandError::from)? {
                 RepairSubject::Seam(seam_id) => seam_id,
                 RepairSubject::Decision(message) => return Err(CommandError::Decision(message)),
             }
@@ -412,7 +438,9 @@ fn facade_before_options(root: &std::path::Path, seam_id: &str) -> AgentRepairOp
     }
 }
 
-fn run_facade_continue(options: ContinueFacadeOptions) -> Result<(), CommandError> {
+fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), CommandError> {
+    // #8767: same implicit root `ripr check` uses; `--root .` opts out.
+    super::check::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
     ensure_command_root(&options.root, "continue")?;
     match select_continue_attempt(&options.root, options.attempt_id.as_deref()).map_err(
         |error| {
@@ -613,7 +641,9 @@ fn none_available_detail(
     detail
 }
 
-fn run_facade_status(options: StatusFacadeOptions) -> Result<(), CommandError> {
+fn run_facade_status(mut options: StatusFacadeOptions) -> Result<(), CommandError> {
+    // #8767: same implicit root `ripr check` uses; `--root .` opts out.
+    super::check::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
     super::agent::run_agent_status(AgentStatusOptions {
         out_dir: None,
         root: options.root,

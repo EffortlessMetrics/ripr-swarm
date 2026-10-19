@@ -9869,6 +9869,16 @@ fn has_interior_mutability(initializer: &str) -> bool {
 /// #8112: whether `file` declares `static mut name`, whose value the test
 /// may have assigned before the assertion reads it.
 fn declares_static_mut(index: &RustIndex, file: &Path, name: &str) -> bool {
+    declares_static_with(index, file, name, true)
+}
+
+/// #8112: whether `file` declares `static name`, `mut` or not, or the
+/// `lazy_static!` form `static ref name`.
+fn declares_static(index: &RustIndex, file: &Path, name: &str) -> bool {
+    declares_static_with(index, file, name, false)
+}
+
+fn declares_static_with(index: &RustIndex, file: &Path, name: &str, require_mut: bool) -> bool {
     let Some(facts) = index.files().get(file) else {
         return false;
     };
@@ -9876,15 +9886,24 @@ fn declares_static_mut(index: &RustIndex, file: &Path, name: &str) -> bool {
     whole_word_offsets(&masked, "static")
         .into_iter()
         .any(|offset| {
-            let rest = masked[offset + "static".len()..].trim_start();
-            rest.strip_prefix("mut")
+            let mut rest = masked[offset + "static".len()..].trim_start();
+            if let Some(after) = rest
+                .strip_prefix("mut")
                 .filter(|after| after.starts_with(char::is_whitespace))
-                .is_some_and(|after| {
-                    let after = after.trim_start();
-                    after.strip_prefix(name).is_some_and(|tail| {
-                        !tail.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
-                    })
-                })
+            {
+                rest = after.trim_start();
+            } else if require_mut {
+                return false;
+            } else if let Some(after) = rest
+                .strip_prefix("ref")
+                .filter(|after| after.starts_with(char::is_whitespace))
+            {
+                // `lazy_static!` writes `static ref NAME: T = init;`.
+                rest = after.trim_start();
+            }
+            rest.strip_prefix(name).is_some_and(|tail| {
+                !tail.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
+            })
         })
 }
 
@@ -9904,6 +9923,12 @@ fn single_constant_value(
         .filter(|(file, _)| in_scope(file));
     let (file, initializer) = matches.next()?;
     if matches.next().is_some() || declares_static_mut(index, file, name) {
+        return None;
+    }
+    // #8112: a non-`mut` `static` of interior-mutable type
+    // (`static C: AtomicUsize = ..; C.store(6)`) can change after its
+    // initializer. A `const` is rebuilt at each use, so it stays readable.
+    if has_interior_mutability(initializer) && declares_static(index, file, name) {
         return None;
     }
     let initializer_text = initializer.trim_start();

@@ -58,6 +58,10 @@ fn generic_or_bracket_snapshot_calls_are_counted_and_refuse() -> Result<(), Stri
         "expect(price(90)).toMatchSnapshot<number>();",
         "expect(price(90))[\"toMatchSnapshot\"]();",
         "expect(price(90)).toMatchSnapshot.call(this);",
+        "expect(price(90)).toMatchSnapshot?.();",
+        "expect(price(90))[\"toMatchSnapshot\" ]();",
+        "expect(price(90)).toMatchSnapshot /* c */ ();",
+        "expect(price(90)).toMatchSnapshot!();",
     ] {
         let source = format!(
             "import {{ price }} from \"../src/price\";\n\ntest(\"price\", () => {{\n  expect(price(150)).toMatchSnapshot();\n  {second}\n}});\n"
