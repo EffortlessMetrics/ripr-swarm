@@ -43,85 +43,120 @@ const ITEM_KEYWORDS: [&str; 8] = [
     "fn", "const", "static", "struct", "enum", "type", "trait", "mod",
 ];
 
+/// One parse of a file's macro definitions and its item- or statement-position
+/// invocations, so asking about many names parses the file once.
+#[derive(Clone, Debug)]
+pub(in crate::analysis) enum MacroSites {
+    /// Unparsable: undecided exactly when the file holds a `macro_rules!`.
+    Unparsed { has_macro_rules: bool },
+    Parsed {
+        definitions: Vec<(String, String)>,
+        /// (macro name, masked arguments, item position)
+        invocations: Vec<(String, String, bool)>,
+    },
+}
+
+impl MacroSites {
+    pub(in crate::analysis) fn scan(source: &str) -> Self {
+        let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+            return Self::Unparsed {
+                has_macro_rules: mask_comments_and_strings(source).contains("macro_rules!"),
+            };
+        };
+        let mut definitions = Vec::new();
+        let mut invocations = Vec::new();
+        for node in parse.tree().syntax().descendants() {
+            if let Some(rules) = ast::MacroRules::cast(node.clone()) {
+                if let Some(macro_name) = rules.name() {
+                    definitions.push((
+                        macro_name.text().to_string(),
+                        mask_comments_and_strings(&rules.syntax().text().to_string()),
+                    ));
+                }
+                continue;
+            }
+            let Some(call) = ast::MacroCall::cast(node.clone()) else {
+                continue;
+            };
+            let Some(macro_name) = call
+                .path()
+                .and_then(|path| path.segment())
+                .and_then(|segment| segment.name_ref())
+                .map(|segment| segment.text().to_string())
+            else {
+                continue;
+            };
+            let arguments = call
+                .token_tree()
+                .map(|tree| mask_comments_and_strings(&tree.syntax().text().to_string()))
+                .unwrap_or_default();
+            let item_position = node.parent().is_some_and(|parent| {
+                ast::SourceFile::can_cast(parent.kind()) || ast::ItemList::can_cast(parent.kind())
+            });
+            let statement_position = node.parent().is_some_and(|parent| {
+                ast::MacroStmts::can_cast(parent.kind())
+                    || ast::MacroExpr::can_cast(parent.kind())
+                        && parent.parent().is_some_and(|holder| {
+                            ast::ExprStmt::can_cast(holder.kind())
+                                || ast::StmtList::can_cast(holder.kind())
+                        })
+            });
+            if item_position || statement_position {
+                invocations.push((macro_name, arguments, item_position));
+            }
+        }
+        Self::Parsed {
+            definitions,
+            invocations,
+        }
+    }
+
+    /// Whether the file's macro invocations may define an item named `name`.
+    pub(in crate::analysis) fn may_define(&self, name: &str) -> bool {
+        let name = name.strip_prefix("r#").unwrap_or(name);
+        if name.is_empty() {
+            return false;
+        }
+        let (definitions, invocations) = match self {
+            Self::Unparsed { has_macro_rules } => return *has_macro_rules,
+            Self::Parsed {
+                definitions,
+                invocations,
+            } => (definitions, invocations),
+        };
+        invocations
+            .iter()
+            .any(|(macro_name, arguments, item_position)| {
+                let mentions_name = contains_as_whole_word(arguments, name);
+                let bare_item_argument =
+                    *item_position && passes_name_as_bare_argument(arguments, name);
+                let declares_in_arguments = declares_item_named(arguments, name);
+                let local = definitions
+                    .iter()
+                    .filter(|(defined, _)| defined == macro_name)
+                    .collect::<Vec<_>>();
+                if local.is_empty() {
+                    // An unread expansion can only receive the name through its
+                    // arguments, and only an item-position call defines items
+                    // for the whole file.
+                    // A std expression macro defines no item; a body fragment
+                    // (the helper-hop fallback source) parses its statement
+                    // macros at "item position".
+                    return bare_item_argument
+                        && !STD_EXPRESSION_MACROS.contains(&macro_name.as_str());
+                }
+                local.iter().any(|(_, definition)| {
+                    declares_item_named(definition, name)
+                        || mentions_name && declares_item_through_binder(definition)
+                        || declares_in_arguments && forwards_arguments_verbatim(definition)
+                })
+            })
+    }
+}
+
 /// Whether the file's macro invocations may define an item named `name`.
 pub(in crate::analysis) fn macro_may_define_item_named(source: &str, name: &str) -> bool {
-    let name = name.strip_prefix("r#").unwrap_or(name);
-    if name.is_empty() {
-        return false;
-    }
-    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
-        return mask_comments_and_strings(source).contains("macro_rules!");
-    };
-    let mut definitions = Vec::new();
-    let mut invocations = Vec::new();
-    for node in parse.tree().syntax().descendants() {
-        if let Some(rules) = ast::MacroRules::cast(node.clone()) {
-            if let Some(macro_name) = rules.name() {
-                definitions.push((
-                    macro_name.text().to_string(),
-                    mask_comments_and_strings(&rules.syntax().text().to_string()),
-                ));
-            }
-            continue;
-        }
-        let Some(call) = ast::MacroCall::cast(node.clone()) else {
-            continue;
-        };
-        let Some(macro_name) = call
-            .path()
-            .and_then(|path| path.segment())
-            .and_then(|segment| segment.name_ref())
-            .map(|segment| segment.text().to_string())
-        else {
-            continue;
-        };
-        let arguments = call
-            .token_tree()
-            .map(|tree| mask_comments_and_strings(&tree.syntax().text().to_string()))
-            .unwrap_or_default();
-        let item_position = node.parent().is_some_and(|parent| {
-            ast::SourceFile::can_cast(parent.kind()) || ast::ItemList::can_cast(parent.kind())
-        });
-        let statement_position = node.parent().is_some_and(|parent| {
-            ast::MacroStmts::can_cast(parent.kind())
-                || ast::MacroExpr::can_cast(parent.kind())
-                    && parent.parent().is_some_and(|holder| {
-                        ast::ExprStmt::can_cast(holder.kind())
-                            || ast::StmtList::can_cast(holder.kind())
-                    })
-        });
-        if item_position || statement_position {
-            invocations.push((
-                macro_name,
-                contains_as_whole_word(&arguments, name),
-                item_position && passes_name_as_bare_argument(&arguments, name),
-                declares_item_named(&arguments, name),
-            ));
-        }
-    }
-    invocations.iter().any(
-        |(macro_name, mentions_name, bare_item_argument, declares_in_arguments)| {
-            let local = definitions
-                .iter()
-                .filter(|(defined, _)| defined == macro_name)
-                .collect::<Vec<_>>();
-            if local.is_empty() {
-                // An unread expansion can only receive the name through its
-                // arguments, and only an item-position call defines items
-                // for the whole file.
-                // A std expression macro defines no item; a body fragment
-                // (the helper-hop fallback source) parses its statement
-                // macros at "item position".
-                return *bare_item_argument
-                    && !STD_EXPRESSION_MACROS.contains(&macro_name.as_str());
-            }
-            local.iter().any(|(_, definition)| {
-                declares_item_named(definition, name)
-                    || *mentions_name && declares_item_through_binder(definition)
-                    || *declares_in_arguments && forwards_arguments_verbatim(definition)
-            })
-        },
-    )
+    MacroSites::scan(source).may_define(name)
 }
 
 /// Whether the invocation's top-level arguments pass `name` as a bare

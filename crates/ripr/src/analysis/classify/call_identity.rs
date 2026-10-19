@@ -98,6 +98,10 @@ pub(crate) struct CallIdentityMemos {
     identities: Mutex<SharedIdentities>,
     /// Lexical source facts shared by all short-lived owner-pin syntax contexts.
     pub(super) owner_file_scopes: Mutex<SharedOwnerScopes>,
+    /// One syntax owner for every inherent-receiver query of the run, so the
+    /// workspace trusted-macro scan behind assertion admission is paid once
+    /// per index rather than once per (seam, test) receiver check.
+    pub(super) receiver_pin_syntax: Mutex<super::OwnerPinSyntax>,
     /// RIPR-SPEC-0035: every workspace `const`/`static` by name with its
     /// file and masked initializer, built once per index on first use by
     /// the owner-return pin's self-computed expected-value check.

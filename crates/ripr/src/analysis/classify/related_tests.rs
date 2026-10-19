@@ -3155,16 +3155,29 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
     if method.is_empty() || impl_type.is_empty() {
         return false;
     }
-    let pin_syntax = super::OwnerPinSyntax::default();
+    // The index-owned syntax owner keeps the workspace macro scan to one pass
+    // per run; a poisoned lock or an index-less probe uses a private owner.
+    let private_syntax;
+    let shared_syntax;
+    let pin_syntax = match index.map(|index| index.call_identity_memos.receiver_pin_syntax.lock()) {
+        Some(Ok(guard)) => {
+            shared_syntax = guard;
+            &*shared_syntax
+        }
+        _ => {
+            private_syntax = super::OwnerPinSyntax::default();
+            &private_syntax
+        }
+    };
     let unit_struct = |name: &str| {
         index.is_some_and(|index| {
-            super::owner_pin::unit_struct_value(name, &test.file, index, &pin_syntax)
+            super::owner_pin::unit_struct_value(name, &test.file, index, pin_syntax)
         })
     };
     let factory = |ty: &str, name: &str| {
         index.is_some_and(|index| associated_fn_returns_own_type(index, ty, name))
     };
-    executable_call_resolves(test, index, &pin_syntax, &|node, scope| {
+    executable_call_resolves(test, index, pin_syntax, &|node, scope| {
         inherent_call_node_resolves(node, scope, method, impl_type, &unit_struct, &factory)
     })
 }
