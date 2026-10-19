@@ -7448,7 +7448,10 @@ language = "rust"
         );
         assert_eq!(
             init(&args(&["--ci", "gitlab"])),
-            Err("unknown init --ci provider \"gitlab\". Accepted: github.".to_string())
+            Err(
+                "unknown init --ci provider \"gitlab\". Did you mean `github`? Accepted: github."
+                    .to_string()
+            )
         );
     }
 
