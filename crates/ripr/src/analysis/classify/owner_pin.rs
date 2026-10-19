@@ -1192,7 +1192,22 @@ impl OwnerPinSyntax {
                     guard_key.as_deref().unwrap_or(&assertion.text),
                 ),
                 &ambiguous,
-            );
+            )
+            .or_else(|| {
+                // #6749: a glob of a crate outside the workspace may bring
+                // another `test` attribute macro that replaces the body.
+                let function = (test.start_line, test.end_line, test.name.as_str());
+                by_file
+                    .get(&test.file)?
+                    .test_glob_roots(function)
+                    .iter()
+                    .find(|root| !crate_names_package(root, &index.package_names))
+                    .map(|root| {
+                        AssertionContextRefusal::TestAttribute(format!(
+                            "#[test] (a glob of `{root}` may rebind `test`)"
+                        ))
+                    })
+            });
         let file_refusal = file_refusal?;
         // A generated test is not in the file's text: the same admission
         // runs over its invocation's expansion, matched by name, attributes,

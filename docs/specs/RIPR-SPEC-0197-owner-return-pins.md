@@ -112,6 +112,13 @@ rule only for an assertion whose context was admitted.
    `serial`, `parallel`, `file_serial` and `file_parallel`, which run the
    body unchanged, and only with no arguments or bare lock keys;
    `inner_attrs`, `crate`, `path` or any other argument shape refuses it.
+   A bare `#[test]` is libtest's only while nothing rebinds `test` (#6749): a
+   `use` in the test's module (or, through `use super::*`, an enclosing
+   module of the file) that binds the name `test`, renamed or not, refuses
+   the pin, as does a glob of a crate outside the workspace (`use skipper::*`,
+   or a std `prelude` glob). A glob of the workspace's own crate or modules
+   is not seen into; a `pub use` rebinding `test` behind one is outside what
+   this file shows.
    Resolution reads the test's own module item list. A bare lock needs a
    direct `use serial_test::<lock>` item there (optionally renamed, `r#`
    normalized) and no other `use` binding the same name; imports in function
@@ -2284,7 +2291,8 @@ assertions. This repair shares the existing callback without that larger migrati
   `owner_pin_macro_ambiguity_in_other_files_and_run_memo`,
   `owner_pin_closure_call_must_share_the_bindings_live_scope`, and
   `shared_return_admission_uses_the_outer_invocation_identity`,
-  `serial_test_locks_keep_the_pin_and_other_attributes_refuse_it`, and
+  `serial_test_locks_keep_the_pin_and_other_attributes_refuse_it`,
+  `a_rebound_test_attribute_refuses_the_pin_and_the_builtin_keeps_it`, and
   `owner_pin_requires_test_item_ancestry_and_enabled_cfg` in the same test module.
 - Bitwise tails (#6675): `a_bitwise_or_tail_is_unconditional_but_closures_and_lazy_or_are_not`
   and `bitwise_pipe_reading_distinguishes_operand_position`; the public-API

@@ -58,6 +58,9 @@ struct FunctionAssertions {
     /// Assertions of test-local check helpers this test calls on an eager
     /// path (#6482).
     helper_assertions: BTreeMap<AssertionKey, BorrowedAssertion>,
+    /// Root segments of the globs that may bring a `test` attribute into a
+    /// bare `#[test]` function's scope (see [`test_attribute_glob_roots`]).
+    test_glob_roots: Vec<String>,
 }
 
 /// One assertion a test borrows from a check helper it calls.
@@ -198,6 +201,16 @@ impl OwnerPinAssertions {
                 None => Some(AssertionContextRefusal::UnidentifiedTest),
             },
         }
+    }
+
+    /// Root segments of the globs that may bring a `test` attribute into the
+    /// scope of `function`, a bare `#[test]` function the scan identified.
+    /// A glob rooted at a workspace package is not a rebinding the scan can
+    /// see; the caller, which knows the package names, refuses any other.
+    pub(crate) fn test_glob_roots(&self, function: (usize, usize, &str)) -> &[String] {
+        self.functions
+            .get(&(function.0, function.1, function.2.to_string()))
+            .map_or(&[], |facts| facts.test_glob_roots.as_slice())
     }
 
     /// The check helper `function` borrows `assertion` from (#6482), or
@@ -2109,6 +2122,13 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                 assertions,
                 macros,
                 helper_assertions,
+                test_glob_roots: function
+                    .attrs()
+                    .any(|attr| attr.simple_name().as_deref() == Some("test"))
+                    .then(|| function.syntax().parent())
+                    .flatten()
+                    .map(|module| test_attribute_glob_roots(&module))
+                    .unwrap_or_default(),
             },
         );
     }
@@ -2697,7 +2717,9 @@ fn item_context_refusal(item: &SyntaxNode) -> Option<AssertionContextRefusal> {
 /// the body, so it keeps the test out of the pin.
 fn runs_body_unchanged(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     if attr.simple_name().as_deref() == Some("test") {
-        return true;
+        return test
+            .parent()
+            .is_some_and(|module| builtin_test_attribute_holds(&module));
     }
     if attr.excl_token().is_some() {
         return false;
@@ -2721,6 +2743,71 @@ fn runs_body_unchanged(attr: &ast::Attr, test: &SyntaxNode) -> bool {
         bare_lock_bound_in_module(&path, &module) && serial_test_path_is_the_crate(&module)
     };
     admitted && lock_arguments_are_bare_keys(attr)
+}
+
+/// Whether a bare `#[test]` in `module` is libtest's built-in attribute. An
+/// import that binds the name `test` (`use skipper::serial as test`) makes it
+/// another attribute macro that may replace the body, in this module or, by
+/// `use super::*`, in an enclosing module of this file. Other globs are
+/// reported by [`test_attribute_glob_roots`] for the caller to judge.
+fn builtin_test_attribute_holds(module: &SyntaxNode) -> bool {
+    module_use_leaves(module)
+        .iter()
+        .all(|leaf| match &leaf.binding {
+            UseBinding::Name(binding) => unraw(binding) != "test",
+            UseBinding::Glob => {
+                !is_super_glob(leaf)
+                    || enclosing_module_items(module)
+                        .is_none_or(|parent| builtin_test_attribute_holds(&parent))
+            }
+        })
+}
+
+fn is_super_glob(leaf: &UseLeaf) -> bool {
+    leaf.path.len() == 1 && leaf.path[0] == "super"
+}
+
+/// The item list or source file around the module whose items are `module`,
+/// when this file holds it.
+fn enclosing_module_items(module: &SyntaxNode) -> Option<SyntaxNode> {
+    module
+        .parent()
+        .filter(|owner| ast::Module::can_cast(owner.kind()))
+        .and_then(|owner| owner.parent())
+}
+
+/// The first path segment of each glob that may bring a `test` attribute
+/// into `module`: its own globs, and those of the enclosing modules it
+/// reaches through `use super::*`. `crate`, `self` and `super` roots and the
+/// standard crates' non-prelude paths name no foreign attribute macro, so
+/// they are left out.
+fn test_attribute_glob_roots(module: &SyntaxNode) -> Vec<String> {
+    let mut roots = Vec::new();
+    let mut current = Some(module.clone());
+    while let Some(items) = current.take() {
+        let mut through_super = false;
+        for leaf in module_use_leaves(&items) {
+            if !matches!(leaf.binding, UseBinding::Glob) {
+                continue;
+            }
+            if is_super_glob(&leaf) {
+                through_super = true;
+                continue;
+            }
+            let Some(root) = leaf.path.first() else {
+                continue;
+            };
+            let standard = matches!(root.as_str(), "std" | "core" | "alloc")
+                && !leaf.path.iter().any(|segment| segment == "prelude");
+            if !standard && !matches!(root.as_str(), "crate" | "self" | "super") {
+                roots.push(root.clone());
+            }
+        }
+        if through_super {
+            current = enclosing_module_items(&items);
+        }
+    }
+    roots
 }
 
 /// `tokio::test`, rooted or not. Only the crate-qualified path: a bare
