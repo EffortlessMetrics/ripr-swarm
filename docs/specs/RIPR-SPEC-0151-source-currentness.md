@@ -51,7 +51,9 @@ digest against it) and the diff adds a line inside the packet change's
 range whose text matches the verified source at that line, so a stale diff
 cannot promote a finding. A source that exists but cannot be read rejects the packet at
 ingestion, so it never counts as verified. A fixture-only packet, or a change
-the diff does not add a line to, stays `unresolved_subject`. Candidate-current
+the diff does not add a line to, stays `unresolved_subject`. Such a change
+still yields its finding, but its file is not a changed file: the diff-mode
+changed-file count includes only packet files the diff adds a line to (#8661). Candidate-current
 Perl findings pass the same `is_candidate_actionable` filters as Python and
 TypeScript preview findings: SARIF results, GitHub annotations,
 `finding_alignment` items and the diff badge's exposure-gap count. The gap

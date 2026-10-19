@@ -235,10 +235,20 @@ impl LanguageAdapter for PerlAdapter {
             packet_to_findings_with_currentness(&packet, &change_lines, |file, change| {
                 perl_change_currentness(&options.root, changed_files, file, change)
             });
+        // #8661: the count names files this diff changes. A packet change in
+        // a file the diff adds no line to still yields its (unresolved)
+        // finding, but it is base-side evidence, not a changed file.
+        let touched: BTreeSet<String> = changed_files
+            .iter()
+            .filter(|diff_file| !diff_file.added_lines.is_empty())
+            .map(|diff_file| normalize_repo_relative(&diff_file.path.to_string_lossy()))
+            .collect();
         let changed_files = packet
             .changes
             .iter()
-            .map(|c| c.file_id.clone())
+            .filter_map(|change| packet.file(&change.file_id))
+            .filter(|file| touched.contains(&normalize_repo_relative(&file.path)))
+            .map(|file| file.file_id.clone())
             .collect::<BTreeSet<_>>()
             .len();
         let limitations = if packet.packet_status == PacketStatus::Partial {
