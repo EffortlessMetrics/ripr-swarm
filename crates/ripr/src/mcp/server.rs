@@ -266,7 +266,11 @@ impl McpServer {
         reject_unknown_arguments(&arguments, &["inventory_id", "offset", "limit"])?;
         let requested = optional_string_argument(&arguments, "inventory_id")?;
         let offset = optional_nonnegative_argument(&arguments, "offset")?.unwrap_or(0);
-        let limit = optional_positive_argument(&arguments, "limit")?;
+        let limit = optional_capped_page_limit(
+            &arguments,
+            "limit",
+            super::attempt_inventory::MAX_PAGE_ITEMS,
+        )?;
         // `max_envelope_bytes` reserves the JSON-escaped request ID plus the
         // fixed outer overhead (#7768): the pinned rmcp adds the JSON-RPC
         // fields and the modern resultType after the tool envelope is
@@ -572,6 +576,24 @@ fn optional_positive_argument(
     match optional_nonnegative_argument(arguments, name)? {
         Some(0) => Err(ErrorData::invalid_params(
             format!("{name} must be at least 1"),
+            None,
+        )),
+        other => Ok(other),
+    }
+}
+
+/// A paging limit with a typed row cap: a JSON integer `>= 1` and `<= max`.
+/// A request above the cap stays invalid params at the dispatch edge instead
+/// of being silently clamped, so the typed `page.limit` echo always names a
+/// limit the server actually honors (#8735).
+fn optional_capped_page_limit(
+    arguments: &Option<serde_json::Map<String, Value>>,
+    name: &str,
+    max: usize,
+) -> Result<Option<usize>, ErrorData> {
+    match optional_positive_argument(arguments, name)? {
+        Some(value) if value > max => Err(ErrorData::invalid_params(
+            format!("{name} must be at most {max}"),
             None,
         )),
         other => Ok(other),
