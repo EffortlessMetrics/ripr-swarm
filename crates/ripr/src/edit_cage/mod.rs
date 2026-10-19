@@ -452,10 +452,13 @@ pub(crate) fn inline_target_is_uncommitted(root: &Path, path: &str) -> bool {
             Err(_) => return false,
         },
     };
-    let staged = git_text(&root, &["ls-files", "--stage", "--", path])
-        .ok()
-        .and_then(|entry| entry.split_ascii_whitespace().nth(1).map(str::to_string));
-    !inline_target_copies_at_head(Some(&committed), Some(&worktree), staged.as_deref())
+    // Empty output means the path is not in the index (a staged deletion):
+    // that differs from HEAD. A git failure is not an answer: defer.
+    let Ok(entry) = git_text(&root, &["ls-files", "--stage", "--", path]) else {
+        return false;
+    };
+    let staged = entry.split_ascii_whitespace().nth(1);
+    !inline_target_copies_at_head(Some(&committed), Some(&worktree), staged)
 }
 
 /// Observe the confined selected target: the worktree bytes go through the
@@ -2638,6 +2641,15 @@ mod tests {
             &fixture.root.join("sub"),
             "src/pricing.rs"
         ));
+        // A git failure is not an answer: a corrupt index defers to the attempt.
+        let index_path = fixture.root.join(".git/index");
+        let saved = fs::read(&index_path).map_err(|err| format!("read index: {err}"))?;
+        fs::write(&index_path, b"corrupt").map_err(|err| format!("corrupt index: {err}"))?;
+        assert!(!inline_target_is_uncommitted(
+            &fixture.root,
+            "src/pricing.rs"
+        ));
+        fs::write(&index_path, saved).map_err(|err| format!("restore index: {err}"))?;
         // A tracked file deleted from the worktree differs from HEAD too.
         git_ok(&fixture.root, &["reset", "-q", "--hard"])?;
         assert!(!inline_target_is_uncommitted(
