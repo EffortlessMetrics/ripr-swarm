@@ -102,8 +102,9 @@ scorecard builder:
   but counted separately; they never enter real-use denominators.
 - One lifecycle observed through several roles or imports remains one
   lifecycle: rows deduplicate by `observation_key`, the representative is
-  the smallest lifecycle id, and observations that disagree on identity,
-  counted flag or disposition reject each other — in either input order.
+  the smallest lifecycle id (breaking equal-id ties lexicographically by
+  rejection reasons), and observations that disagree on identity, counted
+  flag or disposition reject each other — in either input order.
 - Open intake questions cap every claimed disposition at `needs_evidence`.
 - A `spec_required` decision can never qualify as direct one-PR work: a
   claimed `qualified_one_pr` downgrades to `qualified_spec_required`.

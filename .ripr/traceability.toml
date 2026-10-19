@@ -14456,6 +14456,7 @@ tests = [
   "xtask/src/reports/issue_lifecycle.rs::tests::json_and_markdown_derive_from_one_dto_deterministically",
   "xtask/src/reports/issue_lifecycle.rs::tests::parse_captured_accepts_at_most_one_path",
   "xtask/src/reports/issue_lifecycle.rs::tests::digest_corrupted_duplicate_conflicts_in_either_input_order",
+  "xtask/src/reports/issue_lifecycle.rs::tests::rejected_duplicate_digest_ties_preserve_json_and_markdown",
 ]
 fixtures = [
   "fixtures/issue_lifecycle_attempts",
