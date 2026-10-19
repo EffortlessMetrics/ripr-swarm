@@ -707,20 +707,53 @@ mod tests {
                 fs::set_permissions(&launcher_path, permissions)
                     .map_err(|error| error.to_string())?;
             }
+            // Undo the injected read-only state. Every exit after the stimulus
+            // is set up runs this first: outer teardown ignores deletion
+            // failures, and Windows cannot delete a read-only file.
+            let restore_launcher = || -> Result<(), String> {
+                #[cfg(windows)]
+                {
+                    // Clearing FILE_ATTRIBUTE_READONLY is the only way to undo
+                    // the injected failure on Windows; the Unix-mode lint does
+                    // not apply to this cfg-gated branch.
+                    #[expect(
+                        clippy::permissions_set_readonly_false,
+                        reason = "restoring the Windows file attribute after the injected write failure"
+                    )]
+                    {
+                        let mut permissions = fs::metadata(&launcher_path)
+                            .map_err(|error| error.to_string())?
+                            .permissions();
+                        permissions.set_readonly(false);
+                        fs::set_permissions(&launcher_path, permissions)
+                            .map_err(|error| error.to_string())?;
+                    }
+                }
+                #[cfg(not(windows))]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mut permissions = fs::metadata(&launcher_path)
+                        .map_err(|error| error.to_string())?
+                        .permissions();
+                    permissions.set_mode(0o644);
+                    fs::set_permissions(&launcher_path, permissions)
+                        .map_err(|error| error.to_string())?;
+                }
+                Ok(())
+            };
             // A process that bypasses mode bits (typically euid 0) can still
             // write the read-only manifest, so the injected failure cannot
             // occur. Probe the stimulus and skip visibly (#8867).
             let write_denied = match fs::OpenOptions::new().append(true).open(&launcher_path) {
                 Ok(_) => false,
                 Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => true,
-                Err(error) => return Err(error.to_string()),
+                Err(error) => {
+                    restore_launcher()?;
+                    return Err(error.to_string());
+                }
             };
             if !write_denied {
-                #[cfg(not(windows))]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ = fs::set_permissions(&launcher_path, fs::Permissions::from_mode(0o644));
-                }
+                restore_launcher()?;
                 // Direct handle write: libtest captures `eprintln!` of passing tests.
                 let _ = std::io::Write::write_all(
                     &mut std::io::stderr(),
@@ -730,34 +763,7 @@ mod tests {
                 return Ok(());
             }
             let bump_result = bump_version(&["0.11.0".to_string()]);
-            #[cfg(windows)]
-            {
-                // Clearing FILE_ATTRIBUTE_READONLY is the only way to undo
-                // the injected failure on Windows; the Unix-mode lint does
-                // not apply to this cfg-gated branch.
-                #[expect(
-                    clippy::permissions_set_readonly_false,
-                    reason = "restoring the Windows file attribute after the injected write failure"
-                )]
-                {
-                    let mut permissions = fs::metadata(&launcher_path)
-                        .map_err(|error| error.to_string())?
-                        .permissions();
-                    permissions.set_readonly(false);
-                    fs::set_permissions(&launcher_path, permissions)
-                        .map_err(|error| error.to_string())?;
-                }
-            }
-            #[cfg(not(windows))]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mut permissions = fs::metadata(&launcher_path)
-                    .map_err(|error| error.to_string())?
-                    .permissions();
-                permissions.set_mode(0o644);
-                fs::set_permissions(&launcher_path, permissions)
-                    .map_err(|error| error.to_string())?;
-            }
+            restore_launcher()?;
 
             let error = bump_result.err().ok_or_else(|| {
                 "a read-only launcher manifest did not fail the write".to_string()
