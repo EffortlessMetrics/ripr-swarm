@@ -42,7 +42,9 @@ pub(super) const AGENT_START_HELP: &str = r#"Start a source-edit-free workflow p
 Usage: ripr agent start [--root PATH] --seam-id ID [--out PATH] [--json]
 
 Options:
-  --root PATH      Workspace root. Defaults to current directory.
+  --root PATH      Workspace root. Defaults to the current directory, then
+                   walks up to the enclosing workspace or package, or the git
+                   top level; `--root .` pins this directory.
   --seam-id ID     Select one visible seam by ID.
   --out PATH       Workflow output directory (relative to --root). Defaults to target/ripr/workflow.
   --json           Emit one machine-readable JSON document instead of the
@@ -105,7 +107,9 @@ pub(super) const AGENT_CARD_HELP: &str = r#"Hand off one seam as the compact def
 Usage: ripr agent card [--root PATH] --seam-id ID [--json]
 
 Options:
-  --root PATH      Workspace root. Defaults to current directory.
+  --root PATH      Workspace root. Defaults to the current directory, then
+                   walks up to the enclosing workspace or package, or the git
+                   top level; `--root .` pins this directory.
   --seam-id ID     Select one visible seam by ID.
   --json           Emit the versioned repair_card.v1 JSON document. Without
                    this flag the same typed fields render as a compact human
@@ -178,7 +182,9 @@ pub(super) const AGENT_VERIFY_HELP: &str = r#"Verify static-evidence movement be
 Usage: ripr agent verify [--root PATH] --before PATH --after PATH --json
 
 Options:
-  --root PATH      Workspace root. Defaults to current directory.
+  --root PATH      Workspace root. Defaults to the current directory, then
+                   walks up to the enclosing workspace or package, or the git
+                   top level; `--root .` pins this directory.
   --before PATH    Before `repo-exposure-json` snapshot.
   --after PATH     After `repo-exposure-json` snapshot.
   --json           Required until a human verify surface exists.
@@ -264,7 +270,9 @@ pub(super) const AGENT_STATUS_HELP: &str = r#"Report local agent-loop artifact s
 Usage: ripr agent status [--root PATH] [--store PATH] [--attempt ID] [--json] [--out PATH]
 
 Options:
-  --root PATH      Workspace root. Defaults to current directory.
+  --root PATH      Workspace root. Defaults to the current directory, then
+                   walks up to the enclosing workspace or package, or the git
+                   top level; `--root .` pins this directory.
   --store PATH     Explicit repair-attempt store, resolved against --root.
                    Defaults to `target/ripr/repair-attempts`. Missing explicit
                    stores do not fall back to the default.
@@ -312,7 +320,9 @@ Usage: ripr agent repair [--root PATH] [--store PATH] --seam-id ID --phase befor
            [--verify-authorized --verify-authority ID] [--verify-rollback]
 
 Options:
-  --root PATH          Workspace root. Defaults to current directory.
+  --root PATH          Workspace root. Defaults to the current directory, then
+                       walks up to the enclosing workspace or package, or the git
+                       top level; `--root .` pins this directory.
   --store PATH         Explicit repair-attempt store, resolved against --root.
                        Defaults to `target/ripr/repair-attempts`. Missing
                        explicit stores do not fall back to the default.

@@ -419,7 +419,9 @@ pub(super) const DIFF_HELP: &str = r#"Analyze the changed surface first and repo
 Usage: ripr diff [--root PATH] [--base REV] [--head REV] [--mode MODE] [--format FORMAT] [--json]
 
 Options:
-  --root PATH              Workspace root. Defaults to current directory.
+  --root PATH              Workspace root. Defaults to the current directory, then
+                           walks up to the enclosing workspace or package, or the git
+                           top level; `--root .` pins this directory.
   --base REV               Base revision for git diff. When omitted, resolved
                            like check: the local origin/HEAD ref, then
                            origin/main, origin/master, main, and master.
@@ -446,6 +448,10 @@ pub(super) const EXPLAIN_HELP: &str = r#"Print why ripr flagged a specific chang
 Usage: ripr explain [--root PATH] [--base REV] [--worktree|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] [--quiet] <finding-id|file:line>
 
 Options:
+  --root PATH  Workspace root. Defaults to the current directory, then
+               walks up to the enclosing workspace or package, or the git
+               top level; `--root .` pins this directory. A member-relative
+               `file:line` selector binds to the directory you ran from.
   --quiet      Suppress analysis progress and heartbeats on stderr, like
                `ripr check --quiet`. Does not change stdout, exit codes, or
                error reporting.

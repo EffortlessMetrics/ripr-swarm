@@ -42,7 +42,8 @@ mod swarm_command;
 mod task_first;
 
 pub(super) use agent::{
-    agent, before_phase_stdout, run_before_repair_with_identity, translate_agent_repair_seam_id,
+    agent, before_phase_stdout, resolve_agent_repair_root, run_before_repair_with_identity,
+    translate_agent_repair_seam_id,
 };
 pub(super) use context::context;
 // Flag-documenting help bodies live beside their parsers so `cli::help`
@@ -133,6 +134,7 @@ mod check_fanout;
 pub(super) use check::check;
 #[cfg(unix)]
 pub(super) use check::check_with_interrupt_flags;
+pub(super) use check::{bind_member_selector_file, resolve_implicit_command_root};
 
 #[path = "commands/review_comments.rs"]
 mod review_comments;
@@ -2836,6 +2838,8 @@ enum DiffReportFormat {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct DiffOptions {
     root: PathBuf,
+    /// `--root` was typed, so the root is used as given (#8872).
+    root_explicit: bool,
     /// `None` when `--base` was omitted; resolved by the loader's base
     /// authority at run time, never defaulted to a literal branch here.
     base: Option<String>,
@@ -2858,7 +2862,9 @@ pub(super) fn diff(args: &[String]) -> Result<(), String> {
         help::print_diff_help();
         return Ok(());
     }
-    let options = parse_diff_options(args)?;
+    let mut options = parse_diff_options(args)?;
+    // #8872: same implicit root `ripr check` uses; `--root .` opts out.
+    resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
     let json = matches!(options.format, DiffReportFormat::Json);
     // #7331: every post-argv-parse failure of a JSON diff run writes the
     // shared refusal envelope (the diff report's own schema version) to
@@ -2954,6 +2960,7 @@ pub(super) fn diff(args: &[String]) -> Result<(), String> {
 fn parse_diff_options(args: &[String]) -> Result<DiffOptions, String> {
     let mut options = DiffOptions {
         root: PathBuf::from("."),
+        root_explicit: false,
         base: None,
         head: "HEAD".to_string(),
         mode: Mode::Draft,
@@ -2968,6 +2975,7 @@ fn parse_diff_options(args: &[String]) -> Result<DiffOptions, String> {
             "--root" => {
                 i += 1;
                 options.root = PathBuf::from(expect_value(args, i, "--root")?);
+                options.root_explicit = true;
             }
             "--base" => {
                 i += 1;
@@ -3217,7 +3225,13 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
             "ripr check --json",
         ));
     }
-    resolve_worktree_root(&mut input, worktree, root_explicitly_provided)?;
+    // #8872: the implicit workspace root `ripr check` uses (this subsumes the
+    // `--worktree` resolution); `--root .` opts out. A member-relative
+    // `file:line` selector binds to the invocation directory.
+    let prefix = resolve_implicit_command_root(&mut input.root, root_explicitly_provided)?;
+    let selector = selector
+        .map(|item| check::bind_member_selector_item(prefix.as_deref(), &input.root, &item))
+        .transpose()?;
     let config = load_for_root(&input.root)?;
     apply_to_check_input(&mut input, &config, explicit);
     let Some(selector) = selector else {

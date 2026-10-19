@@ -63,11 +63,54 @@ const REPAIR_AFTER_REFUSAL_SCHEMA_VERSION: &str = "0.2";
 /// attempt, not a retry of this one.
 const REPAIR_AFTER_FAILURE_SCHEMA_VERSION: &str = "0.4";
 
+/// #8872: the before phase is driven from `cli::run` before dispatch reaches
+/// [`agent`], so it resolves the root through this same owner there.
+pub(in crate::cli) fn resolve_agent_repair_root(
+    options: &mut AgentRepairOptions,
+) -> Result<(), String> {
+    super::check::resolve_implicit_command_root(&mut options.root, options.root_explicit)
+        .map(|_| ())
+}
+
+/// #8872: the same implicit workspace root `ripr check` uses, for the agent
+/// subcommands that default `--root` to `.`; `--root .` opts out. Relative
+/// `verify` snapshot paths typed from a member directory stay bound to that
+/// directory. Runs after the help short-circuit so `--help` stays inert.
+fn resolve_agent_command_root(command: &mut AgentCommand) -> Result<(), String> {
+    use super::check::{bind_member_selector_file, resolve_implicit_command_root};
+    match command {
+        AgentCommand::Start(options) => {
+            resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+        }
+        AgentCommand::Card(options) => {
+            resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+        }
+        AgentCommand::Status(options) => {
+            resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+        }
+        AgentCommand::Repair(options) => resolve_agent_repair_root(options)?,
+        AgentCommand::Verify(options) => {
+            let prefix = resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+            for path in [&mut options.before, &mut options.after] {
+                let bound = bind_member_selector_file(
+                    prefix.as_deref(),
+                    &options.root,
+                    &path.to_string_lossy(),
+                )?;
+                *path = PathBuf::from(bound);
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
-    let command = parse_agent_args(args)?;
+    let mut command = parse_agent_args(args)?;
     if let Some(result) = agent_dispatch::run_agent_help_command(&command) {
         return result.map_err(CommandError::from);
     }
+    resolve_agent_command_root(&mut command)?;
 
     match command {
         AgentCommand::Start(options) => run_agent_start(options).map_err(CommandError::from),
@@ -1337,6 +1380,7 @@ fn run_agent_repair_phase(
 ) -> Result<(), String> {
     let AgentRepairOptions {
         root,
+        root_explicit: _,
         seam_id,
         attempt_id,
         phase,
@@ -1446,6 +1490,7 @@ fn run_agent_repair_phase(
             let started = write_agent_start_with_report(
                 &AgentStartOptions {
                     root: root.clone(),
+                    root_explicit: true,
                     seam_id: seam_id.clone(),
                     out_dir: std::path::PathBuf::from("target/ripr/workflow"),
                     json: false,
@@ -1629,6 +1674,7 @@ fn run_agent_repair_phase(
 
             let verify_options = AgentVerifyOptions {
                 root: root.clone(),
+                root_explicit: true,
                 before,
                 after,
                 json: true,

@@ -433,6 +433,10 @@ Defaults-first adoption evidence should cover:
 - implicit-root parity for the task-first commands (`repair`, `pilot`, `status`,
   `continue`, `agent stub`) from a workspace member directory, including
   member-relative `file:line` selectors that must not reach a sibling member;
+- the same implicit-root parity for `agent start/repair/card/status/verify`,
+  `rerun`, `diff` and `explain` from a workspace member directory, with
+  member-relative `--before/--after`, `--changed-test` and `file:line` inputs
+  bound to the invocation directory and `--root .` as the opt-out;
 - shared cache-root parity, real nested and linked-worktree boundaries,
   inherited-selector isolation, and the gitless saved-diff route;
 - built-in missing-config behavior matching the generated init profile's

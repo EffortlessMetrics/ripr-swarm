@@ -10,7 +10,9 @@ Options:
   --gap-ledger PATH    Gap decision ledger required by --gap.
   --before PATH        Explicit prior targeted-rerun, repo-exposure, or compatible static snapshot.
   --check-parity       Compare selected current seams with a full static inventory; explicit and potentially expensive.
-  --root PATH          Workspace root. Defaults to current directory.
+  --root PATH          Workspace root. Defaults to the current directory, then
+                       walks up to the enclosing workspace or package, or the git
+                       top level; `--root .` pins this directory.
   --json               Emit the structured current-state report.
   --out PATH           Write the report to a file instead of stdout.
 

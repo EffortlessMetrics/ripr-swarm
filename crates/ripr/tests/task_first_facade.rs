@@ -598,6 +598,166 @@ fn member_directory_commands_use_the_resolved_workspace_root() -> Result<(), Str
     Ok(())
 }
 
+/// #8872: the remaining agent subcommands (`agent start/repair/card/status/
+/// verify`), `rerun`, `diff` and `explain` resolve the implicit workspace root
+/// from a member directory exactly as `check` and the #8767 commands do:
+/// stderr disclosure, workspace-rooted artifacts, member-relative file
+/// selectors bound to the invocation directory, and `--root .` as the opt-out.
+#[cfg(unix)]
+#[test]
+fn member_directory_agent_rerun_diff_explain_use_the_resolved_workspace_root() -> Result<(), String>
+{
+    let fixture = Fixture::dir("facade-member-agent-root")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let member = outer.join("pkg");
+    std::fs::create_dir_all(member.join("src")).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(member.join("tests")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"pkg\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(member.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(member.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    std::fs::write(member.join("tests/pricing.rs"), FIXTURE_WEAK_TEST)
+        .map_err(|e| e.to_string())?;
+    init_repo(&outer)?;
+    run_git(&outer, &["add", "Cargo.toml", "pkg"])?;
+    git_commit(&outer, "member fixture source")?;
+    let disclosure = format!("ripr: resolved workspace root to {} ", outer.display());
+
+    // Seed one attempt from the member; it lands in the workspace store.
+    let repair = run_ripr(&member, &["repair"])?;
+    assert_exit(&repair, 0, "repair from a member directory");
+    let ids = attempt_ids(&outer);
+    assert_eq!(ids.len(), 1, "attempt store must live under the workspace");
+    let seam_id = read_manifest(&outer, &ids[0])?["seam_id"]
+        .as_str()
+        .ok_or("attempt manifest has no seam_id")?
+        .to_string();
+    std::fs::write(member.join("snap.json"), "{}\n").map_err(|e| e.to_string())?;
+
+    let commands: Vec<(&str, Vec<&str>)> = vec![
+        ("agent start", vec!["agent", "start", "--seam-id", &seam_id]),
+        ("agent card", vec!["agent", "card", "--seam-id", &seam_id]),
+        ("agent status", vec!["agent", "status"]),
+        (
+            "agent repair",
+            vec![
+                "agent",
+                "repair",
+                "--phase",
+                "before",
+                "--seam-id",
+                &seam_id,
+            ],
+        ),
+        (
+            "agent verify",
+            vec![
+                "agent",
+                "verify",
+                "--before",
+                "snap.json",
+                "--after",
+                "snap.json",
+                "--json",
+            ],
+        ),
+        ("rerun", vec!["rerun", "--changed-test", "tests/pricing.rs"]),
+        ("diff", vec!["diff", "--base", "HEAD", "--head", "HEAD"]),
+        ("explain", vec!["explain", "src/lib.rs:2"]),
+    ];
+    for (label, args) in &commands {
+        let output = run_ripr(&member, args)?;
+        assert!(
+            stderr_text(&output).contains(&disclosure),
+            "{label} must disclose the resolved root:\nstdout:\n{}\nstderr:\n{}",
+            stdout_text(&output),
+            stderr_text(&output)
+        );
+        assert!(
+            !member.join("target/ripr").exists(),
+            "{label} must not create a member-local target/ripr"
+        );
+    }
+    assert!(
+        outer.join("target/ripr/workflow").exists(),
+        "agent start artifacts belong under the workspace target/ripr"
+    );
+
+    // Positive bindings: member-relative selectors reach the member's files.
+    let status = run_ripr(&member, &["agent", "status"])?;
+    assert!(
+        stdout_text(&status).contains(&ids[0]),
+        "agent status must read the workspace attempt store:\n{}",
+        stdout_text(&status)
+    );
+    let rerun = run_ripr(
+        &member,
+        &["rerun", "--changed-test", "tests/pricing.rs", "--json"],
+    )?;
+    assert!(
+        stdout_text(&rerun).contains("pkg/tests/pricing.rs"),
+        "rerun must bind the member-relative test file:\n{}\n{}",
+        stdout_text(&rerun),
+        stderr_text(&rerun)
+    );
+    let verify = run_ripr(
+        &member,
+        &[
+            "agent",
+            "verify",
+            "--before",
+            "snap.json",
+            "--after",
+            "snap.json",
+            "--json",
+        ],
+    )?;
+    assert!(
+        !stderr_text(&verify).contains("names no file under the invocation directory"),
+        "an existing member-relative snapshot must bind:\n{}",
+        stderr_text(&verify)
+    );
+
+    // Negative control: a selector naming no file is refused, never suffix-matched.
+    for args in [
+        &["rerun", "--changed-test", "tests/nope.rs"][..],
+        &["explain", "src/nope.rs:2"][..],
+        &[
+            "agent",
+            "verify",
+            "--before",
+            "nope.json",
+            "--after",
+            "nope.json",
+            "--json",
+        ][..],
+    ] {
+        let output = run_ripr(&member, args)?;
+        assert_ne!(output.status.code(), Some(0), "{args:?}");
+        assert!(
+            stderr_text(&output).contains("names no file under the invocation directory"),
+            "{args:?}:\n{}",
+            stderr_text(&output)
+        );
+    }
+
+    // Negative control: `--root .` keeps the member directory for every command.
+    for (label, args) in &commands {
+        let mut pinned = args.clone();
+        pinned.extend(["--root", "."]);
+        let output = run_ripr(&member, &pinned)?;
+        assert!(
+            !stderr_text(&output).contains("resolved workspace root"),
+            "{label} --root . must keep the member directory:\n{}",
+            stderr_text(&output)
+        );
+    }
+    Ok(())
+}
+
 #[cfg(unix)]
 fn tree_snapshot(dir: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
     let mut files = Vec::new();

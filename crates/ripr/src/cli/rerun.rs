@@ -29,6 +29,8 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, PartialEq, Eq)]
 struct RerunOptions {
     root: PathBuf,
+    /// `--root` was typed, so the root is used as given (#8872).
+    root_explicit: bool,
     selector: RerunSelector,
     json: bool,
     out: Option<PathBuf>,
@@ -369,7 +371,19 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
         help::print_rerun_help();
         return Ok(());
     }
-    let options = parse_options(args)?;
+    let mut options = parse_options(args)?;
+    // #8872: same implicit root `ripr check` uses; `--root .` opts out. A
+    // member-relative `--changed-test` file binds to the invocation directory.
+    let prefix =
+        super::commands::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+    if let RerunSelector::ChangedTest { file, .. } = &mut options.selector {
+        let bound = super::commands::bind_member_selector_file(
+            prefix.as_deref(),
+            &options.root,
+            &file.to_string_lossy(),
+        )?;
+        *file = PathBuf::from(bound);
+    }
     run_refusing(options)
 }
 
@@ -434,6 +448,7 @@ fn run_refusing(options: RerunOptions) -> Result<(), String> {
 
 fn parse_options(args: &[String]) -> Result<RerunOptions, String> {
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut changed_test = None;
     let mut canonical_gap_id = None;
     let mut gap_ledger = None;
@@ -447,6 +462,7 @@ fn parse_options(args: &[String]) -> Result<RerunOptions, String> {
             "--root" => {
                 index += 1;
                 root = PathBuf::from(expect_value(args, index, "--root")?);
+                root_explicit = true;
             }
             "--changed-test" => {
                 index += 1;
@@ -513,6 +529,7 @@ fn parse_options(args: &[String]) -> Result<RerunOptions, String> {
     };
     Ok(RerunOptions {
         root,
+        root_explicit,
         selector,
         json,
         out,

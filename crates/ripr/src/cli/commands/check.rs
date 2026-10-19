@@ -235,7 +235,7 @@ fn non_cargo_workspace_marker(dir: &Path) -> Option<ImplicitRootReason> {
 /// Returns the invocation directory relative to the widened root (`crates/app`)
 /// when the root moved, so callers can bind member-relative file selectors with
 /// [`bind_member_selector_file`]; `None` when the root did not change.
-pub(super) fn resolve_implicit_command_root(
+pub(in crate::cli) fn resolve_implicit_command_root(
     root: &mut PathBuf,
     root_explicit: bool,
 ) -> Result<Option<String>, String> {
@@ -288,7 +288,7 @@ pub(super) fn resolve_implicit_command_root(
 /// existing invocation-directory file nor an exact workspace-relative file is
 /// refused rather than left to repo-wide suffix matching, which could land on a
 /// sibling member. Absolute paths and an unmoved root pass through unchanged.
-pub(super) fn bind_member_selector_file(
+pub(in crate::cli) fn bind_member_selector_file(
     prefix: Option<&str>,
     root: &Path,
     file: &str,
