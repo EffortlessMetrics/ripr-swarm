@@ -3,6 +3,12 @@ use crate::domain::ProbeFamily;
 
 pub fn classify_changed_line(text: &str) -> Vec<ProbeFamily> {
     let text = text.trim_start();
+    // #8389: an `impl` header declares bounds and runs nothing. `Self: Sized`
+    // only looks like a field and `Fn(u8)` only looks like a call, so no
+    // runtime family applies; the changed header stays one `static_unknown`.
+    if super::classify::is_item_header(text.trim()) {
+        return vec![ProbeFamily::StaticUnknown];
+    }
     // Masked once: comments between `pub` and `const` (`pub /* note */`)
     // must not hide a declaration, and string/comment contents must not
     // mint behavioral families downstream.
@@ -26,8 +32,7 @@ pub fn classify_changed_line(text: &str) -> Vec<ProbeFamily> {
     if has_call_shape(text) && !is_local_accumulator_assignment(&masked) {
         out.push(ProbeFamily::CallDeletion);
     }
-    // #8389: `Self: Sized` in an `impl` header only looks like a field.
-    if has_field_shape(text) && !super::classify::is_item_header(text) {
+    if has_field_shape(text) {
         out.push(ProbeFamily::FieldConstruction);
     }
     if text.starts_with("match ") || has_match_arm_arrow(&masked) {

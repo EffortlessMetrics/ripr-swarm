@@ -931,3 +931,41 @@ fn replaced_impl_header_is_static_unknown_not_a_field() -> Result<(), String> {
     assert!(!body.is_empty(), "the fn inside the impl lost its probe");
     Ok(())
 }
+
+/// #8389: a callable-looking bound (`Fn(u8)`) or a trailing comment in an
+/// `impl` header does not make it a call or a body: the replaced header is one
+/// `static_unknown` probe.
+#[test]
+fn impl_header_with_fn_bound_or_comment_is_static_unknown() -> Result<(), String> {
+    for header in [
+        "impl<T: Fn(u8)> Tr for K<T> where Self: Sized {",
+        "impl Tr for K where Self: Sized { // fn go",
+        "impl Tr for K where Self: Sized { // x;",
+    ] {
+        let source = format!("pub struct K;\n{header}\n    fn go(&self) -> u32 {{ 1 }}\n}}\n");
+        let result = probes(
+            &source,
+            ChangedFile {
+                path: PathBuf::from("src/lib.rs"),
+                added_lines: vec![ChangedLine {
+                    line: 2,
+                    new_side_line: 2,
+                    text: header.into(),
+                }],
+                removed_lines: vec![ChangedLine {
+                    line: 2,
+                    new_side_line: 2,
+                    text: "impl<T: Fn(u8)> Tr for K<T> {".into(),
+                }],
+            },
+        )?;
+        assert!(
+            !result.is_empty()
+                && result
+                    .iter()
+                    .all(|probe| probe.family == ProbeFamily::StaticUnknown),
+            "`{header}` was probed as something else, or lost: {result:?}"
+        );
+    }
+    Ok(())
+}

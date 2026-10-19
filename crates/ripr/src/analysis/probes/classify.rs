@@ -521,6 +521,9 @@ pub fn should_ignore_changed_line(text: &str) -> bool {
 /// never silently dropped. A one-line `impl` whose body holds a `fn` is not a
 /// header.
 pub(crate) fn is_item_header(text: &str) -> bool {
+    // A trailing comment (`// fn go`) must not read as a body.
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let text = masked.trim();
     let text = text.strip_prefix("unsafe ").unwrap_or(text);
     let word_after = |word: &str| {
         text.strip_prefix(word)
@@ -564,6 +567,9 @@ mod tests {
             "impl Tr for K {",
             "impl<T: Debug> Tr for K<T> where Self: Sized {",
             "impl Tr for K where Self: Sized",
+            "impl Tr for K where Self: Sized { // fn go",
+            "impl Tr for K where Self: Sized { // x;",
+            "impl<T: Fn(u8)> Tr for K<T> where Self: Sized {",
             "unsafe impl Send for K {",
             "impl<T: Iterator<Item = u32>> Tr for K<T> {",
         ] {
