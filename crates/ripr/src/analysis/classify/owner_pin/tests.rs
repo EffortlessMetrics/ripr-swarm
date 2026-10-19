@@ -2589,6 +2589,15 @@ fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_const
         ),
         Some("{ let _t = AtomicUsize::new(0); weight(2) }".to_string())
     );
+    // A plain cast `n as u32` elsewhere in the file does not rebind `u32`.
+    assert_eq!(
+        value(
+            "fn narrow(n: u64) -> u32 { n as u32 }\nstatic EXPECTED: u32 = { let _t = AtomicUsize::new(0); weight(4) };",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED"
+        ),
+        Some("{ let _t = AtomicUsize::new(0); weight(4) }".to_string())
+    );
     assert_eq!(
         value(
             "const EXPECTED: AtomicUsize = AtomicUsize::new(weight(4));",
@@ -11254,6 +11263,17 @@ fn scalar_names_rebound_sees_type_struct_and_import_rebinding() {
     assert_eq!(declared_type(": Foo<{ A == B }> = 1"), None);
     assert_eq!(declared_type(": u32 = 1"), Some(" u32 "));
     assert!(!scalar_names_rebound("u32", "static X: u32 = 1;"));
+    for source in [
+        "fn f(x: u64) -> u32 { x as u32 }",
+        "fn f(n: u64) { let y = n as u32; }",
+        "const M: u32 = std::u32::MAX;",
+        "fn f<T>() { <u32 as Tr>::g(); }",
+    ] {
+        assert!(!scalar_names_rebound("u32", source), "{source}");
+    }
+    for source in ["use x as u32;", "use a::{b as u32};", "pub use x as u32;"] {
+        assert!(scalar_names_rebound("u32", source), "{source}");
+    }
     assert!(!scalar_names_rebound(
         "&'static str",
         "const S: &str = \"type str\";"
