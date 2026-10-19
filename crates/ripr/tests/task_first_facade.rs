@@ -598,6 +598,48 @@ fn member_directory_commands_use_the_resolved_workspace_root() -> Result<(), Str
     Ok(())
 }
 
+/// #8872: from a workspace member directory `diff` uses the resolved
+/// workspace root (same stderr disclosure as `check`), and `--root .` keeps
+/// the member. Unix-only like the other implicit-root smoke tests: the
+/// disclosure compares canonicalized temp paths.
+#[cfg(unix)]
+#[test]
+fn member_directory_diff_uses_the_resolved_workspace_root() -> Result<(), String> {
+    let fixture = Fixture::dir("facade-member-diff-root")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let member = outer.join("pkg");
+    std::fs::create_dir_all(member.join("src")).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(member.join("tests")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"pkg\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(member.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(member.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    std::fs::write(member.join("tests/pricing.rs"), FIXTURE_WEAK_TEST)
+        .map_err(|e| e.to_string())?;
+    init_repo(&outer)?;
+    run_git(&outer, &["add", "Cargo.toml", "pkg"])?;
+    git_commit(&outer, "member fixture source")?;
+    let disclosure = format!("ripr: resolved workspace root to {} ", outer.display());
+
+    let implicit = run_ripr(&member, &["diff", "--base", "HEAD"])?;
+    assert!(
+        stderr_text(&implicit).contains(&disclosure),
+        "{}",
+        stderr_text(&implicit)
+    );
+
+    let pinned = run_ripr(&member, &["diff", "--root", ".", "--base", "HEAD"])?;
+    assert!(
+        !stderr_text(&pinned).contains("resolved workspace root"),
+        "`--root .` must keep the member:\n{}",
+        stderr_text(&pinned)
+    );
+    Ok(())
+}
+
 #[cfg(unix)]
 fn tree_snapshot(dir: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
     let mut files = Vec::new();
