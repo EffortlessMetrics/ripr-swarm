@@ -546,6 +546,20 @@ mod tests {
     }
 
     #[test]
+    fn workspace_rust_targets_require_complete_rust_receipts() -> Result<(), String> {
+        for path in [
+            "crates/ripr/tests/agent_stub_compiles.rs",
+            "crates/ripr/build.rs",
+            "crates/ripr/examples/check_diff.rs",
+            "xtask/tests/spec_format_determinism.rs",
+            "xtask/examples/mandatory_partitions.rs",
+        ] {
+            require_rust_receipts(&[path])?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn selected_rust_path_requires_rust_gate_receipt() -> Result<(), String> {
         for path in [
             "xtask/src/check_fast_strict.rs",
