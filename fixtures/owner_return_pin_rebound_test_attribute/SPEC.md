@@ -13,8 +13,10 @@ macro, `cargo test` runs zero tests and a wrong `weight` survives.
 ## When
 
 `cargo xtask fixtures owner_return_pin_rebound_test_attribute` analyzes the
-fixture. The fixture is static-analysis only: `skipper` is a stand-in for the
-attribute macro and is not a dependency.
+fixture. `input/skipper` is a real
+proc-macro crate whose `serial` attribute drops the annotated function:
+`cargo test` in `input/` compiles and reports `running 0 tests`, so a wrong
+`weight` would survive. The analyzer must not credit the assertion.
 
 ## Then
 
