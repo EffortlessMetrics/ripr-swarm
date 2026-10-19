@@ -25,6 +25,47 @@ fn run_ripr_in(
         .map_err(|error| format!("failed to run ripr {args:?}: {error}"))
 }
 
+#[test]
+fn init_ci_provider_errors_recover_near_misses() -> Result<(), String> {
+    for (value, suggestion) in [
+        ("githb", " Did you mean `github`?"),
+        ("githbu", " Did you mean `github`?"),
+        ("gitlab", ""),
+        ("zzzzzzzzzzzz", ""),
+    ] {
+        let output = run_ripr(&["init", "--ci", value, "--dry-run"])?;
+        assert_eq!(output.status.code(), Some(2), "provider {value:?}");
+        assert!(output.stdout.is_empty(), "provider {value:?}: {output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
+            format!("ripr: unknown init --ci provider {value:?}.{suggestion} Accepted: github.\n"),
+            "provider {value:?}"
+        );
+    }
+    let missing = run_ripr(&["init", "--ci"])?;
+    assert_eq!(missing.status.code(), Some(2));
+    assert!(missing.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8_lossy(&missing.stderr).replace("\r\n", "\n"),
+        "ripr: missing value for --ci\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn init_ci_provider_valid_preview_keeps_workflow_contract() -> Result<(), String> {
+    let output = run_ripr(&["init", "--ci", "github", "--dry-run", "--force"])?;
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(".github/workflows/ripr.yml"), "{stdout}");
+    assert!(stdout.contains("continue-on-error: true"), "{stdout}");
+    assert!(
+        stdout.contains("Rerun without --dry-run to apply."),
+        "{stdout}"
+    );
+    Ok(())
+}
+
 const BARE_HELP_GROUPS: &[&str] = &[
     "cache",
     "baseline",
