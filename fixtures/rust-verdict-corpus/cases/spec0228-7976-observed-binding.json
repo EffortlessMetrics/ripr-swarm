@@ -9,6 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "side_effect_push",
   "test_shape": "unit_test_argument_free_getter_observed_binding",
+  "hard_case": null,
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",
