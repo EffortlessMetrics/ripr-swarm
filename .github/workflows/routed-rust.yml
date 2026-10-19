@@ -1,4 +1,5 @@
 name: Routed Rust Small
+run-name: ${{ github.event_name == 'pull_request' && (github.event.label.name == 'merge-ready' && format('Merge-ready request {0}', github.event.pull_request.head.sha) || format('Label metadata {0}', github.run_id)) || format('{0} {1}', github.workflow, github.ref_name) }}
 
 on:
   pull_request:

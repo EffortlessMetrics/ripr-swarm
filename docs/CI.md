@@ -42,11 +42,13 @@ hosted Actions or wheel qualification.
 
 The non-required lanes gated by `merge-ready` do not run on a Draft or plain Ready
 PR without the label.
-Routed Rust Small, ub-review, the Python wheel workflow and source-of-truth still
-follow their own triggers until #4984/#8082 integrate them. Agents and authors prove
+Routed Rust Small is also requested by the `merge-ready` label (#4986; the
+required `Ripr Rust Small Result` exists only for that request). ub-review, the
+Python wheel workflow and source-of-truth still follow their own triggers until
+#4984/#8082 integrate them. Agents and authors prove
 the change locally ([validation](agent-context/validation.md#local-and-hosted-proof)),
 publish a Draft, and add the `merge-ready` label last. Adding `merge-ready`
-starts the non-required lanes once for the head it was applied to. A later push
+starts the required Result and the non-required lanes once for the head it was applied to. A later push
 to a labeled PR does not rerun them: re-apply the label (remove it, then add it
 again) once the new head is ready to qualify. Removing the label does not cancel
 runs already in flight. Only a `merge-ready` labeled request shares a concurrency

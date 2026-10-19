@@ -82,10 +82,11 @@ before spending the `merge-ready`-requested `Ripr Rust Small Result` qualificati
    [local and hosted proof route](agent-context/validation.md#local-and-hosted-proof):
    record the unavailable dimension and reason, completed available checks, and
    existing authorized narrow hosted qualification that will establish it.
-   `REVIEW_INCOMPLETE` may retain that evidence gap and Ready-triggered proof;
+   `REVIEW_INCOMPLETE` may retain that evidence gap and merge-ready-requested proof;
    unavailable proof is not a pass. It cannot excuse an executable but unrun
    applicable local check, unfinished review or repair, a known-red test, or
-   missing claim-essential native proof. Ready requests qualification;
+   missing claim-essential native proof. After Ready, the `merge-ready` label (applied last, or removed and re-added for a new head) requests
+   qualification for the exact head; Ready alone requests nothing;
    `REVIEW_READY` and required proof still govern merge under `finish-pr`.
 
 After Ready, inspect the actual job checkout commit, parents and tree against
@@ -93,12 +94,12 @@ the reviewed candidate and basis. A run's head SHA or a pre-Ready ref observatio
 does not guarantee the checkout. If a material mismatch appears, retain the
 actual run/subject, return to Draft and resume only after the changed prerequisite
 or subject is verified; do not relabel that run as proof for the local tree or
-repeat Ready toggles to refresh it.
+re-apply `merge-ready` merely to refresh it.
 
 A new head or material finding returns the candidate to Draft for one joined
-repair/proof/review wave before another Ready transition. Preserve unaffected
-evidence. Do not re-toggle an unchanged head with a queued or running required
-run: the toggle cancels it. Retain its run link and yield the remote wait.
+repair/proof/review wave before the next `merge-ready` request (remove and re-add the label on the exact new
+head). Preserve unaffected evidence. Do not re-apply the label on an unchanged
+head with a queued or running required run: it cancels it. Retain its run link and yield the remote wait.
 
 ### PR-native continuation record
 

@@ -114,7 +114,7 @@ jobs:
               if [ "$count" != "0" ]; then
                 disposition="covered ($count required check(s) on head)"
               else
-                in_flight="$(gh api --paginate "repos/$REPOSITORY/actions/workflows/routed-rust.yml/runs?event=pull_request&head_sha=$head_sha&per_page=100" --jq '[.workflow_runs[] | select(.status != "completed")] | length' | awk '{s+=$1} END{print s+0}')"
+                in_flight="$(gh api --paginate "repos/$REPOSITORY/actions/workflows/routed-rust.yml/runs?event=pull_request&head_sha=$head_sha&per_page=100" --jq '[.workflow_runs[] | select(.status != "completed") | select(.display_title | startswith("Merge-ready request "))] | length' | awk '{s+=$1} END{print s+0}')"
                 if [ "$in_flight" != "0" ]; then
                   in_progress=$((in_progress + 1))
                   disposition="in flight ($in_flight merge-ready run(s) not yet at result; do not re-apply the label)"
