@@ -53,10 +53,11 @@ exactly once on each side of the block, contains an alphanumeric character,
 does not begin as a continuation (`.call()`, `&&`, `?`), and sits under the
 same nearest opener on both sides (#8389). The whole block keeps its probes
 when paired lines change relative order, when an unpaired line opens or closes
-a block, or when a paired statement line (ending in `;`) crosses an edited
-line (unpaired removed lines before it and unpaired added lines after it, or
-the reverse). Field lines such as `end: span.end(),` may move within their
-literal.
+a block, when a paired line crosses an edited line (unpaired removed lines
+before it and unpaired added lines after it, or the reverse), or when any line
+of the block carries a comment delimiter (`/*`, `*/`) or an odd number of `"`.
+Only `name: value,` field lines may cross an edited line, since they may move
+within their literal. Text is compared exactly apart from a trailing `\r`.
 
 An equal-sized replacement with no retained long identifier token does not
 seed a second historical finding when an emitted candidate probe of the same

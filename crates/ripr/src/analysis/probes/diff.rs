@@ -2175,6 +2175,23 @@ mod tests {
             &[(20, "update_state(1);"), (21, "report_state();")],
         );
         assert!(crossed_edit.identical_replacement_lines().is_empty());
+        let commented_out = replacement(
+            &[(10, "deploy();")],
+            &[(20, "/*"), (21, "deploy();"), (22, "*/")],
+        );
+        assert!(commented_out.identical_replacement_lines().is_empty());
+        let revived = replacement(
+            &[(10, "/*"), (11, "deploy();"), (12, "*/")],
+            &[(20, "deploy();")],
+        );
+        assert!(revived.identical_replacement_lines().is_empty());
+        let trailing_space = replacement(&[(10, "Usage: foo ")], &[(20, "Usage: foo")]);
+        assert!(trailing_space.identical_replacement_lines().is_empty());
+        let arm_order = replacement(
+            &[(10, "first(),"), (11, "second(),")],
+            &[(20, "second(),"), (21, "third(),")],
+        );
+        assert!(arm_order.identical_replacement_lines().is_empty());
         let reindented_string_line = replacement(&[(10, "payload")], &[(20, "    payload")]);
         assert!(
             reindented_string_line

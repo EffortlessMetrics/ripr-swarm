@@ -190,12 +190,15 @@ impl ChangedFile {
                 }
                 // Leading whitespace is kept: inside a multiline string it is
                 // content, so a re-indented string line is an edit.
-                let exact = line.text.trim_end();
-                let added_count = added.iter().filter(|l| l.text.trim_end() == exact).count();
+                let exact = line.text.trim_end_matches('\r');
+                let added_count = added
+                    .iter()
+                    .filter(|l| l.text.trim_end_matches('\r') == exact)
+                    .count();
                 let mut matches = removed
                     .iter()
                     .enumerate()
-                    .filter(|(_, l)| l.text.trim_end() == exact);
+                    .filter(|(_, l)| l.text.trim_end_matches('\r') == exact);
                 let (1, Some((removed_position, old)), None) =
                     (added_count, matches.next(), matches.next())
                 else {
@@ -213,6 +216,19 @@ impl ChangedFile {
                         old.line,
                     ));
                 }
+            }
+            // A comment or string boundary in the run can turn a live line
+            // into prose (or back) without changing its text, and the text
+            // alone cannot say which side of the boundary it sits on.
+            let crosses_prose = |text: &str| {
+                text.contains("/*")
+                    || text.contains("*/")
+                    || text.chars().filter(|&c| c == '"').count() % 2 == 1
+            };
+            if added.iter().any(|l| crosses_prose(&l.text))
+                || removed.iter().any(|l| crosses_prose(&l.text))
+            {
+                continue;
             }
             // Fail-closed: a reorder (`validate; commit` -> `commit; validate`,
             // swapped arguments) is an edit, so every pair must keep its order.
@@ -248,10 +264,10 @@ impl ChangedFile {
             let unpaired = |paired: &BTreeSet<usize>, range: std::ops::Range<usize>| {
                 range.filter(|i| !paired.contains(i)).count()
             };
-            // Only statements (`...;`) are order-sensitive here; a field or
-            // item line (`end: span.end(),`) may move within its literal.
+            // Statements, call arguments and match arms are order-sensitive;
+            // only a `field: value,` line may move within its literal.
             if candidates.iter().any(|c| {
-                if !added[c.0].text.trim_end().ends_with(';') {
+                if is_field_line(added[c.0].text.trim()) {
                     return false;
                 }
                 let removed_before = unpaired(&paired_removed, 0..c.1);
@@ -372,6 +388,16 @@ impl ChangedFile {
 /// The nearest earlier line of `lines` that opens a block or a bound list
 /// (ends with `{`, `(` or `[`, or is a `where` clause), trimmed. Two equal
 /// lines are only the same line when they sit under the same opener.
+/// `name: value,` struct-literal field line; the one kind of line that may
+/// move within its literal without changing meaning.
+fn is_field_line(text: &str) -> bool {
+    let name_len = text
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .count();
+    name_len > 0 && text[name_len..].starts_with(": ") && text.ends_with(',')
+}
+
 fn enclosing_opener<'a>(lines: &[&'a ChangedLine], position: usize) -> Option<&'a str> {
     lines[..position].iter().rev().find_map(|line| {
         let text = line.text.trim();
