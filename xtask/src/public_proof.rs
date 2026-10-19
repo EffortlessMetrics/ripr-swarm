@@ -603,6 +603,35 @@ fn friction_of(step: &Value) -> &[Value] {
     items(step, "friction")
 }
 
+/// Whether a step is over the asked kind of budget. The structured
+/// `budget_breaches` field the harness records wins; receipts written before
+/// that field existed fall back to the friction prose the harness used to
+/// emit, so an old receipt still renders until the next walk refresh (#8722).
+fn step_over_budget(step: &Value, workflow: bool) -> bool {
+    let structured = step.get("budget_breaches").and_then(Value::as_array);
+    match structured {
+        Some(breaches) => breaches.iter().any(|breach| {
+            field(breach, "metric").as_str().is_some_and(|metric| {
+                if workflow {
+                    metric == "workflow_lines"
+                } else {
+                    metric != "workflow_lines"
+                }
+            })
+        }),
+        None => friction_of(step).iter().any(|f| {
+            f.as_str().is_some_and(|t| {
+                if workflow {
+                    t.contains(crate::first_run::GENERATED_WORKFLOW_BUDGET_FLAG)
+                } else {
+                    t.contains("budget")
+                        && !t.contains(crate::first_run::GENERATED_WORKFLOW_BUDGET_FLAG)
+                }
+            })
+        }),
+    }
+}
+
 /// First-run bars computed from a raw `first_run.v1` receipt, so they stay
 /// comparable across the two receipts the page shows.
 fn first_run_value(id: &str, receipt: &Value, ctx: &str) -> Result<Option<f64>, String> {
@@ -623,31 +652,12 @@ fn first_run_value(id: &str, receipt: &Value, ctx: &str) -> Result<Option<f64>, 
                 .filter(|s| field(s, "exit").as_i64() != Some(0))
                 .count(),
         ),
-        "first_run.over_budget_steps" => count(
-            steps
-                .iter()
-                .filter(|s| {
-                    friction_of(s).iter().any(|f| {
-                        f.as_str().is_some_and(|t| {
-                            t.contains("budget")
-                                && !t.contains(crate::first_run::GENERATED_WORKFLOW_BUDGET_FLAG)
-                        })
-                    })
-                })
-                .count(),
-        ),
-        "first_run.over_budget_workflows" => count(
-            steps
-                .iter()
-                .filter(|s| {
-                    friction_of(s).iter().any(|f| {
-                        f.as_str().is_some_and(|t| {
-                            t.contains(crate::first_run::GENERATED_WORKFLOW_BUDGET_FLAG)
-                        })
-                    })
-                })
-                .count(),
-        ),
+        "first_run.over_budget_steps" => {
+            count(steps.iter().filter(|s| step_over_budget(s, false)).count())
+        }
+        "first_run.over_budget_workflows" => {
+            count(steps.iter().filter(|s| step_over_budget(s, true)).count())
+        }
         // A step with no numeric duration makes the walk's total unknowable, so the
         // metric is not measured rather than summed over the steps that were timed.
         "first_run.walk_secs" => cases
@@ -3229,6 +3239,95 @@ mod tests {
             bar.basis.contains("ingest:first-run"),
             "ingested basis was {}",
             bar.basis
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn structured_budget_breach_counts_even_without_matching_prose() -> Result<(), String> {
+        let mut receipts = load(&workspace_root())?;
+        let before = first_run_value(
+            "first_run.over_budget_steps",
+            &receipts.first_current,
+            "first-run-current",
+        )?
+        .ok_or("no over_budget_steps before injection")?;
+        let cases = receipts
+            .first_current
+            .get_mut("cases")
+            .and_then(Value::as_array_mut)
+            .ok_or("first-run-current has no cases")?;
+        let first = cases
+            .first_mut()
+            .ok_or("first-run-current has no first case")?;
+        let steps = first
+            .get_mut("steps")
+            .and_then(Value::as_array_mut)
+            .ok_or("first case has no steps")?;
+        steps.push(serde_json::json!({
+            "step": "check",
+            "command": "ripr check",
+            "exit": 0,
+            "secs": 1.0,
+            "stdout_lines": 10,
+            "stderr_lines_beyond_progress": 0,
+            "friction": ["some non-budget friction"],
+            "budget_breaches": [{"metric": "secs", "value": 40.0, "budget": 30.0}],
+        }));
+        let after = first_run_value(
+            "first_run.over_budget_steps",
+            &receipts.first_current,
+            "first-run-current",
+        )?;
+        assert_eq!(
+            after,
+            Some(before + 1.0),
+            "a structured breach must count even when the friction prose does not say \"budget\""
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn structured_breach_field_ignores_budget_worded_prose_without_a_breach() -> Result<(), String>
+    {
+        let mut receipts = load(&workspace_root())?;
+        let before = first_run_value(
+            "first_run.over_budget_steps",
+            &receipts.first_current,
+            "first-run-current",
+        )?
+        .ok_or("no over_budget_steps before injection")?;
+        let cases = receipts
+            .first_current
+            .get_mut("cases")
+            .and_then(Value::as_array_mut)
+            .ok_or("first-run-current has no cases")?;
+        let first = cases
+            .first_mut()
+            .ok_or("first-run-current has no first case")?;
+        let steps = first
+            .get_mut("steps")
+            .and_then(Value::as_array_mut)
+            .ok_or("first case has no steps")?;
+        steps.push(serde_json::json!({
+            "step": "check",
+            "command": "ripr check",
+            "exit": 0,
+            "secs": 1.0,
+            "stdout_lines": 10,
+            "stderr_lines_beyond_progress": 0,
+            "friction": ["budget mentioned for a non-breach reason"],
+            "budget_breaches": [],
+        }));
+        let after = first_run_value(
+            "first_run.over_budget_steps",
+            &receipts.first_current,
+            "first-run-current",
+        )?;
+        assert_eq!(
+            after,
+            Some(before),
+            "with structured fields present, prose mentioning a budget must not count as a breach"
         );
         Ok(())
     }
