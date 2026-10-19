@@ -1337,6 +1337,9 @@ fn apply_probe_and_oracle_limits(
     // RIPR-SPEC-0240: a `#[should_panic]` test's panic outcome is an oracle
     // ripr does not resolve, not a missing assertion.
     classify::withhold_should_panic_gap(finding, index);
+    // #8600: a related test line at the call-fact budget may hide a call, so
+    // a negative claim over that test's calls is a named limit.
+    classify::withhold_call_budget_gap(finding, index);
     // RIPR-SPEC-0240 runs last so a producer-named limit keeps its finding.
     classify::withhold_unsupported_gap(finding);
 }

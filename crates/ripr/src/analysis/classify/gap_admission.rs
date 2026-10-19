@@ -706,6 +706,96 @@ fn names(text: &str, ident: &str) -> bool {
     })
 }
 
+const BUDGET_LIMIT: StaticLimitKind = StaticLimitKind::RustCallFactBudget;
+const BUDGET_FIRST_UNRESOLVED_EDGE: &str =
+    "whether a related test line holds more calls than the per-line call-fact budget kept";
+
+/// #8600: `extract_call_facts` keeps at most `MAX_CALL_FACTS_PER_LINE`
+/// distinct callees per source line and drops the rest without a marker. A
+/// finding's negative claim (no assertion, no helper, one owner call) reads
+/// the related test's calls, so a related test with a saturated line cannot
+/// establish it: the dropped call may be the oracle. This is the one shared
+/// owner of that decision, derived from the shared saturation predicate, so
+/// no consumer re-derives it and no facts or cache schema carries a flag.
+///
+/// A gap class (`reachable_unrevealed`, `weakly_exposed`) becomes
+/// `static_unknown`. An already-unknown class keeps its class and gains the
+/// named reason. A positive (`exposed`) or `no_static_path` finding is left
+/// alone: a dropped call can only remove reach, never invent a gap. Never
+/// upgrades a class. Returns `true` when the finding was changed.
+pub(in crate::analysis) fn withhold_call_budget_gap(
+    finding: &mut Finding,
+    index: &RustIndex,
+) -> bool {
+    if finding.static_limit_kind.is_some() {
+        return false;
+    }
+    let is_gap = matches!(
+        finding.class,
+        ExposureClass::ReachableUnrevealed | ExposureClass::WeaklyExposed
+    );
+    let is_unknown = matches!(
+        finding.class,
+        ExposureClass::InfectionUnknown
+            | ExposureClass::PropagationUnknown
+            | ExposureClass::StaticUnknown
+    );
+    if !(is_gap || is_unknown) {
+        return false;
+    }
+    let saturated: Vec<String> = finding
+        .related_tests
+        .iter()
+        .filter(|related| {
+            index.tests().iter().any(|test| {
+                test.name == related.name
+                    && test.file == related.file
+                    && test.start_line == related.line
+                    && crate::analysis::extract::has_saturated_line(test.calls.iter())
+            })
+        })
+        .map(|related| {
+            format!(
+                "`{}` ({}:{})",
+                related.name,
+                related.file.display().to_string().replace('\\', "/"),
+                related.line
+            )
+        })
+        .collect();
+    if saturated.is_empty() {
+        return false;
+    }
+    if is_gap {
+        let next_step = format!(
+            "{} has a line with {} distinct calls, the per-line call budget, so ripr may not see every call there and does not report a gap. Split that line or check the test's assertions directly; add a test only if none checks the change.",
+            saturated.join(", "),
+            crate::analysis::extract::MAX_CALL_FACTS_PER_LINE
+        );
+        withhold_gap(
+            finding,
+            BUDGET_LIMIT,
+            BUDGET_FIRST_UNRESOLVED_EDGE,
+            next_step,
+            &saturated,
+        );
+        return true;
+    }
+    finding.static_limit_kind = Some(BUDGET_LIMIT);
+    finding.evidence.extend([
+        format!(
+            "{LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX}{}",
+            last_established_edge(finding, &saturated)
+        ),
+        format!("{LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX}{BUDGET_FIRST_UNRESOLVED_EDGE}"),
+        format!("{LIMITATION_ANALYZER_ROUTE_PREFIX}analysis/classify/gap-admission"),
+        format!(
+            "{LIMITATION_NON_CLAIM_PREFIX}no missing test, no weak oracle, and no test adequacy is established"
+        ),
+    ]);
+    true
+}
+
 const PANIC_LIMIT: StaticLimitKind = StaticLimitKind::RustPanicOutcomeUnresolved;
 const PANIC_FIRST_UNRESOLVED_EDGE: &str =
     "whether the changed code decides the panic the `#[should_panic]` test expects";
@@ -1871,5 +1961,102 @@ fn plain() { row(100); }
         assert_eq!(expects("foreign_message"), Some(false));
         assert_eq!(expects("empty_message"), Some(true));
         assert_eq!(expects("plain"), Some(false));
+    }
+
+    /// A test whose one line holds `calls` distinct callees.
+    fn budget_index(calls: usize) -> (RustIndex, RelatedTest) {
+        let line: String = (0..calls).map(|i| format!("h{i}();")).collect();
+        let facts = crate::analysis::rust_index::summarize_file(
+            PathBuf::from("src/lib.rs"),
+            format!("#[test]\nfn wide() {{\n    {line}\n}}\n"),
+        );
+        let mut related = related("wide");
+        related.line = facts
+            .tests
+            .iter()
+            .find(|test| test.name == "wide")
+            .map_or(0, |test| test.start_line);
+        let mut index = RustIndex::default();
+        index.extend_functions(facts.functions.iter().cloned());
+        index.extend_tests(facts.tests.iter().cloned());
+        index.insert_file_only(PathBuf::from("src/lib.rs"), facts);
+        (index, related)
+    }
+
+    #[test]
+    fn a_related_test_line_at_the_call_budget_withholds_a_gap_and_names_an_unknown() {
+        let budget = crate::analysis::extract::MAX_CALL_FACTS_PER_LINE;
+        let finding_for = |class: ExposureClass, related: &RelatedTest| {
+            let mut finding = marked();
+            finding.class = class;
+            finding.evidence.clear();
+            finding.related_tests = vec![related.clone()];
+            finding
+        };
+        // One under the budget: nothing may have been dropped.
+        let (under, related_under) = budget_index(budget - 1);
+        let mut finding = finding_for(ExposureClass::ReachableUnrevealed, &related_under);
+        assert!(!withhold_call_budget_gap(&mut finding, &under));
+        assert_eq!(finding.class, ExposureClass::ReachableUnrevealed);
+        assert_eq!(finding.static_limit_kind, None);
+
+        // Wide fixtures hold exactly the budget, then past it.
+        for calls in [budget, budget + 40] {
+            let (index, related) = budget_index(calls);
+            // Gap classes become `static_unknown` and drop the absence claim.
+            for class in [
+                ExposureClass::ReachableUnrevealed,
+                ExposureClass::WeaklyExposed,
+            ] {
+                let mut finding = finding_for(class, &related);
+                assert!(withhold_call_budget_gap(&mut finding, &index), "{calls}");
+                assert_eq!(finding.class, ExposureClass::StaticUnknown);
+                assert_eq!(
+                    finding.static_limit_kind,
+                    Some(StaticLimitKind::RustCallFactBudget)
+                );
+                assert!(finding.activation.missing_discriminators.is_empty());
+                assert!(
+                    finding
+                        .stop_reasons
+                        .contains(&StopReason::GapEvidenceUnresolved)
+                );
+            }
+            // Unknown classes keep their class and gain the reason.
+            for class in [
+                ExposureClass::InfectionUnknown,
+                ExposureClass::PropagationUnknown,
+                ExposureClass::StaticUnknown,
+            ] {
+                let mut finding = finding_for(class.clone(), &related);
+                let missing = finding.missing.clone();
+                assert!(withhold_call_budget_gap(&mut finding, &index), "{calls}");
+                assert_eq!(finding.class, class);
+                assert_eq!(
+                    finding.static_limit_kind,
+                    Some(StaticLimitKind::RustCallFactBudget)
+                );
+                assert_eq!(finding.missing, missing);
+            }
+            // A positive, an absent path and a producer-named limit are left
+            // alone: a dropped call never turns them into a gap.
+            for class in [ExposureClass::Exposed, ExposureClass::NoStaticPath] {
+                let mut finding = finding_for(class.clone(), &related);
+                assert!(!withhold_call_budget_gap(&mut finding, &index));
+                assert_eq!(finding.class, class);
+                assert_eq!(finding.static_limit_kind, None);
+            }
+            let mut named = finding_for(ExposureClass::ReachableUnrevealed, &related);
+            named.static_limit_kind = Some(StaticLimitKind::RustMacroReachUnresolved);
+            assert!(!withhold_call_budget_gap(&mut named, &index));
+            assert_eq!(named.class, ExposureClass::ReachableUnrevealed);
+
+            // A finding whose related test is a different test is untouched.
+            let mut elsewhere = related.clone();
+            elsewhere.name = "other".to_string();
+            let mut finding = finding_for(ExposureClass::ReachableUnrevealed, &elsewhere);
+            assert!(!withhold_call_budget_gap(&mut finding, &index));
+            assert_eq!(finding.class, ExposureClass::ReachableUnrevealed);
+        }
     }
 }

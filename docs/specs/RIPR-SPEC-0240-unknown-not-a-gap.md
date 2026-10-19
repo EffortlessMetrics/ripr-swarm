@@ -203,6 +203,25 @@ A panicking macro inside a nested `fn`, closure or `macro_rules!` in the
 owner still counts; that over-reads toward `static_unknown`, never toward a
 gap or credit.
 
+### Call-fact budget of a related test line (#8600)
+
+`extract_call_facts` keeps at most 256 distinct callees per source line. A
+related test with a line at that budget may have had a call dropped, and the
+dropped call may be the test's assertion helper or a second owner call, so a
+negative claim over that test's calls is not established. The shared owner
+`withhold_call_budget_gap` reads the existing saturation predicate
+(`has_saturated_line`); no facts or cache field carries a flag. A
+`reachable_unrevealed` or `weakly_exposed` finding with a saturated related
+test becomes `static_unknown` under `rust_call_fact_budget` and drops its
+absence claims. An `infection_unknown`, `propagation_unknown` or
+`static_unknown` finding keeps its class and gains the reason. `exposed`,
+`no_static_path`, a finding with a producer-named limit, and a finding whose
+related tests have no saturated line are untouched. Exactly 256 is
+conservatively limited: it does not prove a call was dropped. The reason never
+raises a class. Scope: the finding surfaces (`check`, JSON, human, SARIF, LSP);
+the `repo-exposure-json` seam reading keeps its own generic limitations and
+non-actionable canonical item and does not yet carry the typed reason.
+
 ## Scope boundary
 
 - Rust check findings only. The pilot seam rule is RIPR-SPEC-0230 (#5569).
@@ -292,7 +311,12 @@ Integration: `crates/ripr/tests/owner_pin_execution.rs`
 `macro_use_module_admission_matches_runtime`) and
 `crates/ripr/tests/should_panic_limit.rs`
 (`a_should_panic_test_on_a_changed_panic_guard_reads_as_static_unknown`,
-`a_panic_outcome_the_rule_does_not_cover_keeps_the_gap`).
+`a_panic_outcome_the_rule_does_not_cover_keeps_the_gap`) and
+`crates/ripr/tests/call_budget_limit.rs`
+(`a_saturated_related_test_line_withholds_the_gap_under_the_budget_reason`,
+`saturation_that_does_not_limit_the_proof_keeps_the_finding`,
+`an_independently_established_positive_keeps_its_class`), plus the unit test
+`gap_admission.rs::tests::a_related_test_line_at_the_call_budget_withholds_a_gap_and_names_an_unknown`.
 
 Fixtures: `gap_withheld_feature_gated_test`, `gap_kept_ignored_test`.
 
