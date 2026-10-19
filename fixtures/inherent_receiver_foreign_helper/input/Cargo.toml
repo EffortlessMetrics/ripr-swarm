@@ -1,0 +1,6 @@
+[package]
+name = "inherent-receiver-foreign-helper"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
