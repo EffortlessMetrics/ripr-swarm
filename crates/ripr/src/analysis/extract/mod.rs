@@ -20,7 +20,7 @@ pub(crate) use literals::{extract_literal_facts, extract_literals};
 // contents are `text[open + 1..close]`, escapes unprocessed (#7133).
 pub(crate) use mask::{
     mask_comments_and_strings, mask_with_char_literals, mask_with_string_delimiter_quotes,
-    string_literal_spans,
+    rust_literal_ranges, string_literal_spans,
 };
 #[cfg(test)]
 pub(crate) use oracles::contains_macro_invocation;

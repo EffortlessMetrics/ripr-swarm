@@ -78,6 +78,16 @@ are not reconstructed.
 Unavailable or malformed source retains existing uncertainty rather than
 borrowing a candidate line.
 
+Finding IDs remain content-addressed by path, probe family, owner and normalized
+expression. Line movement, checkout root, diff/discovery order and unrelated
+files do not change those inputs. Formatting whitespace outside Rust literals
+collapses; whitespace inside ordinary/raw string, byte, C-string and character
+literals remains data. A material change to an identity input invalidates the
+ID so an earlier suppression cannot silently select a different value. Genuine
+repeated expressions retain distinct ordinal-suffixed IDs. The public-path
+metamorphic and stale-suppression controls are in
+`crates/ripr/tests/finding_identity_contract.rs` (#8832).
+
 Each finding should carry:
 
 - changed behavior

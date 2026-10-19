@@ -2,14 +2,22 @@ use crate::domain::{ProbeFamily, ProbeId, SymbolId};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-/// Normalize an expression: trim leading/trailing whitespace and collapse
-/// internal whitespace runs to a single space.
+/// Collapse formatting whitespace without collapsing Rust literal values.
+/// Keep the shared lexical scanner's raw-string, escape and lifetime rules.
 pub(crate) fn normalize_expression(expr: &str) -> String {
     let trimmed = expr.trim();
+    let ranges = crate::analysis::extract::rust_literal_ranges(trimmed);
+    let mut ranges = ranges.iter().peekable();
     let mut result = String::with_capacity(trimmed.len());
     let mut last_was_space = false;
-    for ch in trimmed.chars() {
-        if ch.is_whitespace() {
+    for (offset, ch) in trimmed.char_indices() {
+        while ranges.peek().is_some_and(|(_, close)| offset > *close) {
+            ranges.next();
+        }
+        let literal = ranges
+            .peek()
+            .is_some_and(|(open, close)| *open <= offset && offset <= *close);
+        if ch.is_whitespace() && !literal {
             if !last_was_space {
                 result.push(' ');
             }
@@ -20,6 +28,12 @@ pub(crate) fn normalize_expression(expr: &str) -> String {
         }
     }
     result
+}
+
+// Historical 0.10 fingerprints collapsed every whitespace run, including
+// literal data. Reconstruction must retain that bug to name a stale ID.
+fn legacy_normalize_expression(expr: &str) -> String {
+    expr.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Compute the 8-char hex fingerprint for a content-addressed probe id.
@@ -107,16 +121,24 @@ pub(crate) fn legacy_whole_line_diff_probe_id(
     // line text appears more than once in the file, which occurrence got the
     // bare id cannot be recovered from one finding, so name nothing rather
     // than risk naming the wrong replacement.
-    let normalized = normalize_expression(line);
+    let normalized = legacy_normalize_expression(line);
     if source
         .lines()
-        .filter(|other| normalize_expression(other) == normalized)
+        .filter(|other| legacy_normalize_expression(other) == normalized)
         .nth(1)
         .is_some()
     {
         return None;
     }
-    let id = diff_probe_id(relative, &probe.family, probe.owner.as_ref(), line, 1).0;
+    let id = fingerprint_probe_id(
+        "probe",
+        &sanitize_path(relative),
+        probe.family.as_str(),
+        probe.owner.as_ref().map_or("", |owner| owner.0.as_str()),
+        &normalized,
+        1,
+    )
+    .0;
     (id != probe.id.0).then_some(id)
 }
 

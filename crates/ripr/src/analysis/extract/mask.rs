@@ -198,6 +198,21 @@ pub(crate) fn string_literal_spans(text: &str) -> Vec<(usize, usize, bool)> {
     scan(text).string_spans
 }
 
+/// Inclusive quote ranges of Rust string and character literals, from the
+/// same scanner used by the lexical extractors. Literal whitespace is data.
+pub(crate) fn rust_literal_ranges(text: &str) -> Vec<(usize, usize)> {
+    let scanned = scan(text);
+    let mut ranges = scanned.char_literals;
+    ranges.extend(
+        scanned
+            .string_spans
+            .into_iter()
+            .map(|(open, close, _)| (open, close)),
+    );
+    ranges.sort_unstable();
+    ranges
+}
+
 /// What one [`scan`] pass reads from a text.
 struct Scanned {
     /// The masked text, byte layout preserved.
