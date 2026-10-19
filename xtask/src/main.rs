@@ -683,6 +683,8 @@ fn finish_precommit_policy(
     }
 }
 
+/// Every gate after file policy. It stops at the first genuine policy error
+/// (intentional: only an instrument failure is deferred past later gates).
 fn precommit_policy_remaining(
     collect_all: bool,
     preflight_receipt: Option<std::ffi::OsString>,

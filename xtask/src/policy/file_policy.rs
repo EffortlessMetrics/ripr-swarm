@@ -33,7 +33,14 @@ const INSTRUMENT_FAILURE_PHRASE: &str = "instrument timeout, not an unresolved p
 /// lock wait), as opposed to a policy violation. `precommit` uses this to run
 /// its remaining checks and still fail at the end.
 pub(crate) fn is_covered_by_instrument_failure(error: &str) -> bool {
-    error.contains(INSTRUMENT_FAILURE_PHRASE)
+    // Anchored to the first line, which the validator formats itself. Later
+    // lines embed arbitrary cargo stdout/stderr, which must not be able to
+    // turn a real failure into an infrastructure one.
+    error.lines().next().is_some_and(|first| {
+        first.contains(&format!(
+            "enumeration did not finish ({INSTRUMENT_FAILURE_PHRASE})"
+        ))
+    })
 }
 
 /// The lock line, only while cargo was still blocked on it: cargo keeps the
@@ -613,6 +620,7 @@ mod tests {
     use super::COVERED_BY_INSTRUMENT_PREFIX;
     use super::COVERED_BY_LOCK_WAIT_PREFIX;
     use super::CoveredBySpawn;
+    use super::INSTRUMENT_FAILURE_PHRASE;
     use super::LOCK_WAIT_RETRIES;
     use super::TEST_COVERED_BY_BUILD_TIMEOUT;
     use super::TEST_COVERED_BY_LIST_TIMEOUT;
@@ -1698,6 +1706,20 @@ mod tests {
         };
         if !is_covered_by_instrument_failure(&error) {
             return Err(format!("lock wait not an instrument failure: {error}"));
+        }
+        // Negative experiment: the phrase quoted in embedded cargo output of a
+        // genuine failure does not make it an instrument failure.
+        let spoofed =
+            validate_test_covered_by_with("policy.toml", &commands, FilePolicyHost::Unix, |_| {
+                Ok((
+                    false,
+                    String::new(),
+                    format!("error: {INSTRUMENT_FAILURE_PHRASE}"),
+                ))
+            });
+        match spoofed {
+            Err(error) if !is_covered_by_instrument_failure(&error) => {}
+            other => return Err(format!("spoofed phrase read as instrument: {other:?}")),
         }
         if is_covered_by_instrument_failure("policy.toml:9 selects zero tests") {
             return Err("unresolved pointer read as instrument failure".to_string());
