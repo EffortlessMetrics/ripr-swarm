@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr mcp --stdio` resource routes `ripr://gap/{canonical_id}` and `ripr://repair-card/{canonical_id}` now percent-decode the captured id segment once when the raw capture misses, with the raw capture as fallback: canonical ids embed raw workspace-relative paths (spaces, `#`, and non-ASCII are literal), so URI-emitting clients that encode those characters no longer loop on `item_not_found`. The resource template descriptions declare this id grammar and name the equivalent tool route (a plain JSON string id) as the fallback (#8736).

@@ -3199,6 +3199,42 @@ fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
         ));
     }
 
+    // Encoded id reads (#8736): canonical ids embed raw workspace-relative
+    // paths, so a URI-emitting client percent-encodes characters like `:`,
+    // `/`, space, and `#`. The resource route must decode the captured
+    // segment once and resolve to the same documents the raw id addressed.
+    let encoded_id = canonical_id
+        .replace('%', "%25")
+        .replace(':', "%3A")
+        .replace('/', "%2F")
+        .replace(' ', "%20")
+        .replace('#', "%23");
+    if encoded_id == canonical_id {
+        return Err("B4 canonical id must contain encodable characters".into());
+    }
+    let gap_encoded = read_resource_document(
+        &mut session,
+        "gap-resource-encoded",
+        &format!("ripr://gap/{encoded_id}"),
+        REPLY_TIMEOUT,
+    )?;
+    if gap_encoded != gap_tool {
+        return Err(format!(
+            "encoded gap resource id did not decode to the same document:\nencoded={gap_encoded}\ntool={gap_tool}"
+        ));
+    }
+    let card_encoded = read_resource_document(
+        &mut session,
+        "card-resource-encoded",
+        &format!("ripr://repair-card/{encoded_id}"),
+        REPLY_TIMEOUT,
+    )?;
+    if card_encoded != card_tool {
+        return Err(format!(
+            "encoded repair-card resource id did not decode to the same document:\nencoded={card_encoded}\ntool={card_tool}"
+        ));
+    }
+
     // Attempt pair: prepare the B4 item, then read both routes.
     let prepared = session.call_tool(
         "prepare",

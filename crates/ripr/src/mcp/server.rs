@@ -881,7 +881,28 @@ impl ServerHandler for McpServer {
                     workspace::RECOVERY_GAP_ITEM_TOO_LARGE,
                     max_envelope_bytes,
                 ),
-                Err(failure) => Err(resource_failure("gap", &failure, None)),
+                Err(failure) => {
+                    // The canonical id embeds a raw workspace-relative path,
+                    // so a URI-emitting client percent-encodes characters
+                    // like space, `#`, and `%` (#8736). When the raw capture
+                    // misses, retry once with the decoded segment before
+                    // reporting item_not_found.
+                    if failure.code != workspace::CODE_ITEM_NOT_FOUND {
+                        return Err(resource_failure("gap", &failure, None));
+                    }
+                    match gaps::percent_decode_resource_id(canonical_id) {
+                        Some(decoded) => match session.get_gap(&decoded, None) {
+                            Ok(document) => self.resource_result(
+                                document,
+                                &request.uri,
+                                workspace::RECOVERY_GAP_ITEM_TOO_LARGE,
+                                max_envelope_bytes,
+                            ),
+                            Err(failure) => Err(resource_failure("gap", &failure, None)),
+                        },
+                        None => Err(resource_failure("gap", &failure, None)),
+                    }
+                }
             };
         }
         if let Some(attempt_id) = repair::repair_attempt_resource_id(&request.uri) {
@@ -916,7 +937,33 @@ impl ServerHandler for McpServer {
                     workspace::RECOVERY_REPAIR_TOO_LARGE,
                     max_envelope_bytes,
                 ),
-                Err(failure) => Err(resource_failure("repair-card", &failure, None)),
+                Err(failure) => {
+                    // Same encoded-id retry as the gap route (#8736): the
+                    // canonical id embeds a raw workspace-relative path.
+                    if failure.code != workspace::CODE_ITEM_NOT_FOUND {
+                        return Err(resource_failure("repair-card", &failure, None));
+                    }
+                    match gaps::percent_decode_resource_id(item_id) {
+                        Some(decoded) => {
+                            match session.repair_card_document(
+                                &decoded,
+                                None,
+                                self.analysis_root.as_deref(),
+                            ) {
+                                Ok(document) => self.resource_result(
+                                    document,
+                                    &request.uri,
+                                    workspace::RECOVERY_REPAIR_TOO_LARGE,
+                                    max_envelope_bytes,
+                                ),
+                                Err(failure) => {
+                                    Err(resource_failure("repair-card", &failure, None))
+                                }
+                            }
+                        }
+                        None => Err(resource_failure("repair-card", &failure, None)),
+                    }
+                }
             };
         }
         let resource_templates = [
