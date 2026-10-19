@@ -627,9 +627,24 @@ fn first_run_value(id: &str, receipt: &Value, ctx: &str) -> Result<Option<f64>, 
             steps
                 .iter()
                 .filter(|s| {
-                    friction_of(s)
-                        .iter()
-                        .any(|f| f.as_str().is_some_and(|t| t.contains("budget")))
+                    friction_of(s).iter().any(|f| {
+                        f.as_str().is_some_and(|t| {
+                            t.contains("budget")
+                                && !t.contains(crate::first_run::GENERATED_WORKFLOW_BUDGET_FLAG)
+                        })
+                    })
+                })
+                .count(),
+        ),
+        "first_run.over_budget_workflows" => count(
+            steps
+                .iter()
+                .filter(|s| {
+                    friction_of(s).iter().any(|f| {
+                        f.as_str().is_some_and(|t| {
+                            t.contains(crate::first_run::GENERATED_WORKFLOW_BUDGET_FLAG)
+                        })
+                    })
                 })
                 .count(),
         ),
@@ -736,6 +751,7 @@ fn derived(id: &str, r: &Receipts) -> Result<Option<Derived>, String> {
         | "first_run.friction_events"
         | "first_run.failed_steps"
         | "first_run.over_budget_steps"
+        | "first_run.over_budget_workflows"
         | "first_run.walk_secs" => Some(first_run("first-run receipts")?),
         _ => None,
     })
@@ -982,6 +998,11 @@ fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
                 num(scored),
                 num(mutants)
             )
+        } else if id == "first_run.over_budget_steps" && is_derived {
+            // The committed dx receipt predates the #8491 split, so its title
+            // still describes the old combined meaning while the derived value
+            // excludes workflow size. Mirrors the scoreboards.toml wording.
+            "First-run steps over their own time or output-length budget".to_string()
         } else if id == "trust.false_verdict_rate" {
             "Wrong verdicts on hand-checked changes from real repositories".to_string()
         } else {
@@ -998,6 +1019,35 @@ fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
             status,
             trend,
             basis,
+        });
+    }
+    // The committed dx receipt predates the #8491 metric, so the loop above
+    // never sees `first_run.over_budget_workflows`; derive it from the raw
+    // first-run receipts rather than leaving the split half-done. Once a
+    // scoreboard receipt ingests the metric, the loop owns the bar and this
+    // fallback stays out of the way. Target and wording mirror scoreboards.toml.
+    if !out
+        .iter()
+        .any(|bar| bar.id == "first_run.over_budget_workflows")
+        && let Some(derived) = derived("first_run.over_budget_workflows", r)?
+    {
+        let value = derived.value;
+        let status = match value {
+            Some(v) if meets(v, 0.0, true) => Status::Meets,
+            Some(_) => Status::Below,
+            None => Status::NotMeasured,
+        };
+        out.push(Bar {
+            board: board_name("first_run").to_string(),
+            id: "first_run.over_budget_workflows".to_string(),
+            title: "Generated CI workflows over their line budget".to_string(),
+            value,
+            unit: "workflows".to_string(),
+            target: 0.0,
+            lower_is_better: true,
+            status,
+            trend: derived.trend,
+            basis: derived.basis,
         });
     }
     Ok(out)
@@ -2459,6 +2509,62 @@ mod tests {
             .find(|bar| bar.id == "first_run.walk_secs")
             .ok_or_else(|| "no first_run.walk_secs bar".to_string())?;
         assert!(bar.status == Status::NotMeasured);
+        Ok(())
+    }
+
+    #[test]
+    fn workflow_size_flag_splits_from_over_budget_steps() -> Result<(), String> {
+        // The workflow-size review-budget flag counts toward
+        // over_budget_workflows, never over_budget_steps; a time-budget flag
+        // still counts toward over_budget_steps (#8492).
+        let flag = format!(
+            "{} 2374 lines, over the 1500-line review budget",
+            crate::first_run::GENERATED_WORKFLOW_BUDGET_FLAG
+        );
+        let receipt = serde_json::json!({
+            "cases": [{
+                "case": "demo",
+                "steps": [
+                    {"step": "init_ci", "friction": [flag]},
+                    {"step": "check", "friction": ["45.2s, over the 30s budget"]},
+                ],
+            }],
+        });
+        let steps = first_run_value("first_run.over_budget_steps", &receipt, "test")?;
+        let workflows = first_run_value("first_run.over_budget_workflows", &receipt, "test")?;
+        assert_eq!(steps, Some(1.0), "only the time-budget step counts");
+        assert_eq!(workflows, Some(1.0), "only the workflow-size step counts");
+        Ok(())
+    }
+
+    #[test]
+    fn page_shows_over_budget_workflows_as_its_own_bar() -> Result<(), String> {
+        // The committed dx receipt predates the #8491 metric, so the page must
+        // derive this bar from the raw first-run receipts: the steps arm drops
+        // to zero while the workflow-size flags surface here instead.
+        let receipts = load(&workspace_root())?;
+        let steps_now = first_run_value(
+            "first_run.over_budget_steps",
+            &receipts.first_current,
+            "first-run-current",
+        )?;
+        assert_eq!(
+            steps_now,
+            Some(0.0),
+            "every current budget flag is workflow-size and must leave over_budget_steps at zero"
+        );
+        let workflows_now = first_run_value(
+            "first_run.over_budget_workflows",
+            &receipts.first_current,
+            "first-run-current",
+        )?;
+        assert_eq!(workflows_now, Some(3.0));
+        let bar = bars(&receipts)?
+            .into_iter()
+            .find(|bar| bar.id == "first_run.over_budget_workflows")
+            .ok_or_else(|| "no first_run.over_budget_workflows bar".to_string())?;
+        assert_eq!(bar.value, workflows_now);
+        assert_eq!(bar.board, "First run");
         Ok(())
     }
 

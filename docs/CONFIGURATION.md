@@ -109,7 +109,7 @@ rendering/upload. It does not run mutation
 testing, enable CI blocking policy, or unlock basic CLI usefulness.
 
 ```text
-ripr init [--root PATH] [--ci github] [--dry-run] [--force]
+ripr init [--root PATH] [--ci github] [--mcp] [--dry-run] [--force]
 ```
 
 After writing, `init` prints `doctor` and `check` commands with the selected
@@ -130,13 +130,18 @@ refreshing the workflow. These commands can be pasted from another directory.
 If the root cannot be represented losslessly, the refusal omits executable
 retries and names the UTF-8-parent/alias remedy; existing files remain intact.
 Where quoting differs, a labeled PowerShell form accompanies the command.
+Workflow refresh warnings from `init` and `doctor` follow the same root and
+quoting rules, including the upgrade instruction emitted by an unreleased
+generator. If the selected root cannot be represented losslessly, the warning
+remains but its executable refresh command is omitted.
 
 | Flag | Default | Notes |
 | --- | --- | --- |
 | `--root PATH` | current directory | Workspace root where `ripr.toml` should be written. |
 | `--ci github` | _(off)_ | Also write `.github/workflows/ripr.yml`. The workflow installs `ripr`, runs `ripr pilot`, uploads pilot/report/agent artifacts, writes repo badge JSON, optionally renders and uploads SARIF when `RIPR_UPLOAD_SARIF` is true, and uses `continue-on-error` so the default path is advisory. |
+| `--mcp` | _(off)_ | Also add the `ripr` MCP server to `.mcp.json` (Claude Code project config). Other servers in an existing file are kept; an existing `ripr` entry is kept unless `--force`; a symlink or a file that is not a JSON object is refused. The file is rewritten with sorted keys. Like `--ci`, `--mcp` keeps an existing `ripr.toml`. Codex config is user-global and is never written: `init` prints the `codex mcp add` command instead. |
 | `--dry-run` | _(off)_ | Preview the run without writing. Prints a plan naming each target path and what would happen to it (`create`, `overwrite`, `leave existing`), then the body of each file that would be written. |
-| `--force` | _(off)_ | Overwrite an existing `ripr.toml` or generated workflow. Without this flag, existing repo policy and workflow files are left unchanged. |
+| `--force` | _(off)_ | Overwrite an existing `ripr.toml`, generated workflow, or `ripr` MCP entry. Without this flag, existing repo policy and workflow files are left unchanged. |
 
 `--dry-run` resolves the same preconditions as the real run, so the preview
 cannot disagree with the run it previews. Whenever the real run would fail, the
@@ -181,6 +186,7 @@ defaults unless repo policy or explicit flags override them.
 
 ```text
 ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N] [--timeout-ms MS]
+           [--format human|json] [--quiet]
 ```
 
 | Flag | Default | Notes |
@@ -189,7 +195,9 @@ ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N] [--timeout-m
 | `--out PATH` | `target/ripr/pilot` under `--root` | Directory for `repo-exposure.{json,md}`, `agent-seam-packets.json`, and `pilot-summary.{json,md}`. |
 | `--mode MODE` | `ripr.toml` `analysis.mode`, otherwise `draft` | One of `instant`, `draft`, `fast`, `deep`, `ready`. |
 | `--max-seams N` | `5` | Maximum ranked seams shown in the pilot summary. Must be positive. |
-| `--timeout-ms MS` | `30000` | Maximum analysis budget in milliseconds before pilot writes a partial summary. |
+| `--timeout-ms MS` | `30000` | Maximum analysis budget in milliseconds before pilot writes a partial summary. When the default passes, the same run continues for up to 240000 more; an explicit value is a hard limit. |
+| `--format FORMAT` | `human` | `human` or `json`. `json` writes the same `pilot-summary.json` document to stdout and suppresses the human terminal; packet files are still written. |
+| `--quiet` | _(off)_ | Suppress analysis progress and heartbeats on stderr. Does not change the packet, exit codes, or error reporting. |
 
 ### `ripr check`
 
@@ -202,7 +210,8 @@ Runs the static exposure analysis and renders findings.
 | `--diff PATH` | _(unset)_ | Path to a unified diff file. Overrides `--base`. `--diff -` reads from stdin. |
 | `--candidate-tree TREE` | _(unset)_ | Analyze exactly this immutable Git tree object, deriving the diff from Git objects alone. Mutually exclusive with `--diff` and `--base`. |
 | `--candidate-base BASE` | repository's empty tree | Base treeish for `--candidate-tree` (a commit, tag, or tree OID). |
-| `--worktree` | _(off)_ | Diff the base against the live working tree instead of `HEAD`, including staged and unstaged tracked edits. Like the committed `<base>...HEAD` diff, it starts at the merge base of the base and `HEAD`, so commits the base gained after the branch forked are not reported as branch changes (the base tip when there is no merge base, as in a shallow clone). Cannot be combined with `--diff`. |
+| `--worktree` | already the default when the tree has staged or unstaged tracked edits | Diff the base against the live working tree instead of `HEAD`, including staged and unstaged tracked edits (untracked files never select it; stage them with `git add -N`). Like the committed `<base>...HEAD` diff, it starts at the merge base of the base and `HEAD`, so commits the base gained after the branch forked are not reported as branch changes (the base tip when there is no merge base, as in a shallow clone). Cannot be combined with `--diff`. |
+| `--committed` | _(off)_ | Diff committed history only (`base...HEAD`) even when the working tree has uncommitted changes; the output notes that those edits were not analyzed. Cannot be combined with `--worktree`, `--diff`, `--candidate-tree`, or repo-scope formats. |
 | `--mode MODE` | `ripr.toml` `analysis.mode`, otherwise `draft` | One of `instant`, `draft`, `fast`, `deep`, `ready`. See the [mode reference](#analysis-modes). |
 | `--format FORMAT` | `human` | See [Output formats](#output-formats) for the full set. |
 | `--gap-ledger PATH` | _(unset)_ | For `repo-badge-*` formats only: render badge counts from explicit gap-decision-ledger projection targets. |
@@ -211,7 +220,10 @@ Runs the static exposure analysis and renders findings.
 | `--suppression-policy PATH` | _(unset)_ | Apply a suppressions TOML (same schema as `.ripr/suppressions.toml`) to the findings-based formats. Relative paths resolve against `--root`; a missing or malformed policy fails the run. Without this flag, findings-based human, human-full, JSON and GitHub formats leave the default file unapplied and disclose a detected `.ripr/suppressions.toml` on stderr. An unused malformed file stays nonfatal; stdout and exit semantics are unchanged. |
 | `--write-artifact PATH` | _(unset)_ | Write a full-fidelity check artifact (`ripr-check-artifact-v1`) for later `ripr explain --from PATH` / `ripr context --from PATH` reuse. Diff-scoped findings runs only. A local, disposable derivative: never a gate, badge, or proof input. |
 | `--perl-facts PATH` | _(unset)_ | Use this explicit Perl facts packet as the analysis input for Perl files. |
+| `--output-dir DIR` | _(unset)_ | With a named `--diff` file, write native `badge.json`, `detail.json` and `human.txt` from one analysis plus a `manifest.json`. `DIR` must be new (its parent must exist). Does not combine with `--format`/`--json`, scope switches, `--gap-ledger`, `--write-artifact` or `--suppression-policy`. See [Output schema](OUTPUT_SCHEMA.md). |
+| `--quiet` | _(off)_ | Suppress analysis progress and heartbeats on stderr. Does not change machine stdout, exit codes, or error reporting. |
 | `--git-timeout SECS` | `300` | Cooperative deadline in seconds for each git invocation in the diff-load path. `0` disables it. Also settable via `RIPR_GIT_TIMEOUT`. |
+| `--timeout SECS` | `600` | Wall-clock budget in seconds for the whole diff or worktree analysis (#5369). When it runs out, `ripr check` stops, exits non-zero and refuses with `analysis_timeout`: no findings are produced and the result is never a clean pass. `0` disables the budget. The budget starts when analysis starts; each git call before that is bounded by `--git-timeout`. Also settable via `RIPR_CHECK_TIMEOUT`. |
 
 Cancelling a `ripr check` run (for example with Ctrl-C) is clean for the files ripr writes itself: outputs and cache entries are written atomically, so an interrupted run leaves no partial report file and no corrupt cache, and the next run simply recomputes and recovers. A file the shell redirects stdout into (for example `ripr check --format repo-exposure-json > report.json`) is owned by the shell, not ripr: an interruption can truncate it, and re-running rewrites it.
 
@@ -234,12 +246,17 @@ that needs the tuning.
 | `RIPR_COMPACT_REPO_SEAM_CACHE_MAX_SEAMS` | `100000` | Secondary seam *count* cap per single entry or shard in the compact repo seam cache. Encoded bytes remain the primary bound (`RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES`). Raise this for large repos only when shards still fit the byte ceiling and the machine has enough disk and time budget. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. |
 | `RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES` | `8388608` (8 MiB) | Primary encoded-byte ceiling for one classified-cache single entry or shard on both the full and compact store paths (RIPR-SPEC-0222). Record-count env vars are secondary. A single record that cannot fit is skipped with `skipped_oversized_record_index_*` (`skipped_oversized_metadata_ceiling_*` when the metadata overflows); analysis output stays usable, the cache is not claimed populated, and one stderr line names the record, its encoded size and the value that fits. Must be a positive integer. Invalid values fail with a diagnostic naming the variable. This is a store-path bound, not a process RSS guarantee or a load/decode bound. |
 | `RIPR_GIT_TIMEOUT` | `300` | Cooperative deadline in seconds for each git invocation in the diff-load path. A git command that exceeds the deadline is terminated and the error names `git_invocation_timeout`. `0` disables the deadline. Must be a non-negative integer; an invalid value fails closed (exit `2`) with an error naming the variable. An explicit `ripr check --git-timeout SECS` overrides the environment value. |
+| `RIPR_CHECK_TIMEOUT` | `600` | Wall-clock budget in seconds for one `ripr check` diff or worktree analysis (#5369). Past the budget the run is stopped and refuses with `analysis_timeout` (exit non-zero, no findings, never a clean pass). `0` disables the budget. Must be a non-negative integer; an invalid value fails closed with an error naming the variable. An explicit `ripr check --timeout SECS` overrides the environment value. |
 | `RIPR_ALLOW_REPO_PERL_EXECUTABLE` | unset | Only the exact value `1` lets `[perl].executable` from `ripr.toml` run as the Perl facts exporter. Otherwise ripr ignores the key, says so, and runs the exporter from `PATH`, so a cloned repository cannot choose a program for ripr to run. |
 | `RIPR_MAX_REPO_INDEX_FILES` | `1200` | Maximum Rust files a repo-scoped analysis will load into the index before failing closed as `repo_scope_oversized`. The analysis is not run when the limit is exceeded, so the result is never a silently partial one. Scope the run with `ripr check --diff` or raise the limit. Must be a positive integer. |
 | `RIPR_REVIEW_GUIDANCE_MAX_INDEX_FILES` | `1200` | Maximum unique files admitted by one `ripr review-comments` guidance dispatch: the analyzable workspace corpus plus present changed owner-attribution inputs, including generated/excluded changed files that attribution reads. Counted before either owner indexing or corpus materialization. Aligns with `RIPR_MAX_REPO_INDEX_FILES` and the diff narrowing threshold (#4972's measured self-repo growth beyond 800), not the `10000` diff memory guard, because guidance indexes the whole workspace, remaining below #3768's 1,600–1,700-file failure shapes. Over-limit dispatches fail as `review_guidance_oversized`; the run receipt stays `failed`, names the limitation and repair route, and no guidance artifacts are published. The xtask wrapper preserves the classification so consumers can distinguish incomplete instrumentation from a real gap. No silent truncation. Raise only on a measured, sufficiently resourced runner, or reduce workspace inputs; narrowing only the diff does not reduce the workspace file count. This is an input limit, not an RSS bound or a guarantee that admitted guidance completes. Positive integer required; invalid values fail closed, while `--help`/`-h` remain available. |
 | `RIPR_REVIEW_GUIDANCE_MAX_PAYLOAD_BYTES` | `268435456` (256 MiB) | Sum of changed diff bytes and the metadata source-byte total for the same unique input set. The shared generated-source classifier also inspects bounded headers/vendor markers, respecting handwritten-file declarations and stronger exclusions. The few-giant-files admission axis; a source-byte count is not the expanded index's memory usage. The same named failure and receipt contract applies before owner indexing or workspace loading. Raise only after runner measurement, or reduce corpus and/or diff bytes. Positive integer required; invalid values fail closed except for help. This preflight does not bound the earlier Git diff capture itself (#5000). |
 | `RIPR_REPO_EXPOSURE_SEAM_LIMIT` | `10000` | Maximum seams a full-repo `repo-exposure` analysis classifies before capping. When the cap fires, the run reports `run_status = "seam_limit_applied"` with a `limitations[]` entry naming the analyzed and total seam counts, this variable, and a repair route. Set to `0` to analyze all seams; any other value that is not a positive integer exits `2` and names the variable. `ripr doctor` reports this cap under its known limitations. |
 | `RIPR_PILOT_SEAM_BUDGET` | `2000` | Maximum seams written to `ripr pilot` artifacts (`repo-exposure.json`, `agent-seam-packets.json`). Set to `0` to disable the budget and write all seams, which may produce very large files; any other value that is not a positive integer exits `2` and names the variable. When the budget applies, both artifacts carry a `limitations[]` disclosure naming the variable and a repair route. |
+| `RIPR_CHECK_FINDINGS_BYTES` | `1000000` | Byte budget for the findings array in `ripr check --format json`. When it engages, the document carries a `limited_findings_bound` run limitation naming the variable. Set to `0` to remove the cap; an unparseable value fails the run. |
+| `RIPR_PYTHON_MAX_WORKSPACE_FILES` | `800` | Maximum `.py` files discovered in one diff-mode Python walk; exceeding it produces a named limitation. Invalid or zero values use the default bound. |
+| `RIPR_PYTHON_MAX_FILE_READ_BYTES` | `16777216` (16 MiB) | Maximum bytes accepted from one Python source file; an oversized file is refused with a named limitation. Invalid or zero values use the default bound. |
+| `RIPR_PYTHON_MAX_WORKSPACE_READ_BYTES` | `67108864` (64 MiB) | Aggregate Python source-read budget per analysis run. Invalid or zero values use the default bound. |
 | `RIPR_TS_MAX_WORKSPACE_FILES` | `20000` | Maximum directory entries visited during TypeScript/JavaScript workspace discovery, including entries that are not accepted source files. Exceeding the bound stops discovery and discloses a truncated workspace; it does not establish a complete analysis. Invalid or zero values use the default bound. |
 | `RIPR_TS_MAX_FILE_READ_BYTES` | `16777216` (16 MiB) | Maximum bytes accepted from one TypeScript/JavaScript source file. An oversized file produces the named `file_read_capped` limitation. The per-run disclosure of refused files is bounded to a stable-sorted sample of 8 paths plus one summary entry carrying the true refused count (#5022); every oversized file is still refused. Invalid or zero values use the default bound. |
 | `RIPR_TS_MAX_WORKSPACE_READ_BYTES` | `67108864` (64 MiB) | Aggregate TypeScript/JavaScript source-read budget per analysis run. Exhaustion produces the named `workspace_read_budget_exhausted` limitation, folded into the same bounded sampled disclosure as `file_read_capped`. Invalid or zero values use the default bound. |
@@ -285,6 +302,19 @@ and recompute its digest. This contract does not cover every cache family or
 provide provenance signatures. Reuse performs one semantic-body serialization
 and SHA-256 operation per envelope; no cache-speed improvement is claimed.
 
+Because a repository could therefore ship a digest-valid entry of its own
+(#7780), the seam-fact, classified-seam and file-fact caches refuse every
+entry when Git tracks any file under the cache root: the lookup reports an
+ignored cache entry naming the condition and the run recomputes. A cache root
+outside any Git work tree (for example `RIPR_CACHE_DIR` elsewhere) is
+unaffected. When Git cannot answer (dubious ownership, a damaged repository, a
+5-second deadline) the cache is refused rather than assumed clean. An
+extracted archive carries no Git evidence, so this does not defend against a
+planted cache delivered that way. A cache export refuses a tracked source
+for the same reason, so it cannot launder tracked entries into an exported
+cache. The corpus-fingerprint cache binds its
+entries to the checkout path hash and is unchanged.
+
 To relocate the cache to a different directory (e.g., for a read-only
 source checkout):
 
@@ -329,7 +359,7 @@ Renders a single finding in human format.
 ```text
 ripr explain [--root PATH] [--base REV] [--worktree | --diff PATH] [--from PATH]
              [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH]
-             [--suppression-policy PATH] <finding-id | file:line>
+             [--suppression-policy PATH] [--quiet] <finding-id | file:line>
 ```
 
 The trailing positional argument selects the finding. Either form works:
@@ -355,7 +385,7 @@ ripr context [--root PATH] [--base REV] [--worktree | --diff PATH] [--from PATH]
              [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH]
              [--suppression-policy PATH]
              (--at | --finding) <finding-id | file:line>
-             [--max-related-tests N] [--json]
+             [--max-related-tests N] [--json] [--quiet]
 ```
 
 | Flag | Default | Notes |
@@ -363,6 +393,7 @@ ripr context [--root PATH] [--base REV] [--worktree | --diff PATH] [--from PATH]
 | `--at SELECTOR` | _(required)_ | Same selector grammar as `explain`. `--finding` is an alias. |
 | `--max-related-tests N` | `ripr.toml` `reports.max_related_tests`, otherwise `5` | Caps the number of related tests embedded in the packet. |
 | `--json` | _(off)_ | Forces JSON; `context` already returns JSON-shaped output, this flag is for parity with `check`. |
+| `--quiet` | _(off)_ | Suppresses the stderr progress stream, like `ripr check --quiet`. `explain` accepts it too. Stdout, exit codes and errors are unchanged. |
 
 ### `ripr doctor`
 
@@ -397,17 +428,19 @@ workspace fail.
 `doctor` also reports the repository config status for the selected root:
 
 ```text
-Config: loaded ripr.toml
-Config path: ./ripr.toml
-Analysis mode default: deep
-LSP seam diagnostics default: true
-Suppressions path: .ripr/suppressions.toml
+- Config path: /path/to/repo/ripr.toml
+- Analysis mode default: deep
+- LSP seam diagnostics default: true
+✓ Workspace: ... · Config: loaded ripr.toml
 ```
+
+`ripr doctor -v` additionally prints `Suppressions path: .ripr/suppressions.toml`,
+the enabled languages, and the other effective defaults.
 
 When no repo config exists, that is healthy and explicit:
 
 ```text
-Config: not found; using built-in defaults
+✓ Workspace: ... · Config: not found; using built-in defaults
 ```
 
 Malformed config makes `doctor` fail with the config path and validation
@@ -459,7 +492,7 @@ reads seven keys; everything else is ignored. The schema lives in
 | `seamDiagnostics` | boolean | `ripr.toml` `lsp.seam_diagnostics`, otherwise `true` | Enables repo seam evidence diagnostics in addition to diff-derived Finding diagnostics. |
 | `diagnosticProfile` | string | `ripr.toml` `lsp.diagnostic_profile`, otherwise `actionable` | `actionable` publishes only producer-backed bounded finding routes; `full` preserves audit/debug finding and seam visibility. Unknown initialization values fall back to the repository/default profile. |
 | `gitTimeoutMs` | number | `30000` | Cooperative deadline in milliseconds for each git invocation in the refresh path (Git-input probe and diff load). An exceeded deadline terminates the git process and commits a limited snapshot naming `git_invocation_timeout`; a timed-out probe fails closed as unresolved. Malformed initialization values are ignored (the default stays). No `ripr.toml` slot. |
-| `refreshDeadlineMs` | number | `600000` | Physical deadline in milliseconds for one whole refresh analysis attempt. An attempt that exceeds the deadline is cancelled cooperatively at analysis checkpoints and dropped fail-closed with the named `deadline_exceeded` outcome and an "analysis deadline exceeded" progress end — no limited snapshot is committed. A deadline cancel loses to an earlier supersede or client cancel (first-cancel-wins). Malformed initialization values are ignored (the default stays). No `ripr.toml` slot. |
+| `refreshDeadlineMs` | number | `600000` | Physical deadline in milliseconds for one whole refresh analysis attempt. An attempt that exceeds the deadline is cancelled cooperatively at analysis checkpoints and dropped fail-closed with the named `deadline_exceeded` outcome and an "analysis deadline exceeded" progress end — no limited snapshot is committed. A deadline cancel loses to an earlier supersede or client cancel (first-cancel-wins). Values below 100 are rejected and the default stays. Malformed initialization values are ignored (the default stays). No `ripr.toml` slot. |
 
 Initialization options are treated as explicit LSP settings and override
 `ripr.toml` when the value is successfully applied. A recognized key with
@@ -570,6 +603,7 @@ The extension contributes these command IDs and palette titles:
 | `ripr.selectWorkspaceRoot` | ripr: Select Workspace Root |
 | `ripr.showOutput` | ripr: Show Output |
 | `ripr.showStatus` | ripr: Show Status |
+| `ripr.showAttemptStatus` | ripr: Show Repair Attempt Status |
 | `ripr.diagnoseSetup` | ripr: Diagnose Setup |
 | `ripr.startCurrentRepair` | ripr: Start Current Repair |
 | `ripr.copyCurrentRepairPacket` | ripr: Copy Current Repair Packet |

@@ -2154,6 +2154,78 @@ fn a_non_plain_drop_on_the_returned_type_lends_no_pin() {
 }
 
 #[test]
+fn a_local_non_plain_drop_guard_lends_a_pin() {
+    // #8480 exit-position narrowing: a non-plain Drop record built only
+    // in a local, non-returned position drops inside the owner, so it
+    // must not refuse the pin for the plain record the owner returns.
+    let lib = "#[derive(Debug, PartialEq)]\npub struct Cfg {\n    pub n: u32,\n}\n\nimpl Drop for Cfg {\n    fn drop(&mut self) {\n    }\n}\n\npub struct Guard {\n    pub n: u32,\n}\n\nimpl Drop for Guard {\n    fn drop(&mut self) {\n        self.n = self.n.wrapping_add(1);\n    }\n}\n\npub fn make(x: u32) -> Cfg { let _guard = Guard { n: 0 };\n    Cfg { n: x * 3 }\n}\n";
+    let tests = "use demo::make;\nuse demo::Cfg;\n\n#[test]\nfn makes() {\n    assert_eq!(make(4), Cfg { n: 12 });\n}\n";
+    let index = index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = establish(&index, "make", "Cfg { n: x * 3 }");
+    assert!(pin.is_some(), "the struct owner must establish a pin");
+    let Some(pin) = pin else { return };
+    assert_eq!(
+        admitted_texts(&index, &pin),
+        vec!["assert_eq!(make(4), Cfg { n: 12 });".to_string()]
+    );
+}
+
+#[test]
+fn returned_types_drop_plain_scans_only_exit_positions() {
+    // #8480 exit-position narrowing, direct owner-level table.
+    let header = "#[derive(Debug, PartialEq)]\npub struct Cfg {\n    pub n: u32,\n}\n\nimpl Drop for Cfg {\n    fn drop(&mut self) {\n        std::process::exit(0);\n    }\n}\n\n";
+    let verdict = |lib: &str| -> bool {
+        let index = index(&[(LIB, lib)]);
+        let owner = owner(&index, "make");
+        OwnerReturnPin::returned_types_drop_plain(owner, &index)
+    };
+    // Local-only constructions: not exit positions.
+    assert!(verdict(&format!(
+        "{header}pub fn make(x: u32) -> u32 {{\n    let _guard = Cfg {{ n: 0 }};\n    x * 3\n}}\n"
+    )));
+    assert!(verdict(&format!(
+        "{header}pub fn make(x: u32) -> u32 {{\n    let _ = Cfg {{ n: 0 }};\n    x * 3\n}}\n"
+    )));
+    assert!(verdict(&format!(
+        "{header}fn sink(_c: Cfg) {{}}\npub fn make(x: u32) -> u32 {{\n    sink(Cfg {{ n: 0 }});\n    x * 3\n}}\n"
+    )));
+    assert!(verdict(&format!(
+        "{header}pub fn make(x: u32) -> u32 {{\n    if (Cfg {{ n: 0 }}).n == 0 {{ x * 3 }} else {{ 0 }}\n}}\n"
+    )));
+    assert!(verdict(&format!(
+        "{header}pub fn make(x: u32) -> u32 {{\n    loop {{ let _g = Cfg {{ n: 0 }}; break; }}\n    x * 3\n}}\n"
+    )));
+    // Exit positions: still demote.
+    assert!(!verdict(&format!(
+        "{header}pub fn make(x: u32) -> Cfg {{\n    Cfg {{ n: x * 3 }}\n}}\n"
+    )));
+    assert!(!verdict(&format!(
+        "{header}pub fn make(x: u32) -> Cfg {{\n    return Cfg {{ n: x * 3 }};\n}}\n"
+    )));
+    assert!(!verdict(&format!(
+        "{header}pub fn make(x: u32) -> Cfg {{\n    if x > 0 {{ Cfg {{ n: x * 3 }} }} else {{ Cfg {{ n: 0 }} }}\n}}\n"
+    )));
+    assert!(!verdict(&format!(
+        "{header}pub fn make(x: u32) -> Result<Cfg, ()> {{\n    Ok(Cfg {{ n: x * 3 }})\n}}\n"
+    )));
+    assert!(!verdict(&format!(
+        "{header}pub fn make(x: u32) -> Cfg {{\n    match x {{ _ => Cfg {{ n: x * 3 }} }}\n}}\n"
+    )));
+    assert!(!verdict(&format!(
+        "{header}pub fn make(x: u32) -> (Cfg, u32) {{\n    (Cfg {{ n: x * 3 }}, 1)\n}}\n"
+    )));
+    assert!(!verdict(&format!(
+        "{header}pub fn make(x: u32) -> Cfg {{\n    (Cfg {{ n: x * 3 }})\n}}\n"
+    )));
+    assert!(!verdict(&format!(
+        "{header}pub fn make(x: u32) -> Cfg {{\n    let c = Cfg {{ n: x * 3 }};\n    c\n}}\n"
+    )));
+    assert!(!verdict(&format!(
+        "{header}pub fn make(x: u32) -> Cfg {{\n    match x {{ _ => {{ Cfg {{ n: x * 3 }} }} }}\n}}\n"
+    )));
+}
+
+#[test]
 fn a_test_written_expected_file_lends_no_weight_pin() {
     // #8097: the test rewrites its expected file from the owner before
     // comparing, inline or through a plain (annotated) binding.
@@ -2529,6 +2601,33 @@ fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_const
         (
             "const EXPECTED: u32 = weight(4);\nmod other { pub const EXPECTED: u32 = 12; }",
             "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED",
+        ),
+        // #8112: an interior-mutable `let` and a `static mut` may hold a
+        // value other than their initializer at the assertion.
+        (
+            "",
+            "let e = std::cell::Cell::new(weight(2));\ne.set(6);\nassert_eq!(std::cell::Cell::new(weight(2)), e);",
+            "e",
+        ),
+        (
+            "",
+            "let e = std::rc::Rc::new(RefCell::new(weight(2)));\nassert_eq!(weight(2), e);",
+            "e",
+        ),
+        (
+            "",
+            "let e = std::sync::Mutex::new(weight(2));\nassert_eq!(weight(2), e);",
+            "e",
+        ),
+        (
+            "",
+            "let e = std::sync::atomic::AtomicUsize::new(weight(2));\nassert_eq!(weight(2), e);",
+            "e",
+        ),
+        (
+            "static mut EXPECTED: u32 = weight(4);",
+            "unsafe { EXPECTED = 6; }\nassert_eq!(weight(4), unsafe { EXPECTED });",
             "EXPECTED",
         ),
     ] {
@@ -4681,6 +4780,46 @@ fn any_mention_in_another_macros_arguments_stays_ambiguous() {
 }
 
 #[test]
+fn a_bound_trusted_call_hides_attributes_and_nested_calls_from_the_pin() {
+    // #8446: the second pass over a bound trusted name's calls must read an
+    // attribute in its arguments like the first pass does, and must reach a
+    // bound call nested inside another trusted call's token tree.
+    let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    let refused = |other: &str| {
+        matches!(
+            weight_refusal(tests, &[("src/other.rs", other)]),
+            Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::MacroBinding(_)
+            ))
+        )
+    };
+    for hidden in [
+        // Finding 1: an attribute in the arguments of a bound trusted call.
+        "use ext::vec;\nvec!(#[no_implicit_prelude] mod tests;);\n",
+        "use ext::vec;\nvec!(#[macro_use] mod tests;);\n",
+        // Finding 2: a bound call nested in another trusted call.
+        "use ext::vec;\nfn f() { dbg!(vec!(assert_eq!(#[cfg(test)] mod tests;))); }\n",
+        "use ext::vec;\nfn f() { dbg!(vec!(#[no_implicit_prelude] mod tests;)); }\n",
+        "use ext::vec;\nfn f() { dbg!(dbg!(vec![assert_eq!(1, 1)])); }\n",
+    ] {
+        assert!(refused(hidden), "{hidden}");
+    }
+    // Discriminating negatives: an inert attribute, an unbound nested name
+    // and a bound call that names no trusted macro keep the pin.
+    for kept in [
+        "use ext::vec;\nvec!(#[derive(Debug)] struct S;);\n",
+        "fn f() { dbg!(vec!(assert_eq!(1, 1))); }\n",
+        "use ext::vec;\nfn f() { dbg!(vec!(1, 2)); }\n",
+    ] {
+        assert_eq!(
+            weight_refusal(tests, &[("src/other.rs", kept)]),
+            None,
+            "{kept}"
+        );
+    }
+}
+
+#[test]
 fn a_bound_trusted_macros_arguments_are_opaque_to_other_trusted_names() {
     // #5941: a user-defined `vec!` is no longer std's, so `assert_eq!` named
     // only inside its arguments can be defined by the expansion together with
@@ -5064,6 +5203,79 @@ fn pretty_assertions_imported_under_its_own_name_is_the_standard_assertion() -> 
             "{other}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn a_verified_drop_in_import_in_a_macro_body_is_the_standard_assertion() -> Result<(), String> {
+    // #8149: the drop-in rule applies to `use` items a macro body emits.
+    let outside = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    let manifest = |dependency: &str| {
+        format!(
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dev-dependencies]\n{dependency}\n"
+        )
+    };
+    let plain = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-macro-plain",
+        &[("Cargo.toml", &manifest("pretty_assertions = \"1\""))],
+    )?;
+    let aliased = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-macro-aliased",
+        &[(
+            "Cargo.toml",
+            &manifest("pretty_assertions = { package = \"fake-assertions\", version = \"1\" }"),
+        )],
+    )?;
+    let refused = |refusal: Option<AssertionRefusal>| {
+        matches!(
+            refusal,
+            Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::MacroBinding(_)
+            ))
+        )
+    };
+    let mut results = Vec::new();
+    // Admitted under a verified manifest, refused without one or when aliased.
+    for other in [
+        "macro_rules! cases { ($n:ident) => { mod $n { use pretty_assertions::assert_eq; #[test] fn t() { assert_eq!(weight(4), 12); } } }; }\n",
+        "macro_rules! cases { () => { use ::pretty_assertions::assert_eq; }; }\n",
+    ] {
+        let others = [("src/other.rs", other)];
+        results.push((
+            other,
+            weight_refusal_under(outside, &others, Some(&plain)),
+            weight_refusal_under(outside, &others, Some(&aliased)),
+            weight_refusal(outside, &others),
+        ));
+    }
+    // Still refused even under a verified manifest.
+    let mut still_refused = Vec::new();
+    for other in [
+        "macro_rules! m { () => { use other::assert_eq; }; }\n",
+        "macro_rules! m { () => { use pretty_assertions::assert_ne as assert_eq; }; }\n",
+        "macro_rules! m { () => { use pretty_assertions::inner::assert_eq; }; }\n",
+        "macro_rules! m { () => { use pretty_assertions::assert_eq; }; }\nmod pretty_assertions {}\n",
+    ] {
+        still_refused.push((
+            other,
+            weight_refusal_under(outside, &[("src/other.rs", other)], Some(&plain)),
+        ));
+    }
+    // A literal `use` in a matcher binds nothing and cannot reach the next `;`.
+    let matcher =
+        "macro_rules! m { (use other::assert_eq) => { use pretty_assertions::assert_eq; }; }\n";
+    let matcher_result = weight_refusal_under(outside, &[("src/other.rs", matcher)], Some(&plain));
+    let _ = std::fs::remove_dir_all(&plain);
+    let _ = std::fs::remove_dir_all(&aliased);
+    for (other, under_plain, under_alias, unrooted) in results {
+        assert_eq!(under_plain, None, "{other}");
+        assert!(refused(under_alias), "{other}");
+        assert!(refused(unrooted), "{other}");
+    }
+    for (other, refusal) in still_refused {
+        assert!(refused(refusal), "{other}");
+    }
+    assert_eq!(matcher_result, None);
     Ok(())
 }
 
@@ -5464,7 +5676,7 @@ fn trusted_macro_scan_skips_files_only_once_every_name_is_ambiguous() {
         // A foreign glob saturates the set before the defining file is read.
         (
             vec![
-                ("src/a.rs", "use std::io::prelude::*;\n"),
+                ("src/a.rs", "use rayon::prelude::*;\n"),
                 ("src/b.rs", shadowing),
             ],
             true,
@@ -5539,7 +5751,7 @@ fn convergence_index() -> RustIndex {
     index(&[
         (
             CONVERGENCE_GLOB,
-            "use std::io::prelude::*;\npub fn drain(input: &mut Vec<u8>) {\n    input.clear();\n}\n",
+            "use rayon::prelude::*;\npub fn drain(input: &mut Vec<u8>) {\n    input.clear();\n}\n",
         ),
         (
             LIB,
@@ -6118,6 +6330,13 @@ fn a_cast_or_qualified_path_is_not_a_rename_of_the_field_type() {
         (with(""), true),
         (
             with("pub fn width(letters: usize) -> u32 {\n    letters as u32\n}\n"),
+            true,
+        ),
+        // A raw identifier `r#use` is not the `use` keyword (#7936).
+        (
+            with(
+                "pub fn width(letters: usize) -> u32 {\n    let r#use = letters as u32;\n    r#use\n}\n",
+            ),
             true,
         ),
         // Both used to read as renames of `Clone` and `PartialEq`.
@@ -8348,6 +8567,195 @@ fn unit_tests(prelude: &str, body: &str) -> String {
     )
 }
 
+/// #7847: an expected word a statement macro binds, or a static the test
+/// writes the owner's value into, compares the owner with itself.
+#[test]
+fn an_expected_value_a_macro_or_a_static_rebinds_from_the_owner_is_not_a_pin() {
+    let macro_prelude =
+        "macro_rules! s {\n    ($i:ident) => {\n        let $i = crate::weight(4);\n    };\n}\n\n";
+    for (prelude, body) in [
+        (
+            macro_prelude,
+            "s!(expected);\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        (
+            "static EXPECTED: AtomicU32 = AtomicU32::new(0);\n\n",
+            "EXPECTED.store(crate::weight(4), Ordering::SeqCst);\n        assert_eq!(crate::weight(4), EXPECTED.load(Ordering::SeqCst));",
+        ),
+        (
+            "static mut EXPECTED: u32 = 0;\n\n",
+            "EXPECTED = crate::weight(4);\n        assert_eq!(crate::weight(4), EXPECTED);",
+        ),
+        (
+            "static EXPECTED: AtomicU32 = AtomicU32::new(0);\n\n",
+            "AtomicU32::store(&EXPECTED, crate::weight(4), Ordering::SeqCst);\n        assert_eq!(crate::weight(4), EXPECTED.load(Ordering::SeqCst));",
+        ),
+        (
+            "thread_local! { static EXPECTED: Cell<u32> = Cell::new(0); }\n\n",
+            "EXPECTED.with(|c| c.set(crate::weight(4)));\n        assert_eq!(crate::weight(4), EXPECTED.with(|c| c.get()));",
+        ),
+        (
+            "",
+            "let mut expected = 0;\n        expected += crate::weight(4);\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        (
+            "",
+            "let mut expected = 0;\n        bump(&mut expected, crate::weight(4));\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        (
+            "",
+            "let mut expected = 0;\n        expected.widen::<u64>(crate::weight(4));\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        (
+            "",
+            "let mut expected = Wrapper::new();\n        expected.cell?.bump(crate::weight(4));\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        (
+            "fn write(_: &AtomicU32, _: u32) {}\nstatic EXPECTED: AtomicU32 = AtomicU32::new(0);\n\n",
+            "write(&EXPECTED, crate::weight(4));\n        assert_eq!(crate::weight(4), EXPECTED.load(Ordering::SeqCst));",
+        ),
+        (
+            "",
+            "let expected = Cell::new(0);\n        Cell::set(&expected, crate::weight(4));\n        assert_eq!(crate::weight(4), expected.get());",
+        ),
+        (
+            "",
+            "let mut expected = 0;\n        (expected, _) = (crate::weight(4), 0);\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        (
+            "",
+            "let mut expected = 0;\n        [expected, ..] = [crate::weight(4), 0];\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        (
+            "struct S { f: u32, g: u32 }\n\n",
+            "let mut expected = 0;\n        S { f: expected, .. } = S { f: crate::weight(4), g: 0 };\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        (
+            "",
+            "let mut expected = String::new();\n        write!(expected, \"{}\", crate::weight(4)).unwrap();\n        assert_eq!(crate::weight(4).to_string(), expected);",
+        ),
+        (
+            "",
+            "let mut expected = String::new();\n        writeln!(expected, \"{}\", crate::weight(4)).unwrap();\n        assert_eq!(crate::weight(4).to_string(), expected);",
+        ),
+        // Non-atomic writes: a field, a tuple field, an index, a listed
+        // mutator that is not a `store`, and a mutator in a struct-literal
+        // field value (not a `let` annotation).
+        (
+            "struct E { v: u32 }\n\n",
+            "let mut expected = E { v: 0 };\n        expected.v = crate::weight(4);\n        assert_eq!(crate::weight(4), expected.v);",
+        ),
+        (
+            "",
+            "let mut expected = (0, 0);\n        expected.0 = crate::weight(4);\n        assert_eq!(crate::weight(4), expected.0);",
+        ),
+        (
+            "",
+            "let mut expected = [0; 2];\n        expected[1] = crate::weight(4);\n        assert_eq!(crate::weight(4), expected[1]);",
+        ),
+        (
+            "",
+            "let mut expected = [0; 2];\n        expected.fill(crate::weight(4));\n        assert_eq!(crate::weight(4), expected[0]);",
+        ),
+        (
+            "struct S { f: u32 }\nstatic EXPECTED: AtomicU32 = AtomicU32::new(0);\n\n",
+            "let _s = S { f: EXPECTED.swap(crate::weight(4), Ordering::SeqCst) };\n        assert_eq!(crate::weight(4), EXPECTED.load(Ordering::SeqCst));",
+        ),
+    ] {
+        let lib = unit_tests(prelude, body);
+        assert!(path_admitted(&lib, "x * 3", None).is_empty(), "{body}");
+    }
+    // Controls: an independent `let`, and a static the test only reads.
+    for (prelude, body) in [
+        (
+            "",
+            "let expected = 12;\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        (
+            "",
+            "let expected: u32 = 12;\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        (
+            "static EXPECTED: u32 = 12;\n\n",
+            "assert_eq!(crate::weight(4), EXPECTED);",
+        ),
+        (
+            "static EXPECTED: u32 = 12;\n\n",
+            "let _w = crate::weight(4);\n        let ok = EXPECTED == 12 && EXPECTED != 3 && EXPECTED >= 1 && EXPECTED <= 99;\n        assert!(ok);\n        assert_eq!(crate::weight(4), EXPECTED);",
+        ),
+        (
+            "static EXPECTED: AtomicU32 = AtomicU32::new(12);\n\n",
+            "let _w = crate::weight(4);\n        let _v = AtomicU32::load(&EXPECTED, Ordering::SeqCst);\n        assert_eq!(crate::weight(4), EXPECTED.load(Ordering::SeqCst));",
+        ),
+        (
+            "",
+            "let _w = crate::weight(4);\n        let expected = 12;\n        let t = (expected, 1);\n        assert_eq!(crate::weight(4), t.0);",
+        ),
+        (
+            "",
+            "let e: u32 = 12;\n        let expected: u32 = e;\n        assert_eq!(crate::weight(4), expected);",
+        ),
+    ] {
+        let lib = unit_tests(prelude, body);
+        assert_eq!(path_admitted(&lib, "x * 3", None).len(), 1, "{body}");
+    }
+}
+
+/// #7847: the lexical write guard on its own, including operator edges the
+/// pipeline fixtures cannot reach.
+#[test]
+fn written_by_test_reads_operators_and_let_boundaries() {
+    for read in [
+        "x == EXPECTED",
+        "EXPECTED == 1",
+        "EXPECTED != 1",
+        "EXPECTED >= 1",
+        "EXPECTED <= 1",
+        "EXPECTED => 1",
+        "let e: EXPECTED = 1;",
+        "assert_eq!(f(4), &EXPECTED);",
+        "AtomicU32::load(&EXPECTED, o);",
+        "let t = (EXPECTED, 1);",
+        "EXPECTED.next_power_of_two();",
+        "EXPECTED.next_multiple_of(4);",
+        "if (EXPECTED, 1) == t {}",
+    ] {
+        assert!(!super::written_by_test(read, "EXPECTED"), "{read}");
+    }
+    for write in [
+        "EXPECTED = 1;",
+        "EXPECTED += 1;",
+        "EXPECTED.0 -= 1;",
+        "let a: u32 = 1; S { f: EXPECTED.swap(1) }",
+        "AtomicU32::store(&EXPECTED, 1, o);",
+        "g(&mut EXPECTED);",
+        "EXPECTED.with(|c| c.set(1));",
+        "EXPECTED.next();",
+        "EXPECTED.v?.bump();",
+        "EXPECTED.widen::<u8>();",
+        "write(&EXPECTED, 1);",
+        "write!(EXPECTED, \"{}\", 1);",
+        "writeln!(EXPECTED, \"{}\", 1);",
+        "store::<u32>(&EXPECTED, 1);",
+        "make()(&EXPECTED, 1);",
+        "EXPECTED.resize_with(3, f);",
+        "EXPECTED.compare_and_swap(1, 2, o);",
+        "EXPECTED.next_if_eq(&1);",
+        "EXPECTED.peek_mut();",
+        "EXPECTED.peek();",
+        "EXPECTED.compare_exchange_weak(1, 2, o, o);",
+        "EXPECTED.try_lock();",
+        "EXPECTED.try_write();",
+        "EXPECTED.as_mut_ptr();",
+        "EXPECTED.next_back();",
+        "(EXPECTED, _) = p;",
+        "[EXPECTED, ..] = p;",
+        "S { f: EXPECTED, .. } = p;",
+    ] {
+        assert!(super::written_by_test(write, "EXPECTED"), "{write}");
+    }
+}
+
 #[test]
 fn a_path_through_the_owners_own_crate_pins_the_owner() {
     for body in [
@@ -10008,6 +10416,10 @@ fn a_scalar_rendering_compared_with_exact_text_pins() {
         "assert_eq!(\"12\", format!(\"{}\", crate::weight(4)));",
         "assert_eq!(format!(\"{}\", crate::weight(4),), \"12\");",
         "assert_eq!(format!(\"{:?}\", crate::weight(4)), \"12\", \"rendered\");",
+        // RIPR-SPEC-0231 example 12: fixed text around the one placeholder
+        // fixes where the rendering starts and ends.
+        "assert_eq!(format!(\"w{}\", crate::weight(4)), \"w12\");",
+        "assert_eq!(format!(\"{{\\\"w\\\":{}}}\", crate::weight(4)), \"{\\\"w\\\":12}\");",
     ] {
         let lib = unit_tests("", body);
         assert_eq!(path_admitted(&lib, "x * 3", None), [body], "{body}");
@@ -10017,8 +10429,11 @@ fn a_scalar_rendering_compared_with_exact_text_pins() {
         "assert_eq!(format!(\"{:x}\", crate::weight(4)), \"c\");",
         "assert_eq!(format!(\"{:#?}\", crate::weight(4)), \"12\");",
         "assert_eq!(format!(\"{:>3}\", crate::weight(4)), \" 12\");",
-        "assert_eq!(format!(\"w{}\", crate::weight(4)), \"w12\");",
         "assert_eq!(format!(\"{}{}\", crate::weight(4), 1), \"121\");",
+        // The expected text does not hold the template's text, or holds
+        // nothing where the rendering goes.
+        "assert_eq!(format!(\"w{}\", crate::weight(4)), \"v12\");",
+        "assert_eq!(format!(\"w{}\", crate::weight(4)), \"w\");",
         // The other side is not plain literal text.
         "let want = String::from(\"12\");\n        assert_eq!(format!(\"{}\", crate::weight(4)), want);",
         "assert_eq!(format!(\"{}\", crate::weight(4)), format!(\"{}\", 12));",
@@ -10028,6 +10443,8 @@ fn a_scalar_rendering_compared_with_exact_text_pins() {
         "assert_eq!(format!(\"{}\", crate::weight(dbg!(4))), \"12\");",
         "assert_eq!(format!(\"{}\", crate::weight(4) / 2), \"6\");",
         "assert_eq!(format!(\"{}\", crate::weight(4)).len(), 2);",
+        "assert_eq!(format!(\"{}\", crate::weight(4)).len().to_string(), \"2\");",
+        "assert_eq!(format!(\"{}\", crate::weight(4)).replace(\"6\", \"2\"), \"12\");",
         "assert_ne!(format!(\"{}\", crate::weight(4)), \"13\");",
         "assert!(!format!(\"{:?}\", crate::weight(4)).is_empty());",
     ] {
@@ -10046,6 +10463,7 @@ fn a_scalar_rendering_compared_with_exact_text_pins() {
         "assert_eq!(format!(\"{}\", crate::weight(4)), \"NaN\");",
         "assert_eq!(\"NaN\", format!(\"{:?}\", crate::weight(4)));",
         "assert_eq!(\"NaN\", format!(\"{}\", crate::weight(4)));",
+        "assert_eq!(format!(\"w={}\", crate::weight(4)), \"w=NaN\");",
     ] {
         assert!(
             path_admitted(&float_tests(body), "x * 3", None).is_empty(),
@@ -10538,4 +10956,120 @@ fn a_macro_body_site_names_the_macro_and_its_reach() {
         sites("macro_rules! g { () => { use crate::x::*; use $crate::y::*; use super::*; }; }\n"),
         Vec::new()
     );
+}
+
+/// #8388: a glob from the standard crates (`use core::simd::prelude::*`)
+/// names only items the standard library defines, so a sibling file's glob
+/// no longer withholds every plain `assert_eq!` in the crate. The shape is
+/// rand's `utils.rs`: a cfg-gated std glob and an unrelated `macro_rules!`
+/// beside a test module whose `assert_eq!` calls carry cfg attributes. Each
+/// control keeps a real rebinding, or a glob that may carry one, ambiguous.
+#[test]
+fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Result<(), String> {
+    let manifest = |dependencies: &str| {
+        format!("[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\n{dependencies}")
+    };
+    let plain = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-std-glob-plain",
+        &[
+            ("Cargo.toml", &manifest("")),
+            ("src/simd.rs", ""),
+            ("src/root.rs", ""),
+            ("src/lib.rs", ""),
+            ("tests/buf_tests.rs", ""),
+        ],
+    )?;
+    let renamed = crate::analysis::facts::drop_in::temp_workspace(
+        "owner-pin-std-glob-renamed",
+        &[(
+            "Cargo.toml",
+            &manifest("core = { package = \"fake-core\", version = \"1\" }\n"),
+        )],
+    )?;
+    let tests = "use demo::weight;\n\n#[cfg(test)]\nmod test {\n    use crate::weight;\n    #[cfg(feature = \"simd_support\")]\n    use std::simd::{Mask, Simd};\n\n    #[test]\n    fn weighs() {\n        assert_eq!(weight(4), 12);\n\n        #[cfg(feature = \"simd_support\")]\n        assert_eq!(weight(5), 15);\n    }\n}\n";
+    let refusal_under = |root: &Path, sibling: &str| {
+        let mut index = index(&[(LIB, WEIGHT_LIB), ("src/simd.rs", sibling), (TESTS, tests)]);
+        index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(root);
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.file == Path::new(TESTS))?;
+        let assertion = test
+            .assertions
+            .iter()
+            .find(|assertion| assertion.text.starts_with("assert_eq!(weight(4)"))?;
+        OwnerPinSyntax::default().refusal(test, assertion, &index)
+    };
+    let refusal_beside = |sibling: &str| refusal_under(&plain, sibling);
+    let rebound = |refusal: Option<AssertionRefusal>| {
+        matches!(
+            refusal,
+            Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::MacroBinding(_)
+            ))
+        )
+    };
+    // Fixture premise: a rebinding sibling does refuse this exact test.
+    let shadowing = "macro_rules! assert_eq { ($($tokens:tt)*) => {} }\n";
+    assert!(rebound(refusal_beside(shadowing)));
+    // Credited: standard-crate globs, gated or not, beside unrelated macros.
+    for sibling in [
+        "#[cfg(feature = \"simd_support\")]\nuse core::simd::prelude::*;\nmacro_rules! wmul_impl { () => {}; }\n",
+        "use std::io::prelude::*;\n",
+        "use ::core::arch::x86::*;\n",
+        "use core::{simd::*, mem};\n",
+        "mod inner {\n    use std::collections::*;\n}\n",
+    ] {
+        assert_eq!(refusal_beside(sibling), None, "{sibling}");
+    }
+    // Still not credited: a real definition or import of the name, even
+    // beside a standard glob.
+    for sibling in [
+        "use core::simd::prelude::*;\nmacro_rules! assert_eq { ($($tokens:tt)*) => {} }\n",
+        "use std::io::prelude::*;\nuse other::assert_eq;\n",
+    ] {
+        assert!(rebound(refusal_beside(sibling)), "{sibling}");
+    }
+    // Still not credited: any glob that is not rooted at the standard
+    // crates, and a standard root a local module or alias takes. (A
+    // workspace package's own glob is scanned as workspace-owned code.)
+    for sibling in [
+        "use rayon::prelude::*;\n",
+        "use stdx::prelude::*;\n",
+        "use ::rayon::prelude::*;\n",
+        "mod core {}\nuse core::simd::prelude::*;\n",
+        "extern crate other as std;\nuse std::io::prelude::*;\n",
+        "use other as core;\nuse core::simd::prelude::*;\n",
+        // `alloc` has no manifest proof, so it stays a foreign glob.
+        "use alloc::vec::*;\n",
+    ] {
+        assert!(rebound(refusal_beside(sibling)), "{sibling}");
+    }
+    // A Cargo rename of the root, and a crate-root alias in a file the glob
+    // is not in, both rebind it.
+    assert!(rebound(refusal_under(
+        &renamed,
+        "use core::simd::prelude::*;\n"
+    )));
+    let aliased_elsewhere = index(&[
+        (LIB, &format!("extern crate other as std;\n{WEIGHT_LIB}")),
+        ("src/simd.rs", "use std::io::prelude::*;\n"),
+        (TESTS, tests),
+    ]);
+    let mut aliased_elsewhere = aliased_elsewhere;
+    aliased_elsewhere.drop_in_manifests =
+        crate::analysis::facts::drop_in::DropInManifests::new(&plain);
+    let test = aliased_elsewhere
+        .tests()
+        .iter()
+        .find(|test| test.file == Path::new(TESTS))
+        .ok_or("the fixture test must be indexed")?;
+    let assertion = test
+        .assertions
+        .iter()
+        .find(|assertion| assertion.text.starts_with("assert_eq!(weight(4)"))
+        .ok_or("the fixture assertion must be indexed")?;
+    let refusal = OwnerPinSyntax::default().refusal(test, assertion, &aliased_elsewhere);
+    assert!(rebound(refusal.clone()), "{refusal:?}");
+    Ok(())
 }

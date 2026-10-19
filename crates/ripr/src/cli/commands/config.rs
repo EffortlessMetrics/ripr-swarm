@@ -1,7 +1,7 @@
 //! Repository configuration commands.
 
 use crate::cli::help;
-use crate::cli::suggest::unknown_argument;
+use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::load_for_root;
 use std::path::{Path, PathBuf};
 
@@ -16,8 +16,10 @@ pub(in crate::cli) fn config(args: &[String]) -> Result<(), String> {
         return Ok(());
     };
     if subcommand != "validate" {
-        return Err(format!(
-            "unknown config subcommand {subcommand:?}; expected `validate`"
+        return Err(unknown_value(
+            "config subcommand",
+            subcommand,
+            &["validate"],
         ));
     }
 
@@ -174,6 +176,25 @@ path = ".ripr/suppressions\u0000.toml"
             return Err(format!("expected a path-qualified TOML error, got {error}"));
         }
         Ok(())
+    }
+
+    #[test]
+    fn unknown_config_subcommand_lists_validate_without_a_near_miss() {
+        assert_eq!(
+            config(&args(&["unknown"])),
+            Err("unknown config subcommand \"unknown\". Accepted: validate.".to_string())
+        );
+    }
+
+    #[test]
+    fn unknown_config_subcommand_suggests_validate_for_validat() {
+        assert_eq!(
+            config(&args(&["validat"])),
+            Err(
+                "unknown config subcommand \"validat\". Did you mean `validate`? Accepted: validate."
+                    .to_string()
+            )
+        );
     }
 
     #[test]

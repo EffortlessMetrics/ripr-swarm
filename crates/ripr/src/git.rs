@@ -385,6 +385,51 @@ pub(crate) fn probe_work_tree_root(root: &Path) -> Result<WorkTreeRootProbe, Str
     Ok(classify_work_tree_root_stdout(&output.stdout))
 }
 
+/// Whether Git tracks any file under `dir`.
+///
+/// `Ok(true)` means the enclosing repository ships at least one file there.
+/// `Ok(false)` means no tracked file, or no Git work tree to ship one: a
+/// directory outside any repository, or Git missing from `PATH`, which cannot
+/// be told apart from an extracted archive. `Err` is every other outcome
+/// (dubious ownership, a damaged repository, a deadline, output past the
+/// cap): the caller cannot establish the answer and must not assume `false`.
+///
+/// Answers for the repository containing `dir` itself, not an inherited
+/// `GIT_DIR`, so a hook or wrapper cannot point the probe elsewhere.
+pub(crate) fn tracked_files_under(dir: &Path) -> Result<bool, String> {
+    let args = ["ls-files", "-z", "--", "."];
+    let mut command = git_command(dir, &args);
+    command
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_INDEX_FILE");
+    let describe = format!("git tracked-file probe in {}", dir.display());
+    // One path proves the answer; the cap only bounds a repository that
+    // tracks a large cache tree, which is itself the refusal.
+    let output = match collect_output_with_deadline_and_limit(
+        command,
+        Duration::from_secs(5),
+        4 * 1024,
+        &describe,
+    ) {
+        Ok(output) => output,
+        Err(error) if is_git_not_found_on_path(&error.to_string()) => return Ok(false),
+        Err(error) => return Err(error.to_string()),
+    };
+    if output.status.success() {
+        return Ok(!output.stdout.is_empty());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("not a git repository") {
+        return Ok(false);
+    }
+    Err(format!(
+        "{describe} failed: {}",
+        stderr.lines().next().unwrap_or("no diagnostic").trim()
+    ))
+}
+
 fn work_tree_root_probe_error(error: CoreError) -> String {
     // The fixed probe deadline cannot be changed by diff-load knobs. Keep
     // cleanup failures and lookalike messages intact; only typed timeouts

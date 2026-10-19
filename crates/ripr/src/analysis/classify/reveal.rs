@@ -3883,11 +3883,14 @@ fn crate_identifier(name: &str) -> String {
 /// `ripr check` on this repository. The memo must not outlive the index it was filled from.
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct FileUseStatements {
-    by_file: std::cell::RefCell<std::collections::BTreeMap<std::path::PathBuf, Vec<String>>>,
+    by_file: crate::analysis::sync_memo::SyncMemo<
+        std::collections::BTreeMap<std::path::PathBuf, Vec<String>>,
+    >,
     /// #7985: per file and name, whether a macro invocation may define an
     /// item of that name.
-    macro_defined:
-        std::cell::RefCell<std::collections::BTreeMap<(std::path::PathBuf, String), bool>>,
+    macro_defined: crate::analysis::sync_memo::SyncMemo<
+        std::collections::BTreeMap<(std::path::PathBuf, String), bool>,
+    >,
 }
 
 impl FileUseStatements {
@@ -3949,6 +3952,8 @@ fn all_use_statements(masked: &str) -> Vec<String> {
             && bytes.get(index + 1) == Some(&b's')
             && bytes.get(index + 2) == Some(&b'e')
             && (index == 0 || !is_ident_byte(bytes[index - 1]))
+            // A raw identifier `r#use` is not the keyword (#7936).
+            && !(index >= 2 && bytes[index - 1] == b'#' && bytes[index - 2] == b'r')
             && bytes[index + 3..]
                 .first()
                 .is_some_and(|byte| byte.is_ascii_whitespace());

@@ -382,6 +382,26 @@ sends readers to `human-full` for full evidence, so that rerun must not lose
 the only runnable next commands. Library renders without CLI navigation omit
 the block.
 
+The bounded digest's top-finding drill-down also names the repair-route
+omission instead of leaving it silent (#8729): when the producer-owned gate
+computes a refusal — no canonical gap to bind, an unreadable authority, a
+seam-limit-truncated candidate set, zero or several binding seams, or an
+ineligible seam — the drill-down prints one advisory line of the shape
+`no repair start offered: <state>; run \`ripr repair <item> --root <root>\`
+for the full gate's answer`. A static-limited finding never gets the runnable
+repair line (its limitation guidance is authoritative on the same screen),
+but a refusal the pipeline did compute is still named there, so "the gate
+refused this seam" cannot read as "analysis could not decide". A run with no
+selected finding prints nothing. The refusal vocabulary is producer-owned and
+JSON fields are unchanged; this is additive human output only.
+
+The same honesty rule bounds the no-eligible reason list on the repair start
+refusal (#8728): the list renders at most three distinct reasons, and when the
+inventory's distinct-reason total exceeds the list, the message discloses the
+remainder (`and N more`) plus the per-seam detail route (`ripr pilot`), so a
+bounded list never presents three reasons as the whole story. The total
+counts distinct reasons across the whole inventory, not one per seam.
+
 A canonical-shape probe's `after` is often its parser shape, which is narrower
 than the changed line (`string.len() >= MAX`). In that case the producer cuts
 `before` to the same span of the old line (`string.len() > MAX`), so the

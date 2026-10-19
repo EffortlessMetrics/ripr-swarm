@@ -91,6 +91,29 @@ pub(crate) fn test_extraction_partial_limitation(
     }
 }
 
+/// Build the `typescript_conditional_assertion_credit` named limitation from
+/// one concrete detected gap (`TypeScriptConditionalCreditGap` produced by
+/// `tests_extract::detect_conditional_assertion_credit`).
+///
+/// CLASSIFICATION-NEUTRAL, additive disclosure only (#8714): the credited
+/// oracle stays credited — this limitation tells consumers the assertion sits
+/// under a condition static analysis cannot evaluate, so the oracle may never
+/// execute at runtime. It never flips a classification.
+pub(crate) fn conditional_assertion_credit_limitation(
+    gap: &TypeScriptConditionalCreditGap,
+) -> TypeScriptNamedLimitation {
+    TypeScriptNamedLimitation {
+        name: "typescript_conditional_assertion_credit",
+        sample_source: format!("{}:{}", normalized_path(&gap.file), gap.sample_line),
+        why_not_actionable: format!(
+            "the recognized test file `{}` credits an assertion that sits under the unevaluated condition `{condition}` (e.g. a feature flag or env read); static analysis cannot tell whether that branch runs, so the credited oracle may never execute and the coverage signal can be empty",
+            normalized_path(&gap.file),
+            condition = gap.condition,
+        ),
+        repair_route: "analysis/typescript-conditional-assertion-credit",
+    }
+}
+
 /// Map a `StaticLimitKind` producer to its TS-specific named limitation, if any.
 ///
 /// Only `MockedModule` and `MissingImportGraph` are mapped here because they

@@ -27,6 +27,7 @@ mod blind_journey;
 mod blind_journey_execute;
 mod branch_inventory;
 mod cache;
+mod check_fast_cli;
 mod command;
 pub mod convergence;
 mod dispatch;
@@ -823,6 +824,15 @@ fn check_fast_gates(
         skipped.push("check-support-tiers (not applicable)");
     }
 
+    // #8631: keep the existing cross-file help/parser validator in the
+    // focused path, before the broader compilation-bearing Rust gates.
+    if categories.cli_help {
+        check_fast_cli::run(child_diagnostics)?;
+        ran.push(check_fast_cli::GATE);
+    } else {
+        skipped.push(check_fast_cli::GATE);
+    }
+
     // Conditional gates based on changed file categories.
     if categories.rust_src {
         check_no_panic_family()?;
@@ -898,7 +908,7 @@ fn check_fast_gates(
 
 fn check_fast_diagnostics(diagnostics: &[run::CommandDiagnostic]) -> String {
     format!(
-        "\n## Child command diagnostics\n\n{} Capture scope: fmt and workspace Clippy only; streams remain inherited, so Cargo progress is unavailable.\n\n{}\n",
+        "\n## Child command diagnostics\n\n{} Capture scope: fmt and workspace Clippy inherit streams; selected CLI help parity captures streams and reports recognized Cargo stderr progress.\n\n{}\n",
         run::COMMAND_DIAGNOSTIC_DISCLOSURE,
         diagnostics
             .iter()
@@ -927,6 +937,7 @@ fn check_fast_failure_report(
 
 struct ChangedFileCategories {
     support_tiers: bool,
+    cli_help: bool,
     rust_src: bool,
     workflow: bool,
     policy: bool,
@@ -945,6 +956,22 @@ fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
                 || f.starts_with("xtask/src/")
                 || f.starts_with(".github/workflows/")
                 || f.starts_with("scripts/")
+        }),
+        // Command parsing lives in these existing semantic owners. Select
+        // their Rust surfaces without copying help.rs's parser-owner table.
+        cli_help: files.iter().any(|f| {
+            f.ends_with(".rs")
+                && [
+                    "crates/ripr/src/cli",
+                    "crates/ripr/src/app",
+                    "crates/ripr/src/mcp",
+                    "crates/ripr/src/output/first_pr",
+                ]
+                .iter()
+                .any(|owner| {
+                    f.strip_prefix(owner)
+                        .is_some_and(|tail| tail == ".rs" || tail.starts_with('/'))
+                })
         }),
         rust_src: files.iter().any(|f| {
             f == "Cargo.lock"
@@ -21611,6 +21638,12 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
     if path.starts_with("tools/python/portable-ripr-consumer/") && path.ends_with(".py") {
         return Some(
             "Portable packet consumer must run as stdlib Python 3.11+ in agent environments that have no Cargo/rustc.",
+        );
+    }
+
+    if path.starts_with(".github/actions/pr-candidate-admission/") && path.ends_with(".py") {
+        return Some(
+            "Pre-allocation admission runs before any Rust build exists, so its pure decision logic is stdlib Python on the hosted runner, kept out of embedded YAML shell (#5391, #2022).",
         );
     }
 

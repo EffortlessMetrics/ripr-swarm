@@ -517,7 +517,8 @@
             "language_scope_unsupported",
             "changed_file_absent_from_worktree",
             "producer_timeout",
-            "producer_failure"
+            "producer_failure",
+            "unevaluated_condition"
           ]
         },
         "producer_stage": {

@@ -1,0 +1,106 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/field_match_unexecuted_assertion/input
+
+Summary: 3 probe(s), 0 exposed, 0 weakly_exposed, 3 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 3 of 3 finding(s) unsuppressed (2 base-side evidence, not candidate edit targets)
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 3 probe(s), 3 finding(s)
+
+Shared evidence and guidance
+  E1 [findings 2, 3]: reach yes: Related tests appear to reach charge: selected
+  E2 [findings 2, 3]: infection yes: Reachable tests can plausibly activate this changed behavior
+  E3 [findings 2, 3]: observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  E4 [findings 2, 3]: discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  E5 [findings 2, 3]: related test src/lib.rs:10 selected uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
+  E6 [findings 2, 3]: source assertion argument value 1001 at line 11
+  E7 [findings 2, 3]: source function argument value lease = 1001 at line 11
+  E8 [findings 2, 3]: source function argument value lease = 600 at line 11
+
+Finding 1: WARNING ./src/lib.rs:4
+  id: probe:src_lib.rs:match_arm:afe43b21
+Changed
+  before: Some(ms) => 1,
+  after:  Some(ms) =>
+Probe
+  family: match_arm
+  delta:  control
+  owner:  src/lib.rs::charge
+  canonical gap: gap:rust:src/lib.rs:charge:match_arm:match_arm:some_ms
+Static exposure
+  reachable_unrevealed (warning, confidence 0.79)
+Evidence
+  - reach yes: Related tests appear to reach charge: selected
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Changed behavior appears to influence match arm result: Some(ms) =>
+  - observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  - local flow reaches match arm result: Some(ms) => (line 4)
+  - related test src/lib.rs:10 selected uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
+  - source assertion argument value 1001 at line 11
+  - source function argument value lease = 1001 at line 11
+  - source function argument value lease = 600 at line 11
+Weakness
+  - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  - No strong discriminator was detected
+Next step
+  - Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value
+Drill in:
+  ripr explain --root <cwd>/fixtures/field_match_unexecuted_assertion/input --diff <cwd>/fixtures/field_match_unexecuted_assertion/diff.patch --mode fast probe:src_lib.rs:match_arm:afe43b21
+  ripr context --root <cwd>/fixtures/field_match_unexecuted_assertion/input --diff <cwd>/fixtures/field_match_unexecuted_assertion/diff.patch --mode fast --at probe:src_lib.rs:match_arm:afe43b21
+
+Finding 2: WARNING ./src/lib.rs:4
+  id: probe:src_lib.rs:match_arm:177cb929
+Changed
+  before: Some(ms) => 1,
+  expr:   Some(ms) => 1,
+  source:  base_deleted — base-side evidence, not a candidate edit target
+Probe
+  family: match_arm
+  delta:  control
+  owner:  src/lib.rs::charge
+  canonical gap: gap:rust:src/lib.rs:charge:match_arm:match_arm:some_ms=>1
+Static exposure
+  reachable_unrevealed (warning, confidence 0.79)
+Evidence
+  shared evidence: E1, E2
+  - propagation yes: Changed behavior appears to influence match arm result: 1
+  shared evidence: E3, E4
+  - local flow reaches match arm result: 1 (line 4)
+  shared evidence: E5, E6, E7, E8
+Weakness
+  - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  - No strong discriminator was detected
+Next step
+  - Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value
+Drill in:
+  ripr explain --root <cwd>/fixtures/field_match_unexecuted_assertion/input --diff <cwd>/fixtures/field_match_unexecuted_assertion/diff.patch --mode fast probe:src_lib.rs:match_arm:177cb929
+  ripr context --root <cwd>/fixtures/field_match_unexecuted_assertion/input --diff <cwd>/fixtures/field_match_unexecuted_assertion/diff.patch --mode fast --at probe:src_lib.rs:match_arm:177cb929
+
+Finding 3: WARNING ./src/lib.rs:4
+  id: probe:src_lib.rs:return_value:afaabce9
+Changed
+  before: Some(ms) => 1,
+  expr:   Some(ms) => 1,
+  source:  base_deleted — base-side evidence, not a candidate edit target
+Probe
+  family: return_value
+  delta:  value
+  owner:  src/lib.rs::charge
+  canonical gap: gap:rust:src/lib.rs:charge:return_value:return_value:some_ms=>1
+Static exposure
+  reachable_unrevealed (warning, confidence 0.66)
+Evidence
+  shared evidence: E1, E2
+  - propagation weak: Propagation witness is incomplete for returned value: Some(ms) => ms as u64
+  shared evidence: E3, E4
+  - local flow reaches returned value: Some(ms) => ms as u64 (line 4)
+  shared evidence: E5, E6, E7, E8
+Weakness
+  - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  - No strong discriminator was detected
+Next step
+  - ripr did not credit the `assert_eq!` in selected at src/lib.rs:11; the "not credited" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `assert_eq!`, in a test expected to pass
+Drill in:
+  ripr explain --root <cwd>/fixtures/field_match_unexecuted_assertion/input --diff <cwd>/fixtures/field_match_unexecuted_assertion/diff.patch --mode fast probe:src_lib.rs:return_value:afaabce9
+  ripr context --root <cwd>/fixtures/field_match_unexecuted_assertion/input --diff <cwd>/fixtures/field_match_unexecuted_assertion/diff.patch --mode fast --at probe:src_lib.rs:return_value:afaabce9

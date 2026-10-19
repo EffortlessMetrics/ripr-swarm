@@ -777,8 +777,19 @@ fn find_related_tests_with_candidates<'a>(
     // For module-level struct/field probes (owner_fn is None) derive the package
     // prefix from the probe's source file so cross-crate spurious matches are
     // still filtered out.
+    //
+    // #7617: a relative probe path under `--root` is joined onto the root
+    // (`ws/member/src/lib.rs`) while test paths are root-relative, so the
+    // prefix comes from the root-relative `probe_path`. An absolute probe
+    // keeps deriving no prefix, as before.
     let struct_package_prefix = if owner_fn.is_none() {
-        package_prefix(&probe.location.file)
+        if path_is_absolute_form(&probe.location.file) {
+            package_prefix(&probe.location.file)
+        } else {
+            probe_path
+                .as_deref()
+                .and_then(|relative| package_prefix(Path::new(relative)))
+        }
     } else {
         None
     };
@@ -5053,7 +5064,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             summary.calls = vec![CallFact {
                 line: 1,
                 name: "render".to_string(),
-                text: line.to_string(),
+                text: line.to_string().into(),
             }];
             assert!(
                 !method_call_resolves_to_impl(&summary, "render", "f64", Some("Render")),
@@ -5236,7 +5247,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             self_type: "ByteSize".to_string(),
         };
         let mut test = test_with_call("tests/units.rs", "test_comparison", &body, "kb");
-        test.calls[0].text = assertion_line.to_string();
+        test.calls[0].text = assertion_line.to_string().into();
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone(), method],
             tests: vec![test],
@@ -5267,7 +5278,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         let mut test = test_with_call("tests/units.rs", "test_comparison", body, "kb");
         // No captured free-call fact: the captured line is the associated
         // call, so the fallback must find the later genuine bare call.
-        test.calls[0].text = "let _ = ByteSize::kb(1);".to_string();
+        test.calls[0].text = "let _ = ByteSize::kb(1);".to_string().into();
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner.clone(), method],
             tests: vec![test],
@@ -8302,6 +8313,47 @@ fn crate_c_score_test() {
     }
 
     #[test]
+    fn relative_root_ownerless_probe_keeps_its_own_inline_tests() {
+        // #7617: under a relative `--root ws`, the probe path is
+        // `ws/member/src/lib.rs` but test paths are root-relative. The
+        // package guard must come from the root-relative path, or it carries
+        // the root (`ws/member/`) and drops the file's own inline tests.
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: vec![
+                test("src/lib.rs", "root_inline", "assert!(true);"),
+                test("member/src/lib.rs", "own_inline", "assert!(true);"),
+            ],
+            ..Default::default()
+        });
+        for file in ["src/lib.rs", "member/src/lib.rs"] {
+            index.insert_file_only(
+                PathBuf::from(file),
+                crate::analysis::rust_index::summarize_file(
+                    PathBuf::from(file),
+                    "fn f() {}\n".to_string(),
+                ),
+            );
+        }
+        let mut probe = probe("ws/member/src/lib.rs", "marker");
+        probe.owner = None;
+        let candidates = RelatedTestCandidateIndex::new(&index).with_analysis_root(Path::new("ws"));
+
+        let related = find_related_tests_with_candidate_index(
+            &probe,
+            None,
+            &index,
+            true,
+            None,
+            None,
+            &candidates,
+        );
+
+        let names: Vec<&str> = related.iter().map(|(test, _)| test.name.as_str()).collect();
+        assert_eq!(names, ["own_inline"]);
+        assert_eq!(related[0].1, RelationReason::SameTestFile);
+    }
+
+    #[test]
     fn foreign_separator_probe_still_resolves_the_canonical_companion() {
         // The probe path was recorded with Windows separators; the stem
         // extraction must split on both flavors so `config_tests` stays a
@@ -8527,7 +8579,7 @@ fn crate_c_score_test() {
             calls: vec![CallFact {
                 line: 1,
                 name: "call_inner".to_string(),
-                text: "call_inner!(10, 3)".to_string(),
+                text: "call_inner!(10, 3)".to_string().into(),
             }],
             assertions: Vec::new(),
             literals: Vec::new(),
@@ -9155,7 +9207,7 @@ fn crate_c_score_test() {
             calls: vec![CallFact {
                 line: 1,
                 name: "score".to_string(),
-                text: body.to_string(),
+                text: body.to_string().into(),
             }],
             assertions: Vec::new(),
             literals: Vec::new(),
@@ -9810,7 +9862,7 @@ let r = try_parse_summary(\"x\");",
             summary.calls = vec![CallFact {
                 line: 1,
                 name: "render".to_string(),
-                text: line.to_string(),
+                text: line.to_string().into(),
             }];
             assert!(
                 !method_call_resolves_to_impl_type(&summary, "render", "u8"),
@@ -9876,7 +9928,7 @@ let r = try_parse_summary(\"x\");",
             summary.calls = vec![CallFact {
                 line: 1,
                 name: "build".to_string(),
-                text: line.to_string(),
+                text: line.to_string().into(),
             }];
             assert!(
                 !method_call_resolves_to_impl_type(&summary, "build", "Site"),
@@ -10145,7 +10197,7 @@ try_parse_summary(raw).map_err(Into::into)"
             calls: vec![CallFact {
                 line: 1,
                 name: call_name.to_string(),
-                text: body.to_string(),
+                text: body.to_string().into(),
             }],
             assertions: Vec::new(),
             literals: Vec::new(),
@@ -10890,7 +10942,7 @@ quickcheck! {
                 summary.calls = vec![CallFact {
                     line: 1,
                     name: owner,
-                    text: body,
+                    text: body.into(),
                 }];
                 summaries.push(summary);
             }

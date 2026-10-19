@@ -37,3 +37,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_caught_assertion (4)
+
+Reason:
+RIPR-SPEC-0088: retain the named limitation and give a terminal manual observation check instead of asking for internal packet fields (#8630); verdict, JSON and packet eligibility unchanged.
+
+Command:
+`cargo xtask goldens bless typescript_caught_assertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_caught_assertion (5)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless typescript_caught_assertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

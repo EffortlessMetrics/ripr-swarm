@@ -1,0 +1,41 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/typescript_negated_identity_pin/input
+config: <cwd>/fixtures/typescript_negated_identity_pin/input/ripr.toml
+
+Summary: 1 probe (0 exposed, 1 weak, 0 unrevealed, 0 no path); 1 of 1 finding unsuppressed
+
+Changed file(s) by language: typescript = 1
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+Start here:
+  State: preview language, advisory only
+  Safe next action: preview-language evidence is advisory; no repair packet is emitted because of the named static limitation: typescript_dynamic_assertion_unresolved — the matcher `.toEqual(...)` receives a non-literal dynamic argument; the adapter cannot statically resolve the expected value and cannot confirm the discriminator pins the changed behavior; `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
+  File: src/settings.ts:2
+  Language: typescript
+  Language status: preview
+  Static exposure: weak (severity: warning, confidence 0.40)
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Changed behavior: return cfg;
+  Missing discriminator (1 of 2): The change to `ready` only replaces the returned `cfg` with a copy of itself (or a copy with the original); structural matchers such as `toEqual` and `deepEqual` pass on both. Add…
+  Related test: tests/settings.test.ts:3 ready
+  Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
+    discriminator `return value == cfg`; no actionable repair packet is emitted until verify,
+    receipt, and edit-boundary fields are available
+  Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator weak
+    - reach yes: 1 related test(s) found for owner `ready`
+    - infection unknown: TypeScript preview adapter does not yet model infection
+    - 5 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/typescript_negated_identity_pin/input --diff <cwd>/fixtures/typescript_negated_identity_pin/diff.patch --mode fast probe:src_settings.ts:typescript_preview:f1269d1b
+  ripr context --root <cwd>/fixtures/typescript_negated_identity_pin/input --diff <cwd>/fixtures/typescript_negated_identity_pin/diff.patch --mode fast --at probe:src_settings.ts:typescript_preview:f1269d1b
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

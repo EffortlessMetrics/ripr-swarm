@@ -29,16 +29,61 @@ use outcome_records::parse_mutation_outcomes_json;
 
 /// One imported cargo-mutants outcome. Shared by `ripr calibrate cargo-mutants`
 /// and `cargo xtask mutation-calibration` so those entry points cannot drift.
+///
+/// Additive location fields (`span`, `span_conflict`) are the join inputs
+/// `ripr calibrate cargo-mutants` already used internally after #5580. They
+/// do not change that command's JSON or markdown; they exist so xtask can
+/// call [`join_cargo_mutants_location`] instead of a file/line-only copy.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CargoMutantsOutcomeRecord {
     pub mutant_id: Option<String>,
     pub seam_id: Option<String>,
     pub file: Option<String>,
     pub line: Option<usize>,
+    /// Complete mutated range when the importer could retain one.
+    pub span: Option<CargoMutantsRuntimeSpan>,
+    /// Set when merged duplicates disagreed on span, file, or line.
+    pub span_conflict: bool,
     pub mutation_operator: String,
     pub runtime_outcome: String,
     pub duration: Option<String>,
     pub test_command: Option<String>,
+}
+
+/// A runtime mutant's complete source range as 1-based `(line, character
+/// column)` positions with an exclusive `end`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CargoMutantsRuntimeSpan {
+    pub start: (usize, usize),
+    pub end: (usize, usize),
+}
+
+/// Static seam geometry consumed by [`join_cargo_mutants_location`].
+///
+/// `column`, `end_line`, and `end_column` are required together for a
+/// complete span; missing any of them keeps the seam line-only.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CargoMutantsSeamLocation {
+    pub file: String,
+    pub line: usize,
+    pub column: Option<usize>,
+    pub end_line: Option<usize>,
+    pub end_column: Option<usize>,
+}
+
+/// Location-join result used by `ripr calibrate cargo-mutants` and
+/// `cargo xtask mutation-calibration`. Indices refer to the seam slice
+/// passed to [`join_cargo_mutants_location`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CargoMutantsLocationJoin {
+    Matched(&'static str, usize),
+    /// Several seams share the mutant's line and no span decides between
+    /// them.
+    AmbiguousFileLine(Vec<usize>),
+    /// Several seam spans contain the mutant and none is strictly inside the
+    /// others: equal or crossing ranges.
+    AmbiguousSpanOverlap(Vec<usize>),
+    Unmatched(&'static str),
 }
 
 /// Parse cargo-mutants JSON (a file body or a combined `mutants.out` array)
@@ -59,10 +104,24 @@ impl From<MutationOutcomeRecord> for CargoMutantsOutcomeRecord {
             seam_id: record.seam_id,
             file: record.file,
             line: record.line,
+            span: record.span,
+            span_conflict: record.span_conflict,
             mutation_operator: record.mutation_operator,
             runtime_outcome: record.runtime_outcome,
             duration: record.duration,
             test_command: record.test_command,
+        }
+    }
+}
+
+impl From<&StaticSeamRecord> for CargoMutantsSeamLocation {
+    fn from(seam: &StaticSeamRecord) -> Self {
+        Self {
+            file: seam.file.clone(),
+            line: seam.line,
+            column: seam.column,
+            end_line: seam.end_line,
+            end_column: seam.end_column,
         }
     }
 }
@@ -83,13 +142,7 @@ struct StaticSeamRecord {
     missing_discriminators: Vec<String>,
 }
 
-/// A runtime mutant's complete source range as 1-based `(line, character
-/// column)` positions with an exclusive `end`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct RuntimeSpan {
-    start: (usize, usize),
-    end: (usize, usize),
-}
+type RuntimeSpan = CargoMutantsRuntimeSpan;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct MutationOutcomeRecord {
@@ -575,13 +628,17 @@ fn build_mutation_calibration_report(
     let mut static_by_id: BTreeMap<String, usize> = BTreeMap::new();
     let mut static_by_line: BTreeMap<(String, usize), Vec<usize>> = BTreeMap::new();
     let mut spanned_by_file: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    let seam_locations = static_seams
+        .iter()
+        .map(CargoMutantsSeamLocation::from)
+        .collect::<Vec<_>>();
     for (idx, seam) in static_seams.iter().enumerate() {
         static_by_id.insert(seam.seam_id.clone(), idx);
         static_by_line
             .entry((normalize_report_path(&seam.file), seam.line))
             .or_default()
             .push(idx);
-        if seam_span(seam).is_some() {
+        if seam_span(&seam_locations[idx]).is_some() {
             spanned_by_file
                 .entry(normalize_report_path(&seam.file))
                 .or_default()
@@ -603,7 +660,15 @@ fn build_mutation_calibration_report(
             .and_then(|seam_id| static_by_id.get(seam_id).copied())
             .map(|idx| LocationJoin::Matched("seam_id", idx));
         let seam_match = by_seam_id.unwrap_or_else(|| {
-            location_join(&static_seams, &static_by_line, &spanned_by_file, &mutation)
+            location_join_indexed(
+                &seam_locations,
+                &static_by_line,
+                &spanned_by_file,
+                mutation.file.as_deref(),
+                mutation.line,
+                mutation.span,
+                mutation.span_conflict,
+            )
         });
 
         let (bucket, candidates) = match seam_match {
@@ -731,16 +796,7 @@ fn candidate_order_key(seam: &StaticSeamRecord) -> (usize, usize, usize, usize, 
     )
 }
 
-enum LocationJoin {
-    Matched(&'static str, usize),
-    /// Several seams share the mutant's line and no span decides between
-    /// them.
-    AmbiguousFileLine(Vec<usize>),
-    /// Several seam spans contain the mutant and none is strictly inside the
-    /// others: equal or crossing ranges.
-    AmbiguousSpanOverlap(Vec<usize>),
-    Unmatched(&'static str),
-}
+type LocationJoin = CargoMutantsLocationJoin;
 
 /// Unmatched reason: the runtime record names no file or no line.
 const UNMATCHED_NO_LOCATION: &str = "no_location";
@@ -773,19 +829,48 @@ const UNMATCHED_NO_CONTAINING_SEAM: &str = "no_containing_seam";
 /// 3. Otherwise the mutant is unmatched. When the file has seam spans that
 ///    could have contained it, the reason is `no_containing_seam`: a seam
 ///    that merely starts on the same line is never joined.
-fn location_join(
-    static_seams: &[StaticSeamRecord],
+pub fn join_cargo_mutants_location(
+    mutation: &CargoMutantsOutcomeRecord,
+    seams: &[CargoMutantsSeamLocation],
+) -> CargoMutantsLocationJoin {
+    let mut static_by_line: BTreeMap<(String, usize), Vec<usize>> = BTreeMap::new();
+    let mut spanned_by_file: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (idx, seam) in seams.iter().enumerate() {
+        static_by_line
+            .entry((normalize_report_path(&seam.file), seam.line))
+            .or_default()
+            .push(idx);
+        if seam_span(seam).is_some() {
+            spanned_by_file
+                .entry(normalize_report_path(&seam.file))
+                .or_default()
+                .push(idx);
+        }
+    }
+    location_join_indexed(
+        seams,
+        &static_by_line,
+        &spanned_by_file,
+        mutation.file.as_deref(),
+        mutation.line,
+        mutation.span,
+        mutation.span_conflict,
+    )
+}
+
+fn location_join_indexed(
+    seams: &[CargoMutantsSeamLocation],
     static_by_line: &BTreeMap<(String, usize), Vec<usize>>,
     spanned_by_file: &BTreeMap<String, Vec<usize>>,
-    mutation: &MutationOutcomeRecord,
+    file: Option<&str>,
+    line: Option<usize>,
+    span: Option<RuntimeSpan>,
+    span_conflict: bool,
 ) -> LocationJoin {
-    if mutation.span_conflict {
+    if span_conflict {
         return LocationJoin::Unmatched(UNMATCHED_CONFLICTING_LOCATION);
     }
-    let (Some(file), Some(line)) = (
-        mutation.file.as_deref().map(normalize_report_path),
-        mutation.line,
-    ) else {
+    let (Some(file), Some(line)) = (file.map(normalize_report_path), line) else {
         return LocationJoin::Unmatched(UNMATCHED_NO_LOCATION);
     };
     let same_line = static_by_line
@@ -793,7 +878,7 @@ fn location_join(
         .map(Vec::as_slice)
         .unwrap_or_default();
 
-    let Some(mutant_span) = mutation.span else {
+    let Some(mutant_span) = span else {
         return file_line_join(same_line, UNMATCHED_NO_SEAM_ON_LINE);
     };
 
@@ -804,7 +889,7 @@ fn location_join(
     let containing: Vec<(usize, SeamRange)> = spanned
         .iter()
         .filter_map(|idx| {
-            let range = seam_span(&static_seams[*idx])?;
+            let range = seam_span(&seams[*idx])?;
             span_contains(range, mutant_span).then_some((*idx, range))
         })
         .collect();
@@ -812,7 +897,7 @@ fn location_join(
         let line_only = same_line
             .iter()
             .copied()
-            .filter(|idx| seam_span(&static_seams[*idx]).is_none())
+            .filter(|idx| seam_span(&seams[*idx]).is_none())
             .collect::<Vec<_>>();
         let reason = if spanned.is_empty() {
             UNMATCHED_NO_SEAM_ON_LINE
@@ -854,7 +939,7 @@ type SeamRange = ((usize, usize), (usize, usize));
 
 /// A seam's range when the snapshot carries all three span coordinates and
 /// they are ordered; otherwise the seam is line-only.
-fn seam_span(seam: &StaticSeamRecord) -> Option<SeamRange> {
+fn seam_span(seam: &CargoMutantsSeamLocation) -> Option<SeamRange> {
     let start = (seam.line, seam.column?);
     let end = (seam.end_line?, seam.end_column?);
     (start.1 > 0 && end.1 > 0 && start < end).then_some((start, end))
@@ -1222,9 +1307,10 @@ fn static_seam_json(record: &StaticSeamRecord) -> Value {
     });
     // Span fields appear only when the seam has a complete range, so
     // line-only snapshots render exactly as before.
-    if let (Some(((_, column), (end_line, end_column))), Some(object)) =
-        (seam_span(record), value.as_object_mut())
-    {
+    if let (Some(((_, column), (end_line, end_column))), Some(object)) = (
+        seam_span(&CargoMutantsSeamLocation::from(record)),
+        value.as_object_mut(),
+    ) {
         object.insert("column".to_string(), column.into());
         object.insert("end_line".to_string(), end_line.into());
         object.insert("end_column".to_string(), end_column.into());
@@ -1541,6 +1627,59 @@ mod tests {
         assert_eq!(public[0].line, internal[0].line);
         assert_eq!(public[0].mutation_operator, internal[0].mutation_operator);
         assert_eq!(public[0].runtime_outcome, internal[0].runtime_outcome);
+        assert_eq!(public[0].span, internal[0].span);
+        assert!(!public[0].span_conflict);
+        assert_eq!(
+            public[0].span,
+            Some(CargoMutantsRuntimeSpan {
+                start: (8, 1),
+                end: (8, 2),
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn public_parser_exposes_span_conflict_and_the_shared_join_drops_it() -> Result<(), String> {
+        let json = r#"{
+  "outcomes": [
+    {
+      "scenario": {"Mutant": {
+        "name": "src/lib.rs:4:9: replace x with y",
+        "file": "src/lib.rs",
+        "span": {"start": {"line": 4, "column": 9}, "end": {"line": 4, "column": 10}},
+        "replacement": "y",
+        "genre": "BinaryOperator"
+      }},
+      "summary": "CaughtMutant"
+    },
+    {
+      "scenario": {"Mutant": {
+        "name": "src/lib.rs:4:9: replace x with y",
+        "file": "src/lib.rs",
+        "span": {"start": {"line": 4, "column": 12}, "end": {"line": 4, "column": 13}},
+        "replacement": "y",
+        "genre": "BinaryOperator"
+      }},
+      "summary": "CaughtMutant"
+    }
+  ]
+}"#;
+        let public = parse_cargo_mutants_outcomes_json(json)?;
+        assert_eq!(public.len(), 1);
+        assert!(public[0].span_conflict);
+        assert_eq!(public[0].span, None);
+        let seams = [CargoMutantsSeamLocation {
+            file: "src/lib.rs".to_string(),
+            line: 4,
+            column: Some(1),
+            end_line: Some(4),
+            end_column: Some(20),
+        }];
+        assert_eq!(
+            join_cargo_mutants_location(&public[0], &seams),
+            CargoMutantsLocationJoin::Unmatched("conflicting_runtime_location")
+        );
         Ok(())
     }
 

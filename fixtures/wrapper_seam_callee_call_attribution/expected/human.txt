@@ -28,6 +28,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/wrapper_seam_callee_call_attribution/input --diff <cwd>/fixtures/wrapper_seam_callee_call_attribution/diff.patch --mode fast probe:src_lib.rs:error_path:463e8297
   ripr context --root <cwd>/fixtures/wrapper_seam_callee_call_attribution/input --diff <cwd>/fixtures/wrapper_seam_callee_call_attribution/diff.patch --mode fast --at probe:src_lib.rs:error_path:463e8297
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:error_path:463e8297 --root <cwd>/fixtures/wrapper_seam_callee_call_attribution/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/wrapper_seam_callee_call_attribution/input --at src/lib.rs:14 --kind error_path
 

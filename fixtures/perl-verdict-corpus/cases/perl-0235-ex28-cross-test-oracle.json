@@ -53,5 +53,8 @@
     "sha256": "0842bcbb18c2a7f3d9f0f523eb74f70f244c44cfea2ade2656b1e5f6efdd56cc",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-testmore-tier-far-from-boundary, then in relations where {\"change_id\": \"$CHANGE_ID\"} set {\"test_id\": \"test:t/pricing.t\"}; the packet fingerprint was recomputed."
-  }
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0235#28"
+  ]
 }

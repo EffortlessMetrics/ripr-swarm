@@ -1,7 +1,7 @@
 use crate::cli::commands_options::{InitCi, InitOptions};
 use crate::cli::help;
 use crate::cli::parse::expect_value;
-use crate::cli::suggest::unknown_argument;
+use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::{CONFIG_FILE_NAME, generated_init_config};
 use crate::output;
 use std::path::{Path, PathBuf};
@@ -45,8 +45,9 @@ pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
         let generator = env!("CARGO_PKG_VERSION");
         let pinned = workflow_install_version(generator);
         if pinned != generator {
+            let refresh = workflow_refresh_guidance(&options.root);
             eprintln!(
-                "ripr: warning: this ripr ({generator}) is not released, so the generated workflow pins the latest release ({pinned}) instead of the generator. After upgrading ripr, refresh with `ripr init --ci github --force` and review the diff before committing."
+                "ripr: warning: this ripr ({generator}) is not released, so the generated workflow pins the latest release ({pinned}) instead of the generator. After upgrading ripr, {refresh}"
             );
         }
     }
@@ -411,6 +412,38 @@ fn init_command_root(root: &Path) -> Result<String, String> {
     })
 }
 
+/// Init and doctor prescribe the same workflow write. Bind it to the selected
+/// root just like init's successful follow-ups and existing-file retries.
+pub(super) fn workflow_refresh_guidance(root: &Path) -> String {
+    let root_display = match init_command_root(root) {
+        Ok(root) => root,
+        Err(error) => return format!("refresh command omitted: {error}."),
+    };
+    let root_arg = if root_display.chars().any(|ch| matches!(ch, '\n' | '\t')) {
+        // Doctor sanitizes raw LF/TAB. Encode the complete directory spelling
+        // as one argument; `/.` prevents POSIX command substitution from
+        // stripping trailing newlines while selecting the same directory.
+        // Keep this directory-only projection with init's root authority:
+        // appending `/.` would be incorrect for an arbitrary file argument.
+        let octal: String = root_display
+            .bytes()
+            .chain(b"/.".iter().copied())
+            .map(|byte| format!("\\{byte:03o}"))
+            .collect();
+        format!("\"$(printf '{octal}')\"")
+    } else {
+        crate::agent::loop_commands::shell_arg(&root_display)
+    };
+    let command = format!("ripr init --ci github --force --root {root_arg}");
+    let mut guidance = format!("refresh with `{command}` and review the diff before committing.");
+    if let Some(powershell) = output::markdown::powershell_text_variant(&command) {
+        // Doctor escapes control characters in advisory evidence. Keep both
+        // copyable spellings inline rather than inserting a rendered escape.
+        guidance.push_str(&format!(" (PowerShell) `{powershell}`"));
+    }
+    guidance
+}
+
 /// Is anything at all sitting at `path`?
 ///
 /// This deliberately does not use `Path::exists()`, which follows symlinks and
@@ -530,6 +563,16 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
                 "Claude Code reads `{MCP_CONFIG_FILE_NAME}` and asks you to approve the project server before its tools appear. For Codex run `codex mcp add {MCP_SERVER_NAME} -- ripr mcp --stdio`."
             );
         }
+        if let Some(workflow) = plan
+            .iter()
+            .find(|target| target.path == init_ci_workflow_path(root, &InitCi::Github))
+        {
+            println!();
+            println!(
+                "CI next: review `{}` (advisory by default; blocking gates are opt-in via the RIPR_GATE_MODE repository variable), commit the generated files, then open or update a pull request and read the workflow's job summary.",
+                output::path::human_path(&workflow.path)
+            );
+        }
         println!();
         println!(
             "Next: run `{doctor}` to verify your setup, then `{check}` to analyze your branch against its default branch."
@@ -637,9 +680,7 @@ pub(super) fn parse_init_options(args: &[String]) -> Result<InitOptions, String>
 fn parse_init_ci(value: &str) -> Result<InitCi, String> {
     match value {
         "github" => Ok(InitCi::Github),
-        _ => Err(format!(
-            "unknown init --ci provider {value:?}. Accepted: github."
-        )),
+        _ => Err(unknown_value("init --ci provider", value, &["github"])),
     }
 }
 

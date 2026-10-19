@@ -27,6 +27,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/guarded_result_match_conditional_failure/input --diff <cwd>/fixtures/guarded_result_match_conditional_failure/diff.patch --mode fast probe:src_lib.rs:error_path:cbbe6663
   ripr context --root <cwd>/fixtures/guarded_result_match_conditional_failure/input --diff <cwd>/fixtures/guarded_result_match_conditional_failure/diff.patch --mode fast --at probe:src_lib.rs:error_path:cbbe6663
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:error_path:cbbe6663 --root <cwd>/fixtures/guarded_result_match_conditional_failure/input` for the full gate's answer
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

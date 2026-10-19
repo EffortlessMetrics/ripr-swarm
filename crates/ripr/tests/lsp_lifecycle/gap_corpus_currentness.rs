@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 mod fixture_git;
 
 const GAP: &str = "gap:54c07ec8eeadf203";
-const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.82";
+const CURRENT_CORPUS_CACHE_SCHEMA_VERSION: &str = "1.84";
 const SEAM: &str = "67f9714ba37b3967";
 const SOURCE: &str = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
 const PRICING: &str = "use ordinary_shop::discounted_total;\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n#[test]\nfn above_threshold_discounts() {\n    assert_eq!(discounted_total(1_000, 100), 990);\n}\n";
