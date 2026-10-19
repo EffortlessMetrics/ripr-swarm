@@ -30,7 +30,8 @@ fn init_ci_provider_errors_recover_near_misses() -> Result<(), String> {
     for (value, suggestion) in [
         ("githb", " Did you mean `github`?"),
         ("githbu", " Did you mean `github`?"),
-        ("gitlab", ""),
+        ("gitlab", " Did you mean `github`?"),
+        ("gitlab-ci", ""),
         ("zzzzzzzzzzzz", ""),
     ] {
         let output = run_ripr(&["init", "--ci", value, "--dry-run"])?;
