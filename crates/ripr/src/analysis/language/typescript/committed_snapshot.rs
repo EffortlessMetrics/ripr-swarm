@@ -18,8 +18,12 @@ fn skip_trivia(mut text: &str) -> &str {
     loop {
         text = text.trim_start();
         if let Some(inner) = text.strip_prefix("//") {
-            // A line comment ends at the line break (#8895).
-            text = inner.split_once('\n').map_or("", |(_, after)| after);
+            // A line comment ends at any JS line terminator: LF, CR, U+2028
+            // or U+2029 (#8895); a CRLF pair ends at its CR and the LF is
+            // whitespace.
+            text = inner
+                .split_once(['\n', '\r', '\u{2028}', '\u{2029}'])
+                .map_or("", |(_, after)| after);
         } else if let Some((_, after)) = text
             .strip_prefix("/*")
             .and_then(|inner| inner.split_once("*/"))
@@ -35,19 +39,34 @@ fn is_identifier_char(c: char) -> bool {
     c.is_alphanumeric() || matches!(c, '_' | '$')
 }
 
+/// `true` when the identifier ending at `index` (just before `Snapshot`) is
+/// matcher-shaped: it starts with `toMatch` or `toThrowErrorMatching`, as
+/// `toMatchSnapshot`, `toMatchInlineSnapshot`, `toThrowErrorMatchingSnapshot`
+/// and `toThrowErrorMatchingInlineSnapshot` do.
+fn matcher_shaped_prefix(text: &str, index: usize) -> bool {
+    text.get(..index).is_some_and(|before| {
+        let word = &before[before.trim_end_matches(is_identifier_char).len()..];
+        word.starts_with("toMatch") || word.starts_with("toThrowErrorMatching")
+    })
+}
+
 /// Snapshot matcher calls in `text`: `Snapshot` followed, after optional
 /// whitespace, block comments and line comments, by `(`, `?.`, `!`, a
 /// type-argument list (`<`), a bracket-access close (`"]`, `']`, `` `] ``,
 /// with optional whitespace or comments before the `]`) or by `.call` /
-/// `.apply` / `.bind` (#8031). Each such call advances the runner's per-title
-/// counter, so it is counted whether or not it writes to the committed file.
-/// A matcher name that is used as a value instead of called in place (the
-/// parenthesised `(a.toMatchSnapshot)()`, a cast `as` / `satisfies`, an
-/// alias `const f = a.toMatchSnapshot`, an argument or destructuring) may be
-/// called any number of times later, so it counts as two: it is never
-/// credited as the one call and refuses (#8895). Only a word that merely
-/// begins with `Snapshot`, or a standalone `Snapshot` that is not a matcher
-/// name, is not counted. Comments and strings only over-count, which refuses.
+/// `.apply` (#8031). Each such call advances the runner's per-title counter,
+/// so it is counted whether or not it writes to the committed file. A
+/// matcher-shaped name (`toMatch*Snapshot`, `toThrowErrorMatching*Snapshot`)
+/// used as a value instead of called in place, and `.bind`, which stores the
+/// callable for any number of later calls, counts as two: the parenthesised
+/// `(a.toMatchSnapshot)()`, a cast `as` / `satisfies`, an alias
+/// `const f = a.toMatchSnapshot`, an argument, a destructuring, an
+/// `import { toMatchSnapshot }` and a comment or string that names the
+/// matcher are never credited as the one call and refuse (#8895). The count
+/// doubles as the refusal marker (refuse-on-presence, RIPR-SPEC-0258 rule 1),
+/// not a call tracker. A word that merely begins with `Snapshot`, a standalone
+/// `Snapshot` and other `...Snapshot` names (`getSnapshot`, `type
+/// FooSnapshot`) count zero unless called.
 pub(super) fn snapshot_calls(text: &str) -> usize {
     text.match_indices("Snapshot")
         .map(|(index, matched)| {
@@ -58,19 +77,19 @@ pub(super) fn snapshot_calls(text: &str) -> usize {
                 return 0;
             }
             let rest = skip_trivia(raw);
+            if rest.starts_with(".bind") {
+                return 2;
+            }
             let called = rest.starts_with(['(', '<', '!'])
-                || [".call", ".apply", ".bind", "?."]
+                || [".call", ".apply", "?."]
                     .iter()
                     .any(|tail| rest.starts_with(tail))
                 || rest
                     .strip_prefix(['"', '\'', '`'])
                     .is_some_and(|after| skip_trivia(after).starts_with(']'));
-            let matcher_name = text
-                .get(..index)
-                .is_some_and(|before| before.ends_with(is_identifier_char));
             if called {
                 1
-            } else if matcher_name {
+            } else if matcher_shaped_prefix(text, index) {
                 2
             } else {
                 0
