@@ -1,6 +1,6 @@
 //! Public-path metamorphic controls for the content-addressed finding contract.
 #![cfg(feature = "lang-rust")]
-use ripr::{CheckInput, CheckOutput, Mode, OutputFormat, check_workspace};
+use ripr::{CheckInput, CheckOutput, Mode, OutputFormat};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -36,6 +36,13 @@ impl Fixture {
         std::fs::write(&path, text).map_err(|e| format!("write {}: {e}", path.display()))
     }
     fn check(&self, changes: &[(&str, &str, &str)]) -> Result<CheckOutput, String> {
+        self.check_with_config(changes, &ripr::config::RiprConfig::default())
+    }
+    fn check_with_config(
+        &self,
+        changes: &[(&str, &str, &str)],
+        config: &ripr::config::RiprConfig,
+    ) -> Result<CheckOutput, String> {
         let mut diff = String::new();
         for (path, before, after) in changes {
             diff.push_str(&format!(
@@ -72,18 +79,21 @@ impl Fixture {
             }
         }
         self.write("change.diff", &diff)?;
-        check_workspace(CheckInput {
-            root: self.root.clone(),
-            diff_file: Some(self.root.join("change.diff")),
-            mode: Mode::Draft,
-            format: OutputFormat::Json,
-            suppression_policy: self
-                .root
-                .join("suppressions.toml")
-                .is_file()
-                .then(|| self.root.join("suppressions.toml")),
-            ..CheckInput::default()
-        })
+        ripr::app::check_workspace_with_config(
+            CheckInput {
+                root: self.root.clone(),
+                diff_file: Some(self.root.join("change.diff")),
+                mode: Mode::Draft,
+                format: OutputFormat::Json,
+                suppression_policy: self
+                    .root
+                    .join("suppressions.toml")
+                    .is_file()
+                    .then(|| self.root.join("suppressions.toml")),
+                ..CheckInput::default()
+            },
+            config,
+        )
     }
 }
 impl Drop for Fixture {
@@ -410,7 +420,13 @@ fn foreign_formatting_does_not_inherit_rust_literal_boundaries() -> Result<(), S
                 "package.json",
                 "{\"name\":\"identity-fixture\",\"version\":\"0.0.0\"}",
             )?;
-            let output = fixture.check(&[(path, previous, source)])?;
+            let mut config = ripr::config::RiprConfig::default();
+            config.languages.enabled = vec![
+                ripr::domain::LanguageId::Rust,
+                ripr::domain::LanguageId::Python,
+                ripr::domain::LanguageId::TypeScript,
+            ];
+            let output = fixture.check_with_config(&[(path, previous, source)], &config)?;
             assert!(
                 output.findings.iter().any(|f| f.id == expected),
                 "formatting must retain the baseline ID for {path}: {output:?}"
