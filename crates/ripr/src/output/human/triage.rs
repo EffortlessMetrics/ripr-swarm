@@ -306,12 +306,27 @@ pub(crate) fn render_human_triage(
             // #8166 residual (F3): a static-limited finding never prints the
             // runnable repair line, even if a route was computed for it; the
             // limitation guidance above is its only next action.
-            if !is_static_limited(finding)
-                && let Some(route) = navigation.repair_route_for(&finding.id)
-            {
-                let command = navigation.repair_command(&route.seam_id);
-                out.push_str(&format!("  {command}\n"));
-                super::push_powershell_variant(out, "  ", &command);
+            // #8729: a finding offered no repair start prints one advisory
+            // line naming the refusal's state — a bounded route, a budget
+            // truncation, an ineligible seam — so the silent gap between
+            // "static limitation" and "analysis could not decide" closes.
+            // The refusal advisory is not gated on the static-limited state:
+            // a static-limited finding whose seam the gate concretely
+            // refused must name that refusal, not merge into the limitation.
+            match navigation.repair_route_for(&finding.id) {
+                Some(route) => {
+                    if !is_static_limited(finding) {
+                        let command = navigation.repair_command(&route.seam_id);
+                        out.push_str(&format!("  {command}\n"));
+                        super::push_powershell_variant(out, "  ", &command);
+                    }
+                }
+                None => {
+                    if let Some(refusal) = navigation.repair_route_refusal() {
+                        let advisory = refusal.advisory(&navigation.repair_command(&finding.id));
+                        out.push_str(&format!("  {advisory}\n"));
+                    }
+                }
             }
             // #5355: a Rust gap gets the one-step route to a runnable test.
             // A gap withheld because ripr could not read the related

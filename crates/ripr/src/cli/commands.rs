@@ -258,9 +258,7 @@ pub(super) fn zero(args: &[String]) -> Result<(), String> {
         return Ok(());
     };
     if subcommand != "status" {
-        return Err(format!(
-            "unknown zero subcommand {subcommand:?}; expected `status`"
-        ));
+        return Err(unknown_value("zero subcommand", subcommand, &["status"]));
     }
     ripr_zero_status(rest)
 }
@@ -282,8 +280,18 @@ pub(super) fn policy(args: &[String]) -> Result<(), String> {
         "preview-promote" => policy_preview_promotion(rest),
         "waiver-aging" => policy_waiver_aging(rest),
         "suppression-health" => policy_suppression_health(rest),
-        _ => Err(format!(
-            "unknown policy subcommand {subcommand:?}; expected `readiness`, `operations`, `history`, `promote`, `preview-promote`, `waiver-aging`, or `suppression-health`"
+        _ => Err(unknown_value(
+            "policy subcommand",
+            subcommand,
+            &[
+                "readiness",
+                "operations",
+                "history",
+                "promote",
+                "preview-promote",
+                "waiver-aging",
+                "suppression-health",
+            ],
         )),
     }
 }
@@ -298,8 +306,10 @@ pub(super) fn pr_ledger(args: &[String]) -> Result<(), String> {
         return Ok(());
     };
     if subcommand != "record" {
-        return Err(format!(
-            "unknown pr-ledger subcommand {subcommand:?}; expected `record`"
+        return Err(unknown_value(
+            "pr-ledger subcommand",
+            subcommand,
+            &["record"],
         ));
     }
     pr_evidence_ledger_record(rest)
@@ -321,8 +331,10 @@ pub(super) fn pr_comments(args: &[String]) -> Result<(), String> {
         "existing" => pr_comments_github::pr_comments_existing(rest),
         "requests" => pr_comments_github::pr_comments_requests(rest),
         "summary" => pr_comments_github::pr_comments_summary(rest),
-        _ => Err(format!(
-            "unknown pr-comments subcommand {subcommand:?}; expected `plan`, `existing`, `requests`, or `summary`"
+        _ => Err(unknown_value(
+            "pr-comments subcommand",
+            subcommand,
+            &["plan", "existing", "requests", "summary"],
         )),
     }
 }
@@ -337,8 +349,10 @@ pub(super) fn pr_review(args: &[String]) -> Result<(), String> {
         return Ok(());
     };
     if subcommand != "front-panel" {
-        return Err(format!(
-            "unknown pr-review subcommand {subcommand:?}; expected `front-panel`"
+        return Err(unknown_value(
+            "pr-review subcommand",
+            subcommand,
+            &["front-panel"],
         ));
     }
     pr_review_front_panel(rest)
@@ -354,8 +368,10 @@ pub(super) fn coverage_grip(args: &[String]) -> Result<(), String> {
         return Ok(());
     };
     if subcommand != "frontier" {
-        return Err(format!(
-            "unknown coverage-grip subcommand {subcommand:?}; expected `frontier`"
+        return Err(unknown_value(
+            "coverage-grip subcommand",
+            subcommand,
+            &["frontier"],
         ));
     }
     coverage_grip_frontier(rest)
@@ -373,8 +389,10 @@ pub(super) fn assistant_loop(args: &[String]) -> Result<(), String> {
     match subcommand.as_str() {
         "proof" => assistant_loop_proof(rest),
         "health" => assistant_loop_health(rest),
-        _ => Err(format!(
-            "unknown assistant-loop subcommand {subcommand:?}; expected `proof` or `health`"
+        _ => Err(unknown_value(
+            "assistant-loop subcommand",
+            subcommand,
+            &["proof", "health"],
         )),
     }
 }
@@ -501,8 +519,17 @@ pub(super) fn reports(args: &[String]) -> Result<(), String> {
         "gap-ledger" => gap_decision_ledger(rest),
         "ts-limitations" => typescript_limitations(rest),
         "ts-false-actionable" => typescript_false_actionable(rest),
-        _ => Err(format!(
-            "unknown reports subcommand {subcommand:?}; expected `index`, `ci-packet`, `ci-summary`, `gap-ledger`, `ts-limitations`, or `ts-false-actionable`"
+        _ => Err(unknown_value(
+            "reports subcommand",
+            subcommand,
+            &[
+                "index",
+                "ci-packet",
+                "ci-summary",
+                "gap-ledger",
+                "ts-limitations",
+                "ts-false-actionable",
+            ],
         )),
     }
 }
@@ -1180,8 +1207,10 @@ pub(super) fn calibrate(args: &[String]) -> Result<(), String> {
         return Ok(());
     };
     if subcommand != "cargo-mutants" {
-        return Err(format!(
-            "unknown calibrate subcommand {subcommand:?}; expected `cargo-mutants`"
+        return Err(unknown_value(
+            "calibrate subcommand",
+            subcommand,
+            &["cargo-mutants"],
         ));
     }
 
@@ -3651,7 +3680,7 @@ mod tests {
         assert_eq!(
             reports(&args(&["unknown"])),
             Err(
-                "unknown reports subcommand \"unknown\"; expected `index`, `ci-packet`, `ci-summary`, `gap-ledger`, `ts-limitations`, or `ts-false-actionable`"
+                "unknown reports subcommand \"unknown\". Accepted: index, ci-packet, ci-summary, gap-ledger, ts-limitations, ts-false-actionable."
                     .to_string()
             )
         );
@@ -4534,7 +4563,7 @@ mod tests {
         );
         assert_eq!(
             pr_review(&args(&["bogus"])),
-            Err("unknown pr-review subcommand \"bogus\"; expected `front-panel`".to_string())
+            Err("unknown pr-review subcommand \"bogus\". Accepted: front-panel.".to_string())
         );
     }
 
@@ -4585,7 +4614,7 @@ mod tests {
         );
         assert_eq!(
             zero(&args(&["unknown"])),
-            Err("unknown zero subcommand \"unknown\"; expected `status`".to_string())
+            Err("unknown zero subcommand \"unknown\". Accepted: status.".to_string())
         );
         assert_eq!(
             parse_ripr_zero_status_options(&args(&[])),
@@ -4714,7 +4743,7 @@ mod tests {
         assert_eq!(
             policy(&args(&["unknown"])),
             Err(
-                "unknown policy subcommand \"unknown\"; expected `readiness`, `operations`, `history`, `promote`, `preview-promote`, `waiver-aging`, or `suppression-health`"
+                "unknown policy subcommand \"unknown\". Accepted: readiness, operations, history, promote, preview-promote, waiver-aging, suppression-health."
                     .to_string()
             )
         );
@@ -4748,7 +4777,14 @@ mod tests {
         assert_eq!(
             parse_policy_promotion_options(&args(&["--to", "strict"])),
             Err(
-                "unknown policy promotion target \"strict\"; expected `visible-only`, `acknowledgeable`, `baseline-check`, or `calibrated-gate`"
+                "unknown policy promotion target \"strict\". Accepted: visible-only, acknowledgeable, baseline-check, calibrated-gate."
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            parse_policy_promotion_options(&args(&["--to", "visble-only"])),
+            Err(
+                "unknown policy promotion target \"visble-only\". Did you mean `visible-only`? Accepted: visible-only, acknowledgeable, baseline-check, calibrated-gate."
                     .to_string()
             )
         );
@@ -4774,7 +4810,14 @@ mod tests {
         assert_eq!(
             parse_policy_preview_promotion_options(&args(&["--language", "ruby"])),
             Err(
-                "unknown preview promotion language \"ruby\"; expected `typescript` or `python`"
+                "unknown preview promotion language \"ruby\". Accepted: typescript, python."
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            parse_policy_preview_promotion_options(&args(&["--language", "pythn"])),
+            Err(
+                "unknown preview promotion language \"pythn\". Did you mean `python`? Accepted: typescript, python."
                     .to_string()
             )
         );
@@ -5864,7 +5907,7 @@ language = "rust"
         );
         assert_eq!(
             pr_ledger(&args(&["unknown"])),
-            Err("unknown pr-ledger subcommand \"unknown\"; expected `record`".to_string())
+            Err("unknown pr-ledger subcommand \"unknown\". Accepted: record.".to_string())
         );
         assert_eq!(
             parse_pr_evidence_ledger_options(&args(&[
@@ -6106,7 +6149,7 @@ language = "rust"
         );
         assert_eq!(
             pr_comments(&args(&["publish"])),
-            Err("unknown pr-comments subcommand \"publish\"; expected `plan`, `existing`, `requests`, or `summary`".to_string())
+            Err("unknown pr-comments subcommand \"publish\". Accepted: plan, existing, requests, summary.".to_string())
         );
         assert_eq!(
             parse_pr_comments_plan_options(&args(&["--mode", "post"])),
@@ -6576,7 +6619,7 @@ language = "rust"
         );
         assert_eq!(
             coverage_grip(&args(&["unknown"])),
-            Err("unknown coverage-grip subcommand \"unknown\"; expected `frontier`".to_string())
+            Err("unknown coverage-grip subcommand \"unknown\". Accepted: frontier.".to_string())
         );
         assert_eq!(
             parse_coverage_grip_frontier_options(&args(&["--coverage", "coverage.json"])),
@@ -7009,7 +7052,7 @@ language = "rust"
         assert_eq!(calibrate(&args(&[])), Ok(()));
         assert_eq!(
             calibrate(&args(&["runtime"])),
-            Err("unknown calibrate subcommand \"runtime\"; expected `cargo-mutants`".to_string())
+            Err("unknown calibrate subcommand \"runtime\". Accepted: cargo-mutants.".to_string())
         );
         assert_eq!(
             parse_calibrate_cargo_mutants_options(&args(&["--repo-exposure-json", "repo.json"])),
@@ -7419,7 +7462,10 @@ language = "rust"
         );
         assert_eq!(
             init(&args(&["--ci", "gitlab"])),
-            Err("unknown init --ci provider \"gitlab\". Accepted: github.".to_string())
+            Err(
+                "unknown init --ci provider \"gitlab\". Did you mean `github`? Accepted: github."
+                    .to_string()
+            )
         );
     }
 
@@ -8058,8 +8104,8 @@ language = "rust"
         // The DX bar from #5409: a workflow an adopter can read in one sitting.
         let line_count = workflow.lines().count();
         assert!(
-            line_count <= 166,
-            "generated workflow is {line_count} lines; #5409 set 150, and the summary comment step took it to 165"
+            line_count <= 175,
+            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, and #4452 added step env bindings"
         );
 
         assert!(workflow.contains("RIPR_UPLOAD_SARIF: \"true\""));
@@ -8140,6 +8186,10 @@ language = "rust"
         assert!(summary.contains("github.actor != 'dependabot[bot]'"));
         assert!(summary.contains("continue-on-error: true"));
         assert!(summary.contains("| ripr pr-comments summary --root . --raw -"));
+        assert!(summary.contains("PR_NUMBER: ${{ github.event.pull_request.number }}"));
+        assert!(summary.contains("PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}"));
+        assert!(summary.contains("REPO: ${{ github.repository }}"));
+        assert!(summary.contains("--pull-request \"$PR_NUMBER\" --head-sha \"$PR_HEAD_SHA\""));
         assert!(summary.contains("done < target/ripr/review/summary/summary.tsv"));
         assert_step_before(&workflow, "Run RIPR", "Publish RIPR summary comment");
 
@@ -8161,9 +8211,12 @@ language = "rust"
         assert!(existing_comments.contains("env.RIPR_COMMENT_MODE != 'off'"));
         assert!(existing_comments.contains("GH_TOKEN: ${{ github.token }}"));
         assert!(existing_comments.contains("gh api --paginate --slurp"));
+        assert!(existing_comments.contains("PR_NUMBER: ${{ github.event.pull_request.number }}"));
         assert!(
-            existing_comments.contains("pulls/${{ github.event.pull_request.number }}/comments")
+            existing_comments.contains("PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}")
         );
+        assert!(existing_comments.contains("REPO: ${{ github.repository }}"));
+        assert!(existing_comments.contains("pulls/$PR_NUMBER/comments"));
         // The command's default output is the file the packet's plan reads.
         assert!(include_str!("commands/pr_comments_github.rs").contains(
             "const DEFAULT_EXISTING_OUT: &str = \"target/ripr/review/existing-comments.json\";"
@@ -8176,11 +8229,14 @@ language = "rust"
         assert!(
             publish_comments.contains("hashFiles('target/ripr/review/comment-publish-plan.json')")
         );
+        assert!(publish_comments.contains("PR_NUMBER: ${{ github.event.pull_request.number }}"));
         assert!(
-            publish_comments.contains("--head-sha \"${{ github.event.pull_request.head.sha }}\"")
+            publish_comments.contains("PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}")
         );
+        assert!(publish_comments.contains("REPO: ${{ github.repository }}"));
+        assert!(publish_comments.contains("--head-sha \"$PR_HEAD_SHA\""));
         assert!(publish_comments.contains(
-            "gh api --method \"$method\" \"repos/${{ github.repository }}/$endpoint\" --input \"$request\""
+            "gh api --method \"$method\" \"repos/$REPO/$endpoint\" --input \"$request\""
         ));
 
         // The packet writes the plan the publish step reads, and the comment

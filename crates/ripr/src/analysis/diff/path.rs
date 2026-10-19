@@ -287,7 +287,8 @@ fn parse_diff_path_token(raw: &str) -> Option<DecodedPath> {
     }
 
     let token = raw.split_once('\t').map_or(raw, |(path, _metadata)| path);
-    let token = token.trim_end();
+    // Git leaves trailing filename spaces unquoted. Only the tab separates
+    // metadata; whitespace before it is part of the native path identity.
     (!token.is_empty()).then(|| DecodedPath::Text(token.to_string()))
 }
 
@@ -653,6 +654,95 @@ mod tests {
         assert_eq!(files[0].removed_lines[0].text, "-- a/src/b space.rs\t");
         assert_eq!(files[0].added_lines[0].text, "++ b/src/b space.rs\t");
         assert_eq!(files[0].added_lines[1].line, 4);
+    }
+
+    #[test]
+    fn unquoted_path_tokens_preserve_trailing_whitespace() {
+        for suffix in [" ", "  ", "\u{2003}"] {
+            let path = format!("src/same.rs{suffix}");
+            let expected = Some(PathBuf::from(&path));
+            for metadata in ["", "2026-10-19 00:00:00 +0000"] {
+                assert_eq!(
+                    parse_new_path_marker(&format!("+++ b/{path}\t{metadata}\r")),
+                    expected
+                );
+                assert_eq!(
+                    parse_old_path_for_confinement(&format!("--- a/{path}\t{metadata}\r")),
+                    expected
+                );
+            }
+            assert_eq!(
+                parse_rename_from_path(&format!("rename from {path}")),
+                expected
+            );
+            assert_eq!(parse_rename_to_path(&format!("rename to {path}")), expected);
+            assert_eq!(
+                parse_git_old_path(&format!("diff --git a/{path} b/destination.rs")),
+                expected
+            );
+            assert_eq!(
+                parse_new_path_marker(&format!("+++ \"b/{path}\"")),
+                expected
+            );
+            assert_ne!(expected, Some(PathBuf::from("src/same.rs")));
+        }
+    }
+
+    #[test]
+    fn trailing_whitespace_file_sections_keep_distinct_paths_and_scope() -> Result<(), String> {
+        use super::super::parse::{
+            parse_unified_diff_with_limit, parse_unified_diff_with_metadata,
+        };
+
+        for suffix in [" ", "  ", "\u{2003}"] {
+            let path = format!("src/same.rs{suffix}");
+            let patch = format!(
+                "--- a/src/same.rs\t\n+++ b/src/same.rs\t\n@@ -2 +3 @@\n-before ordinary\n+after ordinary\n\
+                 --- a/{path}\t\n+++ b/{path}\t\n@@ -5 +7 @@\n-before spaced\n+after spaced\n"
+            );
+            for input in [patch.clone(), patch.replace('\n', "\r\n")] {
+                let parsed = parse_unified_diff_with_metadata(&input);
+                assert!(parsed.limitations.is_empty(), "{:?}", parsed.limitations);
+                assert_eq!(parsed.truncated_file_sections, 0);
+                let Err(error) = parse_unified_diff_with_limit(&input, 1) else {
+                    return Err("distinct whitespace paths fit in one file slot".to_string());
+                };
+                assert!(error.starts_with("diff_scope_oversized: at least 2 changed files"));
+                for files in [
+                    parsed.changed_files,
+                    parse_unified_diff_with_limit(&input, 2)?,
+                ] {
+                    assert_eq!(files.len(), 2, "{files:?}");
+                    for (file, expected, old, new, before, after) in [
+                        (
+                            &files[0],
+                            "src/same.rs",
+                            2,
+                            3,
+                            "before ordinary",
+                            "after ordinary",
+                        ),
+                        (
+                            &files[1],
+                            path.as_str(),
+                            5,
+                            7,
+                            "before spaced",
+                            "after spaced",
+                        ),
+                    ] {
+                        assert_eq!(file.path, Path::new(expected));
+                        assert_eq!(file.removed_lines.len(), 1);
+                        assert_eq!(file.added_lines.len(), 1);
+                        assert_eq!(file.removed_lines[0].line, old);
+                        assert_eq!(file.removed_lines[0].text, before);
+                        assert_eq!(file.added_lines[0].line, new);
+                        assert_eq!(file.added_lines[0].text, after);
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     #[test]

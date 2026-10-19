@@ -38,3 +38,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_unittest_list_equal_derived_result (4)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless python_unittest_list_equal_derived_result --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

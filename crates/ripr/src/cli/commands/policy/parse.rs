@@ -1,5 +1,5 @@
 use crate::cli::commands_options::*;
-use crate::cli::suggest::unknown_argument;
+use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use std::path::PathBuf;
 
@@ -388,8 +388,15 @@ pub(crate) fn parse_policy_promotion_options(
     let target_mode =
         target_mode.ok_or_else(|| "policy promote requires --to <mode>".to_string())?;
     if !output::policy_promotion::is_supported_target_mode(&target_mode) {
-        return Err(format!(
-            "unknown policy promotion target {target_mode:?}; expected `visible-only`, `acknowledgeable`, `baseline-check`, or `calibrated-gate`"
+        return Err(unknown_value(
+            "policy promotion target",
+            &target_mode,
+            &[
+                "visible-only",
+                "acknowledgeable",
+                "baseline-check",
+                "calibrated-gate",
+            ],
         ));
     }
     let operations =
@@ -487,8 +494,10 @@ pub(crate) fn parse_policy_preview_promotion_options(
     let language = language
         .ok_or_else(|| "policy preview-promote requires --language <language>".to_string())?;
     if !output::policy_preview_promotion::is_supported_language(&language) {
-        return Err(format!(
-            "unknown preview promotion language {language:?}; expected `typescript` or `python`"
+        return Err(unknown_value(
+            "preview promotion language",
+            &language,
+            &["typescript", "python"],
         ));
     }
     let candidate_class = candidate_class

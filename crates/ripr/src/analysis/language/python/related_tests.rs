@@ -1593,11 +1593,21 @@ pub(super) fn first_parenthesized_string_argument(text: &str) -> Option<String> 
 
 pub(super) fn contains_call_name(body_text: &str, call_name: &str) -> bool {
     let needle = format!("{call_name}(");
-    body_text.match_indices(&needle).any(|(idx, _)| {
-        python_callee_start_has_boundary(body_text, idx)
-            && !line_prefix_looks_like_comment_or_string(body_text, idx)
-            && !is_definition_name(body_text, idx)
-    })
+    body_text
+        .match_indices(&needle)
+        .any(|(idx, _)| is_bare_call_site(body_text, idx))
+}
+
+/// Whether a `name(` at byte `idx` is a bare call: an identifier boundary (no
+/// attribute receiver), outside comments, strings and docstrings, and not a
+/// `def` / `class` header. The one definition both `contains_call_name`
+/// (test-to-owner calls) and `module_callees::bare_callees` (owner-to-helper
+/// edges) use, so the two cannot drift (#4568).
+pub(super) fn is_bare_call_site(text: &str, idx: usize) -> bool {
+    python_callee_start_has_boundary(text, idx)
+        && !line_prefix_looks_like_comment_or_string(text, idx)
+        && !python_text_hides_code(text, idx)
+        && !is_definition_name(text, idx)
 }
 
 /// `def name(` / `async def name(` / `class name(` defines `name`; it does not
@@ -2168,28 +2178,66 @@ pub(super) fn python_text_hides_code(text: &str, idx: usize) -> bool {
         || inside_triple_quoted_string(text, idx)
 }
 
+/// Whether `idx` falls inside an open triple-quoted string. A small lexer:
+/// triple delimiters inside ordinary single-line strings (`'"""'`) and `#`
+/// comments do not open a docstring, and a backslash escapes the next char.
 fn inside_triple_quoted_string(text: &str, idx: usize) -> bool {
-    let mut open: Option<&str> = None;
+    let mut triple: Option<&str> = None;
     let mut cursor = 0;
     while cursor < idx {
         let rest = &text[cursor..];
-        match open {
-            Some(delimiter) if rest.starts_with(delimiter) => {
-                open = None;
+        if let Some(delimiter) = triple {
+            if let Some(escaped) = rest.strip_prefix('\\') {
+                cursor += 1 + escaped.chars().next().map_or(0, char::len_utf8);
+            } else if rest.starts_with(delimiter) {
+                triple = None;
                 cursor += delimiter.len();
+            } else {
+                cursor += rest.chars().next().map_or(1, char::len_utf8);
             }
-            None if rest.starts_with("\"\"\"") => {
-                open = Some("\"\"\"");
-                cursor += 3;
+            continue;
+        }
+        if rest.starts_with("\"\"\"") {
+            triple = Some("\"\"\"");
+            cursor += 3;
+        } else if rest.starts_with("'''") {
+            triple = Some("'''");
+            cursor += 3;
+        } else if rest.starts_with('#') || rest.starts_with('"') || rest.starts_with('\'') {
+            let len = if rest.starts_with('#') {
+                rest.find('\n').unwrap_or(rest.len())
+            } else {
+                single_line_string_len(rest)
+            };
+            // `idx` inside a comment or a (possibly backslash-continued)
+            // string literal is hidden code, not a call.
+            if idx < cursor + len {
+                return true;
             }
-            None if rest.starts_with("'''") => {
-                open = Some("'''");
-                cursor += 3;
-            }
-            _ => cursor += rest.chars().next().map_or(1, char::len_utf8),
+            cursor += len;
+        } else {
+            cursor += rest.chars().next().map_or(1, char::len_utf8);
         }
     }
-    open.is_some()
+    triple.is_some()
+}
+
+/// Byte length of the ordinary single-line string literal at the start of
+/// `rest` (which begins with its quote): through the closing quote, or to the
+/// end of the line when unterminated.
+fn single_line_string_len(rest: &str) -> usize {
+    let quote = rest.as_bytes()[0];
+    let bytes = rest.as_bytes();
+    let mut index = 1;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' => index += 2,
+            b'\n' => return index,
+            byte if byte == quote => return index + 1,
+            _ => index += 1,
+        }
+    }
+    rest.len()
 }
 
 pub(super) fn same_stem_related(test: &PythonTest, owner: &PythonOwner) -> bool {

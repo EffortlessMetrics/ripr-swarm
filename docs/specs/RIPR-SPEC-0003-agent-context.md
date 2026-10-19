@@ -26,7 +26,13 @@ A selector naming several findings (for example two findings at one
 as ambiguous with the bounded candidate finding IDs instead of silently
 selecting the first match; ambiguity is the same usage-class refusal as a
 miss. A unique canonical gap identity (`gap:...`) resolves exactly its
-finding, like a unique finding ID.
+finding, like a unique finding ID — including the hash form `gap:<16hex>`
+that JSON outputs emit for the canonical gap: both spellings of one gap
+resolve through the same seam-to-finding binding, on fresh and `--from`
+replay paths alike. A seam-shaped selector whose reverse lookup hits a
+budget-truncated seam inventory refuses as undecidable instead of rendering
+a clean miss the lookup did not establish: the refusal names the
+truncation, the wider-budget recovery, and the listing route.
 
 The packet should include:
 

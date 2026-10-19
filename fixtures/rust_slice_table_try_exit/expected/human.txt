@@ -31,6 +31,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_slice_table_try_exit/input --diff <cwd>/fixtures/rust_slice_table_try_exit/diff.patch --mode fast probe:src_lib.rs:predicate:2639b14d
   ripr context --root <cwd>/fixtures/rust_slice_table_try_exit/input --diff <cwd>/fixtures/rust_slice_table_try_exit/diff.patch --mode fast --at probe:src_lib.rs:predicate:2639b14d
+  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:predicate:2639b14d --root <cwd>/fixtures/rust_slice_table_try_exit/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_slice_table_try_exit/input --at src/lib.rs:18 --kind predicate
 

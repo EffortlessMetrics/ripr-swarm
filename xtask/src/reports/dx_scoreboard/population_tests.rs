@@ -326,7 +326,7 @@ fn perl_projection_keeps_producer_and_edited_contributions_separate() -> Result<
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/perl-verdict-corpus");
     let records = population::Records::load(&dir)?;
     // Independently counted committed rows: producer 27 (15 discriminated,
-    // 12 not fully), edited 9. Do not derive these expectations via summarize.
+    // 12 not fully), edited 33. Do not derive these expectations via summarize.
     for (rate, expected) in [
         ("false_verdict_rate", (4, 27)),
         ("false_actionable_rate", (1, 15)),
@@ -336,7 +336,7 @@ fn perl_projection_keeps_producer_and_edited_contributions_separate() -> Result<
     ] {
         let selected = records.population(&format!("by_packet_provenance.producer.{rate}"))?;
         assert_eq!(selected.totals()?, expected);
-        assert_eq!(selected.cases.len(), 36);
+        assert_eq!(selected.cases.len(), 60);
         assert_eq!(
             selected
                 .cases
@@ -344,20 +344,20 @@ fn perl_projection_keeps_producer_and_edited_contributions_separate() -> Result<
                 .filter(|case| case.denominator == 0)
                 .count(),
             if rate == "false_actionable_rate" {
-                21
+                45
             } else if rate == "false_exposed_rate" || rate == "false_silent_rate" {
-                24
+                48
             } else {
-                9
+                33
             }
         );
     }
-    assert_eq!(records.population("abstention_rate")?.totals()?, (18, 36));
+    assert_eq!(records.population("abstention_rate")?.totals()?, (20, 60));
     assert_eq!(
         records
             .population("by_packet_provenance.edited_producer.abstention_rate")?
             .totals()?,
-        (3, 9)
+        (5, 33)
     );
     for invalid in [
         "by_packet_provenance.producer",

@@ -43,7 +43,13 @@ pub(crate) enum RepairStartDecision {
     Action(Box<CanonicalNextActionV1>),
     NoEligible {
         total_seams: usize,
+        /// Distinct ineligibility reasons rendered in the bounded list.
         reasons: Vec<String>,
+        /// The total count of distinct ineligibility reasons across the
+        /// visible seams (#8728). Greater than `reasons.len()` when the
+        /// bounded list was truncated; the renderer discloses the
+        /// remainder instead of presenting three as the whole story.
+        reasons_total: usize,
     },
 }
 
@@ -60,6 +66,10 @@ pub(crate) struct RepairStartFacts<'a> {
     /// Distinct ineligibility reasons across the visible seams, bounded by
     /// the gatherer. Empty when every visible seam is eligible.
     pub(crate) ineligible_reasons: &'a [String],
+    /// The total count of distinct ineligibility reasons across the
+    /// visible seams, tracked alongside the bounded list so a truncated
+    /// list can disclose its remainder (#8728).
+    pub(crate) ineligible_reasons_total: usize,
     /// The current HEAD, when it could be read.
     pub(crate) head: Option<&'a str>,
     /// The before-phase command for the single candidate, if any. Ignored
@@ -78,6 +88,7 @@ pub(crate) fn decide_repair_start(
         return Ok(RepairStartDecision::NoEligible {
             total_seams: facts.total_seams,
             reasons: facts.ineligible_reasons.to_vec(),
+            reasons_total: facts.ineligible_reasons_total,
         });
     }
     let single = facts.eligible_ids.len() == 1;
@@ -176,6 +187,33 @@ fn ineligibility_label(reason: RepairPacketIneligibility) -> &'static str {
     }
 }
 
+/// Bound the displayed no-eligible reason list while keeping an honest
+/// distinct-reason total. The list renders at most `MAX_LISTED_REASONS`
+/// entries so the message stays bounded; the total keeps tracking every
+/// distinct reason across the whole inventory so the renderer can disclose
+/// the remainder instead of presenting the bound as the whole story (#8728).
+/// The distinctness set is intentionally separate from the displayed list:
+/// once the list fills, a repeated omitted reason must not inflate the
+/// count of distinct omitted reasons (a review finding on the first #8728
+/// pass: A, B, C, D, D reads as "two more" although only D is omitted).
+fn collect_no_eligible_reasons<'a>(
+    refusal_reasons: impl Iterator<Item = &'a str>,
+) -> (Vec<String>, usize) {
+    const MAX_LISTED_REASONS: usize = 3;
+    let mut reasons: Vec<String> = Vec::new();
+    let mut distinct: Vec<String> = Vec::new();
+    for reason in refusal_reasons {
+        if distinct.iter().any(|seen| seen == reason) {
+            continue;
+        }
+        distinct.push(reason.to_string());
+        if reasons.len() < MAX_LISTED_REASONS {
+            reasons.push(reason.to_string());
+        }
+    }
+    (reasons, distinct.len())
+}
+
 /// Gather the live authorities and decide one repair start. A truncated seam
 /// inventory fails closed: selecting from a partial list could hide
 /// candidates and silently pick first.
@@ -191,8 +229,6 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
             info.analyzed, info.total
         ));
     }
-    let mut eligible_ids = Vec::new();
-    let mut reasons: Vec<String> = Vec::new();
     // The before-phase packet producer refuses policy-omitted seams
     // (#4332), so the auto selector must apply the same omission: a
     // severity-off seam is never a start candidate, and the omission is
@@ -200,18 +236,18 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
     // classes this selector already excludes, or for configured-off
     // classes, so no eligible seam is lost.
     let policy = AgentBriefPolicy::from_config(&config);
+    let mut eligible_ids = Vec::new();
+    let mut refusal_reasons: Vec<String> = Vec::new();
     for entry in &classified {
         match repair_refusal_reason(entry, policy) {
             None => eligible_ids.push(entry.seam.id().as_str().to_string()),
-            Some(reason) => {
-                // Name the shared gate's own reason among the no-eligible
-                // reasons so the limitation is diagnosable.
-                if reasons.len() < 3 && !reasons.contains(&reason) {
-                    reasons.push(reason);
-                }
-            }
+            // Name the shared gate's own reason among the no-eligible
+            // reasons so the limitation is diagnosable.
+            Some(reason) => refusal_reasons.push(reason),
         }
     }
+    let (reasons, reasons_total) =
+        collect_no_eligible_reasons(refusal_reasons.iter().map(String::as_str));
     let bound = bound_root(&root.to_string_lossy());
     let head = current_git_head(root).ok();
     let spec = if eligible_ids.len() == 1 {
@@ -224,6 +260,7 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
         eligible_ids: &eligible_ids,
         total_seams: classified.len(),
         ineligible_reasons: &reasons,
+        ineligible_reasons_total: reasons_total,
         head: head.as_deref(),
         start_spec: spec.as_ref(),
     })
@@ -345,8 +382,9 @@ pub(crate) fn resolve_repair_subject_outcome(
 }
 
 /// The repair route for the one finding the default human `ripr check`
-/// selects (#8166 Slice C), or `None` when that finding may not be offered
-/// a repair start. The seam↔finding binding is the shared
+/// selects (#8166 Slice C), or the named refusal when that finding may not
+/// be offered a repair start (#8729). The seam↔finding binding is the
+/// shared
 /// [`finding_for_seam`](super::repair_card_handoff::finding_for_seam)
 /// authority, and admission is the same [`repair_refusal_reason`] gate
 /// the explicit resolver applies, so the printed seam ID round-trips
@@ -367,35 +405,50 @@ pub(crate) fn resolve_repair_subject_outcome(
 /// finding's gap file, so no seam outside that file could claim this
 /// finding. Fail-closed throughout: a seam-limit-truncated candidate
 /// set, zero or several binding seams, an ineligible or policy-omitted
-/// seam, and any unreadable authority yield no route rather than a
-/// guessed one. When bounded evidence cannot decide eligibility the
-/// seam simply gets no route; `ripr repair` itself re-checks admission
-/// against the full inventory before starting any attempt.
+/// seam, and any unreadable authority refuse with a named reason rather
+/// than a guessed or silent route. `Silent` is deliberate only: the
+/// renderer never prints a runnable line for a static-limited finding
+/// (F3 — its limitation guidance on the same screen is authoritative), so
+/// an eligible seam under a static-limited finding still yields no route,
+/// and a run with no selected finding has nothing to name. A refusal the
+/// pipeline did compute is named even for a static-limited finding (#8729):
+/// "the gate refused this seam" must not read as "analysis could not
+/// decide". When bounded evidence cannot decide eligibility the refusal
+/// names the state; `ripr repair` itself re-checks admission against the
+/// full inventory before starting any attempt.
 pub(crate) fn check_repair_route(
     root: &Path,
     check_config: &crate::config::RiprConfig,
     output: &super::CheckOutput,
-) -> Option<crate::app::RepairRoute> {
-    let finding = crate::output::human::selected_triage_finding(output, check_config)?;
-    // #8166 residual (F3): a static-limited finding keeps its limitation
-    // guidance and gets no runnable repair line — the same static-limited
-    // definition the human triage state uses (a named static limitation, or
-    // a class static analysis could not establish a path for). Offering a
-    // repair start beside "inspect the static limitation before treating
-    // this as repair-ready" contradicts that guidance on one screen.
-    if finding.static_limit_kind.is_some()
+) -> crate::app::CheckRepairRoute {
+    use super::navigation::{CheckRepairRoute, RepairRouteRefusal};
+    let Some(finding) = crate::output::human::selected_triage_finding(output, check_config) else {
+        return CheckRepairRoute::Silent;
+    };
+    // #8166 residual (F3): a static-limited finding never gets a runnable
+    // repair line — the same static-limited definition the human triage
+    // state uses (a named static limitation, or a class static analysis
+    // could not establish a path for). Offering a repair start beside
+    // "inspect the static limitation before treating this as repair-ready"
+    // contradicts that guidance on one screen. The renderer enforces F3 on
+    // the `Route` arm; here the eligibility pipeline still runs so that a
+    // computed refusal is named instead of silent (#8729): a static-limited
+    // finding whose seam the gate refused must not read as "analysis could
+    // not decide" either.
+    let static_limited = finding.static_limit_kind.is_some()
         || matches!(
             finding.class,
             crate::domain::ExposureClass::NoStaticPath
                 | crate::domain::ExposureClass::InfectionUnknown
                 | crate::domain::ExposureClass::PropagationUnknown
                 | crate::domain::ExposureClass::StaticUnknown
-        )
-    {
-        return None;
-    }
-    let gap = finding.canonical_gap.as_ref()?;
-    let config = load_for_root(root).ok()?;
+        );
+    let Some(gap) = finding.canonical_gap.as_ref() else {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::NoCanonicalGap);
+    };
+    let Ok(config) = load_for_root(root) else {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::ConfigUnreadable);
+    };
     let evidence_files: Vec<std::path::PathBuf> = finding
         .related_tests
         .iter()
@@ -409,17 +462,20 @@ pub(crate) fn check_repair_route(
                 .then_some(relative)
         })
         .collect();
-    let classified = crate::analysis::classify_seams_in_file_with_related_at_with_config(
+    let Ok(classified) = crate::analysis::classify_seams_in_file_with_related_at_with_config(
         root,
         &config,
         Path::new(&gap.file),
         &evidence_files,
-    )
-    .ok()?;
+    ) else {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::ClassificationFailed);
+    };
     match crate::analysis::repo_exposure_seam_limit() {
-        Ok(Some((limit, _))) if classified.len() > limit => return None,
+        Ok(Some((limit, _))) if classified.len() > limit => {
+            return CheckRepairRoute::Refused(RepairRouteRefusal::SeamLimit);
+        }
         Ok(_) => {}
-        Err(_) => return None,
+        Err(_) => return CheckRepairRoute::Refused(RepairRouteRefusal::SeamLimit),
     }
     let policy = AgentBriefPolicy::from_config(&config);
     let mut bound = classified.iter().filter(|entry| {
@@ -432,14 +488,23 @@ pub(crate) fn check_repair_route(
         )
         .is_some_and(|bound_finding| bound_finding.id == finding.id)
     });
-    let entry = bound.next()?;
+    let Some(entry) = bound.next() else {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::NoBindingSeam);
+    };
     if bound.next().is_some() {
-        return None;
+        return CheckRepairRoute::Refused(RepairRouteRefusal::SeveralBindingSeams);
     }
-    if repair_refusal_reason(entry, policy).is_some() {
-        return None;
+    if let Some(reason) = repair_refusal_reason(entry, policy) {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::Ineligible { reason });
     }
-    Some(crate::app::RepairRoute {
+    if static_limited {
+        // F3: no runnable line for a static-limited finding. The refusal
+        // arms above still named any concrete ineligibility; reaching here
+        // means the seam was eligible, so the limitation guidance on the
+        // same screen is the whole story and no advisory is added.
+        return CheckRepairRoute::Silent;
+    }
+    CheckRepairRoute::Route(crate::app::RepairRoute {
         finding_id: finding.id.clone(),
         seam_id: entry.seam.id().as_str().to_string(),
     })
@@ -703,6 +768,21 @@ fn pick_reusable_attempt<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// #8728 follow-up: the displayed reason list bounds at three, but the
+    /// disclosed total counts distinct reasons across the whole inventory.
+    /// A fourth reason repeated by later seams must not inflate the total:
+    /// A, B, C, D, D has exactly one omitted distinct reason.
+    #[test]
+    fn no_eligible_reasons_total_dedups_repeated_omitted_reasons() {
+        let (reasons, total) =
+            collect_no_eligible_reasons(["a", "b", "c", "d", "d", "a", "e", "e", "e"].into_iter());
+        assert_eq!(
+            reasons,
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
+        assert_eq!(total, 5, "five distinct reasons, not one per seam");
+    }
+
     fn awaiting(
         id_tail: char,
         seam: &str,
@@ -795,6 +875,7 @@ mod tests {
         eligible_ids: &'a [String],
         total_seams: usize,
         reasons: &'a [String],
+        reasons_total: usize,
         start_spec: Option<&'a CommandSpec>,
     ) -> RepairStartFacts<'a> {
         RepairStartFacts {
@@ -802,6 +883,7 @@ mod tests {
             eligible_ids,
             total_seams,
             ineligible_reasons: reasons,
+            ineligible_reasons_total: reasons_total,
             head: Some("head1"),
             start_spec,
         }
@@ -809,12 +891,13 @@ mod tests {
 
     #[test]
     fn decide_zero_visible_seams_yields_setup_outcome() -> Result<(), String> {
-        match decide_repair_start(&facts(&[], 0, &[], None))? {
+        match decide_repair_start(&facts(&[], 0, &[], 0, None))? {
             RepairStartDecision::NoEligible {
                 total_seams,
                 reasons,
+                reasons_total,
             } => {
-                if total_seams != 0 || !reasons.is_empty() {
+                if total_seams != 0 || !reasons.is_empty() || reasons_total != 0 {
                     return Err("setup outcome must carry zero seams".to_string());
                 }
                 Ok(())
@@ -828,13 +911,46 @@ mod tests {
     #[test]
     fn decide_zero_eligible_seams_yields_limitation_outcome() -> Result<(), String> {
         let reasons = vec!["repair route not ready".to_string()];
-        match decide_repair_start(&facts(&[], 2, &reasons, None))? {
+        match decide_repair_start(&facts(&[], 2, &reasons, 1, None))? {
             RepairStartDecision::NoEligible {
                 total_seams,
                 reasons,
+                reasons_total,
             } => {
-                if total_seams != 2 || reasons != ["repair route not ready".to_string()] {
+                if total_seams != 2
+                    || reasons != ["repair route not ready".to_string()]
+                    || reasons_total != 1
+                {
                     return Err("limitation outcome must carry the evidence".to_string());
+                }
+                Ok(())
+            }
+            RepairStartDecision::Start { .. } | RepairStartDecision::Action(_) => {
+                Err("zero eligible seams must not start or select".to_string())
+            }
+        }
+    }
+
+    /// #8728: the bounded reason list and its total travel together, so a
+    /// truncated list can disclose its remainder instead of reading as
+    /// complete.
+    #[test]
+    fn decide_zero_eligible_carries_reason_total_for_disclosure() -> Result<(), String> {
+        let reasons = vec![
+            "repair route not ready".to_string(),
+            "cross-language oracle visibility unresolved".to_string(),
+            "repair target unresolved".to_string(),
+        ];
+        match decide_repair_start(&facts(&[], 5, &reasons, 5, None))? {
+            RepairStartDecision::NoEligible {
+                reasons,
+                reasons_total,
+                ..
+            } => {
+                if reasons.len() != 3 || reasons_total != 5 {
+                    return Err(format!(
+                        "bounded list must stay at three with the total beside it: {reasons:?} of {reasons_total}"
+                    ));
                 }
                 Ok(())
             }
@@ -849,7 +965,7 @@ mod tests {
     #[test]
     fn decide_single_candidate_without_spec_does_not_start() -> Result<(), String> {
         let eligible = vec!["seam:demo".to_string()];
-        match decide_repair_start(&facts(&eligible, 1, &[], None))? {
+        match decide_repair_start(&facts(&eligible, 1, &[], 0, None))? {
             RepairStartDecision::Action(action) => {
                 if action.is_executable() {
                     return Err("an unoffered candidate must not execute".to_string());

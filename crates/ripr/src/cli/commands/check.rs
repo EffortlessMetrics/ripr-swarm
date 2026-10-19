@@ -1663,8 +1663,11 @@ fn check_inner(
             // #8166 Slice C: the repair line reuses the producer-owned
             // admission gate over the live seam inventory, for the same
             // live-files reason as the stub route above. Other formats
-            // keep their existing next-step contracts unchanged.
-            .with_repair_route(crate::app::task_first::check_repair_route(
+            // keep their existing next-step contracts unchanged. #8729:
+            // the outcome carries the named refusal so a finding offered
+            // no repair start renders one advisory line naming why,
+            // instead of a silent gap on the triage screen.
+            .with_repair_route_outcome(crate::app::task_first::check_repair_route(
                 &limited_check_input.root,
                 &config,
                 &output,

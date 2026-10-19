@@ -521,6 +521,16 @@ fn routed_result_admitted(
     assert!(env.len() >= 20, "actual result env is initialized");
     env.extend([
         ("EVENT_NAME", event),
+        // Manual/push positives represent the independent main authority;
+        // diagnostic branch/tag refusal is exercised by routed_dispatch_result.
+        (
+            "WORKFLOW_REF",
+            if event == "pull_request" {
+                "refs/pull/10/merge"
+            } else {
+                "refs/heads/main"
+            },
+        ),
         ("DOCS_DETECT_RESULT", detector),
         ("DOCS_ONLY", docs),
         ("DOCS_GATE_RESULT", docs_gate),

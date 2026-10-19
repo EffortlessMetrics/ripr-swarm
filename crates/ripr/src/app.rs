@@ -104,8 +104,8 @@ pub(crate) use explain::{
     explain_finding_with_config_navigation_mode_and_progress,
 };
 pub(crate) use navigation::{
-    CheckDiffProvenance, FindingDrillIn, FindingNavigation, RepairRoute, finding_navigation,
-    finding_navigation_with_worktree,
+    CheckDiffProvenance, CheckRepairRoute, FindingDrillIn, FindingNavigation, RepairRoute,
+    finding_navigation, finding_navigation_with_worktree,
 };
 pub(crate) use progress::{
     AnalysisProgressEvent, AnalysisProgressScope, AnalysisProgressSink, AnalysisProgressStage,

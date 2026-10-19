@@ -59,3 +59,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — javascript_awaited_registration (6)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless javascript_awaited_registration --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -219,6 +219,21 @@ pub(crate) struct TypeScriptOwnerExtractionGap {
     pub(crate) snippet: String,
 }
 
+/// One concrete, observed conditional or loop branch that holds an extracted
+/// assertion under a condition static analysis cannot evaluate (#8714).
+/// Produced by `detect_conditional_assertion_credit`; consumed by the
+/// `typescript_conditional_assertion_credit` named-limitation producer.
+/// Classification-neutral, additive disclosure only: the branch recursion is
+/// deliberate, and this record carries the caveat so a credited oracle is
+/// known to possibly never execute.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TypeScriptConditionalCreditGap {
+    pub(crate) file: PathBuf,
+    pub(crate) sample_line: usize,
+    /// Bounded single-line source text of the unevaluated condition.
+    pub(crate) condition: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TypeScriptRelationKind {
     DirectOwnerCall,
@@ -247,6 +262,12 @@ pub(crate) enum TypeScriptRelationKind {
     /// Admitted only when no test calls the owner itself. Reach is real but
     /// indirect, so the classifier never promotes it to `exposed`.
     ModuleEntryCall,
+    /// Test imports a module-level value (`export const stop =
+    /// Symbol('stop')`) from the owner's module and uses it as a value
+    /// outside a direct `expect(...)` subject (#8568). Heuristic: the use
+    /// shows the test consumes the binding, not that an assertion observes
+    /// its initializer, so it never lends oracle credit.
+    ModuleValueUse,
     SameFileProximity,
     DescribeName,
     TestName,
@@ -266,6 +287,7 @@ impl TypeScriptRelationKind {
             // Below every relation that calls the owner itself.
             Self::ModuleEntryCall => 3,
             Self::SameFileProximity => 3,
+            Self::ModuleValueUse => 2,
             Self::DescribeName => 2,
             Self::TestName => 1,
         }
@@ -299,6 +321,7 @@ impl TypeScriptRelationKind {
             Self::ClassMethodCall => "class_method_call",
             Self::ReExportChainFollowed => "re_export_chain_followed",
             Self::ModuleEntryCall => "module_entry_call",
+            Self::ModuleValueUse => "module_value_use",
             Self::SameFileProximity => "same_file_proximity",
             Self::DescribeName => "describe_name",
             Self::TestName => "test_name",

@@ -3046,6 +3046,64 @@ mod tests {
     }
 
     #[test]
+    fn a_line_at_the_call_fact_budget_keeps_the_activation_fallback_closed() {
+        use crate::analysis::extract::MAX_CALL_FACTS_PER_LINE;
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let line = "assert!(gate(n));";
+        let activation = ActivationEvidence {
+            observed_values: vec![ValueFact {
+                line: 1,
+                text: String::new(),
+                value: "input == 10".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        let with_facts = |count: usize| {
+            test_summary(
+                "budget",
+                line,
+                (0..count).map(|_| call("gate", line)).collect(),
+                vec![exact(line)],
+                &[],
+            )
+        };
+        assert!(
+            pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&with_facts(MAX_CALL_FACTS_PER_LINE - 1)],
+                &activation
+            ),
+            "control: a line one fact under the budget keeps the fallback"
+        );
+        // Identical facts count once, so only the budget guard refuses.
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&with_facts(MAX_CALL_FACTS_PER_LINE)],
+                &activation
+            ),
+            "a line at the budget may have dropped another owner call"
+        );
+    }
+
+    #[test]
+    fn a_loan_call_line_at_the_call_fact_budget_does_not_pair() {
+        use crate::analysis::extract::MAX_CALL_FACTS_PER_LINE;
+        let (mut test, assertion, loan, activation) = loan_case(CHECK, "check(10, true);", 2);
+        assert!(loan_pairs(&test, &assertion, &loan, &activation), "control");
+        let helper_call = test.calls[0].clone();
+        // Identical helper facts pass the "every fact is the helper call"
+        // check, so only the budget guard can refuse the full line.
+        test.calls
+            .extend((1..MAX_CALL_FACTS_PER_LINE).map(|_| helper_call.clone()));
+        assert!(!loan_pairs(&test, &assertion, &loan, &activation));
+    }
+
+    #[test]
     fn line_activation_does_not_pair_through_another_owner_call_on_the_line() {
         let probe = predicate_probe("input >= 10");
         let owner = gate_owner();

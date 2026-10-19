@@ -31,6 +31,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/parser_formatted_input_provenance/input --diff <cwd>/fixtures/parser_formatted_input_provenance/diff.patch --mode fast probe:src_lib.rs:predicate:7ed3887e
   ripr context --root <cwd>/fixtures/parser_formatted_input_provenance/input --diff <cwd>/fixtures/parser_formatted_input_provenance/diff.patch --mode fast --at probe:src_lib.rs:predicate:7ed3887e
+  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:predicate:7ed3887e --root <cwd>/fixtures/parser_formatted_input_provenance/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/parser_formatted_input_provenance/input --at src/lib.rs:44 --kind predicate
 
