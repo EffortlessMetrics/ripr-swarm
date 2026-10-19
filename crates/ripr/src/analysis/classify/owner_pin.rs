@@ -9928,15 +9928,33 @@ fn is_plain_scalar_type(declared: &str) -> bool {
         })
 }
 
-/// Whether the file may rebind a primitive name `declared` uses
-/// (`type u32 = Counter;`, `struct u32;`, `use x::u32;`, `use x as u32;`),
-/// so the name no longer proves a scalar. An item keyword before the name, a
-/// `::` before it that does not continue the path (`std::u32::MAX` does not
-/// rebind, `use x::u32;` does) and an `as` inside a `use` statement count; a
-/// plain cast `n as u32` does not. Glob imports are not scanned.
+/// Whether the file may rebind a primitive name `declared` uses, so the
+/// name no longer proves a scalar: an item keyword before it (`type u32 =
+/// ..;`, `struct u32;`), or any mention of it inside a `use` or `extern
+/// crate` statement (`use x::u32;`, `use m::{Counter, u32};`, `use x as
+/// u32;`) unless it continues a path (`use std::u32::MAX;`) or is a
+/// generic argument. A glob import (`use m::*;`) may bring any name in, so
+/// it rebinds every name. A plain cast `n as u32` or `std::u32::MAX` does
+/// not. Limits: `include!`, `#[path]` and macro-generated types are not
+/// scanned.
 fn scalar_names_rebound(declared: &str, source: &str) -> bool {
     let masked = mask_comments_and_strings(source);
     let is_word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let imports = |statement: &str| {
+        !whole_word_offsets(statement, "use").is_empty()
+            || !whole_word_offsets(statement, "extern").is_empty()
+    };
+    if whole_word_offsets(&masked, "use")
+        .into_iter()
+        .any(|offset| {
+            masked[offset..]
+                .split(';')
+                .next()
+                .is_some_and(|statement| statement.contains('*'))
+        })
+    {
+        return true;
+    }
     declared
         .split(|c: char| !is_word(c))
         .filter(|word| !word.is_empty() && !word.chars().all(|c| c.is_ascii_digit()))
@@ -9944,25 +9962,22 @@ fn scalar_names_rebound(declared: &str, source: &str) -> bool {
             whole_word_offsets(&masked, word).into_iter().any(|offset| {
                 let before = masked[..offset].trim_end();
                 let after = masked[offset + word.len()..].trim_start();
-                let keyword_before = |keyword: &str| {
-                    before.ends_with(keyword)
-                        && before[..before.len() - keyword.len()]
-                            .chars()
-                            .next_back()
-                            .is_none_or(|c| !is_word(c))
-                };
+                let statement = before.rsplit(';').next().unwrap_or(before);
+                if imports(statement) {
+                    return !after.starts_with("::") && !before.ends_with('<');
+                }
                 if before.ends_with("::") {
                     return !after.starts_with("::");
                 }
-                if keyword_before("as") {
-                    // Only an `as` of a `use` statement renames; unsure keeps
-                    // the refusal.
-                    let statement = before.rsplit(';').next().unwrap_or(before);
-                    return !whole_word_offsets(statement, "use").is_empty();
-                }
                 ["type", "struct", "enum", "trait", "union", "mod"]
                     .iter()
-                    .any(|keyword| keyword_before(keyword))
+                    .any(|keyword| {
+                        before.ends_with(keyword)
+                            && before[..before.len() - keyword.len()]
+                                .chars()
+                                .next_back()
+                                .is_none_or(|c| !is_word(c))
+                    })
             })
         })
 }
