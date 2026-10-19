@@ -20552,6 +20552,34 @@ fn work_done_progress_no_traffic_when_root_or_config_unavailable_before_start() 
     })
 }
 
+#[test]
+fn explicit_refresh_returns_once_the_scheduler_accepts_a_queued_request() -> Result<(), String> {
+    // #8733: a refresh that finds work active used to park until the
+    // scheduler went fully idle, so the `ripr.refresh` executeCommand
+    // response (and one notification-handler slot) waited out the whole
+    // in-flight analysis. The call must return as soon as the scheduler
+    // accepts the queued request; the queued run itself is unchanged.
+    work_done_progress_runtime()?.block_on(async {
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        backend.initialize_test_workspace_root();
+
+        let first = work_done_progress_request(backend, 1)?;
+        let first_request = started_request(&first)?;
+        backend.emit_progress_for_decision(&first).await;
+        backend.mark_attempt_running_for_test(&first_request);
+
+        backend
+            .refresh_diagnostics(RefreshScope::Full, RefreshReason::ExplicitRefresh)
+            .await;
+
+        if backend.refresh_scheduler_for_test().is_idle() {
+            return Err("queued refresh returned only after the scheduler went idle".to_string());
+        }
+        Ok(())
+    })
+}
+
 /// Drive a real `ripr lsp` server over duplex IO through one explicit
 /// refresh and collect the work-done-progress traffic on the wire (#1971).
 /// Returns (workDoneProgress/create requests, $/progress notifications).

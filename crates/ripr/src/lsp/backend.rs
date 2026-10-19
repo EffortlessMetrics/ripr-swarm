@@ -527,18 +527,15 @@ impl Backend {
                     self.publish_analysis_status().await;
                 }
                 self.log_refresh_queued(generation).await;
-                loop {
-                    if self.refresh_scheduler.is_idle() {
-                        break;
-                    }
-                    let notified = self.refresh_idle.notified();
-                    tokio::pin!(notified);
-                    notified.as_mut().enable();
-                    if self.refresh_scheduler.is_idle() {
-                        break;
-                    }
-                    notified.await;
-                }
+                // #8733: answer once the scheduler has accepted (and
+                // deduplicated) the queued request. The old idle-wait held
+                // the `ripr.refresh` executeCommand response — and one of
+                // the four notification-handler slots for interactive
+                // triggers — parked for the entire in-flight analysis, up
+                // to the production refresh deadline, so the recovery
+                // gesture every failure surface names appeared dead. The
+                // queued request still starts when the active attempt
+                // finishes; nothing downstream depended on this wait.
                 return;
             }
             RefreshDecision::Deduplicated | RefreshDecision::Stopped => return,

@@ -945,6 +945,55 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('refreshDiagnostics acknowledges immediately while analysis is running', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1',
+        kind: 'analysis_status',
+        state: 'running',
+        attempt_id: '9'
+      });
+
+      await context.controller.refreshDiagnostics();
+
+      assert.ok(
+        context.infoMessages.some((message) => message.includes('queued')),
+        `expected a queued acknowledgement, got: ${context.infoMessages.join(' | ')}`
+      );
+      assert.deepStrictEqual(context.client.requests, [{
+        method: 'workspace/executeCommand',
+        params: {
+          command: 'ripr.refresh',
+          arguments: []
+        }
+      }]);
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('refreshDiagnostics stays quiet when no analysis is in flight', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+
+      await context.controller.refreshDiagnostics();
+
+      assert.deepStrictEqual(context.infoMessages, []);
+      assert.deepStrictEqual(context.client.requests, [{
+        method: 'workspace/executeCommand',
+        params: {
+          command: 'ripr.refresh',
+          arguments: []
+        }
+      }]);
+    } finally {
+      await context.dispose();
+    }
+  });
+
   test('copyContext with no active editor completes', async () => {
     await vscode.commands.executeCommand('workbench.action.closeAllEditors');
     // Should resolve without throwing even when no editor is open.
