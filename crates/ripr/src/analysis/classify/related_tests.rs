@@ -2520,6 +2520,9 @@ fn let_statement_type_head(stmt: &str) -> Option<&str> {
     let eq = stmt.find('=')?;
     let pattern = &stmt[..eq];
     if let Some(colon) = pattern.find(':') {
+        // Full annotation consumption may only narrow the previous compact
+        // authority, including its bounded generic-specialization handling.
+        let prior_head = type_head(&pattern[colon + 1..])?.0.last().copied()?;
         // The first '=' may belong to an associated-type binding or a const
         // argument. Read the complete annotation before finding its assignment.
         let annotation = &stmt[colon + 1..];
@@ -2527,6 +2530,9 @@ fn let_statement_type_head(stmt: &str) -> Option<&str> {
         let [name] = segments.as_slice() else {
             return None;
         };
+        if *name != prior_head {
+            return None;
+        }
         let tail = tail.strip_prefix("::").map_or(tail, str::trim_start);
         let tail = if tail.starts_with('<') {
             &tail[skip_annotation_generic_args(tail.as_bytes(), 0)?..]
@@ -9957,7 +9963,6 @@ let r = try_parse_summary(\"x\");",
             "Site::<fn() -> ()>",
             "Site :: <fn() -> ()>",
             "Site:: <fn() -> ()>",
-            "Site::<{ 1 == 1 }>",
             "Site<{ 1 > 0 }>",
             "Site<{ 1 < 2 }>",
             "Site<{ 1 == 1 }>",
@@ -9985,6 +9990,9 @@ let r = try_parse_summary(\"x\");",
         for body in [
             "let s: Site<[u8; 4]> = make(); s.build();",
             "let s: Site<{ true; false }> = make(); s.build();",
+            "let s: Site::<{ 1 == 1 }> = make(); s.build();",
+            "let s: Site::<{ 1 == 2 }> = make(); s.build();",
+            "let s: Site::<Box<dyn Iterator<Item = u8>>> = make(); s.build();",
             "let s = Site::with_cache::<fn() -> ()>(); s.build();",
             "let s: Site<fn() -> ()] = make(); s.build();",
             "let s: Site<u8> == make(); s.build();",
