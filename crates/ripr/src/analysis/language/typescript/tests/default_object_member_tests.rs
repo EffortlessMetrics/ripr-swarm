@@ -109,6 +109,10 @@ fn a_default_import_used_for_anything_else_credits_nothing() -> Result<(), Strin
             "  const utils = { merge: () => ({ a: 1, b: 2 }) };\n  expect(utils.merge({ a: 1 }, { b: 2 })).toEqual({ a: 1, b: 2 });",
         ),
         (
+            "path-qualified",
+            "  const source = { utils: { merge: () => ({ a: 1, b: 2 }) } };\n  expect(source.utils.merge({ a: 1 }, { b: 2 })).toEqual({ a: 1, b: 2 });",
+        ),
+        (
             "other-member",
             "  expect(utils.other({ a: 1 }, { b: 2 })).toEqual({ a: 1, b: 2 });",
         ),
@@ -138,6 +142,41 @@ fn a_function_the_object_does_not_hold_is_not_a_member() -> Result<(), String> {
     let owner = format!("{owner}function other(): number {{\n  return 1;\n}}\n");
     assert_ne!(
         class_of("not-held", &owner, &test_with(CALL))?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+// The enclosing-scope guards, not `every_use_is_member_call` (which sees only
+// the test body), refuse a replacement or use outside the body.
+#[test]
+fn a_file_level_or_setup_replacement_of_the_member_credits_nothing() -> Result<(), String> {
+    let header = "import { it, expect, vi, beforeEach } from 'vitest';\nimport utils from '../src/utils';\n\n";
+    let test = format!("it('merges', () => {{\n{CALL}\n}});\n");
+    for (label, setup) in [
+        (
+            "file-level-assignment",
+            "utils.merge = () => ({ a: 1, b: 5, c: 4 });\n",
+        ),
+        (
+            "file-level-spy",
+            "vi.spyOn(utils, 'merge').mockReturnValue({ a: 1, b: 5, c: 4 });\n",
+        ),
+        (
+            "setup-hook-assignment",
+            "beforeEach(() => {\n  utils.merge = () => ({ a: 1, b: 5, c: 4 });\n});\n",
+        ),
+        ("other-member-call", "utils.other(1);\n"),
+    ] {
+        assert_ne!(
+            class_of(label, OWNER, &format!("{header}{setup}{test}"))?,
+            ExposureClass::Exposed,
+            "{label}"
+        );
+    }
+    // Control: the same file without a setup use still credits.
+    assert_eq!(
+        class_of("control", OWNER, &format!("{header}{test}"))?,
         ExposureClass::Exposed
     );
     Ok(())

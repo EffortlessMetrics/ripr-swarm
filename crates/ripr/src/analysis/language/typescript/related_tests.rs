@@ -803,7 +803,7 @@ pub(crate) fn owner_call_relation(
         {
             return false;
         }
-        import_references_owner_call(import, &test.body_text, owner)
+        import_references_owner_call(import, test, owner)
     }) {
         return Some(TypeScriptRelationKind::ImportedOwnerCall);
     }
@@ -2571,9 +2571,10 @@ fn owner_export_imported_from_unrelated_source(
 
 fn import_references_owner_call(
     import: &TypeScriptImport,
-    body_text: &str,
+    test: &TypeScriptTest,
     owner: &TypeScriptOwner,
 ) -> bool {
+    let body_text = test.body_text.as_str();
     if import.namespace {
         return contains_member_call_name(body_text, &import.local, &owner.name);
     }
@@ -2583,7 +2584,11 @@ fn import_references_owner_call(
     // member cannot be reassigned, aliased, shadowed or passed elsewhere
     // first (a body-local `const local = ...` is itself such a use).
     if owner.default_object_member && import.imported.as_deref() == Some("default") {
-        return contains_member_call_name(body_text, &import.local, &owner.name)
+        return test
+            .default_member_only_locals_in_file
+            .iter()
+            .any(|(local, member)| *local == import.local && *member == owner.name)
+            && contains_member_call_name(body_text, &import.local, &owner.name)
             && every_use_is_member_call(body_text, &import.local, &owner.name);
     }
     // A default import (`import local from './owner'`) binds the owner

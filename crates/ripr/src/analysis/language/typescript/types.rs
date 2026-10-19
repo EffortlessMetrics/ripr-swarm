@@ -137,6 +137,12 @@ pub(crate) struct TypeScriptTest {
     /// `f(`. Populated once per file by `extract_tests`; empty when anything
     /// could rebind or replace the name.
     pub(crate) identity_helpers_in_file: Vec<String>,
+    /// `(local, member)` pairs for default imports of the containing test
+    /// file whose local appears nowhere in the whole file (setup hooks and
+    /// file-level code included) except as its own import binding and as
+    /// calls `local.member(`, all of one member (RIPR-SPEC-0243 rule 5).
+    /// Populated once per file by `extract_tests`.
+    pub(crate) default_member_only_locals_in_file: Vec<(String, String)>,
     /// Test-local mock factories of the containing test file
     /// (RIPR-SPEC-0247 rule 1, amended 2026-10-15): top-level
     /// `function f() { return { ... }; }` or `const f = () => ({ ... });`

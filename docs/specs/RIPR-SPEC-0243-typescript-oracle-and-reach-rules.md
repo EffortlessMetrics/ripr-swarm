@@ -541,8 +541,9 @@ Amended 2026-10-19 (decision 15): a default import is also the receiver of
 object holds the top-level function `name` under its own name (`{ name }` or
 `{ name: name }`). The object must be made only of such plain entries; a
 spread, computed key, method, getter, renamed entry or duplicate key leaves
-every owner unmarked. The test must use `local` for nothing but calls of that
-member, so an alias (`const m = local.name`), a reassignment, `Object.assign`
+every owner unmarked. The test file must use `local` for nothing but calls of
+that one member, anywhere in the file (setup hooks and file-level code
+included), so an alias (`const m = local.name`), a reassignment, `Object.assign`
 or a body-local rebinding of `local` all refuse the relation. The relation is
 `imported_owner_call` and the observation guard reads `local.name(...)` as a
 call of the owner, as it does for a namespace import.
@@ -1004,7 +1005,8 @@ to `amount - 20`, and `tests/lib.test.ts` has
   `expect` binding facts rule 3 reads.
 - `crates/ripr/src/analysis/language/typescript/owners.rs`:
   `mark_default_object_members` (decision 15); `related_tests.rs`
-  `import_references_owner_call` and `every_use_is_member_call`, and
+  `import_references_owner_call` and `every_use_is_member_call`,
+  `tests_extract.rs` `default_member_only_locals` (the whole-file use check), and
   `classifier.rs` `owner_namespace_receivers`, read the marker.
 - `crates/ripr/src/analysis/language/typescript/related_tests.rs`: rule 5
   (`direct_owner_call_has_declaration_anchor`,
