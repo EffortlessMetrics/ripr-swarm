@@ -33,7 +33,7 @@ Evidence
   - related test tests/errors.rs:4 try_parse_summary_pins_malformed_source uses medium exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {
 return Err("callee pin should observe ParseSummaryError::MalformedSource".into());
 }; misses: no call to the changed code found; linked by name only
-  - source enum variant value ParseSummaryError::MalformedSource at tests/errors.rs:6
+  - source enum variant value ParseSummaryError::MalformedSource at line 6
 
 Weakness
   - No relevant oracle was detected
@@ -72,7 +72,7 @@ Evidence
   - related test tests/errors.rs:4 try_parse_summary_pins_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {
 return Err("callee pin should observe ParseSummaryError::MalformedSource".into());
 }; misses: no call to the changed code found; linked by name only
-  - source enum variant value ParseSummaryError::MalformedSource at tests/errors.rs:6
+  - source enum variant value ParseSummaryError::MalformedSource at line 6
 
 Weakness
   - No relevant oracle was detected

@@ -225,14 +225,27 @@ fn evidence_path<T>(
     }
 
     let observed_values_total = finding.activation.observed_values.len();
-    for value in finding
+    let shown_values = finding
         .activation
         .observed_values
         .iter()
         .take(MAX_OBSERVED_VALUES_SHOWN)
-    {
+        .collect::<Vec<_>>();
+    // #8389: a bare `at line N` is only ambiguous when the shown window mixes
+    // facts from more than one test file; then each line names its file.
+    let name_files = shown_values
+        .iter()
+        .filter_map(|value| value.file.as_deref())
+        .collect::<std::collections::BTreeSet<_>>()
+        .len()
+        > 1;
+    for value in shown_values {
         lines.push(project(
-            crate::output::observed_values::source_value_evidence_line_with_file(value),
+            if name_files {
+                crate::output::observed_values::source_value_evidence_line_with_file(value)
+            } else {
+                crate::output::observed_values::source_value_evidence_line(value)
+            },
             EvidenceSource::Value(value),
         ));
     }

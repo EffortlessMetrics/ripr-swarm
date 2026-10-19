@@ -37,9 +37,9 @@ Evidence
                 name: String::from("3")
             }
         ); misses: no assertion pins `name: render(retries)`
-  - source assertion argument value "3" at src/lib.rs:34
-  - source assertion argument value 3 at src/lib.rs:34
-  - source function argument value retries = 3 at src/lib.rs:35
+  - source assertion argument value "3" at line 34
+  - source assertion argument value 3 at line 34
+  - source function argument value retries = 3 at line 35
 
 Weakness
   - No strong discriminator was detected
@@ -82,9 +82,9 @@ Evidence
                 name: String::from("3")
             }
         );
-  - source assertion argument value "3" at src/lib.rs:34
-  - source assertion argument value 3 at src/lib.rs:34
-  - source function argument value retries = 3 at src/lib.rs:35
+  - source assertion argument value "3" at line 34
+  - source assertion argument value 3 at line 34
+  - source function argument value retries = 3 at line 35
 
 Weakness
   - No strong discriminator was detected

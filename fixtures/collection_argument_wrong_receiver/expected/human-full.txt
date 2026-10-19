@@ -15,10 +15,10 @@ Shared evidence and guidance
   E5 [findings 1, 2]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   E6 [findings 1, 2]: local flow reaches state write: v.push(x * 1) (line 3)
   E7 [findings 1, 2]: related test src/lib.rs:10 records_into_the_bag uses strong exact value oracle: assert_eq!(c.0, vec![11]); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  E8 [findings 1, 2]: source function argument value v = 0 at src/lib.rs:13
-  E9 [findings 1, 2]: source function argument value x = 11 at src/lib.rs:13
-  E10 [findings 1, 2]: source assertion argument value 0 at src/lib.rs:14
-  E11 [findings 1, 2]: source assertion argument value 11 at src/lib.rs:14
+  E8 [findings 1, 2]: source function argument value v = 0 at line 13
+  E9 [findings 1, 2]: source function argument value x = 11 at line 13
+  E10 [findings 1, 2]: source assertion argument value 0 at line 14
+  E11 [findings 1, 2]: source assertion argument value 11 at line 14
 
 Finding 1: WARNING ./src/lib.rs:3
   id: probe:src_lib.rs:call_deletion:1f64eda5

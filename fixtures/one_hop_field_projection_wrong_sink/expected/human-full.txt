@@ -31,7 +31,7 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches constructed field: missing_duration_count: total - known (line 5)
   - related test src/lib.rs:12 pin uses strong exact value oracle: assert_eq!(sentinel(), 19);
-  - source assertion argument value 19 at src/lib.rs:12
+  - source assertion argument value 19 at line 12
 
 Weakness
   - No clear propagation path from changed behavior to an observable sink

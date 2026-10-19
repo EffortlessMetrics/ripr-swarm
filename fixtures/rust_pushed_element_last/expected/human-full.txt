@@ -15,8 +15,8 @@ Shared evidence and guidance
   E5 [findings 1, 2]: discriminator yes: Strong oracle found: exact value or pattern assertion
   E6 [findings 1, 2]: local flow reaches state write: self.log.push(x * 1) (line 11)
   E7 [findings 1, 2]: related test src/lib.rs:20 pushed_element_is_last uses strong exact value oracle: assert_eq!(ledger.log.last(), Some(&7));
-  E8 [findings 1, 2]: source function argument value x = 7 at src/lib.rs:22
-  E9 [findings 1, 2]: source assertion argument value 7 at src/lib.rs:23
+  E8 [findings 1, 2]: source function argument value x = 7 at line 22
+  E9 [findings 1, 2]: source assertion argument value 7 at line 23
 
 Finding 1: INFO ./src/lib.rs:11
   id: probe:src_lib.rs:call_deletion:c581181e

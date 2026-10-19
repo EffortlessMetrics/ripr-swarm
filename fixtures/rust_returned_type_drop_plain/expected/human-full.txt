@@ -13,8 +13,8 @@ Shared evidence and guidance
   E3 [findings 1, 2]: observation yes: A related test observes a value or effect near the changed behavior
   E4 [findings 1, 2]: discriminator yes: Strong oracle found: whole-object equality assertion
   E5 [findings 1, 2]: related test src/lib.rs:21 makes uses strong whole object equality oracle: assert_eq!(make(4), Cfg { n: 12 });
-  E6 [findings 1, 2]: source assertion argument value 12 at src/lib.rs:22
-  E7 [findings 1, 2]: source function argument value x = 4 at src/lib.rs:22
+  E6 [findings 1, 2]: source assertion argument value 12 at line 22
+  E7 [findings 1, 2]: source function argument value x = 4 at line 22
 
 Finding 1: INFO ./src/lib.rs:13
   id: probe:src_lib.rs:field_construction:7199daa5

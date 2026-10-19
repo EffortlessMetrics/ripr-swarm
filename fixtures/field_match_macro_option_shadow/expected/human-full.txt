@@ -30,8 +30,8 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches match arm result: None => (line 5)
   - related test src/lib.rs:10 selected uses strong whole object equality oracle: assert_eq!(charge(&Lease { elapsed: None, timeout: 600 }), 1001); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source assertion argument value 1001 at src/lib.rs:12
-  - source function argument value lease = 600 at src/lib.rs:12
+  - source assertion argument value 1001 at line 12
+  - source function argument value lease = 600 at line 12
 
 Weakness
   - No strong discriminator was detected
@@ -76,8 +76,8 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches match arm result: 601 (line 5)
   - related test src/lib.rs:10 selected uses strong whole object equality oracle: assert_eq!(charge(&Lease { elapsed: None, timeout: 600 }), 1001); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source assertion argument value 1001 at src/lib.rs:12
-  - source function argument value lease = 600 at src/lib.rs:12
+  - source assertion argument value 1001 at line 12
+  - source function argument value lease = 600 at line 12
 
 Weakness
   - No strong discriminator was detected
@@ -113,8 +113,8 @@ Evidence
   - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - local flow reaches returned value: None => lease.timeout (line 5)
   - related test src/lib.rs:10 selected uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
-  - source assertion argument value 1001 at src/lib.rs:12
-  - source function argument value lease = 600 at src/lib.rs:12
+  - source assertion argument value 1001 at line 12
+  - source function argument value lease = 600 at line 12
 
 Weakness
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)

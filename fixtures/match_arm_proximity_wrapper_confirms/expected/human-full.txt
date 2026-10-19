@@ -33,11 +33,11 @@ Evidence
   - related test src/lib.rs:36 seconds_total uses strong exact value oracle: assert_eq!(total, 1_814_400);
   - related test src/lib.rs:45 bridge_fortnight uses strong exact value oracle: assert_eq!(seconds_bridge(Unit::Fortnight), 1_209_600); misses: no call to the changed code found; linked by file location only
   - related test src/lib.rs:50 from_str_fortnight uses strong exact value oracle: assert!(matches!(Unit::from_str("fortnight"), Ok(Unit::Fortnight))); misses: no call to the changed code found; linked by file location only
-  - source assertion argument value 1_814_400 at src/lib.rs:41
-  - source assertion argument value 1_209_600 at src/lib.rs:46
-  - source enum variant value Unit::Fortnight at src/lib.rs:46
-  - source assertion argument value "fortnight" at src/lib.rs:51
-  - source enum variant value Unit::Fortnight at src/lib.rs:51
+  - source assertion argument value 1_814_400 at line 41
+  - source assertion argument value 1_209_600 at line 46
+  - source enum variant value Unit::Fortnight at line 46
+  - source assertion argument value "fortnight" at line 51
+  - source enum variant value Unit::Fortnight at line 51
 Drill in:
   ripr explain --root <cwd>/fixtures/match_arm_proximity_wrapper_confirms/input --diff <cwd>/fixtures/match_arm_proximity_wrapper_confirms/diff.patch --mode fast probe:src_lib.rs:match_arm:9e71545f
   ripr context --root <cwd>/fixtures/match_arm_proximity_wrapper_confirms/input --diff <cwd>/fixtures/match_arm_proximity_wrapper_confirms/diff.patch --mode fast --at probe:src_lib.rs:match_arm:9e71545f

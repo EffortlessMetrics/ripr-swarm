@@ -55,7 +55,7 @@ Updated:
 ## Pending — rust_slice_table_zero_elements (5)
 
 Reason:
-RIPR-SPEC-0122: human source-value evidence line names its test file as path:line, and the window line reads 'read from related tests' (#8389)
+RIPR-SPEC-0122: human source-value evidence names the test file (path:line) only when the shown window spans more than one test file, and the window line reads 'read from related tests' (#8389)
 
 Command:
 `cargo xtask goldens bless rust_slice_table_zero_elements --reason "..."`

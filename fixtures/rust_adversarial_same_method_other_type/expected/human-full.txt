@@ -35,9 +35,9 @@ Evidence
   - related test tests/size_hints.rs:4 combinations_inexact_size_hints uses smoke smoke only oracle: assert!(it.size_hint().1.is_some()); misses: assertion too weak to tell the old behavior from the new
   - related test tests/size_hints.rs:4 combinations_inexact_size_hints uses strong exact value oracle: assert_eq!(it.size_hint(), (3, Some(3))); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related test tests/size_hints.rs:4 combinations_inexact_size_hints uses weak relational check oracle: assert!(it.size_hint().1 == Some(3)); misses: assertion too weak to tell the old behavior from the new
-  - source assertion argument value 3 at tests/size_hints.rs:6
-  - source assertion argument value 3 at tests/size_hints.rs:7
-  - source assertion argument value 3 at tests/size_hints.rs:9
+  - source assertion argument value 3 at line 6
+  - source assertion argument value 3 at line 7
+  - source assertion argument value 3 at line 9
 
 Weakness
   - No strong discriminator was detected

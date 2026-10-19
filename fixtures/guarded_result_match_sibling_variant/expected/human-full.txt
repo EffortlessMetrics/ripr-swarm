@@ -15,10 +15,10 @@ Shared evidence and guidance
   E5 [findings 1, 2]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   E6 [findings 1, 2]: local flow reaches error variant: Result::Err(ParseError::InvalidData) (line 9)
   E7 [findings 1, 2]: related test tests/protocol.rs:4 pins_the_sibling_variant_of_the_changed_owner uses strong guarded result match oracle: match expect_ready(..) { Ok(..) => .., Err(..) => Err(ParseError::UnexpectedEof) }; misses: no assertion pins `ParseError::InvalidData`
-  E8 [findings 1, 2]: source enum variant value ParseError::UnexpectedEof at tests/protocol.rs:5
-  E9 [findings 1, 2]: source function argument value kind = "busy" at tests/protocol.rs:5
-  E10 [findings 1, 2]: source function argument value len = 12 at tests/protocol.rs:5
-  E11 [findings 1, 2]: source assertion argument value 12 at tests/protocol.rs:6
+  E8 [findings 1, 2]: source enum variant value ParseError::UnexpectedEof at line 5
+  E9 [findings 1, 2]: source function argument value kind = "busy" at line 5
+  E10 [findings 1, 2]: source function argument value len = 12 at line 5
+  E11 [findings 1, 2]: source assertion argument value 12 at line 6
 
 Finding 1: WARNING ./src/lib.rs:9
   id: probe:src_lib.rs:error_path:94d13aee

@@ -32,9 +32,9 @@ Evidence
   - local flow reaches match arm result: Unit::Fortnight => (line 23)
   - related test src/lib.rs:32 seconds_total uses strong exact value oracle: assert_eq!(total, 1_814_400); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related test src/lib.rs:41 from_str_fortnight uses strong exact value oracle: assert!(matches!(Unit::from_str("fortnight"), Ok(Unit::Fortnight))); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source assertion argument value 1_814_400 at src/lib.rs:37
-  - source assertion argument value "fortnight" at src/lib.rs:42
-  - source enum variant value Unit::Fortnight at src/lib.rs:42
+  - source assertion argument value 1_814_400 at line 37
+  - source assertion argument value "fortnight" at line 42
+  - source enum variant value Unit::Fortnight at line 42
 
 Weakness
   - No strong discriminator was detected

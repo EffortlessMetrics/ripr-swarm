@@ -33,8 +33,8 @@ Evidence
   - related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {
 return Err("malformed source should produce ParseSummaryError::MalformedSource".into());
 }
-  - source function argument value raw = "@bad;" at tests/errors.rs:10
-  - source enum variant value ParseSummaryError::MalformedSource at tests/errors.rs:11
+  - source function argument value raw = "@bad;" at line 10
+  - source enum variant value ParseSummaryError::MalformedSource at line 11
 Drill in:
   ripr explain --root <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast probe:src_lib.rs:error_path:5c979117
   ripr context --root <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast --at probe:src_lib.rs:error_path:5c979117
@@ -65,8 +65,8 @@ Evidence
   - related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {
 return Err("malformed source should produce ParseSummaryError::MalformedSource".into());
 }
-  - source function argument value raw = "@bad;" at tests/errors.rs:10
-  - source enum variant value ParseSummaryError::MalformedSource at tests/errors.rs:11
+  - source function argument value raw = "@bad;" at line 10
+  - source enum variant value ParseSummaryError::MalformedSource at line 11
 Drill in:
   ripr explain --root <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast probe:src_lib.rs:return_value:f573bd5d
   ripr context --root <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast --at probe:src_lib.rs:return_value:f573bd5d
@@ -97,8 +97,8 @@ Evidence
   - related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {
 return Err("malformed source should produce ParseSummaryError::MalformedSource".into());
 }
-  - source function argument value raw = "@bad;" at tests/errors.rs:10
-  - source enum variant value ParseSummaryError::MalformedSource at tests/errors.rs:11
+  - source function argument value raw = "@bad;" at line 10
+  - source enum variant value ParseSummaryError::MalformedSource at line 11
 Drill in:
   ripr explain --root <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast probe:src_lib.rs:error_path:5c979117.2
   ripr context --root <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast --at probe:src_lib.rs:error_path:5c979117.2
@@ -129,8 +129,8 @@ Evidence
   - related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {
 return Err("malformed source should produce ParseSummaryError::MalformedSource".into());
 }
-  - source function argument value raw = "@bad;" at tests/errors.rs:10
-  - source enum variant value ParseSummaryError::MalformedSource at tests/errors.rs:11
+  - source function argument value raw = "@bad;" at line 10
+  - source enum variant value ParseSummaryError::MalformedSource at line 11
 Drill in:
   ripr explain --root <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast probe:src_lib.rs:return_value:f573bd5d.2
   ripr context --root <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_downcast_witness/diff.patch --mode fast --at probe:src_lib.rs:return_value:f573bd5d.2
@@ -166,9 +166,9 @@ return Err("boxed variant must preserve ParseSummaryError::MalformedSource".into
   - related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {
 return Err("malformed source should produce ParseSummaryError::MalformedSource".into());
 }; misses: no call to the changed code found; linked by name only
-  - source enum variant value ParseSummaryError::MalformedSource at tests/errors.rs:11
-  - source function argument value raw = "@bad;" at tests/errors.rs:20
-  - source enum variant value ParseSummaryError::MalformedSource at tests/errors.rs:23
+  - source enum variant value ParseSummaryError::MalformedSource at line 11
+  - source function argument value raw = "@bad;" at line 20
+  - source enum variant value ParseSummaryError::MalformedSource at line 23
 
 Weakness
   - Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
@@ -219,9 +219,9 @@ return Err("boxed variant must preserve ParseSummaryError::MalformedSource".into
   - related test tests/errors.rs:8 parse_summary_fails_closed_on_malformed_source uses strong exact error variant oracle: if !matches!(result, Err(ParseSummaryError::MalformedSource)) {
 return Err("malformed source should produce ParseSummaryError::MalformedSource".into());
 }; misses: no call to the changed code found; linked by name only
-  - source enum variant value ParseSummaryError::MalformedSource at tests/errors.rs:11
-  - source function argument value raw = "@bad;" at tests/errors.rs:20
-  - source enum variant value ParseSummaryError::MalformedSource at tests/errors.rs:23
+  - source enum variant value ParseSummaryError::MalformedSource at line 11
+  - source function argument value raw = "@bad;" at line 20
+  - source enum variant value ParseSummaryError::MalformedSource at line 23
 
 Weakness
   - Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
@@ -269,8 +269,8 @@ Some(ChecksumError::MalformedPayload)
 ) {
 return Err("checksum witness pinned the malformed-payload sibling".into());
 }; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source function argument value payload = "payload?" at tests/errors.rs:34
-  - source enum variant value ChecksumError::MalformedPayload at tests/errors.rs:37
+  - source function argument value payload = "payload?" at line 34
+  - source enum variant value ChecksumError::MalformedPayload at line 37
 
 Weakness
   - Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
@@ -318,8 +318,8 @@ Some(ChecksumError::MalformedPayload)
 ) {
 return Err("checksum witness pinned the malformed-payload sibling".into());
 }; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source function argument value payload = "payload?" at tests/errors.rs:34
-  - source enum variant value ChecksumError::MalformedPayload at tests/errors.rs:37
+  - source function argument value payload = "payload?" at line 34
+  - source enum variant value ChecksumError::MalformedPayload at line 37
 
 Weakness
   - Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
@@ -367,8 +367,8 @@ Some(ParseSummaryError::MalformedSource)
 ) {
 return Err("render witness pinned the parse-summary variant instead".into());
 }; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source function argument value raw = "zhex" at tests/errors.rs:48
-  - source enum variant value ParseSummaryError::MalformedSource at tests/errors.rs:51
+  - source function argument value raw = "zhex" at line 48
+  - source enum variant value ParseSummaryError::MalformedSource at line 51
 
 Weakness
   - Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
@@ -416,8 +416,8 @@ Some(ParseSummaryError::MalformedSource)
 ) {
 return Err("render witness pinned the parse-summary variant instead".into());
 }; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source function argument value raw = "zhex" at tests/errors.rs:48
-  - source enum variant value ParseSummaryError::MalformedSource at tests/errors.rs:51
+  - source function argument value raw = "zhex" at line 48
+  - source enum variant value ParseSummaryError::MalformedSource at line 51
 
 Weakness
   - Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
@@ -460,7 +460,7 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches error variant: try_length_summary(raw).map_err(Into::into) (line 95)
   - related test tests/errors.rs:61 length_summary_only_checks_is_err uses weak broad error oracle: assert!(result.is_err()); misses: assertion too weak to tell the old behavior from the new
-  - source function argument value raw = "way-too-long-input-that-exceeds-the-forty-char-limit!!" at tests/errors.rs:62
+  - source function argument value raw = "way-too-long-input-that-exceeds-the-forty-char-limit!!" at line 62
 
 Weakness
   - Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
@@ -503,7 +503,7 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches returned value: try_length_summary(raw).map_err(Into::into) (line 95)
   - related test tests/errors.rs:61 length_summary_only_checks_is_err uses weak broad error oracle: assert!(result.is_err()); misses: assertion too weak to tell the old behavior from the new
-  - source function argument value raw = "way-too-long-input-that-exceeds-the-forty-char-limit!!" at tests/errors.rs:62
+  - source function argument value raw = "way-too-long-input-that-exceeds-the-forty-char-limit!!" at line 62
 
 Weakness
   - Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
@@ -551,8 +551,8 @@ Some(GlyphError::MalformedGlyph)
 ) {
 return Err("glyph variant witness requires the typed conversion".into());
 }; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source function argument value raw = "#glyph" at tests/errors.rs:69
-  - source enum variant value GlyphError::MalformedGlyph at tests/errors.rs:72
+  - source function argument value raw = "#glyph" at line 69
+  - source enum variant value GlyphError::MalformedGlyph at line 72
 
 Weakness
   - Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
@@ -600,8 +600,8 @@ Some(GlyphError::MalformedGlyph)
 ) {
 return Err("glyph variant witness requires the typed conversion".into());
 }; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source function argument value raw = "#glyph" at tests/errors.rs:69
-  - source enum variant value GlyphError::MalformedGlyph at tests/errors.rs:72
+  - source function argument value raw = "#glyph" at line 69
+  - source enum variant value GlyphError::MalformedGlyph at line 72
 
 Weakness
   - Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
@@ -645,7 +645,7 @@ Evidence
   - discriminator no: No assertion found on related tests
   - local flow reaches error variant: try_theme_summary(raw).map_err(Into::into) (line 123)
   - related test tests/errors.rs:82 theme_summary_ignores_matches_result uses none unknown oracle; misses: has no assertion
-  - source function argument value raw = "&theme" at tests/errors.rs:83
+  - source function argument value raw = "&theme" at line 83
 
 Weakness
   - No detected assertion observes the changed value, error, field, or effect
@@ -682,7 +682,7 @@ Evidence
   - discriminator no: No assertion found on related tests
   - local flow reaches returned value: try_theme_summary(raw).map_err(Into::into) (line 123)
   - related test tests/errors.rs:82 theme_summary_ignores_matches_result uses none unknown oracle; misses: has no assertion
-  - source function argument value raw = "&theme" at tests/errors.rs:83
+  - source function argument value raw = "&theme" at line 83
 
 Weakness
   - No detected assertion observes the changed value, error, field, or effect

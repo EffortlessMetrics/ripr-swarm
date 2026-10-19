@@ -31,8 +31,8 @@ Evidence
   - discriminator weak: Only weak oracle found, such as a broad relational assertion or non-empty check
   - local flow reaches constructed field: retries: retries + 1 (line 8)
   - related test src/lib.rs:17 build_is_not_nine_retries uses weak whole object equality oracle: assert_ne!(build(3), Config { retries: 9 }); misses: assertion too weak to tell the old behavior from the new
-  - source assertion argument value 9 at src/lib.rs:18
-  - source function argument value retries = 3 at src/lib.rs:18
+  - source assertion argument value 9 at line 18
+  - source function argument value retries = 3 at line 18
 
 Weakness
   - No strong discriminator was detected

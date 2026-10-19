@@ -31,7 +31,7 @@ Evidence
   - discriminator not established (weakly_exposed); related oracle: Strong oracle found: exact value or pattern assertion
   - local flow reaches returned value: 4 * self.step() (line 5)
   - related test src/lib.rs:35 advances uses strong exact value oracle: assert_eq!(self::Counter::advance(&Unit), 8);
-  - source assertion argument value 8 at src/lib.rs:36
+  - source assertion argument value 8 at line 36
 
 Next step
   The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap

@@ -31,7 +31,7 @@ Evidence
   - discriminator not established (weakly_exposed); related oracle: Strong oracle found: exact value or pattern assertion
   - local flow reaches returned value: String::from("") (line 7)
   - related test src/lib.rs:28 render_is_empty uses strong exact value oracle: assert_eq!(Sample.render(), String::from(""));
-  - source assertion argument value "" at src/lib.rs:29
+  - source assertion argument value "" at line 29
 Drill in:
   ripr explain --root <cwd>/fixtures/rust_trait_impl_shadow/input --diff <cwd>/fixtures/rust_trait_impl_shadow/diff.patch --mode fast probe:src_lib.rs:return_value:b6bd8eab
   ripr context --root <cwd>/fixtures/rust_trait_impl_shadow/input --diff <cwd>/fixtures/rust_trait_impl_shadow/diff.patch --mode fast --at probe:src_lib.rs:return_value:b6bd8eab

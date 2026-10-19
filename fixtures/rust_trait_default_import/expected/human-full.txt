@@ -31,7 +31,7 @@ Evidence
   - discriminator yes: Strong oracle found: exact value or pattern assertion
   - local flow reaches returned value: 4 * self.step() (line 5)
   - related test src/lib.rs:22 advances uses strong exact value oracle: assert_eq!(self::Counter::advance(&Unit), 8);
-  - source assertion argument value 8 at src/lib.rs:23
+  - source assertion argument value 8 at line 23
 Drill in:
   ripr explain --root <cwd>/fixtures/rust_trait_default_import/input --diff <cwd>/fixtures/rust_trait_default_import/diff.patch --mode fast probe:src_lib.rs:return_value:f04fc840
   ripr context --root <cwd>/fixtures/rust_trait_default_import/input --diff <cwd>/fixtures/rust_trait_default_import/diff.patch --mode fast --at probe:src_lib.rs:return_value:f04fc840

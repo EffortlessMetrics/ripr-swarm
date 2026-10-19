@@ -35,14 +35,14 @@ Evidence
   - related test tests/protocol.rs:55 swallowed_error_arm_never_credits uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
   - related test tests/protocol.rs:25 variable_binding_scrutinee_keeps_existing_weaker_meaning uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
   - related test tests/protocol.rs:4 direct_owner_call_keeps_the_file_related misses: asserts, but not on the changed value; checked `expect_response("42|workspace/refresh", "42").unwrap()`
-  - source function argument value expected_id = "42" at tests/protocol.rs:5
-  - source function argument value raw = "42|workspace/refresh" at tests/protocol.rs:5
-  - source assertion argument value "42" at tests/protocol.rs:6
-  - source function argument value expected_id = "42" at tests/protocol.rs:26
-  - source function argument value raw = "42|workspace/refresh" at tests/protocol.rs:26
-  - source assertion argument value "42" at tests/protocol.rs:28
-  - source function argument value raw = "42" at tests/protocol.rs:36
-  - source assertion argument value "42" at tests/protocol.rs:37
+  - source function argument value expected_id = "42" at line 5
+  - source function argument value raw = "42|workspace/refresh" at line 5
+  - source assertion argument value "42" at line 6
+  - source function argument value expected_id = "42" at line 26
+  - source function argument value raw = "42|workspace/refresh" at line 26
+  - source assertion argument value "42" at line 28
+  - source function argument value raw = "42" at line 36
+  - source assertion argument value "42" at line 37
   - source values (showing 8 of 14 read from related tests; full list in --format json)
 
 Weakness
@@ -83,14 +83,14 @@ Evidence
   - related test tests/protocol.rs:34 shadowed_callee_never_credits_the_seam uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
   - related test tests/protocol.rs:55 swallowed_error_arm_never_credits uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
   - related test tests/protocol.rs:25 variable_binding_scrutinee_keeps_existing_weaker_meaning uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
-  - source function argument value expected_id = "42" at tests/protocol.rs:5
-  - source function argument value raw = "42|workspace/refresh" at tests/protocol.rs:5
-  - source assertion argument value "42" at tests/protocol.rs:6
-  - source function argument value expected_id = "42" at tests/protocol.rs:26
-  - source function argument value raw = "42|workspace/refresh" at tests/protocol.rs:26
-  - source assertion argument value "42" at tests/protocol.rs:28
-  - source function argument value raw = "42" at tests/protocol.rs:36
-  - source assertion argument value "42" at tests/protocol.rs:37
+  - source function argument value expected_id = "42" at line 5
+  - source function argument value raw = "42|workspace/refresh" at line 5
+  - source assertion argument value "42" at line 6
+  - source function argument value expected_id = "42" at line 26
+  - source function argument value raw = "42|workspace/refresh" at line 26
+  - source assertion argument value "42" at line 28
+  - source function argument value raw = "42" at line 36
+  - source assertion argument value "42" at line 37
   - source values (showing 8 of 14 read from related tests; full list in --format json)
 
 Weakness

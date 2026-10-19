@@ -15,8 +15,8 @@ Shared evidence and guidance
   E5 [findings 1, 3]: discriminator yes: Strong oracle found: exact error variant assertion
   E6 [findings 1, 3]: local flow reaches error variant: Result::Err(Cfg { n: x * 3 }) (line 13)
   E7 [findings 1, 3]: related test src/lib.rs:21 parses uses strong exact error variant oracle: assert_eq!(parse(4), Err(Cfg { n: 12 }));
-  E8 [findings 1, 3]: source assertion argument value 12 at src/lib.rs:22
-  E9 [findings 1, 3]: source function argument value x = 4 at src/lib.rs:22
+  E8 [findings 1, 3]: source assertion argument value 12 at line 22
+  E9 [findings 1, 3]: source function argument value x = 4 at line 22
 
 Finding 1: INFO ./src/lib.rs:13
   id: probe:src_lib.rs:error_path:ac1e8194
@@ -56,8 +56,8 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches constructed field: n: x * 3 (line 13)
   - related test src/lib.rs:21 parses uses strong exact error variant oracle: assert_eq!(parse(4), Err(Cfg { n: 12 })); misses: no assertion pins `n: x * 3`
-  - source assertion argument value 12 at src/lib.rs:22
-  - source function argument value x = 4 at src/lib.rs:22
+  - source assertion argument value 12 at line 22
+  - source function argument value x = 4 at line 22
 Weakness
   - No strong discriminator was detected
   - missing discriminator n: x * 3: No field-value assertion observes the constructed field: n: x * 3

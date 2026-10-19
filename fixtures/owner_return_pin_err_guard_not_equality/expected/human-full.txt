@@ -35,9 +35,9 @@ return Err("weight(4) kept the old value".to_string());
 }; misses: assertion too weak to tell the old behavior from the new
   - related test tests/weight_tests.rs:12 weight_is_at_least_twelve uses weak relational check oracle: assert!(weight(4) >= 12); misses: assertion too weak to tell the old behavior from the new
   - related test tests/weight_tests.rs:17 weight_matches_or_flag uses weak relational check oracle: assert!(weight(4) == 12 || lenient); misses: assertion too weak to tell the old behavior from the new
-  - source function argument value input = 4 at tests/weight_tests.rs:5
-  - source function argument value input = 4 at tests/weight_tests.rs:13
-  - source function argument value input = 4 at tests/weight_tests.rs:19
+  - source function argument value input = 4 at line 5
+  - source function argument value input = 4 at line 13
+  - source function argument value input = 4 at line 19
 
 Weakness
   - No strong discriminator was detected

@@ -32,11 +32,11 @@ Evidence
   - local flow reaches returned value: subtotal * 8 / 100 (line 6)
   - related test src/lib.rs:14 tax_is_owed uses weak relational check oracle: assert!(owed > 0); misses: assertion too weak to tell the old behavior from the new
   - related test src/lib.rs:20 subtotal_multiplies uses strong exact value oracle: assert_eq!(subtotal(3, 100), 300); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source function argument value subtotal = 300 at src/lib.rs:15
-  - source assertion argument value 0 at src/lib.rs:16
-  - source assertion argument value 100 at src/lib.rs:21
-  - source assertion argument value 3 at src/lib.rs:21
-  - source assertion argument value 300 at src/lib.rs:21
+  - source function argument value subtotal = 300 at line 15
+  - source assertion argument value 0 at line 16
+  - source assertion argument value 100 at line 21
+  - source assertion argument value 3 at line 21
+  - source assertion argument value 300 at line 21
 
 Weakness
   - No strong discriminator was detected

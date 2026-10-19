@@ -29,7 +29,7 @@ Evidence
   - discriminator unknown: Assertions exist, but oracle strength is unknown
   - local flow reaches unknown sink (line 1)
   - related test src/lib.rs:34 observation_schema_generation_matches_policy uses unknown exact value oracle: assert_eq!(OBSERVATION_SCHEMA_GENERATION, 3);
-  - source assertion argument value 3 at src/lib.rs:35
+  - source assertion argument value 3 at line 35
 
 Weakness
   - No strong discriminator was detected

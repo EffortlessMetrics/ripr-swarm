@@ -15,9 +15,9 @@ Shared evidence and guidance
   E5 [findings 1, 2]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   E6 [findings 1, 2]: local flow reaches state write: v.push(x * 1) (line 4)
   E7 [findings 1, 2]: related test src/lib.rs:12 records_into_the_bag uses strong exact value oracle: assert_eq!(b.0, vec![]); misses: no test input enters `if x > 10`
-  E8 [findings 1, 2]: source function argument value v = 0 at src/lib.rs:14
-  E9 [findings 1, 2]: source function argument value x = 4 at src/lib.rs:14
-  E10 [findings 1, 2]: source assertion argument value 0 at src/lib.rs:15
+  E8 [findings 1, 2]: source function argument value v = 0 at line 14
+  E9 [findings 1, 2]: source function argument value x = 4 at line 14
+  E10 [findings 1, 2]: source assertion argument value 0 at line 15
   N1 [findings 1, 2]: Add a related test input that enters `if x > 10`; no related test call runs the changed line, so no assertion can observe it yet
 
 Finding 1: WARNING ./src/lib.rs:4

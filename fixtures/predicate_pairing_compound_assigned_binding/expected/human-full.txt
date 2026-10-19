@@ -31,9 +31,9 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator
   - local flow reaches returned value: 1 (line 3)
   - related test tests/compounded.rs:4 compounded uses strong exact value oracle: assert_eq!(got, 2);
-  - source function argument value input = 10 at tests/compounded.rs:5
+  - source function argument value input = 10 at line 5
   - source function argument value input == 10 at line 5
-  - source assertion argument value 2 at tests/compounded.rs:7
+  - source assertion argument value 2 at line 7
 
 Weakness
   - Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator

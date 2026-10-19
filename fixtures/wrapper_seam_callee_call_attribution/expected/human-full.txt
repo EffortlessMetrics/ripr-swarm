@@ -31,9 +31,9 @@ Evidence
   - local flow reaches error variant: try_parse_summary(raw).map_err(|error| error.to_string().into()) (line 14)
   - related test tests/attribution.rs:4 observes_callee_outcome uses strong exact value oracle: assert_eq!(parsed.map(|n| n), Ok(3)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related test tests/attribution.rs:13 calls_callee_before_shadow_binding misses: asserts, but not on the changed value; checked `assert_eq!(parsed.map(|n| n), Ok(3))`
-  - source assertion argument value 3 at tests/attribution.rs:6
-  - source assertion argument value 3 at tests/attribution.rs:15
-  - source assertion argument value 5 at tests/attribution.rs:18
+  - source assertion argument value 3 at line 6
+  - source assertion argument value 3 at line 15
+  - source assertion argument value 5 at line 18
 
 Weakness
   - Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
@@ -78,9 +78,9 @@ Evidence
   - related test tests/attribution.rs:13 calls_callee_before_shadow_binding uses strong exact value oracle: assert_eq!(parsed.map(|n| n), Ok(3)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related test tests/attribution.rs:13 calls_callee_before_shadow_binding uses strong exact value oracle: assert_eq!(ignored, Ok(5)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related test tests/attribution.rs:4 observes_callee_outcome uses strong exact value oracle: assert_eq!(parsed.map(|n| n), Ok(3)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source assertion argument value 3 at tests/attribution.rs:6
-  - source assertion argument value 3 at tests/attribution.rs:15
-  - source assertion argument value 5 at tests/attribution.rs:18
+  - source assertion argument value 3 at line 6
+  - source assertion argument value 3 at line 15
+  - source assertion argument value 5 at line 18
 
 Weakness
   - Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established

@@ -31,8 +31,8 @@ Evidence
   - discriminator yes: Strong oracle found: exact value or pattern assertion
   - local flow reaches returned value: x * 3 (line 13)
   - related test src/lib.rs:21 computes uses strong exact value oracle: assert_eq!(compute(4), 12);
-  - source assertion argument value 12 at src/lib.rs:22
-  - source function argument value x = 4 at src/lib.rs:22
+  - source assertion argument value 12 at line 22
+  - source function argument value x = 4 at line 22
 Drill in:
   ripr explain --root <cwd>/fixtures/rust_returned_type_drop_local_guard/input --diff <cwd>/fixtures/rust_returned_type_drop_local_guard/diff.patch --mode fast probe:src_lib.rs:return_value:4fe97f3f
   ripr context --root <cwd>/fixtures/rust_returned_type_drop_local_guard/input --diff <cwd>/fixtures/rust_returned_type_drop_local_guard/diff.patch --mode fast --at probe:src_lib.rs:return_value:4fe97f3f
@@ -62,8 +62,8 @@ Evidence
   - discriminator unknown: Assertions exist, but oracle strength is unknown
   - local flow reaches unknown sink (line 13)
   - related test src/lib.rs:21 computes uses unknown exact value oracle: assert_eq!(compute(4), 12);
-  - source assertion argument value 12 at src/lib.rs:22
-  - source function argument value x = 4 at src/lib.rs:22
+  - source assertion argument value 12 at line 22
+  - source function argument value x = 4 at line 22
 
 Weakness
   - No strong discriminator was detected

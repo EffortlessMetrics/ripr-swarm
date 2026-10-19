@@ -30,8 +30,8 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches match arm result: foreign::None => (line 5)
   - related test src/lib.rs:12 legacy_only uses strong whole object equality oracle: assert_eq!(charge(&Lease { settled_elapsed_ms: None, timeout_sec: 600 }), 600); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source assertion argument value 600 at src/lib.rs:13
-  - source function argument value lease = 600 at src/lib.rs:13
+  - source assertion argument value 600 at line 13
+  - source function argument value lease = 600 at line 13
 
 Weakness
   - No strong discriminator was detected

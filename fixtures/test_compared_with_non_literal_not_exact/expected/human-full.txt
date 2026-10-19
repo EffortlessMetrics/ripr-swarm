@@ -31,12 +31,12 @@ Evidence
   - discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly
   - local flow reaches returned value: points * 2 (line 2)
   - related test src/lib.rs:10 score_is_zero_only_for_zero_points uses weak relational check oracle: assert_eq!(score(points) == 0, expected); misses: assertion too weak to tell the old behavior from the new
-  - source table row value 0 at src/lib.rs:11
-  - source table row value 2 at src/lib.rs:11
-  - source table row value false at src/lib.rs:11
-  - source table row value true at src/lib.rs:11
-  - source function argument value points = 0 at src/lib.rs:12
-  - source function argument value points = 2 at src/lib.rs:12
+  - source table row value 0 at line 11
+  - source table row value 2 at line 11
+  - source table row value false at line 11
+  - source table row value true at line 11
+  - source function argument value points = 0 at line 12
+  - source function argument value points = 2 at line 12
 
 Weakness
   - No strong discriminator was detected

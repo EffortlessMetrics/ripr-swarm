@@ -31,8 +31,8 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches returned value: x * 3 (line 2)
   - related test tests/render.rs:2 renders uses strong exact value oracle: assert_eq!(written_expected::render(4), want.trim().parse::<i32>().unwrap()); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source function argument value x = 4 at tests/render.rs:3
-  - source function argument value x = 4 at tests/render.rs:5
+  - source function argument value x = 4 at line 3
+  - source function argument value x = 4 at line 5
 
 Weakness
   - No strong discriminator was detected
@@ -68,8 +68,8 @@ Evidence
   - discriminator no: No assertion found on related tests
   - local flow reaches unknown sink (line 2)
   - related test tests/render.rs:2 renders misses: asserts, but not on the changed value; checked `std::fs::write("tests/w.txt", written_expected::render(4).to_string()).unwrap()`
-  - source function argument value x = 4 at tests/render.rs:3
-  - source function argument value x = 4 at tests/render.rs:5
+  - source function argument value x = 4 at line 3
+  - source function argument value x = 4 at line 5
 
 Weakness
   - No relevant oracle was detected

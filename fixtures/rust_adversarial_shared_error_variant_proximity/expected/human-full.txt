@@ -16,10 +16,10 @@ Shared evidence and guidance
   E6 [findings 1, 2]: local flow reaches error variant: Result::Err(PayError::Limit) (line 17)
   E7 [findings 1, 2]: related test src/lib.rs:31 a_small_deposit_is_accepted uses strong exact value oracle: assert_eq!(deposit_cap(100), Ok(100)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   E8 [findings 1, 2]: related test src/lib.rs:26 a_large_refund_hits_the_limit uses strong exact error variant oracle: assert!(matches!(refund(20_000), Err(PayError::Limit))); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  E9 [findings 1, 2]: source assertion argument value 20_000 at src/lib.rs:27
-  E10 [findings 1, 2]: source enum variant value PayError::Limit at src/lib.rs:27
-  E11 [findings 1, 2]: source assertion argument value 100 at src/lib.rs:32
-  E12 [findings 1, 2]: source function argument value amount = 100 at src/lib.rs:32
+  E9 [findings 1, 2]: source assertion argument value 20_000 at line 27
+  E10 [findings 1, 2]: source enum variant value PayError::Limit at line 27
+  E11 [findings 1, 2]: source assertion argument value 100 at line 32
+  E12 [findings 1, 2]: source function argument value amount = 100 at line 32
 
 Finding 1: WARNING ./src/lib.rs:17
   id: probe:src_lib.rs:error_path:25576e80

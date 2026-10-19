@@ -36,14 +36,14 @@ Evidence
   - related test src/lib.rs:49 initial_table uses strong exact value oracle: assert_eq!(initial(name), want, "{name:?}"); misses: no call to the changed code found; linked by file location only
   - related test src/lib.rs:76 ratio_smoke uses none unknown oracle; misses: has no assertion
   - related tests (showing 5 of 6; more in --format json)
-  - source assertion argument value 0 at src/lib.rs:44
-  - source assertion argument value 2 at src/lib.rs:45
-  - source assertion argument value 3 at src/lib.rs:45
-  - source assertion argument value 4 at src/lib.rs:45
-  - source table row value "" at src/lib.rs:50
-  - source table row value "Bob" at src/lib.rs:50
-  - source table row value "ada" at src/lib.rs:50
-  - source table row value '?' at src/lib.rs:50
+  - source assertion argument value 0 at line 44
+  - source assertion argument value 2 at line 45
+  - source assertion argument value 3 at line 45
+  - source assertion argument value 4 at line 45
+  - source table row value "" at line 50
+  - source table row value "Bob" at line 50
+  - source table row value "ada" at line 50
+  - source table row value '?' at line 50
   - source values (showing 8 of 14 read from related tests; full list in --format json)
 
 Weakness

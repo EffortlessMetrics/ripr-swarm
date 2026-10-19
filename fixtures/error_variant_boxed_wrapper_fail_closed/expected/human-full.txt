@@ -35,8 +35,8 @@ Some(ChecksumError::MalformedPayload)
 ) {
 return Err("checksum witness pinned the malformed-payload sibling".into());
 }; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source function argument value payload = "payload?" at tests/errors.rs:5
-  - source enum variant value ChecksumError::MalformedPayload at tests/errors.rs:8
+  - source function argument value payload = "payload?" at line 5
+  - source enum variant value ChecksumError::MalformedPayload at line 8
 
 Weakness
   - Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
@@ -84,8 +84,8 @@ Some(ChecksumError::MalformedPayload)
 ) {
 return Err("checksum witness pinned the malformed-payload sibling".into());
 }; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source function argument value payload = "payload?" at tests/errors.rs:5
-  - source enum variant value ChecksumError::MalformedPayload at tests/errors.rs:8
+  - source function argument value payload = "payload?" at line 5
+  - source enum variant value ChecksumError::MalformedPayload at line 8
 
 Weakness
   - Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
@@ -133,8 +133,8 @@ Some(ParseSummaryError::MalformedSource)
 ) {
 return Err("render witness pinned the parse-summary variant instead".into());
 }; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source function argument value raw = "zhex" at tests/errors.rs:19
-  - source enum variant value ParseSummaryError::MalformedSource at tests/errors.rs:22
+  - source function argument value raw = "zhex" at line 19
+  - source enum variant value ParseSummaryError::MalformedSource at line 22
 
 Weakness
   - Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
@@ -182,8 +182,8 @@ Some(ParseSummaryError::MalformedSource)
 ) {
 return Err("render witness pinned the parse-summary variant instead".into());
 }; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source function argument value raw = "zhex" at tests/errors.rs:19
-  - source enum variant value ParseSummaryError::MalformedSource at tests/errors.rs:22
+  - source function argument value raw = "zhex" at line 19
+  - source enum variant value ParseSummaryError::MalformedSource at line 22
 
 Weakness
   - Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established

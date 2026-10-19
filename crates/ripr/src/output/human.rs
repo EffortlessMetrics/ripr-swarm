@@ -5114,39 +5114,53 @@ mod tests {
         );
     }
 
-    /// #8389: a source value comes from a related test that is usually outside
-    /// the diff, so the line must name the file; a bare line number cannot be
-    /// found. A fact without a recorded file keeps the bare spelling.
+    /// #8389: a bare `at line N` is ambiguous once the shown window mixes
+    /// related-test files, so each line then names its file; a window from one
+    /// file keeps `at line N`.
     #[test]
-    fn source_value_lines_name_the_test_file() {
+    fn source_value_lines_name_the_test_file_only_when_files_differ() {
+        let fact = |file: &str, line: usize, value: &str, context| ValueFact {
+            file: Some(std::path::PathBuf::from(file)),
+            line,
+            text: "assert!(true);".to_string(),
+            value: value.to_string(),
+            context,
+        };
         let mut finding = sample_finding();
         finding.activation.observed_values = vec![
-            ValueFact {
-                file: Some(std::path::PathBuf::from("tests/pricing.rs")),
-                line: 7,
-                text: "assert!(true);".to_string(),
-                value: "true".to_string(),
-                context: ValueContext::AssertionArgument,
-            },
-            ValueFact {
-                file: None,
-                line: 9,
-                text: "f(3)".to_string(),
-                value: "3".to_string(),
-                context: ValueContext::FunctionArgument,
-            },
+            fact(
+                "tests/pricing.rs",
+                7,
+                "true",
+                ValueContext::AssertionArgument,
+            ),
+            fact("tests/other.rs", 9, "3", ValueContext::FunctionArgument),
         ];
-
         let rendered = render_finding(&finding);
-
         assert!(
             rendered.contains("source assertion argument value true at tests/pricing.rs:7"),
             "{rendered}"
         );
         assert!(
-            rendered.contains("source function argument value 3 at line 9"),
+            rendered.contains("source function argument value 3 at tests/other.rs:9"),
             "{rendered}"
         );
+
+        finding.activation.observed_values = vec![
+            fact(
+                "tests/pricing.rs",
+                7,
+                "true",
+                ValueContext::AssertionArgument,
+            ),
+            fact("tests/pricing.rs", 9, "3", ValueContext::FunctionArgument),
+        ];
+        let rendered = render_finding(&finding);
+        assert!(
+            rendered.contains("source assertion argument value true at line 7"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("tests/pricing.rs:"), "{rendered}");
     }
 
     /// #4320 review: beyond JSON's own ranked 32-value cap, both formats are

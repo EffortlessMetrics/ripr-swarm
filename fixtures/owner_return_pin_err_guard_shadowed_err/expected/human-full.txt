@@ -33,7 +33,7 @@ Evidence
   - related test tests/weight_tests.rs:8 checks_weight uses weak relational check oracle: if weight(4) != 12 {
 return Err("mismatch");
 }; misses: assertion too weak to tell the old behavior from the new
-  - source function argument value input = 4 at tests/weight_tests.rs:9
+  - source function argument value input = 4 at line 9
 
 Weakness
   - No strong discriminator was detected

@@ -31,8 +31,8 @@ Evidence
   - discriminator yes: Strong oracle found: exact value or pattern assertion
   - local flow reaches state write: events_sent.push(0 + id) (line 3)
   - related test src/lib.rs:12 send_records_one_event uses strong exact value oracle: assert_eq!(events_sent.len(), 1);
-  - source function argument value id = 7 at src/lib.rs:14
-  - source assertion argument value 1 at src/lib.rs:15
+  - source function argument value id = 7 at line 14
+  - source assertion argument value 1 at line 15
 Drill in:
   ripr explain --root <cwd>/fixtures/rust_direct_collection_count_payload/input --diff <cwd>/fixtures/rust_direct_collection_count_payload/diff.patch --mode fast probe:src_lib.rs:call_deletion:b78eb0d6
   ripr context --root <cwd>/fixtures/rust_direct_collection_count_payload/input --diff <cwd>/fixtures/rust_direct_collection_count_payload/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:b78eb0d6
@@ -61,8 +61,8 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches state write: events_sent.push(0 + id) (line 3)
   - related test src/lib.rs:12 send_records_one_event uses strong exact value oracle: assert_eq!(events_sent.len(), 1); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source function argument value id = 7 at src/lib.rs:14
-  - source assertion argument value 1 at src/lib.rs:15
+  - source function argument value id = 7 at line 14
+  - source assertion argument value 1 at line 15
 
 Weakness
   - No strong discriminator was detected
