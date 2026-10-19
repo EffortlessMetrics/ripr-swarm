@@ -47,6 +47,13 @@ pub(crate) struct TypeScriptOwner {
     /// export. Constructor matching uses it to credit
     /// `new <default-import local>(...)` (#4104-B, review #4138).
     pub(crate) class_default_export: bool,
+    /// `true` when the module's `export default { name }` (or `{ name: name
+    /// }`) object holds this top-level function under its own name, so a
+    /// default import `utils` calls it as `utils.name(...)`. Set only for a
+    /// literal made of plain same-name entries (no spread, computed key,
+    /// method, getter or duplicate), which keeps the member from being
+    /// replaced inside the object. RIPR-SPEC-0243 rule 5.
+    pub(crate) default_object_member: bool,
     /// Exported names of the owner's module whose code reaches this
     /// top-level function through a bounded same-module call graph (an
     /// exported wrapper, or a value a same-module factory built). Empty for

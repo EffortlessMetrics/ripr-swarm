@@ -29,6 +29,7 @@ pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> 
         }
         let mut owners = without_reassigned_commonjs_exports(owners);
         mark_default_exported_bindings(&ret.program.body, &mut owners);
+        mark_default_object_members(&ret.program.body, &mut owners);
         // #7507: a `let`/function owner rebound before its `export default`
         // carries dead code at the declaration site — drop it so no finding
         // can credit a test with observing it.
@@ -550,6 +551,60 @@ fn mark_default_exported_bindings(body: &[Statement<'_>], owners: &mut [TypeScri
     }
 }
 
+/// Mark top-level function owners held by the module's `export default {
+/// name }` object (RIPR-SPEC-0243 rule 5). Only an object made entirely of
+/// plain same-name entries qualifies: a spread, computed key, method, getter,
+/// renamed entry or duplicate key could replace or rebind a member, so any
+/// of them leaves every owner unmarked. A module with more than one default
+/// object export marks nothing.
+fn mark_default_object_members(body: &[Statement<'_>], owners: &mut [TypeScriptOwner]) {
+    use oxc_ast::ast::{ObjectPropertyKind, PropertyKey, PropertyKind};
+    let mut objects = body.iter().filter_map(|stmt| match stmt {
+        Statement::ExportDefaultDeclaration(export) => {
+            let mut expression = export.declaration.as_expression()?;
+            while let Expression::ParenthesizedExpression(paren) = expression {
+                expression = &paren.expression;
+            }
+            match expression {
+                Expression::ObjectExpression(object) => Some(object),
+                _ => None,
+            }
+        }
+        _ => None,
+    });
+    let (Some(object), None) = (objects.next(), objects.next()) else {
+        return;
+    };
+    let mut members: Vec<String> = Vec::new();
+    for property in &object.properties {
+        let ObjectPropertyKind::ObjectProperty(property) = property else {
+            return;
+        };
+        let (PropertyKind::Init, false, false) =
+            (property.kind, property.computed, property.method)
+        else {
+            return;
+        };
+        let (PropertyKey::StaticIdentifier(key), Expression::Identifier(value)) =
+            (&property.key, &property.value)
+        else {
+            return;
+        };
+        if key.name != value.name || members.iter().any(|seen| seen == key.name.as_str()) {
+            return;
+        }
+        members.push(key.name.to_string());
+    }
+    for owner in owners.iter_mut() {
+        if owner.class_name.is_none()
+            && owner.owner_kind == OwnerKind::Function
+            && members.contains(&owner.name)
+        {
+            owner.default_object_member = true;
+        }
+    }
+}
+
 /// `module.exports` as a static member expression on the bare `module`
 /// identifier.
 fn is_module_exports(member: &StaticMemberExpression<'_>) -> bool {
@@ -753,6 +808,7 @@ pub(crate) fn owner_from_variable_declarator(
             imports: imports.to_vec(),
             method_kind: TypeScriptMethodKind::Ordinary,
             class_default_export: false,
+            default_object_member: false,
             module_entries: Vec::new(),
             // Non-function initializers carry no resolvable signature facts:
             // no fixed positional signature the boundary witness could
@@ -806,6 +862,7 @@ pub(crate) fn owner_from_function(
         imports: imports.to_vec(),
         method_kind: TypeScriptMethodKind::Ordinary,
         class_default_export: false,
+        default_object_member: false,
         module_entries: Vec::new(),
         params,
         arity,
@@ -835,6 +892,7 @@ pub(crate) fn owner_from_arrow(
         imports: imports.to_vec(),
         method_kind: TypeScriptMethodKind::Ordinary,
         class_default_export: false,
+        default_object_member: false,
         module_entries: Vec::new(),
         params,
         arity,
@@ -905,6 +963,7 @@ pub(crate) fn owner_from_method(
             oxc_ast::ast::MethodDefinitionKind::Method => TypeScriptMethodKind::Ordinary,
         },
         class_default_export: false,
+        default_object_member: false,
         module_entries: Vec::new(),
         params,
         arity,

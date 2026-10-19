@@ -906,6 +906,7 @@ pub(crate) fn module_entry_owner(
         class_name: None,
         exported_as_default: entry.exported_as_default,
         class_default_export: false,
+        default_object_member: false,
         method_kind: TypeScriptMethodKind::Ordinary,
         module_entries: Vec::new(),
         params: Vec::new(),
@@ -2576,6 +2577,15 @@ fn import_references_owner_call(
     if import.namespace {
         return contains_member_call_name(body_text, &import.local, &owner.name);
     }
+    // RIPR-SPEC-0243 rule 5: a default import of a module whose `export
+    // default { name }` object holds the owner reaches it as
+    // `local.name(...)`. The local must be used for nothing else, so the
+    // member cannot be reassigned, aliased, shadowed or passed elsewhere
+    // first (a body-local `const local = ...` is itself such a use).
+    if owner.default_object_member && import.imported.as_deref() == Some("default") {
+        return contains_member_call_name(body_text, &import.local, &owner.name)
+            && every_use_is_member_call(body_text, &import.local, &owner.name);
+    }
     // A default import (`import local from './owner'`) binds the owner
     // module's default export (#4103 under-credit): credit a call through the
     // local when the owner IS that default export. An anonymous default
@@ -2587,6 +2597,28 @@ fn import_references_owner_call(
         // alias arm applies — a locally re-declared `local` reaches the
         // shadow, not the owner.
         && !local_identifier_declared_in_test_body(body_text, &import.local)
+}
+
+/// `true` when every whole-word use of `object_name` in `body_text` is a
+/// call of its `method_name` member (`obj.m(`, `obj?.m(`, `obj!.m(`).
+fn every_use_is_member_call(body_text: &str, object_name: &str, method_name: &str) -> bool {
+    let word =
+        |ch: Option<char>| ch.is_some_and(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric());
+    body_text.match_indices(object_name).all(|(at, _)| {
+        let before = body_text[..at].chars().next_back();
+        let rest = &body_text[at + object_name.len()..];
+        if word(before) || word(rest.chars().next()) {
+            return true;
+        }
+        before != Some('.')
+            && [".", "?.", "!."].iter().any(|dot| {
+                rest.strip_prefix(dot).is_some_and(|after| {
+                    after
+                        .strip_prefix(method_name)
+                        .is_some_and(|tail| tail.starts_with('('))
+                })
+            })
+    })
 }
 
 pub(crate) fn import_source_matches_owner(
