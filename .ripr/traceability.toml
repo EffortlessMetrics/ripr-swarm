@@ -10683,6 +10683,7 @@ tests = [
   "crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::resolver_stays_unresolved_without_diff_evidence",
   "crates/ripr/src/analysis/language/perl/tests.rs::perl_finding_is_candidate_current_only_for_an_observed_changed_line",
   "crates/ripr/src/analysis/language/perl/tests.rs::perl_finding_through_a_symlink_out_of_the_root_stays_unresolved",
+  "crates/ripr/src/analysis/language/perl/tests.rs::perl_changed_file_count_ignores_packet_changes_in_untouched_files",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -16018,6 +16019,9 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::mock_payload_on_the_parameters_own_mock_is_credited",
   "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::mock_payload_on_a_test_file_factory_mock_is_credited",
   "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::mock_payload_binding_must_be_exactly_a_fresh_mock",
+  "crates/ripr/src/analysis/language/typescript/tests/mock_spread_source_tests.rs::spread_of_a_plain_const_without_the_mock_key_is_credited",
+  "crates/ripr/src/analysis/language/typescript/tests/mock_spread_source_tests.rs::spread_that_could_replace_the_mock_refuses",
+  "crates/ripr/src/analysis/language/typescript/tests/mock_spread_source_tests.rs::source_is_recorded_only_when_the_file_mentions_it_at_a_spread",
   "crates/ripr/src/analysis/language/typescript/tests/spy_module_object_tests.rs::spy_on_an_exported_module_object_the_changed_line_calls_is_credited",
   "crates/ripr/src/analysis/language/typescript/tests/spy_module_object_tests.rs::spy_on_a_module_object_refuses_every_other_path_to_the_spy",
   "crates/ripr/src/analysis/language/typescript/tests/spy_module_object_tests.rs::spy_file_checks_read_the_committed_test_file",
