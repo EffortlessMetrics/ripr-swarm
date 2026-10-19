@@ -19658,3 +19658,130 @@ fn named_call_scan_sees_calls_after_an_earlier_line_comment() {
         "compute"
     ));
 }
+
+// #7415 review: index-backed oracles for the permissive factory and
+// helper-hop routes of the bounded inherent-receiver rule.
+fn receiver_rule_index(source: &str) -> Result<FixtureIndex, String> {
+    index_from_files(&[(PathBuf::from("src/lib.rs"), source)])
+}
+
+fn receiver_rule_parts<'a>(
+    index: &'a RustIndex,
+    owner: &str,
+    caller: &str,
+) -> Result<(&'a FunctionSummary, &'a TestSummary), String> {
+    let owner = index
+        .functions()
+        .iter()
+        .find(|function| function.name == owner && function.item.has_self_param)
+        .ok_or_else(|| format!("missing owner {owner}"))?;
+    let caller = index
+        .tests()
+        .iter()
+        .find(|test| test.name == caller)
+        .ok_or_else(|| format!("missing test {caller}"))?;
+    Ok((owner, caller))
+}
+
+#[test]
+fn inherent_factory_binding_admits_only_a_plain_self_returning_declaration() -> Result<(), String> {
+    for (factory, expected) in [
+        ("pub fn make() -> Self { Site(1) }", true),
+        ("pub fn make() -> Site { Site(1) }", true),
+        ("pub fn make() -> Result<Self, ()> { Ok(Site(1)) }", false),
+        ("pub async fn make() -> Self { Site(1) }", false),
+        ("pub fn make(&self) -> Self { Site(1) }", false),
+        ("pub fn make() -> Foreign { Foreign }", false),
+        ("pub fn make<Site>() -> Site { todo!() }", false),
+        (
+            "pub fn make<F>(f: F) -> Foreign where F: Fn() -> Self { f(); Foreign }",
+            false,
+        ),
+        (
+            "pub fn make<F: Fn() -> Self>(f: F) -> Foreign { f(); Foreign }",
+            false,
+        ),
+        // Two same-name declarations: the factory is not unique.
+        (
+            "pub fn make() -> Self { Site(1) }\n}\nimpl Site {\npub fn make() -> Foreign { Foreign }",
+            false,
+        ),
+    ] {
+        let source = format!(
+            "pub struct Site(u32);\npub struct Foreign;\nimpl Site {{\n{factory}\npub fn area(&self) -> u32 {{ self.0 }}\n}}\n#[test]\nfn t() {{\n    let s = Site::make();\n    assert_eq!(s.area(), 1);\n}}\n#[test]\nfn other_type() {{\n    let s = Other::make();\n    assert_eq!(s.area(), 1);\n}}\n"
+        );
+        let index = receiver_rule_index(&source)?;
+        let (owner, caller) = receiver_rule_parts(&index, "area", "t")?;
+        assert_eq!(
+            crate::analysis::classify::inherent_owner_call_resolves(caller, owner, &index),
+            expected,
+            "{factory}"
+        );
+        let (_, other) = receiver_rule_parts(&index, "area", "other_type")?;
+        assert!(
+            !crate::analysis::classify::inherent_owner_call_resolves(other, owner, &index),
+            "a different spelled type never resolves: {factory}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn inherent_helper_hop_credits_only_a_sync_helper_that_binds_the_owner_type() -> Result<(), String>
+{
+    for (helper, caller_body, expected) in [
+        (
+            "fn helper() -> u32 { let s = Site::new(); s.area() }",
+            "assert_eq!(helper(), 1);",
+            true,
+        ),
+        (
+            "fn helper() -> u32 { let s = Foreign::new(); s.area() }",
+            "assert_eq!(helper(), 1);",
+            false,
+        ),
+        (
+            "async fn helper() -> u32 { let s = Site::new(); s.area() }",
+            "let _ = helper();",
+            false,
+        ),
+        (
+            "fn helper() -> u32 { let s = Site::new(); s.area() }",
+            "assert_eq!(1, 1);",
+            false,
+        ),
+    ] {
+        let source = format!(
+            "pub struct Site(u32);\nimpl Site {{\npub fn new() -> Self {{ Site(1) }}\npub fn area(&self) -> u32 {{ self.0 }}\n}}\n{helper}\n#[test]\nfn t() {{\n    {caller_body}\n}}\n"
+        );
+        let index = receiver_rule_index(&source)?;
+        let (owner, caller) = receiver_rule_parts(&index, "area", "t")?;
+        assert_eq!(
+            inherent_helper_path_reaches_owner(
+                caller,
+                owner,
+                &index,
+                HELPER_OWNER_CALL_GRAPH_MAX_HOPS,
+                &mut BTreeSet::new(),
+            ),
+            expected,
+            "{helper} / {caller_body}"
+        );
+        let helper_fn = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "helper")
+            .ok_or("missing helper")?;
+        assert_eq!(
+            crate::analysis::classify::function_declaration_is_async(helper_fn, &index),
+            Some(helper.starts_with("async")),
+            "{helper}"
+        );
+        assert_eq!(
+            crate::analysis::classify::free_helper_call_resolves(caller, helper_fn, &index),
+            caller_body.contains("helper("),
+            "{helper} / {caller_body}"
+        );
+    }
+    Ok(())
+}

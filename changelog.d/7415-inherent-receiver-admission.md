@@ -3,8 +3,14 @@
   attribution without bounded receiver evidence. Diff and repository reports
   refuse comment-only, expired-binding and assertion-operand item-shadow
   evidence while preserving actual enum receivers, public-library calls and
-  outer receivers after an inner foreign shadow expires. Corpus snapshots
-  retain the false actionable cost of unsupported factory/parameter/import flow
+  outer receivers after an inner foreign shadow expires. Accepted cost: three
+  verdict-corpus rows (`lib-rstest-fixture-injected-receiver`,
+  `serde-derive-rename-field-upper`, `serde-derive-rename-variant-lower`) move
+  from credited/ideal to gap/`false_actionable`. Their tests do discriminate;
+  the bounded rule cannot yet prove the rstest-injected receiver or the
+  bare-imported unit variant (`UpperCase.apply_to_field`), so the shape is
+  reported as a gap, a false actionable signal on a discriminating test, in
+  exchange for refusing unproven receiver credit elsewhere. Restoring credit for those shapes is tracked in #8782
   (#7415, #8004).
 - Same-name local wrapper delegation retains repository helper reach; diff
   evidence remains conservative. Module-shadowed assertion operands and foreign

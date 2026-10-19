@@ -4018,7 +4018,7 @@ pub(in crate::analysis::test_grip_evidence) fn crate_root_file_key(path: &Path) 
     (!text.is_empty()).then(|| text.to_string())
 }
 
-fn inherent_helper_path_reaches_owner(
+pub(in crate::analysis::test_grip_evidence) fn inherent_helper_path_reaches_owner(
     caller: &TestSummary,
     owner: &FunctionSummary,
     index: &RustIndex,
