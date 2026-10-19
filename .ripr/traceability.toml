@@ -5098,6 +5098,9 @@ id = "RIPR-SPEC-0051"
 name = "First successful PR UX"
 spec = "docs/specs/RIPR-SPEC-0051-first-successful-pr-ux.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/first_pr_write_failure.rs::first_pr_packet_failed_write_preserves_destination_and_retries",
+  "crates/ripr/tests/cli_smoke/first_pr_write_failure.rs::first_pr_derived_ledger_failed_write_preserves_destination_and_retries",
+  "crates/ripr/src/output/file_write.rs::tests::failed_stream_keeps_success_looking_json_private_and_retry_publishes_all_bytes",
   "crates/ripr/src/output/first_pr.rs::tests::preflight_recovery_commands_pair_shell_forms_for_apostrophe_root_and_refs",
   "crates/ripr/src/output/first_pr.rs::tests::preflight_diff_failure_carries_the_same_shell_recovery_steps",
   "crates/ripr/src/output/first_pr/preflight.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults",

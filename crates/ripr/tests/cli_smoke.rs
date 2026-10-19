@@ -42,6 +42,9 @@ mod diff_selection;
 mod discarded_matches;
 #[path = "cli_smoke/findings_byte_budget.rs"]
 mod findings_byte_budget;
+#[cfg(unix)]
+#[path = "cli_smoke/first_pr_write_failure.rs"]
+mod first_pr_write_failure;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/human_full_shared.rs"]
 mod human_full_shared;

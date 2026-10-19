@@ -248,6 +248,55 @@ mod tests {
     }
 
     #[test]
+    fn failed_stream_keeps_success_looking_json_private_and_retry_publishes_all_bytes()
+    -> Result<(), String> {
+        use std::io::Write as _;
+        const PREVIOUS: &[u8] = b"{\"status\":\"passed\",\"run\":\"previous\"}\n";
+        const PREFIX: &[u8] = b"{\"status\":\"passed\",\"run\":\"replacement\"}\n";
+        const COMPLETE: &[u8] = b"{\"status\":\"passed\",\"run\":\"replacement\"}\n \n";
+        let dir = fresh_dir("failed-success-looking-json")?;
+        let result = (|| {
+            for existing in [false, true] {
+                let path = dir.join(if existing {
+                    "existing.json"
+                } else {
+                    "new.json"
+                });
+                if existing {
+                    fs::write(&path, PREVIOUS).map_err(|err| format!("seed: {err}"))?;
+                }
+                let fill = |file: &mut std::fs::File, inject_failure: bool| {
+                    // This prefix alone parses as a successful receipt. Error
+                    // handling must keep even valid-looking partial output private.
+                    file.write_all(PREFIX)?;
+                    if inject_failure {
+                        return Err(std::io::Error::other("task-owned report write failure"));
+                    }
+                    file.write_all(b" \n")
+                };
+                let Err(error) = super::write_with(&path, |file| fill(file, true)) else {
+                    return Err("failed report stream returned success".to_string());
+                };
+                assert_eq!(error.kind(), std::io::ErrorKind::Other);
+                assert_eq!(error.to_string(), "task-owned report write failure");
+                if existing {
+                    assert_eq!(fs::read(&path).map_err(|err| err.to_string())?, PREVIOUS);
+                } else {
+                    assert!(!path.try_exists().map_err(|err| err.to_string())?);
+                }
+                assert_eq!(leftovers(&dir)?, Vec::<String>::new());
+                super::write_with(&path, |file| fill(file, false))
+                    .map_err(|err| format!("retry: {err}"))?;
+                assert_eq!(fs::read(&path).map_err(|err| err.to_string())?, COMPLETE);
+                assert_eq!(leftovers(&dir)?, Vec::<String>::new());
+            }
+            Ok(())
+        })();
+        let _ = fs::remove_dir_all(&dir);
+        result
+    }
+
+    #[test]
     fn replaces_a_longer_file_completely_and_leaves_no_temp() -> Result<(), String> {
         let dir = fresh_dir("replace")?;
         let path = dir.join("report.json");
