@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_self_comparing_oracle (3)
+
+Reason:
+RIPR-SPEC-0122: bounded human check output gained the #8729 no-repair-start advisory; absorb it into the wave-2 TS oracle-honesty fixtures (parallel-lane bless gap)
+
+Command:
+`cargo xtask goldens bless typescript_self_comparing_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

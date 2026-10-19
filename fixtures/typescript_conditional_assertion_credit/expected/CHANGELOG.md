@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_conditional_assertion_credit (3)
+
+Reason:
+RIPR-SPEC-0122: bounded human check output gained the #8729 no-repair-start advisory; absorb it into the four wave-2 TS oracle-honesty fixtures (parallel-lane bless gap)
+
+Command:
+`cargo xtask goldens bless typescript_conditional_assertion_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
