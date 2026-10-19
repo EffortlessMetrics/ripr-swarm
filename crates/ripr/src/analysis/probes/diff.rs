@@ -100,6 +100,16 @@ pub(crate) fn probes_for_file_with_relations(
             skip_removed[removed_index] = true;
         }
     }
+    // A line that is byte-identical on both sides of one replacement run
+    // (unchanged or moved inside a rewritten block) is not an edit (#8389).
+    for (new_side_line, old_line) in changed.identical_replacement_lines() {
+        if let (Some(&added_index), Some(&removed_index)) =
+            (added_at.get(&new_side_line), removed_at.get(&old_line))
+        {
+            skip_added[added_index] = true;
+            skip_removed[removed_index] = true;
+        }
+    }
     // Rebuilt once per file and shared by every reader of the old file (#7637).
     let old_source = super::classify::old_source(index, changed);
     let old_source = old_source.as_deref();
@@ -1898,6 +1908,74 @@ mod tests {
             "{probes:?}"
         );
         assert!(!probes.is_empty(), "the changed pair keeps its probe");
+    }
+
+    fn replacement(removed: &[(usize, &str)], added: &[(usize, &str)]) -> ChangedFile {
+        let start = added.first().map_or(1, |(line, _)| *line);
+        let line = |(line, text): &(usize, &str), new_side_line: usize| ChangedLine {
+            line: *line,
+            new_side_line,
+            text: (*text).to_string(),
+        };
+        ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: added.iter().map(|l| line(l, l.0)).collect(),
+            removed_lines: removed.iter().map(|l| line(l, start)).collect(),
+        }
+    }
+
+    /// #8389 (syn 96801f7): a line identical on both sides of an uneven
+    /// replacement block is unchanged, so it seeds no probe, while the real
+    /// edit beside it still does.
+    #[test]
+    fn an_identical_line_inside_a_replacement_block_seeds_no_probe() {
+        let same = "end: span.end.prev_span(),";
+        let changed = replacement(
+            &[(10, "start: old_start.offset(1),"), (11, same)],
+            &[
+                (20, same),
+                (21, "start: new_start.offset(1),"),
+                (22, "extra: span.len(),"),
+            ],
+        );
+        let probes = probes_for_file(Path::new("workspace"), &changed, &RustIndex::default());
+        assert!(
+            probes.iter().all(|probe| probe.expression != same),
+            "the unchanged line must not seed a probe: {probes:?}"
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.expression == "start: new_start.offset(1),"),
+            "the real edit keeps its probe: {probes:?}"
+        );
+    }
+
+    /// Fail-closed: a repeated identical line pairs by guess, so it keeps
+    /// its probes; a line edited by one character is still a change.
+    #[test]
+    fn identical_line_suppression_is_fail_closed() {
+        let same = "end: span.end.prev_span(),";
+        let twice = replacement(
+            &[(10, same), (11, same)],
+            &[(20, same), (21, same), (22, "extra: span.len(),")],
+        );
+        assert!(twice.identical_replacement_lines().is_empty());
+        let probes = probes_for_file(Path::new("workspace"), &twice, &RustIndex::default());
+        assert!(
+            probes.iter().any(|probe| probe.expression == same),
+            "{probes:?}"
+        );
+        let edited = replacement(
+            &[(10, "end: span.start.prev_span(),"), (11, "let z = 1;")],
+            &[(20, same), (21, "let y = 2;"), (22, "let w = 3;")],
+        );
+        assert!(edited.identical_replacement_lines().is_empty());
+        let probes = probes_for_file(Path::new("workspace"), &edited, &RustIndex::default());
+        assert!(
+            probes.iter().any(|probe| probe.expression == same),
+            "{probes:?}"
+        );
     }
 
     #[test]

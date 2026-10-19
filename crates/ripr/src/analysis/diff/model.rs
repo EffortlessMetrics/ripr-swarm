@@ -138,6 +138,56 @@ impl ChangedFile {
         pairs
     }
 
+    /// Added lines whose trimmed text is byte-identical to one removed line of
+    /// the same replacement run, as `(added new-side line, removed old-side
+    /// line)`. Git reports an unchanged or moved line inside a rewritten block
+    /// as both removed and added; it is not an edit. Fail-closed: the text must
+    /// occur exactly once among the run's added lines and exactly once among
+    /// the removed lines recorded in it, so a repeated line never pairs by
+    /// guess, and a blank line never pairs.
+    pub(crate) fn identical_replacement_lines(&self) -> Vec<(usize, usize)> {
+        let added_at: BTreeMap<usize, &ChangedLine> = self
+            .added_lines
+            .iter()
+            .map(|line| (line.new_side_line, line))
+            .collect();
+        let mut pairs = Vec::new();
+        for run in self.replacement_runs() {
+            let removed: Vec<&ChangedLine> = run
+                .removed_by_coordinate
+                .iter()
+                .flat_map(|(_, lines)| lines.iter().copied())
+                .collect();
+            let added: Vec<&ChangedLine> = (run.start..=run.end)
+                .filter_map(|line| added_at.get(&line).copied())
+                .collect();
+            for (added_position, line) in added.iter().enumerate() {
+                let text = line.text.trim();
+                if text.is_empty() {
+                    continue;
+                }
+                let added_count = added.iter().filter(|l| l.text.trim() == text).count();
+                let mut matches = removed
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, l)| l.text.trim() == text);
+                let (1, Some((removed_position, old)), None) =
+                    (added_count, matches.next(), matches.next())
+                else {
+                    continue;
+                };
+                // The same text under a different opener is a different
+                // construct (`Packet {` field vs `where` bound).
+                if enclosing_opener(&added, added_position)
+                    == enclosing_opener(&removed, removed_position)
+                {
+                    pairs.push((line.new_side_line, old.line));
+                }
+            }
+        }
+        pairs
+    }
+
     /// The file's contiguous added runs that have removed lines recorded at
     /// their start. The diff parser gives every removed line of a block the
     /// new-side coordinate where the block's added run starts.
@@ -238,6 +288,17 @@ impl ChangedFile {
             })
             .unwrap_or(added_new_side_line)
     }
+}
+
+/// The nearest earlier line of `lines` that opens a block or a bound list
+/// (ends with `{`, `(` or `[`, or is a `where` clause), trimmed. Two equal
+/// lines are only the same line when they sit under the same opener.
+fn enclosing_opener<'a>(lines: &[&'a ChangedLine], position: usize) -> Option<&'a str> {
+    lines[..position].iter().rev().find_map(|line| {
+        let text = line.text.trim();
+        (text.ends_with(['{', '(', '[']) || text == "where" || text.starts_with("where "))
+            .then_some(text)
+    })
 }
 
 /// One contiguous added run and the removed lines recorded inside it.
