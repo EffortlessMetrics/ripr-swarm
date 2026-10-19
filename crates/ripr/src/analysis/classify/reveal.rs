@@ -699,11 +699,27 @@ fn owner_call_reaches_read_unrewritten(
             None => return false,
         },
     };
+    // The window also covers the part of the read line before the assertion
+    // macro (`o.log.clear(); assert_eq!(..)`).
+    let line_end = masked[read_at..]
+        .find('\n')
+        .map_or(masked.len(), |found| read_at + found);
+    let read_end = masked[read_at..line_end]
+        .find("assert")
+        .map_or(read_at, |found| read_at + found);
     let call = format!("{binding}.{method}(");
     owner_calls_before_read(&test.body, test.start_line, binding, method, read_line)
         .into_iter()
         .any(|at| {
-            only_field_reads_between(&masked, at + call.len(), read_at, binding, getter, path)
+            // A bare call statement only: a chained or bound result
+            // (`o.add(4).clear_log()`, `let r = o.add(4)`) may be `&mut Self`
+            // and rewrite the field without naming `binding`. `.unwrap()`,
+            // `.expect(..)` and `?` consume the result and are allowed.
+            let statement_start = masked[..at].rfind([';', '{', '}']).map_or(0, |i| i + 1);
+            masked[statement_start..at].trim().is_empty()
+                && bare_call_end(&masked, at, call.len()).is_some_and(|end| {
+                    only_field_reads_between(&masked, end, read_end, binding, getter, path)
+                })
         })
 }
 
@@ -767,7 +783,9 @@ fn only_field_reads_between(
                 // assignment and compound assignment may rewrite it, and a
                 // `&mut binding.path` borrow can be mutated through an alias.
                 let next = rest.trim_start();
-                !window[..at].trim_end().ends_with("&mut")
+                !window[..at]
+                    .trim_end_matches(|ch: char| ch == '(' || ch.is_whitespace())
+                    .ends_with("&mut")
                     && [";", ",", ")", "}", "==", "!=", "<", ">"]
                         .iter()
                         .any(|ok| next.starts_with(ok))
@@ -5235,6 +5253,41 @@ mod tests {
             let lines = format!("{setup}\n    {rewrite}");
             assert!(!confirms(Vec::new(), &lines, read), "{rewrite}");
         }
+        // Chained or bound owner results, a write earlier on the read line,
+        // and a parenthesized `&mut` borrow (#8866 review).
+        for lines in [
+            "    let mut o = Ob::new();\n    o.add(4).clear_log();".to_string(),
+            "    let mut o = Ob::new();\n    let r = o.add(4);\n    r.log.clear();".to_string(),
+            format!("{setup}\n    let r = &mut (o.log); *r = vec![4];"),
+        ] {
+            assert!(!confirms(Vec::new(), &lines, read), "{lines}");
+        }
+        assert!(!confirms(
+            Vec::new(),
+            &format!("{setup}\n    o.reset_to(&[4]);"),
+            "assert_eq!(o.entries(), &[4]);"
+        ));
+        let test = TestSummary {
+            start_line: 1,
+            ..test_with_body_assertions(
+                "t",
+                "fn t() {\n    let mut o = Ob::new();\n    o.add(4);\n    o.reset_to(&[4]); assert_eq!(o.entries(), &[4]);\n}",
+                Vec::new(),
+            )
+        };
+        assert!(!owner_call_reaches_read_unrewritten(
+            &test,
+            "o",
+            "add",
+            4,
+            Some("entries"),
+            "log"
+        ));
+        assert!(confirms(
+            Vec::new(),
+            "    let mut o = Ob::new();\n    o.add(4).unwrap();",
+            read
+        ));
         // An owner call on the assertion's own line is never accepted
         // (`owner_calls_before_read` needs an earlier line), so a rewrite
         // between them cannot be credited either (#8866 review).
