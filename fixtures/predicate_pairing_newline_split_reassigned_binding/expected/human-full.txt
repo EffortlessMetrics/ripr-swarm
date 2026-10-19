@@ -31,9 +31,9 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator
   - local flow reaches returned value: input >= 10 (line 2)
   - related test tests/rebound.rs:4 rebound uses strong exact value oracle: assert_eq!(got, true);
-  - source function argument value input = 10 at line 5
+  - source function argument value input = 10 at tests/rebound.rs:5
   - source function argument value input == 10 at line 5
-  - source assertion argument value true at line 8
+  - source assertion argument value true at tests/rebound.rs:8
 
 Weakness
   - Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator
@@ -68,9 +68,9 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches returned value: input >= 10 (line 2)
   - related test tests/rebound.rs:4 rebound uses strong exact value oracle: assert_eq!(got, true); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source function argument value input = 10 at line 5
+  - source function argument value input = 10 at tests/rebound.rs:5
   - source function argument value input == 10 at line 5
-  - source assertion argument value true at line 8
+  - source assertion argument value true at tests/rebound.rs:8
 
 Weakness
   - No strong discriminator was detected

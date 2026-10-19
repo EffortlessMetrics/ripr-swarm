@@ -232,7 +232,7 @@ fn evidence_path<T>(
         .take(MAX_OBSERVED_VALUES_SHOWN)
     {
         lines.push(project(
-            crate::output::observed_values::source_value_evidence_line(value),
+            crate::output::observed_values::source_value_evidence_line_with_file(value),
             EvidenceSource::Value(value),
         ));
     }
@@ -259,7 +259,7 @@ fn evidence_path<T>(
             }
         };
         lines.push(project(format!(
-            "source values (showing {MAX_OBSERVED_VALUES_SHOWN} of {observed_values_total}; {json_window})"
+            "source values (showing {MAX_OBSERVED_VALUES_SHOWN} of {observed_values_total} read from related tests; {json_window})"
         ), EvidenceSource::Window));
     }
 

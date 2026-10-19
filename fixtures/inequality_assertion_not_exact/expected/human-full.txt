@@ -31,8 +31,8 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches returned value: points * 2 (line 2)
   - related test src/lib.rs:10 score_is_not_zero uses weak relational check oracle: assert_ne!(score(2), 0); misses: assertion too weak to tell the old behavior from the new
-  - source assertion argument value 0 at line 11
-  - source function argument value points = 2 at line 11
+  - source assertion argument value 0 at src/lib.rs:11
+  - source function argument value points = 2 at src/lib.rs:11
 
 Weakness
   - No strong discriminator was detected

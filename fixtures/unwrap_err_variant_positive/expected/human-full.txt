@@ -15,8 +15,8 @@ Shared evidence and guidance
   E5 [findings 1, 2]: discriminator yes: Strong oracle found: exact error variant assertion
   E6 [findings 1, 2]: local flow reaches error variant: Result::Err(CalcError::Negative) (line 8)
   E7 [findings 1, 2]: related test tests/errors.rs:4 negative_input_rejects_with_negative_error uses strong exact error variant oracle: assert_eq!(err, CalcError::Negative);
-  E8 [findings 1, 2]: source function argument value x = -1 at line 5
-  E9 [findings 1, 2]: source enum variant value CalcError::Negative at line 6
+  E8 [findings 1, 2]: source function argument value x = -1 at tests/errors.rs:5
+  E9 [findings 1, 2]: source enum variant value CalcError::Negative at tests/errors.rs:6
 
 Finding 1: INFO ./src/lib.rs:8
   id: probe:src_lib.rs:error_path:6b37a3bc

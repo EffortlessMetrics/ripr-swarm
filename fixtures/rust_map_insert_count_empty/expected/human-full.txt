@@ -31,9 +31,9 @@ Evidence
   - discriminator yes: Strong oracle found: exact value or pattern assertion
   - local flow reaches state write: self.stock.insert(sku.to_owned(), qty) (line 13)
   - related test src/lib.rs:22 first_insert_makes_one_entry uses strong exact value oracle: assert_eq!(shelf.stock.len(), 1);
-  - source function argument value qty = 2 at line 24
-  - source function argument value sku = "A" at line 24
-  - source assertion argument value 1 at line 25
+  - source function argument value qty = 2 at src/lib.rs:24
+  - source function argument value sku = "A" at src/lib.rs:24
+  - source assertion argument value 1 at src/lib.rs:25
 Drill in:
   ripr explain --root <cwd>/fixtures/rust_map_insert_count_empty/input --diff <cwd>/fixtures/rust_map_insert_count_empty/diff.patch --mode fast probe:src_lib.rs:call_deletion:930be5e9
   ripr context --root <cwd>/fixtures/rust_map_insert_count_empty/input --diff <cwd>/fixtures/rust_map_insert_count_empty/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:930be5e9
@@ -62,9 +62,9 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches state write: self.stock.insert(sku.to_owned(), qty) (line 13)
   - related test src/lib.rs:22 first_insert_makes_one_entry uses strong exact value oracle: assert_eq!(shelf.stock.len(), 1); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source function argument value qty = 2 at line 24
-  - source function argument value sku = "A" at line 24
-  - source assertion argument value 1 at line 25
+  - source function argument value qty = 2 at src/lib.rs:24
+  - source function argument value sku = "A" at src/lib.rs:24
+  - source assertion argument value 1 at src/lib.rs:25
 
 Weakness
   - No strong discriminator was detected

@@ -31,9 +31,9 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no field-value assertion observes the constructed field
   - local flow reaches constructed field: total: a + b (line 12)
   - related test src/lib.rs:20 pins_second_row uses strong exact value oracle: assert_eq!(rows[1].total, 33); misses: no assertion pins `total: a + b`
-  - source function argument value a = 30 at line 21
-  - source function argument value b = 3 at line 21
-  - source assertion argument value 33 at line 22
+  - source function argument value a = 30 at src/lib.rs:21
+  - source function argument value b = 3 at src/lib.rs:21
+  - source assertion argument value 33 at src/lib.rs:22
 
 Weakness
   - No strong discriminator was detected
@@ -69,9 +69,9 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: a non-plain Drop on the returned type may exit while unwinding from a failed assertion (observation_unverified)
   - local flow reaches returned value: [Row { total: 0 }, Row { total: a + b }] (line 12)
   - related test src/lib.rs:20 pins_second_row uses strong exact value oracle: assert_eq!(rows[1].total, 33); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source function argument value a = 30 at line 21
-  - source function argument value b = 3 at line 21
-  - source assertion argument value 33 at line 22
+  - source function argument value a = 30 at src/lib.rs:21
+  - source function argument value b = 3 at src/lib.rs:21
+  - source assertion argument value 33 at src/lib.rs:22
 
 Weakness
   - No strong discriminator was detected

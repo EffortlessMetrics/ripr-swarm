@@ -30,7 +30,7 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches returned value: 7 (line 1)
   - related test src/test_support.rs:10 observes_answer uses strong exact value oracle: ensure!(actual == 8); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source assertion argument value 8 at line 5
+  - source assertion argument value 8 at src/test_support.rs:5
 
 Weakness
   - No strong discriminator was detected

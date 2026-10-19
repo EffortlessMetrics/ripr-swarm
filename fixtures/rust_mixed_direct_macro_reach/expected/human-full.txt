@@ -31,9 +31,9 @@ Evidence
   - local flow reaches returned value: 3 * x (line 14)
   - related test src/lib.rs:27 inner_is_positive uses weak relational check oracle: assert!(inner(2) > 0); misses: assertion too weak to tell the old behavior from the new
   - related test src/lib.rs:22 outer_triples uses strong exact value oracle: assert_eq!(outer(4), 12); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source assertion argument value 12 at line 23
-  - source assertion argument value 4 at line 23
-  - source function argument value x = 2 at line 28
+  - source assertion argument value 12 at src/lib.rs:23
+  - source assertion argument value 4 at src/lib.rs:23
+  - source function argument value x = 2 at src/lib.rs:28
 
 Weakness
   - A test may reach this change through a Rust macro path ripr cannot expand. The macro edge is unresolved; this is a named limitation, not a coverage claim

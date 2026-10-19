@@ -31,10 +31,10 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches error variant: let n = rdr.read(&mut buf)? (line 5)
   - related test src/lib.rs:14 reads_successfully uses strong exact value oracle: assert_eq!(rdr.len(), 10, "Err(ReadError::Closed)"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source assertion argument value 10 at line 17
-  - source assertion argument value "Err(ReadError::Closed)" at line 18
-  - source assertion argument value 10 at line 18
-  - source enum variant value ReadError::Closed at line 18
+  - source assertion argument value 10 at src/lib.rs:17
+  - source assertion argument value "Err(ReadError::Closed)" at src/lib.rs:18
+  - source assertion argument value 10 at src/lib.rs:18
+  - source enum variant value ReadError::Closed at src/lib.rs:18
 
 Weakness
   - No exact error variant discriminator was detected
@@ -70,10 +70,10 @@ Evidence
   - discriminator unknown: Assertions exist, but oracle strength is unknown
   - local flow reaches unknown sink (line 5)
   - related test src/lib.rs:14 reads_successfully uses unknown exact value oracle: assert_eq!(rdr.len(), 10, "Err(ReadError::Closed)");
-  - source assertion argument value 10 at line 17
-  - source assertion argument value "Err(ReadError::Closed)" at line 18
-  - source assertion argument value 10 at line 18
-  - source enum variant value ReadError::Closed at line 18
+  - source assertion argument value 10 at src/lib.rs:17
+  - source assertion argument value "Err(ReadError::Closed)" at src/lib.rs:18
+  - source assertion argument value 10 at src/lib.rs:18
+  - source enum variant value ReadError::Closed at src/lib.rs:18
 
 Weakness
   - No strong discriminator was detected

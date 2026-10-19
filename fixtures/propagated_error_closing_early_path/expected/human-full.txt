@@ -36,8 +36,8 @@ Evidence
         Failure::Missing
     )? (line 6)
   - related test src/lib.rs:16 observes_only_the_early_error uses strong exact error variant oracle: assert_eq!(check(true, None), Err(Failure::Missing)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source enum variant value Failure::Missing at line 17
-  - source function argument value early = true at line 17
+  - source enum variant value Failure::Missing at src/lib.rs:17
+  - source function argument value early = true at src/lib.rs:17
 
 Weakness
   - No exact error variant discriminator was detected
@@ -73,8 +73,8 @@ Evidence
   - discriminator unknown: Assertions exist, but oracle strength is unknown
   - local flow reaches unknown sink (line 8)
   - related test src/lib.rs:16 observes_only_the_early_error uses unknown exact error variant oracle: assert_eq!(check(true, None), Err(Failure::Missing));
-  - source enum variant value Failure::Missing at line 17
-  - source function argument value early = true at line 17
+  - source enum variant value Failure::Missing at src/lib.rs:17
+  - source function argument value early = true at src/lib.rs:17
 
 Weakness
   - No strong discriminator was detected

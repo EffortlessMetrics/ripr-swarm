@@ -31,8 +31,8 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches match arm result: Mode::Warm => (line 9)
   - related test src/heaters.rs:19 cold_delay uses strong exact value oracle: assert_eq!(delay(Mode::Cold), 50); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source assertion argument value 50 at line 20
-  - source enum variant value Mode::Cold at line 20
+  - source assertion argument value 50 at src/heaters.rs:20
+  - source enum variant value Mode::Cold at src/heaters.rs:20
 
 Weakness
   - No strong discriminator was detected

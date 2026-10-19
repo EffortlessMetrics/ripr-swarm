@@ -31,7 +31,7 @@ Evidence
   - discriminator no: No assertion found on related tests
   - local flow reaches call effect: try_parse_summary(raw).map_err(Into::into) (line 39)
   - related test tests/errors.rs:4 try_parse_summary_with_foreign_pin misses: asserts, but not on the changed value; checked `if !matches!(result, Err(_)) { return Err("callee should fail closed".into()); }`
-  - source enum variant value OtherError::MalformedSource at line 10
+  - source enum variant value OtherError::MalformedSource at tests/errors.rs:10
 
 Weakness
   - No relevant oracle was detected
@@ -73,7 +73,7 @@ return Err("callee should fail closed".into());
   - related test tests/errors.rs:4 try_parse_summary_with_foreign_pin uses strong exact error variant oracle: if !matches!(other, Err(OtherError::MalformedSource)) {
 return Err("foreign pin should observe OtherError::MalformedSource".into());
 }; misses: no call to the changed code found; linked by name only
-  - source enum variant value OtherError::MalformedSource at line 10
+  - source enum variant value OtherError::MalformedSource at tests/errors.rs:10
 
 Weakness
   - No relevant oracle was detected

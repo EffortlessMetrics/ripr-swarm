@@ -34,15 +34,15 @@ Evidence
   - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.1, "receipt-1=head_passed join=request_identity_v2", "request_identity_v2"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.2, vec!["request-1".to_string()]); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.3, vec!["receipt-1".to_string()]); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source function argument value plan_status = "planned" at line 8
-  - source function argument value task_id = "different-task" at line 8
-  - source assertion argument value "head_passed" at line 9
-  - source assertion argument value 0 at line 9
-  - source assertion argument value "receipt-1=head_passed join=request_identity_v2" at line 10
-  - source assertion argument value "request_identity_v2" at line 10
-  - source assertion argument value 1 at line 10
-  - source assertion argument value "request-1" at line 11
-  - source values (showing 8 of 11; full list in --format json)
+  - source function argument value plan_status = "planned" at tests/projection.rs:8
+  - source function argument value task_id = "different-task" at tests/projection.rs:8
+  - source assertion argument value "head_passed" at tests/projection.rs:9
+  - source assertion argument value 0 at tests/projection.rs:9
+  - source assertion argument value "receipt-1=head_passed join=request_identity_v2" at tests/projection.rs:10
+  - source assertion argument value "request_identity_v2" at tests/projection.rs:10
+  - source assertion argument value 1 at tests/projection.rs:10
+  - source assertion argument value "request-1" at tests/projection.rs:11
+  - source values (showing 8 of 11 read from related tests; full list in --format json)
 
 Weakness
   - No strong discriminator was detected
@@ -81,15 +81,15 @@ Evidence
   - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.1, "receipt-1=head_passed join=request_identity_v2", "request_identity_v2"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.2, vec!["request-1".to_string()]); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related test tests/projection.rs:4 terminal_projection_0 uses strong exact value oracle: assert_eq!(terminal.3, vec!["receipt-1".to_string()]); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source function argument value plan_status = "planned" at line 8
-  - source function argument value task_id = "different-task" at line 8
-  - source assertion argument value "head_passed" at line 9
-  - source assertion argument value 0 at line 9
-  - source assertion argument value "receipt-1=head_passed join=request_identity_v2" at line 10
-  - source assertion argument value "request_identity_v2" at line 10
-  - source assertion argument value 1 at line 10
-  - source assertion argument value "request-1" at line 11
-  - source values (showing 8 of 11; full list in --format json)
+  - source function argument value plan_status = "planned" at tests/projection.rs:8
+  - source function argument value task_id = "different-task" at tests/projection.rs:8
+  - source assertion argument value "head_passed" at tests/projection.rs:9
+  - source assertion argument value 0 at tests/projection.rs:9
+  - source assertion argument value "receipt-1=head_passed join=request_identity_v2" at tests/projection.rs:10
+  - source assertion argument value "request_identity_v2" at tests/projection.rs:10
+  - source assertion argument value 1 at tests/projection.rs:10
+  - source assertion argument value "request-1" at tests/projection.rs:11
+  - source values (showing 8 of 11 read from related tests; full list in --format json)
 
 Weakness
   - No strong discriminator was detected

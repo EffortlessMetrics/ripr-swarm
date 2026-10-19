@@ -15,8 +15,8 @@ Shared evidence and guidance
   E5 [findings 1, 2]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   E6 [findings 1, 2]: local flow reaches error variant: Result::Err(ParseError::TooLong) (line 10)
   E7 [findings 1, 2]: related test tests/validation.rs:8 valid_input_returns_valid uses strong exact value oracle: assert_eq!(validate_or_default("hello"), Ok("valid")); misses: no assertion pins `ParseError::TooLong`
-  E8 [findings 1, 2]: source assertion argument value "valid" at line 9
-  E9 [findings 1, 2]: source function argument value input = "hello" at line 9
+  E8 [findings 1, 2]: source assertion argument value "valid" at tests/validation.rs:9
+  E9 [findings 1, 2]: source function argument value input = "hello" at tests/validation.rs:9
 
 Finding 1: WARNING ./src/lib.rs:10
   id: probe:src_lib.rs:error_path:162493bf

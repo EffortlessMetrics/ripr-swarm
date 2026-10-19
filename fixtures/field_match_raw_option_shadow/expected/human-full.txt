@@ -13,8 +13,8 @@ Shared evidence and guidance
   E3 [findings 2, 3]: observation yes: A related test observes a value or effect near the changed behavior
   E4 [findings 2, 3]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   E5 [findings 2, 3]: related test src/lib.rs:15 sibling_only uses strong whole object equality oracle: assert_eq!(charge(&Lease { settled_elapsed_ms: None, timeout_sec: 600 }), 2); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  E6 [findings 2, 3]: source assertion argument value 2 at line 16
-  E7 [findings 2, 3]: source function argument value lease = 600 at line 16
+  E6 [findings 2, 3]: source assertion argument value 2 at src/lib.rs:16
+  E7 [findings 2, 3]: source function argument value lease = 600 at src/lib.rs:16
 
 Finding 1: WARNING ./src/lib.rs:6
   id: probe:src_lib.rs:match_arm:23efc786
@@ -35,8 +35,8 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches match arm result: None => (line 6)
   - related test src/lib.rs:15 sibling_only uses strong whole object equality oracle: assert_eq!(charge(&Lease { settled_elapsed_ms: None, timeout_sec: 600 }), 2); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source assertion argument value 2 at line 16
-  - source function argument value lease = 600 at line 16
+  - source assertion argument value 2 at src/lib.rs:16
+  - source function argument value lease = 600 at src/lib.rs:16
 Weakness
   - No strong discriminator was detected
 Static limitation

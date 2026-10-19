@@ -31,9 +31,9 @@ Evidence
   - discriminator yes: Strong oracle found: exact value or pattern assertion
   - local flow reaches constructed field: missing_duration_count: total - known (line 5)
   - related test src/lib.rs:12 pin uses strong exact value oracle: assert_eq!(projected(20, 1), 19);
-  - source assertion argument value 1 at line 12
-  - source assertion argument value 19 at line 12
-  - source assertion argument value 20 at line 12
+  - source assertion argument value 1 at src/lib.rs:12
+  - source assertion argument value 19 at src/lib.rs:12
+  - source assertion argument value 20 at src/lib.rs:12
 Drill in:
   ripr explain --root <cwd>/fixtures/one_hop_field_projection/input --diff <cwd>/fixtures/one_hop_field_projection/diff.patch --mode fast probe:src_lib.rs:field_construction:42ec5018
   ripr context --root <cwd>/fixtures/one_hop_field_projection/input --diff <cwd>/fixtures/one_hop_field_projection/diff.patch --mode fast --at probe:src_lib.rs:field_construction:42ec5018

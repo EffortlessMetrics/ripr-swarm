@@ -15,9 +15,9 @@ Shared evidence and guidance
   E5 [findings 1, 2]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   E6 [findings 1, 2]: local flow reaches state write: self.stock.insert(sku.to_owned(), qty) (line 13)
   E7 [findings 1, 2]: related test src/lib.rs:22 overwrite_keeps_one_entry uses strong exact value oracle: assert_eq!(shelf.stock.len(), 1); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  E8 [findings 1, 2]: source function argument value qty = 2 at line 25
-  E9 [findings 1, 2]: source function argument value sku = "A" at line 25
-  E10 [findings 1, 2]: source assertion argument value 1 at line 26
+  E8 [findings 1, 2]: source function argument value qty = 2 at src/lib.rs:25
+  E9 [findings 1, 2]: source function argument value sku = "A" at src/lib.rs:25
+  E10 [findings 1, 2]: source assertion argument value 1 at src/lib.rs:26
 
 Finding 1: WARNING ./src/lib.rs:13
   id: probe:src_lib.rs:call_deletion:930be5e9

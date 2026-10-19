@@ -31,8 +31,8 @@ Evidence
   - discriminator yes: Strong oracle found: exact value or pattern assertion
   - local flow reaches returned value: value + 1 (line 2)
   - related test src/lib.rs:8 observes_score uses strong exact value oracle: assert!(matches!(value, 2));
-  - source function argument value value = 1 at line 9
-  - source assertion argument value 2 at line 10
+  - source function argument value value = 1 at src/lib.rs:9
+  - source assertion argument value 2 at src/lib.rs:10
 Drill in:
   ripr explain --root <cwd>/fixtures/wildcard_oracle_exact_original/input --diff <cwd>/fixtures/wildcard_oracle_exact_original/diff.patch --mode fast probe:src_lib.rs:return_value:519eff0d
   ripr context --root <cwd>/fixtures/wildcard_oracle_exact_original/input --diff <cwd>/fixtures/wildcard_oracle_exact_original/diff.patch --mode fast --at probe:src_lib.rs:return_value:519eff0d

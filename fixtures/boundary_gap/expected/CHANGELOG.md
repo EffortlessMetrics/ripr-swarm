@@ -976,3 +976,16 @@ The unchanged-after-attempt before/after corpus generation moves from 1.83 to
 1.84 for check-helper argument pins (RIPR-SPEC-0197). Content commitments and
 dependent verify/receipt byte hashes follow that exact change. Routing,
 unchanged movement, incomplete receipt and all tamper controls remain.
+
+## Pending — boundary_gap (25)
+
+Reason:
+RIPR-SPEC-0122: human source-value evidence line names its test file as path:line, and the window line reads 'read from related tests' (#8389)
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

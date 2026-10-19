@@ -31,9 +31,9 @@ Evidence
   - discriminator missing: `capacity == threshold`; related oracle: Strong oracle found: exact value or pattern assertion
   - local flow reaches returned value: capacity - 10 (line 2)
   - related test src/lib.rs:10 above_threshold_gets_reduced uses strong exact value oracle: assert_eq!(result, 90); misses: no test input reaches `capacity == threshold`
-  - source function argument value capacity = 100 at line 11
-  - source function argument value threshold = 50 at line 11
-  - source assertion argument value 90 at line 12
+  - source function argument value capacity = 100 at src/lib.rs:11
+  - source function argument value threshold = 50 at src/lib.rs:11
+  - source assertion argument value 90 at src/lib.rs:12
 
 Weakness
   - missing discriminator capacity == threshold: No related test call uses capacity equal to threshold; observed capacity values: 100; observed threshold values: 50

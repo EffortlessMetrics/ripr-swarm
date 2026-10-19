@@ -31,7 +31,7 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches unknown sink (line 15)
   - related test tests/lower.rs:4 lower_ast_only_checks_name uses strong exact value oracle: assert_eq!(statement.name, "item");
-  - source assertion argument value "item" at line 6
+  - source assertion argument value "item" at tests/lower.rs:6
 
 Weakness
   - No clear propagation path from changed behavior to an observable sink

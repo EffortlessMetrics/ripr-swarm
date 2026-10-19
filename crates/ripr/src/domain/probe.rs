@@ -343,6 +343,11 @@ impl ValueContext {
 /// consumers recover it via `finding.assertion_texts[line.to_string()]`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ValueFact {
+    /// Test file the value was read from, when the producer knows it. The
+    /// human renderer prints it next to `line`; check JSON does not emit it,
+    /// so the report schema is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<PathBuf>,
     pub line: usize,
     pub text: String,
     pub value: String,

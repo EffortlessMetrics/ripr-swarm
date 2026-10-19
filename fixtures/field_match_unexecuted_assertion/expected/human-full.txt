@@ -13,9 +13,9 @@ Shared evidence and guidance
   E3 [findings 2, 3]: observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   E4 [findings 2, 3]: discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   E5 [findings 2, 3]: related test src/lib.rs:10 selected uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
-  E6 [findings 2, 3]: source assertion argument value 1001 at line 11
-  E7 [findings 2, 3]: source function argument value lease = 1001 at line 11
-  E8 [findings 2, 3]: source function argument value lease = 600 at line 11
+  E6 [findings 2, 3]: source assertion argument value 1001 at src/lib.rs:11
+  E7 [findings 2, 3]: source function argument value lease = 1001 at src/lib.rs:11
+  E8 [findings 2, 3]: source function argument value lease = 600 at src/lib.rs:11
 
 Finding 1: WARNING ./src/lib.rs:4
   id: probe:src_lib.rs:match_arm:afe43b21
@@ -37,9 +37,9 @@ Evidence
   - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - local flow reaches match arm result: Some(ms) => (line 4)
   - related test src/lib.rs:10 selected uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
-  - source assertion argument value 1001 at line 11
-  - source function argument value lease = 1001 at line 11
-  - source function argument value lease = 600 at line 11
+  - source assertion argument value 1001 at src/lib.rs:11
+  - source function argument value lease = 1001 at src/lib.rs:11
+  - source function argument value lease = 600 at src/lib.rs:11
 Weakness
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - No strong discriminator was detected

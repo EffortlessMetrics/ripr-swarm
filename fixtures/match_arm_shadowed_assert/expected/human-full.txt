@@ -31,7 +31,7 @@ Evidence
   - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - local flow reaches match arm result: _ if arg.starts_with('-') => (line 61)
   - related test src/tests.rs:3 checks_unknown uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
-  - source enum variant value super::SelectionRequest::Unresolved at line 6
+  - source enum variant value super::SelectionRequest::Unresolved at src/tests.rs:6
 
 Weakness
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)

@@ -32,11 +32,11 @@ Evidence
   - local flow reaches returned value: high (line 15)
   - related test src/lib.rs:23 boundary uses strong whole object equality oracle: assert_eq!(make(10), Cfg { n: 1 }); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - related test src/lib.rs:28 far uses strong whole object equality oracle: assert_eq!(make(11), Cfg { n: 1 }); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - source assertion argument value 1 at line 24
-  - source function argument value x = 10 at line 24
+  - source assertion argument value 1 at src/lib.rs:24
+  - source function argument value x = 10 at src/lib.rs:24
   - source function argument value x == 10 at line 24
-  - source assertion argument value 1 at line 29
-  - source function argument value x = 11 at line 29
+  - source assertion argument value 1 at src/lib.rs:29
+  - source function argument value x = 11 at src/lib.rs:29
 
 Weakness
   - No strong discriminator was detected

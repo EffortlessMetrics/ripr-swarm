@@ -31,9 +31,9 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches constructed field: n: x * 3 (line 14)
   - related test src/lib.rs:25 makes uses strong whole object equality oracle: assert_eq!(make(true, 4), Cfg { n: 12 }); misses: no assertion pins `n: x * 3`
-  - source assertion argument value 12 at line 26
-  - source function argument value flag = true at line 26
-  - source function argument value x = 4 at line 26
+  - source assertion argument value 12 at src/lib.rs:26
+  - source function argument value flag = true at src/lib.rs:26
+  - source function argument value x = 4 at src/lib.rs:26
 
 Weakness
   - No strong discriminator was detected

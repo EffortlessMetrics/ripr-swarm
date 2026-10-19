@@ -31,7 +31,7 @@ Evidence
   - discriminator weak: Only relational oracle found; it may not discriminate the changed value exactly
   - local flow reaches returned value: value + 2 (line 2)
   - related test src/lib.rs:8 observes_score uses weak relational check oracle: assert!(matches!(value, _)); misses: assertion too weak to tell the old behavior from the new
-  - source function argument value value = 1 at line 9
+  - source function argument value value = 1 at src/lib.rs:9
 
 Weakness
   - No strong discriminator was detected

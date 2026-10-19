@@ -15,8 +15,8 @@ Shared evidence and guidance
   E5 [findings 1, 2]: discriminator yes: Strong oracle found: exact error variant assertion
   E6 [findings 1, 2]: local flow reaches error variant: Result::Err(AuthError::RevokedToken) (line 7)
   E7 [findings 1, 2]: related test tests/errors.rs:4 empty_token_rejects_with_revoked_token uses strong exact error variant oracle: assert!(matches!(authenticate(""), Err(AuthError::RevokedToken)));
-  E8 [findings 1, 2]: source enum variant value AuthError::RevokedToken at line 5
-  E9 [findings 1, 2]: source function argument value token = "" at line 5
+  E8 [findings 1, 2]: source enum variant value AuthError::RevokedToken at tests/errors.rs:5
+  E9 [findings 1, 2]: source function argument value token = "" at tests/errors.rs:5
 
 Finding 1: INFO ./src/lib.rs:7
   id: probe:src_lib.rs:error_path:99b06ce7
