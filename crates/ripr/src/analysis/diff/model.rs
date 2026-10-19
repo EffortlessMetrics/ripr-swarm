@@ -248,7 +248,12 @@ impl ChangedFile {
             let unpaired = |paired: &BTreeSet<usize>, range: std::ops::Range<usize>| {
                 range.filter(|i| !paired.contains(i)).count()
             };
+            // Only statements (`...;`) are order-sensitive here; a field or
+            // item line (`end: span.end(),`) may move within its literal.
             if candidates.iter().any(|c| {
+                if !added[c.0].text.trim_end().ends_with(';') {
+                    return false;
+                }
                 let removed_before = unpaired(&paired_removed, 0..c.1);
                 let removed_after = unpaired(&paired_removed, c.1 + 1..removed.len());
                 let added_before = unpaired(&paired_added, 0..c.0);
