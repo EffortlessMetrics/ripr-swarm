@@ -1393,14 +1393,18 @@ fn unavailable_workspace_evidence_names_restart_before_any_refresh() -> Result<(
             }
         }
         requests.push(line(json!({
+            "jsonrpc": "2.0", "id": "status-resource", "method": "resources/read",
+            "params": { "_meta": current_meta(), "uri": "ripr://workspace/status" }
+        }))?);
+        requests.push(line(json!({
             "jsonrpc": "2.0", "id": "survivor", "method": "tools/call",
             "params": { "_meta": current_meta(), "name": "ripr_workspace_status", "arguments": {} }
         }))?);
         let output = run_mcp(root, &[&requests.concat()])?;
         let responses = response_lines(&output)?;
-        if responses.len() != 18 {
+        if responses.len() != 19 {
             return Err(format!(
-                "expected 18 replies for {root_error}, got {}",
+                "expected 19 replies for {root_error}, got {}",
                 responses.len()
             ));
         }
@@ -1413,9 +1417,9 @@ fn unavailable_workspace_evidence_names_restart_before_any_refresh() -> Result<(
                     .map(|id| (id, response))
             })
             .collect();
-        if by_id.len() != 18 {
+        if by_id.len() != 19 {
             return Err(format!(
-                "expected 18 unique reply ids for {root_error}, got {}",
+                "expected 19 unique reply ids for {root_error}, got {}",
                 by_id.len()
             ));
         }
@@ -1456,6 +1460,32 @@ fn unavailable_workspace_evidence_names_restart_before_any_refresh() -> Result<(
                     "fixture or survivor state lost {root_error}: {reply}"
                 ));
             }
+        }
+        // #8737: the status resource carries the same restart recovery as the
+        // tool result, not only the bare `workspace_state: unavailable`
+        // document with its opaque error code.
+        let status_resource = by_id
+            .get("status-resource")
+            .ok_or_else(|| "missing status-resource reply".to_string())?;
+        if status_resource.pointer("/result/contents/0/text").is_none() {
+            return Err(format!(
+                "status resource lost its document payload: {status_resource}"
+            ));
+        }
+        let resource_recovery = status_resource
+            .pointer("/result/contents/1/text")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                format!(
+                    "unavailable status resource must carry the restart recovery: {status_resource}"
+                )
+            })?;
+        if !resource_recovery.contains("Workspace unavailable")
+            || !resource_recovery.contains("ripr mcp --stdio --root")
+        {
+            return Err(format!(
+                "status resource recovery must name the cause and restart route: {status_resource}"
+            ));
         }
         let recovery = "restart the server with `ripr mcp --stdio --root <repository>`";
         let refresh = by_id

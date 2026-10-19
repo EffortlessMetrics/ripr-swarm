@@ -78,7 +78,7 @@ const GET_REPAIR_ATTEMPT_TOOL_DESCRIPTION: &str = "Read one repair transaction b
 
 const GET_RECEIPT_STATUS_TOOL_DESCRIPTION: &str = "Read the current receipt state for one attempt identity (receipt ids are attempt-bound: one retained receipt per durable attempt). The status vocabulary is awaiting_edit, after_pending, verification_pending, improved, closed, unchanged, regressed, limited, stale, and invalid. Session transactions report awaiting_edit with an explicit null receipt: RIPR performs no verification and issues no receipt, so the external client owns the edit, the verification execution, and the receipt under its own authority. Durable attempts report their producer state mapped onto the same vocabulary, and a finished attempt with a digest-bound terminal receipt projects the receipt document with its exact byte bindings, the shared receipt-lifecycle state, and a terminal status owned by the same AgentReceiptReading as CLI status: advisory plus improved static grip reports improved, complete changed stays open as limited, incomplete producer completeness stays limited except recorded stale or gap-mismatch lifecycle states retain stale or invalid, and invalid producer status stays invalid; advisory regression preserves the trimmed, case-insensitive legacy static_movement.state fallback; receipt presence alone never reports closed; a manifest or receipt that fails canonical validation reports invalid or attempt_invalid rather than a reconstructed state. Status binds exact before/after/verify bytes, repository identity, the candidate item, and currentness, re-validated on every read; nothing is joined by mtime or latest-file convention. Static movement and focused runtime test execution remain separate evidence axes — this document reports static receipt state only. This tool never edits source, never launches a process, and never executes verification or mutation commands. Equivalent reads: the tool ripr_get_receipt_status and the resource ripr://receipt/{receipt_id} return the same document.";
 
-const STATUS_RESOURCE_DESCRIPTION: &str = "Bounded, read-only workspace discovery, authority, and session status: repository-root discovery state, configuration presence, launch-trust and authority facts, and the current analysis session (attempt state, last completed snapshot identity, typed AnalysisOutcome, profile facts). No gap evidence detail is exposed here; run ripr_refresh, then read items through ripr_get_gap.";
+const STATUS_RESOURCE_DESCRIPTION: &str = "Bounded, read-only workspace discovery, authority, and session status: repository-root discovery state, configuration presence, launch-trust and authority facts, and the current analysis session (attempt state, last completed snapshot identity, typed AnalysisOutcome, profile facts). No gap evidence detail is exposed here; run ripr_refresh, then read items through ripr_get_gap. On an unavailable root the payload carries the same recovery sentence as the ripr_workspace_status tool result as a second text content entry, naming the cause and the restart route (`ripr mcp --stdio --root <repository>).";
 
 const SNAPSHOT_RESOURCE_TEMPLATE_DESCRIPTION: &str = "Bounded evidence for one completed snapshot: the snapshot identity, the typed AnalysisOutcome, the full canonical item index (identities and locations, not evidence), and the stored bounded-selection summary. Read one item's complete evidence through ripr_get_gap or ripr://gap/{canonical_id}. An unknown or superseded snapshot id is rejected with a typed no_snapshot or stale_snapshot failure. An unavailable root fails closed with workspace_unavailable and recovery to restart the server with `ripr mcp --stdio --root <repository>`.";
 
@@ -374,7 +374,13 @@ pub(super) fn unavailable_recovery(status: &WorkspaceStatus) -> Option<String> {
     ))
 }
 
-/// The `ripr://workspace/status` resource payload.
+/// The `ripr://workspace/status` resource payload. On an unavailable root
+/// the same recovery sentence the tool result appends is carried as a
+/// second text content entry (#8737): the JSON document itself stays the
+/// bare status projection, but the restart route is no longer tool-only.
+/// The entry rides inside `contents` because the read path round-trips the
+/// payload through the SDK's typed resource result, which drops unknown
+/// top-level fields.
 pub(super) fn status_resource_result(
     status: &WorkspaceStatus,
     session: &WorkspaceSession,
@@ -391,13 +397,19 @@ pub(super) fn status_resource_result(
     );
     let text = serde_json::to_string_pretty(&document)
         .map_err(|error| format!("render workspace status: {error}"))?;
-    Ok(json!({
-        "contents": [{
+    let mut contents = vec![json!({
+        "uri": STATUS_RESOURCE_URI,
+        "mimeType": "application/json",
+        "text": text
+    })];
+    if let Some(recovery) = unavailable_recovery(status) {
+        contents.push(json!({
             "uri": STATUS_RESOURCE_URI,
-            "mimeType": "application/json",
-            "text": text
-        }]
-    }))
+            "mimeType": "text/plain",
+            "text": recovery
+        }));
+    }
+    Ok(json!({ "contents": contents }))
 }
 
 fn status_tool_descriptor() -> Value {
