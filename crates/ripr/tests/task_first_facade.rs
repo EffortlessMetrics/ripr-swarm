@@ -3507,6 +3507,23 @@ fn member_explain_diff_replay_selector_never_reaches_a_sibling_finding() -> Resu
         stderr_text(&negative)
     );
 
+    // A selector already typed workspace-relative is not prefixed twice.
+    let relative = run_ripr(
+        &member,
+        &["explain", "--diff", &sibling_arg, "pkg/src/lib.rs:2"],
+    )?;
+    assert_ne!(
+        relative.status.code(),
+        Some(0),
+        "{}",
+        stderr_text(&relative)
+    );
+    assert!(
+        stderr_text(&relative).contains("no finding matched \"pkg/src/lib.rs:2\""),
+        "{}",
+        stderr_text(&relative)
+    );
+
     // Positive control: with the member's file back, the same selector explains
     // the member's own finding, never the sibling's.
     std::fs::write(member.join("src/lib.rs"), FIXTURE_LIB.replace(">=", ">"))

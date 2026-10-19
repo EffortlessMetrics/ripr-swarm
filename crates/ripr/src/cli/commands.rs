@@ -3255,6 +3255,8 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
         .map(
             |item| match check::bind_member_selector_item(prefix.as_deref(), &input.root, &item) {
                 Err(_) if replay => Ok(match prefix.as_deref() {
+                    // Already workspace-relative (typed with the member prefix).
+                    Some(prefix) if item.starts_with(&format!("{prefix}/")) => item,
                     Some(prefix) => format!("{prefix}/{}", item.trim_start_matches("./")),
                     None => item,
                 }),
