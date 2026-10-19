@@ -718,46 +718,72 @@ fn is_behavior_neutral_rewrap(after: &[&str], before: &[&str]) -> bool {
     respelled && neutral_spelling(&after) == neutral_spelling(&before)
 }
 
-/// `lines` joined with whitespace collapsed, and dropped beside punctuation so
-/// a wrap point does not matter (`=\n  x` and `= x` read alike).
+/// `lines` joined into one statement: whitespace runs collapse to one space,
+/// and a wrap point drops its space beside an opening or closing bracket, a
+/// comma, a semicolon or a dot, where a wrap never changes the tokens
+/// (`foo(\n  a)` and `foo(a)` read alike). Interior spacing is kept, so
+/// `a & &b` and `a && b` stay different.
 fn join_tokens(lines: &[&str]) -> String {
-    let joined = lines
-        .iter()
-        .map(|line| line.trim())
-        .collect::<Vec<_>>()
-        .join(" ");
-    let word = |ch: char| ch.is_alphanumeric() || ch == '_';
-    let chars = joined.chars().collect::<Vec<_>>();
-    let mut out = String::with_capacity(joined.len());
-    let mut previous: Option<char> = None;
-    for (at, &ch) in chars.iter().enumerate() {
-        if ch.is_whitespace() {
-            let next = chars[at + 1..].iter().find(|c| !c.is_whitespace());
-            let between_words = previous.is_some_and(word) && next.is_some_and(|next| word(*next));
-            if between_words && previous != Some(' ') {
-                out.push(' ');
-                previous = Some(' ');
-            }
+    let mut out = String::new();
+    for line in lines {
+        let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
+        let Some(first) = line.chars().next() else {
             continue;
+        };
+        if let Some(last) = out.chars().next_back() {
+            if !(matches!(last, '(' | '[' | '{' | '.')
+                || matches!(first, ')' | ']' | '}' | '.' | ',' | ';'))
+            {
+                out.push(' ');
+            }
         }
-        out.push(ch);
-        previous = Some(ch);
+        out.push_str(&line);
     }
     out
 }
 
-/// 1-based lines of `source` that hold string, character or comment text,
-/// read from the whole file so a continuation line inside a multi-line
-/// literal counts (the per-line quote check cannot see it).
+/// 1-based lines of `source` that hold string or comment text, read from the
+/// whole file so a continuation line inside a multi-line literal counts (the
+/// per-line quote check cannot see it). A line whose only masked spans are
+/// character literals (`'x'`) holds code, which the mask also erases.
 fn prose_lines(source: &str) -> std::collections::BTreeSet<usize> {
     let masked = mask_comments_and_strings(source);
     source
         .lines()
         .zip(masked.lines())
         .enumerate()
-        .filter(|(_, (original, masked))| original != masked)
+        .filter(|(_, (original, masked))| {
+            original != masked && !only_char_literals(original, masked)
+        })
         .map(|(at, _)| at + 1)
         .collect()
+}
+
+/// Whether every span the mask erased from `original` is shaped like a
+/// character literal: quote, up to a dozen bytes without a double quote,
+/// quote.
+fn only_char_literals(original: &str, masked: &str) -> bool {
+    let (original, masked) = (original.as_bytes(), masked.as_bytes());
+    let mut at = 0;
+    while at < original.len() {
+        if original.get(at) == masked.get(at) {
+            at += 1;
+            continue;
+        }
+        let start = at;
+        while at < original.len() && original.get(at) != masked.get(at) {
+            at += 1;
+        }
+        let span = &original[start..at];
+        let char_shaped = span.len() <= 12
+            && span.first() == Some(&b'\'')
+            && span.last() == Some(&b'\'')
+            && !span.contains(&b'"');
+        if !char_shaped {
+            return false;
+        }
+    }
+    true
 }
 
 fn neutral_spelling(line: &str) -> String {
@@ -2121,6 +2147,54 @@ mod tests {
         );
         assert!(code.is_empty(), "{code:?}");
         assert!(!inside.is_empty(), "string text keeps its probe");
+    }
+
+    /// A character literal is masked like a string, but it is code.
+    #[test]
+    fn a_char_literal_line_still_reads_as_a_respelling() {
+        let code = block_probes(
+            "let c = 'x'; let m = i32::MAX;\n",
+            &[(1, "let c = 'x'; let m = i32::MAX;")],
+            &[(1, 1, "let c = 'x'; let m = core::i32::MAX;")],
+        );
+        assert!(code.is_empty(), "{code:?}");
+        let prose = prose_lines("let s = \"a\"; let c = 'x';\nlet c = 'x';\n");
+        assert_eq!(prose, std::collections::BTreeSet::from([1]));
+    }
+
+    #[test]
+    fn rewrap_joins_wrap_points_without_merging_operators() {
+        assert!(is_behavior_neutral_rewrap(
+            &["fn f() -> Foo<T> {"],
+            &["fn f() -> Foo<'_,", "    T> {"],
+        ));
+        assert!(!is_behavior_neutral_rewrap(
+            &["let m = a && b + i32::MAX;"],
+            &["let m = a & &b", " + core::i32::MAX;"],
+        ));
+    }
+
+    /// Old-file lines shift against new-side ones, and a prose line on only
+    /// one side keeps the block probed.
+    #[test]
+    fn a_prose_line_on_one_side_keeps_a_shifted_rewrap_probed() {
+        let source = "fn a() {}\nfn b() {}\nlet m = i32::MAX;\n";
+        let neutral = block_probes(
+            source,
+            &[(3, "let m = i32::MAX;")],
+            &[(9, 3, "let m ="), (10, 3, "    core::i32::MAX;")],
+        );
+        assert!(neutral.is_empty(), "{neutral:?}");
+        let string_source = "fn a() {}\nfn b() {}\nlet m = i32::MAX;\n";
+        let kept = block_probes(
+            string_source,
+            &[(3, "let m = i32::MAX;")],
+            &[(9, 3, "let m = \"x\" +"), (10, 3, "    core::i32::MAX;")],
+        );
+        assert!(
+            !kept.is_empty(),
+            "a quote on the removed side keeps the probe"
+        );
     }
 
     #[test]
