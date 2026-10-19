@@ -36,10 +36,15 @@ pub(crate) fn is_covered_by_instrument_failure(error: &str) -> bool {
     error.contains(INSTRUMENT_FAILURE_PHRASE)
 }
 
+/// The lock line, only while cargo was still blocked on it: cargo keeps the
+/// line after it acquires the lock and goes on to compile, so a lock line
+/// followed by any other output is a stale mention, not a lock wait.
 fn lock_wait_note(stderr: &str) -> Option<&str> {
     stderr
         .lines()
-        .find(|line| line.contains(CARGO_LOCK_WAIT_MARKER))
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .filter(|line| line.contains(CARGO_LOCK_WAIT_MARKER))
 }
 
 /// Run `capture`, retrying while the only observed cause of a timeout is a
@@ -51,13 +56,21 @@ fn capture_past_lock_wait(
 ) -> Result<TimedOutput, String> {
     let mut attempts = 0;
     loop {
-        let output = capture(spawn)?;
+        let mut output = capture(spawn)?;
         if output.timed_out
             && lock_wait_note(&output.stderr).is_some()
             && attempts < LOCK_WAIT_RETRIES
         {
             attempts += 1;
             continue;
+        }
+        if attempts > 0 {
+            // Retry history, kept ahead of cargo's own output so the
+            // last-line lock check above is unaffected.
+            output.stderr = format!(
+                "xtask: retried {attempts} time(s) while blocked on a cargo lock (final attempt took {:?})\n{}",
+                output.duration, output.stderr
+            );
         }
         return Ok(output);
     }
@@ -1642,6 +1655,29 @@ mod tests {
         let (_, _, stderr) = enumeration_result(output, TEST_COVERED_BY_LIST_TIMEOUT);
         if calls != 1 || !stderr.starts_with(COVERED_BY_INSTRUMENT_PREFIX) {
             return Err(format!("real timeout was retried or mislabeled: {calls}"));
+        }
+        // Negative experiment: a stale lock line followed by compile output is
+        // not a lock wait, so it is neither retried nor labeled as one.
+        let mut calls = 0;
+        let output = capture_past_lock_wait(&lock_spawn(), &mut |_| {
+            calls += 1;
+            Ok(timed_output(
+                None,
+                "",
+                "    Blocking waiting for file lock on build directory\n   Compiling xtask v0.1.0\n",
+                true,
+            ))
+        })?;
+        let (_, _, stderr) = enumeration_result(output, TEST_COVERED_BY_LIST_TIMEOUT);
+        if calls != 1 || !stderr.starts_with(COVERED_BY_INSTRUMENT_PREFIX) {
+            return Err(format!(
+                "stale lock line was retried or mislabeled: {calls}: {stderr}"
+            ));
+        }
+        // Retry history is kept in the report text.
+        let output = capture_past_lock_wait(&lock_spawn(), &mut |_| Ok(lock_wait_output(true)))?;
+        if !output.stderr.starts_with("xtask: retried 6 time(s)") {
+            return Err(format!("retry history missing: {}", output.stderr));
         }
         // Both timeouts surface as instrument failures through the validator.
         let commands = [common(4, "cargo test -p xtask slow_filter")];

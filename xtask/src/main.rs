@@ -639,13 +639,53 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
     // slow enumeration) must not hide the later checks, but it is never a pass:
     // the remaining checks run and the instrument failure is returned before
     // any passing report is published.
-    let deferred_instrument_failure = match check_file_policy() {
-        Err(error) if policy::is_covered_by_instrument_failure(&error) => Some(error),
-        other => {
-            other?;
-            None
+    let mut deferred = None;
+    check_file_policy_deferring(&mut deferred)?;
+    let remaining = precommit_policy_remaining(collect_all, preflight_receipt);
+    finish_precommit_policy(deferred, remaining, collect_all)
+}
+
+/// Prefix of a `precommit` failure that is only a deferred file-policy
+/// instrument failure (no source or policy gate failed). `precommit-v2`
+/// classifies exactly these as infrastructure failures.
+const PRECOMMIT_INSTRUMENT_PREFIX: &str =
+    "precommit instrument failure (no source or policy gate failed): ";
+
+/// `check_file_policy`, except that an instrument failure (cargo lock wait or
+/// timeout) is stored in `deferred` instead of returned.
+fn check_file_policy_deferring(deferred: &mut Option<String>) -> Result<(), String> {
+    match check_file_policy() {
+        Err(error) if policy::is_covered_by_instrument_failure(&error) => {
+            *deferred = Some(error);
+            Ok(())
         }
-    };
+        other => other,
+    }
+}
+
+/// A deferred instrument failure never reads as a pass and never hides a real
+/// later failure: both are reported when both occur.
+fn finish_precommit_policy(
+    deferred: Option<String>,
+    remaining: Result<(), String>,
+    collect_all: bool,
+) -> Result<(), String> {
+    match (deferred, remaining) {
+        (None, remaining) => {
+            remaining?;
+            publish_precommit_policy_report(collect_all)
+        }
+        (Some(deferred), Ok(())) => Err(format!("{PRECOMMIT_INSTRUMENT_PREFIX}{deferred}")),
+        (Some(deferred), Err(error)) => Err(format!(
+            "{error}; also check-file-policy hit an instrument failure: {deferred}"
+        )),
+    }
+}
+
+fn precommit_policy_remaining(
+    collect_all: bool,
+    preflight_receipt: Option<std::ffi::OsString>,
+) -> Result<(), String> {
     if !collect_all {
         check_covered_by()?;
         check_executable_files()?;
@@ -693,12 +733,7 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
         check_network_policy()?;
         check_lint_policy()?;
     }
-    if let Some(error) = deferred_instrument_failure {
-        return Err(format!(
-            "precommit ran its remaining checks, but check-file-policy hit an instrument failure and did not pass: {error}"
-        ));
-    }
-    publish_precommit_policy_report(collect_all)
+    Ok(())
 }
 
 /// Output-surface diffs must not reach review with stale goldens (#8421): main
