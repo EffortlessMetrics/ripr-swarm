@@ -2,7 +2,7 @@ use super::super::rust_index::{RustIndex, error_path_twins, find_owner_function}
 use super::SeededProbe;
 use super::expectations::{expected_sinks, required_oracles};
 use super::family::family_for_probe_shape;
-use super::ids::{normalize_expression, repo_probe_id};
+use super::ids::{normalize_rust_expression as normalize_expression, repo_probe_id};
 use crate::analysis::diagnostic_origin::ParserByteSpan;
 use crate::domain::{DeltaKind, Probe, SourceLocation};
 use std::collections::HashMap;

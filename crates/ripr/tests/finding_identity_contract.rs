@@ -1,4 +1,5 @@
 //! Public-path metamorphic controls for the content-addressed finding contract.
+#![cfg(feature = "lang-rust")]
 use ripr::{CheckInput, CheckOutput, Mode, OutputFormat, check_workspace};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -360,5 +361,61 @@ fn duplicate_expression_occurrences_keep_distinct_ids() -> Result<(), String> {
         baseline,
         selected(fixture.check(&[("src/lib.rs", &before, source)])?)
     );
+    Ok(())
+}
+
+#[cfg(all(feature = "lang-python", feature = "lang-typescript"))]
+#[test]
+fn foreign_formatting_does_not_inherit_rust_literal_boundaries() -> Result<(), String> {
+    for (path, sources, previous, expected) in [
+        (
+            "src/subject.py",
+            [
+                "def label(x):\n    return 'x\"y' + x + 'z\"w'\n",
+                "def label(x):\n    return 'x\"y' +  x + 'z\"w'\n",
+            ],
+            "def label(x):\n    return x\n",
+            "probe:src_subject.py:python_preview:c53015c3",
+        ),
+        (
+            "src/subject.ts",
+            [
+                "export function label(x: string): string {\n  return 'x\"y' + x + 'z\"w';\n}\n",
+                "export function label(x: string): string {\n  return 'x\"y' +  x + 'z\"w';\n}\n",
+            ],
+            "export function label(x: string): string {\n  return x;\n}\n",
+            "probe:src_subject.ts:typescript_preview:70e065a7",
+        ),
+        (
+            "src/subject.ts",
+            [
+                "export function label(x: string, y: string): boolean {\n  if (/\"/.test(x) && x !== \"a\" && /\"/.test(y)) {\n    return true;\n  }\n  return false;\n}\n",
+                "export function label(x: string, y: string): boolean {\n  if (/\"/.test(x) && x  !== \"a\" && /\"/.test(y)) {\n    return true;\n  }\n  return false;\n}\n",
+            ],
+            "export function label(x: string, y: string): boolean {\n  if (/\"/.test(x) && x !== \"b\" && /\"/.test(y)) {\n    return true;\n  }\n  return false;\n}\n",
+            "probe:src_subject.ts:typescript_preview:516ba317",
+        ),
+    ] {
+        for source in sources {
+            let fixture = Fixture::new(&[(path, source)])?;
+            fixture.write(
+                "ripr.toml",
+                "[languages]\nenabled = [\"rust\", \"python\", \"typescript\"]\n",
+            )?;
+            fixture.write(
+                "pyproject.toml",
+                "[project]\nname=\"identity_fixture\"\nversion=\"0.0.0\"\n",
+            )?;
+            fixture.write(
+                "package.json",
+                "{\"name\":\"identity-fixture\",\"version\":\"0.0.0\"}",
+            )?;
+            let output = fixture.check(&[(path, previous, source)])?;
+            assert!(
+                output.findings.iter().any(|f| f.id == expected),
+                "formatting must retain the baseline ID for {path}: {output:?}"
+            );
+        }
+    }
     Ok(())
 }

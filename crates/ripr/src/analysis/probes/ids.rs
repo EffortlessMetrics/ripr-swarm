@@ -2,11 +2,22 @@ use crate::domain::{ProbeFamily, ProbeId, SymbolId};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
+/// Historical cross-language whitespace normalization. Foreign producers and
+/// 0.10 ID reconstruction retain this boundary until their native literal
+/// semantics are handled by their language owner.
+pub(crate) fn normalize_expression(expr: &str) -> String {
+    normalize_outside_literals(expr.trim(), &[])
+}
+
 /// Collapse formatting whitespace without collapsing Rust literal values.
 /// Keep the shared lexical scanner's raw-string, escape and lifetime rules.
-pub(crate) fn normalize_expression(expr: &str) -> String {
+pub(crate) fn normalize_rust_expression(expr: &str) -> String {
     let trimmed = expr.trim();
     let ranges = crate::analysis::extract::rust_literal_ranges(trimmed);
+    normalize_outside_literals(trimmed, &ranges)
+}
+
+fn normalize_outside_literals(trimmed: &str, ranges: &[(usize, usize)]) -> String {
     let mut ranges = ranges.iter().peekable();
     let mut result = String::with_capacity(trimmed.len());
     let mut last_was_space = false;
@@ -28,12 +39,6 @@ pub(crate) fn normalize_expression(expr: &str) -> String {
         }
     }
     result
-}
-
-// Historical 0.10 fingerprints collapsed every whitespace run, including
-// literal data. Reconstruction must retain that bug to name a stale ID.
-fn legacy_normalize_expression(expr: &str) -> String {
-    expr.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Compute the 8-char hex fingerprint for a content-addressed probe id.
@@ -97,7 +102,7 @@ pub(crate) fn diff_probe_id(
     let sp = sanitize_path(path);
     let family_str = family.as_str();
     let owner_str = owner.map(|o| o.0.as_str()).unwrap_or("");
-    let norm = normalize_expression(expression);
+    let norm = normalize_rust_expression(expression);
     fingerprint_probe_id("probe", &sp, family_str, owner_str, &norm, ordinal)
 }
 
@@ -121,10 +126,10 @@ pub(crate) fn legacy_whole_line_diff_probe_id(
     // line text appears more than once in the file, which occurrence got the
     // bare id cannot be recovered from one finding, so name nothing rather
     // than risk naming the wrong replacement.
-    let normalized = legacy_normalize_expression(line);
+    let normalized = normalize_expression(line);
     if source
         .lines()
-        .filter(|other| legacy_normalize_expression(other) == normalized)
+        .filter(|other| normalize_expression(other) == normalized)
         .nth(1)
         .is_some()
     {
@@ -152,7 +157,7 @@ pub(crate) fn repo_probe_id(
     let sp = sanitize_path(path);
     let family_str = family.as_str();
     let owner_str = owner.map(|o| o.0.as_str()).unwrap_or("");
-    let norm = normalize_expression(expression);
+    let norm = normalize_rust_expression(expression);
     fingerprint_probe_id("repo-probe", &sp, family_str, owner_str, &norm, ordinal)
 }
 

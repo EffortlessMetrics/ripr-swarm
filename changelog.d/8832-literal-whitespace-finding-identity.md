@@ -1,4 +1,4 @@
 <!-- section: Fixed -->
-- Rust finding IDs preserve literal whitespace so a changed string or character
-  value cannot inherit an earlier value's suppression; formatting whitespace
-  outside literals remains normalized, and old IDs stay stale (#8832).
+- Rust finding IDs retain literal whitespace in the hashed expression, with
+  formatting whitespace outside literals still normalized and historical
+  suppression IDs reconstructed for stale-selector warnings (#8832).

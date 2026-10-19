@@ -86,7 +86,9 @@ literals remains data. A material change to an identity input invalidates the
 ID so an earlier suppression cannot silently select a different value. Genuine
 repeated expressions retain distinct ordinal-suffixed IDs. The public-path
 metamorphic and stale-suppression controls are in
-`crates/ripr/tests/finding_identity_contract.rs` (#8832).
+`crates/ripr/tests/finding_identity_contract.rs` (#8832). The distinct-payload
+fp8 collision witnesses in #8838 remain unmet acceptance; duplicate-expression
+ordinal tests do not establish collision stability or waive this requirement.
 
 Each finding should carry:
 
