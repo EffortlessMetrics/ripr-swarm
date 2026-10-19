@@ -50,7 +50,7 @@ fn command_args(args: &[&str]) -> Vec<String> {
 /// root, no base/diff. Coherence checks pass (no consumer base to compare
 /// against); freshness checks no-op (no source files exist on disk under the
 /// temp root, so the loop skips each file).
-fn packet_test_options() -> crate::analysis::AnalysisOptions {
+pub(super) fn packet_test_options() -> crate::analysis::AnalysisOptions {
     use crate::analysis::{AnalysisMode, AnalysisOptions};
     AnalysisOptions {
         root: std::env::temp_dir().join(format!("ripr-perl-packet-test-{}", std::process::id())),
@@ -71,7 +71,7 @@ fn packet_test_options() -> crate::analysis::AnalysisOptions {
 }
 
 /// Convenience wrapper: consume a packet text with the default test options.
-fn consume(packet_text: &str) -> Result<PerlFactPacket, String> {
+pub(super) fn consume(packet_text: &str) -> Result<PerlFactPacket, String> {
     PerlAdapter.consume_fact_packet(packet_text, &packet_test_options())
 }
 
