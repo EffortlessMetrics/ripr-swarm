@@ -126,8 +126,9 @@ pub(super) struct PythonSourceLimitation {
 /// siblings enter the scan on the same terms the adapter's test index uses
 /// (#7385), and discovery descends one level into immediate app directories
 /// (the `django-admin startapp` layout keeps unittest tests in
-/// `<app>/tests.py`). Every scan stays bounded: 64 entries per directory,
-/// a 4096-byte prefix read per file.
+/// `<app>/tests.py`). Every scan stays bounded: 64 admitted `.py` test
+/// candidates per directory, sorted by file name before the cap so the
+/// bounded answer is deterministic, and a 4096-byte prefix read per file.
 ///
 /// Config-file pytest markers add pytest; they do not skip the unittest
 /// scan, so a mixed repo reports both frameworks (#7664). Pytest is listed
@@ -147,23 +148,29 @@ pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
-        for entry in entries.flatten().take(64) {
-            let name = entry.file_name();
-            let Some(name) = name.to_str() else {
-                continue;
-            };
-            // #7706: admit the same Python test paths `is_test_file`
-            // recognizes (`tests.py` / `test.py` / `*_test.py` and files
-            // under a `tests`/`test` directory), still restricted to `.py`
-            // sources so foreign-language `test_*.rs` files never enter.
-            if !name.ends_with(".py") || !is_test_file(&entry.path()) {
-                continue;
-            }
+        // #8706: sort by file name and count only admitted `.py` test
+        // candidates toward the per-directory cap. The #8257 review applied
+        // the same discipline to the app-directory list; capping the raw
+        // entry stream here let 64 non-test entries starve the scan of every
+        // test file and made the surviving set depend on unspecified
+        // `read_dir` enumeration order, so the same repository could report
+        // a different framework set between runs and machines.
+        let mut candidates: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
+        candidates.sort();
+        for path in candidates
+            .iter()
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.ends_with(".py") && is_test_file(path))
+            })
+            .take(PYTHON_FRAMEWORK_SCAN_DIR_ENTRY_CAP)
+        {
             // Bounded evidence read: the import line is at the top of the
             // file, so a small prefix suffices. Read at most that prefix so a
             // large test file cannot exhaust memory when config markers keep
             // the unittest scan running (#7664 review).
-            let Some(text) = read_framework_evidence_prefix(&entry.path()) else {
+            let Some(text) = read_framework_evidence_prefix(path) else {
                 continue;
             };
             if !saw_pytest && text.lines().any(is_pytest_import_line) {
@@ -231,6 +238,11 @@ pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> 
 /// Bytes inspected for framework import evidence. The read consumes at most
 /// one extra byte so a cut final line can be dropped instead of classified.
 const PYTHON_FRAMEWORK_EVIDENCE_PREFIX_BYTES: u64 = 4096;
+
+/// Admitted `.py` test candidates inspected per scanned directory. The cap
+/// counts candidates after the `.py` / test-path admission filter, never raw
+/// directory entries, so non-test files cannot starve the scan (#8706).
+const PYTHON_FRAMEWORK_SCAN_DIR_ENTRY_CAP: usize = 64;
 
 fn read_framework_evidence_prefix(path: &Path) -> Option<String> {
     let file = std::fs::File::open(path).ok()?;

@@ -524,6 +524,44 @@ fn detect_python_test_framework_is_fail_closed_for_empty_root() -> Result<(), St
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
+
+#[test]
+fn detect_python_test_frameworks_scan_is_starvation_free_and_deterministic() -> Result<(), String> {
+    // #8706: the per-directory cap must count only admitted `.py` test
+    // candidates, not every raw directory entry. 64 non-test entries in a
+    // scanned directory must not starve the only test file in it, and the
+    // answer must not depend on unspecified `read_dir` enumeration order.
+    let root = unique_test_root("starvation-free");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    // Sort-first names so a raw-entry cap in any enumeration that surfaces
+    // them ahead of the test file starves the scan on the old code path.
+    for index in 0..64 {
+        std::fs::write(root.join(format!("a-notes-{index:02}.md")), "notes\n")
+            .map_err(|err| format!("write notes: {err}"))?;
+    }
+    std::fs::write(root.join("test_evidence.py"), "import unittest\n")
+        .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    // Same starvation shape inside a `tests/` directory.
+    let root = unique_test_root("starvation-free-tests-dir");
+    let tests_dir = root.join("tests");
+    std::fs::create_dir_all(&tests_dir).map_err(|err| format!("create tests dir: {err}"))?;
+    for index in 0..64 {
+        std::fs::write(tests_dir.join(format!("a-fixture-{index:02}.json")), "{}\n")
+            .map_err(|err| format!("write fixture: {err}"))?;
+    }
+    std::fs::write(tests_dir.join("test_core.py"), "import pytest\n")
+        .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
 use super::super::super::diff::ChangedLine;
 use super::bounded_read::{
     DEFAULT_PYTHON_MAX_FILE_READ_BYTES, DEFAULT_PYTHON_MAX_WORKSPACE_FILES,
