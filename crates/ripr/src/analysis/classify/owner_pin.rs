@@ -10240,10 +10240,12 @@ fn expected_binding_calls_owner(test: &TestSummary, expected: &str, name: &str) 
             // test may write through it (`EXPECTED.store(f(4))`): neither
             // is a `let` the scan reads, so the owner may feed the operand
             // (#7847).
-            if bound_by_macro(&masked_body, word) || written_by_test(&masked_body, word) {
+            let bindings = receiver_let_bindings(test, word);
+            let plain = bindings.as_deref().is_some_and(plain_let_values);
+            if bound_by_macro(&masked_body, word) || written_by_test(&masked_body, word, plain) {
                 return true;
             }
-            let Some(bindings) = receiver_let_bindings(test, word) else {
+            let Some(bindings) = bindings else {
                 if binds_outside_let(&masked_body, word) || let_patterns_bind(&masked_body, word) {
                     return true;
                 }
@@ -10268,9 +10270,23 @@ fn expected_binding_calls_owner(test: &TestSummary, expected: &str, name: &str) 
 /// `name.sort()`, `name.0.push(..)`, any `*_mut`, `*_assign`, `fetch_*` or
 /// `set_*` method). Lexical and conservative, so a static the test stores
 /// the owner's value in is no independent expected value.
-fn written_by_test(masked: &str, name: &str) -> bool {
+///
+/// `plain` (#8795): every binding of `name` is a `let` of a plain value
+/// (`plain_let_values`), which holds no interior mutability and no callee can
+/// write through a shared borrow of it, so `&name` passed to a call and a
+/// non-mutating `replace`/`take` shape are reads. A static, a const or any
+/// other binding is never plain.
+fn written_by_test(masked: &str, name: &str, plain: bool) -> bool {
     whole_word_offsets(masked, name).into_iter().any(|offset| {
         let before = masked[..offset].trim_end();
+        // `let e: Config = ..`, `let e: crate::Config`, `let e: &Config` and
+        // `let e: (Config, u8)` annotate a type: the `=` after it assigns the
+        // binding, not the type name. Only a `let` pattern's annotation
+        // qualifies; a struct-literal field value (`S { f: EXPECTED.swap(..) }`)
+        // is an expression and stays scanned (#8795).
+        if in_let_annotation(before) {
+            return false;
+        }
         if before.ends_with("&mut") {
             return true;
         }
@@ -10278,21 +10294,14 @@ fn written_by_test(masked: &str, name: &str) -> bool {
         if before.ends_with("let") || before.ends_with("mut") {
             return false;
         }
-        // `let e: Config = ..` annotates a type: the `=` after it assigns the
-        // binding, not the type name. Only a `let` pattern's annotation
-        // qualifies; a struct-literal field value (`S { f: EXPECTED.swap(..) }`)
-        // is an expression and stays scanned.
-        if before.ends_with(':') && !before.ends_with("::") && in_let_annotation(before) {
-            return false;
-        }
         // `write!(name, ..)` / `writeln!(name, ..)` write into their first
         // argument; the trusted-macro list keeps `bound_by_macro` from
         // seeing them.
         before.ends_with("write!(")
             || before.ends_with("writeln!(")
-            || borrowed_into_path_call(before)
-            || place_is_written(&masked[offset + name.len()..])
-            || destructured_into(&masked[offset + name.len()..])
+            || (!plain && borrowed_into_path_call(before))
+            || place_is_written(&masked[offset + name.len()..], plain)
+            || (destructured_into(&masked[offset + name.len()..]) && !index_operand(before))
     })
 }
 
@@ -10364,19 +10373,196 @@ fn borrowed_into_path_call(before: &str) -> bool {
         .contains(&last)
 }
 
-/// Whether the text before a `:` sits inside a `let` pattern's annotation:
-/// the nearest preceding `let` has no `=`, `;`, `{` or `}` after it.
+/// Whether the text before a name sits inside a `let` pattern's type
+/// annotation (#8795): the nearest preceding `let` has no `=`, `;`, `{` or
+/// `}` after it, and a single `:` (not a `::` path separator) separates the
+/// pattern from the name. A pattern with no annotation colon
+/// (`let (a, name) = ..`) binds the name and is not an annotation; a struct
+/// pattern's field colon sits inside `{}` and is excluded.
 fn in_let_annotation(before: &str) -> bool {
     whole_word_offsets(before, "let")
         .into_iter()
         .next_back()
-        .is_some_and(|at| !before[at + "let".len()..].contains(['=', ';', '{', '}']))
+        .is_some_and(|at| {
+            let tail = &before[at + "let".len()..];
+            !tail.contains(['=', ';', '{', '}']) && has_single_colon(tail)
+        })
+}
+
+fn has_single_colon(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes.iter().enumerate().any(|(at, byte)| {
+        *byte == b':'
+            && bytes.get(at + 1) != Some(&b':')
+            && (at == 0 || bytes.get(at - 1) != Some(&b':'))
+    })
+}
+
+/// Whether the name sits inside the `[..]` of an index expression
+/// (`v[name] = ..`): the nearest unclosed group before it is a `[` that
+/// directly follows an identifier or a closing bracket. The name is then an
+/// index read, not the place an enclosing assignment writes (#8795). An
+/// array pattern (`[name, ..] = p`) follows `;`, `=` or nothing, so it is not.
+fn index_operand(before: &str) -> bool {
+    let mut depth = 0usize;
+    for (at, character) in before.char_indices().rev() {
+        match character {
+            ')' | ']' | '}' => depth += 1,
+            '(' | '[' | '{' => {
+                if depth > 0 {
+                    depth -= 1;
+                    continue;
+                }
+                return character == '['
+                    && before[..at].chars().next_back().is_some_and(|prev| {
+                        prev.is_ascii_alphanumeric() || matches!(prev, '_' | ')' | ']')
+                    });
+            }
+            ';' if depth == 0 => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Whether every `let` binding of a name (the text after the name, as
+/// `receiver_let_bindings` returns it) initializes it with a plain value: a
+/// literal, a tuple or array of plain values, a `String` built from a
+/// literal, or an uppercase constructor / struct literal of plain values.
+/// Such a value has no interior mutability, so a shared borrow of it cannot
+/// be written by a callee (#8795). No binding at all (a static, a const) is
+/// not plain.
+fn plain_let_values(bindings: &[&str]) -> bool {
+    !bindings.is_empty()
+        && bindings.iter().all(|binding| {
+            let statement = binding.trim_end().trim_end_matches(';');
+            let init = statement
+                .match_indices('=')
+                .map(|(position, _)| position)
+                .find(|position| {
+                    !matches!(statement.as_bytes().get(position + 1), Some(b'=' | b'>'))
+                        && !matches!(
+                            statement.as_bytes().get(position.wrapping_sub(1)),
+                            Some(b'=' | b'!' | b'<' | b'>')
+                        )
+                })
+                .map(|position| &statement[position + 1..]);
+            init.is_some_and(is_plain_value)
+        })
+}
+
+fn is_plain_value(expression: &str) -> bool {
+    let expression = expression.trim();
+    let unsigned = expression
+        .strip_prefix('-')
+        .map_or(expression, str::trim_start);
+    if unsigned.starts_with(|c: char| c.is_ascii_digit()) {
+        return unsigned
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.'));
+    }
+    if unsigned.len() != expression.len() {
+        return false;
+    }
+    if matches!(expression, "true" | "false") || is_string_literal(expression) {
+        return true;
+    }
+    if expression.len() >= 3 && expression.starts_with('\'') && expression.ends_with('\'') {
+        return !expression[1..expression.len() - 1].contains('\'');
+    }
+    if let Some(inner) =
+        group_inner(expression, '(', ')').or_else(|| group_inner(expression, '[', ']'))
+    {
+        return split_top_level(inner)
+            .iter()
+            .all(|part| part.trim().is_empty() || is_plain_value(part));
+    }
+    for suffix in [".to_string()", ".to_owned()"] {
+        if let Some(literal) = expression.strip_suffix(suffix) {
+            return is_string_literal(literal.trim());
+        }
+    }
+    if expression == "String::new()" {
+        return true;
+    }
+    if let Some(argument) = expression
+        .strip_prefix("String::from(")
+        .and_then(|rest| rest.strip_suffix(')'))
+    {
+        return is_string_literal(argument.trim());
+    }
+    let Some(open) = expression.find(['(', '{']) else {
+        return false;
+    };
+    let head = expression[..open].trim();
+    let constructor = head.rsplit("::").next().unwrap_or(head);
+    if !constructor.starts_with(|c: char| c.is_ascii_uppercase())
+        || !head
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | ':'))
+    {
+        return false;
+    }
+    if expression.as_bytes()[open] == b'(' {
+        return group_inner(&expression[open..], '(', ')').is_some_and(|inner| {
+            split_top_level(inner)
+                .iter()
+                .all(|part| part.trim().is_empty() || is_plain_value(part))
+        });
+    }
+    group_inner(&expression[open..], '{', '}').is_some_and(|inner| {
+        split_top_level(inner).iter().all(|field| {
+            field.trim().is_empty()
+                || field.split_once(':').is_some_and(|(name, value)| {
+                    is_plain_identifier(name.trim()) && is_plain_value(value)
+                })
+        })
+    })
+}
+
+fn is_string_literal(text: &str) -> bool {
+    let text = text.strip_prefix('b').unwrap_or(text);
+    text.len() >= 2
+        && text.starts_with('"')
+        && text.ends_with('"')
+        && !text[1..text.len() - 1].contains(['"', '\\'])
+}
+
+/// The text inside `open..close` when `text` is exactly that one group.
+fn group_inner(text: &str, open: char, close: char) -> Option<&str> {
+    let rest = text.strip_prefix(open)?;
+    let after = skip_balanced(text, open, close)?;
+    if after.trim().is_empty() {
+        rest.rfind(close).map(|end| &rest[..end])
+    } else {
+        None
+    }
+}
+
+/// `text` split at commas outside any bracket pair.
+fn split_top_level(text: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    for (at, character) in text.char_indices() {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&text[start..at]);
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&text[start..]);
+    parts
 }
 
 /// Whether the place expression that continues `rest` (a chain of `.field`,
 /// `.0`, `[..]` and calls) is assigned, or ends in a mutating call. An
 /// unreadable chain fails closed.
-fn place_is_written(rest: &str) -> bool {
+fn place_is_written(rest: &str, plain: bool) -> bool {
     let mut rest = rest.trim_start();
     loop {
         if let Some(call) = rest.strip_prefix('.') {
@@ -10394,7 +10580,7 @@ fn place_is_written(rest: &str) -> bool {
                 return true;
             }
             if rest.starts_with('(') {
-                if is_mutating_method(&method) {
+                if is_mutating_method(&method) && !(plain && pure_with_arguments(&method, rest)) {
                     return true;
                 }
                 match skip_balanced(rest, '(', ')') {
@@ -10414,6 +10600,32 @@ fn place_is_written(rest: &str) -> bool {
         }
     }
     assignment_operator_at(rest)
+}
+
+/// On a plain value (#8795), `replace` with two arguments is
+/// `str::replace(from, to)` and `take` with an argument is
+/// `Iterator::take(n)`: both return a new value. The one-argument
+/// `Cell`/`Option`/`RefCell::replace` and the argument-free `take` stay
+/// mutators. `args` starts at the call's `(`.
+fn pure_with_arguments(method: &str, args: &str) -> bool {
+    let Some(inner) = group_inner_prefix(args) else {
+        return false;
+    };
+    let count = split_top_level(inner)
+        .iter()
+        .filter(|part| !part.trim().is_empty())
+        .count();
+    match method {
+        "replace" => count >= 2,
+        "take" => count >= 1,
+        _ => false,
+    }
+}
+
+/// The inside of the paren group `text` opens with.
+fn group_inner_prefix(text: &str) -> Option<&str> {
+    let after = skip_balanced(text, '(', ')')?;
+    Some(&text[1..text.len() - after.len() - 1])
 }
 
 /// Whether the name sits in a pattern that is the left side of an assignment
