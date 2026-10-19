@@ -101,6 +101,7 @@ fn run_result(
         ("ADMISSION_REASON", "fixture"),
         ("TARGET", "github"),
         ("DOCS_ONLY", "false"),
+        ("LABEL_NAME", "merge-ready"),
     ]
     .into_iter()
     .chain(overrides.iter().copied())
