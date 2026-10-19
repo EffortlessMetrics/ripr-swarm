@@ -89,3 +89,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_where_bound_declarations (8)
+
+Reason:
+RIPR-SPEC-0268: human evidence window glosses the unknown-sink row with its meaning (#8744)
+
+Command:
+`cargo xtask goldens bless rust_where_bound_declarations --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

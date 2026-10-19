@@ -60,7 +60,7 @@ Evidence
   - propagation unknown: No propagation model is available for this changed syntax
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator unknown: Assertions exist, but oracle strength is unknown
-  - local flow reaches unknown sink (line 2)
+  - local flow reaches unknown sink (line 2) — ripr could not classify where the changed value ends up; propagation confidence is limited
   - related test tests/render.rs:2 renders uses unknown exact value oracle: assert_eq!(written_expected::render(4), std::fs::read_to_string("tests/w.txt").unwrap().trim().parse::<i32>().unwrap());
   - source assertion argument value "tests/w.txt" at line 3
   - source function argument value x = 4 at line 3

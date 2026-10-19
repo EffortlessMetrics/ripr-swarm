@@ -223,6 +223,23 @@ fn verdict_changers(finding: &Finding, owner_signature: Option<&str>) -> Vec<Str
     if let Some(fact) = exact_assertion_fact(facts, &finding.probe.family) {
         push(format!("assert the exact `{}`", fact.value));
     }
+    // #8744: when the only flow-sink evidence says ripr could not classify
+    // where the changed value ends up, a recipe that names what the owner
+    // "returns or changes" asserts a target shape the evidence says is
+    // unclassified. Keep the recipes — they remain the best static guess —
+    // but qualify them so they do not read as settled targets.
+    if !finding.flow_sinks.is_empty()
+        && finding
+            .flow_sinks
+            .iter()
+            .all(|sink| sink.kind == crate::domain::FlowSinkKind::Unknown)
+    {
+        push(
+            "treat the assertion target as provisional: ripr could not classify \
+             where the changed value ends up"
+                .to_string(),
+        );
+    }
     needs
 }
 
@@ -278,6 +295,15 @@ mod tests {
             relation_reason: None,
             relation_confidence: None,
             miss: Some(miss),
+        }
+    }
+
+    fn unknown_sink() -> crate::domain::FlowSinkFact {
+        crate::domain::FlowSinkFact {
+            kind: crate::domain::FlowSinkKind::Unknown,
+            text: "unknown sink".to_string(),
+            line: 3,
+            owner: None,
         }
     }
 
@@ -397,5 +423,42 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains("misses: ripr could not confirm"), "{text}");
+    }
+
+    #[test]
+    fn unknown_sink_only_recipe_is_qualified_as_provisional() {
+        // #8744: when the only flow-sink evidence says the sink is
+        // unclassified, the verdict-change recipe must not read as a settled
+        // assertion target.
+        let mut finding = sample_perl_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.recommended_next_step = Some("add an exact assertion".to_string());
+        finding.related_tests = Vec::new();
+        finding.flow_sinks = vec![unknown_sink()];
+
+        let text = render_verdict_explanation(&finding, None);
+
+        assert!(
+            text.contains("treat the assertion target as provisional"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn classified_sink_recipe_is_not_qualified() {
+        let mut finding = sample_perl_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.recommended_next_step = Some("add an exact assertion".to_string());
+        finding.related_tests = Vec::new();
+        finding.flow_sinks = vec![crate::domain::FlowSinkFact {
+            kind: crate::domain::FlowSinkKind::ReturnValue,
+            text: "amount - 10".to_string(),
+            line: 3,
+            owner: None,
+        }];
+
+        let text = render_verdict_explanation(&finding, None);
+
+        assert!(!text.contains("provisional"), "{text}");
     }
 }

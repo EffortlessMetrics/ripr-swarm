@@ -127,10 +127,16 @@ fn evidence_path<T>(
     ];
 
     for sink in &finding.flow_sinks {
-        lines.push(project(
-            crate::output::flow_sink_line::flow_sink_evidence_line(sink),
-            EvidenceSource::Flow(sink),
-        ));
+        let mut line = crate::output::flow_sink_line::flow_sink_evidence_line(sink);
+        // #8744: `unknown sink` is the one unglossed internal term in the
+        // explain vocabulary; the human window states its meaning beside the
+        // row instead of leaving the consumer to guess whether it is a ripr
+        // limit, a code property, or an instruction.
+        if let Some(meaning) = crate::output::flow_sink_line::flow_sink_kind_meaning(&sink.kind) {
+            line.push_str(" — ");
+            line.push_str(meaning);
+        }
+        lines.push(project(line, EvidenceSource::Flow(sink)));
     }
 
     for test in finding.related_tests.iter().take(MAX_RELATED_TESTS_SHOWN) {

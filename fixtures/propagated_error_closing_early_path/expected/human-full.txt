@@ -71,7 +71,7 @@ Evidence
   - propagation unknown: No propagation model is available for this changed syntax
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator unknown: Assertions exist, but oracle strength is unknown
-  - local flow reaches unknown sink (line 8)
+  - local flow reaches unknown sink (line 8) — ripr could not classify where the changed value ends up; propagation confidence is limited
   - related test src/lib.rs:16 observes_only_the_early_error uses unknown exact error variant oracle: assert_eq!(check(true, None), Err(Failure::Missing));
   - source enum variant value Failure::Missing at line 17
   - source function argument value early = true at line 17

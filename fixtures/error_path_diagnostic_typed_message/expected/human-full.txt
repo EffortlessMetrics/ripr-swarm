@@ -68,7 +68,7 @@ Evidence
   - propagation unknown: No propagation model is available for this changed syntax
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator unknown: Assertions exist, but oracle strength is unknown
-  - local flow reaches unknown sink (line 5)
+  - local flow reaches unknown sink (line 5) — ripr could not classify where the changed value ends up; propagation confidence is limited
   - related test src/lib.rs:14 reads_successfully uses unknown exact value oracle: assert_eq!(rdr.len(), 10, "Err(ReadError::Closed)");
   - source assertion argument value 10 at line 17
   - source assertion argument value "Err(ReadError::Closed)" at line 18

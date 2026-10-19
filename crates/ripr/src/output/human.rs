@@ -5049,6 +5049,30 @@ mod tests {
         assert!(rendered.contains("Add assertion for disabled path result"));
     }
 
+    /// #8744: `unknown sink` is the one unglossed internal term in the
+    /// evidence window; the human render states its meaning beside the row
+    /// while the JSON evidence strings stay raw.
+    #[test]
+    fn render_finding_glosses_the_unknown_sink_row() {
+        let mut finding = sample_finding();
+        finding.flow_sinks = vec![FlowSinkFact {
+            kind: FlowSinkKind::Unknown,
+            text: "unknown sink".to_string(),
+            line: 3,
+            owner: None,
+        }];
+
+        let rendered = render_finding(&finding);
+
+        assert!(
+            rendered.contains(
+                "local flow reaches unknown sink (line 3) — ripr could not classify \
+                 where the changed value ends up; propagation confidence is limited"
+            ),
+            "{rendered}"
+        );
+    }
+
     /// #4320: the 5-related-test window must disclose the total — the number
     /// of reaching tests is core exposure evidence, and an unmarked cap reads
     /// as the whole evidence.
