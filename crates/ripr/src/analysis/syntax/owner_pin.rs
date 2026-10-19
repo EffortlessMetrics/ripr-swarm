@@ -2770,7 +2770,7 @@ fn extern_crate_binds_test(module: &SyntaxNode) -> bool {
         .any(|item| {
             item.rename()
                 .and_then(|rename| rename.name())
-                .is_some_and(|name| unraw(&name.text()) == "test")
+                .is_some_and(|name| unraw(name.text()) == "test")
         })
 }
 
@@ -2797,7 +2797,7 @@ fn file_binds_test_name(file: &SyntaxNode) -> bool {
             return extern_crate
                 .rename()
                 .and_then(|rename| rename.name())
-                .is_some_and(|name| unraw(&name.text()) == "test");
+                .is_some_and(|name| unraw(name.text()) == "test");
         }
         let Some(tree) = ast::Use::cast(item).and_then(|import| import.use_tree()) else {
             return false;
