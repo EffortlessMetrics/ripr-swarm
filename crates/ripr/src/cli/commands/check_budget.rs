@@ -11,7 +11,9 @@
 //! running until the process exits; the thread boundary, not the token, is
 //! what makes the bound hard.
 
-use crate::analysis::cancellation::{AnalysisAbortKind, AnalysisCancellationToken, with_token};
+use crate::analysis::cancellation::{
+    AnalysisAbortKind, AnalysisCancellationToken, current_token, with_token,
+};
 use crate::core_error::CoreError;
 use std::sync::mpsc;
 use std::time::Duration;
@@ -59,7 +61,10 @@ where
     let Some(budget) = budget else {
         return work();
     };
-    let token = AnalysisCancellationToken::new();
+    // A standalone check's first-SIGINT token is already active on the
+    // caller. Carry it into the budget worker so exporter waits observe the
+    // same cancellation request before the outer CLI renders status 130.
+    let token = current_token().unwrap_or_else(AnalysisCancellationToken::new);
     let worker_token = token.clone();
     let (tx, rx) = mpsc::channel();
     // The worker replaces the main thread's analysis stack, so it gets at
@@ -97,6 +102,34 @@ where
 mod tests {
     use super::*;
     use crate::core_error::CheckFailureKind;
+
+    #[cfg(unix)]
+    #[test]
+    fn budget_worker_observes_caller_sigint_token() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        };
+
+        let interrupted = Arc::new(AtomicBool::new(true));
+        let token = AnalysisCancellationToken::with_interrupt_flags(
+            Arc::clone(&interrupted),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let result = with_token(&token, || {
+            run_with_budget(
+                Some(Duration::from_secs(2)),
+                || {},
+                || {
+                    Ok(crate::analysis::cancellation::checkpoint_typed()
+                        .err()
+                        .map(|e| e.kind))
+                },
+            )
+        });
+        assert!(interrupted.load(Ordering::SeqCst));
+        assert_eq!(result, Ok(Some(AnalysisAbortKind::Cancelled)));
+    }
 
     #[test]
     fn work_inside_the_budget_returns_its_result() {
