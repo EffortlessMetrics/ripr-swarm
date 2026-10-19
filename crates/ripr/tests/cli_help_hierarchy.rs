@@ -7,6 +7,10 @@ use std::process::Command;
 mod help_contract;
 use help_contract::{assert_contains, normalized, undocumented_doc_flags};
 
+#[path = "common/help_workspace.rs"]
+mod help_workspace;
+use help_workspace::in_help_workspace;
+
 fn run_ripr(args: &[&str]) -> Result<std::process::Output, String> {
     run_ripr_in(args, None)
 }
@@ -459,37 +463,6 @@ mod discovery_rows {
         }
         Ok(())
     }
-}
-
-fn in_help_workspace(
-    test: impl FnOnce(&std::path::Path) -> Result<(), String>,
-) -> Result<(), String> {
-    let nonce = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|error| error.to_string())?
-        .as_nanos();
-    let parent = std::env::temp_dir();
-    std::fs::create_dir_all(&parent).map_err(|error| error.to_string())?;
-    let root = parent.join(format!("ripr-group-help-{}-{nonce}", std::process::id()));
-    std::fs::create_dir(&root).map_err(|error| error.to_string())?;
-    // Help must neither load configuration nor write reports, even in a
-    // workspace where an executing command would reject the configuration.
-    let config = "deliberately invalid TOML [";
-    std::fs::write(root.join("ripr.toml"), config).map_err(|error| error.to_string())?;
-    let result = test(&root).and_then(|()| {
-        let entries = std::fs::read_dir(&root).map_err(|error| error.to_string())?;
-        let entries = entries
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| error.to_string())?;
-        let actual =
-            std::fs::read_to_string(root.join("ripr.toml")).map_err(|error| error.to_string())?;
-        if entries.len() != 1 || actual != config {
-            return Err(format!("group help changed workspace contents: {root:?}"));
-        }
-        Ok(())
-    });
-    let cleanup = std::fs::remove_dir_all(&root).map_err(|error| error.to_string());
-    result.and(cleanup)
 }
 
 #[test]
