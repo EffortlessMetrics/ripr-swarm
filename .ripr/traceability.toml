@@ -1035,7 +1035,7 @@ tests = [
   "crates/ripr/src/lsp/config.rs::tests::initialization_options_override_repo_config_defaults",
   "crates/ripr/src/lsp/config.rs::tests::pulled_settings_override_initialization_options_for_returned_keys",
   "crates/ripr/src/lsp/config.rs::tests::repository_reload_preserves_pulled_overrides",
-  "crates/ripr/src/app.rs::tests::configured_finding_severity_applies_to_human_json_and_github",
+  "crates/ripr/src/app/tests/rendering_contracts.rs::configured_finding_severity_applies_to_human_json_and_github",
   "crates/ripr/src/lsp/diagnostics.rs::seam_diagnostic_tests::configured_seam_severity_can_disable_a_class",
   "crates/ripr/tests/cli_smoke.rs::doctor_reports_missing_config_defaults",
   "crates/ripr/tests/cli_smoke.rs::doctor_reports_loaded_config_path",
