@@ -2688,7 +2688,10 @@ fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
             "explain output's context command lost the scope: {next_line}"
         ));
     }
-    if !String::from_utf8_lossy(&context.stdout).contains("\"version\": \"1.0\"") {
+    // #8743: the packet contract is 1.1 since classification/severity/
+    // confidence joined the packet; the assertion only proves the
+    // context command emitted its JSON packet.
+    if !String::from_utf8_lossy(&context.stdout).contains("\"version\": \"1.1\"") {
         return Err("context command did not return its JSON packet".to_string());
     }
     Ok(())
@@ -2799,7 +2802,10 @@ fn check_explain_and_context_replay_from_a_checkout_path_with_space_and_apostrop
         assert_success(&explain);
         let context = replay_printed_ripr(context_line, &decoy)?;
         assert_success(&context);
-        if !String::from_utf8_lossy(&context.stdout).contains("\"version\": \"1.0\"") {
+        // #8743: the packet contract is 1.1 since classification/severity/
+        // confidence joined the packet; the assertion only proves the
+        // context command emitted its JSON packet.
+        if !String::from_utf8_lossy(&context.stdout).contains("\"version\": \"1.1\"") {
             return Err("context command did not return its JSON packet".to_string());
         }
         let explain_stdout = String::from_utf8_lossy(&explain.stdout);
