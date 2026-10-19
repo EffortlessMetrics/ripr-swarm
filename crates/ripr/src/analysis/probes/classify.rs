@@ -550,6 +550,10 @@ pub(crate) fn is_item_header(text: &str) -> bool {
     if text.contains("fn ") || body_semicolon {
         return false;
     }
+    // Text after the opening `{` is a one-line body, not a header.
+    if text.contains('{') && !text.ends_with('{') {
+        return false;
+    }
     word_after("impl") && (text.ends_with('{') || text.contains(" where"))
 }
 
@@ -613,6 +617,7 @@ mod tests {
             "impl<T: Debug> Tr for K<T>",
             "impl K { const A: u32 = 1; }",
             "impl K where Self: Sized { const A: u32 = 1; }",
+            "impl K where Self: Sized { Foo { a: 1 } }",
             "T: Debug + Clone,",
         ] {
             assert!(!is_item_header(behavior), "`{behavior}`");
