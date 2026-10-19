@@ -3287,10 +3287,7 @@ fn observed_parameter_values(rows: &[Vec<ParameterValue>], parameter: &str) -> V
 /// text before the parameter's first `:`, so a destructuring pattern is not
 /// widened into its field names (unlike `signature_parameters`).
 pub(crate) fn function_parameters(function: &FunctionSummary) -> Vec<String> {
-    let body = function.body.as_str();
-    let Some(arguments) =
-        parameter_list_open(body).and_then(|open| delimited_contents_at(body, open))
-    else {
+    let Some(arguments) = signature_arguments(function) else {
         return Vec::new();
     };
     parameters_in_arguments(&arguments)
@@ -3305,10 +3302,7 @@ pub(crate) fn function_parameters(function: &FunctionSummary) -> Vec<String> {
 /// binds. Field names in a pattern are kept too, which only widens the
 /// owner-scoped set (#6970 review).
 pub(crate) fn signature_parameters(function: &FunctionSummary) -> Vec<String> {
-    let body = function.body.as_str();
-    let Some(arguments) =
-        parameter_list_open(body).and_then(|open| delimited_contents_at(body, open))
-    else {
+    let Some(arguments) = signature_arguments(function) else {
         return Vec::new();
     };
     split_top_level_args(&arguments)
@@ -3322,10 +3316,7 @@ pub(crate) fn signature_parameters(function: &FunctionSummary) -> Vec<String> {
 /// `i`. A parameter whose pattern binds more or fewer than one name
 /// (`(a, b): (u8, u8)`, `_: u8`) is an empty name.
 pub(crate) fn call_parameter_names(function: &FunctionSummary) -> Vec<String> {
-    let body = function.body.as_str();
-    let Some(arguments) =
-        parameter_list_open(body).and_then(|open| delimited_contents_at(body, open))
-    else {
+    let Some(arguments) = signature_arguments(function) else {
         return Vec::new();
     };
     split_top_level_args(&arguments)
@@ -3344,6 +3335,14 @@ pub(crate) fn call_parameter_names(function: &FunctionSummary) -> Vec<String> {
             })
         })
         .collect()
+}
+
+/// The contents of `function`'s parameter list with comments and strings
+/// masked, so a trailing comment such as `// lo: a, b: c` on a wrapped
+/// signature cannot add, split or shift parameter names (#7840).
+fn signature_arguments(function: &FunctionSummary) -> Option<String> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(&function.body);
+    parameter_list_open(&masked).and_then(|open| delimited_contents_at(&masked, open))
 }
 
 /// The `(` opening the parameter list: the first one after `fn` that sits
@@ -4907,6 +4906,18 @@ mod tests {
         );
         let no_params = function("pub fn zero() -> u8 {\n    f(1)\n}");
         assert!(function_parameters(&no_params).is_empty());
+    }
+
+    #[test]
+    fn signature_comments_do_not_shift_parameter_names() {
+        // #7840: a trailing comment holding a comma and a colon is not a
+        // parameter, for all three signature readers.
+        let commented = function(
+            "pub fn tier(\n    lo: u8, // lo: a, b: c\n    hi: u8, /* x: y, z: w */\n) -> u8 {\n    0\n}",
+        );
+        assert_eq!(function_parameters(&commented), vec!["lo", "hi"]);
+        assert_eq!(signature_parameters(&commented), vec!["lo", "hi"]);
+        assert_eq!(call_parameter_names(&commented), vec!["lo", "hi"]);
     }
 
     #[test]

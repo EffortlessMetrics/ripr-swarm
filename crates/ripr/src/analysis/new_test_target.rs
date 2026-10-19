@@ -30,6 +30,7 @@ const SAFE_NEW_INLINE_UNIT_EVIDENCE: &str = "producer-owned new inline unit test
 
 #[cfg(test)]
 pub(crate) use integration::admit_new_integration_test;
+pub(crate) use integration::library_crate_name_for_root_file;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct NewTestTargetAdmission {

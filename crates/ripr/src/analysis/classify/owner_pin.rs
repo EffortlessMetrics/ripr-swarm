@@ -9869,6 +9869,16 @@ fn has_interior_mutability(initializer: &str) -> bool {
 /// #8112: whether `file` declares `static mut name`, whose value the test
 /// may have assigned before the assertion reads it.
 fn declares_static_mut(index: &RustIndex, file: &Path, name: &str) -> bool {
+    declares_static_with(index, file, name, true)
+}
+
+/// #8112: whether `file` declares `static name`, `mut` or not, or the
+/// `lazy_static!` form `static ref name`.
+fn declares_static(index: &RustIndex, file: &Path, name: &str) -> bool {
+    declares_static_with(index, file, name, false)
+}
+
+fn declares_static_with(index: &RustIndex, file: &Path, name: &str, require_mut: bool) -> bool {
     let Some(facts) = index.files().get(file) else {
         return false;
     };
@@ -9876,15 +9886,24 @@ fn declares_static_mut(index: &RustIndex, file: &Path, name: &str) -> bool {
     whole_word_offsets(&masked, "static")
         .into_iter()
         .any(|offset| {
-            let rest = masked[offset + "static".len()..].trim_start();
-            rest.strip_prefix("mut")
+            let mut rest = masked[offset + "static".len()..].trim_start();
+            if let Some(after) = rest
+                .strip_prefix("mut")
                 .filter(|after| after.starts_with(char::is_whitespace))
-                .is_some_and(|after| {
-                    let after = after.trim_start();
-                    after.strip_prefix(name).is_some_and(|tail| {
-                        !tail.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
-                    })
-                })
+            {
+                rest = after.trim_start();
+            } else if require_mut {
+                return false;
+            } else if let Some(after) = rest
+                .strip_prefix("ref")
+                .filter(|after| after.starts_with(char::is_whitespace))
+            {
+                // `lazy_static!` writes `static ref NAME: T = init;`.
+                rest = after.trim_start();
+            }
+            rest.strip_prefix(name).is_some_and(|tail| {
+                !tail.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
+            })
         })
 }
 
@@ -9904,6 +9923,12 @@ fn single_constant_value(
         .filter(|(file, _)| in_scope(file));
     let (file, initializer) = matches.next()?;
     if matches.next().is_some() || declares_static_mut(index, file, name) {
+        return None;
+    }
+    // #8112: a non-`mut` `static` of interior-mutable type
+    // (`static C: AtomicUsize = ..; C.store(6)`) can change after its
+    // initializer. A `const` is rebuilt at each use, so it stays readable.
+    if has_interior_mutability(initializer) && declares_static(index, file, name) {
         return None;
     }
     let initializer_text = initializer.trim_start();
@@ -10236,6 +10261,13 @@ fn expected_binding_calls_owner(test: &TestSummary, expected: &str, name: &str) 
             // name) may hold an owner call: fail closed (#6974 review).
             // A word the scan refuses only because a `let` annotation
             // names it (`let w: Window = ..`) is a type, not a binding.
+            // A statement macro may bind the word (`s!(expected);`), and the
+            // test may write through it (`EXPECTED.store(f(4))`): neither
+            // is a `let` the scan reads, so the owner may feed the operand
+            // (#7847).
+            if bound_by_macro(&masked_body, word) || written_by_test(&masked_body, word) {
+                return true;
+            }
             let Some(bindings) = receiver_let_bindings(test, word) else {
                 if binds_outside_let(&masked_body, word) || let_patterns_bind(&masked_body, word) {
                     return true;
@@ -10252,6 +10284,280 @@ fn expected_binding_calls_owner(test: &TestSummary, expected: &str, name: &str) 
         }
     }
     false
+}
+
+/// #7847: whether the masked test body writes through `name` outside a
+/// `let`: an assignment to the name or a place under it (`name = ..`,
+/// `name.field = ..`, `name.0 = ..`, `name[i] += ..`), a `&mut name` borrow,
+/// or a mutating call on it or a place under it (`name.store(..)`,
+/// `name.sort()`, `name.0.push(..)`, any `*_mut`, `*_assign`, `fetch_*` or
+/// `set_*` method). Lexical and conservative, so a static the test stores
+/// the owner's value in is no independent expected value.
+fn written_by_test(masked: &str, name: &str) -> bool {
+    whole_word_offsets(masked, name).into_iter().any(|offset| {
+        let before = masked[..offset].trim_end();
+        if before.ends_with("&mut") {
+            return true;
+        }
+        // A `let` (or `let mut`) declaration is the binding the let scan reads.
+        if before.ends_with("let") || before.ends_with("mut") {
+            return false;
+        }
+        // `let e: Config = ..` annotates a type: the `=` after it assigns the
+        // binding, not the type name. Only a `let` pattern's annotation
+        // qualifies; a struct-literal field value (`S { f: EXPECTED.swap(..) }`)
+        // is an expression and stays scanned.
+        if before.ends_with(':') && !before.ends_with("::") && in_let_annotation(before) {
+            return false;
+        }
+        // `write!(name, ..)` / `writeln!(name, ..)` write into their first
+        // argument; the trusted-macro list keeps `bound_by_macro` from
+        // seeing them.
+        before.ends_with("write!(")
+            || before.ends_with("writeln!(")
+            || borrowed_into_path_call(before)
+            || place_is_written(&masked[offset + name.len()..])
+            || destructured_into(&masked[offset + name.len()..])
+    })
+}
+
+/// A name passed by shared reference as an argument to any non-macro call
+/// (`AtomicU32::store(&EXPECTED, ..)`, `write(&EXPECTED, ..)`,
+/// `Cell::set(&expected, ..)`) may be written by the callee. A plain reader
+/// callee and a macro (`assert_eq!(f(4), &EXPECTED)`) do not count.
+fn borrowed_into_path_call(before: &str) -> bool {
+    let Some(head) = before.strip_suffix('&') else {
+        return false;
+    };
+    let head = head.trim_end().trim_end_matches('&').trim_end();
+    if !head.ends_with(['(', ',']) {
+        return false;
+    }
+    let mut depth = 0usize;
+    let mut open = None;
+    for (at, c) in head.char_indices().rev() {
+        match c {
+            ')' | ']' => depth += 1,
+            '(' | '[' => {
+                if depth == 0 {
+                    open = Some(at);
+                    break;
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    let Some(open) = open else {
+        return false;
+    };
+    let callee = head[..open].trim_end();
+    if callee.ends_with('!') {
+        return false;
+    }
+    // A turbofish callee (`store::<u32>(&X, ..)`) is unreadable: refuse.
+    if callee.ends_with(['>', ')', ']', '}']) {
+        return true;
+    }
+    let path: String = callee
+        .chars()
+        .rev()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == ':')
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    let last = path
+        .rsplit_once("::")
+        .map_or(path.as_str(), |(_, last)| last);
+    !last.is_empty()
+        && ![
+            "load",
+            "get",
+            "read",
+            "eq",
+            "ne",
+            "len",
+            "clone",
+            "cmp",
+            "partial_cmp",
+            "contains",
+            "starts_with",
+            "ends_with",
+            "is_empty",
+        ]
+        .contains(&last)
+}
+
+/// Whether the text before a `:` sits inside a `let` pattern's annotation:
+/// the nearest preceding `let` has no `=`, `;`, `{` or `}` after it.
+fn in_let_annotation(before: &str) -> bool {
+    whole_word_offsets(before, "let")
+        .into_iter()
+        .next_back()
+        .is_some_and(|at| !before[at + "let".len()..].contains(['=', ';', '{', '}']))
+}
+
+/// Whether the place expression that continues `rest` (a chain of `.field`,
+/// `.0`, `[..]` and calls) is assigned, or ends in a mutating call. An
+/// unreadable chain fails closed.
+fn place_is_written(rest: &str) -> bool {
+    let mut rest = rest.trim_start();
+    loop {
+        if let Some(call) = rest.strip_prefix('.') {
+            let call = call.trim_start();
+            let method: String = call
+                .chars()
+                .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
+                .collect();
+            if method.is_empty() {
+                return true;
+            }
+            rest = call[method.len()..].trim_start();
+            // A turbofish or `?` is a shape the scan does not read.
+            if rest.starts_with("::") || rest.starts_with('?') {
+                return true;
+            }
+            if rest.starts_with('(') {
+                if is_mutating_method(&method) {
+                    return true;
+                }
+                match skip_balanced(rest, '(', ')') {
+                    Some(after) => rest = after.trim_start(),
+                    None => return true,
+                }
+            }
+        } else if rest.starts_with('[') {
+            match skip_balanced(rest, '[', ']') {
+                Some(after) => rest = after.trim_start(),
+                None => return true,
+            }
+        } else if rest.starts_with('?') {
+            return true;
+        } else {
+            break;
+        }
+    }
+    assignment_operator_at(rest)
+}
+
+/// Whether the name sits in a pattern that is the left side of an assignment
+/// (`(name, _) = ..`, `[name, ..] = ..`, `S { f: name, .. } = ..`): after the
+/// enclosing group closes, an `=` (not `==` or `=>`) or compound operator
+/// follows. `rest` is the text after the name.
+fn destructured_into(rest: &str) -> bool {
+    let mut depth = 0usize;
+    for (at, character) in rest.char_indices() {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                if depth > 0 {
+                    depth -= 1;
+                    continue;
+                }
+                // The enclosing group closed: what follows decides.
+                let mut tail = rest[at..].trim_start_matches([')', ']', '}']);
+                tail = tail.trim_start();
+                return assignment_operator_at(tail);
+            }
+            ';' if depth == 0 => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
+fn assignment_operator_at(rest: &str) -> bool {
+    rest.strip_prefix('=')
+        .is_some_and(|tail| !tail.starts_with(['=', '>']))
+        || ["+=", "-=", "*=", "/=", "%=", "|=", "&=", "^=", "<<=", ">>="]
+            .iter()
+            .any(|operator| rest.starts_with(operator))
+}
+
+/// The text after the bracket that closes the one `text` opens with.
+fn skip_balanced(text: &str, open: char, close: char) -> Option<&str> {
+    let mut depth = 0usize;
+    for (at, character) in text.char_indices() {
+        if character == open {
+            depth += 1;
+        } else if character == close {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                return Some(&text[at + close.len_utf8()..]);
+            }
+        }
+    }
+    None
+}
+
+/// Methods that may mutate their receiver (#7847). Name families cover the
+/// std mutators; an unlisted name is read-only to the scan.
+fn is_mutating_method(method: &str) -> bool {
+    const MUTATORS: &[&str] = &[
+        "store",
+        "set",
+        "with",
+        "nth",
+        "splice",
+        "replace_range",
+        "replace",
+        "swap",
+        "append",
+        "write",
+        "lock",
+        "take",
+        "clear",
+        "entry",
+        "resize",
+        "truncate",
+        "get_or_init",
+        "update",
+        "next",
+        "next_back",
+        "next_chunk",
+        "resize_with",
+        "compare_and_swap",
+        "try_lock",
+        "try_write",
+        "as_mut_ptr",
+        "reverse",
+        "split_off",
+        "rotate_left",
+        "rotate_right",
+        "replace_with",
+        "copy_within",
+    ];
+    MUTATORS.contains(&method)
+        || [
+            "push",
+            "pop",
+            "sort",
+            "fill",
+            "drain",
+            "retain",
+            "extend",
+            "insert",
+            "copy_",
+            "clone_from",
+            "remove",
+            "or_insert",
+            "get_or_insert",
+            "dedup",
+            "swap_",
+            "write_",
+            "make_ascii_",
+            "compare_exchange",
+            "next_if",
+            "peek",
+            "fetch_",
+            "set_",
+        ]
+        .iter()
+        .any(|prefix| method.starts_with(prefix))
+        || ["_mut", "_assign"]
+            .iter()
+            .any(|suffix| method.ends_with(suffix))
 }
 
 /// #6578: whether the expected operand may carry a value an rstest fixture

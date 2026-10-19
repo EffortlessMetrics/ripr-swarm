@@ -77,6 +77,19 @@ impl ChangedFile {
         pairs
     }
 
+    /// Replacement blocks whose removed and added runs differ in length and
+    /// that no removed line interrupts, as the added run's new-side lines and
+    /// its removed lines. [`Self::replacement_counterparts`] pairs nothing in
+    /// such a block; a caller that judges the block as a whole (a rewrap of
+    /// one statement) reads it here.
+    pub(crate) fn uneven_replacement_blocks(&self) -> Vec<(Vec<usize>, Vec<&ChangedLine>)> {
+        self.replacement_runs()
+            .into_iter()
+            .filter(|run| !run.interrupted && run.removed.len() != run.len())
+            .map(|run| ((run.start..=run.end).collect(), run.removed))
+            .collect()
+    }
+
     /// Every added line's counterpart for a caller that compares an added
     /// line with the old line it replaced, keyed by the added line's
     /// new-side line. An even block pairs by position, as
