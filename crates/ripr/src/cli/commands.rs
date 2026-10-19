@@ -2836,6 +2836,9 @@ enum DiffReportFormat {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct DiffOptions {
     root: PathBuf,
+    /// `true` when `--root` was typed, so implicit workspace-root resolution
+    /// must not rewrite `.` (#8872). Same opt-out as `ripr check`.
+    root_explicit: bool,
     /// `None` when `--base` was omitted; resolved by the loader's base
     /// authority at run time, never defaulted to a literal branch here.
     base: Option<String>,
@@ -2858,7 +2861,12 @@ pub(super) fn diff(args: &[String]) -> Result<(), String> {
         help::print_diff_help();
         return Ok(());
     }
-    let options = parse_diff_options(args)?;
+    let mut options = parse_diff_options(args)?;
+    // #8872: same implicit root `ripr check` uses; `--root .` opts out.
+    // Resolution must run before `load_for_root` so config, base, and the
+    // diff range share the widened workspace. The member prefix is unused:
+    // `diff` has no file selector.
+    let _ = check::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
     let json = matches!(options.format, DiffReportFormat::Json);
     // #7331: every post-argv-parse failure of a JSON diff run writes the
     // shared refusal envelope (the diff report's own schema version) to
@@ -2954,6 +2962,7 @@ pub(super) fn diff(args: &[String]) -> Result<(), String> {
 fn parse_diff_options(args: &[String]) -> Result<DiffOptions, String> {
     let mut options = DiffOptions {
         root: PathBuf::from("."),
+        root_explicit: false,
         base: None,
         head: "HEAD".to_string(),
         mode: Mode::Draft,
@@ -2968,6 +2977,7 @@ fn parse_diff_options(args: &[String]) -> Result<DiffOptions, String> {
             "--root" => {
                 i += 1;
                 options.root = PathBuf::from(expect_value(args, i, "--root")?);
+                options.root_explicit = true;
             }
             "--base" => {
                 i += 1;

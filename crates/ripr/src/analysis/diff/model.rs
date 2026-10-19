@@ -77,6 +77,19 @@ impl ChangedFile {
         pairs
     }
 
+    /// Replacement blocks whose removed and added runs differ in length and
+    /// that no removed line interrupts, as the added run's new-side lines and
+    /// its removed lines. [`Self::replacement_counterparts`] pairs nothing in
+    /// such a block; a caller that judges the block as a whole (a rewrap of
+    /// one statement) reads it here.
+    pub(crate) fn uneven_replacement_blocks(&self) -> Vec<(Vec<usize>, Vec<&ChangedLine>)> {
+        self.replacement_runs()
+            .into_iter()
+            .filter(|run| !run.interrupted && run.removed.len() != run.len())
+            .map(|run| ((run.start..=run.end).collect(), run.removed))
+            .collect()
+    }
+
     /// Every added line's counterpart for a caller that compares an added
     /// line with the old line it replaced, keyed by the added line's
     /// new-side line. An even block pairs by position, as
@@ -161,9 +174,12 @@ impl ChangedFile {
             let added: Vec<&ChangedLine> = (run.start..=run.end)
                 .filter_map(|line| added_at.get(&line).copied())
                 .collect();
+            // (added position, removed position, new-side line, old line)
+            let mut candidates: Vec<(usize, usize, usize, usize)> = Vec::new();
             for (added_position, line) in added.iter().enumerate() {
                 let text = line.text.trim();
-                if text.is_empty() {
+                // Punctuation-only lines (`}`, `);`) carry no identity.
+                if !text.chars().any(char::is_alphanumeric) {
                     continue;
                 }
                 let added_count = added.iter().filter(|l| l.text.trim() == text).count();
@@ -181,9 +197,42 @@ impl ChangedFile {
                 if enclosing_opener(&added, added_position)
                     == enclosing_opener(&removed, removed_position)
                 {
-                    pairs.push((line.new_side_line, old.line));
+                    candidates.push((
+                        added_position,
+                        removed_position,
+                        line.new_side_line,
+                        old.line,
+                    ));
                 }
             }
+            // Fail-closed: a reorder (`validate; commit` -> `commit; validate`,
+            // swapped arguments) is an edit, so every pair must keep its order.
+            if candidates.windows(2).any(|w| w[0].1 >= w[1].1) {
+                continue;
+            }
+            // A line that opens or closes a block and has no counterpart moves
+            // a boundary, so an identical neighbour may now sit in another block.
+            let paired_added: BTreeSet<usize> = candidates.iter().map(|c| c.0).collect();
+            let paired_removed: BTreeSet<usize> = candidates.iter().map(|c| c.1).collect();
+            let unbalanced = |text: &str| {
+                text.chars().fold(0i32, |net, c| match c {
+                    '{' | '(' | '[' => net + 1,
+                    '}' | ')' | ']' => net - 1,
+                    _ => net,
+                }) != 0
+            };
+            if added
+                .iter()
+                .enumerate()
+                .any(|(i, l)| !paired_added.contains(&i) && unbalanced(&l.text))
+                || removed
+                    .iter()
+                    .enumerate()
+                    .any(|(i, l)| !paired_removed.contains(&i) && unbalanced(&l.text))
+            {
+                continue;
+            }
+            pairs.extend(candidates.iter().map(|c| (c.2, c.3)));
         }
         pairs
     }
