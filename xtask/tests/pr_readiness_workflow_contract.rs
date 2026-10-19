@@ -1,8 +1,8 @@
 //! Pin the protected PR qualification event at the workflow boundary.
 //!
-//! Draft activity must not create the required `Ripr Rust Small Result` check.
-//! The native Draft -> Ready transition is the only pull-request admission
-//! event; main and explicit manual authorities remain separate. The PR
+//! Draft, Ready, push and ordinary-label activity must not create the required
+//! `Ripr Rust Small Result` check. An explicit `merge-ready` label event is the
+//! only pull-request admission event; main and explicit manual authorities remain separate. The PR
 //! staleness watchdog is alert-only: it must never qualify a Ready head by
 //! dispatching the protected workflow on its branch (#4986).
 
@@ -13,15 +13,19 @@ const WORKFLOW: &str = ".github/workflows/routed-rust.yml";
 const EXPECTED_EVENT_DECLARATIONS: &[&str] = &[
     "on:",
     "  pull_request:",
-    "    types: [ready_for_review]",
+    "    types: [labeled]",
     "  push:",
     "    branches: [main, master]",
     "  workflow_dispatch:",
 ];
-const EXPECTED_CONCURRENCY_GROUP: &str = "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}";
+const EXPECTED_CONCURRENCY_GROUP: &str = "  group: ${{ github.event_name == 'pull_request' && github.event.label.name != 'merge-ready' && format('{0}-{1}-nonrequest-{2}', github.workflow, github.event.pull_request.number, github.run_id) || format('{0}-{1}-{2}', github.workflow, github.event.pull_request.number || github.ref, github.event_name) }}";
 const EXPECTED_CANCEL_IN_PROGRESS: &str =
     "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}";
 const REQUIRED_CONTEXT: &str = "Ripr Rust Small Result";
+/// The only name expression that can post the required context: main/manual
+/// runs and an explicit merge-ready request. Every other label event posts a
+/// different name; a skipped job would report success for a static name.
+const EXPECTED_RESULT_NAME: &str = "${{ (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}";
 const WATCHDOG: &str = ".github/workflows/pr-staleness-watchdog.yml";
 /// Executable (non-comment) fragments that would let the watchdog start or
 /// authorize a workflow run.
@@ -124,17 +128,18 @@ fn terminal_context(source: &str) -> Option<&str> {
 }
 
 #[test]
-fn required_pr_context_is_withheld_until_ready() -> Result<(), String> {
+fn required_pr_context_is_withheld_until_merge_ready() -> Result<(), String> {
     let source = workflow_source()?;
 
     assert_eq!(
         event_declarations(&source)?,
         EXPECTED_EVENT_DECLARATIONS,
-        "protected workflow must expose only Ready PR, main push, and manual authorities",
+        "protected workflow must expose only the label-request PR, main push, and manual authorities",
     );
     assert!(source.contains(EXPECTED_CONCURRENCY_GROUP));
     assert!(source.contains(EXPECTED_CANCEL_IN_PROGRESS));
-    assert_eq!(terminal_context(&source), Some(REQUIRED_CONTEXT));
+    assert_eq!(terminal_context(&source), Some(EXPECTED_RESULT_NAME));
+    assert!(EXPECTED_RESULT_NAME.contains(REQUIRED_CONTEXT));
     assert!(!source.contains("Ripr Rust Small Ignored Label Event"));
     assert!(!source.contains("github.event.pull_request.draft"));
     Ok(())
@@ -143,10 +148,7 @@ fn required_pr_context_is_withheld_until_ready() -> Result<(), String> {
 #[test]
 fn contract_rejects_draft_or_mutation_triggers() -> Result<(), String> {
     let source = workflow_source()?;
-    let changed = source.replace(
-        "types: [ready_for_review]",
-        "types: [ready_for_review, synchronize]",
-    );
+    let changed = source.replace("types: [labeled]", "types: [labeled, synchronize]");
     assert_ne!(changed, source, "trigger mutation must engage");
     assert_ne!(
         event_declarations(&changed)?,
@@ -174,16 +176,20 @@ fn contract_rejects_disabled_ready_cancellation() -> Result<(), String> {
 #[test]
 fn contract_rejects_a_noncanonical_terminal_context() -> Result<(), String> {
     let source = workflow_source()?;
+    // A static required name would be skipped-as-success on ordinary labels.
     let changed = source.replace(
+        &format!("  result:\n    # Static `Ripr Rust Small Result` only for main/manual runs and an explicit\n    # merge-ready request. Any other pull_request label event is a nonrequest\n    # under a different name so the required context is never satisfied by it.\n    name: {EXPECTED_RESULT_NAME}"),
         "  result:\n    name: Ripr Rust Small Result",
-        "  result:\n    name: Ripr Rust Small Draft Result",
     );
     assert_ne!(changed, source, "result-name mutation must engage");
     assert_ne!(
         terminal_context(&changed),
-        Some(REQUIRED_CONTEXT),
-        "a renamed result must violate the required-context contract",
+        Some(EXPECTED_RESULT_NAME),
+        "a static result name must violate the required-context contract",
     );
+    let widened = source.replace("label.name == 'merge-ready') &&", "label.name != '') &&");
+    assert_ne!(widened, source, "request-label mutation must engage");
+    assert_ne!(terminal_context(&widened), Some(EXPECTED_RESULT_NAME));
     Ok(())
 }
 
@@ -371,7 +377,7 @@ fn ready_after_active_completed_or_unavailable_advisory_has_no_new_admission() -
         !events.iter().any(|event| event == "ready_for_review"),
         "UB: Ready must neither replace active work nor repeat completed/unavailable work"
     );
-    assert_eq!(parsed_types(&workflow_source()?)?, ["ready_for_review"]);
+    assert_eq!(parsed_types(&workflow_source()?)?, ["labeled"]);
     Ok(())
 }
 
@@ -459,12 +465,12 @@ fn unauditable_event_layouts_and_missing_publication_fail_closed() -> Result<(),
 }
 
 #[test]
-fn contract_rejects_replacing_required_ready_admission() -> Result<(), String> {
+fn contract_rejects_replacing_required_merge_ready_admission() -> Result<(), String> {
     let source = workflow_source()?;
-    let changed = source.replace("types: [ready_for_review]", "types: [opened]");
+    let changed = source.replace("types: [labeled]", "types: [opened]");
     assert_ne!(changed, source, "required-admission mutation engages");
     assert_ne!(event_declarations(&changed)?, EXPECTED_EVENT_DECLARATIONS);
-    assert_ne!(parsed_types(&changed)?, ["ready_for_review"]);
+    assert_ne!(parsed_types(&changed)?, ["labeled"]);
     Ok(())
 }
 

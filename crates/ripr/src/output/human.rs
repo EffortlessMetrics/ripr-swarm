@@ -2063,6 +2063,7 @@ mod tests {
                 crate::app::CheckRepairRoute::Route(crate::app::RepairRoute {
                     finding_id: finding_id.clone(),
                     seam_id: "67fc764ba37d77bd".to_string(),
+                    uncommitted_target: None,
                 }),
             ),
         );
@@ -2088,6 +2089,7 @@ mod tests {
                 crate::app::CheckRepairRoute::Route(crate::app::RepairRoute {
                     finding_id: "probe:other".to_string(),
                     seam_id: "67fc764ba37d77bd".to_string(),
+                    uncommitted_target: None,
                 }),
             ),
         );
@@ -2106,6 +2108,38 @@ mod tests {
         assert!(
             !full.contains("ripr repair"),
             "human-full keeps its existing drill-in contract:\n{full}"
+        );
+
+        // A route whose production-file target has uncommitted changes would
+        // be refused by `ripr repair`; the screen states the requirement and
+        // never lists the command as a bare runnable action.
+        let held = crate::app::FindingDrillIn::Commands(
+            crate::app::FindingNavigation::legacy().with_repair_route_outcome(
+                crate::app::CheckRepairRoute::Route(crate::app::RepairRoute {
+                    finding_id: finding_id.clone(),
+                    seam_id: "67fc764ba37d77bd".to_string(),
+                    uncommitted_target: Some("src/lib.rs".to_string()),
+                }),
+            ),
+        );
+        let rendered_held = super::render_bounded_with_config_and_navigation(
+            &output,
+            &config,
+            Some(&held),
+            crate::app::CheckDiffProvenance::CommittedHistory,
+        );
+        assert!(
+            rendered_held.contains("Repair start (needs a committed `src/lib.rs`;")
+                && rendered_held.contains("commit or stash it first"),
+            "a dirty inline target must state the commit-or-stash requirement:\n{rendered_held}"
+        );
+        assert!(
+            !rendered_held.contains("test route below"),
+            "no stub is rendered here, so the test route must not be named:\n{rendered_held}"
+        );
+        assert!(
+            !rendered_held.contains("\n  ripr repair 67fc764ba37d77bd\n"),
+            "a refused start must not be a bare runnable line:\n{rendered_held}"
         );
     }
 
