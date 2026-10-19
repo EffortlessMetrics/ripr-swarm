@@ -730,12 +730,11 @@ fn join_tokens(lines: &[&str]) -> String {
         let Some(first) = line.chars().next() else {
             continue;
         };
-        if let Some(last) = out.chars().next_back() {
-            if !(matches!(last, '(' | '[' | '{' | '.')
+        if let Some(last) = out.chars().next_back()
+            && !(matches!(last, '(' | '[' | '{' | '.')
                 || matches!(first, ')' | ']' | '}' | '.' | ',' | ';'))
-            {
-                out.push(' ');
-            }
+        {
+            out.push(' ');
         }
         out.push_str(&line);
     }
