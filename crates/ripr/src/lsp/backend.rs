@@ -6517,9 +6517,22 @@ impl Backend {
             crate::app::finding_navigation_with_worktree(&input, None, false, true)
                 .explain_command(&finding.id)
         });
+        // #8743: severity resolves through this session's repo config so the
+        // packet stays wire-identical to the CLI route; without a loaded
+        // config the class profile default applies, as in the DTO.
+        let session_config = self.analysis_config();
+        let default_config;
+        let config: &crate::config::RiprConfig = match session_config.as_ref() {
+            Some(config) => config.repo_config(),
+            None => {
+                default_config = crate::config::RiprConfig::default();
+                &default_config
+            }
+        };
         let rendered = crate::output::json::render_context_packet_with_explain_command(
             finding,
             max_related_tests,
+            config,
             explain_command,
             &snapshot.root,
         );

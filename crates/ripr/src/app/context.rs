@@ -128,6 +128,7 @@ pub(crate) fn collect_context_with_config_worktree_and_progress(
             Ok(output::json::render_context_packet_with_explain_command(
                 finding,
                 max_related_tests,
+                config,
                 Some(navigation.explain_command(&finding.id)),
                 &output.root,
             ))
@@ -190,6 +191,7 @@ pub(crate) fn collect_context_from_artifact(
             Ok(output::json::render_context_packet_with_explain_command(
                 finding,
                 max_related_tests,
+                config,
                 Some(navigation.explain_command(&finding.id)),
                 // The artifact records the analyzed root; the packet location
                 // renders against it like every fresh route (#5996).

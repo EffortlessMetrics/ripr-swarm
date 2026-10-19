@@ -669,7 +669,10 @@ mod tests {
         }
 
         let packet: Value = serde_json::from_str(&crate::output::json::render_context_packet(
-            &finding, 5, &root,
+            &finding,
+            5,
+            &crate::config::RiprConfig::default(),
+            &root,
         ))
         .map_err(|error| format!("parse context packet: {error}"))?;
         if packet.pointer("/probe/file").and_then(Value::as_str) != Some(expected) {

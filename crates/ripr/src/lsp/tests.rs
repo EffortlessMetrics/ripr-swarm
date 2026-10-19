@@ -2632,7 +2632,12 @@ fn discriminator_witness_stays_aligned_across_lsp_surfaces() -> Result<(), Strin
     assert!(markup.value.contains("tests/pricing.rs:10"));
     assert!(markup.value.contains("suggested_assertion_unavailable"));
 
-    let context_packet = crate::output::json::render_context_packet(&finding, 5, Path::new("."));
+    let context_packet = crate::output::json::render_context_packet(
+        &finding,
+        5,
+        &crate::config::RiprConfig::default(),
+        Path::new("."),
+    );
     let context_packet: serde_json::Value =
         serde_json::from_str(&context_packet).map_err(|err| format!("packet JSON: {err}"))?;
     assert_eq!(context_packet["witness"], witness);

@@ -187,7 +187,12 @@ mod tests {
     #[test]
     fn context_packet_includes_effective_stop_reasons_for_unknowns() {
         let finding = unknown_finding();
-        let packet = render_context_packet(&finding, 5, Path::new("."));
+        let packet = render_context_packet(
+            &finding,
+            5,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
 
         assert!(packet.contains("\"stop_reasons\": [\"static_probe_unknown\"]"));
     }

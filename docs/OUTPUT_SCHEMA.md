@@ -3356,9 +3356,12 @@ Policy reports are advisory unless `--mode fail-on-new-warning` is used.
 
 ```json
 {
-  "version": "1.0",
+  "version": "1.1",
   "tool": "ripr",
   "canonical_gap_id": "gap:rust:src/lib.rs:discount:predicate_boundary:predicate:amount>=discount_threshold",
+  "classification": "weakly_exposed",
+  "severity": "warning",
+  "confidence": 0.75,
   "probe": {
     "id": "probe:src_lib.rs:predicate:bbaa2c25",
     "family": "predicate",
@@ -3415,6 +3418,13 @@ Policy reports are advisory unless `--mode fail-on-new-warning` is used.
   "recommended_next_step": "Add below, equal, and above threshold tests."
 }
 ```
+
+Since packet version 1.1 (#8743), `classification`, `severity`, and
+`confidence` state the finding's exposure verdict outright, wire-identical to
+the `ripr check --json` finding fields of the same names; consumers must not
+derive the class from the `ripr` stage states, which are underdetermined on
+their own. `severity` resolves through the run's `ripr.toml` severity config,
+so a user override applies here exactly as it does on the check surface.
 
 `witness.explain_command` names the resolved repository root, not the spelling
 typed on the command line, so it analyzes the same repository when pasted from

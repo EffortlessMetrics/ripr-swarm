@@ -17,7 +17,7 @@ confidence|high|Confidence value.
 confidence|low|Confidence value.
 confidence|medium|Confidence value.
 confidence|unknown|Confidence value.
-context_version|1.0|Current agent context packet version.
+context_version|1.1|Current agent context packet version.
 delta|control|Delta kind value.
 delta|effect|Delta kind value.
 delta|unknown|Delta kind value.
