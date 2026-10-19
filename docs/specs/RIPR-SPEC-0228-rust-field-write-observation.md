@@ -520,11 +520,13 @@ changes `self.count += 2` to `self.count += 1`.
   generic parameter in the file reuses the name (a local `BTreeMap` with a seeded `Default` fails closed). A
   stored value computed from several parameters (`insert(k, a + b)`) is
   not a parameter and fails closed (#7988).
-- Not yet implemented for argument-free field reads: rule 3 (no
-  intervening write between the owner call and the read). This one does not
-  fail closed: a later write through the binding can still read `exposed`
-  (#7976). Keyed reads enforce it. Also not yet implemented, all failing
-  closed: the `static_unknown` fallback with
+- Argument-free field reads enforce rule 3 and refuse `#[should_panic]`
+  tests (#7976): between an accepted owner call and the read, the binding
+  may appear only as the read's own getter call or as a read-only access of
+  the written field (`o.log`, `o.log.len()`); `o.reset_to(..)`,
+  `o.log.clear()`, `o.log = ..` or `touch(&mut o)` in between withdraws the
+  credit unless a later owner call restores it. Not yet implemented, all
+  failing closed: the `static_unknown` fallback with
   `rust_state_read_path_unresolved` for a strong oracle on an unresolved
   getter, which reads `weakly_exposed` instead (example 13); reads that are
   not a compared side (`let items = &c.items;` then an assertion on

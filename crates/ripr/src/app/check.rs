@@ -598,6 +598,59 @@ struct PerlProducerStaging {
     stderr: PathBuf,
 }
 
+/// Largest trailing slice of an exporter's stderr capture that is read to
+/// build a failure message (#8796). Far above the 600-character display
+/// limit so multi-byte text and trailing whitespace cannot starve the tail.
+const PERL_STDERR_READ_WINDOW: u64 = 64 * 1024;
+
+/// Largest total number of trailing bytes scanned across blank windows.
+const PERL_STDERR_SCAN_BUDGET: u64 = 1024 * 1024;
+
+/// Last 600 characters of `reader`, reading at most
+/// [`PERL_STDERR_SCAN_BUDGET`] bytes however large the stream is. Returns
+/// `None` when the stream is unreadable or its window is blank.
+fn bounded_stderr_tail<R: std::io::Read + std::io::Seek>(reader: &mut R) -> Option<String> {
+    use std::io::{Read, SeekFrom};
+    const LIMIT: usize = 600;
+    // Slack for replacement characters a window boundary can create in the
+    // oldest bytes of the accumulated suffix.
+    const BOUNDARY_SLACK: usize = 4;
+    let len = reader.seek(SeekFrom::End(0)).ok()?;
+    let mut start = len;
+    let mut scanned: u64 = 0;
+    // Earlier windows are prepended until the trimmed suffix holds enough
+    // characters, the start is reached, or the scan budget is spent.
+    let mut suffix: Vec<u8> = Vec::new();
+    loop {
+        let more = start > 0 && scanned < PERL_STDERR_SCAN_BUDGET;
+        if more {
+            let next = start.saturating_sub(PERL_STDERR_READ_WINDOW);
+            reader.seek(SeekFrom::Start(next)).ok()?;
+            let mut window = Vec::new();
+            reader.take(start - next).read_to_end(&mut window).ok()?;
+            scanned += start - next;
+            start = next;
+            window.extend_from_slice(&suffix);
+            suffix = window;
+        }
+        let text = String::from_utf8_lossy(&suffix);
+        let text = text.trim();
+        let enough = text.chars().count() >= LIMIT + BOUNDARY_SLACK;
+        if enough || !more {
+            if text.is_empty() {
+                return None;
+            }
+            let from = text
+                .char_indices()
+                .rev()
+                .map(|(index, _)| index)
+                .nth(LIMIT - 1)
+                .unwrap_or(0);
+            return Some(text[from..].to_string());
+        }
+    }
+}
+
 impl PerlProducerStaging {
     fn create(cache_dir: &Path, packet_hash: &str) -> Result<Self, String> {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -655,24 +708,13 @@ impl PerlProducerStaging {
         }
     }
 
-    /// The tail of the exporter's stderr, for failure messages. The file is
-    /// attempt-private and bounded here, so a noisy producer cannot flood the
-    /// report.
+    /// The tail of the exporter's stderr, for failure messages. The capture is
+    /// attempt-private but its size is chosen by the exporter, so only a
+    /// bounded trailing window is ever read (#8796); a noisy or hostile
+    /// producer can neither flood the report nor the consumer's memory.
     fn stderr_tail(&self) -> Option<String> {
-        const LIMIT: usize = 600;
-        let bytes = std::fs::read(&self.stderr).ok()?;
-        let text = String::from_utf8_lossy(&bytes);
-        let text = text.trim();
-        if text.is_empty() {
-            return None;
-        }
-        let start = text
-            .char_indices()
-            .rev()
-            .map(|(index, _)| index)
-            .nth(LIMIT)
-            .unwrap_or(0);
-        Some(text[start..].trim().to_string())
+        let mut file = std::fs::File::open(&self.stderr).ok()?;
+        bounded_stderr_tail(&mut file)
     }
 
     fn remove_empty_directory(&self) -> Result<(), String> {
@@ -1676,6 +1718,170 @@ mod tests {
         assert!(is_managed_perl_producer("perl-lsp"));
         assert!(!is_managed_perl_producer("custom"));
         assert!(!is_managed_perl_producer(""));
+    }
+
+    /// Cursor that counts how many bytes callers actually pull out of it.
+    struct CountingCursor {
+        inner: std::io::Cursor<Vec<u8>>,
+        read_bytes: usize,
+    }
+
+    impl std::io::Read for CountingCursor {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let n = self.inner.read(buf)?;
+            self.read_bytes += n;
+            Ok(n)
+        }
+    }
+
+    impl std::io::Seek for CountingCursor {
+        fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+            self.inner.seek(pos)
+        }
+    }
+
+    #[test]
+    fn stderr_tail_reads_a_bounded_window_of_a_huge_capture() -> Result<(), String> {
+        // #8796: the old implementation read the whole capture (3 GiB of
+        // sparse stderr -> 3 GiB RSS). A multi-megabyte capture must cost no
+        // more than the window while keeping the same trailing text.
+        let mut data = vec![b'a'; 8 * 1024 * 1024];
+        data.extend_from_slice(b"\nfinal diagnostic line\n");
+        let total = data.len();
+        let mut reader = CountingCursor {
+            inner: std::io::Cursor::new(data),
+            read_bytes: 0,
+        };
+        let tail = bounded_stderr_tail(&mut reader).ok_or("expected a tail")?;
+        if reader.read_bytes > 256 * 1024 {
+            return Err(format!(
+                "read {} of {total} bytes; expected a window of at most 256 KiB",
+                reader.read_bytes
+            ));
+        }
+        if !tail.ends_with("final diagnostic line") {
+            return Err(format!("tail lost the end of the capture: {tail:?}"));
+        }
+        if tail.chars().count() > 600 {
+            return Err(format!("tail exceeds the display limit: {}", tail.len()));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn stderr_tail_short_capture_is_returned_whole_and_blank_is_none() -> Result<(), String> {
+        let mut short = std::io::Cursor::new(b"  boom \n".to_vec());
+        if bounded_stderr_tail(&mut short).as_deref() != Some("boom") {
+            return Err("short capture must be returned trimmed".to_string());
+        }
+        let mut blank = std::io::Cursor::new(vec![0x20u8; 200_000]);
+        if bounded_stderr_tail(&mut blank).is_some() {
+            return Err("blank capture must yield no tail".to_string());
+        }
+        // A window that starts inside a multi-byte character still yields
+        // valid text for the characters that follow.
+        let mut multibyte = std::io::Cursor::new("é".repeat(100_000).into_bytes());
+        let tail = bounded_stderr_tail(&mut multibyte).ok_or("expected a tail")?;
+        if tail.chars().count() != 600 || tail.chars().any(|c| c != 'é') {
+            return Err(format!(
+                "unexpected multibyte tail of {} chars",
+                tail.chars().count()
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn stderr_tail_steps_back_over_trailing_whitespace_within_budget() -> Result<(), String> {
+        let mut data = b"real diagnostic".to_vec();
+        data.extend(std::iter::repeat_n(b' ', 200 * 1024));
+        let mut reader = CountingCursor {
+            inner: std::io::Cursor::new(data),
+            read_bytes: 0,
+        };
+        let tail = bounded_stderr_tail(&mut reader).ok_or("expected the earlier text")?;
+        if tail != "real diagnostic" {
+            return Err(format!("unexpected tail {tail:?}"));
+        }
+        // Text beyond the scan budget is not reached, and the budget is a cap.
+        let mut far = b"too far back".to_vec();
+        far.extend(std::iter::repeat_n(b'\n', 4 * 1024 * 1024));
+        let mut reader = CountingCursor {
+            inner: std::io::Cursor::new(far),
+            read_bytes: 0,
+        };
+        if bounded_stderr_tail(&mut reader).is_some() {
+            return Err("text beyond the scan budget must yield no tail".to_string());
+        }
+        if reader.read_bytes as u64 > PERL_STDERR_SCAN_BUDGET {
+            return Err(format!("read {} bytes, over the budget", reader.read_bytes));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn staging_stderr_tail_reads_the_capture_file_through_the_bounded_window() -> Result<(), String>
+    {
+        // Real file, not a reader: reintroducing `fs::read` here would load
+        // all of it. 300 MiB is sparse, so it costs no disk, and the test
+        // finishes quickly only because just the tail is read.
+        let dir = std::env::temp_dir().join(format!("ripr-8796-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let path = dir.join("exporter.stderr");
+        let file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
+        file.set_len(300 * 1024 * 1024).map_err(|e| e.to_string())?;
+        {
+            use std::io::{Seek, SeekFrom, Write};
+            let mut file = file;
+            file.seek(SeekFrom::End(0)).map_err(|e| e.to_string())?;
+            file.write_all(b"\nexporter failed: boom\n")
+                .map_err(|e| e.to_string())?;
+        }
+        let staging = PerlProducerStaging {
+            packet: dir.join("p.tmp"),
+            diff: dir.join("ripr.diff"),
+            stderr: path,
+            directory: dir.clone(),
+        };
+        let tail = staging.stderr_tail();
+        let _ = std::fs::remove_file(&staging.stderr);
+        let _ = std::fs::remove_dir(&dir);
+        match tail {
+            Some(text) if text.ends_with("exporter failed: boom") => Ok(()),
+            other => Err(format!("unexpected tail {other:?}")),
+        }
+    }
+
+    #[test]
+    fn stderr_tail_diagnostic_straddling_a_window_boundary_keeps_its_tail() -> Result<(), String> {
+        let mut data = "a".repeat(599).into_bytes();
+        data.push(b'b');
+        data.extend(std::iter::repeat_n(b' ', 65_535));
+        let mut cursor = std::io::Cursor::new(data);
+        let tail = bounded_stderr_tail(&mut cursor).ok_or("expected a tail")?;
+        let expected = format!("{}b", "a".repeat(599));
+        if tail != expected {
+            return Err(format!(
+                "straddling tail was {} chars: {tail:?}",
+                tail.len()
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn stderr_tail_selected_suffix_keeps_a_leading_space() -> Result<(), String> {
+        let data = format!("a {}", "b".repeat(599)).into_bytes();
+        let mut cursor = std::io::Cursor::new(data);
+        let tail = bounded_stderr_tail(&mut cursor).ok_or("expected a tail")?;
+        let expected = format!(" {}", "b".repeat(599));
+        if tail != expected {
+            return Err(format!(
+                "expected a leading space, got {} chars",
+                tail.chars().count()
+            ));
+        }
+        Ok(())
     }
 
     #[test]
