@@ -5110,7 +5110,7 @@ mod harness_limitation_assertion_tests {
         let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
         let diff_fixture = manifest_dir
             .parent()
-            .expect("xtask lives under the repo root")
+            .unwrap_or(manifest_dir)
             .join("fixtures/split_test_boundary_oracle");
         assert!(diff_fixture.join("diff.patch").exists());
         assert!(evidence_promotion_case_is_diff_sourced(
