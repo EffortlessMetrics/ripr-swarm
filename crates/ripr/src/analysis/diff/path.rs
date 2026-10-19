@@ -704,7 +704,10 @@ mod tests {
                 let parsed = parse_unified_diff_with_metadata(&input);
                 assert!(parsed.limitations.is_empty(), "{:?}", parsed.limitations);
                 assert_eq!(parsed.truncated_file_sections, 0);
-                assert!(parse_unified_diff_with_limit(&input, 1).is_err());
+                let Err(error) = parse_unified_diff_with_limit(&input, 1) else {
+                    return Err("distinct whitespace paths fit in one file slot".to_string());
+                };
+                assert!(error.starts_with("diff_scope_oversized: at least 2 changed files"));
                 for files in [
                     parsed.changed_files,
                     parse_unified_diff_with_limit(&input, 2)?,
