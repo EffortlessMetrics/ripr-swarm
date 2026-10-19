@@ -16,9 +16,9 @@ use super::client_features::ClientFeatureProfile;
 use super::config::{LspAnalysisConfig, validated_pulled_options};
 use super::diagnostics::{
     AnalysisPendingRecovery, DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache,
-    WorkspaceDiagnostics, analysis_pending_diagnostics, delivered_diagnostics_for_uri,
-    delivery_omission_diagnostic, diagnostic_refresh_plan, take_all_uris,
-    withdrawn_quarantine_diagnostics,
+    WorkspaceDiagnostics, analysis_pending_diagnostics, analysis_pending_withdrawal_diagnostics,
+    delivered_diagnostics_for_uri, delivery_omission_diagnostic, diagnostic_refresh_plan,
+    take_all_uris, withdrawn_quarantine_diagnostics,
 };
 use super::hover::{
     classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
@@ -6139,6 +6139,23 @@ impl Backend {
                 analysis_pending_document_report(params.previous_result_id, recovery).into(),
             );
         };
+        // A configuration failure latched after this snapshot committed
+        // withdraws the retained evidence from service (#8731): the
+        // snapshot stays committed and reachable via the retrieval routes,
+        // but serving it as current would render pre-failure findings at
+        // full weight with no in-editor signal that analysis is paused.
+        // Serve the typed withdrawal marker under the FixConfiguration
+        // recovery route instead — the same stable pending identity the
+        // pre-analysis state uses, so the client re-renders instead of
+        // holding the stale payload.
+        if self.configuration_failure().is_some() {
+            let recovery = AnalysisPendingRecovery::FixConfiguration;
+            return Ok(analysis_pending_document_report_withdrawn(
+                params.previous_result_id,
+                recovery,
+            )
+            .into());
+        }
         let uri = params.text_document.uri;
         // A quarantined (dirty-buffer) document is served one Information
         // marker under a distinct result id (#1970/#7771): saved-state
@@ -6227,6 +6244,14 @@ impl Backend {
             let recovery = self.analysis_pending_recovery();
             return Ok(analysis_pending_workspace_report(&params, recovery).into());
         };
+        // A configuration failure latched after this snapshot committed
+        // withdraws the retained evidence from service (#8731), same as the
+        // document pull path: serve the typed withdrawal marker per tracked
+        // URI under the FixConfiguration recovery route.
+        if self.configuration_failure().is_some() {
+            let recovery = AnalysisPendingRecovery::FixConfiguration;
+            return Ok(analysis_pending_workspace_report_withdrawn(&params, recovery).into());
+        }
         let mut uris = snapshot
             .diagnostics_by_uri
             .keys()
@@ -7339,6 +7364,25 @@ fn analysis_pending_document_report(
     previous_result_id: Option<String>,
     recovery: AnalysisPendingRecovery,
 ) -> DocumentDiagnosticReport {
+    analysis_pending_document_report_for(previous_result_id, recovery, false)
+}
+
+/// The withdrawal variant for a blocking failure latched after a snapshot
+/// committed (#8731): the same stable pending identity and `unchanged`
+/// contract as the pre-analysis report, but the marker names the
+/// withdrawal instead of the never-analyzed state.
+fn analysis_pending_document_report_withdrawn(
+    previous_result_id: Option<String>,
+    recovery: AnalysisPendingRecovery,
+) -> DocumentDiagnosticReport {
+    analysis_pending_document_report_for(previous_result_id, recovery, true)
+}
+
+fn analysis_pending_document_report_for(
+    previous_result_id: Option<String>,
+    recovery: AnalysisPendingRecovery,
+    withdrawn: bool,
+) -> DocumentDiagnosticReport {
     let result_id = analysis_pending_result_id(&recovery);
     if previous_result_id.as_deref() == Some(result_id.as_str()) {
         return DocumentDiagnosticReport::Unchanged(RelatedUnchangedDocumentDiagnosticReport {
@@ -7346,11 +7390,16 @@ fn analysis_pending_document_report(
             unchanged_document_diagnostic_report: UnchangedDocumentDiagnosticReport { result_id },
         });
     }
+    let items = if withdrawn {
+        analysis_pending_withdrawal_diagnostics(recovery)
+    } else {
+        analysis_pending_diagnostics(recovery)
+    };
     DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
         related_documents: None,
         full_document_diagnostic_report: tower_lsp_server::ls_types::FullDocumentDiagnosticReport {
             result_id: Some(result_id),
-            items: analysis_pending_diagnostics(recovery),
+            items,
         },
     })
 }
@@ -7366,11 +7415,34 @@ fn analysis_pending_workspace_report(
     params: &WorkspaceDiagnosticParams,
     recovery: AnalysisPendingRecovery,
 ) -> WorkspaceDiagnosticReport {
+    analysis_pending_workspace_report_for(params, recovery, false)
+}
+
+/// The withdrawal variant of the workspace pending report (#8731): same
+/// per-tracked-URI identity contract as the pre-analysis report, with the
+/// withdrawal marker payload.
+fn analysis_pending_workspace_report_withdrawn(
+    params: &WorkspaceDiagnosticParams,
+    recovery: AnalysisPendingRecovery,
+) -> WorkspaceDiagnosticReport {
+    analysis_pending_workspace_report_for(params, recovery, true)
+}
+
+fn analysis_pending_workspace_report_for(
+    params: &WorkspaceDiagnosticParams,
+    recovery: AnalysisPendingRecovery,
+    withdrawn: bool,
+) -> WorkspaceDiagnosticReport {
     let result_id = analysis_pending_result_id(&recovery);
-    let mut items = Vec::with_capacity(params.previous_result_ids.len());
+    let items = if withdrawn {
+        analysis_pending_withdrawal_diagnostics(recovery)
+    } else {
+        analysis_pending_diagnostics(recovery)
+    };
+    let mut report_items = Vec::with_capacity(params.previous_result_ids.len());
     for entry in &params.previous_result_ids {
         if entry.value == result_id {
-            items.push(WorkspaceDocumentDiagnosticReport::Unchanged(
+            report_items.push(WorkspaceDocumentDiagnosticReport::Unchanged(
                 WorkspaceUnchangedDocumentDiagnosticReport {
                     uri: entry.uri.clone(),
                     version: None,
@@ -7381,19 +7453,21 @@ fn analysis_pending_workspace_report(
             ));
             continue;
         }
-        items.push(WorkspaceDocumentDiagnosticReport::Full(
+        report_items.push(WorkspaceDocumentDiagnosticReport::Full(
             WorkspaceFullDocumentDiagnosticReport {
                 uri: entry.uri.clone(),
                 version: None,
                 full_document_diagnostic_report:
                     tower_lsp_server::ls_types::FullDocumentDiagnosticReport {
                         result_id: Some(result_id.clone()),
-                        items: analysis_pending_diagnostics(recovery),
+                        items: items.clone(),
                     },
             },
         ));
     }
-    WorkspaceDiagnosticReport { items }
+    WorkspaceDiagnosticReport {
+        items: report_items,
+    }
 }
 
 /// Disclosure emitted once per quarantine episode when a dirty document's
