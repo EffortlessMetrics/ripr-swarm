@@ -1,4 +1,5 @@
 use crate::app::agent_brief::{AGENT_BRIEF_HARD_MAX_SEAMS, DEFAULT_AGENT_BRIEF_MAX_SEAMS};
+use crate::cli::commands_numeric::{parse_positive_u64, parse_positive_usize};
 use crate::cli::parse::expect_value;
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use std::path::PathBuf;
@@ -956,15 +957,7 @@ pub(super) fn parse_agent_verify_execute_options(
             "--cancel-after-ms" => {
                 i += 1;
                 let value = expect_value(args, i, "--cancel-after-ms")?;
-                let parsed = value.parse::<u64>().map_err(|error| {
-                    format!("invalid --cancel-after-ms: expected a positive integer: {error}")
-                })?;
-                if parsed == 0 {
-                    return Err(
-                        "invalid --cancel-after-ms: expected a positive integer".to_string()
-                    );
-                }
-                cancel_after_ms = Some(parsed);
+                cancel_after_ms = Some(parse_positive_u64(value, "--cancel-after-ms")?);
             }
             "--json" => json = true,
             other => return Err(unknown_argument("agent verify-execute", other)),
@@ -1176,15 +1169,10 @@ fn parse_files_value(value: &str) -> Result<Vec<PathBuf>, String> {
 }
 
 fn parse_max_seams(value: &str) -> Result<usize, String> {
-    let parsed = value
-        .parse::<usize>()
-        .map_err(|err| format!("invalid --max-seams: expected a positive integer: {err}"))?;
-    if parsed == 0 {
-        return Err("invalid --max-seams: expected a positive integer".to_string());
-    }
+    let parsed = parse_positive_usize(value, "--max-seams")?;
     if parsed > AGENT_BRIEF_HARD_MAX_SEAMS {
         return Err(format!(
-            "invalid --max-seams: maximum is {AGENT_BRIEF_HARD_MAX_SEAMS}"
+            "invalid --max-seams: maximum is {AGENT_BRIEF_HARD_MAX_SEAMS}; got {value:?}"
         ));
     }
     Ok(parsed)
@@ -1218,6 +1206,38 @@ mod tests {
         assert!(parsed.authorize);
         assert_eq!(parsed.cancel_after_ms, Some(250));
         assert!(parsed.json);
+        Ok(())
+    }
+
+    #[test]
+    fn agent_verify_execute_numeric_flag_repeats_validate_each_value_and_last_valid_wins()
+    -> Result<(), String> {
+        let parsed = parse_agent_verify_execute_options(&args(&[
+            "--packet",
+            "packet.json",
+            "--result-json",
+            "result.json",
+            "--json",
+            "--cancel-after-ms",
+            "1",
+            "--cancel-after-ms",
+            "2",
+        ]))?;
+        assert_eq!(parsed.cancel_after_ms, Some(2));
+        assert_eq!(
+            parse_agent_verify_execute_options(&args(&[
+                "--packet",
+                "packet.json",
+                "--result-json",
+                "result.json",
+                "--json",
+                "--cancel-after-ms",
+                "0",
+                "--cancel-after-ms",
+                "1",
+            ])),
+            Err("--cancel-after-ms requires a positive integer; got \"0\"".to_string())
+        );
         Ok(())
     }
 
@@ -1941,10 +1961,7 @@ mod tests {
                 "--max-seams",
                 "many",
             ])),
-            Err(
-                "invalid --max-seams: expected a positive integer: invalid digit found in string"
-                    .to_string()
-            )
+            Err("--max-seams requires a positive integer; got \"many\"".to_string())
         );
         assert_eq!(
             parse_agent_brief_options(&args(&[
@@ -1954,7 +1971,7 @@ mod tests {
                 "--max-seams",
                 "0",
             ])),
-            Err("invalid --max-seams: expected a positive integer".to_string())
+            Err("--max-seams requires a positive integer; got \"0\"".to_string())
         );
         assert_eq!(
             parse_agent_brief_options(&args(&[
@@ -1964,12 +1981,40 @@ mod tests {
                 "--max-seams",
                 "11",
             ])),
-            Err("invalid --max-seams: maximum is 10".to_string())
+            Err("invalid --max-seams: maximum is 10; got \"11\"".to_string())
         );
         assert_eq!(
             parse_agent_brief_options(&args(&["--files", "src/lib.rs,", "--json"])),
             Err("agent brief --files requires non-empty paths".to_string())
         );
+    }
+
+    #[test]
+    fn agent_brief_numeric_flag_repeats_validate_each_value_and_last_valid_wins()
+    -> Result<(), String> {
+        let parsed = parse_agent_brief_options(&args(&[
+            "--diff",
+            "change.diff",
+            "--json",
+            "--max-seams",
+            "1",
+            "--max-seams",
+            "10",
+        ]))?;
+        assert_eq!(parsed.max_seams, 10);
+        assert_eq!(
+            parse_agent_brief_options(&args(&[
+                "--diff",
+                "change.diff",
+                "--json",
+                "--max-seams",
+                "0",
+                "--max-seams",
+                "1",
+            ])),
+            Err("--max-seams requires a positive integer; got \"0\"".to_string())
+        );
+        Ok(())
     }
 
     #[test]
