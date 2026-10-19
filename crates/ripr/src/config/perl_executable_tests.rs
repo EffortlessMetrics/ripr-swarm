@@ -27,7 +27,7 @@ fn perl_executable_preserves_valid_paths_and_the_opt_in_boundary() -> Result<(),
         "perl-ripr-facts",
         "./tools/exporter",
         "/opt/Perl Tools/exporter",
-        r"C:\Program Files\Perl\exporter.exe",
+        r"C:\path\to\Perl Tools\exporter.exe",
         "./tools/导出器",
         " ./tools/exporter ",
     ] {
