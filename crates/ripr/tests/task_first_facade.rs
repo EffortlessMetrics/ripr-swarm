@@ -598,6 +598,93 @@ fn member_directory_commands_use_the_resolved_workspace_root() -> Result<(), Str
     Ok(())
 }
 
+fn tree_snapshot(dir: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
+    let mut files = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(next) = pending.pop() {
+        for entry in std::fs::read_dir(&next).map_err(|e| e.to_string())? {
+            let path = entry.map_err(|e| e.to_string())?.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                files.push((
+                    path.clone(),
+                    std::fs::read(&path).map_err(|e| e.to_string())?,
+                ));
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+/// #8767 review: a member-relative `src/lib.rs:2` typed in a member with no
+/// gap must bind to that member's file, never to a sibling member's colliding
+/// `src/lib.rs` that has the gap. `agent stub --write` and repair admission
+/// both leave the sibling untouched; from the sibling the same selector works.
+#[cfg(unix)]
+#[test]
+fn member_relative_selector_never_reaches_a_sibling_members_file() -> Result<(), String> {
+    let fixture = Fixture::dir("facade-member-selector")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let quiet = outer.join("quiet");
+    let gap = outer.join("gap");
+    for member in [&quiet, &gap] {
+        std::fs::create_dir_all(member.join("src")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(member.join("tests")).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"quiet\", \"gap\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(gap.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(gap.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    std::fs::write(gap.join("tests/pricing.rs"), FIXTURE_WEAK_TEST).map_err(|e| e.to_string())?;
+    std::fs::write(
+        quiet.join("Cargo.toml"),
+        "[package]\nname = \"quiet_member\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(
+        quiet.join("src/lib.rs"),
+        "pub const NAME: &str = \"quiet\";\n\n\n",
+    )
+    .map_err(|e| e.to_string())?;
+    init_repo(&outer)?;
+    run_git(&outer, &["add", "Cargo.toml", "quiet", "gap"])?;
+    git_commit(&outer, "two member fixture")?;
+    let before = tree_snapshot(&gap)?;
+
+    let stub = run_ripr(
+        &quiet,
+        &["agent", "stub", "--at", "src/lib.rs:2", "--write"],
+    )?;
+    assert_ne!(stub.status.code(), Some(0), "{}", stderr_text(&stub));
+    assert_eq!(
+        tree_snapshot(&gap)?,
+        before,
+        "stub must not touch the sibling"
+    );
+    assert!(
+        !stderr_text(&stub).contains("gap/src/lib.rs")
+            || stderr_text(&stub).contains("quiet/src/lib.rs"),
+        "{}",
+        stderr_text(&stub)
+    );
+
+    let repair = run_ripr(&quiet, &["repair", "src/lib.rs:2"])?;
+    assert_ne!(repair.status.code(), Some(0), "{}", stderr_text(&repair));
+    assert!(attempt_ids(&outer).is_empty(), "no attempt on the sibling");
+    assert_eq!(tree_snapshot(&gap)?, before);
+
+    // Positive control: the same selector typed from the member that owns the gap.
+    let owned = run_ripr(&gap, &["repair", "src/lib.rs:2"])?;
+    assert_exit(&owned, 0, "repair from the member that owns the gap");
+    assert_eq!(attempt_ids(&outer).len(), 1);
+    Ok(())
+}
+
 fn run_ripr_env(
     current_dir: &Path,
     args: &[&str],

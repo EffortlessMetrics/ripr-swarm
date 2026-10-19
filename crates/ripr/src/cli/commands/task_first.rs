@@ -289,11 +289,13 @@ pub(in crate::cli) fn status(args: &[String]) -> Result<(), CommandError> {
 
 fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandError> {
     // #8767: same implicit root `ripr check` uses; `--root .` opts out.
-    super::check::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+    let prefix =
+        super::check::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
     ensure_command_root(&options.root, "repair")?;
     let seam_id = match options.item.as_deref() {
         Some(item) => {
-            match resolve_repair_subject(&options.root, item).map_err(CommandError::from)? {
+            let item = super::check::bind_member_selector_item(prefix.as_deref(), item);
+            match resolve_repair_subject(&options.root, &item).map_err(CommandError::from)? {
                 RepairSubject::Seam(seam_id) => seam_id,
                 RepairSubject::Decision(message) => return Err(CommandError::Decision(message)),
             }

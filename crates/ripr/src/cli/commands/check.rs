@@ -231,12 +231,16 @@ fn non_cargo_workspace_marker(dir: &Path) -> Option<ImplicitRootReason> {
 /// Shared by every command that takes `--root` and defaults to `.`: without a
 /// typed `--root`, resolve the workspace root exactly as `ripr check` does
 /// (#8767), with the same stderr disclosure. A typed `--root` is kept as given.
+///
+/// Returns the invocation directory relative to the widened root (`crates/app`)
+/// when the root moved, so callers can bind member-relative file selectors with
+/// [`bind_member_selector_file`]; `None` when the root did not change.
 pub(super) fn resolve_implicit_command_root(
     root: &mut PathBuf,
     root_explicit: bool,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     if root_explicit {
-        return Ok(());
+        return Ok(None);
     }
     let mut input = CheckInput {
         root: root.clone(),
@@ -249,8 +253,51 @@ pub(super) fn resolve_implicit_command_root(
     {
         eprintln!("{}", terminal_safe(warning));
     }
+    let moved = input.root != *root;
+    let prefix = if moved {
+        std::fs::canonicalize(".").ok().and_then(|cwd| {
+            let base = std::fs::canonicalize(&input.root).ok()?;
+            let relative = cwd.strip_prefix(base).ok()?;
+            let text = relative
+                .components()
+                .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/");
+            (!text.is_empty()).then_some(text)
+        })
+    } else {
+        None
+    };
     *root = input.root;
-    Ok(())
+    Ok(prefix)
+}
+
+/// #8767: when the root was implicitly widened, a relative file selector that
+/// names an existing file under the invocation directory means that file, so it
+/// is rewritten to its workspace-relative path before resolution; otherwise the
+/// suffix matcher could pick a sibling member's `src/lib.rs`. When the selector
+/// also exists workspace-relative, the invocation-directory file wins (the
+/// operator typed it from that directory). Anything else is returned as typed.
+pub(super) fn bind_member_selector_file(prefix: Option<&str>, file: &str) -> String {
+    let Some(prefix) = prefix else {
+        return file.to_string();
+    };
+    let path = Path::new(file);
+    if path.is_absolute() || !Path::new(".").join(path).is_file() {
+        return file.to_string();
+    }
+    format!("{prefix}/{}", file.trim_start_matches("./"))
+}
+
+/// [`bind_member_selector_file`] for a `file:line` repair item; seam ids and
+/// gap ids contain no such shape and pass through unchanged.
+pub(super) fn bind_member_selector_item(prefix: Option<&str>, item: &str) -> String {
+    match item.rsplit_once(':') {
+        Some((file, line)) if line.parse::<usize>().is_ok() => {
+            format!("{}:{line}", bind_member_selector_file(prefix, file))
+        }
+        _ => item.to_string(),
+    }
 }
 
 pub(super) fn resolve_implicit_workspace_root(input: &mut CheckInput) -> Result<(), String> {

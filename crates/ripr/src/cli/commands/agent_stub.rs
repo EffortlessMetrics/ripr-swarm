@@ -23,7 +23,11 @@ const RUST_TEST_STUB_SCHEMA_VERSION: &str = "0.2";
 
 pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), CommandError> {
     // #8767: same implicit root `ripr check` uses; `--root .` opts out.
-    super::check::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+    let prefix =
+        super::check::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+    if let crate::app::test_stub::TestStubSelector::At { file, .. } = &mut options.selector {
+        *file = super::check::bind_member_selector_file(prefix.as_deref(), file);
+    }
     ensure_command_root(&options.root, "agent stub")?;
     let config = load_for_root(&options.root).map_err(CommandError::Failure)?;
     let resolution = match resolve_test_stub(&options.root, &config, &options.selector) {
