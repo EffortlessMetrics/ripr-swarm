@@ -2157,6 +2157,19 @@ mod tests {
             &[(20, "let b = 2;"), (21, "end: span.end.prev_span(),")],
         );
         assert_eq!(in_order.identical_replacement_lines().len(), 1);
+        let moved_continuation = replacement(
+            &[
+                (10, "let a = load();"),
+                (11, "let b = load2()"),
+                (12, ".unwrap_or_default();"),
+            ],
+            &[
+                (20, "let a = load()"),
+                (21, ".unwrap_or_default();"),
+                (22, "let b = load2();"),
+            ],
+        );
+        assert!(moved_continuation.identical_replacement_lines().is_empty());
     }
 
     /// Probes for `source` (the new file) with the given added

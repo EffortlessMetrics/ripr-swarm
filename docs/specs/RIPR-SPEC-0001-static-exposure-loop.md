@@ -561,6 +561,9 @@ Fixture coverage:
 - `probes_for_file_keeps_lone_structural_line_hunks`
 - `probes_for_file_keeps_structural_line_closing_outside_block_in_mixed_run`
 - `lone_else_split_hunk_is_not_no_behavioral_candidates`
+- `an_identical_line_inside_a_replacement_block_seeds_no_probe`
+- `identical_line_suppression_is_fail_closed`
+- `identical_line_pairing_never_hides_reorders_or_block_moves`
 
 ## Implementation Mapping
 

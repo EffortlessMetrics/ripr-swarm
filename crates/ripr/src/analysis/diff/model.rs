@@ -182,6 +182,12 @@ impl ChangedFile {
                 if !text.chars().any(char::is_alphanumeric) {
                     continue;
                 }
+                // Continuation lines (`.unwrap_or_default();`, `&& ok`, `?`)
+                // take their meaning from the previous statement, so a move
+                // between statements changes behavior without changing text.
+                if text.starts_with(['.', '?', '&', '|', '+', '-', '*', '/', '=', '<', '>']) {
+                    continue;
+                }
                 let added_count = added.iter().filter(|l| l.text.trim() == text).count();
                 let mut matches = removed
                     .iter()
