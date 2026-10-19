@@ -734,10 +734,20 @@ fn join_tokens(lines: &[&str]) -> String {
         let Some(first) = line.chars().next() else {
             continue;
         };
-        if let Some(last) = out.chars().next_back()
+        // Two dots are one range token when joint and two tokens when
+        // separated, so a wrap between them keeps its space.
+        let mut tail = out.chars().rev();
+        let (last, before_last) = (tail.next(), tail.next());
+        let dots = (last == Some('.') && before_last == Some('.'))
+            || (first == '.' && last == Some('.'))
+            || (first == '.' && line.chars().nth(1) == Some('.'));
+        if let Some(last) = last
+            && !dots
             && !(matches!(last, '(' | '[' | '{' | '.')
                 || matches!(first, ')' | ']' | '}' | '.' | ',' | ';'))
         {
+            out.push(' ');
+        } else if last.is_some() && dots {
             out.push(' ');
         }
         out.push_str(&line);
@@ -2217,6 +2227,16 @@ mod tests {
         assert!(!is_behavior_neutral_rewrap(
             &["let label = stringify!(i32::MAX);"],
             &["let label = stringify!(", "    core::i32::MAX);"],
+        ));
+    }
+
+    #[test]
+    fn rewrap_keeps_separated_dots_apart() {
+        assert_eq!(join_tokens(&["a .", ". b"]), "a . . b");
+        assert_eq!(join_tokens(&["a", ".b()"]), "a.b()");
+        assert!(!is_behavior_neutral_rewrap(
+            &["let v = (x, i32::MAX); a .. b"],
+            &["let v = (x, core::i32::MAX); a .", ". b"],
         ));
     }
 
