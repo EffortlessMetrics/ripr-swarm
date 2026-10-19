@@ -862,11 +862,31 @@ pub(crate) fn capture_bytes_in_dir_with_budget(
     budget: ByteCaptureBudget,
     error_context: &str,
 ) -> Result<TimedBytesOutput, String> {
+    capture_bytes_in_dir_with_budget_envs(
+        program,
+        args,
+        source,
+        (&[], env_remove),
+        budget,
+        error_context,
+    )
+}
+
+/// Like [`capture_bytes_in_dir_with_budget`], with explicit child environment
+/// as `(set, remove)`.
+pub(crate) fn capture_bytes_in_dir_with_budget_envs(
+    program: &Path,
+    args: &[String],
+    source: (&Path, Option<&[u8]>),
+    (envs, env_remove): (&[(&str, &str)], &[&str]),
+    budget: ByteCaptureBudget,
+    error_context: &str,
+) -> Result<TimedBytesOutput, String> {
     capture_bytes_with_input(
         program,
         args,
         source,
-        &[],
+        envs,
         env_remove,
         (budget.timeout, Some(budget)),
         error_context,
