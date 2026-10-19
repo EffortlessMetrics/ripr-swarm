@@ -815,18 +815,51 @@ const TOKEN_MACROS: [&str; 6] = [
     "debug_assert_matches",
 ];
 
+/// Whether `ch` can continue a Rust identifier. Every non-ASCII char counts,
+/// so combining marks and other identifier continuations never split a name.
+fn continues_identifier(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_' || !ch.is_ascii()
+}
+
+/// Each token-observing macro invocation in `masked` text as the byte offset
+/// of its name and of the first byte after its `!`. Trivia (whitespace, and
+/// comments the mask turned into spaces) may sit before the bang, as Rust
+/// allows. A name inside a longer identifier, or a `!=` comparison, is not an
+/// invocation.
+fn token_macro_bangs(masked: &str) -> Vec<(usize, usize)> {
+    let bytes = masked.as_bytes();
+    let mut found = Vec::new();
+    for name in TOKEN_MACROS {
+        for (at, _) in masked.match_indices(name) {
+            let before_ok = masked[..at]
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !continues_identifier(ch));
+            let after = at + name.len();
+            let after_ok = masked[after..]
+                .chars()
+                .next()
+                .is_none_or(|ch| !continues_identifier(ch));
+            if !before_ok || !after_ok {
+                continue;
+            }
+            let mut cursor = after;
+            while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
+                cursor += 1;
+            }
+            if bytes.get(cursor) == Some(&b'!') && bytes.get(cursor + 1) != Some(&b'=') {
+                found.push((at, cursor + 1));
+            }
+        }
+    }
+    found
+}
+
 /// Whether `line` holds a token-observing macro invocation. A single-line
 /// check for callers without the whole file; [`token_macro_lines`] also
 /// covers the continuation lines of a multi-line invocation.
 fn observes_tokens(line: &str) -> bool {
-    TOKEN_MACROS.iter().any(|name| {
-        line.match_indices(&format!("{name}!")).any(|(at, _)| {
-            line[..at]
-                .chars()
-                .next_back()
-                .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'))
-        })
-    })
+    !token_macro_bangs(&mask_comments_and_strings(line)).is_empty()
 }
 
 /// 1-based lines of `source` inside a token-observing macro invocation, from
@@ -844,42 +877,29 @@ fn token_macro_lines(source: &str) -> std::collections::BTreeSet<usize> {
         .collect::<Vec<_>>();
     let line_of = |at: usize| newlines.partition_point(|&newline| newline < at) + 1;
     let mut lines = std::collections::BTreeSet::new();
-    for name in TOKEN_MACROS {
-        for (at, _) in masked.match_indices(&format!("{name}!")) {
-            let boundary = masked[..at]
-                .chars()
-                .next_back()
-                .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'));
-            if !boundary {
-                continue;
-            }
-            let mut cursor = at + name.len() + 1;
-            while bytes
-                .get(cursor)
-                .is_some_and(|byte| byte.is_ascii_whitespace())
-            {
-                cursor += 1;
-            }
-            if !matches!(bytes.get(cursor), Some(b'(' | b'[' | b'{')) {
-                continue;
-            }
-            let mut depth = 0usize;
-            let mut end = bytes.len();
-            for (offset, byte) in bytes[cursor..].iter().enumerate() {
-                match byte {
-                    b'(' | b'[' | b'{' => depth += 1,
-                    b')' | b']' | b'}' => {
-                        depth = depth.saturating_sub(1);
-                        if depth == 0 {
-                            end = cursor + offset;
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            lines.extend(line_of(at)..=line_of(end));
+    for (at, mut cursor) in token_macro_bangs(&masked) {
+        while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
+            cursor += 1;
         }
+        if !matches!(bytes.get(cursor), Some(b'(' | b'[' | b'{')) {
+            continue;
+        }
+        let mut depth = 0usize;
+        let mut end = bytes.len();
+        for (offset, byte) in bytes[cursor..].iter().enumerate() {
+            match byte {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        end = cursor + offset;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        lines.extend(line_of(at)..=line_of(end));
     }
     lines
 }
@@ -2370,6 +2390,36 @@ mod tests {
             "assert! argument text keeps its probe"
         );
         assert!(token_macro_lines("fn f() {\n    éassert!(\n        x\n    );\n}\n").is_empty());
+    }
+
+    #[test]
+    fn trivia_before_the_bang_still_reads_as_a_token_macro() {
+        for source in [
+            "fn f() {\n    let s = stringify !(\n        i32::MAX\n    );\n}\n",
+            "fn f() {\n    let s = stringify\n        !(\n        i32::MAX\n    );\n}\n",
+            "fn f() {\n    let s = stringify /* c */ !(\n        i32::MAX\n    );\n}\n",
+        ] {
+            let lines = token_macro_lines(source);
+            assert!(
+                lines.contains(&3) || lines.contains(&4),
+                "{source}: {lines:?}"
+            );
+        }
+        assert!(observes_tokens("dbg !(core::i32::MAX);"));
+        assert!(observes_tokens("assert /* c */ !(x);"));
+        assert!(!observes_tokens("let ok = dbg != 1;"));
+        let spaced = "fn f() {\n    let s = stringify !(\n        i32::MAX\n    );\n}\n";
+        let probes = block_probes(
+            spaced,
+            &[(3, "        i32::MAX")],
+            &[(3, 3, "        core::i32::MAX")],
+        );
+        assert!(
+            !probes.is_empty(),
+            "continuation-only change keeps its probe"
+        );
+        let combining = "fn f() {\n    e\u{301}assert!(\n        x\n    );\n}\n";
+        assert!(token_macro_lines(combining).is_empty());
     }
 
     #[test]
