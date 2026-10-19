@@ -1,10 +1,7 @@
 use std::process::{Command, Output};
 
-fn ripr(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .args(args)
-        .output()
-        .expect("run ripr CLI")
+fn ripr(args: &[&str]) -> Result<Output, std::io::Error> {
+    Command::new(env!("CARGO_BIN_EXE_ripr")).args(args).output()
 }
 
 fn assert_usage_refusal(output: Output, expected: &str) {
@@ -21,7 +18,8 @@ fn assert_usage_refusal(output: Output, expected: &str) {
 }
 
 #[test]
-fn agent_brief_numeric_refusals_name_the_exact_cli_value() {
+fn agent_brief_numeric_refusals_name_the_exact_cli_value() -> Result<(), Box<dyn std::error::Error>>
+{
     for value in ["0", "-1", "nonnumeric", "18446744073709551616"] {
         assert_usage_refusal(
             ripr(&[
@@ -34,7 +32,7 @@ fn agent_brief_numeric_refusals_name_the_exact_cli_value() {
                 "--json",
                 "--max-seams",
                 value,
-            ]),
+            ])?,
             &format!("--max-seams requires a positive integer; got {value:?}"),
         );
     }
@@ -50,7 +48,7 @@ fn agent_brief_numeric_refusals_name_the_exact_cli_value() {
             "--json",
             "--max-seams",
             "11",
-        ]),
+        ])?,
         "invalid --max-seams: maximum is 10; got \"11\"",
     );
 
@@ -65,13 +63,15 @@ fn agent_brief_numeric_refusals_name_the_exact_cli_value() {
             "0",
             "--max-seams",
             "1",
-        ]),
+        ])?,
         "--max-seams requires a positive integer; got \"0\"",
     );
+    Ok(())
 }
 
 #[test]
-fn agent_verify_execute_numeric_refusals_name_the_exact_cli_value() {
+fn agent_verify_execute_numeric_refusals_name_the_exact_cli_value()
+-> Result<(), Box<dyn std::error::Error>> {
     for value in ["0", "-1", "nonnumeric", "18446744073709551616"] {
         assert_usage_refusal(
             ripr(&[
@@ -86,7 +86,7 @@ fn agent_verify_execute_numeric_refusals_name_the_exact_cli_value() {
                 "--json",
                 "--cancel-after-ms",
                 value,
-            ]),
+            ])?,
             &format!("--cancel-after-ms requires a positive integer; got {value:?}"),
         );
     }
@@ -104,13 +104,15 @@ fn agent_verify_execute_numeric_refusals_name_the_exact_cli_value() {
             "0",
             "--cancel-after-ms",
             "1",
-        ]),
+        ])?,
         "--cancel-after-ms requires a positive integer; got \"0\"",
     );
+    Ok(())
 }
 
 #[test]
-fn verify_execute_positive_repeated_cancellation_stays_a_policy_refusal() {
+fn verify_execute_positive_repeated_cancellation_stays_a_policy_refusal()
+-> Result<(), Box<dyn std::error::Error>> {
     let result_path =
         std::env::temp_dir().join(format!("ripr-8835-result-{}.json", std::process::id()));
     let result_path = result_path.to_string_lossy().into_owned();
@@ -128,10 +130,9 @@ fn verify_execute_positive_repeated_cancellation_stays_a_policy_refusal() {
         "1",
         "--cancel-after-ms",
         "2",
-    ]);
+    ])?;
     assert_eq!(output.status.code(), Some(3));
-    let stdout: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .expect("policy refusal remains machine-readable JSON on stdout");
+    let stdout: serde_json::Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(stdout["disposition"], "verification_rejected_policy");
     assert_eq!(stdout["executed"], false);
     assert_eq!(stdout["result_committed"], false);
@@ -140,4 +141,5 @@ fn verify_execute_positive_repeated_cancellation_stays_a_policy_refusal() {
         "ripr: verification_rejected_policy\n"
     );
     assert!(!std::path::Path::new(&result_path).exists());
+    Ok(())
 }
