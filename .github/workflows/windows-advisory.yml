@@ -447,25 +447,35 @@ jobs:
                   with self.assertRaises(RuntimeError):
                       self.packet(listing)
 
-              def test_windows_recovery_matches_published_slashes_and_keeps_literal(self):
+              def test_windows_recovery_matches_console_quotes_and_keeps_literal(self):
                   # Inert Windows-shaped sentinels: no real drive or directory is accessed.
                   drive = 'Q' + ':'
                   root = drive + r'\synthetic-selector-fixture literal'
                   diff = root + r'\fixture change.diff'
-                  expected = f"ripr check --root '{drive}/synthetic-selector-fixture literal' --diff '{drive}/synthetic-selector-fixture literal/fixture change.diff' --json"
+                  expected = f'ripr check --root "{drive}/synthetic-selector-fixture literal" --diff "{drive}/synthetic-selector-fixture literal/fixture change.diff" --json'
                   self.assertEqual(self.ns['recovery_command'](root, diff, windows=True), expected)
                   stderr = ('No finding. Retry `' + expected + '`.').encode()
                   self.assertEqual(self.ns['printed_recovery'](stderr, root, diff, windows=True), expected)
+                  with self.assertRaisesRegex(RuntimeError, 'frozen root/diff/JSON scope'):
+                      self.ns['printed_recovery'](stderr.replace(b'"', b"'"), root, diff, windows=True)
+
+              def test_posix_recovery_keeps_single_quotes(self):
+                  root = '/synthetic-selector-fixture literal'
+                  diff = root + '/fixture change.diff'
+                  expected = "ripr check --root '/synthetic-selector-fixture literal' --diff '/synthetic-selector-fixture literal/fixture change.diff' --json"
+                  self.assertEqual(self.ns['recovery_command'](root, diff, windows=False), expected)
+                  self.assertEqual(self.ns['printed_recovery'](('`' + expected + '`').encode(), root, diff, windows=False), expected)
 
               def test_recovery_refuses_changed_scope_or_literal(self):
-                  command = self.ns['recovery_command'](self.root, self.out)
-                  for wrong in (self.ns['recovery_command'](self.stock, self.out),
-                                self.ns['recovery_command'](self.root, self.binary),
-                                command.replace(' --json', ''), command + ' --no-cache'):
-                      with self.subTest(command=wrong), self.assertRaises(RuntimeError):
-                          self.ns['printed_recovery'](('`' + wrong + '`').encode(), self.root, self.out)
-                  with self.assertRaises(RuntimeError):
-                      self.ns['printed_recovery'](('`' + command + '` `' + command + '`').encode(), self.root, self.out)
+                  for windows in (False, True):
+                      command = self.ns['recovery_command'](self.root, self.out, windows=windows)
+                      for wrong in (self.ns['recovery_command'](self.stock, self.out, windows=windows),
+                                    self.ns['recovery_command'](self.root, self.binary, windows=windows),
+                                    command.replace(' --json', ''), command + ' --no-cache'):
+                          with self.subTest(windows=windows, command=wrong), self.assertRaises(RuntimeError):
+                              self.ns['printed_recovery'](('`' + wrong + '`').encode(), self.root, self.out, windows=windows)
+                      with self.assertRaises(RuntimeError):
+                          self.ns['printed_recovery'](('`' + command + '` `' + command + '`').encode(), self.root, self.out, windows=windows)
 
               def test_cache_target_is_owned_before_restore_and_all_subset_builds(self):
                   text = WORKFLOW.read_text()
@@ -1054,12 +1064,13 @@ jobs:
               return finding["id"]
 
           def recovery_command(fixture, diff, windows=None):
-              # Frozen fixture paths contain spaces: shell_arg quotes them; Windows display uses slashes.
+              # These frozen spaced paths use shell_arg's host quotes (#7729/#8152).
               windows = os.name == "nt" if windows is None else windows
               paths = [str(fixture), str(diff)]
               if windows:
                   paths = [p.removeprefix("\\\\?\\").replace("\\", "/") for p in paths]
-              return f"ripr check --root '{paths[0]}' --diff '{paths[1]}' --json"
+              quote = '"' if windows else "'"
+              return f"ripr check --root {quote}{paths[0]}{quote} --diff {quote}{paths[1]}{quote} --json"
 
           def printed_recovery(stderr, fixture, diff, windows=None):
               matches = re.findall(chr(96) + r"(ripr check [^\x60]+)" + chr(96), stderr.decode())
