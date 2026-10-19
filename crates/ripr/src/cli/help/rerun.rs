@@ -13,6 +13,9 @@ Options:
   --root PATH          Workspace root. Defaults to the current directory, then
                        walks up to the enclosing workspace or package, or the git
                        top level; `--root .` pins this directory.
+                       A relative --out resolves against the resolved root;
+                       --before and --gap-ledger paths are read as typed from
+                       the current directory.
   --json               Emit the structured current-state report.
   --out PATH           Write the report to a file instead of stdout.
 

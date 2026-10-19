@@ -371,19 +371,7 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
         help::print_rerun_help();
         return Ok(());
     }
-    let mut options = parse_options(args)?;
-    // #8872: same implicit root `ripr check` uses; `--root .` opts out. A
-    // member-relative `--changed-test` file binds to the invocation directory.
-    let prefix =
-        super::commands::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
-    if let RerunSelector::ChangedTest { file, .. } = &mut options.selector {
-        let bound = super::commands::bind_member_selector_file(
-            prefix.as_deref(),
-            &options.root,
-            &file.to_string_lossy(),
-        )?;
-        *file = PathBuf::from(bound);
-    }
+    let options = parse_options(args)?;
     run_refusing(options)
 }
 
@@ -391,8 +379,41 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
 /// argv parser routes through `refuse`, which writes the shared refusal
 /// envelope to stdout on `--json` runs before the prose error reaches
 /// stderr. Argv usage errors above stay prose-only.
-fn run_refusing(options: RerunOptions) -> Result<(), String> {
+fn run_refusing(mut options: RerunOptions) -> Result<(), String> {
     let json = options.json;
+    // #8872: same implicit root `ripr check` uses; `--root .` opts out. A
+    // failure here is a post-argv failure, so a `--json` run still gets the
+    // refusal envelope (#7331). A member-relative `--changed-test` file that
+    // exists binds to the invocation directory; one that does not is passed
+    // through so the named-limitation report (RIPR-SPEC-0123) stays reachable.
+    let typed_root = options.root.clone();
+    let resolved =
+        super::commands::resolve_implicit_command_root(&mut options.root, options.root_explicit);
+    let prefix = match resolved {
+        Ok(prefix) => prefix,
+        Err(error) => {
+            return Err(if json {
+                refuse_json_envelope(
+                    TARGETED_RERUN_REFUSAL_SCHEMA_VERSION,
+                    "diff",
+                    None,
+                    &typed_root,
+                    None,
+                    CoreError::from(error),
+                )
+            } else {
+                error
+            });
+        }
+    };
+    if let RerunSelector::ChangedTest { file, .. } = &mut options.selector {
+        let typed = file.to_string_lossy().into_owned();
+        if let Ok(bound) =
+            super::commands::bind_member_selector_file(prefix.as_deref(), &options.root, &typed)
+        {
+            *file = PathBuf::from(bound);
+        }
+    }
     let refuse = |error: CoreError| -> String {
         if !json {
             return error.to_string();

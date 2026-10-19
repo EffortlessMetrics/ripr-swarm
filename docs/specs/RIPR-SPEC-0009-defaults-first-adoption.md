@@ -436,7 +436,10 @@ Defaults-first adoption evidence should cover:
 - the same implicit-root parity for `agent start/repair/card/status/verify`,
   `rerun`, `diff` and `explain` from a workspace member directory, with
   member-relative `--before/--after`, `--changed-test` and `file:line` inputs
-  bound to the invocation directory and `--root .` as the opt-out;
+  bound to the invocation directory when they name an existing file (an
+  unresolved `rerun --changed-test` stays RIPR-SPEC-0123's named limitation),
+  `--root .` as the opt-out, and root-resolution failures of `diff --json` and
+  `rerun --json` keeping the refusal envelope;
 - shared cache-root parity, real nested and linked-worktree boundaries,
   inherited-selector isolation, and the gitless saved-diff route;
 - built-in missing-config behavior matching the generated init profile's

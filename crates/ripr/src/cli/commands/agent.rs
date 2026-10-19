@@ -68,8 +68,19 @@ const REPAIR_AFTER_FAILURE_SCHEMA_VERSION: &str = "0.4";
 pub(in crate::cli) fn resolve_agent_repair_root(
     options: &mut AgentRepairOptions,
 ) -> Result<(), String> {
-    super::check::resolve_implicit_command_root(&mut options.root, options.root_explicit)
-        .map(|_| ())
+    let prefix =
+        super::check::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+    // A member-relative `file:line` selector binds to the invocation directory
+    // before subject translation, locking or publication, so it can never
+    // suffix-match a sibling member. Structured ids pass through unchanged.
+    if let Some(item) = options.seam_id.take() {
+        options.seam_id = Some(super::check::bind_member_selector_item(
+            prefix.as_deref(),
+            &options.root,
+            &item,
+        )?);
+    }
+    Ok(())
 }
 
 /// #8872: the same implicit workspace root `ripr check` uses, for the agent
