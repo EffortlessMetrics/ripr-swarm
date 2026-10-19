@@ -120,6 +120,23 @@ fn verify_command_quotes_for_the_windows_host_grammar() {
         verify_command_for_test_on(&plain[0], true).as_deref(),
         Some("python -m pytest tests/test_checkout.py::test_ok")
     );
+    // Bytes that cmd or PowerShell expand inside double quotes get no
+    // paste-ready command on Windows; the POSIX grammar still quotes them.
+    for path in ["tests/foo$(id).py", "tests/100%.py", "tests/a`b.py"] {
+        let tests = extract_tests(Path::new(path), pytest_source);
+        assert_eq!(tests.len(), 1, "{path}");
+        assert_eq!(
+            verify_command_for_test_on(&tests[0], true),
+            None,
+            "expandable bytes must not become a paste-ready command: {path}"
+        );
+    }
+    let expandable = extract_tests(Path::new("tests/foo$(id).py"), pytest_source);
+    assert_eq!(
+        verify_command_for_test_on(&expandable[0], false).as_deref(),
+        Some("python -m pytest 'tests/foo$(id).py'::test_ok"),
+        "POSIX single quotes still neutralize the metacharacters"
+    );
 }
 
 #[test]
@@ -187,6 +204,31 @@ fn repair_placement_quotes_the_verify_command_for_windows_hosts() -> Result<(), 
         r#"python -m pytest "tests/my file.py::test_same""#
     );
     Ok(())
+}
+
+#[test]
+fn repair_placement_withholds_windows_expandable_paths() {
+    // #8752: a path whose bytes cmd or PowerShell expand inside double
+    // quotes cannot become a paste-ready repair route; the placement is
+    // withheld like the dotted-path refusal, not emitted as a broken command.
+    let tests = extract_tests(
+        Path::new("tests/foo$(id).py"),
+        "def test_same():\n    assert checkout()\n",
+    );
+    assert_eq!(tests.len(), 1);
+    let candidates = [PythonRelatedCandidate {
+        test: &tests[0],
+        relation: PythonRelationKind::SyntacticCall,
+    }];
+    assert_eq!(
+        python_repair_placement_on(&ExposureClass::WeaklyExposed, &candidates, true),
+        None,
+        "an expandable path must not become a paste-ready command"
+    );
+    assert!(
+        python_repair_placement_on(&ExposureClass::WeaklyExposed, &candidates, false).is_some(),
+        "the POSIX grammar keeps the verify route"
+    );
 }
 
 #[test]

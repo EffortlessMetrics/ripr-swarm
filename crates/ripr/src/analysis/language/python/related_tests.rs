@@ -317,11 +317,12 @@ pub(super) fn verify_command_for_test_on(test: &PythonTest, windows: bool) -> Op
             // quoting. On Windows the node id sits inside the quotes: cmd
             // only strips surrounding quotes when an argument both starts and
             // ends with one, so `pytest "path"::test` would hand pytest the
-            // quote bytes as part of the file name.
+            // quote bytes as part of the file name. A token with bytes cmd
+            // or PowerShell expand inside double quotes gets no command.
             let selector = if windows {
-                shell_quote_file_arg_for_host(&format!("{path}::{node}"), true)
+                shell_quote_file_arg_for_host(&format!("{path}::{node}"), true)?
             } else {
-                format!("{}::{node}", shell_quote_file_arg_for_host(&path, false))
+                format!("{}::{node}", shell_quote_file_arg_for_host(&path, false)?)
             };
             Some(format!(
                 "{} {selector}",
@@ -331,11 +332,11 @@ pub(super) fn verify_command_for_test_on(test: &PythonTest, windows: bool) -> Op
         "unittest" => {
             let module = unittest_module_for_path(&path)?;
             let selector = if windows {
-                shell_quote_file_arg_for_host(&format!("{module}.{}", test.qualified_name), true)
+                shell_quote_file_arg_for_host(&format!("{module}.{}", test.qualified_name), true)?
             } else {
                 format!(
                     "{}.{}",
-                    shell_quote_file_arg_for_host(&module, false),
+                    shell_quote_file_arg_for_host(&module, false)?,
                     test.qualified_name
                 )
             };
@@ -366,22 +367,30 @@ fn unittest_module_for_path(path: &str) -> Option<String> {
 /// other byte is quoted so spaces, unicode, and shell metacharacters reach
 /// the test runner intact. On POSIX hosts the quote is single-quote escaping
 /// (`'\''`), so `$()`, backticks, spaces, and quotes are not expanded. On
-/// Windows hosts it is double quotes — the common denominator of cmd and
-/// PowerShell; an embedded `"` is doubled per the PowerShell grammar, and
-/// cmd's lack of any embedded-quote escape stays a documented limit. Stored
-/// node ids and test-file paths stay the raw spelling; only the command text
-/// is quoted. This does not run the command.
-fn shell_quote_file_arg_for_host(file_str: &str, windows: bool) -> String {
+/// Windows hosts the quote is double quotes — the common denominator of cmd
+/// and PowerShell for literal text — but both shells still expand some bytes
+/// inside double quotes (PowerShell: `$()`, `$var`, and backtick escapes;
+/// cmd: `%VAR%`). A token carrying any of those bytes gets no paste-ready
+/// command at all: the verify route stays silent rather than emitting a
+/// command whose paste executes the file name. An embedded `"` in a
+/// quotable token is doubled per the PowerShell grammar; cmd has no
+/// representation for an embedded quote, which stays a documented limit.
+/// Stored node ids and test-file paths stay the raw spelling; only the
+/// command text is quoted. This does not run the command.
+fn shell_quote_file_arg_for_host(file_str: &str, windows: bool) -> Option<String> {
     let in_safe_class = |c: char| {
         c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-') || (windows && c == ':')
     };
     if !file_str.is_empty() && file_str.chars().all(in_safe_class) {
-        return file_str.to_string();
+        return Some(file_str.to_string());
     }
     if windows {
-        return format!("\"{}\"", file_str.replace('"', "\"\""));
+        if file_str.contains(['$', '`', '%']) {
+            return None;
+        }
+        return Some(format!("\"{}\"", file_str.replace('"', "\"\"")));
     }
-    format!("'{}'", file_str.replace('\'', "'\\''"))
+    Some(format!("'{}'", file_str.replace('\'', "'\\''")))
 }
 
 pub(super) fn python_repair_placement(
