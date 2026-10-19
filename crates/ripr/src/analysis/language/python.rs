@@ -115,9 +115,9 @@ use related_tests::{
     PythonRelatedCandidate, PythonRelationKind, binding_target_for_construction, body_calls_owner,
     construct_result_is_called, contains_any_attribute_call, find_related_tests,
     has_unclosed_quote, imported_module_matches_owner, local_binding_calls_owner,
-    normalize_similarity_key, normalize_test_stem, owner_similarity_keys, python_repair_placement,
-    related_test_candidates, related_test_relation, same_stem_related, similarity_key_contains,
-    verify_command_for_test,
+    normalize_similarity_key, normalize_test_stem, owner_similarity_keys,
+    python_repair_placement_on, related_test_candidates, related_test_relation, same_stem_related,
+    similarity_key_contains, verify_command_for_test_on,
 };
 use related_tests::{
     assertion_calls_method_only_on_foreign_receiver, first_parenthesized_string_argument,
