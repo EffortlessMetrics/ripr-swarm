@@ -2059,12 +2059,13 @@ mod tests {
         };
         let config = crate::config::RiprConfig::default();
         let routed = crate::app::FindingDrillIn::Commands(
-            crate::app::FindingNavigation::legacy().with_repair_route(Some(
-                crate::app::RepairRoute {
+            crate::app::FindingNavigation::legacy().with_repair_route_outcome(
+                crate::app::CheckRepairRoute::Route(crate::app::RepairRoute {
                     finding_id: finding_id.clone(),
                     seam_id: "67fc764ba37d77bd".to_string(),
-                },
-            )),
+                    uncommitted_target: None,
+                }),
+            ),
         );
         let rendered = super::render_bounded_with_config_and_navigation(
             &output,
@@ -2084,12 +2085,13 @@ mod tests {
         );
 
         let other = crate::app::FindingDrillIn::Commands(
-            crate::app::FindingNavigation::legacy().with_repair_route(Some(
-                crate::app::RepairRoute {
+            crate::app::FindingNavigation::legacy().with_repair_route_outcome(
+                crate::app::CheckRepairRoute::Route(crate::app::RepairRoute {
                     finding_id: "probe:other".to_string(),
                     seam_id: "67fc764ba37d77bd".to_string(),
-                },
-            )),
+                    uncommitted_target: None,
+                }),
+            ),
         );
         let rendered_other = super::render_bounded_with_config_and_navigation(
             &output,
@@ -2106,6 +2108,38 @@ mod tests {
         assert!(
             !full.contains("ripr repair"),
             "human-full keeps its existing drill-in contract:\n{full}"
+        );
+
+        // A route whose production-file target has uncommitted changes would
+        // be refused by `ripr repair`; the screen states the requirement and
+        // never lists the command as a bare runnable action.
+        let held = crate::app::FindingDrillIn::Commands(
+            crate::app::FindingNavigation::legacy().with_repair_route_outcome(
+                crate::app::CheckRepairRoute::Route(crate::app::RepairRoute {
+                    finding_id: finding_id.clone(),
+                    seam_id: "67fc764ba37d77bd".to_string(),
+                    uncommitted_target: Some("src/lib.rs".to_string()),
+                }),
+            ),
+        );
+        let rendered_held = super::render_bounded_with_config_and_navigation(
+            &output,
+            &config,
+            Some(&held),
+            crate::app::CheckDiffProvenance::CommittedHistory,
+        );
+        assert!(
+            rendered_held.contains("Repair start (needs a committed `src/lib.rs`;")
+                && rendered_held.contains("commit or stash it first"),
+            "a dirty inline target must state the commit-or-stash requirement:\n{rendered_held}"
+        );
+        assert!(
+            !rendered_held.contains("test route below"),
+            "no stub is rendered here, so the test route must not be named:\n{rendered_held}"
+        );
+        assert!(
+            !rendered_held.contains("\n  ripr repair 67fc764ba37d77bd\n"),
+            "a refused start must not be a bare runnable line:\n{rendered_held}"
         );
     }
 
@@ -3798,6 +3832,79 @@ mod tests {
         Ok(())
     }
 
+    // #8630: named limitations refuse packet projection before validation.
+    // Internal missing fields are not operator inputs, even for a weak class.
+    #[test]
+    fn preview_limited_named_limitation_has_terminal_observation_check() -> Result<(), String> {
+        const WHY: &str = "typescript_dynamic_assertion_unresolved — the expected value comes from a helper the adapter cannot resolve";
+        for language in [LanguageId::TypeScript, LanguageId::JavaScript] {
+            for class in [
+                ExposureClass::WeaklyExposed,
+                ExposureClass::ReachableUnrevealed,
+                ExposureClass::NoStaticPath,
+                ExposureClass::StaticUnknown,
+                ExposureClass::InfectionUnknown,
+                ExposureClass::PropagationUnknown,
+            ] {
+                for missing_fields in [false, true] {
+                    let mut finding = typescript_preview_finding(true);
+                    finding.language = Some(language);
+                    finding.class = class.clone();
+                    finding.evidence.push(
+                        "typescript_limitation: typescript_dynamic_assertion_unresolved"
+                            .to_string(),
+                    );
+                    finding
+                        .evidence
+                        .push(format!("typescript_limitation_why: {WHY}"));
+                    if !missing_fields {
+                        finding
+                            .evidence
+                            .retain(|line| !line.starts_with("missing_actionability_fields: "));
+                    }
+                    let actionability =
+                        crate::output::preview_actionability::preview_actionability_for(&finding)
+                            .ok_or_else(|| "fixture must project preview actionability".to_string())?;
+                    assert!(!actionability.repair_packet_ready, "{language:?} {class:?}");
+                    assert_eq!(
+                        !actionability.missing_actionability_fields.is_empty(),
+                        missing_fields,
+                        "fixture must exercise the intended missing-field state"
+                    );
+                    assert!(
+                        crate::output::typescript_packet_projection::typescript_gap_record_for(
+                            &finding
+                        )
+                        .is_none(),
+                        "named limitation must withhold the repair record"
+                    );
+                    let rendered = render(&single_finding_output(finding));
+                    let line = rendered
+                        .lines()
+                        .find(|line| line.starts_with("  Safe next action:"))
+                        .ok_or_else(|| format!("missing safe action:\n{rendered}"))?;
+                    assert!(line.contains(WHY), "producer reason was lost: {line}");
+                    assert!(
+                        line.contains("`ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it"),
+                        "closed route must be explicit: {line}"
+                    );
+                    assert!(
+                        line.ends_with("check by hand whether a test observes this change, then rerun `ripr check`"),
+                        "limitation must name a manual observation check: {line}"
+                    );
+                    for misleading in [
+                        "complete the missing",
+                        "resolve the limitation",
+                        "add or strengthen a test",
+                    ] {
+                        assert!(!line.contains(misleading), "{line}");
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     // #4216 review: an unknown-class closed packet (for example a Bun-bridge
     // cross-language visibility limit: StaticUnknown, no static_limit_kind,
     // missing fields present) is not a known weak test, so the manual step is
@@ -3899,7 +4006,7 @@ mod tests {
     fn preview_limited_safe_action_says_no_repair_for_exposed_typescript() {
         let mut finding = typescript_preview_finding(false);
         finding.class = ExposureClass::Exposed;
-        let output = single_finding_output(finding);
+        let output = single_finding_output(finding.clone());
 
         let rendered = render(&output);
 
@@ -3912,6 +4019,24 @@ mod tests {
         ), "{rendered}");
         assert!(!rendered.contains("complete the missing repair-packet fields"));
         assert!(!rendered.contains("repair packet is not ready"));
+
+        // A named limitation must not hide the already-observed control
+        // behind the manual-inspection branch (#8630).
+        finding
+            .evidence
+            .push("typescript_limitation: typescript_dynamic_assertion_unresolved".to_string());
+        finding.evidence.push(
+            "typescript_limitation_why: typescript_dynamic_assertion_unresolved — an additional assertion is opaque".to_string(),
+        );
+        let rendered = render(&single_finding_output(finding));
+        assert!(
+            rendered.contains("so there is no repair to make"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("check by hand whether a test observes"),
+            "{rendered}"
+        );
     }
 
     #[test]

@@ -814,6 +814,16 @@ unchanged. It is the one limitation kind that may ride on a complete outcome
 (`complete_with_findings` / `complete_no_findings`); every other kind marks the
 outcome incomplete. Human output renders it without the incomplete-scope hedge.
 
+`unevaluated_condition` (#8714) discloses conditional assertion credit: a
+credited test assertion sits under a branch condition static analysis cannot
+evaluate, so the credited oracle may never execute. The limitation names the
+test file and the condition (detail prefix `typescript_conditional_assertion_credit`),
+and human output says the credited assertion sits under an unevaluable
+condition rather than claiming files were not analyzed. Unlike `eol_only_churn`,
+this kind still marks the outcome incomplete — consumers gating on
+`analysis_complete` see these runs as partial; letting it ride a complete
+outcome is a separate, consumer-visible design decision (#8714 review).
+
 When an *unchanged* Rust test file is indexed by lexical fallback after the
 reference parser refuses it, and a classified owner consults that file for
 related-test evidence (a related test came from it, or the file source calls
@@ -18059,7 +18069,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.83",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.84",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -18759,7 +18769,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.43",
+    "schema_version": "1.44",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -18770,7 +18780,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.83",
+      "schema_version": "1.84",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

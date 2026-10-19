@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn coverage_failure_capture_preserves_original_command_and_failure() -> Result<(), String> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = crate::test_support::workspace_root()?;
     let text = fs::read_to_string(root.join(".github/workflows/coverage.yml"))
         .map_err(|error| error.to_string())?;
     assert!(text.contains("id: generate-coverage\n        run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info"));
@@ -15,7 +15,7 @@ fn coverage_failure_capture_preserves_original_command_and_failure() -> Result<(
 
 #[test]
 fn linux_llvm_proof_routes_prepare_the_pinned_component_before_tests() -> Result<(), String> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = crate::test_support::workspace_root()?;
     let routes = [
         (
             "rust-gates.yml",
@@ -90,7 +90,7 @@ fn linux_llvm_proof_routes_prepare_the_pinned_component_before_tests() -> Result
 
 #[test]
 fn automatic_pr_plan_placeholder_is_retired() -> Result<(), String> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = crate::test_support::workspace_root()?;
     let workflow = ".github/workflows/pr-plan.yml";
     assert!(
         !root
@@ -940,9 +940,21 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
     let cases = [
         (
             "pull_request",
+            Some("labeled"),
+            Some("merge-ready"),
+            RoutedRustEventRoute::LaunchFullGate,
+        ),
+        (
+            "pull_request",
+            Some("labeled"),
+            Some("Merge-Ready"),
+            RoutedRustEventRoute::LaunchFullGate,
+        ),
+        (
+            "pull_request",
             Some("ready_for_review"),
             None,
-            RoutedRustEventRoute::LaunchFullGate,
+            RoutedRustEventRoute::WorkflowNotTriggered,
         ),
         (
             "pull_request",
@@ -966,19 +978,19 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             "pull_request",
             Some("labeled"),
             Some("full-ci"),
-            RoutedRustEventRoute::WorkflowNotTriggered,
+            RoutedRustEventRoute::NonrequestLabel,
         ),
         (
             "pull_request",
             Some("labeled"),
             Some("windows-ci"),
-            RoutedRustEventRoute::WorkflowNotTriggered,
+            RoutedRustEventRoute::NonrequestLabel,
         ),
         (
             "pull_request",
             Some("labeled"),
             Some("macos-ci"),
-            RoutedRustEventRoute::WorkflowNotTriggered,
+            RoutedRustEventRoute::NonrequestLabel,
         ),
         (
             "pull_request",
@@ -1002,50 +1014,46 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         );
     }
 
-    let draft_resurrected = workflow.replace(
-        "    types: [ready_for_review]",
-        "    types: [ready_for_review, synchronize]",
-    );
+    let draft_resurrected =
+        workflow.replace("    types: [labeled]", "    types: [labeled, synchronize]");
     assert!(
         routed_rust_ready_event_contract_violations(&draft_resurrected)
             .iter()
             .any(|violation| {
                 violation.contains("must be exactly") && violation.contains("synchronize")
             }),
-        "re-admitting synchronize must fail the Ready-only contract: {:?}",
+        "re-admitting synchronize must fail the merge-ready request contract: {:?}",
         routed_rust_ready_event_contract_violations(&draft_resurrected)
     );
 
-    let label_resurrected = workflow.replace(
-        "    types: [ready_for_review]",
-        "    types: [ready_for_review, labeled]",
+    let ready_resurrected = workflow.replace(
+        "    types: [labeled]",
+        "    types: [labeled, ready_for_review]",
     );
     assert!(
-        routed_rust_ready_event_contract_violations(&label_resurrected)
+        routed_rust_ready_event_contract_violations(&ready_resurrected)
             .iter()
             .any(|violation| {
-                violation.contains("must be exactly") && violation.contains("labeled")
+                violation.contains("must be exactly") && violation.contains("ready_for_review")
             }),
-        "re-admitting label events must fail the Ready-only contract: {:?}",
-        routed_rust_ready_event_contract_violations(&label_resurrected)
+        "re-admitting the Ready transition must fail the merge-ready contract: {:?}",
+        routed_rust_ready_event_contract_violations(&ready_resurrected)
     );
 
-    let edited_resurrected = workflow.replace(
-        "    types: [ready_for_review]",
-        "    types: [ready_for_review, edited]",
-    );
+    let edited_resurrected =
+        workflow.replace("    types: [labeled]", "    types: [labeled, edited]");
     assert!(
         routed_rust_ready_event_contract_violations(&edited_resurrected)
             .iter()
             .any(|violation| {
                 violation.contains("must be exactly") && violation.contains("edited")
             }),
-        "re-admitting the edited activity type must fail the Ready-only contract: {:?}",
+        "re-admitting the edited activity type must fail the merge-ready request contract: {:?}",
         routed_rust_ready_event_contract_violations(&edited_resurrected)
     );
 
     let ready_dropped = workflow.replace(
-        "    types: [ready_for_review]",
+        "    types: [labeled]",
         "    types: [opened, synchronize, reopened]",
     );
     assert!(
@@ -1056,7 +1064,7 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&ready_dropped)
     );
 
-    let missing_types = workflow.replace("    types: [ready_for_review]\n", "");
+    let missing_types = workflow.replace("    types: [labeled]\n", "");
     assert!(
         routed_rust_ready_event_contract_violations(&missing_types)
             .iter()
@@ -1073,7 +1081,7 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&cancellation_disabled)
             .iter()
             .any(|violation| violation.contains("cancel-in-progress")),
-        "disabling Ready-run cancellation must fail: {:?}",
+        "disabling merge-ready cancellation must fail: {:?}",
         routed_rust_ready_event_contract_violations(&cancellation_disabled)
     );
 
@@ -1113,9 +1121,10 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
     );
 
     let shared_group = workflow.replace(
-        "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}",
-        "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}",
+        "format('{0}-{1}-{2}', github.workflow, github.event.pull_request.number || github.ref, github.event_name)",
+        "format('{0}-{1}', github.workflow, github.event.pull_request.number || github.ref)",
     );
+    assert_ne!(shared_group, workflow, "fixture must rewrite the group");
     assert!(
         routed_rust_ready_event_contract_violations(&shared_group)
             .iter()
@@ -1137,8 +1146,12 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
     );
 
     let pseudo_result = workflow.replace(
-        "    name: Ripr Rust Small Result",
-        "    name: ${{ github.event_name == 'pull_request' && 'Ripr Rust Small Ignored Label Event' || 'Ripr Rust Small Result' }}",
+        "'Merge-ready Nonrequest' }}",
+        "'Ripr Rust Small Ignored Label Event' }}",
+    );
+    assert_ne!(
+        pseudo_result, workflow,
+        "fixture must rewrite the nonrequest name"
     );
     assert!(
         routed_rust_ready_event_contract_violations(&pseudo_result)
@@ -1149,16 +1162,89 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
     );
 
     let renamed_result = workflow.replace(
-        "    name: Ripr Rust Small Result",
-        "    name: Ripr Rust Small Draft Result",
+        "&& 'Ripr Rust Small Result' ||",
+        "&& 'Ripr Rust Small Draft Result' ||",
+    );
+    assert_ne!(
+        renamed_result, workflow,
+        "fixture must rename the required context"
     );
     assert!(
         routed_rust_ready_event_contract_violations(&renamed_result)
             .iter()
-            .any(|violation| violation.contains("must post the static")),
+            .any(|violation| violation.contains("result job must be named by exactly")),
         "renaming the required result context must fail: {:?}",
         routed_rust_ready_event_contract_violations(&renamed_result)
     );
+
+    // Negative experiments for the skipped-required-job hazard: each mutation
+    // would let a nonrequest event produce, or a request skip, the required
+    // context, and must be rejected by name.
+    let static_required_name = workflow.replace(
+        "    name: ${{ (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}",
+        "    name: Ripr Rust Small Result",
+    );
+    assert_ne!(
+        static_required_name, workflow,
+        "fixture must rewrite the result name"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&static_required_name)
+            .iter()
+            .any(|violation| violation.contains("result job must be named by exactly")),
+        "a static result name posts the required context for ordinary labels: {:?}",
+        routed_rust_ready_event_contract_violations(&static_required_name)
+    );
+    let any_label_request = workflow.replace(
+        "github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result'",
+        "github.event.label.name != '') && 'Ripr Rust Small Result'",
+    );
+    assert_ne!(
+        any_label_request, workflow,
+        "fixture must widen the request label"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&any_label_request)
+            .iter()
+            .any(|violation| violation.contains("result job must be named by exactly")),
+        "any label must not earn the required context: {:?}",
+        routed_rust_ready_event_contract_violations(&any_label_request)
+    );
+    let skippable_result = workflow.replace(
+        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Summarize routed result",
+        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Summarize routed result",
+    );
+    assert_ne!(
+        skippable_result, workflow,
+        "fixture must make the result skippable"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&skippable_result)
+            .iter()
+            .any(|violation| violation.contains("job-level `if: always()`")),
+        "a skippable result reports success when skipped: {:?}",
+        routed_rust_ready_event_contract_violations(&skippable_result)
+    );
+    for job in ["route", "detect-docs-only", "admission"] {
+        let unguarded = workflow.replace(
+            "github.event_name != 'pull_request' || github.event.label.name == 'merge-ready'\n",
+            "true\n",
+        )
+        .replace(
+            "github.event_name != 'pull_request' || github.event.label.name == 'merge-ready')\n",
+            "true)\n",
+        );
+        assert_ne!(
+            unguarded, workflow,
+            "fixture must remove the request guards"
+        );
+        let violations = routed_rust_ready_event_contract_violations(&unguarded);
+        assert!(
+            violations.iter().any(|violation| violation
+                .contains(&format!("job `{job}` must carry the request guard"))),
+            "job {job} must be guarded against nonrequest labels: {violations:?}"
+        );
+    }
 }
 
 #[test]
@@ -1212,7 +1298,7 @@ jobs:
 
 #[test]
 fn advisory_review_prepares_locked_fixture_before_sensors() -> Result<(), String> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = crate::test_support::workspace_root()?;
     let text = fs::read_to_string(root.join(".github/workflows/ub-review.yml"))
         .map_err(|error| error.to_string())?;
     let header = "name: Prepare locked owner-return fixture dependencies";

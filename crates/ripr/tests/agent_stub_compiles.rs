@@ -811,6 +811,54 @@ fn bare_at_stubs_only_a_reported_gap() -> Result<(), String> {
     scratch.cleanup()
 }
 
+/// A CRLF owner file stays CRLF after `--write`: the stub is produced with
+/// `\n` line breaks, so splicing it verbatim leaves mixed line endings.
+#[test]
+fn write_keeps_a_crlf_owner_file_crlf() -> Result<(), String> {
+    const NEW_MODULE: &str = "pub fn gate(a: u32) -> bool {\r\n    a > 10\r\n}";
+    const EXISTING_MODULE: &str = "pub fn gate(a: u32) -> bool {\r\n    a > 10\r\n}\r\n\r\n#[cfg(test)]\r\nmod tests {\r\n    #[test]\r\n    fn smoke() {}\r\n}\r\n";
+    for (label, source) in [("new", NEW_MODULE), ("existing", EXISTING_MODULE)] {
+        let scratch = Scratch::new()?;
+        let root = scratch.directory.clone();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"stub_crlf\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
+        let output = run_bounded(
+            ripr_stub_write(&root, "src/lib.rs:2"),
+            &root,
+            "stub",
+            Duration::from_mins(2),
+        )?;
+        assert!(
+            output.status.success(),
+            "{label}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let written = std::fs::read(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
+        assert!(
+            written.len() > source.len(),
+            "{label}: stub was not written"
+        );
+        let lone_lf = written
+            .iter()
+            .enumerate()
+            .filter(|(index, byte)| **byte == b'\n' && (*index == 0 || written[index - 1] != b'\r'))
+            .count();
+        assert_eq!(
+            lone_lf,
+            0,
+            "{label}: mixed line endings in {}",
+            String::from_utf8_lossy(&written)
+        );
+        scratch.cleanup()?;
+    }
+    Ok(())
+}
+
 /// #6689 items 1–2: refusal hints keep the requested family and never route
 /// the caller to a nearer seam of another family.
 const KIND_REFUSAL_SOURCE: &str = "pub fn plain(n: u8) -> u8 {\n    if n > 3 { n } else { 0 }\n}\n\npub fn fallible(input: &str) -> Result<u8, E> {\n    if input.is_empty() {\n        return Err(E::Bad);\n    }\n    Ok(1)\n}\n\n#[derive(Debug, PartialEq)]\npub enum E { Bad }\n";
@@ -2087,6 +2135,257 @@ pub mod extra {
         ));
     }
     scratch.cleanup()?;
+    Ok(())
+}
+
+/// #8741: when the gap's related test is an existing `tests/*.rs` file, the
+/// stub is appended to that file (the only path the repair packet's edit cage
+/// allows) instead of adding an inline module to the production file.
+#[test]
+fn stub_for_an_existing_integration_test_target_appends_to_that_file() -> Result<(), String> {
+    const SOURCE: &str =
+        "pub fn discount(qty: u32, rate: u32) -> u32 {\n    if qty > 10 { rate } else { 0 }\n}\n";
+    const TEST: &str = "use stub_existing::discount;\n\n#[test]\nfn small() {\n    assert!(discount(5, 2) == 0);\n}\n";
+    let scratch = Scratch::new()?;
+    let root = scratch.directory.clone();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"stub_existing\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n# Keep this scratch crate out of a parent Cargo workspace.\n[workspace]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), SOURCE).map_err(|error| error.to_string())?;
+    std::fs::create_dir(root.join("tests")).map_err(|error| error.to_string())?;
+    std::fs::write(root.join("tests/discount.rs"), TEST).map_err(|error| error.to_string())?;
+
+    let stub = ripr_stub_write(&root, "src/lib.rs:2");
+    let output = run_bounded(stub, &root, "stub", Duration::from_mins(2))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(output.status.success(), "stub: {stdout}{stderr}");
+    let document: serde_json::Value =
+        serde_json::from_str(&stdout).map_err(|error| format!("stub JSON: {error}: {stdout}"))?;
+    assert_eq!(
+        document["placement"]["kind"], "existing_integration_file",
+        "an existing tests/ target must receive the stub: {stdout}"
+    );
+    assert_eq!(
+        document["placement"]["file"], "tests/discount.rs",
+        "{stdout}"
+    );
+    assert_eq!(document["written"], true, "{stdout}");
+    assert_eq!(
+        std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?,
+        SOURCE,
+        "the production file must not be touched"
+    );
+    let test_name = document["test_name"]
+        .as_str()
+        .ok_or_else(|| "test_name".to_string())?;
+    let written = std::fs::read_to_string(root.join("tests/discount.rs"))
+        .map_err(|error| error.to_string())?;
+    assert!(
+        written.starts_with(TEST),
+        "existing content kept:\n{written}"
+    );
+    assert!(
+        written.contains(&format!("fn {test_name}(")) && written.contains("use stub_existing::*;"),
+        "{written}"
+    );
+    assert!(
+        !written.contains("mod ripr_tests"),
+        "no inline module in the integration file: {written}"
+    );
+
+    let run = document["run_command"]
+        .as_str()
+        .ok_or_else(|| format!("run_command: {stdout}"))?;
+    assert!(
+        run.contains("--test discount") && run.contains(test_name),
+        "{run}"
+    );
+    let cargo = cargo_from_run_command(run, &root)?;
+    let cargo_run = run_bounded(cargo, &root, "cargo-test", Duration::from_mins(2))?;
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&cargo_run.stdout),
+        String::from_utf8_lossy(&cargo_run.stderr)
+    );
+    assert!(
+        !cargo_run.status.success() && text.contains("not yet implemented: ripr:"),
+        "the appended stub must compile and stop at its own todo:\n{text}\n{written}"
+    );
+    scratch.cleanup()?;
+    Ok(())
+}
+
+const EXISTING_LIB: &str =
+    "pub fn discount(qty: u32, rate: u32) -> u32 {\n    if qty > 10 { rate } else { 0 }\n}\n";
+const EXISTING_TEST: &str =
+    "use stub_existing::discount;\n\n#[test]\nfn small() {\n    assert!(discount(5, 2) == 0);\n}\n";
+
+fn existing_target_scratch(
+    manifest_tail: &str,
+    lib_path: &str,
+    lib: &str,
+    test_path: &str,
+    test: &str,
+) -> Result<Scratch, String> {
+    let scratch = Scratch::new()?;
+    let root = &scratch.directory;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        format!(
+            "[package]\nname = \"stub_existing\"\nversion = \"0.1.0\"\nedition = \"2024\"\n{manifest_tail}\n# Keep this scratch crate out of a parent Cargo workspace.\n[workspace]\n"
+        ),
+    )
+    .map_err(|error| error.to_string())?;
+    for (path, text) in [(lib_path, lib), (test_path, test)] {
+        let full = root.join(path);
+        if let Some(parent) = full.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        std::fs::write(full, text).map_err(|error| error.to_string())?;
+    }
+    Ok(scratch)
+}
+
+fn stub_json(root: &Path, location: &str) -> Result<serde_json::Value, String> {
+    let output = run_bounded(
+        ripr_stub_write(root, location),
+        root,
+        "stub",
+        Duration::from_mins(2),
+    )?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    if !output.status.success() {
+        return Ok(serde_json::json!({
+            "refused": true,
+            "output": format!("{stdout}{}", String::from_utf8_lossy(&output.stderr)),
+        }));
+    }
+    serde_json::from_str(&stdout).map_err(|error| format!("stub JSON: {error}: {stdout}"))
+}
+
+fn count_fn(text: &str, name: &str) -> usize {
+    text.matches(&format!("fn {name}(")).count()
+}
+
+/// A repeated `--write`, and a same-named test already in the target, must
+/// never append a duplicate `fn` (which would break the target's compilation).
+#[test]
+fn stub_for_an_existing_integration_target_is_unique_within_that_file() -> Result<(), String> {
+    let scratch = existing_target_scratch(
+        "",
+        "src/lib.rs",
+        EXISTING_LIB,
+        "tests/discount.rs",
+        EXISTING_TEST,
+    )?;
+    let root = scratch.directory.clone();
+    let first = stub_json(&root, "src/lib.rs:2")?;
+    assert_eq!(first["placement"]["kind"], "existing_integration_file");
+    let name = first["test_name"]
+        .as_str()
+        .ok_or_else(|| format!("test_name: {first}"))?
+        .to_string();
+
+    // Second write: either cleanly refused or a distinct name, never a duplicate.
+    let second = stub_json(&root, "src/lib.rs:2")?;
+    let written = std::fs::read_to_string(root.join("tests/discount.rs"))
+        .map_err(|error| error.to_string())?;
+    assert_eq!(count_fn(&written, &name), 1, "duplicate fn:\n{written}");
+    if second["refused"] != true {
+        assert_ne!(second["test_name"], first["test_name"], "{second}");
+        let compile = cargo_from_run_command(
+            second["run_command"]
+                .as_str()
+                .unwrap_or("cargo test --test discount"),
+            &root,
+        )?;
+        let out = run_bounded(compile, &root, "cargo-test", Duration::from_mins(2))?;
+        let text = String::from_utf8_lossy(&out.stderr).to_string();
+        assert!(
+            !text.contains("error["),
+            "second write must compile:\n{text}"
+        );
+    }
+
+    // A same-named test already present in the target is not shadowed.
+    std::fs::write(
+        root.join("tests/discount.rs"),
+        format!("{EXISTING_TEST}\n#[test]\nfn {name}() {{}}\n"),
+    )
+    .map_err(|error| error.to_string())?;
+    let third = stub_json(&root, "src/lib.rs:2")?;
+    let written = std::fs::read_to_string(root.join("tests/discount.rs"))
+        .map_err(|error| error.to_string())?;
+    assert_eq!(count_fn(&written, &name), 1, "collision:\n{written}");
+    if third["refused"] != true {
+        assert_ne!(third["test_name"].as_str(), Some(name.as_str()), "{third}");
+    }
+    scratch.cleanup()?;
+    Ok(())
+}
+
+/// Owners and targets the integration route cannot serve keep the old
+/// placement (or refuse); the named target file is never appended to.
+fn assert_not_appended(
+    manifest_tail: &str,
+    lib_path: &str,
+    lib: &str,
+    location: &str,
+    test_path: &str,
+    test: &str,
+) -> Result<(), String> {
+    let scratch = existing_target_scratch(manifest_tail, lib_path, lib, test_path, test)?;
+    let root = scratch.directory.clone();
+    let result = stub_json(&root, location)?;
+    assert_ne!(
+        result["placement"]["kind"], "existing_integration_file",
+        "{test_path}: {result}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join(test_path)).map_err(|error| error.to_string())?,
+        test,
+        "{test_path} must be untouched: {result}"
+    );
+    scratch.cleanup()
+}
+
+#[test]
+fn stub_for_an_unservable_existing_target_keeps_the_old_placement() -> Result<(), String> {
+    assert_not_appended(
+        "",
+        "src/lib.rs",
+        &EXISTING_LIB.replace("pub fn", "pub(crate) fn"),
+        "src/lib.rs:2",
+        "tests/discount.rs",
+        EXISTING_TEST,
+    )?;
+    assert_not_appended(
+        "",
+        "src/lib.rs",
+        "pub mod inner {\n    pub fn discount(qty: u32, rate: u32) -> u32 {\n        if qty > 10 { rate } else { 0 }\n    }\n}\n",
+        "src/lib.rs:3",
+        "tests/discount.rs",
+        EXISTING_TEST,
+    )?;
+    assert_not_appended(
+        "",
+        "src/main.rs",
+        &format!("{EXISTING_LIB}fn main() {{}}\n"),
+        "src/main.rs:2",
+        "tests/discount.rs",
+        EXISTING_TEST,
+    )?;
+    assert_not_appended(
+        "",
+        "src/lib.rs",
+        EXISTING_LIB,
+        "src/lib.rs:2",
+        "tests/common/mod.rs",
+        EXISTING_TEST,
+    )?;
     Ok(())
 }
 

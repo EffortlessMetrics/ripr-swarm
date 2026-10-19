@@ -521,6 +521,26 @@ fn routed_result_admitted(
     assert!(env.len() >= 20, "actual result env is initialized");
     env.extend([
         ("EVENT_NAME", event),
+        // A pull_request result is a qualification only for an explicit
+        // merge-ready request; other labels are exercised separately.
+        (
+            "LABEL_NAME",
+            if event == "pull_request" {
+                "merge-ready"
+            } else {
+                ""
+            },
+        ),
+        // Manual/push positives represent the independent main authority;
+        // diagnostic branch/tag refusal is exercised by routed_dispatch_result.
+        (
+            "WORKFLOW_REF",
+            if event == "pull_request" {
+                "refs/pull/10/merge"
+            } else {
+                "refs/heads/main"
+            },
+        ),
         ("DOCS_DETECT_RESULT", detector),
         ("DOCS_ONLY", docs),
         ("DOCS_GATE_RESULT", docs_gate),
@@ -542,6 +562,25 @@ fn routed_result_admitted(
         "{summary}"
     );
     Ok(output.status.success())
+}
+
+#[test]
+fn actual_result_block_treats_other_labels_as_a_nonrequest_that_never_qualifies() -> TestResult {
+    let source = job("result")?;
+    // The step keeps the label-aware nonrequest branch ahead of every
+    // qualification decision; the job name (policy-pinned) then differs from
+    // the required context, so this pass can never satisfy branch protection.
+    let (_, run) = source.split_once("        run: |\n").ok_or("result step")?;
+    let first_decision = run
+        .lines()
+        .find(|line| line.trim_start().starts_with("if ["))
+        .ok_or("first decision")?;
+    assert!(
+        first_decision.contains("\"${LABEL_NAME,,}\" != \"merge-ready\""),
+        "{first_decision}"
+    );
+    assert!(source.contains("'Merge-ready Nonrequest'"));
+    Ok(())
 }
 
 #[test]

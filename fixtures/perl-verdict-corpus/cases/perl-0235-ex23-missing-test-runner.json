@@ -54,5 +54,8 @@
     "sha256": "3e8c620fca4c0abd5767599a0a6d6c8d7b3b80c9e1a70aaa0074b8d725971477",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-test2-summary-deep-is-count, then append to dynamic_boundaries: {\"boundary_id\": \"boundary:runner:t/ledger.t\", \"confidence\": \"high\", \"file_id\": \"file:t/ledger.t\", \"kind\": \"missing_test_runner\", \"owner_id\": null, \"provenance_refs\": [], \"range\": {\"end_column\": 0, \"end_line\": 0, \"start_column\": 0, \"start_line\": 0}}; the packet fingerprint was recomputed."
-  }
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0235#23"
+  ]
 }

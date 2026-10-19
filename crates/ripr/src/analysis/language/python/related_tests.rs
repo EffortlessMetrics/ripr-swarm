@@ -5,7 +5,7 @@ use super::{
     python_callee_start_has_boundary, python_prefix_hides_code, python_string_literal_value,
 };
 use crate::domain::{ExposureClass, OracleKind, OracleStrength, OwnerKind, RelatedTest};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 #[cfg(test)]
@@ -992,16 +992,11 @@ pub(super) fn owner_result_locals(test: &PythonTest, callees: &[String]) -> Vec<
         let value = value.trim_start();
         // The whole assigned value must be the owner call, so the local holds
         // its result on every path (`r = sign(0)`, not `r = sign(0) or 1`).
-        let is_whole_call = callees.iter().any(|callee| {
-            value.strip_prefix(callee.as_str()).is_some_and(|rest| {
-                let open = value_start + callee.len() + (rest.len() - rest.trim_start().len());
-                rest.trim_start().starts_with('(')
-                    && super::no_behavior::matching_call_paren(body, open).is_some_and(|close| {
-                        let after = body[close + 1..].split('\n').next().unwrap_or_default();
-                        let after = after.trim();
-                        after.is_empty() || after.starts_with('#')
-                    })
-            })
+        // A sole-argument materializer (`r = list(gen(0))`) keeps that result.
+        let is_whole_call = whole_owner_call_end(body, value_start, callees).is_some_and(|end| {
+            let after = body[end..].split('\n').next().unwrap_or_default();
+            let after = after.trim();
+            after.is_empty() || after.starts_with('#')
         });
         if super::static_limits::is_simple_python_identifier(target)
             && !value.starts_with('=')
@@ -1018,6 +1013,38 @@ pub(super) fn owner_result_locals(test: &PythonTest, callees: &[String]) -> Vec<
     locals.sort();
     locals.dedup();
     locals
+}
+
+/// End (exclusive) of the expression at `start` when it is exactly one owner
+/// call, optionally wrapped in sole-argument [`MATERIALIZING_WRAPPERS`].
+fn whole_owner_call_end(body: &str, start: usize, callees: &[String]) -> Option<usize> {
+    let value = &body[start..];
+    for callee in callees {
+        if let Some(rest) = value.strip_prefix(callee.as_str()) {
+            let open = start + callee.len() + (rest.len() - rest.trim_start().len());
+            if rest.trim_start().starts_with('(') {
+                return super::no_behavior::matching_call_paren(body, open).map(|close| close + 1);
+            }
+        }
+    }
+    for wrapper in MATERIALIZING_WRAPPERS {
+        let Some(rest) = value.strip_prefix(wrapper) else {
+            continue;
+        };
+        let trimmed = rest.trim_start();
+        if !trimmed.starts_with('(') {
+            continue;
+        }
+        let open = start + wrapper.len() + (rest.len() - trimmed.len());
+        let close = super::no_behavior::matching_call_paren(body, open)?;
+        let inner = open + 1 + (body[open + 1..].len() - body[open + 1..].trim_start().len());
+        let inner_end = whole_owner_call_end(body, inner, callees)?;
+        return body[inner_end..close]
+            .trim()
+            .is_empty()
+            .then_some(close + 1);
+    }
+    None
 }
 
 /// Open-bracket depth at byte `idx` of `text`, skipping quoted strings, so a
@@ -1090,8 +1117,49 @@ pub(super) fn oracle_operand_calls(text: &str, callee: &str) -> bool {
     text.match_indices(&needle).any(|(idx, _)| {
         python_callee_start_has_boundary(text, idx)
             && !line_prefix_looks_like_comment_or_string(text, idx)
-            && bracket_depth_at(text, idx) == depth
+            && reaches_operand_depth(text, idx, idx + needle.len() - 1, depth)
     })
+}
+
+/// Builtins that only re-materialize their one argument, so a call wrapped in
+/// them (`list(utils.sign(0))`) still asserts the owner's output. Any other
+/// wrapper may ignore it (`always_true(utils.sign(0))`).
+const MATERIALIZING_WRAPPERS: [&str; 5] = ["list", "tuple", "set", "frozenset", "sorted"];
+
+/// Whether the call starting at `start` (its `(` at `open`) sits at the
+/// asserted operand `depth`, directly or only inside materializing wrappers
+/// that take it as their sole argument.
+fn reaches_operand_depth(text: &str, start: usize, open: usize, depth: usize) -> bool {
+    let (mut start, mut open) = (start, open);
+    loop {
+        let here = bracket_depth_at(text, start);
+        if here == depth {
+            return true;
+        }
+        if here < depth {
+            return false;
+        }
+        let Some(close) = super::no_behavior::matching_call_paren(text, open) else {
+            return false;
+        };
+        if !text[close + 1..].trim_start().starts_with(')') {
+            return false;
+        }
+        let Some(before) = text[..start].trim_end().strip_suffix('(') else {
+            return false;
+        };
+        let name_start = before
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| !is_python_identifier_char(*ch))
+            .map_or(0, |(at, ch)| at + ch.len_utf8());
+        if !MATERIALIZING_WRAPPERS.contains(&&before[name_start..])
+            || before[..name_start].ends_with('.')
+        {
+            return false;
+        }
+        (start, open) = (name_start, before.len());
+    }
 }
 
 /// Whether an assertion's text names the local `name` as an asserted operand
@@ -1413,6 +1481,44 @@ pub(super) fn import_source_module_matches_owner(
     names_owner_module && module_name_identifies_owner_for(owner, &import.source_module, test_file)
 }
 
+/// Identity index over the parsed tests: a related test is joined back to its
+/// source facts by `(file, name)`. Built once per finding so the join is a hash
+/// lookup rather than a scan of every test per related test (which made a
+/// finding with N related tests cost O(N^2)). Insertion keeps source order, so
+/// `matching` yields the same tests in the same order as a linear filter.
+pub(super) struct TestLookup<'a> {
+    by_name: HashMap<&'a str, Vec<&'a PythonTest>>,
+}
+
+impl<'a> TestLookup<'a> {
+    pub(super) fn new(all_tests: &'a [PythonTest]) -> Self {
+        let mut by_name: HashMap<&'a str, Vec<&'a PythonTest>> = HashMap::new();
+        for test in all_tests {
+            by_name.entry(test.name.as_str()).or_default().push(test);
+        }
+        Self { by_name }
+    }
+
+    /// Every test whose file and name equal the related test's.
+    pub(super) fn matching<'b>(
+        &'b self,
+        related: &'b RelatedTest,
+    ) -> impl Iterator<Item = &'a PythonTest> + 'b {
+        self.by_name
+            .get(related.name.as_str())
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(move |test| test.file == related.file)
+    }
+
+    /// Number of distinct test names indexed.
+    #[cfg(test)]
+    pub(super) fn identity_count(&self) -> usize {
+        self.by_name.len()
+    }
+}
+
 /// Free-function module-identity evidence: a strong observing test imports the
 /// owner's function *from the owner's module*. This is what distinguishes a
 /// genuine `from src.handler import validate` from a same-named function pulled in
@@ -1420,14 +1526,12 @@ pub(super) fn import_source_module_matches_owner(
 /// not identity-bearing for a free-function owner.
 pub(super) fn strong_test_imports_owner_from_module(
     strong_tests: &[&RelatedTest],
-    all_tests: &[PythonTest],
+    all_tests: &TestLookup<'_>,
     owner: &PythonOwner,
 ) -> bool {
     strong_tests.iter().any(|related_test| {
-        all_tests.iter().any(|test| {
-            test.name == related_test.name
-                && test.file == related_test.file
-                && super::test_activation::activation_control(test).is_none()
+        all_tests.matching(related_test).any(|test| {
+            super::test_activation::activation_control(test).is_none()
                 && test.imports.iter().any(|import| {
                     import.imported == owner.name
                         && import_source_module_matches_owner(import, owner, &test.file)
@@ -1489,11 +1593,21 @@ pub(super) fn first_parenthesized_string_argument(text: &str) -> Option<String> 
 
 pub(super) fn contains_call_name(body_text: &str, call_name: &str) -> bool {
     let needle = format!("{call_name}(");
-    body_text.match_indices(&needle).any(|(idx, _)| {
-        python_callee_start_has_boundary(body_text, idx)
-            && !line_prefix_looks_like_comment_or_string(body_text, idx)
-            && !is_definition_name(body_text, idx)
-    })
+    body_text
+        .match_indices(&needle)
+        .any(|(idx, _)| is_bare_call_site(body_text, idx))
+}
+
+/// Whether a `name(` at byte `idx` is a bare call: an identifier boundary (no
+/// attribute receiver), outside comments, strings and docstrings, and not a
+/// `def` / `class` header. The one definition both `contains_call_name`
+/// (test-to-owner calls) and `module_callees::bare_callees` (owner-to-helper
+/// edges) use, so the two cannot drift (#4568).
+pub(super) fn is_bare_call_site(text: &str, idx: usize) -> bool {
+    python_callee_start_has_boundary(text, idx)
+        && !line_prefix_looks_like_comment_or_string(text, idx)
+        && !python_text_hides_code(text, idx)
+        && !is_definition_name(text, idx)
 }
 
 /// `def name(` / `async def name(` / `class name(` defines `name`; it does not
@@ -1751,16 +1865,14 @@ pub(super) fn strong_test_calls_owner_method_on_bound_receiver(
     owner_class_token: Option<&String>,
     method_name: Option<&String>,
     strong_tests: &[&RelatedTest],
-    all_tests: &[PythonTest],
+    all_tests: &TestLookup<'_>,
 ) -> bool {
     let (Some(class), Some(method)) = (owner_class_token, method_name) else {
         return false;
     };
     strong_tests.iter().any(|related_test| {
-        all_tests.iter().any(|test| {
-            test.name == related_test.name
-                && test.file == related_test.file
-                && super::test_activation::activation_control(test).is_none()
+        all_tests.matching(related_test).any(|test| {
+            super::test_activation::activation_control(test).is_none()
                 && owner_class_locals(test, owner, class).iter().any(|local| {
                     body_calls_method_on_owner_bound_receiver(&test.body_text, local, method)
                 })
@@ -1776,16 +1888,14 @@ pub(super) fn strong_test_calls_owner_method_on_bound_receiver(
 pub(super) fn strong_tests_import_only_rival_modules(
     owner: &PythonOwner,
     strong_tests: &[&RelatedTest],
-    all_tests: &[PythonTest],
+    all_tests: &TestLookup<'_>,
 ) -> bool {
     if owner.ambiguous_src_modules.is_empty() || strong_tests.is_empty() {
         return false;
     }
     strong_tests.iter().all(|related_test| {
-        all_tests.iter().any(|test| {
-            test.name == related_test.name
-                && test.file == related_test.file
-                && super::test_activation::activation_control(test).is_none()
+        all_tests.matching(related_test).any(|test| {
+            super::test_activation::activation_control(test).is_none()
                 && test
                     .imports
                     .iter()
@@ -2068,28 +2178,66 @@ pub(super) fn python_text_hides_code(text: &str, idx: usize) -> bool {
         || inside_triple_quoted_string(text, idx)
 }
 
+/// Whether `idx` falls inside an open triple-quoted string. A small lexer:
+/// triple delimiters inside ordinary single-line strings (`'"""'`) and `#`
+/// comments do not open a docstring, and a backslash escapes the next char.
 fn inside_triple_quoted_string(text: &str, idx: usize) -> bool {
-    let mut open: Option<&str> = None;
+    let mut triple: Option<&str> = None;
     let mut cursor = 0;
     while cursor < idx {
         let rest = &text[cursor..];
-        match open {
-            Some(delimiter) if rest.starts_with(delimiter) => {
-                open = None;
+        if let Some(delimiter) = triple {
+            if let Some(escaped) = rest.strip_prefix('\\') {
+                cursor += 1 + escaped.chars().next().map_or(0, char::len_utf8);
+            } else if rest.starts_with(delimiter) {
+                triple = None;
                 cursor += delimiter.len();
+            } else {
+                cursor += rest.chars().next().map_or(1, char::len_utf8);
             }
-            None if rest.starts_with("\"\"\"") => {
-                open = Some("\"\"\"");
-                cursor += 3;
+            continue;
+        }
+        if rest.starts_with("\"\"\"") {
+            triple = Some("\"\"\"");
+            cursor += 3;
+        } else if rest.starts_with("'''") {
+            triple = Some("'''");
+            cursor += 3;
+        } else if rest.starts_with('#') || rest.starts_with('"') || rest.starts_with('\'') {
+            let len = if rest.starts_with('#') {
+                rest.find('\n').unwrap_or(rest.len())
+            } else {
+                single_line_string_len(rest)
+            };
+            // `idx` inside a comment or a (possibly backslash-continued)
+            // string literal is hidden code, not a call.
+            if idx < cursor + len {
+                return true;
             }
-            None if rest.starts_with("'''") => {
-                open = Some("'''");
-                cursor += 3;
-            }
-            _ => cursor += rest.chars().next().map_or(1, char::len_utf8),
+            cursor += len;
+        } else {
+            cursor += rest.chars().next().map_or(1, char::len_utf8);
         }
     }
-    open.is_some()
+    triple.is_some()
+}
+
+/// Byte length of the ordinary single-line string literal at the start of
+/// `rest` (which begins with its quote): through the closing quote, or to the
+/// end of the line when unterminated.
+fn single_line_string_len(rest: &str) -> usize {
+    let quote = rest.as_bytes()[0];
+    let bytes = rest.as_bytes();
+    let mut index = 1;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' => index += 2,
+            b'\n' => return index,
+            byte if byte == quote => return index + 1,
+            _ => index += 1,
+        }
+    }
+    rest.len()
 }
 
 pub(super) fn same_stem_related(test: &PythonTest, owner: &PythonOwner) -> bool {
@@ -2187,6 +2335,20 @@ mod oracle_operand_tests {
             ("assert always_true(utils.sign(0)) == True", false),
             ("self.assertTrue(always_true(utils.sign(0)))", false),
             ("assert myutils.sign(0) == 0", false),
+            ("assert list(utils.sign(0)) == []", true),
+            ("self.assertEqual(list(utils.sign(0)), [])", true),
+            ("self.assertEqual(sorted(list(utils.sign(0))), [])", true),
+            ("assert always_true(list(utils.sign(0))) == True", false),
+            ("assert list(always_true(utils.sign(0))) == []", false),
+            ("assert list(utils.sign(0), 1) == []", false),
+            ("assert x.list(utils.sign(0)) == []", false),
+            ("assert list(utils.sign(0),) == []", false),
+            ("assert list(*utils.sign(0)) == []", false),
+            ("assert sorted(utils.sign(0), reverse=True) == []", false),
+            ("assert tuple(utils.sign(0), 1) == ()", false),
+            ("assert set(utils.sign(0))", true),
+            ("assert frozenset(utils.sign(0)) == frozenset()", true),
+            ("assert list(utils.sign(0))[0] == 1", true),
         ] {
             assert_eq!(oracle_operand_calls(text, "utils.sign"), expected, "{text}");
         }

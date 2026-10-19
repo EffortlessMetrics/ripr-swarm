@@ -473,3 +473,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_buffer_token (23)
+
+Reason:
+RIPR-SPEC-0028: #8562 test input slices the owner result so the fixture stays on its token-coincidence subject; only the source_subject test digest changes
+
+Command:
+`cargo xtask goldens bless python_adversarial_buffer_token --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_buffer_token (24)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless python_adversarial_buffer_token --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

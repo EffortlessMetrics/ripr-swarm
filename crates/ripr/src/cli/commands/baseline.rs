@@ -9,7 +9,7 @@ use crate::cli::commands_options::{
     BaselineCreateOptions, BaselineDiffOptions, BaselineUpdateOptions,
 };
 use crate::cli::help;
-use crate::cli::suggest::unknown_argument;
+use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use std::path::PathBuf;
 
@@ -30,8 +30,10 @@ pub(in crate::cli) fn baseline(args: &[String]) -> Result<(), String> {
         "create" => baseline_create(rest),
         "diff" => baseline_diff(rest),
         "update" => baseline_update(rest),
-        _ => Err(format!(
-            "unknown baseline subcommand {subcommand:?}; expected `create`, `diff`, or `update`"
+        _ => Err(unknown_value(
+            "baseline subcommand",
+            subcommand,
+            &["create", "diff", "update"],
         )),
     }
 }
@@ -379,7 +381,7 @@ mod tests {
         assert_eq!(
             baseline(&args(&["unknown"])),
             Err(
-                "unknown baseline subcommand \"unknown\"; expected `create`, `diff`, or `update`"
+                "unknown baseline subcommand \"unknown\". Accepted: create, diff, update."
                     .to_string()
             )
         );
@@ -395,6 +397,17 @@ mod tests {
             parse_baseline_create_options(&args(&["--bad"])),
             Err(
                 "unknown baseline create argument \"--bad\". Run `ripr baseline create --help`."
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn unknown_baseline_subcommand_suggests_create_for_creat() {
+        assert_eq!(
+            baseline(&args(&["creat"])),
+            Err(
+                "unknown baseline subcommand \"creat\". Did you mean `create`? Accepted: create, diff, update."
                     .to_string()
             )
         );

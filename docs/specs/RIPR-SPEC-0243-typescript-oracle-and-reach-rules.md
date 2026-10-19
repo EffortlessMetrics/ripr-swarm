@@ -26,10 +26,13 @@ Linked issues:
 - #4554 (workspace package-name resolution)
 - #6654 (corpus cases scored false actionable under the first draft)
 - #7315 (literal rejection equality observes the rejected reason)
+- #8714 (conditional-branch assertion guard and disclosure)
 
 Linked PRs:
 
 - #6686 (TypeScript verdict corpus; mutation evidence for rule 10)
+- #8712 (rule 2 implementation: negated Jest assertions earn capped credit)
+- #8713 (rule 9 implementation: self-comparing exact matchers)
 
 
 Support-tier impact:
@@ -83,7 +86,7 @@ were not committed; each row below states its input.
 
 | Test snippet | Today | What it pins |
 | --- | --- | --- |
-| `expect(price(150)).not.toBe(150)` | `unknown` / unknown, `weakly_exposed`, plus `typescript_oracle_helper_gated` naming `expect(...)` | that the result is not 150 |
+| `expect(price(150)).not.toBe(150)` | `relational_check` / weak, `weakly_exposed` (rule 2, #8712; before: `unknown` / unknown plus `typescript_oracle_helper_gated` naming `expect(...)`) | that the result is not 150 |
 | file-local `const expect = (x) => ({ toBe() {} })`, then `expect(price(150)).toBe(999)` | `exact_value` / strong, `exposed` | nothing |
 | chai-imported `expect(price(150)).toBe(140)` | `exact_value` / strong, `exposed` | nothing: chai has no `toBe` |
 | `toThrow(Error)` after `"empty"` changed to `"blank"` | `exact_error_variant` / strong, `exposed` | any thrown `Error` |
@@ -242,7 +245,8 @@ A negated matcher operand is not an expected value: a negated assertion
 has no `expected_value_or_variant` and no `typescript_oracle_expected`
 evidence line, so RIPR-SPEC-0087 G-C never borrows it as a concrete
 expected value. A test whose only assertion is negated no longer reports
-`typescript_oracle_helper_gated`.
+`typescript_oracle_helper_gated`. Implemented 2026-10-18 (#8712);
+`.not` composes with `.resolves` / `.rejects` in either order.
 
 **Rule 3. `expect` must be a test-runner `expect`.** Step 2 accepts an
 identifier callee `expect` only when that name is not bound in the file; or
@@ -382,7 +386,12 @@ same token sequence, ignoring whitespace outside string literals
 (`expect(price(150)).toBe(price(150))`), reads `relational_check` /
 weak. The matcher supplies no independent expected value: both sides
 run the code under test, so a change that alters both alike passes. This
-mirrors RIPR-SPEC-0238 rule 1.
+mirrors RIPR-SPEC-0238 rule 1. Implemented 2026-10-18 (#8713) for a
+dynamic matcher argument — the expected side re-invokes the owner or
+re-reads the same one-hop local; a literal-vs-literal self-comparison
+stays strong at extraction and the observation guard refuses it credit.
+Whitespace inside a string literal is significant, so
+`expect("ab").toBe("a b")` is not self-comparing.
 
 ### Other assertion tables
 
@@ -483,6 +492,12 @@ Candidates come from the first non-empty tier:
    unrelated source. The label is `SameFileProximity` (equal normalized
    file stems), then `DescribeName`, then `TestName`; with no label there
    is no relation.
+   For a module function owner, a test that only uses the changed value
+   outside `expect(...)` relates through the weak, oracle-free
+   `ModuleValueUse` (`module_value_use`) when the import resolves to the
+   owner module, with no shadow (including an enclosing describe-level or
+   test-callback binding), mock or comment/string-only mention; it reads at
+   most `weakly_exposed`.
 
 Relation rank, `uses_oracle` and reason:
 
@@ -494,6 +509,7 @@ Relation rank, `uses_oracle` and reason:
 | `ReExportChainFollowed` | 4 | yes | `re_export_chain_followed` / medium |
 | `ModuleEntryCall` | 3 | yes | `helper_owner_call` / medium |
 | `SameFileProximity` | 3 | no | none |
+| `ModuleValueUse` | 2 | no | none |
 | `DescribeName` | 2 | no | none |
 | `TestName` | 1 | no | none |
 
@@ -739,8 +755,9 @@ to `amount - 20`, and `tests/lib.test.ts` has
    `direct_owner_call`, `exposed` (unchanged).
 2. `expect(price(150)).toBeGreaterThan(100)`: `relational_check` / weak,
    `weakly_exposed` (unchanged). `expect(price(150)).toBe(price(150))`:
-   `relational_check` / weak, `weakly_exposed` (today `exact_value` /
-   strong, `exposed`, inferred; rule 9).
+   `relational_check` / weak, `weakly_exposed` (rule 9, #8713; measured
+   `exact_value` / strong, `exposed` before implementation). The one-hop-local
+   spelling `const a = price(150); expect(a).toBe(a)` reads the same.
 3. `expect(price(150)).toMatchSnapshot()`: `snapshot` / medium,
    `weakly_exposed`, `typescript_snapshot_discriminator_unresolved`
    (unchanged).
@@ -750,10 +767,10 @@ to `amount - 20`, and `tests/lib.test.ts` has
 4. `price(150);` with no assertion: oracle `unknown`, `weakly_exposed`
    (unchanged; never `reachable_unrevealed`).
 5. `expect(price(150)).not.toBe(150)`: `relational_check` / weak,
-   `weakly_exposed`, no `typescript_oracle_helper_gated` (today `unknown`
-   / unknown with that limitation).
+   `weakly_exposed`, no `typescript_oracle_helper_gated` (rule 2, #8712;
+   before: `unknown` / unknown with that limitation).
 6. `expect(() => price(150)).not.toThrow()`: `broad_error` / weak,
-   `weakly_exposed` (today `unknown` / unknown).
+   `weakly_exposed` (rule 2, #8712; before: `unknown` / unknown).
 7. `const expect = (x: unknown) => ({ toBe(_: unknown) {} });` at file
    level, then `expect(price(150)).toBe(999)`: no assertion, oracle
    `unknown`, `weakly_exposed` (today `exact_value` / strong, `exposed`).
@@ -771,7 +788,15 @@ to `amount - 20`, and `tests/lib.test.ts` has
     `unknown`, `weakly_exposed` (unchanged). Amended by RIPR-SPEC-0246
     rule 2: the literal-array `forEach` body is collected, `exposed` when
     the assertion pins the changed value.
-11. `if (ok) { expect(price(150)).toBe(130); }`: `exposed` (unchanged).
+11. `if (ok) { expect(price(150)).toBe(130); }`: `exposed` (unchanged;
+    the class does not move under #8714). Constant-literal conditions are
+    decidable: `if (true)` always runs (benign), and assertions inside
+    `if (false)` are withheld at collection because the branch never runs.
+    A condition static analysis cannot evaluate (`ok`, a feature flag, an
+    env read) keeps the credited assertion but the result now carries the
+    `typescript_conditional_assertion_credit` limitation, naming the
+    unevaluated condition and recording that the credited oracle may never
+    execute (classification-neutral disclosure, #8714).
 12. `src/lib.ts` is `export function parse(s: string): string { if (s ===
     "") { throw new Error("empty"); } return s; }`, formatted with the
     `throw` on its own line, which is the changed line: `"empty"` changed
@@ -923,6 +948,8 @@ to `amount - 20`, and `tests/lib.test.ts` has
   `extract_tests_maps_class_tothrow_to_exact_error_variant_oracle`,
   `extract_tests_keeps_lowercase_ident_tothrow_broad`,
   `find_related_tests_matches_named_import_alias_calls`,
+  `find_related_tests_module_value_use_enclosing_scope_shadow_negatives`,
+  `find_related_tests_module_value_use_masking_only_negatives`,
   `default_import_does_not_credit_named_non_default_owner`,
   `overcredit_4103_spy_fabrication_blocks_owner_credit_and_names_limitation`.
 - Existing: `crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs`

@@ -524,6 +524,242 @@ fn repair_explicit_policy_omitted_gap_and_seam_refuse_without_attempt_or_lock() 
     Ok(())
 }
 
+/// #8767: from a workspace member directory `repair`, `status`, `continue`
+/// and `agent stub` use the resolved workspace root (attempt store under the
+/// workspace `target/ripr`, never the member), and `pilot` keeps `--root .`
+/// and an explicit `--out` as typed. Unix-only like the other implicit-root
+/// smoke tests: the disclosure compares canonicalized temp paths.
+#[cfg(unix)]
+#[test]
+fn member_directory_commands_use_the_resolved_workspace_root() -> Result<(), String> {
+    let fixture = Fixture::dir("facade-member-root")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let member = outer.join("pkg");
+    std::fs::create_dir_all(member.join("src")).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(member.join("tests")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"pkg\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(member.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(member.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    std::fs::write(member.join("tests/pricing.rs"), FIXTURE_WEAK_TEST)
+        .map_err(|e| e.to_string())?;
+    init_repo(&outer)?;
+    run_git(&outer, &["add", "Cargo.toml", "pkg"])?;
+    git_commit(&outer, "member fixture source")?;
+    let disclosure = format!("ripr: resolved workspace root to {} ", outer.display());
+
+    let repair = run_ripr(&member, &["repair"])?;
+    assert_exit(&repair, 0, "repair from a member directory");
+    assert!(
+        stderr_text(&repair).contains(&disclosure),
+        "{}",
+        stderr_text(&repair)
+    );
+    let ids = attempt_ids(&outer);
+    assert_eq!(ids.len(), 1, "attempt store must live under the workspace");
+    assert!(
+        !member.join("target/ripr").exists(),
+        "no member-local target/ripr"
+    );
+
+    for args in [&["status"][..], &["continue"][..]] {
+        let output = run_ripr(&member, args)?;
+        let all = format!("{}{}", stdout_text(&output), stderr_text(&output));
+        assert!(all.contains(&disclosure), "{args:?}:\n{all}");
+        assert!(
+            all.contains(&ids[0]),
+            "{args:?} must read the attempt `repair` wrote:\n{all}"
+        );
+    }
+
+    let stub = run_ripr(&member, &["agent", "stub", "--at", "pkg/src/lib.rs:2"])?;
+    assert_exit(&stub, 0, "agent stub resolves against the workspace");
+    assert!(stderr_text(&stub).contains(&disclosure));
+
+    let pinned = run_ripr(&member, &["pilot", "--root", ".", "--quiet"])?;
+    assert!(!stderr_text(&pinned).contains("resolved workspace root"));
+    assert!(
+        member.join("target/ripr").exists() && !outer.join("target/ripr/pilot").exists(),
+        "`--root .` pilot artifacts stay in the member"
+    );
+
+    let custom = outer.join("custom-out");
+    let custom_arg = custom.to_string_lossy().into_owned();
+    let typed_out = run_ripr(&member, &["pilot", "--out", &custom_arg, "--quiet"])?;
+    assert!(stderr_text(&typed_out).contains(&disclosure));
+    assert!(custom.exists(), "explicit --out stays as typed");
+    assert!(
+        !outer.join("target/ripr/pilot").exists(),
+        "explicit --out must not also write the default packet directory"
+    );
+    Ok(())
+}
+
+/// #8872: from a workspace member directory `diff` uses the resolved
+/// workspace root (same stderr disclosure as `check`), and `--root .` keeps
+/// the member. Unix-only like the other implicit-root smoke tests: the
+/// disclosure compares canonicalized temp paths.
+#[cfg(unix)]
+#[test]
+fn member_directory_diff_uses_the_resolved_workspace_root() -> Result<(), String> {
+    let fixture = Fixture::dir("facade-member-diff-root")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let member = outer.join("pkg");
+    std::fs::create_dir_all(member.join("src")).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(member.join("tests")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"pkg\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(member.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(member.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    std::fs::write(member.join("tests/pricing.rs"), FIXTURE_WEAK_TEST)
+        .map_err(|e| e.to_string())?;
+    init_repo(&outer)?;
+    run_git(&outer, &["add", "Cargo.toml", "pkg"])?;
+    git_commit(&outer, "member fixture source")?;
+    let disclosure = format!("ripr: resolved workspace root to {} ", outer.display());
+
+    let implicit = run_ripr(&member, &["diff", "--base", "HEAD"])?;
+    assert!(
+        stderr_text(&implicit).contains(&disclosure),
+        "{}",
+        stderr_text(&implicit)
+    );
+
+    let pinned = run_ripr(&member, &["diff", "--root", ".", "--base", "HEAD"])?;
+    assert!(
+        !stderr_text(&pinned).contains("resolved workspace root"),
+        "`--root .` must keep the member:\n{}",
+        stderr_text(&pinned)
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+fn tree_snapshot(dir: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
+    let mut files = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(next) = pending.pop() {
+        for entry in std::fs::read_dir(&next).map_err(|e| e.to_string())? {
+            let path = entry.map_err(|e| e.to_string())?.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                files.push((
+                    path.clone(),
+                    std::fs::read(&path).map_err(|e| e.to_string())?,
+                ));
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+/// #8767 review: a member-relative `src/lib.rs:2` typed in a member with no
+/// gap must bind to that member's file, never to a sibling member's colliding
+/// `src/lib.rs` that has the gap. `agent stub --write` and repair admission
+/// both leave the sibling untouched; from the sibling the same selector works.
+#[cfg(unix)]
+#[test]
+fn member_relative_selector_never_reaches_a_sibling_members_file() -> Result<(), String> {
+    let fixture = Fixture::dir("facade-member-selector")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let quiet = outer.join("quiet");
+    let gap = outer.join("gap");
+    for member in [&quiet, &gap] {
+        std::fs::create_dir_all(member.join("src")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(member.join("tests")).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"quiet\", \"gap\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(gap.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(gap.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    std::fs::write(gap.join("src/only_in_gap.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    std::fs::write(gap.join("tests/pricing.rs"), FIXTURE_WEAK_TEST).map_err(|e| e.to_string())?;
+    std::fs::write(
+        quiet.join("Cargo.toml"),
+        "[package]\nname = \"quiet_member\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(
+        quiet.join("src/lib.rs"),
+        "pub const NAME: &str = \"quiet\";\n\n\n",
+    )
+    .map_err(|e| e.to_string())?;
+    init_repo(&outer)?;
+    run_git(&outer, &["add", "Cargo.toml", "quiet", "gap"])?;
+    git_commit(&outer, "two member fixture")?;
+    let before = tree_snapshot(&gap)?;
+
+    let stub = run_ripr(
+        &quiet,
+        &["agent", "stub", "--at", "src/lib.rs:2", "--write"],
+    )?;
+    assert_ne!(stub.status.code(), Some(0), "{}", stderr_text(&stub));
+    assert_eq!(
+        tree_snapshot(&gap)?,
+        before,
+        "stub must not touch the sibling"
+    );
+
+    let repair = run_ripr(&quiet, &["repair", "src/lib.rs:2"])?;
+    assert_ne!(repair.status.code(), Some(0), "{}", stderr_text(&repair));
+    assert!(attempt_ids(&outer).is_empty(), "no attempt on the sibling");
+    assert_eq!(tree_snapshot(&gap)?, before);
+
+    // A file that exists only in the sibling must be refused, not suffix-matched.
+    let stub = run_ripr(
+        &quiet,
+        &["agent", "stub", "--at", "src/only_in_gap.rs:2", "--write"],
+    )?;
+    assert_ne!(stub.status.code(), Some(0), "{}", stderr_text(&stub));
+    assert!(
+        stderr_text(&stub).contains("--root ."),
+        "{}",
+        stderr_text(&stub)
+    );
+    let repair = run_ripr(&quiet, &["repair", "src/only_in_gap.rs:2"])?;
+    assert_ne!(repair.status.code(), Some(0), "{}", stderr_text(&repair));
+    assert!(
+        stderr_text(&repair).contains("--root ."),
+        "{}",
+        stderr_text(&repair)
+    );
+    assert!(attempt_ids(&outer).is_empty(), "no attempt on the sibling");
+    assert_eq!(tree_snapshot(&gap)?, before);
+
+    // Structured ids ending in digits are not file selectors: they must reach
+    // the id resolvers, never the member-selector refusal.
+    for id in [
+        "repo-probe:src/lib.rs:predicate:12345678",
+        "probe:src/lib.rs:predicate:12345678",
+        "gap:rust:src/lib.rs:price:predicate:3",
+    ] {
+        let output = run_ripr(&quiet, &["repair", id])?;
+        assert!(
+            !stderr_text(&output).contains("names no file under the invocation directory"),
+            "{id} must not be refused as a file selector:\n{}",
+            stderr_text(&output)
+        );
+    }
+    assert!(attempt_ids(&outer).is_empty());
+
+    // Positive control: the same selector typed from the member that owns the gap.
+    let owned = run_ripr(&gap, &["repair", "src/lib.rs:2"])?;
+    assert_exit(&owned, 0, "repair from the member that owns the gap");
+    assert_eq!(attempt_ids(&outer).len(), 1);
+    Ok(())
+}
+
 fn run_ripr_env(
     current_dir: &Path,
     args: &[&str],
@@ -666,7 +902,9 @@ fn check_drill_down_prints_repair_identity_that_starts_the_same_seam() -> Result
 
 /// #8166 Slice C (negative control): when the top finding's seam is no
 /// longer repair-eligible (its boundary is already gripped, so it is not a
-/// headline repair target), the drill-down prints no `ripr repair` line.
+/// headline repair target), the drill-down prints no runnable `ripr repair`
+/// line. #8729: the omission is not silent — one advisory line names the
+/// ineligibility and the full-gate route.
 #[test]
 fn check_drill_down_omits_repair_when_top_seam_is_not_eligible() -> Result<(), String> {
     let fixture = Fixture::boundary("facade-check-drilldown-ineligible")?;
@@ -700,8 +938,18 @@ fn check_drill_down_omits_repair_when_top_seam_is_not_eligible() -> Result<(), S
         "the gripped finding must still drill down to explain/context:\n{stdout}"
     );
     assert!(
-        printed_repair_identity(&stdout).is_none() && !stdout.contains("ripr repair"),
-        "an ineligible seam must print no repair line:\n{stdout}"
+        printed_repair_identity(&stdout).is_none(),
+        "an ineligible seam must print no runnable repair line:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("no repair start offered:"),
+        "an ineligible seam must name the omission's state:\n{stdout}"
+    );
+    assert!(
+        !stdout
+            .lines()
+            .any(|line| line.trim_start().starts_with("ripr repair ")),
+        "no line may be a runnable repair start:\n{stdout}"
     );
     assert!(
         attempt_ids(root).is_empty(),
@@ -733,6 +981,54 @@ fn check_drill_down_omits_repair_when_seam_inventory_is_truncated() -> Result<()
     assert!(
         printed_repair_identity(&stdout).is_none() && !stdout.contains("ripr repair"),
         "a truncated inventory must print no repair line:\n{stdout}"
+    );
+    Ok(())
+}
+
+/// #8689: a seam-shaped selector whose reverse lookup hits a
+/// budget-truncated seam inventory must refuse as undecidable — naming the
+/// truncation, the wider-budget recovery, and the listing route — instead
+/// of rendering a clean "no finding matched" miss the lookup did not
+/// establish.
+#[test]
+fn explain_names_truncation_when_seam_reverse_cannot_check() -> Result<(), String> {
+    let fixture = Fixture::two_seam("facade-explain-truncated")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    weaken_boundary_predicate(root)?;
+    let check = run_worktree_check(root, &root_arg)?;
+    let seam_id = printed_repair_identity(&stdout_text(&check)).ok_or_else(|| {
+        format!(
+            "eligible top finding must print a repair line:\n{}",
+            stdout_text(&check)
+        )
+    })?;
+    let explained = run_ripr_env(
+        root,
+        &[
+            "explain",
+            "--root",
+            &root_arg,
+            "--base",
+            "HEAD",
+            "--worktree",
+            &seam_id,
+        ],
+        &[("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1")],
+    )?;
+    assert_exit(&explained, 2, "explain under a truncated seam inventory");
+    let stderr = stderr_text(&explained);
+    assert!(
+        stderr.contains("could not resolve") && stderr.contains("truncated"),
+        "a truncated inventory must be named, not a clean miss:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("wider seam budget"),
+        "the refusal must name the wider-budget recovery:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("no finding matched"),
+        "an undecided lookup must not render a clean miss:\n{stderr}"
     );
     Ok(())
 }
@@ -806,6 +1102,89 @@ fn repair_refuses_a_producer_gap_id_that_names_several_seams() -> Result<(), Str
     assert!(
         attempt_ids(root).is_empty(),
         "an ambiguous producer gap must create no attempt"
+    );
+    Ok(())
+}
+
+/// #8688: the seam-derived hash-form canonical gap ID (`gap:<16hex>`) that
+/// `ripr rerun --json` carries must resolve in `ripr explain` and
+/// `ripr context` to the same finding `ripr check` prints, exactly like the
+/// producer form, so one gap identity works across check → explain →
+/// context → repair.
+#[test]
+fn explain_and_context_accept_the_hash_form_gap_id_rerun_emits() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-gap-hash-rerun")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    weaken_boundary_predicate(root)?;
+    let rerun = run_ripr(
+        root,
+        &[
+            "rerun",
+            "--root",
+            &root_arg,
+            "--changed-test",
+            "tests/pricing.rs",
+            "--json",
+        ],
+    )?;
+    assert_exit(&rerun, 0, "changed-test rerun for the hash-form gap id");
+    let rerun_json: serde_json::Value =
+        serde_json::from_slice(&rerun.stdout).map_err(|err| format!("parse rerun JSON: {err}"))?;
+    let gap_hash = rerun_json["seams"]
+        .as_array()
+        .and_then(|seams| {
+            seams
+                .iter()
+                .find_map(|seam| seam["canonical_gap_id"].as_str().map(str::to_string))
+        })
+        .ok_or_else(|| "rerun seam rows must carry canonical_gap_id".to_string())?;
+    assert!(
+        gap_hash.starts_with("gap:"),
+        "rerun emits the hash form the explain/context surfaces must accept: {gap_hash}"
+    );
+    // The producer's `probe:` ID names the finding both drill-ins must hit.
+    let check = run_worktree_check(root, &root_arg)?;
+    let probe_id = printed_probe_identity(&stdout_text(&check))
+        .ok_or_else(|| "check must print a probe finding ID".to_string())?;
+    let explained = run_ripr(
+        root,
+        &[
+            "explain",
+            "--root",
+            &root_arg,
+            "--base",
+            "HEAD",
+            "--worktree",
+            &gap_hash,
+        ],
+    )?;
+    assert_exit(&explained, 0, "explain with the hash-form gap ID");
+    assert!(
+        stdout_text(&explained).contains(&probe_id),
+        "explain by hash-form gap ID must render the same finding check printed:\n{}",
+        stdout_text(&explained)
+    );
+    let context = run_ripr(
+        root,
+        &[
+            "context",
+            "--root",
+            &root_arg,
+            "--base",
+            "HEAD",
+            "--worktree",
+            "--at",
+            &gap_hash,
+        ],
+    )?;
+    assert_exit(&context, 0, "context with the hash-form gap ID");
+    let packet: serde_json::Value = serde_json::from_slice(&context.stdout)
+        .map_err(|err| format!("parse context packet: {err}"))?;
+    assert_eq!(
+        packet["probe"]["id"].as_str(),
+        Some(probe_id.as_str()),
+        "context by hash-form gap ID must select the same finding"
     );
     Ok(())
 }
@@ -885,10 +1264,19 @@ fn cross_namespace_ids_round_trip_between_check_explain_and_repair() -> Result<(
         ],
     )?;
     assert_exit(&agent_stale, 2, "agent repair with a stale probe ID");
+    let agent_stale_stderr = stderr_text(&agent_stale);
     assert!(
-        stderr_text(&agent_stale).contains("not a seam ID"),
-        "truly unknown agent seam ID keeps the wrong-namespace hint:\n{}",
-        stderr_text(&agent_stale)
+        agent_stale_stderr.contains("agent repair --seam-id")
+            && agent_stale_stderr.contains("stale"),
+        "stale probe refusal must name this command and the stale mapping:\n{agent_stale_stderr}"
+    );
+    assert!(
+        !agent_stale_stderr.contains("agent packet seam_id"),
+        "the translating surface must not name the packet surface the user did not run:\n{agent_stale_stderr}"
+    );
+    assert!(
+        !agent_stale_stderr.contains("resolves it to its repair seam"),
+        "the translating surface must not promise the resolution that just failed:\n{agent_stale_stderr}"
     );
     assert!(
         attempt_ids(root).is_empty(),
@@ -1734,6 +2122,65 @@ fn continue_two_attempts_requires_explicit_selection() -> Result<(), String> {
         "awaiting_edit",
         "the unselected attempt must stay current"
     );
+    Ok(())
+}
+
+/// #8742: a repeated `ripr repair` for the seam that already has an attempt
+/// awaiting its edit at this HEAD resumes it. No second attempt is prepared,
+/// the printed `continue` command names the existing attempt, and a bare
+/// `ripr continue` still selects it after the focused edit.
+#[test]
+fn repeated_repair_resumes_the_awaiting_attempt_instead_of_duplicating() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-repair-twice")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let first = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&first, 0, "first repair");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "the first repair prepares one attempt");
+    let manifest_before = manifest_bytes(root, &ids[0])?;
+
+    let second = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&second, 0, "repeated repair");
+    assert_eq!(
+        attempt_ids(root),
+        ids,
+        "a repeated repair must not prepare a second attempt"
+    );
+    assert_eq!(
+        manifest_bytes(root, &ids[0])?,
+        manifest_before,
+        "resuming must not rewrite the awaiting attempt"
+    );
+    let stderr = stderr_text(&second);
+    assert!(
+        stderr.contains(&ids[0]) && stderr.contains("already awaiting"),
+        "must name the resumed attempt:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "ripr continue --root {root_arg} --attempt {}",
+            ids[0]
+        )),
+        "must print the continue command for the existing attempt:\n{stderr}"
+    );
+    assert!(
+        stdout_text(&second).contains(&ids[0]),
+        "the handoff card must still render:\n{}",
+        stdout_text(&second)
+    );
+
+    // The bare continue is unambiguous and finishes that same attempt.
+    let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+        .map_err(|error| format!("read pricing tests: {error}"))?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{pricing}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|error| format!("write focused edit: {error}"))?;
+    let continued = run_ripr(root, &["continue", "--root", &root_arg])?;
+    assert_exit(&continued, 0, "bare continue after a repeated repair");
+    assert_eq!(read_manifest(root, &ids[0])?["state"], "ready_to_finish");
     Ok(())
 }
 
@@ -2660,3 +3107,6 @@ fn repair_skips_severity_off_seams_with_named_omission() -> Result<(), String> {
 // not here: the attempt commitment forbids staging a binding by editing
 // a manifest, and the full trust ceremony belongs to the binding
 // authority's own suite (`python_repair_attempt.rs`).
+
+#[path = "task_first_facade/inspection_cache_disclosure.rs"]
+mod inspection_cache_disclosure;

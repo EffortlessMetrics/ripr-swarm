@@ -28,6 +28,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_ffi_attribute_literals/input --diff <cwd>/fixtures/rust_ffi_attribute_literals/diff.patch --mode fast probe:src_lib.rs:predicate:96df341d
   ripr context --root <cwd>/fixtures/rust_ffi_attribute_literals/input --diff <cwd>/fixtures/rust_ffi_attribute_literals/diff.patch --mode fast --at probe:src_lib.rs:predicate:96df341d
+  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:predicate:96df341d --root <cwd>/fixtures/rust_ffi_attribute_literals/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_ffi_attribute_literals/input --at src/lib.rs:3 --kind predicate
 

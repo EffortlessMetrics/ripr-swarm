@@ -52,5 +52,8 @@
     "packet": "packets/perl-test2-deposit-lives-only.json",
     "sha256": "a2ca89791552c7ff2992a49d56014ca387f76dbd4027f223eb5b1934dd957769",
     "provenance": "producer"
-  }
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0235#2"
+  ]
 }

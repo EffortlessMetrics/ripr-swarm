@@ -56,8 +56,12 @@ pub(super) const PILOT_HELP: &str = r#"Find the top test gap in this repo and wr
 Usage: ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N] [--timeout-ms MS] [--format json] [--quiet]
 
 Options:
-  --root PATH       Workspace root to analyze. Defaults to current directory.
-  --out PATH        Output directory for the pilot packet. Defaults to target/ripr/pilot under --root.
+  --root PATH       Workspace root. Defaults to the current directory, then
+                    walks up to the enclosing workspace or package, or the git
+                    top level; `--root .` pins this directory.
+  --out PATH        Output directory for the pilot packet. Defaults to
+                    target/ripr/pilot under the resolved root (`--root .` pins
+                    this directory).
   --mode MODE       instant, draft, fast, deep, or ready. Defaults to draft unless ripr.toml sets one.
   --max-seams N     Maximum ranked seams in the pilot summary. Defaults to 5.
   --timeout-ms MS   Maximum analysis budget before writing a partial summary. Defaults to
@@ -439,9 +443,12 @@ Exit status:
 "#;
 pub(super) const EXPLAIN_HELP: &str = r#"Print why ripr flagged a specific change.
 
-Usage: ripr explain [--root PATH] [--base REV] [--worktree|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] <finding-id|file:line>
+Usage: ripr explain [--root PATH] [--base REV] [--worktree|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] [--quiet] <finding-id|file:line>
 
 Options:
+  --quiet      Suppress analysis progress and heartbeats on stderr, like
+               `ripr check --quiet`. Does not change stdout, exit codes, or
+               error reporting.
   --worktree   Analyze staged and unstaged tracked edits, like
                `ripr check --worktree`, so a finding listed from uncommitted
                edits can be selected. Not combinable with --diff or --from.
@@ -468,6 +475,10 @@ Options:
   --suppression-policy PATH
                Apply the explicit suppression policy for replay.
 
+Filesystem effects:
+  Fresh analysis may create or refresh disposable cache files under
+  target/ripr/cache/ (or RIPR_CACHE_DIR when set).
+
 Performance:
   Use --from to skip re-analysis when you already ran
   `ripr check --write-artifact PATH`. This avoids re-parsing the diff and
@@ -480,11 +491,14 @@ The packet is always JSON, for an agent or tool to consume; `--json` is
 accepted and changes nothing. To read the same finding as prose, run
 `ripr explain` with the same selector.
 
-Usage: ripr context [--root PATH] [--base REV] [--worktree|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json]
+Usage: ripr context [--root PATH] [--base REV] [--worktree|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json] [--quiet]
 
 Options:
   --finding ID
                Select the finding by id or `file:line`, like `--at`.
+  --quiet      Suppress analysis progress and heartbeats on stderr, like
+               `ripr check --quiet`. Does not change stdout, exit codes, or
+               error reporting.
   --worktree   Analyze staged and unstaged tracked edits, like
                `ripr check --worktree` (see `ripr explain --help`).
   --from PATH  Load findings from a check artifact written by
@@ -507,6 +521,10 @@ Options:
                Use the explicit Perl facts packet for replay.
   --suppression-policy PATH
                Apply the explicit suppression policy for replay.
+
+Filesystem effects:
+  Fresh analysis may create or refresh disposable cache files under
+  target/ripr/cache/ (or RIPR_CACHE_DIR when set).
 
 Performance:
   Use --from to skip re-analysis when you already ran

@@ -1349,14 +1349,22 @@ the actual side and the string literal as the expected value when:
 1. The assertion is one plain, unqualified `assert_eq!` whose only nested
    macros are plain, unqualified `format!` calls; `assert_ne!` and
    `assert!` stay refused.
-2. One compared operand is exactly `format!("{}", call)` or
-   `format!("{:?}", call)` (a trailing comma is allowed). Flags, width,
-   precision, other text in the format string, a second argument, or
-   anything chained after `format!(..)` refuses. The call is the owner
-   call shape of rule 1, with nothing around it.
-3. The other operand is a plain string literal with no escapes, other
-   than `"NaN"`: every NaN payload of `f32` or `f64` renders as `NaN`, so
-   that text pins no single value (#7905).
+2. One compared operand is `format!(template, call)` (a trailing comma is
+   allowed) whose template holds exactly one `{}` or `{:?}` placeholder,
+   with literal text around it: `{{` and `}}` read as braces, and `\"` and
+   `\\` are the only escapes. Flags, width, precision, positional or
+   named placeholders, raw strings, a second argument, or anything chained
+   after `format!(..)` (`format!("{}", f(4)).len().to_string()`) refuses. The call is the owner call shape of rule 1,
+   with nothing around it.
+3. The other operand is a string literal whose only escapes are `\"` and
+   `\\`, and whose text is the template's text before the placeholder, a
+   non-empty middle, then the template's text after it. The fixed text on
+   both sides fixes where the middle starts and ends, so the middle is the
+   value's whole rendering. A middle of `NaN` refuses: every NaN payload of
+   `f32` or `f64` renders as `NaN`, so that text pins no single value
+   (#7905). `assert_eq!(format!("{{\"score\":{}}}", score(2)),
+   "{\"score\":4}")` pins `score(2)` to `4`; the same template against
+   `"{\"total\":4}"` refuses.
 4. The owner's return type is a primitive scalar under the cell-0094 rule
    (declared `bool`, `char`, `f32`, `f64` or built-in integer, with no
    same-named item or import in the owner's file), and its return-path
@@ -1654,6 +1662,58 @@ idx + 1 });` got no pin and read as a gap although
    - beside those pattern pins, a `field_construction` probe is credited
      only through the owner pin of rule 5, which needs a one-line brace
      payload.
+
+### Check-helper argument pins (RIPR-SPEC-0231 example 12)
+
+A test-local check helper whose assertion compares two of its own
+parameters (`fn assert_json_eq(actual: String, expected: String) {
+assert!(actual == expected); }`) fails exactly when the two arguments the
+test passes differ. At a test's eager call of a helper that rule 7 already
+lends (#6482), the pin reads the helper's assertion as comparing those
+arguments, in the test's own scope, when:
+
+1. The owner's return-path gate holds any value, and the borrowed
+   assertion is `assert_eq!(a, b)` or `assert!(a == b)` over two distinct
+   plain parameters of the helper (a message is allowed). The helper is
+   rule 7's plain check helper: its parameters are plain and never
+   rebound, and it never names the owner anywhere, so neither side can be
+   fed from the owner inside it.
+2. The two parameters declare the same type, one of the primitive scalars
+   or `String`, and no workspace item may rebind that type's name: `==` on
+   two of them compares their values, while a workspace type or two
+   different types may carry a `PartialEq` that ignores its operands. `&str`
+   is refused: a `&W` whose `Deref` targets `str` coerces into it at the
+   call, and `==` then compares only that view.
+3. The test's call is an eager statement `helper(..);` with nothing else
+   on its line and one argument per parameter. When the test calls the
+   helper more than once, the first call that satisfies rule 4 and the
+   owner identity and scope gates is the pin (an unrelated earlier
+   `check(0, 0);`, or a call of a different function that shares the
+   owner's name, does not hide a later one; the identity gate itself is
+   not relaxed). Each
+   argument is read as
+   written, or, when it is a plain name, through its one `let` under
+   RIPR-SPEC-0225 rule 1: bound once, never `mut`, in the test's own block,
+   and used nowhere but this call. Anything else refuses.
+4. One argument is the owner call shape of rule 1, or, for a primitive
+   scalar owner, a rendered template under "Rendered scalar pins" rules 2
+   and 3. The other is a literal (`4`, `-1.5`, `'x'`, `true`, `"text"`) or
+   `String::from("text")`, read as `"text"` while no workspace item may
+   rebind `String` or `From` (a precaution: under the ordinary prelude a
+   local `trait From` makes `String::from(..)` ambiguous and the test does
+   not compile, but a scope without the implicit prelude could bind it to a
+   conversion that calls the owner). Every test-side gate after that reads the substituted
+   pair as the test's own assertion: the self-comparison, fixture and
+   written-file scans, the bare-call identity and shadow checks.
+
+So `let actual = format!("{{\"score\":{}}}", score(2)); let expected =
+String::from("{\"score\":4}"); assert_json_eq(actual, expected);` pins
+`score(2)` to `4`. Named residuals, each left unconfirmed rather than
+credited on a reading that can be wrong: an owner call written inline as
+the argument (`check(score(2), 4)`), which rule 7's eager-call lines do
+not hold because the line has a second call; an argument passed by
+reference (`check(&actual, "4")`); a helper over `&str`, a workspace type
+or two different types; and `.to_string()` or `.into()` expected values.
 
 ## Required Evidence
 
@@ -2306,6 +2366,17 @@ assertions. This repair shares the existing callback without that larger migrati
   `fixtures/tail_comparison_boundary`, whose tests pin a free owner's
   unconditional tail.
 
+- Check-helper argument pins: `crates/ripr/tests/check_helper_argument_pins.rs`
+  (`a_helper_comparing_its_parameters_pins_the_arguments_the_test_passes`,
+  `a_direct_template_rendering_pins_a_scalar_owner`,
+  `decoy_helper_arguments_lend_no_pin`); unit
+  `owner_pin/helper_arguments.rs` (`reads_only_a_bare_call_statement`,
+  `reads_a_template_around_one_placeholder`,
+  `reads_parameter_types_without_spacing`,
+  `reads_only_literal_expected_values`, `compares_only_one_by_value_type`);
+  verdict-corpus case
+  `spec0231-oracle-helper-assert-json-eq`.
+
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/syntax/ra.rs`: `function_item_fact` fills
@@ -2323,6 +2394,12 @@ assertions. This repair shares the existing callback without that larger migrati
 - `crates/ripr/src/analysis/classify/owner_pin/short_circuit.rs`:
   `ShortCircuitTail` (#7969), the `ReturnPathGate::ShortCircuit` owner
   side and its per-run test-side check.
+- `crates/ripr/src/analysis/classify/owner_pin/helper_arguments.rs`:
+  check-helper argument substitution, literal expected values and rendered
+  template reading; `OwnerReturnPin::substituted_helper_operands` and
+  `substituted_pin` apply them before the operand readings, and the
+  seam-cache generations move to classified full `1.84`, sharded and
+  compact `0.90`.
 - `crates/ripr/src/analysis/classify/operand_pin.rs`: rule 7's
   operand-only pin, applied in `classifier/evidence.rs`.
 - `crates/ripr/src/analysis/classifier/evidence.rs`: establishes the pin

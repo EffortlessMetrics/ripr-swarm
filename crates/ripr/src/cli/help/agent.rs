@@ -135,7 +135,9 @@ pub(super) const AGENT_STUB_HELP: &str = r#"Write a compiling Rust test stub for
 Usage: ripr agent stub [--root PATH] (--seam-id ID | --at FILE:LINE [--kind FAMILY]) [--write] [--json]
 
 Options:
-  --root PATH      Workspace root. Defaults to current directory.
+  --root PATH      Workspace root. Defaults to the current directory, then
+                   walks up to the enclosing workspace or package, or the git
+                   top level; `--root .` pins this directory.
   --seam-id ID     Select one visible seam by ID.
   --at FILE:LINE   Select the gap at a `ripr check` finding location.
   --kind FAMILY    With --at: the finding's probe family (`predicate`,
@@ -318,10 +320,14 @@ Options:
                        packet, the after-phase result, or the verification
                        receipt). Without it stdout is a short summary and the
                        documents stay in their files under target/ripr/.
-  --seam-id ID         Select one visible seam by ID; required for `before` and
-                       the compatibility selector for `after`. `ripr pilot
-                       --root .` lists seam IDs; `ripr check` finding IDs
-                       (`probe:...`) are not seam IDs.
+  --seam-id ID         Select one visible seam; required for `before` and the
+                       compatibility selector for `after`. For `--phase before`,
+                       a seam ID, a `ripr check` finding ID (`probe:` /
+                       `repo-probe:`), a canonical gap ID, or a `file:line`
+                       location naming exactly one repair-eligible seam
+                       resolves to that seam. `--phase after` keeps exact seam
+                       IDs. An unmapped ID refuses with the `ripr pilot`
+                       recovery route.
   --attempt ID         Select one durable repair attempt; valid for `after`
                        and `verify` (verify accepts only `--attempt`).
   --phase before|after|verify
@@ -406,3 +412,41 @@ Environment variables:
                                     if the value is empty or 0; it does not
                                     change any verdict.
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::AGENT_REPAIR_HELP;
+
+    #[test]
+    fn agent_repair_help_seam_id_names_before_phase_finding_id_acceptance() -> Result<(), String> {
+        // #8686: pin the `--seam-id` entry, not AGENT_HELP.
+        let seam_id = AGENT_REPAIR_HELP
+            .split("  --seam-id ID")
+            .nth(1)
+            .and_then(|rest| rest.split("  --attempt ID").next())
+            .ok_or("AGENT_REPAIR_HELP must have a --seam-id entry before --attempt")?;
+        for needle in [
+            "`ripr check` finding ID",
+            "`probe:`",
+            "`repo-probe:`",
+            "canonical gap ID",
+            "`file:line`",
+            "`--phase before`",
+            "`--phase after` keeps exact seam",
+            "unmapped ID refuses",
+            "`ripr pilot`",
+        ] {
+            if !seam_id.contains(needle) {
+                return Err(format!(
+                    "AGENT_REPAIR_HELP --seam-id omitted {needle:?}: {seam_id}"
+                ));
+            }
+        }
+        if seam_id.contains("are not seam IDs") {
+            return Err(format!(
+                "stale pre-#8556 wording must not remain on --seam-id: {seam_id}"
+            ));
+        }
+        Ok(())
+    }
+}

@@ -13,15 +13,40 @@
 
 use super::*;
 
+/// Text after skipping whitespace and `/* */` comments.
+fn skip_trivia(mut text: &str) -> &str {
+    loop {
+        text = text.trim_start();
+        match text
+            .strip_prefix("/*")
+            .and_then(|inner| inner.split_once("*/"))
+        {
+            Some((_, after)) => text = after,
+            None => return text,
+        }
+    }
+}
+
 /// Snapshot matcher calls in `text`: `Snapshot` followed, after optional
-/// whitespace, by `(`. Each such call advances the runner's per-title
-/// counter, so it is counted whether or not it writes to the committed file;
-/// comments and strings only over-count, which refuses.
+/// whitespace and block comments, by `(`, `?.`, `!`, a type-argument list
+/// (`<`), a bracket-access close (`"]`, `']`, `` `] ``, with optional
+/// whitespace or comments before the `]`) or by `.call` / `.apply` / `.bind`
+/// (#8031). Each such call advances the runner's per-title counter, so it is
+/// counted whether or not it writes to the committed file; comments and
+/// strings only over-count, which refuses.
 fn snapshot_calls(text: &str) -> usize {
     text.match_indices("Snapshot")
         .filter(|(index, matched)| {
-            text.get(index + matched.len()..)
-                .is_some_and(|rest| rest.trim_start().starts_with('('))
+            text.get(index + matched.len()..).is_some_and(|rest| {
+                let rest = skip_trivia(rest);
+                rest.starts_with(['(', '<', '!'])
+                    || [".call", ".apply", ".bind", "?."]
+                        .iter()
+                        .any(|tail| rest.starts_with(tail))
+                    || rest
+                        .strip_prefix(['"', '\'', '`'])
+                        .is_some_and(|after| skip_trivia(after).starts_with(']'))
+            })
         })
         .count()
 }
@@ -157,6 +182,15 @@ fn committed_snapshot_file(root: &Path, test_file: &Path) -> Option<CommittedSna
     if crate::analysis::committed_source::snapshot_inputs_differ_in(root, &snapshots) {
         return None;
     }
+    // `read_config_capped` refuses a symlinked `.snap` leaf only; a linked
+    // `__snapshots__` directory could point at a tree no review judged.
+    if std::fs::symlink_metadata(root.join(&snapshots))
+        .ok()?
+        .file_type()
+        .is_symlink()
+    {
+        return None;
+    }
     let path = root.join(&snapshots).join(format!("{name}.snap"));
     let text = read_config_capped(&path).ok()?;
     let header = text.lines().next()?;
@@ -189,41 +223,202 @@ enum SnapshotRunner {
 }
 
 /// What the runner configs above the test file say.
-struct RunnerConfigs {
-    mentions_vitest: bool,
+pub(super) struct RunnerConfigs {
+    pub(super) mentions_vitest: bool,
 }
 
-/// Text that moves snapshot files away from the default location or makes
-/// every run rewrite them, so a committed entry no longer fails a changed
-/// value.
+/// Text that moves snapshot files away from the default location, changes
+/// how they are serialized, or makes every run rewrite them, so a committed
+/// entry no longer fails a changed value. The short `-u` flag is matched
+/// separately so any whitespace may precede it, not only a space.
 const SNAPSHOT_OVERRIDES: [&str; 7] = [
     "snapshotResolver",
     "resolveSnapshotPath",
     "snapshotEnvironment",
     "updateSnapshot",
     "--update",
-    " -u",
     "\"-u\"",
+    "snapshotFormat",
 ];
+
+/// `true` when `text` holds `key` as an object key (`key:`, `key :`,
+/// `"key":`, `'key':`, or JS shorthand `{ key }` / `{ key, ... }`). A
+/// longer identifier (`rootDir`, `roots`) does not match `root`.
+fn mentions_named_key(text: &str, key: &str) -> bool {
+    text.match_indices(key).any(|(index, matched)| {
+        let preceded_by_ident = text
+            .get(..index)
+            .and_then(|before| before.chars().next_back())
+            .is_some_and(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$'));
+        !preceded_by_ident
+            && text.get(index + matched.len()..).is_some_and(|rest| {
+                let rest = rest.strip_prefix(['"', '\'']).unwrap_or(rest).trim_start();
+                rest.starts_with(':') || rest.starts_with([',', '}'])
+            })
+    })
+}
 
 /// `true` when `text` holds an `update` key (`update: true`, `update : x`,
 /// `"update": x`), Vitest's option to rewrite every changed snapshot.
 fn mentions_update_key(text: &str) -> bool {
-    text.match_indices("update").any(|(index, matched)| {
-        text.get(index + matched.len()..).is_some_and(|rest| {
-            rest.strip_prefix(['"', '\''])
-                .unwrap_or(rest)
-                .trim_start()
-                .starts_with(':')
-        })
+    mentions_named_key(text, "update")
+}
+
+/// `true` when a runner config names another config this walk does not read:
+/// Jest `projects`, Vitest `workspace`, or a Vitest/Vite `root` key. Jest's
+/// `rootDir` and a `<rootDir>` mapper token do not match `root`.
+fn delegates_to_other_config(text: &str) -> bool {
+    ["projects", "workspace", "root"]
+        .into_iter()
+        .any(|key| mentions_named_key(text, key))
+}
+
+/// `true` when `text` holds the short update flag after any whitespace
+/// (`jest -u`, `jest\t-u`). `"-u"` is in [`SNAPSHOT_OVERRIDES`].
+fn mentions_short_update_flag(text: &str) -> bool {
+    text.match_indices("-u").any(|(index, _)| {
+        text.get(..index)
+            .and_then(|before| before.chars().next_back())
+            .is_some_and(char::is_whitespace)
     })
 }
 
+/// Flags that point a runner at a config, project list or root the
+/// directory walk does not read.
+const CONFIG_FLAGS: [&str; 7] = [
+    "--config",
+    "--projects",
+    "--rootDir",
+    "--root",
+    "--dir",
+    "--workspace",
+    "-r",
+];
+
+/// `true` when a `package.json` passes a runner config, project list or root
+/// by path: a script flag (`--config x`, `--config=x`, `-c x`, `-cx`,
+/// `--rootDir`, Vitest `--root` / `-r` / `--dir` / `--workspace`) or a
+/// `"projects"` / `"rootDir"` key under the `jest` key. Either way the
+/// config the runner uses may be one the directory walk does not read.
+/// Over-matching (a `node -r` preload) only refuses.
+fn passes_config_by_path(text: &str) -> bool {
+    text.contains("\"projects\"")
+        || text.contains("\"rootDir\"")
+        || text
+            .split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | '[' | ']'))
+            .any(|token| {
+                let flag = token.split('=').next().unwrap_or(token);
+                CONFIG_FLAGS.contains(&flag)
+                    || token.starts_with("--config")
+                    || (token.starts_with("-c") && !token.starts_with("--"))
+            })
+}
+
+/// Read every runner config and `package.json` directly in `directory` into
+/// `configs`, or `None` when one mentions a snapshot override, passes a
+/// config by path, delegates to another config this walk does not read,
+/// cannot be read, or sits in a symlinked directory.
+/// `allow_symlink` is `true` only for the analysis root itself, whose path is
+/// the user's own checkout path and may be a link.
+fn scan_config_directory(
+    directory: &Path,
+    allow_symlink: bool,
+    configs: &mut RunnerConfigs,
+) -> Option<()> {
+    // `read_dir` follows a symlinked directory, so a link could point at a
+    // tree this reader never judged; `read_config_capped` already refuses a
+    // symlinked file.
+    if !allow_symlink
+        && std::fs::symlink_metadata(directory)
+            .ok()?
+            .file_type()
+            .is_symlink()
+    {
+        return None;
+    }
+    for entry in std::fs::read_dir(directory).ok()? {
+        let entry = entry.ok()?;
+        let file_name = entry.file_name();
+        let Some(file_name) = file_name.to_str() else {
+            continue;
+        };
+        let is_config = !file_name.ends_with(".snap")
+            && crate::analysis::language::snapshot_input(Path::new(file_name));
+        if !is_config {
+            continue;
+        }
+        let text = read_config_capped(&entry.path()).ok()?;
+        if SNAPSHOT_OVERRIDES
+            .iter()
+            .any(|override_text| text.contains(override_text))
+            || mentions_short_update_flag(&text)
+            // Vitest reads `update` from its own config only; a
+            // `package.json` script may be named `update`.
+            || (file_name != "package.json" && mentions_update_key(&text))
+            || (file_name == "package.json" && passes_config_by_path(&text))
+            // A Jest/Vitest config that names other configs is not walked.
+            || (file_name != "package.json" && delegates_to_other_config(&text))
+        {
+            return None;
+        }
+        configs.mentions_vitest |= file_name.starts_with("vite") || text.contains("vitest");
+    }
+    Some(())
+}
+
+/// How many directories above `root` the walk reads while it looks for the
+/// repository boundary.
+const ABOVE_ROOT_LIMIT: usize = 16;
+
+/// The directories above `root` to read, or `None` when the repository
+/// boundary cannot be established.
+///
+/// The root is canonicalized first so a symlinked analysis root climbs its
+/// real parents. The walk stops at (and includes) the first directory holding
+/// a repository marker, looking at most `limit` levels up. Empty when `root`
+/// is itself the repository top. When no marker is found and the walk reaches
+/// the filesystem root within `limit`, every ancestor is returned: nothing
+/// above is a repository, and the caller still reads any config there. When
+/// the limit is hit before a marker or the filesystem root, the boundary is
+/// unknown (a deep nest, or an export without `.git` inside a larger tree), so
+/// `None` makes the caller refuse rather than guess.
+pub(super) fn directories_above_root(root: &Path, limit: usize) -> Option<Vec<PathBuf>> {
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    if root.join(".git").exists() {
+        return Some(Vec::new());
+    }
+    let all: Vec<&Path> = root.ancestors().skip(1).collect();
+    let above: Vec<&Path> = all.iter().copied().take(limit).collect();
+    match above.iter().position(|dir| dir.join(".git").exists()) {
+        Some(boundary) => Some(
+            above
+                .into_iter()
+                .take(boundary + 1)
+                .map(Path::to_path_buf)
+                .collect(),
+        ),
+        None if all.len() <= limit => Some(above.into_iter().map(Path::to_path_buf).collect()),
+        None => None,
+    }
+}
+
 /// The runner configs and `package.json` files in the test's directory and
-/// every ancestor up to `root`, or `None` when one mentions a snapshot
-/// override, cannot be read, or (in a committed-history run) differs from
-/// `HEAD`.
+/// every ancestor up to `root`, then above `root` up to the repository
+/// boundary (the first directory holding `.git`, or the filesystem root), or
+/// `None` when one mentions a snapshot override, passes a config by path,
+/// delegates to another config this walk does not read, cannot be read, (in
+/// a committed-history run) differs from `HEAD`, or the boundary is not
+/// found within reach.
 fn runner_configs(root: &Path, directory: &Path) -> Option<RunnerConfigs> {
+    runner_configs_within(root, directory, ABOVE_ROOT_LIMIT)
+}
+
+/// [`runner_configs`] with an explicit look-up limit above the root.
+pub(super) fn runner_configs_within(
+    root: &Path,
+    directory: &Path,
+    above_root_limit: usize,
+) -> Option<RunnerConfigs> {
     let mut configs = RunnerConfigs {
         mentions_vitest: false,
     };
@@ -232,30 +427,15 @@ fn runner_configs(root: &Path, directory: &Path) -> Option<RunnerConfigs> {
         if crate::analysis::committed_source::snapshot_inputs_differ_in(root, relative) {
             return None;
         }
-        for entry in std::fs::read_dir(root.join(relative)).ok()? {
-            let entry = entry.ok()?;
-            let file_name = entry.file_name();
-            let Some(file_name) = file_name.to_str() else {
-                continue;
-            };
-            let is_config = !file_name.ends_with(".snap")
-                && crate::analysis::language::snapshot_input(Path::new(file_name));
-            if !is_config {
-                continue;
-            }
-            let text = read_config_capped(&entry.path()).ok()?;
-            if SNAPSHOT_OVERRIDES
-                .iter()
-                .any(|override_text| text.contains(override_text))
-                // Vitest reads `update` from its own config only; a
-                // `package.json` script may be named `update`.
-                || (file_name != "package.json" && mentions_update_key(&text))
-            {
-                return None;
-            }
-            configs.mentions_vitest |= file_name.starts_with("vite") || text.contains("vitest");
-        }
+        scan_config_directory(
+            &root.join(relative),
+            relative.as_os_str().is_empty(),
+            &mut configs,
+        )?;
         current = relative.parent();
+    }
+    for dir in directories_above_root(root, above_root_limit)? {
+        scan_config_directory(&dir, false, &mut configs)?;
     }
     Some(configs)
 }

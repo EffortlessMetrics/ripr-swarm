@@ -53,11 +53,15 @@ pub(crate) fn probes_for_file_with_relations(
     // Inline test-module scopes are file structure, not per-line evidence:
     // build once per file so ownerless-line checks stay linear (#3718).
     let test_module_ranges = test_module_ranges_for(index, &changed.path);
+    // Added-run starts once per file: `added_run_start` used to scan every
+    // added line at every step of the run, once per added line (#7524).
+    let added_run_starts = changed.added_run_starts();
     let build_context = ProbeBuildContext {
         root,
         changed,
         index,
         changed_nodes: &changed_nodes,
+        added_run_starts: &added_run_starts,
     };
     let mut emitted_parser_shapes = std::collections::BTreeMap::<(usize, String), usize>::new();
     let propagation_subjects = super::propagation_boundary::closing_propagation_subjects(
@@ -69,11 +73,81 @@ pub(crate) fn probes_for_file_with_relations(
     // replacement is a guard-only arm edit, one entry per such edit: that
     // edit's predicate already carries the old guard as `before`.
     let mut guard_edit_counterparts = Vec::<usize>::new();
-    let skip_added = structural_lines_covered_by_run(&changed.added_lines);
-    let skip_removed = structural_lines_covered_by_run(&changed.removed_lines);
+    let mut skip_added = structural_lines_covered_by_run(&changed.added_lines);
+    let mut skip_removed = structural_lines_covered_by_run(&changed.removed_lines);
     // Rebuilt once per file and shared by every reader of the old file (#7637).
     let old_source = super::classify::old_source(index, changed);
     let old_source = old_source.as_deref();
+    // A positional replacement, or a rewrapped block, that is only an
+    // elided-lifetime or primitive constant path respelling changes no
+    // behavior: no probe on either side. String and comment text is output or
+    // prose, so a line inside either (including a continuation line of a
+    // multi-line literal) is never a respelling.
+    let added_prose = find_file_facts(index, &changed.path)
+        .map(|facts| prose_lines(&facts.source))
+        .unwrap_or_default();
+    let removed_prose = old_source.map(prose_lines).unwrap_or_default();
+    let added_at = changed
+        .added_lines
+        .iter()
+        .enumerate()
+        .map(|(index, line)| (line.new_side_line, index))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let removed_at = changed
+        .removed_lines
+        .iter()
+        .enumerate()
+        .map(|(index, line)| (line.line, index))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for (new_side_line, removed) in changed.replacement_counterparts() {
+        let (Some(&added_index), Some(&removed_index)) =
+            (added_at.get(&new_side_line), removed_at.get(&removed.line))
+        else {
+            continue;
+        };
+        if !added_prose.contains(&new_side_line)
+            && !removed_prose.contains(&removed.line)
+            && is_behavior_neutral_respelling(&changed.added_lines[added_index].text, &removed.text)
+        {
+            skip_added[added_index] = true;
+            skip_removed[removed_index] = true;
+        }
+    }
+    for (new_side_lines, removed) in changed.uneven_replacement_blocks() {
+        let added_indexes = new_side_lines
+            .iter()
+            .filter_map(|line| added_at.get(line).copied())
+            .collect::<Vec<_>>();
+        let removed_indexes = removed
+            .iter()
+            .filter_map(|line| removed_at.get(&line.line).copied())
+            .collect::<Vec<_>>();
+        if added_indexes.len() != new_side_lines.len()
+            || removed_indexes.len() != removed.len()
+            || new_side_lines.iter().any(|line| added_prose.contains(line))
+            || removed
+                .iter()
+                .any(|line| removed_prose.contains(&line.line))
+        {
+            continue;
+        }
+        let after = added_indexes
+            .iter()
+            .map(|&index| changed.added_lines[index].text.as_str())
+            .collect::<Vec<_>>();
+        let before = removed
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect::<Vec<_>>();
+        if is_behavior_neutral_rewrap(&after, &before) {
+            for index in added_indexes {
+                skip_added[index] = true;
+            }
+            for index in removed_indexes {
+                skip_removed[index] = true;
+            }
+        }
+    }
     // Block-comment content is prose, not behavior: `name: value` or `x < y`
     // inside `/* .. */` or `/*! .. */` must not seed probes. Line comments are
     // already skipped by prefix.
@@ -258,7 +332,12 @@ pub(crate) fn probes_for_file_with_relations(
                     new_side_line: shape.start_line,
                     text: canonical_text.clone(),
                 };
-                let before = removed_before(shape.start_line, &canonical_text, changed);
+                let before = removed_before(
+                    shape.start_line,
+                    &canonical_text,
+                    changed,
+                    &added_run_starts,
+                );
                 // #5312 (widening #6995): a canonical shape's `after` is the
                 // parser shape, not the whole line, so cut the same span from
                 // the old line for every family. #7020: the arm consumers that
@@ -319,7 +398,7 @@ pub(crate) fn probes_for_file_with_relations(
         }
         if !parser_shapes.is_empty() {
             for shape in parser_shapes {
-                let before = removed_before(added.new_side_line, text, changed)
+                let before = removed_before(added.new_side_line, text, changed, &added_run_starts)
                     .map(|line| arm_before(&shape.family, line, changed, old_source));
                 probes.push(SeededProbe::from_probe(build_probe(
                     &build_context,
@@ -349,7 +428,7 @@ pub(crate) fn probes_for_file_with_relations(
             continue;
         }
         for family in families {
-            let before = removed_before(added.new_side_line, text, changed)
+            let before = removed_before(added.new_side_line, text, changed, &added_run_starts)
                 .map(|line| arm_before(&family, line, changed, old_source));
             probes.push(SeededProbe::from_probe(build_probe(
                 &build_context,
@@ -410,8 +489,13 @@ pub(crate) fn probes_for_file_with_relations(
             // A bound replacement may collapse several old predicates into one.
             // Shared identifiers alone do not establish that the old subject
             // remained in the replacement's evidence.
-            if (has_matching_added_line(removed, &family, changed, &added_bounds)
-                || represented_short_lines.contains(&(removed.line, family.as_str())))
+            if (has_matching_added_line(
+                removed,
+                &family,
+                changed,
+                &added_bounds,
+                &added_run_starts,
+            ) || represented_short_lines.contains(&(removed.line, family.as_str())))
                 && (!removed_bounds.lines[removed_index]
                     || probes
                         .iter()
@@ -420,7 +504,7 @@ pub(crate) fn probes_for_file_with_relations(
                 continue;
             }
             if family == ProbeFamily::StaticUnknown
-                && has_adjacent_reordered_added_line(removed, changed)
+                && has_adjacent_reordered_added_line(removed, changed, &added_run_starts)
                 && probes
                     .iter()
                     .any(|seeded| seeded.probe.before.as_deref() == Some(text))
@@ -525,15 +609,20 @@ fn retarget_changed_binding_predicates(
     };
     // The removed counterpart of this replacement, when it is the same
     // binding's old initializer, becomes the probe's `before` evidence.
-    let before_initializer = nearby_removed_line(added.new_side_line, text, context.changed)
-        .and_then(|removed_text| {
-            changed_let_binding(&removed_text).map(|(removed_binding, removed_initializer)| {
-                (removed_binding.to_string(), removed_initializer.to_string())
-            })
+    let before_initializer = nearby_removed_line(
+        added.new_side_line,
+        text,
+        context.changed,
+        context.added_run_starts,
+    )
+    .and_then(|removed_text| {
+        changed_let_binding(&removed_text).map(|(removed_binding, removed_initializer)| {
+            (removed_binding.to_string(), removed_initializer.to_string())
         })
-        .and_then(|(removed_binding, removed_initializer)| {
-            (removed_binding == binding).then_some(removed_initializer)
-        });
+    })
+    .and_then(|(removed_binding, removed_initializer)| {
+        (removed_binding == binding).then_some(removed_initializer)
+    });
     let mut retargeted = Vec::new();
     for use_site in uses {
         if changed_lines.contains(&use_site.predicate_line) {
@@ -589,6 +678,162 @@ fn dedup_probe_ids(probes: &mut [SeededProbe]) {
             seeded.probe.id.0 = format!("{}.{}", seeded.probe.id.0, count);
         }
     }
+}
+
+/// Whether `after` only respells `before` in a way the compiler resolves to
+/// the same program: an elided lifetime argument written out
+/// (`Chunk` -> `Chunk<'_>`, the `elided_lifetimes_in_paths` lint) or a
+/// primitive integer constant moved from its deprecated module to the
+/// associated constant (`core::i32::MAX` -> `i32::MAX`). Anything else,
+/// including a line that differs elsewhere, stays probed.
+fn is_behavior_neutral_respelling(after: &str, before: &str) -> bool {
+    let (after, before) = (after.trim(), before.trim());
+    // String and comment text is output or prose, so a line holding either is
+    // never a respelling.
+    let prose = |line: &str| {
+        line.contains('"') || line.contains("//") || line.contains("/*") || observes_tokens(line)
+    };
+    !prose(after)
+        && !prose(before)
+        && after != before
+        && neutral_spelling(after) == neutral_spelling(before)
+}
+
+/// Whether a block of added lines only rewraps and respells the block of
+/// removed lines it replaced: the same statement joined or split across a
+/// different number of lines (`= \n Index::new(core::isize::MAX - 1);` joined
+/// onto one line as `isize::MAX`). Each side is joined with whitespace
+/// normalized, and some respelling must actually differ, so a pure reformat
+/// is left to the rest of the analysis. Blocks beyond `MAX_REWRAP_LINES` stay
+/// probed.
+fn is_behavior_neutral_rewrap(after: &[&str], before: &[&str]) -> bool {
+    const MAX_REWRAP_LINES: usize = 8;
+    if after.len() > MAX_REWRAP_LINES || before.len() > MAX_REWRAP_LINES {
+        return false;
+    }
+    let prose = |line: &&str| {
+        line.contains('"') || line.contains("//") || line.contains("/*") || observes_tokens(line)
+    };
+    if after.iter().any(prose) || before.iter().any(prose) {
+        return false;
+    }
+    let (after, before) = (join_tokens(after), join_tokens(before));
+    let respelled = neutral_spelling(&before) != before || neutral_spelling(&after) != after;
+    respelled && neutral_spelling(&after) == neutral_spelling(&before)
+}
+
+/// `lines` joined into one statement: whitespace runs collapse to one space,
+/// and a wrap point drops its space beside an opening or closing bracket, a
+/// comma, a semicolon or a dot, where a wrap never changes the tokens
+/// (`foo(\n  a)` and `foo(a)` read alike). Interior spacing is kept, so
+/// `a & &b` and `a && b` stay different.
+fn join_tokens(lines: &[&str]) -> String {
+    let mut out = String::new();
+    for line in lines {
+        let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
+        let Some(first) = line.chars().next() else {
+            continue;
+        };
+        // Two dots are one range token when joint and two tokens when
+        // separated, so a wrap between them keeps its space.
+        let mut tail = out.chars().rev();
+        let (last, before_last) = (tail.next(), tail.next());
+        let dots = (last == Some('.') && before_last == Some('.'))
+            || (first == '.' && last == Some('.'))
+            || (first == '.' && line.chars().nth(1) == Some('.'));
+        if let Some(last) = last
+            && !dots
+            && !(matches!(last, '(' | '[' | '{' | '.')
+                || matches!(first, ')' | ']' | '}' | '.' | ',' | ';'))
+        {
+            out.push(' ');
+        } else if last.is_some() && dots {
+            out.push(' ');
+        }
+        out.push_str(&line);
+    }
+    out
+}
+
+/// 1-based lines of `source` that hold string or comment text, read from the
+/// whole file so a continuation line inside a multi-line literal counts (the
+/// per-line quote check cannot see it). A line whose only masked spans are
+/// character literals (`'x'`) holds code, which the mask also erases.
+fn prose_lines(source: &str) -> std::collections::BTreeSet<usize> {
+    let masked = mask_comments_and_strings(source);
+    source
+        .lines()
+        .zip(masked.lines())
+        .enumerate()
+        .filter(|(_, (original, masked))| {
+            original != masked && !only_char_literals(original, masked)
+        })
+        .map(|(at, _)| at + 1)
+        .collect()
+}
+
+/// Whether every span the mask erased from `original` is shaped like a
+/// character literal: quote, up to a dozen bytes without a double quote,
+/// quote.
+fn only_char_literals(original: &str, masked: &str) -> bool {
+    let (original, masked) = (original.as_bytes(), masked.as_bytes());
+    let mut at = 0;
+    while at < original.len() {
+        if original.get(at) == masked.get(at) {
+            at += 1;
+            continue;
+        }
+        let start = at;
+        while at < original.len() && original.get(at) != masked.get(at) {
+            at += 1;
+        }
+        let span = &original[start..at];
+        let char_shaped = span.len() <= 12
+            && span.first() == Some(&b'\'')
+            && span.last() == Some(&b'\'')
+            && !span.contains(&b'"');
+        if !char_shaped {
+            return false;
+        }
+    }
+    true
+}
+
+/// Whether `line` holds a macro that reads its argument as source text, so a
+/// respelled path inside it changes the produced string.
+fn observes_tokens(line: &str) -> bool {
+    line.contains("stringify!")
+}
+
+fn neutral_spelling(line: &str) -> String {
+    const INTS: [&str; 12] = [
+        "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
+    ];
+    let mut out = line.replace("<'_>", "").replace("<'_, ", "<");
+    for int in INTS {
+        for root in ["core", "std"] {
+            for item in ["MAX", "MIN"] {
+                let from = format!("{root}::{int}::{item}");
+                let to = format!("{int}::{item}");
+                let mut rewritten = String::with_capacity(out.len());
+                let mut rest = out.as_str();
+                while let Some(at) = rest.find(&from) {
+                    // Only a free-standing path: a longer path or identifier
+                    // ending in `core`/`std` resolves differently.
+                    let free = rest[..at]
+                        .chars()
+                        .next_back()
+                        .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_' || ch == ':'));
+                    rewritten.push_str(&rest[..at]);
+                    rewritten.push_str(if free { &to } else { &from });
+                    rest = &rest[at + from.len()..];
+                }
+                rewritten.push_str(rest);
+                out = rewritten;
+            }
+        }
+    }
+    out
 }
 
 /// Whether an added `text` line is only the one-line signature of a NEW
@@ -893,6 +1138,7 @@ struct ProbeBuildContext<'a> {
     changed: &'a ChangedFile,
     index: &'a RustIndex,
     changed_nodes: &'a [SyntaxNodeFact],
+    added_run_starts: &'a std::collections::BTreeMap<usize, usize>,
 }
 
 fn build_probe(
@@ -1001,8 +1247,11 @@ fn lines_are_adjacent(removed_new_side_line: usize, added_new_side_line: usize) 
     removed_new_side_line.abs_diff(added_new_side_line) <= 1
 }
 
-fn added_run_start(added_new_side_line: usize, changed: &ChangedFile) -> usize {
-    changed.added_run_start(added_new_side_line)
+fn added_run_start(
+    added_new_side_line: usize,
+    starts: &std::collections::BTreeMap<usize, usize>,
+) -> usize {
+    ChangedFile::added_run_start_from(starts, added_new_side_line)
 }
 
 fn has_matching_added_line(
@@ -1010,11 +1259,12 @@ fn has_matching_added_line(
     removed_family: &ProbeFamily,
     changed: &ChangedFile,
     added_bounds: &[bool],
+    added_run_starts: &std::collections::BTreeMap<usize, usize>,
 ) -> bool {
     let removed_tokens = extract_identifier_tokens(&removed_line.text);
     !removed_tokens.is_empty()
         && changed.added_lines.iter().enumerate().any(|(index, line)| {
-            let run_start = added_run_start(line.new_side_line, changed);
+            let run_start = added_run_start(line.new_side_line, added_run_starts);
             if !lines_are_adjacent(removed_line.new_side_line, line.new_side_line)
                 && !lines_are_adjacent(removed_line.new_side_line, run_start)
             {
@@ -1098,14 +1348,18 @@ fn represented_short_replacements(
 /// The character comparison reads only plain `".."` strings: a line with a
 /// raw string (`r#"a" b"#`) or a `'"'` char literal is never read as a
 /// reorder (fail closed: the removed probe stays).
-fn has_adjacent_reordered_added_line(removed_line: &ChangedLine, changed: &ChangedFile) -> bool {
+fn has_adjacent_reordered_added_line(
+    removed_line: &ChangedLine,
+    changed: &ChangedFile,
+    added_run_starts: &std::collections::BTreeMap<usize, usize>,
+) -> bool {
     if has_unpaired_quote_literal(&removed_line.text) {
         return false;
     }
     let removed = sorted_code_characters(&removed_line.text);
     !removed.is_empty()
         && changed.added_lines.iter().any(|line| {
-            let run_start = added_run_start(line.new_side_line, changed);
+            let run_start = added_run_start(line.new_side_line, added_run_starts);
             (lines_are_adjacent(removed_line.new_side_line, line.new_side_line)
                 || lines_are_adjacent(removed_line.new_side_line, run_start))
                 && !has_unpaired_quote_literal(&line.text)
@@ -1300,9 +1554,10 @@ fn removed_before(
     added_new_side_line: usize,
     added: &str,
     changed: &ChangedFile,
+    added_run_starts: &std::collections::BTreeMap<usize, usize>,
 ) -> Option<String> {
     replaced_line_counterpart(added_new_side_line, changed)
-        .or_else(|| nearby_removed_line(added_new_side_line, added, changed))
+        .or_else(|| nearby_removed_line(added_new_side_line, added, changed, added_run_starts))
 }
 
 /// A match-arm probe's whole old line, with an uncut arm head joined to
@@ -1429,6 +1684,7 @@ fn nearby_removed_line(
     added_new_side_line: usize,
     added: &str,
     changed: &ChangedFile,
+    added_run_starts: &std::collections::BTreeMap<usize, usize>,
 ) -> Option<String> {
     let added_tokens = extract_identifier_tokens(added);
     // Only consider removed lines adjacent to this added line, or to the
@@ -1438,7 +1694,7 @@ fn nearby_removed_line(
     // the file (regardless of hunk or position) previously produced a
     // `before` value taken from an unrelated hunk whenever no removed line
     // shared a token with the added line.
-    let run_start = added_run_start(added_new_side_line, changed);
+    let run_start = added_run_start(added_new_side_line, added_run_starts);
     let nearby = changed
         .removed_lines
         .iter()
@@ -1743,6 +1999,293 @@ mod tests {
             ..Default::default()
         });
         probes_for_file(Path::new("workspace"), &changed, &index)
+    }
+
+    /// Pair wiring: a neutral respelling beside a real change in one hunk
+    /// seeds no probe for the neutral pair and still probes the real change,
+    /// with old-file line numbers that differ from the new-side ones.
+    #[test]
+    fn a_neutral_pair_is_skipped_beside_a_changed_pair() {
+        let path = PathBuf::from("src/lib.rs");
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![
+                ChangedLine {
+                    line: 13,
+                    new_side_line: 13,
+                    text: "fn next(&mut self) -> Option<Chunk<'_>> {".to_string(),
+                },
+                ChangedLine {
+                    line: 14,
+                    new_side_line: 14,
+                    text: "fn peek(&mut self) -> Option<Other> {".to_string(),
+                },
+            ],
+            removed_lines: vec![
+                ChangedLine {
+                    line: 3,
+                    new_side_line: 13,
+                    text: "fn next(&mut self) -> Option<Chunk> {".to_string(),
+                },
+                ChangedLine {
+                    line: 4,
+                    new_side_line: 13,
+                    text: "fn peek(&mut self) -> Option<Chunk> {".to_string(),
+                },
+            ],
+        };
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: BTreeMap::from([(
+                path.clone(),
+                FileFacts {
+                    path: path.clone(),
+                    source: "".into(),
+                    ..FileFacts::default()
+                },
+            )]),
+            ..Default::default()
+        });
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        assert!(
+            probes.iter().all(|probe| probe.location.line == 14),
+            "{probes:?}"
+        );
+        assert!(!probes.is_empty(), "the changed pair keeps its probe");
+    }
+
+    /// Probes for `source` (the new file) with the given added
+    /// `(new_side_line, text)` and removed `(old_line, new_side_line, text)`.
+    fn block_probes(
+        source: &str,
+        added: &[(usize, &str)],
+        removed: &[(usize, usize, &str)],
+    ) -> Vec<Probe> {
+        let path = PathBuf::from("src/lib.rs");
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: added
+                .iter()
+                .map(|&(line, text)| ChangedLine {
+                    line,
+                    new_side_line: line,
+                    text: text.to_string(),
+                })
+                .collect(),
+            removed_lines: removed
+                .iter()
+                .map(|&(line, new_side_line, text)| ChangedLine {
+                    line,
+                    new_side_line,
+                    text: text.to_string(),
+                })
+                .collect(),
+        };
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: BTreeMap::from([(
+                path.clone(),
+                FileFacts {
+                    path: path.clone(),
+                    source: source.into(),
+                    ..FileFacts::default()
+                },
+            )]),
+            ..Default::default()
+        });
+        probes_for_file(Path::new("workspace"), &changed, &index)
+    }
+
+    /// #8747: two removed lines joined onto one added line, with the same
+    /// respelling, pair nothing by position yet change no behavior.
+    #[test]
+    fn a_rewrapped_respelling_seeds_no_probe_but_a_rewrapped_change_does() {
+        let source = "pub const MAX: SmallIndex = SmallIndex::new_unchecked(isize::MAX - 1);\n";
+        let neutral = block_probes(
+            source,
+            &[(
+                1,
+                "pub const MAX: SmallIndex = SmallIndex::new_unchecked(isize::MAX - 1);",
+            )],
+            &[
+                (7, 1, "pub const MAX: SmallIndex ="),
+                (8, 1, "    SmallIndex::new_unchecked(core::isize::MAX - 1);"),
+            ],
+        );
+        assert!(neutral.is_empty(), "{neutral:?}");
+        let changed_source =
+            "pub const MAX: SmallIndex = SmallIndex::new_unchecked(isize::MAX - 2);\n";
+        let changed = block_probes(
+            changed_source,
+            &[(
+                1,
+                "pub const MAX: SmallIndex = SmallIndex::new_unchecked(isize::MAX - 2);",
+            )],
+            &[
+                (7, 1, "pub const MAX: SmallIndex ="),
+                (8, 1, "    SmallIndex::new_unchecked(core::isize::MAX - 1);"),
+            ],
+        );
+        assert!(!changed.is_empty(), "a changed value keeps its probe");
+    }
+
+    #[test]
+    fn rewrap_normalization_keeps_word_boundaries() {
+        assert!(is_behavior_neutral_rewrap(
+            &["let max = i32::MAX;"],
+            &["let max =", "    core::i32::MAX;"],
+        ));
+        // Joining `let` and `max` into one word is a different program text.
+        assert!(!is_behavior_neutral_rewrap(
+            &["letmax = i32::MAX;"],
+            &["let", "max = core::i32::MAX;"],
+        ));
+        // A pure reformat holds no respelling.
+        assert!(!is_behavior_neutral_rewrap(
+            &["let a = b;"],
+            &["let a =", "b;"]
+        ));
+    }
+
+    /// A continuation line of a multi-line string literal carries no quote on
+    /// that line, yet it is output text, not code.
+    #[test]
+    fn a_respelling_inside_a_multiline_string_literal_is_not_neutral() {
+        let source =
+            "fn f() -> String {\n    format!(\"range\n        limit i32::MAX\n        end\")\n}\n";
+        let prose = prose_lines(source);
+        assert!(prose.contains(&3), "{prose:?}");
+        assert!(!prose.contains(&1) && !prose.contains(&5), "{prose:?}");
+        let inside = block_probes(
+            source,
+            &[(3, "        limit i32::MAX")],
+            &[(3, 3, "        limit core::i32::MAX")],
+        );
+        let code = block_probes(
+            "let a = i32::MAX;\n",
+            &[(1, "let a = i32::MAX;")],
+            &[(1, 1, "let a = core::i32::MAX;")],
+        );
+        assert!(code.is_empty(), "{code:?}");
+        assert!(!inside.is_empty(), "string text keeps its probe");
+    }
+
+    /// A character literal is masked like a string, but it is code.
+    #[test]
+    fn a_char_literal_line_still_reads_as_a_respelling() {
+        let code = block_probes(
+            "let c = 'x'; let m = i32::MAX;\n",
+            &[(1, "let c = 'x'; let m = i32::MAX;")],
+            &[(1, 1, "let c = 'x'; let m = core::i32::MAX;")],
+        );
+        assert!(code.is_empty(), "{code:?}");
+        let prose = prose_lines("let s = \"a\"; let c = 'x';\nlet c = 'x';\n");
+        assert_eq!(prose, std::collections::BTreeSet::from([1]));
+    }
+
+    #[test]
+    fn rewrap_joins_wrap_points_without_merging_operators() {
+        assert!(is_behavior_neutral_rewrap(
+            &["fn f() -> Foo<T> {"],
+            &["fn f() -> Foo<'_,", "    T> {"],
+        ));
+        assert!(!is_behavior_neutral_rewrap(
+            &["let m = a && b + i32::MAX;"],
+            &["let m = a & &b", " + core::i32::MAX;"],
+        ));
+    }
+
+    /// Old-file lines shift against new-side ones, and a prose line on only
+    /// one side keeps the block probed.
+    #[test]
+    fn a_prose_line_on_one_side_keeps_a_shifted_rewrap_probed() {
+        let source = "fn a() {}\nfn b() {}\nlet m = i32::MAX;\n";
+        let neutral = block_probes(
+            source,
+            &[(3, "let m = i32::MAX;")],
+            &[(9, 3, "let m ="), (10, 3, "    core::i32::MAX;")],
+        );
+        assert!(neutral.is_empty(), "{neutral:?}");
+        let string_source = "fn a() {}\nfn b() {}\nlet m = i32::MAX;\n";
+        let kept = block_probes(
+            string_source,
+            &[(3, "let m = i32::MAX;")],
+            &[(9, 3, "let m = \"x\" +"), (10, 3, "    core::i32::MAX;")],
+        );
+        assert!(
+            !kept.is_empty(),
+            "a quote on the removed side keeps the probe"
+        );
+    }
+
+    /// `stringify!` reads source tokens, so a respelled path inside it
+    /// changes the produced text.
+    #[test]
+    fn a_respelling_inside_stringify_is_not_neutral() {
+        assert!(!is_behavior_neutral_respelling(
+            "let label = stringify!(i32::MAX);",
+            "let label = stringify!(core::i32::MAX);",
+        ));
+        assert!(!is_behavior_neutral_rewrap(
+            &["let label = stringify!(i32::MAX);"],
+            &["let label = stringify!(", "    core::i32::MAX);"],
+        ));
+    }
+
+    #[test]
+    fn rewrap_keeps_separated_dots_apart() {
+        assert_eq!(join_tokens(&["a .", ". b"]), "a . . b");
+        assert_eq!(join_tokens(&["a", ".b()"]), "a.b()");
+        assert!(!is_behavior_neutral_rewrap(
+            &["let v = (x, i32::MAX); a .. b"],
+            &["let v = (x, core::i32::MAX); a .", ". b"],
+        ));
+    }
+
+    #[test]
+    fn a_respelled_signature_line_seeds_no_probe_but_a_changed_one_does() {
+        let neutral = shapes_probes(
+            "fn next(&mut self) -> Option<Chunk<'_>> {",
+            "fn next(&mut self) -> Option<Chunk> {",
+            &[],
+            "",
+        );
+        assert!(neutral.is_empty(), "{neutral:?}");
+        let changed = shapes_probes(
+            "fn next(&mut self) -> Option<Chunk<'_>> {",
+            "fn next(&mut self) -> Option<Other> {",
+            &[],
+            "",
+        );
+        assert!(!changed.is_empty());
+    }
+
+    #[test]
+    fn behavior_neutral_respellings_seed_no_probe() {
+        for (added, removed) in [
+            (
+                "fn next(&mut self) -> Option<Result<Chunk<'_>>> {",
+                "fn next(&mut self) -> Option<Result<Chunk>> {",
+            ),
+            (
+                "let max = SmallIndex::new_unchecked(i32::MAX as usize - 1);",
+                "let max = SmallIndex::new_unchecked(core::i32::MAX as usize - 1);",
+            ),
+        ] {
+            assert!(is_behavior_neutral_respelling(added, removed), "{added}");
+        }
+        for (added, removed) in [
+            ("if digit >= b'9' {", "if digit > b'9' {"),
+            ("let max = u32::MAX;", "let max = u32::MIN;"),
+            ("let max = i32::MAX - 1;", "let max = core::i32::MAX;"),
+            ("let max = u32::MAX;", "let max = u32::MAX;"),
+            (
+                r#"panic!("bad i32::MAX")"#,
+                r#"panic!("bad core::i32::MAX")"#,
+            ),
+            ("x = myi32::MAX;", "x = mycore::i32::MAX;"),
+            ("x = foo::u8::MAX;", "x = foo::std::u8::MAX;"),
+        ] {
+            assert!(!is_behavior_neutral_respelling(added, removed), "{added}");
+        }
     }
 
     /// #6995: a predicate shape narrower than its line takes the same span
@@ -3292,13 +3835,14 @@ mod tests {
         };
         // Every removed arm shares `Kind`; the arm with the same pattern is
         // the original, whatever its position or spacing.
+        let starts = changed.added_run_starts();
         assert_eq!(
-            nearby_removed_line(4, "        Kind::Beta => 5,", &changed),
+            nearby_removed_line(4, "        Kind::Beta => 5,", &changed, &starts),
             Some("Kind::Beta  =>  2,".to_string())
         );
         // A changed pattern keeps the token rule.
         assert_eq!(
-            nearby_removed_line(4, "        Kind::Delta => 5,", &changed),
+            nearby_removed_line(4, "        Kind::Delta => 5,", &changed, &starts),
             Some("Kind::Alpha => 1,".to_string())
         );
     }
@@ -3403,10 +3947,13 @@ mod tests {
         );
         let raw_swapped = swap(raw, raw_changed);
         assert!(
-            raw_swapped
-                .removed_lines
-                .first()
-                .is_some_and(|line| !has_adjacent_reordered_added_line(line, &raw_swapped)),
+            raw_swapped.removed_lines.first().is_some_and(|line| {
+                !has_adjacent_reordered_added_line(
+                    line,
+                    &raw_swapped,
+                    &raw_swapped.added_run_starts(),
+                )
+            }),
             "a raw-string line is never read as a reorder"
         );
         // An adjacent character-equal added line whose probe does not carry
@@ -3440,10 +3987,13 @@ mod tests {
             ],
         };
         assert!(
-            paired_elsewhere
-                .removed_lines
-                .get(1)
-                .is_some_and(|line| has_adjacent_reordered_added_line(line, &paired_elsewhere)),
+            paired_elsewhere.removed_lines.get(1).is_some_and(|line| {
+                has_adjacent_reordered_added_line(
+                    line,
+                    &paired_elsewhere,
+                    &paired_elsewhere.added_run_starts(),
+                )
+            }),
             "premise: the added line is an adjacent reorder of the removed one"
         );
         let paired_probes = probes_for_file(

@@ -1,0 +1,60 @@
+{
+  "case_id": "perl-0235-ex03-smoke-ok-strong-exact",
+  "subject_id": "authored-perl-test2-ledger",
+  "diff": "cases/perl-0235-ex03-smoke-ok-strong-exact.diff",
+  "anchor": {
+    "file": "lib/Ledger.pm",
+    "line": 34
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "test2_ok_lives_only",
+  "hard_case": "RIPR-SPEC-0235 example 3: a smoke_ok oracle bound to the owner, strength edited to strong_exact.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "return $amount - $balance;",
+        "mutated_line": "return $amount - $balance;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the deposit subtracts the balance"
+      },
+      {
+        "replacement": "return $balance;",
+        "mutated_line": "return $balance;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the deposit is ignored"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0235 example 3: a smoke_ok oracle bound to the owner, strength edited to strong_exact. The rewrite and run truth are those of perl-test2-deposit-lives-only (not_discriminated); the packet edit changes which facts ripr reads, not what prove -l t does with the rewrite.",
+  "labeling_observation": {
+    "ripr_commit": "4f48195",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-0235-ex03-smoke-ok-strong-exact.json",
+    "sha256": "5370af61e4b232b571074ac6c9cd1310c9a30990d45bc17d179f297a51b9917a",
+    "provenance": "edited_producer",
+    "edits": "Started from the producer packet of perl-test2-deposit-lives-only, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"strength\": \"strong_exact\"}; the packet fingerprint was recomputed."
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0235#3"
+  ]
+}

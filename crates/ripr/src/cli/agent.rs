@@ -1,6 +1,6 @@
 use crate::app::agent_brief::{AGENT_BRIEF_HARD_MAX_SEAMS, DEFAULT_AGENT_BRIEF_MAX_SEAMS};
 use crate::cli::parse::expect_value;
-use crate::cli::suggest::unknown_argument;
+use crate::cli::suggest::{unknown_argument, unknown_value};
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -71,6 +71,8 @@ pub(super) struct AgentCardOptions {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct AgentStubOptions {
     pub(super) root: PathBuf,
+    /// `--root` was typed, so the root is used as given (#8767).
+    pub(super) root_explicit: bool,
     pub(super) selector: crate::app::test_stub::TestStubSelector,
     /// Apply the stub to the working tree instead of only printing it.
     pub(super) write: bool,
@@ -211,8 +213,22 @@ pub(super) fn parse_agent_args(args: &[String]) -> Result<AgentCommand, String> 
         Some("status") => parse_agent_status_command(&args[1..]),
         Some("review-summary") => parse_agent_review_summary_command(&args[1..]),
         Some("repair") => parse_agent_repair_command(&args[1..]),
-        Some(other) => Err(format!(
-            "unknown agent subcommand {other:?}; expected `start`, `brief`, `packet`, `card`, `stub`, `verify`, `verify-execute`, `receipt`, `status`, `review-summary`, or `repair`"
+        Some(other) => Err(unknown_value(
+            "agent subcommand",
+            other,
+            &[
+                "start",
+                "brief",
+                "packet",
+                "card",
+                "stub",
+                "verify",
+                "verify-execute",
+                "receipt",
+                "status",
+                "review-summary",
+                "repair",
+            ],
         )),
     }
 }
@@ -813,6 +829,7 @@ fn parse_agent_stub_command(args: &[String]) -> Result<AgentCommand, String> {
 pub(super) fn parse_agent_stub_options(args: &[String]) -> Result<AgentStubOptions, String> {
     use crate::app::test_stub::TestStubSelector;
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut selector: Option<TestStubSelector> = None;
     let mut kind: Option<String> = None;
     let mut write = false;
@@ -824,6 +841,7 @@ pub(super) fn parse_agent_stub_options(args: &[String]) -> Result<AgentStubOptio
             "--root" => {
                 i += 1;
                 root = PathBuf::from(expect_value(args, i, "--root")?);
+                root_explicit = true;
             }
             "--kind" => {
                 i += 1;
@@ -865,6 +883,7 @@ pub(super) fn parse_agent_stub_options(args: &[String]) -> Result<AgentStubOptio
     };
     Ok(AgentStubOptions {
         root,
+        root_explicit,
         selector,
         write,
         json,
@@ -1301,7 +1320,7 @@ mod tests {
         assert_eq!(
             parse_agent_args(&args(&["other"])),
             Err(
-                "unknown agent subcommand \"other\"; expected `start`, `brief`, `packet`, `card`, `stub`, `verify`, `verify-execute`, `receipt`, `status`, `review-summary`, or `repair`"
+                "unknown agent subcommand \"other\". Accepted: start, brief, packet, card, stub, verify, verify-execute, receipt, status, review-summary, repair."
                     .to_string()
             )
         );

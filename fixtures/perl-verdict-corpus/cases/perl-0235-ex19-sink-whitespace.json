@@ -54,5 +54,8 @@
     "sha256": "bb1dc7edac2f07c34c2942e659cfd38406caad653c49ec5d0bc5d9b618296a0e",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-test2-summary-deep-is-count, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"observed_sink\": {\"strip_spaces\": true}}; the packet fingerprint was recomputed."
-  }
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0235#19"
+  ]
 }

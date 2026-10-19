@@ -27,6 +27,7 @@ mod blind_journey;
 mod blind_journey_execute;
 mod branch_inventory;
 mod cache;
+mod check_fast_cli;
 mod command;
 pub mod convergence;
 mod dispatch;
@@ -593,6 +594,7 @@ const PRECOMMIT_GATE_COMMANDS: &[&str] = &[
     "check-identity-registry",
     "check-doc-artifacts",
     "check-doc-index",
+    "check-doc-roles",
     "check-changelog-fragments",
     "check-readme-state",
     "markdown-links",
@@ -666,6 +668,7 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
     check_identity_registry()?;
     check_doc_artifacts()?;
     check_doc_index()?;
+    check_doc_roles()?;
     check_changelog_fragments()?;
     check_readme_state()?;
     markdown_links()?;
@@ -823,6 +826,15 @@ fn check_fast_gates(
         skipped.push("check-support-tiers (not applicable)");
     }
 
+    // #8631: keep the existing cross-file help/parser validator in the
+    // focused path, before the broader compilation-bearing Rust gates.
+    if categories.cli_help {
+        check_fast_cli::run(child_diagnostics)?;
+        ran.push(check_fast_cli::GATE);
+    } else {
+        skipped.push(check_fast_cli::GATE);
+    }
+
     // Conditional gates based on changed file categories.
     if categories.rust_src {
         check_no_panic_family()?;
@@ -898,7 +910,7 @@ fn check_fast_gates(
 
 fn check_fast_diagnostics(diagnostics: &[run::CommandDiagnostic]) -> String {
     format!(
-        "\n## Child command diagnostics\n\n{} Capture scope: fmt and workspace Clippy only; streams remain inherited, so Cargo progress is unavailable.\n\n{}\n",
+        "\n## Child command diagnostics\n\n{} Capture scope: fmt and workspace Clippy inherit streams; selected CLI help parity captures streams and reports recognized Cargo stderr progress.\n\n{}\n",
         run::COMMAND_DIAGNOSTIC_DISCLOSURE,
         diagnostics
             .iter()
@@ -927,6 +939,7 @@ fn check_fast_failure_report(
 
 struct ChangedFileCategories {
     support_tiers: bool,
+    cli_help: bool,
     rust_src: bool,
     workflow: bool,
     policy: bool,
@@ -945,6 +958,22 @@ fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
                 || f.starts_with("xtask/src/")
                 || f.starts_with(".github/workflows/")
                 || f.starts_with("scripts/")
+        }),
+        // Command parsing lives in these existing semantic owners. Select
+        // their Rust surfaces without copying help.rs's parser-owner table.
+        cli_help: files.iter().any(|f| {
+            f.ends_with(".rs")
+                && [
+                    "crates/ripr/src/cli",
+                    "crates/ripr/src/app",
+                    "crates/ripr/src/mcp",
+                    "crates/ripr/src/output/first_pr",
+                ]
+                .iter()
+                .any(|owner| {
+                    f.strip_prefix(owner)
+                        .is_some_and(|tail| tail == ".rs" || tail.starts_with('/'))
+                })
         }),
         rust_src: files.iter().any(|f| {
             f == "Cargo.lock"
@@ -1548,6 +1577,7 @@ fn run_policy_checks() -> Result<(), String> {
     check_identity_registry()?;
     check_doc_artifacts()?;
     check_doc_index()?;
+    check_doc_roles()?;
     check_changelog_fragments()?;
     check_readme_state()?;
     markdown_links()?;
@@ -5173,7 +5203,7 @@ fn receipts_report_markdown(
 }
 
 fn precommit_report_body() -> String {
-    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-text-encoding`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-release-challenge-judgments`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-identity-registry`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-changelog-fragments`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
+    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-text-encoding`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-release-challenge-judgments`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-identity-registry`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-doc-roles`\n- `cargo xtask check-changelog-fragments`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
 }
 
 /// Compose the check-pr report for either terminal state (#3036). One
@@ -21611,6 +21641,12 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
     if path.starts_with("tools/python/portable-ripr-consumer/") && path.ends_with(".py") {
         return Some(
             "Portable packet consumer must run as stdlib Python 3.11+ in agent environments that have no Cargo/rustc.",
+        );
+    }
+
+    if path.starts_with(".github/actions/pr-candidate-admission/") && path.ends_with(".py") {
+        return Some(
+            "Pre-allocation admission runs before any Rust build exists, so its pure decision logic is stdlib Python on the hosted runner, kept out of embedded YAML shell (#5391, #2022).",
         );
     }
 
