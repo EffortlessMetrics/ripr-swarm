@@ -1242,6 +1242,8 @@ tests = [
   "crates/ripr/src/cli/commands.rs::tests::init_parses_root_dry_run_and_force",
   "crates/ripr/src/cli/commands.rs::tests::init_requires_root_value",
   "crates/ripr/src/cli/commands.rs::tests::init_rejects_unknown_arguments",
+  "crates/ripr/tests/cli_help_hierarchy.rs::init_ci_provider_errors_recover_near_misses",
+  "crates/ripr/tests/cli_help_hierarchy.rs::init_ci_provider_valid_preview_keeps_workflow_contract",
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_is_advisory",
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_uploads_reports_and_makes_sarif_optional",
   "crates/ripr/src/cli/commands.rs::tests::init_ci_github_writes_workflow_and_preserves_existing_config",

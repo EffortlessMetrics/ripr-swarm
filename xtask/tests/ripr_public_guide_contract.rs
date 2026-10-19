@@ -692,6 +692,8 @@ fn public_docs_only_pass_flags_the_command_help_lists() -> Result<(), String> {
 }
 
 const PORTABLE_TESTS: &[&str] = &[
+    "init_ci_provider_errors_recover_near_misses",
+    "init_ci_provider_valid_preview_keeps_workflow_contract",
     "workflow_help_lists_the_five_governed_identities",
     "workflow_help_renders_one_workflow_with_bounded_sections",
     "unknown_workflow_fails_with_a_family_distinct_from_unknown_command",
@@ -745,7 +747,7 @@ fn packaged_help_target_runs_every_case_and_rejects_missing_shared_asset() -> Re
         .iter()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
-    if actual != expected || actual.len() != 27 {
+    if actual != expected || actual.len() != PORTABLE_TESTS.len() {
         return Err(format!(
             "portable test inventory drifted: expected {expected:?}, got {actual:?}"
         ));
@@ -754,10 +756,13 @@ fn packaged_help_target_runs_every_case_and_rejects_missing_shared_asset() -> Re
     execute.arg("--test-threads=1").current_dir(&scratch.0);
     let result = require_success(run(execute)?, "extracted help execution")?;
     let text = String::from_utf8(result.stdout).map_err(|error| error.to_string())?;
-    if !text.contains("test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out")
-    {
+    if !text.contains(&format!(
+        "test result: ok. {} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out",
+        PORTABLE_TESTS.len()
+    )) {
         return Err(format!(
-            "extracted target did not run all 27 portable cases:\n{text}"
+            "extracted target did not run all {} portable cases:\n{text}",
+            PORTABLE_TESTS.len()
         ));
     }
     // The successful compile, exact inventory and execution above establish

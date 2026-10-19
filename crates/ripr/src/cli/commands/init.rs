@@ -1,7 +1,7 @@
 use crate::cli::commands_options::{InitCi, InitOptions};
 use crate::cli::help;
 use crate::cli::parse::expect_value;
-use crate::cli::suggest::unknown_argument;
+use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::{CONFIG_FILE_NAME, generated_init_config};
 use crate::output;
 use std::path::{Path, PathBuf};
@@ -680,9 +680,7 @@ pub(super) fn parse_init_options(args: &[String]) -> Result<InitOptions, String>
 fn parse_init_ci(value: &str) -> Result<InitCi, String> {
     match value {
         "github" => Ok(InitCi::Github),
-        _ => Err(format!(
-            "unknown init --ci provider {value:?}. Accepted: github."
-        )),
+        _ => Err(unknown_value("init --ci provider", value, &["github"])),
     }
 }
 
