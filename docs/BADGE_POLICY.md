@@ -437,7 +437,11 @@ The ordinary count thresholds are:
 | nonzero with `--fail-on-nonzero` | `fail` | `red` |
 
 Limited, stale, unknown, preview-skipped, or missing-input states override these
-count thresholds. Badge status and CI exit policy remain separate decisions.
+count thresholds. A diff outcome with no analysis subject (`no_scope`,
+`no_changed_lines`, or `no_behavioral_candidates`) also renders a yellow
+`warn` badge naming that kind, even though the typed analysis outcome is
+complete. An analyzed `complete_no_findings` outcome can retain the green zero.
+Badge status and CI exit policy remain separate decisions.
 
 ## CLI shape
 
