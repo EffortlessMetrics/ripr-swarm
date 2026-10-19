@@ -39,6 +39,10 @@ pub(crate) struct OwnerPinAssertions {
     parsed: bool,
     functions: BTreeMap<FunctionKey, FunctionAssertions>,
     module_declarations: BTreeMap<(usize, String), ModuleDeclarationAdmission>,
+    /// Whether any item in the file may rebind `test` (#6749), judged
+    /// without regard to scope. A macro-generated test is not in the file's
+    /// text, so its expansion cannot see these items; the file answers for it.
+    file_binds_test: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -58,9 +62,6 @@ struct FunctionAssertions {
     /// Assertions of test-local check helpers this test calls on an eager
     /// path (#6482).
     helper_assertions: BTreeMap<AssertionKey, BorrowedAssertion>,
-    /// Root segments of the globs that may bring a `test` attribute into a
-    /// bare `#[test]` function's scope (see [`test_attribute_glob_roots`]).
-    test_glob_roots: Vec<String>,
 }
 
 /// One assertion a test borrows from a check helper it calls.
@@ -203,14 +204,11 @@ impl OwnerPinAssertions {
         }
     }
 
-    /// Root segments of the globs that may bring a `test` attribute into the
-    /// scope of `function`, a bare `#[test]` function the scan identified.
-    /// A glob rooted at a workspace package is not a rebinding the scan can
-    /// see; the caller, which knows the package names, refuses any other.
-    pub(crate) fn test_glob_roots(&self, function: (usize, usize, &str)) -> &[String] {
-        self.functions
-            .get(&(function.0, function.1, function.2.to_string()))
-            .map_or(&[], |facts| facts.test_glob_roots.as_slice())
+    /// Whether some `use` or `extern crate` of the file binds `test`,
+    /// whatever module holds it. For tests whose own module is not in the
+    /// file's text.
+    pub(crate) fn file_binds_test(&self) -> bool {
+        self.file_binds_test
     }
 
     /// The check helper `function` borrows `assertion` from (#6482), or
@@ -1881,6 +1879,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
         return result;
     };
     result.parsed = true;
+    result.file_binds_test = file_binds_test_name(parse.tree().syntax());
     let lines = LineIndex::new(source);
     let empty_macros = local_empty_macros(parse.tree().syntax());
     let json_uses = literal_json_uses(&parse.tree());
@@ -2122,13 +2121,6 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                 assertions,
                 macros,
                 helper_assertions,
-                test_glob_roots: function
-                    .attrs()
-                    .any(|attr| attr.simple_name().as_deref() == Some("test"))
-                    .then(|| function.syntax().parent())
-                    .flatten()
-                    .map(|module| test_attribute_glob_roots(&module))
-                    .unwrap_or_default(),
             },
         );
     }
@@ -2748,23 +2740,44 @@ fn runs_body_unchanged(attr: &ast::Attr, test: &SyntaxNode) -> bool {
 /// Whether a bare `#[test]` in `module` is libtest's built-in attribute. An
 /// import that binds the name `test` (`use skipper::serial as test`) makes it
 /// another attribute macro that may replace the body, in this module or, by
-/// `use super::*`, in an enclosing module of this file. Other globs are
-/// reported by [`test_attribute_glob_roots`] for the caller to judge.
+/// `use super::*`, in an enclosing module of this file. A glob of another
+/// crate is refused by the macro-binding authority, and one of the
+/// workspace's own modules is not seen into.
 fn builtin_test_attribute_holds(module: &SyntaxNode) -> bool {
-    module_use_leaves(module)
-        .iter()
-        .all(|leaf| match &leaf.binding {
-            UseBinding::Name(binding) => unraw(binding) != "test",
-            UseBinding::Glob => {
-                !is_super_glob(leaf)
-                    || enclosing_module_items(module)
-                        .is_none_or(|parent| builtin_test_attribute_holds(&parent))
-            }
+    !extern_crate_binds_test(module)
+        && module_use_leaves(module)
+            .iter()
+            .all(|leaf| match &leaf.binding {
+                UseBinding::Name(binding) => unraw(binding) != "test",
+                UseBinding::Glob => {
+                    let Some(levels) = super_glob_levels(leaf) else {
+                        return true;
+                    };
+                    let mut parent = Some(module.clone());
+                    for _ in 0..levels {
+                        parent = parent.and_then(|items| enclosing_module_items(&items));
+                    }
+                    parent.is_none_or(|parent| builtin_test_attribute_holds(&parent))
+                }
+            })
+}
+
+/// Whether a direct `extern crate .. as test;` of `module` rebinds `test`.
+fn extern_crate_binds_test(module: &SyntaxNode) -> bool {
+    module
+        .children()
+        .filter_map(ast::ExternCrate::cast)
+        .any(|item| {
+            item.rename()
+                .and_then(|rename| rename.name())
+                .is_some_and(|name| unraw(&name.text()) == "test")
         })
 }
 
-fn is_super_glob(leaf: &UseLeaf) -> bool {
-    leaf.path.len() == 1 && leaf.path[0] == "super"
+/// How many modules up a `super::*` / `super::super::*` glob reaches.
+fn super_glob_levels(leaf: &UseLeaf) -> Option<usize> {
+    (!leaf.path.is_empty() && leaf.path.iter().all(|segment| segment == "super"))
+        .then_some(leaf.path.len())
 }
 
 /// The item list or source file around the module whose items are `module`,
@@ -2776,38 +2789,25 @@ fn enclosing_module_items(module: &SyntaxNode) -> Option<SyntaxNode> {
         .and_then(|owner| owner.parent())
 }
 
-/// The first path segment of each glob that may bring a `test` attribute
-/// into `module`: its own globs, and those of the enclosing modules it
-/// reaches through `use super::*`. `crate`, `self` and `super` roots and the
-/// standard crates' non-prelude paths name no foreign attribute macro, so
-/// they are left out.
-fn test_attribute_glob_roots(module: &SyntaxNode) -> Vec<String> {
-    let mut roots = Vec::new();
-    let mut current = Some(module.clone());
-    while let Some(items) = current.take() {
-        let mut through_super = false;
-        for leaf in module_use_leaves(&items) {
-            if !matches!(leaf.binding, UseBinding::Glob) {
-                continue;
-            }
-            if is_super_glob(&leaf) {
-                through_super = true;
-                continue;
-            }
-            let Some(root) = leaf.path.first() else {
-                continue;
-            };
-            let standard = matches!(root.as_str(), "std" | "core" | "alloc")
-                && !leaf.path.iter().any(|segment| segment == "prelude");
-            if !standard && !matches!(root.as_str(), "crate" | "self" | "super") {
-                roots.push(root.clone());
-            }
+/// Scope-blind: whether any `use` or `extern crate` of the file binds
+/// `test`.
+fn file_binds_test_name(file: &SyntaxNode) -> bool {
+    file.descendants().any(|item| {
+        if let Some(extern_crate) = ast::ExternCrate::cast(item.clone()) {
+            return extern_crate
+                .rename()
+                .and_then(|rename| rename.name())
+                .is_some_and(|name| unraw(&name.text()) == "test");
         }
-        if through_super {
-            current = enclosing_module_items(&items);
-        }
-    }
-    roots
+        let Some(tree) = ast::Use::cast(item).and_then(|import| import.use_tree()) else {
+            return false;
+        };
+        let mut leaves = Vec::new();
+        flatten_use_tree(&tree, &[], &mut leaves);
+        leaves.iter().any(
+            |leaf| matches!(&leaf.binding, UseBinding::Name(binding) if unraw(binding) == "test"),
+        )
+    })
 }
 
 /// `tokio::test`, rooted or not. Only the crate-qualified path: a bare

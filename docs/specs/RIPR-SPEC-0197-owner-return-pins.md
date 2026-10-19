@@ -114,11 +114,14 @@ rule only for an assertion whose context was admitted.
    `inner_attrs`, `crate`, `path` or any other argument shape refuses it.
    A bare `#[test]` is libtest's only while nothing rebinds `test` (#6749): a
    `use` in the test's module (or, through `use super::*`, an enclosing
-   module of the file) that binds the name `test`, renamed or not, refuses
-   the pin, as does a glob of a crate outside the workspace (`use skipper::*`,
-   or a std `prelude` glob). A glob of the workspace's own crate or modules
-   is not seen into; a `pub use` rebinding `test` behind one is outside what
-   this file shows.
+   module of the file, however many `super` levels up) that binds the name
+   `test`, renamed or not, or an `extern crate .. as test`, refuses the pin.
+   A macro-generated test is judged by the whole file: any such binding
+   anywhere in it refuses. A glob of a crate outside the workspace is already
+   refused by the macro-binding authority. A glob of the workspace's own
+   crate or modules is not seen into, nor is an enclosing module in another
+   file; a `pub use` rebinding `test` behind either is outside what the
+   file shows.
    Resolution reads the test's own module item list. A bare lock needs a
    direct `use serial_test::<lock>` item there (optionally renamed, `r#`
    normalized) and no other `use` binding the same name; imports in function
