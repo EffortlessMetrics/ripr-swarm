@@ -1643,6 +1643,7 @@ mod tests {
             observe: stage(StageState::Yes),
             discriminate: stage(StageState::Yes),
             observed_values: vec![ValueFact {
+                file: None,
                 line: 5,
                 text: "discounted_total(50, 100)".to_string(),
                 value: "50".to_string(),
