@@ -187,6 +187,33 @@ fn ineligibility_label(reason: RepairPacketIneligibility) -> &'static str {
     }
 }
 
+/// Bound the displayed no-eligible reason list while keeping an honest
+/// distinct-reason total. The list renders at most `MAX_LISTED_REASONS`
+/// entries so the message stays bounded; the total keeps tracking every
+/// distinct reason across the whole inventory so the renderer can disclose
+/// the remainder instead of presenting the bound as the whole story (#8728).
+/// The distinctness set is intentionally separate from the displayed list:
+/// once the list fills, a repeated omitted reason must not inflate the
+/// count of distinct omitted reasons (a review finding on the first #8728
+/// pass: A, B, C, D, D reads as "two more" although only D is omitted).
+fn collect_no_eligible_reasons<'a>(
+    refusal_reasons: impl Iterator<Item = &'a str>,
+) -> (Vec<String>, usize) {
+    const MAX_LISTED_REASONS: usize = 3;
+    let mut reasons: Vec<String> = Vec::new();
+    let mut distinct: Vec<String> = Vec::new();
+    for reason in refusal_reasons {
+        if distinct.iter().any(|seen| seen == reason) {
+            continue;
+        }
+        distinct.push(reason.to_string());
+        if reasons.len() < MAX_LISTED_REASONS {
+            reasons.push(reason.to_string());
+        }
+    }
+    (reasons, distinct.len())
+}
+
 /// Gather the live authorities and decide one repair start. A truncated seam
 /// inventory fails closed: selecting from a partial list could hide
 /// candidates and silently pick first.
@@ -209,29 +236,18 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
     // classes this selector already excludes, or for configured-off
     // classes, so no eligible seam is lost.
     let policy = AgentBriefPolicy::from_config(&config);
-    /// The bounded no-eligible reason list renders at most this many
-    /// distinct reasons; the total count keeps tracking so the renderer
-    /// can disclose the remainder instead of presenting the bound as the
-    /// whole story (#8728).
-    const MAX_LISTED_REASONS: usize = 3;
     let mut eligible_ids = Vec::new();
-    let mut reasons: Vec<String> = Vec::new();
-    let mut reasons_total = 0usize;
+    let mut refusal_reasons: Vec<String> = Vec::new();
     for entry in &classified {
         match repair_refusal_reason(entry, policy) {
             None => eligible_ids.push(entry.seam.id().as_str().to_string()),
-            Some(reason) => {
-                // Name the shared gate's own reason among the no-eligible
-                // reasons so the limitation is diagnosable.
-                if !reasons.contains(&reason) {
-                    reasons_total += 1;
-                    if reasons.len() < MAX_LISTED_REASONS {
-                        reasons.push(reason);
-                    }
-                }
-            }
+            // Name the shared gate's own reason among the no-eligible
+            // reasons so the limitation is diagnosable.
+            Some(reason) => refusal_reasons.push(reason),
         }
     }
+    let (reasons, reasons_total) =
+        collect_no_eligible_reasons(refusal_reasons.iter().map(String::as_str));
     let bound = bound_root(&root.to_string_lossy());
     let head = current_git_head(root).ok();
     let spec = if eligible_ids.len() == 1 {
@@ -752,6 +768,21 @@ fn pick_reusable_attempt<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// #8728 follow-up: the displayed reason list bounds at three, but the
+    /// disclosed total counts distinct reasons across the whole inventory.
+    /// A fourth reason repeated by later seams must not inflate the total:
+    /// A, B, C, D, D has exactly one omitted distinct reason.
+    #[test]
+    fn no_eligible_reasons_total_dedups_repeated_omitted_reasons() {
+        let (reasons, total) =
+            collect_no_eligible_reasons(["a", "b", "c", "d", "d", "a", "e", "e", "e"].into_iter());
+        assert_eq!(
+            reasons,
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
+        assert_eq!(total, 5, "five distinct reasons, not one per seam");
+    }
+
     fn awaiting(
         id_tail: char,
         seam: &str,
