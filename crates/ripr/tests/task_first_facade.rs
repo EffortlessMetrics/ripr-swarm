@@ -666,7 +666,9 @@ fn check_drill_down_prints_repair_identity_that_starts_the_same_seam() -> Result
 
 /// #8166 Slice C (negative control): when the top finding's seam is no
 /// longer repair-eligible (its boundary is already gripped, so it is not a
-/// headline repair target), the drill-down prints no `ripr repair` line.
+/// headline repair target), the drill-down prints no runnable `ripr repair`
+/// line. #8729: the omission is not silent — one advisory line names the
+/// ineligibility and the full-gate route.
 #[test]
 fn check_drill_down_omits_repair_when_top_seam_is_not_eligible() -> Result<(), String> {
     let fixture = Fixture::boundary("facade-check-drilldown-ineligible")?;
@@ -700,8 +702,18 @@ fn check_drill_down_omits_repair_when_top_seam_is_not_eligible() -> Result<(), S
         "the gripped finding must still drill down to explain/context:\n{stdout}"
     );
     assert!(
-        printed_repair_identity(&stdout).is_none() && !stdout.contains("ripr repair"),
-        "an ineligible seam must print no repair line:\n{stdout}"
+        printed_repair_identity(&stdout).is_none(),
+        "an ineligible seam must print no runnable repair line:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("no repair start offered:"),
+        "an ineligible seam must name the omission's state:\n{stdout}"
+    );
+    assert!(
+        !stdout
+            .lines()
+            .any(|line| line.trim_start().starts_with("ripr repair ")),
+        "no line may be a runnable repair start:\n{stdout}"
     );
     assert!(
         attempt_ids(root).is_empty(),
@@ -733,6 +745,54 @@ fn check_drill_down_omits_repair_when_seam_inventory_is_truncated() -> Result<()
     assert!(
         printed_repair_identity(&stdout).is_none() && !stdout.contains("ripr repair"),
         "a truncated inventory must print no repair line:\n{stdout}"
+    );
+    Ok(())
+}
+
+/// #8689: a seam-shaped selector whose reverse lookup hits a
+/// budget-truncated seam inventory must refuse as undecidable — naming the
+/// truncation, the wider-budget recovery, and the listing route — instead
+/// of rendering a clean "no finding matched" miss the lookup did not
+/// establish.
+#[test]
+fn explain_names_truncation_when_seam_reverse_cannot_check() -> Result<(), String> {
+    let fixture = Fixture::two_seam("facade-explain-truncated")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    weaken_boundary_predicate(root)?;
+    let check = run_worktree_check(root, &root_arg)?;
+    let seam_id = printed_repair_identity(&stdout_text(&check)).ok_or_else(|| {
+        format!(
+            "eligible top finding must print a repair line:\n{}",
+            stdout_text(&check)
+        )
+    })?;
+    let explained = run_ripr_env(
+        root,
+        &[
+            "explain",
+            "--root",
+            &root_arg,
+            "--base",
+            "HEAD",
+            "--worktree",
+            &seam_id,
+        ],
+        &[("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1")],
+    )?;
+    assert_exit(&explained, 2, "explain under a truncated seam inventory");
+    let stderr = stderr_text(&explained);
+    assert!(
+        stderr.contains("could not resolve") && stderr.contains("truncated"),
+        "a truncated inventory must be named, not a clean miss:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("wider seam budget"),
+        "the refusal must name the wider-budget recovery:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("no finding matched"),
+        "an undecided lookup must not render a clean miss:\n{stderr}"
     );
     Ok(())
 }
@@ -806,6 +866,89 @@ fn repair_refuses_a_producer_gap_id_that_names_several_seams() -> Result<(), Str
     assert!(
         attempt_ids(root).is_empty(),
         "an ambiguous producer gap must create no attempt"
+    );
+    Ok(())
+}
+
+/// #8688: the seam-derived hash-form canonical gap ID (`gap:<16hex>`) that
+/// `ripr rerun --json` carries must resolve in `ripr explain` and
+/// `ripr context` to the same finding `ripr check` prints, exactly like the
+/// producer form, so one gap identity works across check → explain →
+/// context → repair.
+#[test]
+fn explain_and_context_accept_the_hash_form_gap_id_rerun_emits() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-gap-hash-rerun")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    weaken_boundary_predicate(root)?;
+    let rerun = run_ripr(
+        root,
+        &[
+            "rerun",
+            "--root",
+            &root_arg,
+            "--changed-test",
+            "tests/pricing.rs",
+            "--json",
+        ],
+    )?;
+    assert_exit(&rerun, 0, "changed-test rerun for the hash-form gap id");
+    let rerun_json: serde_json::Value =
+        serde_json::from_slice(&rerun.stdout).map_err(|err| format!("parse rerun JSON: {err}"))?;
+    let gap_hash = rerun_json["seams"]
+        .as_array()
+        .and_then(|seams| {
+            seams
+                .iter()
+                .find_map(|seam| seam["canonical_gap_id"].as_str().map(str::to_string))
+        })
+        .ok_or_else(|| "rerun seam rows must carry canonical_gap_id".to_string())?;
+    assert!(
+        gap_hash.starts_with("gap:"),
+        "rerun emits the hash form the explain/context surfaces must accept: {gap_hash}"
+    );
+    // The producer's `probe:` ID names the finding both drill-ins must hit.
+    let check = run_worktree_check(root, &root_arg)?;
+    let probe_id = printed_probe_identity(&stdout_text(&check))
+        .ok_or_else(|| "check must print a probe finding ID".to_string())?;
+    let explained = run_ripr(
+        root,
+        &[
+            "explain",
+            "--root",
+            &root_arg,
+            "--base",
+            "HEAD",
+            "--worktree",
+            &gap_hash,
+        ],
+    )?;
+    assert_exit(&explained, 0, "explain with the hash-form gap ID");
+    assert!(
+        stdout_text(&explained).contains(&probe_id),
+        "explain by hash-form gap ID must render the same finding check printed:\n{}",
+        stdout_text(&explained)
+    );
+    let context = run_ripr(
+        root,
+        &[
+            "context",
+            "--root",
+            &root_arg,
+            "--base",
+            "HEAD",
+            "--worktree",
+            "--at",
+            &gap_hash,
+        ],
+    )?;
+    assert_exit(&context, 0, "context with the hash-form gap ID");
+    let packet: serde_json::Value = serde_json::from_slice(&context.stdout)
+        .map_err(|err| format!("parse context packet: {err}"))?;
+    assert_eq!(
+        packet["probe"]["id"].as_str(),
+        Some(probe_id.as_str()),
+        "context by hash-form gap ID must select the same finding"
     );
     Ok(())
 }
@@ -885,10 +1028,19 @@ fn cross_namespace_ids_round_trip_between_check_explain_and_repair() -> Result<(
         ],
     )?;
     assert_exit(&agent_stale, 2, "agent repair with a stale probe ID");
+    let agent_stale_stderr = stderr_text(&agent_stale);
     assert!(
-        stderr_text(&agent_stale).contains("not a seam ID"),
-        "truly unknown agent seam ID keeps the wrong-namespace hint:\n{}",
-        stderr_text(&agent_stale)
+        agent_stale_stderr.contains("agent repair --seam-id")
+            && agent_stale_stderr.contains("stale"),
+        "stale probe refusal must name this command and the stale mapping:\n{agent_stale_stderr}"
+    );
+    assert!(
+        !agent_stale_stderr.contains("agent packet seam_id"),
+        "the translating surface must not name the packet surface the user did not run:\n{agent_stale_stderr}"
+    );
+    assert!(
+        !agent_stale_stderr.contains("resolves it to its repair seam"),
+        "the translating surface must not promise the resolution that just failed:\n{agent_stale_stderr}"
     );
     assert!(
         attempt_ids(root).is_empty(),

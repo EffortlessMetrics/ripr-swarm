@@ -27,6 +27,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_mixed_direct_macro_reach/input --diff <cwd>/fixtures/rust_mixed_direct_macro_reach/diff.patch --mode fast probe:src_lib.rs:return_value:acafd82e
   ripr context --root <cwd>/fixtures/rust_mixed_direct_macro_reach/input --diff <cwd>/fixtures/rust_mixed_direct_macro_reach/diff.patch --mode fast --at probe:src_lib.rs:return_value:acafd82e
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:return_value:acafd82e --root <cwd>/fixtures/rust_mixed_direct_macro_reach/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

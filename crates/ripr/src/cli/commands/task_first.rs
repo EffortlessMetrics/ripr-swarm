@@ -280,6 +280,7 @@ fn run_facade_repair(options: RepairFacadeOptions) -> Result<(), CommandError> {
             RepairStartDecision::NoEligible {
                 total_seams,
                 reasons,
+                reasons_total,
             } => {
                 // A deliberate named outcome, not a failure: the honest
                 // setup/limitation message on stderr, stdout empty.
@@ -287,6 +288,7 @@ fn run_facade_repair(options: RepairFacadeOptions) -> Result<(), CommandError> {
                     &options.root,
                     total_seams,
                     &reasons,
+                    reasons_total,
                 )));
             }
             RepairStartDecision::Action(action) => {
@@ -536,6 +538,7 @@ fn no_eligible_seam_message(
     root: &std::path::Path,
     total_seams: usize,
     reasons: &[String],
+    reasons_total: usize,
 ) -> String {
     let root = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
         &root.to_string_lossy(),
@@ -549,6 +552,15 @@ fn no_eligible_seam_message(
     let mut message = format!("{total_seams} visible {noun} under {root}, none repair-eligible");
     if !reasons.is_empty() {
         message.push_str(&format!(" ({})", reasons.join("; ")));
+        // The list is bounded (#8728): when the total count exceeds what
+        // was rendered, disclose the remainder instead of letting three
+        // read as the whole story.
+        if reasons_total > reasons.len() {
+            message.push_str(&format!(
+                " (and {} more; run `ripr pilot --root {root}` for per-seam detail)",
+                reasons_total - reasons.len()
+            ));
+        }
     }
     // `repair` inventories saved repository seams, while `check` reads a
     // diff: promise a gap only when the branch has changed code, and keep
@@ -643,6 +655,33 @@ mod tests {
             }
             RepairFacadeCommand::Help => Err("empty args must not print help".to_string()),
         }
+    }
+
+    /// #8728: a bounded reason list whose total exceeds what was rendered
+    /// discloses the remainder and the per-seam detail route; a list at its
+    /// total reads unchanged.
+    #[test]
+    fn no_eligible_message_discloses_truncated_reasons() -> Result<(), String> {
+        let reasons = vec![
+            "repair route not ready".to_string(),
+            "cross-language oracle visibility unresolved".to_string(),
+            "repair target unresolved".to_string(),
+        ];
+        let truncated = no_eligible_seam_message(Path::new("."), 9, &reasons, 5);
+        for expected in ["(and 2 more", "ripr pilot"] {
+            if !truncated.contains(expected) {
+                return Err(format!(
+                    "truncated list must disclose {expected:?}: {truncated}"
+                ));
+            }
+        }
+        let complete = no_eligible_seam_message(Path::new("."), 9, &reasons, 3);
+        if complete.contains("and 2 more") {
+            return Err(format!(
+                "complete list must not claim a remainder: {complete}"
+            ));
+        }
+        Ok(())
     }
 
     #[test]

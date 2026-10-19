@@ -33,6 +33,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_mock_payload_iife_impl/input --diff <cwd>/fixtures/typescript_mock_payload_iife_impl/diff.patch --mode fast probe:src_save.ts:typescript_preview:0730bad0
   ripr context --root <cwd>/fixtures/typescript_mock_payload_iife_impl/input --diff <cwd>/fixtures/typescript_mock_payload_iife_impl/diff.patch --mode fast --at probe:src_save.ts:typescript_preview:0730bad0
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_save.ts:typescript_preview:0730bad0 --root <cwd>/fixtures/typescript_mock_payload_iife_impl/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full
