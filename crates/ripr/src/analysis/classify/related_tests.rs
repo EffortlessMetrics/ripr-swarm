@@ -2613,7 +2613,7 @@ fn associated_fn_returns_own_type(index: &RustIndex, ty: &str, name: &str) -> bo
     let mut declarations = index.functions().iter().filter(|function| {
         function.name == name
             && matches!(&function.item.container,
-                FunctionContainer::Inherent { self_ty } if self_ty == ty)
+                FunctionContainer::Inherent { self_ty } if base_type_name(self_ty) == ty)
     });
     let (Some(function), None) = (declarations.next(), declarations.next()) else {
         return false;
@@ -2652,7 +2652,71 @@ fn associated_fn_returns_own_type(index: &RustIndex, ty: &str, name: &str) -> bo
     };
     let returned = returned.syntax().text().to_string();
     let returned = returned.trim();
-    returned == "Self" || returned == ty
+    returned == "Self" || base_type_name(returned) == ty
+}
+
+/// `Site<T>` -> `Site`: generic arguments never change the nominal head.
+fn base_type_name(name: &str) -> &str {
+    name.split('<').next().unwrap_or(name).trim()
+}
+
+/// Receiver constructor authority from the index. An inherent declaration of
+/// `name` is judged by its declared return type alone. With none, `default`
+/// is credited only by positive evidence of `impl Default for ty` or a unique
+/// `#[derive(Default)]` type, and `from` only by an `impl From<_> for ty`.
+fn associated_constructor_names_own_type(index: &RustIndex, ty: &str, name: &str) -> bool {
+    let inherent = index.functions().iter().any(|function| {
+        function.name == name
+            && matches!(&function.item.container,
+                FunctionContainer::Inherent { self_ty } if base_type_name(self_ty) == ty)
+    });
+    if inherent {
+        return associated_fn_returns_own_type(index, ty, name);
+    }
+    let trait_impl = |trait_name: &str| {
+        index.functions().iter().any(|function| {
+            function.name == name
+                && matches!(&function.item.container,
+                    FunctionContainer::TraitImpl { trait_path, self_ty }
+                        if base_type_name(self_ty) == ty
+                            && base_type_name(trait_path.rsplit("::").next().unwrap_or(trait_path))
+                                == trait_name)
+        })
+    };
+    match name {
+        "default" => trait_impl("Default") || type_derives_default(index, ty),
+        "from" => trait_impl("From"),
+        _ => false,
+    }
+}
+
+/// Exactly one struct/enum/union named `ty` in the workspace, carrying
+/// `#[derive(.. Default ..)]`.
+fn type_derives_default(index: &RustIndex, ty: &str) -> bool {
+    let mut found = Vec::new();
+    for (path, facts) in index.files().iter() {
+        let source = &facts.data().source;
+        if !source.contains(ty) {
+            continue;
+        }
+        let Some(tree) = index.source_syntax.get(index, path).and_then(|s| s.tree()) else {
+            continue;
+        };
+        for adt in tree.syntax().descendants().filter_map(ast::Adt::cast) {
+            if adt.name().is_none_or(|name| name.text() != ty) {
+                continue;
+            }
+            let derives = ast::HasAttrs::attrs(&adt).any(|attr| {
+                let text = attr.syntax().text().to_string();
+                text.trim_start().starts_with("#[derive(")
+                    && text
+                        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                        .any(|word| word == "Default")
+            });
+            found.push(derives);
+        }
+    }
+    matches!(found.as_slice(), [true])
 }
 
 /// CamelCase final segment (`Circle`), read as an enum tuple variant.
@@ -3213,7 +3277,7 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
         })
     };
     let factory = |ty: &str, name: &str| {
-        index.is_some_and(|index| associated_fn_returns_own_type(index, ty, name))
+        index.is_some_and(|index| associated_constructor_names_own_type(index, ty, name))
     };
     executable_call_resolves(test, index, pin_syntax, &|node, scope| {
         inherent_call_node_resolves(node, scope, method, impl_type, &unit_struct, &factory)

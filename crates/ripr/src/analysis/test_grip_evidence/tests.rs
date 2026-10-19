@@ -19834,3 +19834,92 @@ fn inherent_receiver_initializer_needs_indexed_return_type_and_unqualified_path(
     }
     Ok(())
 }
+
+#[test]
+fn inherent_receiver_default_from_and_generic_heads_need_positive_index_evidence()
+-> Result<(), String> {
+    // (type declarations, impls, receiver expression, expected)
+    for (decls, receiver, expected) in [
+        // derive(Default) on the owner type.
+        (
+            "#[derive(Default)]\npub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }",
+            "Site::default()",
+            true,
+        ),
+        // Manual impl Default for the owner type.
+        (
+            "pub struct Site { v: u32 }\nimpl Default for Site { fn default() -> Self { Site { v: 1 } } }\nimpl Site { pub fn area(&self) -> u32 { self.v } }",
+            "Site::default()",
+            true,
+        ),
+        // impl From<u8> for the owner type.
+        (
+            "pub struct Site { v: u32 }\nimpl From<u8> for Site { fn from(v: u8) -> Self { Site { v: v.into() } } }\nimpl Site { pub fn area(&self) -> u32 { self.v } }",
+            "Site::from(1)",
+            true,
+        ),
+        // Generic owner: turbofish head and generic inherent factory.
+        (
+            "pub struct Site<T> { v: T }\nimpl<T> Site<T> { pub fn new(v: T) -> Self { Site { v } } pub fn area(&self) -> u32 { 1 } }",
+            "Site::<u8>::new(1)",
+            true,
+        ),
+        (
+            "pub struct Site<T> { v: T }\nimpl<T> Site<T> { pub fn new(v: T) -> Self { Site { v } } pub fn area(&self) -> u32 { 1 } }",
+            "Site::new(1)",
+            true,
+        ),
+        // No Default/From evidence at all.
+        (
+            "pub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }",
+            "Site::default()",
+            false,
+        ),
+        (
+            "pub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }",
+            "Site::from(1)",
+            false,
+        ),
+        // Inherent default() is judged by its declared return type.
+        (
+            "pub struct Site { v: u32 }\npub struct Cache;\nimpl Site { pub fn default() -> Cache { Cache } pub fn area(&self) -> u32 { self.v } }",
+            "Site::default()",
+            false,
+        ),
+        (
+            "pub struct Site { v: u32 }\nimpl Site { pub fn default() -> Self { Site { v: 1 } } pub fn area(&self) -> u32 { self.v } }",
+            "Site::default()",
+            true,
+        ),
+        // derive(Default) on a DIFFERENT type does not credit Site.
+        (
+            "#[derive(Default)]\npub struct Cache;\npub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }",
+            "Site::default()",
+            false,
+        ),
+        // From implemented for a different type only.
+        (
+            "pub struct Site { v: u32 }\npub struct Cache;\nimpl From<u8> for Cache { fn from(_v: u8) -> Self { Cache } }\nimpl Site { pub fn area(&self) -> u32 { self.v } }",
+            "Site::from(1)",
+            false,
+        ),
+        // Unqualified-path and Self refusals stay.
+        (
+            "#[derive(Default)]\npub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }",
+            "foreign::Site::default()",
+            false,
+        ),
+    ] {
+        let source = format!(
+            "{decls}\n#[test]\nfn t() {{\n    let s = {receiver};\n    assert_eq!(s.area(), 1);\n}}\n"
+        );
+        let index = receiver_rule_index(&source)?;
+        let (owner, caller) = receiver_rule_parts(&index, "area", "t")?;
+        assert_eq!(
+            crate::analysis::classify::inherent_owner_call_resolves(caller, owner, &index),
+            expected,
+            "{receiver} over {decls}"
+        );
+    }
+    Ok(())
+}
