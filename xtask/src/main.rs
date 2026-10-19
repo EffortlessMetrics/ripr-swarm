@@ -973,14 +973,17 @@ fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
                         .is_some_and(|tail| tail == ".rs" || tail.starts_with('/'))
                 })
         }),
+        // The retained Rust gates include workspace/all-target Clippy and
+        // test-source policy. Include package tests, examples and build scripts,
+        // with anchored roots so fixture lookalikes keep their own category.
         rust_src: files.iter().any(|f| {
             f == "Cargo.lock"
                 || f == "Cargo.toml"
                 || f.ends_with("/Cargo.toml")
                 || (f.ends_with(".rs")
-                    && (f.contains("crates/ripr/src")
-                        || f.contains("xtask/src")
-                        || f.starts_with("tools/repo-policy/")))
+                    && ["crates/ripr/", "xtask/", "tools/repo-policy/"]
+                        .iter()
+                        .any(|root| f.starts_with(root)))
         }),
         workflow: files.iter().any(|f| f.starts_with(".github/workflows/")),
         policy: files
