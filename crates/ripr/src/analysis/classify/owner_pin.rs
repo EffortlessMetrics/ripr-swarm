@@ -9872,7 +9872,8 @@ fn declares_static_mut(index: &RustIndex, file: &Path, name: &str) -> bool {
     declares_static_with(index, file, name, true)
 }
 
-/// #8112: whether `file` declares `static name`, `mut` or not.
+/// #8112: whether `file` declares `static name`, `mut` or not, or the
+/// `lazy_static!` form `static ref name`.
 fn declares_static(index: &RustIndex, file: &Path, name: &str) -> bool {
     declares_static_with(index, file, name, false)
 }
@@ -9893,6 +9894,12 @@ fn declares_static_with(index: &RustIndex, file: &Path, name: &str, require_mut:
                 rest = after.trim_start();
             } else if require_mut {
                 return false;
+            } else if let Some(after) = rest
+                .strip_prefix("ref")
+                .filter(|after| after.starts_with(char::is_whitespace))
+            {
+                // `lazy_static!` writes `static ref NAME: T = init;`.
+                rest = after.trim_start();
             }
             rest.strip_prefix(name).is_some_and(|tail| {
                 !tail.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')

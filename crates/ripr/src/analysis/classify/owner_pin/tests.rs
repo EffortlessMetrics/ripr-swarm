@@ -2560,6 +2560,16 @@ fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_const
         ),
         Some("weight(4)".to_string())
     );
+    // #8112: a `lazy_static!` `static ref` of plain value type reads like
+    // any other static.
+    assert_eq!(
+        value(
+            "lazy_static! { static ref EXPECTED: u32 = weight(4); }",
+            "assert_eq!(weight(4), *EXPECTED);",
+            "EXPECTED"
+        ),
+        Some("weight(4)".to_string())
+    );
     // An operand that is not a plain name, a name the test binds twice or
     // outside a `let` (a loop variable), the owner's own name, and a name
     // nothing binds yield nothing to read.
@@ -2627,6 +2637,11 @@ fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_const
         ),
         (
             "static EXPECTED: AtomicUsize = AtomicUsize::new(weight(4));",
+            "EXPECTED.store(6, Ordering::SeqCst);\nassert_eq!(weight(4), EXPECTED);",
+            "EXPECTED",
+        ),
+        (
+            "lazy_static! { static ref EXPECTED: AtomicUsize = AtomicUsize::new(weight(4)); }",
             "EXPECTED.store(6, Ordering::SeqCst);\nassert_eq!(weight(4), EXPECTED);",
             "EXPECTED",
         ),
