@@ -9811,7 +9811,7 @@ pub(in crate::analysis) fn expected_operand_value(
     while is_plain_identifier(&current) && current != owner.name && seen.insert(current.clone()) {
         let next = match receiver_let_bindings(test, &current) {
             Some(bindings) => match bindings.as_slice() {
-                [binding] => immutable_let_value(test, binding),
+                [binding] => immutable_let_value(index, test, binding),
                 [] => single_constant_value(index, &current, &in_scope),
                 _ => None,
             },
@@ -9830,7 +9830,7 @@ pub(in crate::analysis) fn expected_operand_value(
 /// name), unless the `let` is `mut`, so a later assignment or `push` may
 /// change it, or carries an attribute (`#[cfg(..)] let`) that may compile
 /// it away (#7066 review), as [`let_bound_owner_call`] refuses.
-fn immutable_let_value(test: &TestSummary, binding: &str) -> Option<String> {
+fn immutable_let_value(index: &RustIndex, test: &TestSummary, binding: &str) -> Option<String> {
     let masked = mask_comments_and_strings(&test.body);
     let binding_at = (binding.as_ptr() as usize).checked_sub(test.body.as_ptr() as usize)?;
     let let_at = *whole_word_offsets(masked.get(..binding_at)?, "let").last()?;
@@ -9843,7 +9843,11 @@ fn immutable_let_value(test: &TestSummary, binding: &str) -> Option<String> {
     let value = assigned_value(&binding)?;
     // #8112: an immutable binding of an interior-mutable value
     // (`let e = Cell::new(f(2)); e.set(6);`) can change after its initializer.
-    if may_mutate_through_shared(declared_type(&binding), value) {
+    let source = index
+        .files()
+        .get(&test.file)
+        .map(|facts| facts.source.to_string());
+    if may_mutate_through_shared(declared_type(&binding), value, source.as_deref()) {
         return None;
     }
     Some(value.to_string())
@@ -9890,10 +9894,19 @@ fn has_interior_mutability(initializer: &str) -> bool {
 /// type that merely holds an atomic (`Counter`) is not recognized from its
 /// name; only a known interior-mutable type name in the type or the
 /// initializer text refuses it.
-fn may_mutate_through_shared(declared: Option<&str>, initializer: &str) -> bool {
+fn may_mutate_through_shared(
+    declared: Option<&str>,
+    initializer: &str,
+    source: Option<&str>,
+) -> bool {
     match declared {
         Some(declared) if has_interior_mutability(declared) => true,
-        Some(declared) if is_plain_scalar_type(declared) => false,
+        Some(declared)
+            if is_plain_scalar_type(declared)
+                && source.is_some_and(|source| !scalar_names_rebound(declared, source)) =>
+        {
+            false
+        }
         _ => has_interior_mutability(initializer),
     }
 }
@@ -9915,6 +9928,32 @@ fn is_plain_scalar_type(declared: &str) -> bool {
         })
 }
 
+/// Whether the file may rebind a primitive name `declared` uses
+/// (`type u32 = Counter;`, `struct u32;`, `use x::u32;`, `use x as u32;`),
+/// so the name no longer proves a scalar. Any item keyword or `::` or `as`
+/// before the name counts; glob imports are not scanned.
+fn scalar_names_rebound(declared: &str, source: &str) -> bool {
+    let masked = mask_comments_and_strings(source);
+    declared
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|word| !word.is_empty() && !word.chars().all(|c| c.is_ascii_digit()))
+        .any(|word| {
+            whole_word_offsets(&masked, word).into_iter().any(|offset| {
+                let before = masked[..offset].trim_end();
+                before.ends_with("::")
+                    || ["type", "struct", "enum", "trait", "union", "mod", "as"]
+                        .iter()
+                        .any(|keyword| {
+                            before.ends_with(keyword)
+                                && before[..before.len() - keyword.len()]
+                                    .chars()
+                                    .next_back()
+                                    .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'))
+                        })
+            })
+        })
+}
+
 /// The `T` of `[: T] = value` text, when annotated.
 fn declared_type(text: &str) -> Option<&str> {
     let trimmed = text.trim_start();
@@ -9922,7 +9961,10 @@ fn declared_type(text: &str) -> Option<&str> {
         .strip_prefix(':')
         .filter(|after| !after.starts_with(':'))?;
     let end = assigned_value_offset(after)?;
-    after.get(..end.saturating_sub(1))
+    let declared = after.get(..end.saturating_sub(1))?;
+    // A type holding `=` or a block (`Foo<{ A == B }>`, `[u8; { N }]`) makes
+    // the split ambiguous: treat the declared type as unknown.
+    (!declared.contains(['=', '{'])).then_some(declared)
 }
 
 /// #8112: whether `file` declares `static mut name`, whose value the test
@@ -9988,7 +10030,15 @@ fn single_constant_value(
     // (`static C: AtomicUsize = ..; C.store(6)`) can change after its
     // initializer. A `const` is rebuilt at each use, so it stays readable.
     if declares_static(index, file, name)
-        && may_mutate_through_shared(declared.as_deref(), initializer)
+        && may_mutate_through_shared(
+            declared.as_deref(),
+            initializer,
+            index
+                .files()
+                .get(file)
+                .map(|facts| facts.source.to_string())
+                .as_deref(),
+        )
     {
         return None;
     }

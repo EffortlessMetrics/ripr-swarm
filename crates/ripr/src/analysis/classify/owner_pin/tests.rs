@@ -2679,6 +2679,7 @@ fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_const
             "EXPECTED.store(6, Ordering::SeqCst);\nassert_eq!(weight(4), EXPECTED);",
             "EXPECTED",
         ),
+        // `make()` is intentionally opaque: these refuse from the declared type.
         (
             "static EXPECTED: Cell<u32> = make();",
             "assert_eq!(weight(4), EXPECTED);",
@@ -2697,6 +2698,17 @@ fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_const
         (
             "",
             "let e: Cell<u32> = make();\nassert_eq!(weight(2), e);",
+            "e",
+        ),
+        // A file that rebinds a primitive name no longer proves a scalar.
+        (
+            "struct Counter(AtomicUsize);\ntype u32 = Counter;\nstatic EXPECTED: u32 = Counter(AtomicUsize::new(weight(4)));",
+            "assert_eq!(weight(4), EXPECTED.0);",
+            "EXPECTED",
+        ),
+        (
+            "struct Counter(AtomicUsize);\ntype u32 = Counter;",
+            "let e: u32 = Counter(AtomicUsize::new(weight(2)));\nassert_eq!(weight(2), e);",
             "e",
         ),
         // A user type holding an atomic is refused only when its type or
@@ -11235,4 +11247,23 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
     let refusal = OwnerPinSyntax::default().refusal(test, assertion, &aliased_elsewhere);
     assert!(rebound(refusal.clone()), "{refusal:?}");
     Ok(())
+}
+
+#[test]
+fn scalar_names_rebound_sees_type_struct_and_import_rebinding() {
+    assert_eq!(declared_type(": Foo<{ A == B }> = 1"), None);
+    assert_eq!(declared_type(": u32 = 1"), Some(" u32 "));
+    assert!(!scalar_names_rebound("u32", "static X: u32 = 1;"));
+    assert!(!scalar_names_rebound(
+        "&'static str",
+        "const S: &str = \"type str\";"
+    ));
+    for source in [
+        "type u32 = Counter;",
+        "struct u32;",
+        "use other::u32;",
+        "use other::Counter as u32;",
+    ] {
+        assert!(scalar_names_rebound("u32", source), "{source}");
+    }
 }
