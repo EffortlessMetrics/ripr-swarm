@@ -805,7 +805,7 @@ fn only_char_literals(original: &str, masked: &str) -> bool {
 /// Macros that render an argument as source text (`stringify!`, the assert
 /// family's failure message, `dbg!`), so a respelled path inside one changes
 /// the produced string.
-const TOKEN_MACROS: [&str; 8] = [
+const TOKEN_MACROS: [&str; 10] = [
     "stringify",
     "dbg",
     "assert",
@@ -814,6 +814,8 @@ const TOKEN_MACROS: [&str; 8] = [
     "debug_assert",
     "debug_assert_eq",
     "debug_assert_ne",
+    "assert_matches",
+    "debug_assert_matches",
 ];
 
 /// Whether `line` holds a token-observing macro invocation. A single-line
@@ -2338,6 +2340,13 @@ mod tests {
         assert_eq!(
             lines,
             std::collections::BTreeSet::from([3, 4, 5]),
+            "{lines:?}"
+        );
+        let multi = "fn f() {\n    assert!(\n        x == core::i32::MAX\n    );\n    dbg!(\n        core::i32::MAX,\n    );\n    assert_matches!(\n        y,\n        Some(core::i32::MAX)\n    );\n}\n";
+        let lines = token_macro_lines(multi);
+        assert_eq!(
+            lines,
+            std::collections::BTreeSet::from([2, 3, 4, 5, 6, 7, 8, 9, 10, 11]),
             "{lines:?}"
         );
         let inside = block_probes(
