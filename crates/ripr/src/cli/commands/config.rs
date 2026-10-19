@@ -176,9 +176,10 @@ path = ".ripr/suppressions\u0000.toml"
                 let error = validate_config(&root)
                     .err()
                     .ok_or_else(|| format!("unusable Perl executable {value} validated"))?;
-                assert!(error.contains("ripr.toml"), "{error}");
-                assert!(error.contains(expected), "{error}");
-                assert!(!error.contains('\0'));
+                if !error.contains("ripr.toml") || !error.contains(expected) || error.contains('\0')
+                {
+                    return Err(format!("unexpected executable validation error: {error:?}"));
+                }
             }
             Ok(())
         })();

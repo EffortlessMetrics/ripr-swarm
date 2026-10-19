@@ -34,8 +34,8 @@ fn perl_executable_preserves_valid_paths_and_the_opt_in_boundary() -> Result<(),
         let config = parse_config(&format!("[perl]\nexecutable = '{value}'\n"))?;
         assert_eq!(config.perl().executable_for_opt_in(false), None);
         assert_eq!(
-            config.perl().executable_for_opt_in(true),
-            Some(Path::new(value)),
+            config.perl().executable_for_opt_in(true).and_then(Path::to_str),
+            Some(value),
             "valid executable paths must keep their exact spelling"
         );
     }
