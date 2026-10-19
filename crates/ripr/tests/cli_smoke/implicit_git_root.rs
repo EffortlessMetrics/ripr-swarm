@@ -420,14 +420,21 @@ fn task_first_commands_resolve_workspace_root_from_a_member_directory() -> TestR
         "pilot must not create a member-local target/ripr"
     );
 
-    for args in [
-        &["repair"][..],
-        &["status"][..],
-        &["continue"][..],
-        &["agent", "stub", "--at", "src/lib.rs:1"][..],
+    // (args, expected exit): repair and continue report a named decision (3)
+    // because the fixture has no repair-eligible seam or current attempt.
+    for (args, expected) in [
+        (&["repair"][..], 3),
+        (&["status"][..], 0),
+        (&["continue"][..], 3),
+        (&["agent", "stub", "--at", "src/lib.rs:1"][..], 0),
     ] {
         let output = run(args)?;
         let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(
+            output.status.code(),
+            Some(expected),
+            "{args:?} exit code; stderr:\n{stderr}"
+        );
         assert!(
             stderr.contains(&disclosure),
             "{args:?} must disclose the resolved root; stderr:\n{stderr}"

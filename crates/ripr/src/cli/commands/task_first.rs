@@ -294,7 +294,8 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
     ensure_command_root(&options.root, "repair")?;
     let seam_id = match options.item.as_deref() {
         Some(item) => {
-            let item = super::check::bind_member_selector_item(prefix.as_deref(), item);
+            let item =
+                super::check::bind_member_selector_item(prefix.as_deref(), &options.root, item)?;
             match resolve_repair_subject(&options.root, &item).map_err(CommandError::from)? {
                 RepairSubject::Seam(seam_id) => seam_id,
                 RepairSubject::Decision(message) => return Err(CommandError::Decision(message)),

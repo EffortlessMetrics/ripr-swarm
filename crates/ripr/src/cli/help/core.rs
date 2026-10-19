@@ -59,7 +59,9 @@ Options:
   --root PATH       Workspace root. Defaults to the current directory, then
                     walks up to the enclosing workspace or package, or the git
                     top level; `--root .` pins this directory.
-  --out PATH        Output directory for the pilot packet. Defaults to target/ripr/pilot under --root.
+  --out PATH        Output directory for the pilot packet. Defaults to
+                    target/ripr/pilot under the resolved root (`--root .` pins
+                    this directory).
   --mode MODE       instant, draft, fast, deep, or ready. Defaults to draft unless ripr.toml sets one.
   --max-seams N     Maximum ranked seams in the pilot summary. Defaults to 5.
   --timeout-ms MS   Maximum analysis budget before writing a partial summary. Defaults to

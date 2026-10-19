@@ -598,6 +598,7 @@ fn member_directory_commands_use_the_resolved_workspace_root() -> Result<(), Str
     Ok(())
 }
 
+#[cfg(unix)]
 fn tree_snapshot(dir: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
     let mut files = Vec::new();
     let mut pending = vec![dir.to_path_buf()];
@@ -640,6 +641,7 @@ fn member_relative_selector_never_reaches_a_sibling_members_file() -> Result<(),
     .map_err(|e| e.to_string())?;
     std::fs::write(gap.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
     std::fs::write(gap.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    std::fs::write(gap.join("src/only_in_gap.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
     std::fs::write(gap.join("tests/pricing.rs"), FIXTURE_WEAK_TEST).map_err(|e| e.to_string())?;
     std::fs::write(
         quiet.join("Cargo.toml"),
@@ -666,15 +668,30 @@ fn member_relative_selector_never_reaches_a_sibling_members_file() -> Result<(),
         before,
         "stub must not touch the sibling"
     );
-    assert!(
-        !stderr_text(&stub).contains("gap/src/lib.rs")
-            || stderr_text(&stub).contains("quiet/src/lib.rs"),
-        "{}",
-        stderr_text(&stub)
-    );
 
     let repair = run_ripr(&quiet, &["repair", "src/lib.rs:2"])?;
     assert_ne!(repair.status.code(), Some(0), "{}", stderr_text(&repair));
+    assert!(attempt_ids(&outer).is_empty(), "no attempt on the sibling");
+    assert_eq!(tree_snapshot(&gap)?, before);
+
+    // A file that exists only in the sibling must be refused, not suffix-matched.
+    let stub = run_ripr(
+        &quiet,
+        &["agent", "stub", "--at", "src/only_in_gap.rs:2", "--write"],
+    )?;
+    assert_ne!(stub.status.code(), Some(0), "{}", stderr_text(&stub));
+    assert!(
+        stderr_text(&stub).contains("--root ."),
+        "{}",
+        stderr_text(&stub)
+    );
+    let repair = run_ripr(&quiet, &["repair", "src/only_in_gap.rs:2"])?;
+    assert_ne!(repair.status.code(), Some(0), "{}", stderr_text(&repair));
+    assert!(
+        stderr_text(&repair).contains("--root ."),
+        "{}",
+        stderr_text(&repair)
+    );
     assert!(attempt_ids(&outer).is_empty(), "no attempt on the sibling");
     assert_eq!(tree_snapshot(&gap)?, before);
 

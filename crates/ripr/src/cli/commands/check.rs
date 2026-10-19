@@ -255,7 +255,10 @@ pub(super) fn resolve_implicit_command_root(
     }
     let moved = input.root != *root;
     let prefix = if moved {
-        std::fs::canonicalize(".").ok().and_then(|cwd| {
+        // Fail closed: without the invocation prefix, relative file selectors
+        // could silently resolve against a sibling member.
+        let relate = || -> Option<String> {
+            let cwd = std::fs::canonicalize(".").ok()?;
             let base = std::fs::canonicalize(&input.root).ok()?;
             let relative = cwd.strip_prefix(base).ok()?;
             let text = relative
@@ -264,7 +267,11 @@ pub(super) fn resolve_implicit_command_root(
                 .collect::<Vec<_>>()
                 .join("/");
             (!text.is_empty()).then_some(text)
-        })
+        };
+        Some(relate().ok_or_else(|| {
+            "cannot relate the current directory to the resolved workspace root; pass --root PATH to select the analysis root explicitly"
+                .to_string()
+        })?)
     } else {
         None
     };
@@ -277,26 +284,51 @@ pub(super) fn resolve_implicit_command_root(
 /// is rewritten to its workspace-relative path before resolution; otherwise the
 /// suffix matcher could pick a sibling member's `src/lib.rs`. When the selector
 /// also exists workspace-relative, the invocation-directory file wins (the
-/// operator typed it from that directory). Anything else is returned as typed.
-pub(super) fn bind_member_selector_file(prefix: Option<&str>, file: &str) -> String {
+/// operator typed it from that directory). A selector that is neither an
+/// existing invocation-directory file nor an exact workspace-relative file is
+/// refused rather than left to repo-wide suffix matching, which could land on a
+/// sibling member. Absolute paths and an unmoved root pass through unchanged.
+pub(super) fn bind_member_selector_file(
+    prefix: Option<&str>,
+    root: &Path,
+    file: &str,
+) -> Result<String, String> {
     let Some(prefix) = prefix else {
-        return file.to_string();
+        return Ok(file.to_string());
     };
     let path = Path::new(file);
-    if path.is_absolute() || !Path::new(".").join(path).is_file() {
-        return file.to_string();
+    if path.is_absolute() {
+        return Ok(file.to_string());
     }
-    format!("{prefix}/{}", file.trim_start_matches("./"))
+    if Path::new(".").join(path).is_file() {
+        return Ok(format!("{prefix}/{}", file.trim_start_matches("./")));
+    }
+    if root.join(path).is_file() {
+        return Ok(file.to_string());
+    }
+    Err(format!(
+        "`{file}` names no file under the invocation directory `{prefix}` or the workspace root; pass `--root .` to select this directory, or the full workspace-relative path (for example `{prefix}/{}`)",
+        file.trim_start_matches("./")
+    ))
 }
 
-/// [`bind_member_selector_file`] for a `file:line` repair item; seam ids and
-/// gap ids contain no such shape and pass through unchanged.
-pub(super) fn bind_member_selector_item(prefix: Option<&str>, item: &str) -> String {
+/// [`bind_member_selector_file`] for a `file:line` repair item; seam ids, gap
+/// ids and probe ids have no path-shaped prefix and pass through unchanged.
+pub(super) fn bind_member_selector_item(
+    prefix: Option<&str>,
+    root: &Path,
+    item: &str,
+) -> Result<String, String> {
     match item.rsplit_once(':') {
-        Some((file, line)) if line.parse::<usize>().is_ok() => {
-            format!("{}:{line}", bind_member_selector_file(prefix, file))
+        Some((file, line))
+            if line.parse::<usize>().is_ok() && (file.contains('/') || file.contains('.')) =>
+        {
+            Ok(format!(
+                "{}:{line}",
+                bind_member_selector_file(prefix, root, file)?
+            ))
         }
-        _ => item.to_string(),
+        _ => Ok(item.to_string()),
     }
 }
 

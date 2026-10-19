@@ -26,7 +26,7 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
     let prefix =
         super::check::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
     if let crate::app::test_stub::TestStubSelector::At { file, .. } = &mut options.selector {
-        *file = super::check::bind_member_selector_file(prefix.as_deref(), file);
+        *file = super::check::bind_member_selector_file(prefix.as_deref(), &options.root, file)?;
     }
     ensure_command_root(&options.root, "agent stub")?;
     let config = load_for_root(&options.root).map_err(CommandError::Failure)?;
