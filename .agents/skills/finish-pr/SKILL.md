@@ -115,8 +115,8 @@ passive waiting; genuine remote waits name their owner and decision-changing eve
 without an idle polling worker. Batch related findings into one repair wave, preserve
 unaffected review, and do not force branch churn or a global intake freeze. These
 instructions govern agent decisions; they do not install branch protection.
-The existing Draft -> Ready proof trigger remains in force; being Ready for
-hosted qualification is not REVIEW_READY or permission to arm auto-merge.
+The `merge-ready` label (#4986) is the hosted qualification request; being Ready for
+review is not REVIEW_READY or permission to arm auto-merge.
 
 # Release-scope law
 

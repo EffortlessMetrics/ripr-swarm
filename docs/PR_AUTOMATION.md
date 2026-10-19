@@ -44,7 +44,7 @@ reading raw logs.
 ## Draft to Ready handoff
 
 Publish a coherent candidate as Draft. The delivery owner completes this order
-before spending the Ready-triggered `Ripr Rust Small Result` qualification:
+before spending the `merge-ready`-requested `Ripr Rust Small Result` qualification:
 
 1. Bind the exact candidate head and integration basis. Complete independent
    substantive review through `review-pr`, disposition every known finding, and
