@@ -598,6 +598,40 @@ struct PerlProducerStaging {
     stderr: PathBuf,
 }
 
+/// Largest trailing slice of an exporter's stderr capture that is read to
+/// build a failure message (#8796). Far above the 600-character display
+/// limit so multi-byte text and trailing whitespace cannot starve the tail.
+const PERL_STDERR_READ_WINDOW: u64 = 64 * 1024;
+
+/// Last 600 characters of `reader`, reading at most
+/// [`PERL_STDERR_READ_WINDOW`] bytes however large the stream is. Returns
+/// `None` when the stream is unreadable or its window is blank.
+fn bounded_stderr_tail<R: std::io::Read + std::io::Seek>(reader: &mut R) -> Option<String> {
+    use std::io::{Read, SeekFrom};
+    const LIMIT: usize = 600;
+    let len = reader.seek(SeekFrom::End(0)).ok()?;
+    reader
+        .seek(SeekFrom::Start(len.saturating_sub(PERL_STDERR_READ_WINDOW)))
+        .ok()?;
+    let mut bytes = Vec::new();
+    reader
+        .take(PERL_STDERR_READ_WINDOW)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    let text = String::from_utf8_lossy(&bytes);
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let start = text
+        .char_indices()
+        .rev()
+        .map(|(index, _)| index)
+        .nth(LIMIT)
+        .unwrap_or(0);
+    Some(text[start..].trim().to_string())
+}
+
 impl PerlProducerStaging {
     fn create(cache_dir: &Path, packet_hash: &str) -> Result<Self, String> {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -655,24 +689,13 @@ impl PerlProducerStaging {
         }
     }
 
-    /// The tail of the exporter's stderr, for failure messages. The file is
-    /// attempt-private and bounded here, so a noisy producer cannot flood the
-    /// report.
+    /// The tail of the exporter's stderr, for failure messages. The capture is
+    /// attempt-private but its size is chosen by the exporter, so only a
+    /// bounded trailing window is ever read (#8796); a noisy or hostile
+    /// producer can neither flood the report nor the consumer's memory.
     fn stderr_tail(&self) -> Option<String> {
-        const LIMIT: usize = 600;
-        let bytes = std::fs::read(&self.stderr).ok()?;
-        let text = String::from_utf8_lossy(&bytes);
-        let text = text.trim();
-        if text.is_empty() {
-            return None;
-        }
-        let start = text
-            .char_indices()
-            .rev()
-            .map(|(index, _)| index)
-            .nth(LIMIT)
-            .unwrap_or(0);
-        Some(text[start..].trim().to_string())
+        let mut file = std::fs::File::open(&self.stderr).ok()?;
+        bounded_stderr_tail(&mut file)
     }
 
     fn remove_empty_directory(&self) -> Result<(), String> {
@@ -1676,6 +1699,77 @@ mod tests {
         assert!(is_managed_perl_producer("perl-lsp"));
         assert!(!is_managed_perl_producer("custom"));
         assert!(!is_managed_perl_producer(""));
+    }
+
+    /// Cursor that counts how many bytes callers actually pull out of it.
+    struct CountingCursor {
+        inner: std::io::Cursor<Vec<u8>>,
+        read_bytes: usize,
+    }
+
+    impl std::io::Read for CountingCursor {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let n = self.inner.read(buf)?;
+            self.read_bytes += n;
+            Ok(n)
+        }
+    }
+
+    impl std::io::Seek for CountingCursor {
+        fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+            self.inner.seek(pos)
+        }
+    }
+
+    #[test]
+    fn stderr_tail_reads_a_bounded_window_of_a_huge_capture() -> Result<(), String> {
+        // #8796: the old implementation read the whole capture (3 GiB of
+        // sparse stderr -> 3 GiB RSS). A multi-megabyte capture must cost no
+        // more than the window while keeping the same trailing text.
+        let mut data = vec![b'a'; 8 * 1024 * 1024];
+        data.extend_from_slice(b"\nfinal diagnostic line\n");
+        let total = data.len();
+        let mut reader = CountingCursor {
+            inner: std::io::Cursor::new(data),
+            read_bytes: 0,
+        };
+        let tail = bounded_stderr_tail(&mut reader).ok_or("expected a tail")?;
+        if reader.read_bytes > 256 * 1024 {
+            return Err(format!(
+                "read {} of {total} bytes; expected a window of at most 256 KiB",
+                reader.read_bytes
+            ));
+        }
+        if !tail.ends_with("final diagnostic line") {
+            return Err(format!("tail lost the end of the capture: {tail:?}"));
+        }
+        if tail.chars().count() > 601 {
+            return Err(format!("tail exceeds the display limit: {}", tail.len()));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn stderr_tail_short_capture_is_returned_whole_and_blank_is_none() -> Result<(), String> {
+        let mut short = std::io::Cursor::new(b"  boom \n".to_vec());
+        if bounded_stderr_tail(&mut short).as_deref() != Some("boom") {
+            return Err("short capture must be returned trimmed".to_string());
+        }
+        let mut blank = std::io::Cursor::new(vec![0x20u8; 200_000]);
+        if bounded_stderr_tail(&mut blank).is_some() {
+            return Err("blank capture must yield no tail".to_string());
+        }
+        // A window that starts inside a multi-byte character still yields
+        // valid text for the characters that follow.
+        let mut multibyte = std::io::Cursor::new("é".repeat(100_000).into_bytes());
+        let tail = bounded_stderr_tail(&mut multibyte).ok_or("expected a tail")?;
+        if tail.chars().count() != 601 || tail.chars().any(|c| c != 'é') {
+            return Err(format!(
+                "unexpected multibyte tail of {} chars",
+                tail.chars().count()
+            ));
+        }
+        Ok(())
     }
 
     #[test]
