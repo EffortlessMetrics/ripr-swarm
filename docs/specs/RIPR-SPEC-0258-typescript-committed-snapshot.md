@@ -112,8 +112,10 @@ runner's entry for it can be named and is committed:
   from `HEAD` (edited, deleted, untracked or ignored): the test file is read
   at `HEAD`, so its entry must be the one `HEAD` holds;
 - every snapshot matcher call in the test file sits in a test body (text
-  `Snapshot`, optional whitespace, `(`; counting inline snapshots, which
-  advance the same counter),
+  `Snapshot`, then after optional whitespace and block comments `(`, `<`,
+  `!`, `?.`, `.call`, `.apply`, `.bind`, or a quoted bracket access closed
+  by `]`; counting inline snapshots, which advance the same counter; comments
+  and strings only over-count, which refuses),
   so no hook or helper advances the counter;
 - the test body holds exactly one such call, and this assertion is its
   only `toMatchSnapshot`, with no argument or with the rule 2 hint;
@@ -276,6 +278,8 @@ RIPR-SPEC-0243 ladder, including the observation guard.
   `hinted_snapshot_sharing_its_counter_stays_medium` pin example 4;
   `snapshot_location_or_update_override_stays_medium` pins example 5;
   `snapshot_input_differing_from_head_stays_medium` pins example 6;
+  `generic_or_bracket_snapshot_calls_are_counted_and_refuse` pins the
+  counted spellings of rule 1;
   `config_passed_by_path_or_custom_named_stays_medium`,
   `config_above_the_analysis_root_is_read_up_to_the_repository`,
   `config_above_the_root_is_read_only_within_reach_of_the_marker`,

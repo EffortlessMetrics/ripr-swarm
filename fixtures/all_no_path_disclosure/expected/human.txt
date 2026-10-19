@@ -28,6 +28,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/all_no_path_disclosure/input --diff <cwd>/fixtures/all_no_path_disclosure/diff.patch --mode fast probe:src_lib.rs:predicate:908b0e30
   ripr context --root <cwd>/fixtures/all_no_path_disclosure/input --diff <cwd>/fixtures/all_no_path_disclosure/diff.patch --mode fast --at probe:src_lib.rs:predicate:908b0e30
+  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:predicate:908b0e30 --root <cwd>/fixtures/all_no_path_disclosure/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

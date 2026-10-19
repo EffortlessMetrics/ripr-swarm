@@ -1549,7 +1549,8 @@ proptest! {
             "perllsp".to_string(),
             "perl-lsp".to_string(),
         ])),
-        executable in any::<String>(),
+        executable in any::<String>()
+            .prop_filter("usable executable path", |value| !value.is_empty() && !value.contains('\0')),
         timeout_ms in 1u64..,
         cache_dir in valid_repository_paths(),
     ) {

@@ -238,3 +238,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — scanner_controls (21)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless scanner_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

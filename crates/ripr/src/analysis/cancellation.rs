@@ -125,6 +125,19 @@ impl AnalysisCancellationToken {
         }))
     }
 
+    /// Give a budgeted CLI worker the caller's SIGINT flags without sharing
+    /// its abort state. A worker deadline must not turn the caller's later
+    /// refusal publication into another cancellation error.
+    pub(crate) fn for_check_budget_worker(&self) -> Self {
+        Self(Arc::new(CancellationState {
+            reason: AtomicU8::new(ACTIVE),
+            outcome: AtomicU8::new(OUTCOME_NONE),
+            budget: None,
+            interrupted: self.0.interrupted.clone(),
+            native_publication: self.0.native_publication.clone(),
+        }))
+    }
+
     pub(crate) fn remaining_budget(&self) -> Option<Duration> {
         self.0.budget.as_ref().map(|budget| {
             budget

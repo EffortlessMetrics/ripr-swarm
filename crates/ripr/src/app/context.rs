@@ -1,6 +1,6 @@
 use super::check::check_with_progress;
 use super::progress::{AnalysisProgressScope, AnalysisProgressSink};
-use super::selector::{FindingSelection, select_finding};
+use super::selector::FindingSelection;
 use super::{CheckInput, OutputFormat};
 use crate::config::RiprConfig;
 use crate::output;
@@ -139,6 +139,15 @@ pub(crate) fn collect_context_with_config_worktree_and_progress(
                 &navigation.list_command(),
             )),
         ),
+        FindingSelection::Undecided(limitation) => {
+            Err(crate::core_error::CoreError::selector_miss(
+                super::explain::selector_limitation_fresh_run(
+                    selector,
+                    &navigation.list_command(),
+                    &limitation,
+                ),
+            ))
+        }
         FindingSelection::NoMatch => Err(crate::core_error::CoreError::selector_miss(
             super::explain::no_finding_matched_fresh_run(
                 selector,
@@ -185,7 +194,15 @@ pub(crate) fn collect_context_from_artifact(
     // An explicit Draft must survive replay over a non-Draft repo default,
     // just as it does on the fresh context and artifact explain routes.
     let navigation = super::finding_navigation(&input, Some(artifact_path), mode_explicit);
-    match select_finding(&findings, selector) {
+    // Same seam-side reverse lookups as the fresh path, over the current
+    // root's classified seams: seam IDs and hash-form canonical gap IDs
+    // spell the same finding on every context surface (#8688).
+    match super::selector::select_finding_with_seam_reverse(
+        &findings,
+        &input.root,
+        config,
+        selector,
+    ) {
         FindingSelection::Unique(finding) => {
             Ok(output::json::render_context_packet_with_explain_command(
                 finding,
@@ -199,6 +216,18 @@ pub(crate) fn collect_context_from_artifact(
         FindingSelection::Ambiguous(candidates) => {
             Err(crate::core_error::CoreError::selector_miss(
                 super::explain::ambiguous_finding_match(selector, &candidates, "ripr check --json"),
+            ))
+        }
+        // `select_finding` never inventories seams, so it cannot produce a
+        // limitation; the arm keeps the match exhaustive and renders the
+        // honest state if a future producer starts carrying one.
+        FindingSelection::Undecided(limitation) => {
+            Err(crate::core_error::CoreError::selector_miss(
+                super::explain::selector_limitation_fresh_run(
+                    selector,
+                    "ripr check --json",
+                    &limitation,
+                ),
             ))
         }
         FindingSelection::NoMatch => Err(crate::core_error::CoreError::selector_miss(

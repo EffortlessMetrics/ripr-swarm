@@ -5103,8 +5103,22 @@ mod harness_limitation_assertion_tests {
             "fixtures/evidence-promotion-honesty-corpus/patches/semver-matches-greater.diff"
         )));
         assert!(!evidence_promotion_case_is_diff_sourced(None));
-        assert!(!evidence_promotion_case_is_diff_sourced(Some(
-            "fixtures/split_test_boundary_oracle"
-        )));
+        // Absolute paths: the check reads the filesystem, and other xtask
+        // tests move the process cwd to the repo root. A relative
+        // `fixtures/split_test_boundary_oracle` flipped to diff-sourced
+        // (it carries a `diff.patch`) whenever one of them ran concurrently.
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let diff_fixture = manifest_dir
+            .parent()
+            .unwrap_or(manifest_dir)
+            .join("fixtures/split_test_boundary_oracle");
+        assert!(diff_fixture.join("diff.patch").exists());
+        assert!(evidence_promotion_case_is_diff_sourced(
+            diff_fixture.to_str()
+        ));
+        assert!(!manifest_dir.join("diff.patch").exists());
+        assert!(!evidence_promotion_case_is_diff_sourced(
+            manifest_dir.to_str()
+        ));
     }
 }
