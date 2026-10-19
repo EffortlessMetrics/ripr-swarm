@@ -122,7 +122,7 @@ pub(in crate::analysis) fn withhold_framework_oracle_gap(
                 && env_activated(test, owner)
             {
                 Idiom::Environment
-            } else if strong && mock_closure_reads_arguments(test) {
+            } else if strong && mock_closure_reads_arguments(test, changed_text) {
                 Idiom::MockClosure
             } else if direct && expect_debug_literal(test) {
                 Idiom::ExpectDebug
@@ -190,31 +190,90 @@ fn contains_name(text: &str, needle: &str) -> bool {
     })
 }
 
-/// The owner reads the process environment and the test changes it.
+/// The owner reads an environment variable by a literal name and the test
+/// sets or removes a variable of that same name.
 fn env_activated(test: &TestFact, owner: &FunctionFact) -> bool {
-    let owner_body = masked(&owner.body);
-    let test_body = masked(&test.body);
-    let reads = owner_body.contains("env::var(") || owner_body.contains("env::var_os(");
-    let writes = ["set_var(", "remove_var("]
-        .iter()
-        .any(|call| test_body.contains(call));
-    reads && writes
+    let body: &str = &test.body;
+    if !(body.contains("set_var(") || body.contains("remove_var(")) {
+        return false;
+    }
+    let read = literal_call_names(&owner.body, &["env::var", "env::var_os"]);
+    let written = literal_call_names(body, &["set_var", "remove_var"]);
+    read.iter().any(|name| written.contains(name))
+}
+
+/// The string literals passed first to each `callee("..` call in `text`,
+/// where `callee` is not the tail of a longer identifier (`reset_var`).
+fn literal_call_names(text: &str, callees: &[&str]) -> Vec<String> {
+    let mut names = Vec::new();
+    for callee in callees {
+        for (at, _) in text.match_indices(callee) {
+            if text[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+            {
+                continue;
+            }
+            let Some(after) = text[at + callee.len()..].trim_start().strip_prefix('(') else {
+                continue;
+            };
+            let Some(literal) = after.trim_start().strip_prefix('"') else {
+                continue;
+            };
+            if let Some(end) = literal.find('"') {
+                names.push(literal[..end].to_string());
+            }
+        }
+    }
+    names
 }
 
 /// A mockall expectation whose `returning` closure uses one of its named
-/// parameters, so the call's arguments decide the value the test asserts.
-fn mock_closure_reads_arguments(test: &TestFact) -> bool {
-    let body = masked(&test.body);
-    if !body.contains("expect_") {
+/// parameters, on a mocked method the changed line calls: the call's
+/// arguments then decide the value the test asserts.
+fn mock_closure_reads_arguments(test: &TestFact, changed_text: &str) -> bool {
+    let raw: &str = &test.body;
+    if !raw.contains(".returning(|") {
         return false;
     }
+    let body = masked(raw);
     body.match_indices(".returning(|").any(|(at, marker)| {
+        // The mocked method is the `expect_<name>` call that opens the chain.
+        let Some(name) = body[..at]
+            .rmatch_indices("expect_")
+            .find(|(start, _)| body[..*start].chars().next_back().is_none_or(boundary))
+            .map(|(start, _)| {
+                body[start + "expect_".len()..]
+                    .chars()
+                    .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
+                    .collect::<String>()
+            })
+        else {
+            return false;
+        };
+        if name.is_empty() || !changed_text.contains(&format!(".{name}(")) {
+            return false;
+        }
         let params_start = at + marker.len();
         let Some(params_end) = body[params_start..].find('|') else {
             return false;
         };
         let rest = &body[params_start + params_end + 1..];
-        let statement = rest.split(';').next().unwrap_or(rest);
+        // The closure ends where `returning(` closes.
+        let mut depth = 1usize;
+        let closure_end = rest
+            .char_indices()
+            .find(|(_, ch)| {
+                match ch {
+                    '(' | '[' | '{' => depth += 1,
+                    ')' | ']' | '}' => depth = depth.saturating_sub(1),
+                    _ => {}
+                }
+                depth == 0
+            })
+            .map_or(rest.len(), |(end, _)| end);
+        let closure = &rest[..closure_end];
         body[params_start..params_start + params_end]
             .split(',')
             .filter_map(|param| {
@@ -228,7 +287,7 @@ fn mock_closure_reads_arguments(test: &TestFact) -> bool {
                     .trim();
                 (is_ident(name) && !name.starts_with('_')).then_some(name)
             })
-            .any(|name| contains_name(statement, name))
+            .any(|name| contains_name(closure, name))
     })
 }
 
@@ -252,6 +311,13 @@ fn expect_debug_literal(test: &TestFact) -> bool {
 /// the gap.
 fn insta_leaves_field_unredacted(test: &TestFact, changed_text: &str) -> bool {
     let body: &str = &test.body;
+    // Redactions and filters set outside the macro are not read.
+    if ["add_redaction", "with_settings", "Settings"]
+        .iter()
+        .any(|name| body.contains(name))
+    {
+        return false;
+    }
     let mut found = false;
     for macro_name in INSTA_MACROS {
         for (at, _) in body.match_indices(macro_name) {
@@ -318,13 +384,15 @@ fn macro_arguments(rest: &str) -> Option<&str> {
     None
 }
 
-/// String literals in the arguments that start a redaction path (`".id"`).
+/// String literals in the arguments that key a redaction (`".id" => ..`).
 fn redaction_selectors(arguments: &str) -> Vec<&str> {
     arguments
         .split('"')
         .skip(1)
         .step_by(2)
-        .filter(|literal| literal.starts_with(['.', '*']))
+        .zip(arguments.split('"').skip(2).step_by(2))
+        .filter(|(_, after)| after.trim_start().starts_with("=>"))
+        .map(|(literal, _)| literal)
         .collect()
 }
 
@@ -349,8 +417,10 @@ mod tests {
     #[test]
     fn redaction_selectors_are_the_path_literals_of_the_argument_list() {
         assert_eq!(
-            redaction_selectors("record, { \".id\" => \"[id]\", \".meta.at\" => \"[t]\" }"),
-            vec![".id", ".meta.at"]
+            redaction_selectors(
+                "record, { \".id\" => \"[id]\", \".meta.at\" => \"[t]\", \"[].n\" => 1 }"
+            ),
+            vec![".id", ".meta.at", "[].n"]
         );
         assert!(redaction_selectors("record").is_empty());
     }
@@ -403,7 +473,10 @@ mod tests {{
             ("|to, _| total > 0", false),
         ] {
             assert_eq!(
-                mock_closure_reads_arguments(&test_named(&source(closure), "counts")?),
+                mock_closure_reads_arguments(
+                    &test_named(&source(closure), "counts")?,
+                    "mailer.send(user)"
+                ),
                 reads,
                 "{closure}"
             );
@@ -418,8 +491,28 @@ mod tests {
     }
 }
 ";
-        assert!(!mock_closure_reads_arguments(&test_named(plain, "counts")?));
+        assert!(!mock_closure_reads_arguments(
+            &test_named(plain, "counts")?,
+            "mailer.send(user)"
+        ));
+        // The changed line calls a different mocked method.
+        assert!(!mock_closure_reads_arguments(
+            &test_named(&source("|to, _| to != \"cy\""), "counts")?,
+            "mailer.deliver(user)"
+        ));
         Ok(())
+    }
+
+    #[test]
+    fn literal_call_names_read_the_first_literal_of_whole_callees() {
+        assert_eq!(
+            literal_call_names(
+                "std::env::var(\"A\"); env::var_os( \"B\" )",
+                &["env::var", "env::var_os"]
+            ),
+            vec!["A".to_string(), "B".to_string()]
+        );
+        assert!(literal_call_names("reset_var(\"A\"); set_var(NAME, 1)", &["set_var"]).is_empty());
     }
 
     #[test]

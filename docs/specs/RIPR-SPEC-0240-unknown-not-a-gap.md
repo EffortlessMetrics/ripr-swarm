@@ -213,21 +213,30 @@ the surface, and each used to leave a certain `weakly_exposed` claim.
 non-ignored related test matches one of these shapes:
 
 - **environment**: a `match_arm`, `predicate` or `error_path` probe, a
-  `direct_owner_call` test with a strong assertion that calls `set_var` or
-  `remove_var`, and an owner body that calls `env::var(` or `env::var_os(`.
-  The assertion may well decide the changed arm, but ripr does not follow the
-  environment to it. A relational-only test keeps the gap
-  (`lib-serial-test-batch-default-relational`).
-- **mock closure**: a test with a strong assertion and an `expect_*` call whose
-  `.returning(|..|)` closure uses one of its named (non-`_`) parameters in the
-  rest of its statement. A closure that ignores its arguments keeps the gap.
+  `direct_owner_call` test with a strong assertion that calls
+  `set_var("NAME", ..)` or `remove_var("NAME")`, and an owner body that calls
+  `env::var("NAME")` or `env::var_os("NAME")` with the same literal name. A
+  different variable, a non-literal name or a relational-only test keeps the
+  gap (`lib-serial-test-batch-default-relational`).
+- **mock closure**: a test with a strong assertion and an `expect_<m>()` call
+  whose `.returning(|..|)` closure uses one of its named (non-`_`) parameters,
+  where the changed line calls `.<m>(`. A closure that ignores its arguments,
+  or a changed line that does not call the mocked method (the grace predicate
+  of `lib-mockall-grace-boundary-times`), keeps the gap.
 - **expect-test**: a `direct_owner_call` test comparing a non-empty
   `expect![[..]]` literal with `.assert_debug_eq(..)`.
 - **insta**: a `direct_owner_call` test whose insta snapshot macros have no
-  inline `@` literal, on a changed `field:` initializer that no redaction
-  selector (`".id"`) names. Any other changed line keeps the gap (the
-  `snapshot_oracle` fixture's changed predicate), and so does a redacted field
-  (`lib-insta-json-redacted-id`).
+  inline `@` literal and no `add_redaction`, `with_settings` or `Settings`,
+  on a changed `field:` initializer that no redaction selector (a literal
+  keyed by `=>`, such as `".id"` or `"[].id"`) names. Any other changed line
+  keeps the gap (the `snapshot_oracle` fixture's changed predicate), and so
+  does a redacted field (`lib-insta-json-redacted-id`).
+
+Any one matching related test withholds the finding: a weaker sibling test
+reads as evidence ripr gathered, not as the oracle that decides, and the
+matching test is the strongest oracle ripr cannot evaluate. The shapes read
+the test text, so a snapshot of a value other than the owner's result still
+withholds; that only costs an advisory.
 
 It runs after the should-panic rule and before `withhold_unsupported_gap`,
 and writes the finding the same way. Nothing is credited. Corpus effect:

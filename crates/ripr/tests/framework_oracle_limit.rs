@@ -193,6 +193,16 @@ fn an_environment_shape_that_differs_keeps_the_gap() -> Result<(), String> {
         4,
         "test without set_var",
     )?;
+    // The test changes a different variable.
+    keeps_gap(
+        &env_source(
+            "std::env::var(\"APP_RETRIES\")",
+            &ENV_EXACT.replace("APP_RETRIES", "OTHER"),
+        ),
+        &edit,
+        4,
+        "other variable",
+    )?;
     // The only assertion is relational.
     keeps_gap(
         &env_source(
@@ -202,6 +212,106 @@ fn an_environment_shape_that_differs_keeps_the_gap() -> Result<(), String> {
         &edit,
         4,
         "relational oracle",
+    )
+}
+
+/// The `authored-lib-mockall` verdict-corpus subject, with the recipient
+/// test's `returning` closure left to the caller. Line 15 sends the mail.
+const MOCK_SUBJECT: &str = "//! Overdue reminders sent through a mocked mailer. The tests use mockall\n\
+//! expectations: some pin the call count and arguments, one accepts any\n\
+//! arguments, and one only checks the mock's return value flows back.\n\
+\n\
+#[cfg_attr(test, mockall::automock)]\n\
+pub trait Mailer {\n\
+    fn send(&self, to: &str, body: &str) -> bool;\n\
+}\n\
+\n\
+pub const GRACE_DAYS: u32 = 30;\n\
+\n\
+pub fn remind(mailer: &dyn Mailer, user: &str, overdue_days: u32) -> bool {\n\
+    if overdue_days > GRACE_DAYS {\n\
+        let body = format!(\"{user}, your book is {overdue_days} days late\");\n\
+        return mailer.send(user, &body);\n\
+    }\n\
+    false\n\
+}\n\
+\n\
+pub fn remind_all(mailer: &dyn Mailer, users: &[(&str, u32)]) -> usize {\n\
+    users\n\
+        .iter()\n\
+        .filter(|(user, days)| remind(mailer, user, *days))\n\
+        .count()\n\
+}\n\
+\n\
+#[cfg(test)]\n\
+mod tests {\n\
+    use super::*;\n\
+    use mockall::predicate::{always, eq};\n\
+\n\
+    #[test]\n\
+    fn reminds_only_after_the_grace_period() {\n\
+        let mut mailer = MockMailer::new();\n\
+        mailer.expect_send().with(eq(\"ann\"), always()).times(1).return_const(true);\n\
+        assert!(remind(&mailer, \"ann\", 31));\n\
+        assert!(!remind(&mailer, \"ann\", 30));\n\
+    }\n\
+\n\
+    #[test]\n\
+    fn sends_some_body() {\n\
+        let mut mailer = MockMailer::new();\n\
+        mailer.expect_send().times(1).returning(|_, _| true);\n\
+        remind(&mailer, \"bob\", 45);\n\
+    }\n\
+\n\
+    #[test]\n\
+    fn counts_the_delivered_reminders() {\n\
+        let mut mailer = MockMailer::new();\n\
+        mailer.expect_send().returning(CLOSURE);\n\
+        assert_eq!(remind_all(&mailer, &[(\"ann\", 40), (\"cy\", 40), (\"dee\", 2)]), 1);\n\
+    }\n\
+}\n\
+";
+
+fn mock_source(closure: &str) -> String {
+    MOCK_SUBJECT.replace("CLOSURE", closure)
+}
+
+#[test]
+fn a_mock_closure_that_reads_the_arguments_is_withheld() -> Result<(), String> {
+    let edit = diff(
+        15,
+        "        return mailer.send(user, &body);",
+        "        return mailer.send(&user[..], &body);",
+    );
+    withheld(
+        &mock_source("|to, _| to != \"cy\""),
+        &edit,
+        15,
+        "mock closure",
+    )
+}
+
+#[test]
+fn a_mock_shape_that_differs_keeps_the_gap() -> Result<(), String> {
+    let edit = diff(
+        15,
+        "        return mailer.send(user, &body);",
+        "        return mailer.send(&user[..], &body);",
+    );
+    // The closure ignores the call's arguments.
+    keeps_gap(&mock_source("|_, _| true"), &edit, 15, "ignored arguments")?;
+    keeps_gap(&mock_source("|to, _| true"), &edit, 15, "unused argument")?;
+    // The changed line is the grace predicate, which no closure decides.
+    let guard = diff(
+        13,
+        "    if overdue_days >= GRACE_DAYS {",
+        "    if overdue_days > GRACE_DAYS {",
+    );
+    keeps_gap(
+        &mock_source("|to, _| to != \"cy\""),
+        &guard,
+        13,
+        "predicate line",
     )
 }
 
