@@ -22,7 +22,13 @@ use crate::output::gap_vocabulary::exposure_counterpart;
 /// Schema version of the `rust_test_stub` JSON document.
 const RUST_TEST_STUB_SCHEMA_VERSION: &str = "0.2";
 
-pub(super) fn run_agent_stub(options: AgentStubOptions) -> Result<(), CommandError> {
+pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), CommandError> {
+    // #8767: same implicit root `ripr check` uses; `--root .` opts out.
+    let prefix =
+        super::check::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+    if let crate::app::test_stub::TestStubSelector::At { file, .. } = &mut options.selector {
+        *file = super::check::bind_member_selector_file(prefix.as_deref(), &options.root, file)?;
+    }
     ensure_command_root(&options.root, "agent stub")?;
     let config = load_for_root(&options.root).map_err(CommandError::Failure)?;
     let resolution = match resolve_test_stub(&options.root, &config, &options.selector) {
@@ -417,6 +423,7 @@ mod tests {
             .map_err(CommandError::Failure)?;
         run_agent_stub(AgentStubOptions {
             root: root.to_path_buf(),
+            root_explicit: true,
             selector,
             write: false,
             json: false,

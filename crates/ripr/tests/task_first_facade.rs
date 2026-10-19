@@ -524,6 +524,200 @@ fn repair_explicit_policy_omitted_gap_and_seam_refuse_without_attempt_or_lock() 
     Ok(())
 }
 
+/// #8767: from a workspace member directory `repair`, `status`, `continue`
+/// and `agent stub` use the resolved workspace root (attempt store under the
+/// workspace `target/ripr`, never the member), and `pilot` keeps `--root .`
+/// and an explicit `--out` as typed. Unix-only like the other implicit-root
+/// smoke tests: the disclosure compares canonicalized temp paths.
+#[cfg(unix)]
+#[test]
+fn member_directory_commands_use_the_resolved_workspace_root() -> Result<(), String> {
+    let fixture = Fixture::dir("facade-member-root")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let member = outer.join("pkg");
+    std::fs::create_dir_all(member.join("src")).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(member.join("tests")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"pkg\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(member.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(member.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    std::fs::write(member.join("tests/pricing.rs"), FIXTURE_WEAK_TEST)
+        .map_err(|e| e.to_string())?;
+    init_repo(&outer)?;
+    run_git(&outer, &["add", "Cargo.toml", "pkg"])?;
+    git_commit(&outer, "member fixture source")?;
+    let disclosure = format!("ripr: resolved workspace root to {} ", outer.display());
+
+    let repair = run_ripr(&member, &["repair"])?;
+    assert_exit(&repair, 0, "repair from a member directory");
+    assert!(
+        stderr_text(&repair).contains(&disclosure),
+        "{}",
+        stderr_text(&repair)
+    );
+    let ids = attempt_ids(&outer);
+    assert_eq!(ids.len(), 1, "attempt store must live under the workspace");
+    assert!(
+        !member.join("target/ripr").exists(),
+        "no member-local target/ripr"
+    );
+
+    for args in [&["status"][..], &["continue"][..]] {
+        let output = run_ripr(&member, args)?;
+        let all = format!("{}{}", stdout_text(&output), stderr_text(&output));
+        assert!(all.contains(&disclosure), "{args:?}:\n{all}");
+        assert!(
+            all.contains(&ids[0]),
+            "{args:?} must read the attempt `repair` wrote:\n{all}"
+        );
+    }
+
+    let stub = run_ripr(&member, &["agent", "stub", "--at", "pkg/src/lib.rs:2"])?;
+    assert_exit(&stub, 0, "agent stub resolves against the workspace");
+    assert!(stderr_text(&stub).contains(&disclosure));
+
+    let pinned = run_ripr(&member, &["pilot", "--root", ".", "--quiet"])?;
+    assert!(!stderr_text(&pinned).contains("resolved workspace root"));
+    assert!(
+        member.join("target/ripr").exists() && !outer.join("target/ripr/pilot").exists(),
+        "`--root .` pilot artifacts stay in the member"
+    );
+
+    let custom = outer.join("custom-out");
+    let custom_arg = custom.to_string_lossy().into_owned();
+    let typed_out = run_ripr(&member, &["pilot", "--out", &custom_arg, "--quiet"])?;
+    assert!(stderr_text(&typed_out).contains(&disclosure));
+    assert!(custom.exists(), "explicit --out stays as typed");
+    assert!(
+        !outer.join("target/ripr/pilot").exists(),
+        "explicit --out must not also write the default packet directory"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+fn tree_snapshot(dir: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
+    let mut files = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(next) = pending.pop() {
+        for entry in std::fs::read_dir(&next).map_err(|e| e.to_string())? {
+            let path = entry.map_err(|e| e.to_string())?.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                files.push((
+                    path.clone(),
+                    std::fs::read(&path).map_err(|e| e.to_string())?,
+                ));
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+/// #8767 review: a member-relative `src/lib.rs:2` typed in a member with no
+/// gap must bind to that member's file, never to a sibling member's colliding
+/// `src/lib.rs` that has the gap. `agent stub --write` and repair admission
+/// both leave the sibling untouched; from the sibling the same selector works.
+#[cfg(unix)]
+#[test]
+fn member_relative_selector_never_reaches_a_sibling_members_file() -> Result<(), String> {
+    let fixture = Fixture::dir("facade-member-selector")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let quiet = outer.join("quiet");
+    let gap = outer.join("gap");
+    for member in [&quiet, &gap] {
+        std::fs::create_dir_all(member.join("src")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(member.join("tests")).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"quiet\", \"gap\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(gap.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(gap.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    std::fs::write(gap.join("src/only_in_gap.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    std::fs::write(gap.join("tests/pricing.rs"), FIXTURE_WEAK_TEST).map_err(|e| e.to_string())?;
+    std::fs::write(
+        quiet.join("Cargo.toml"),
+        "[package]\nname = \"quiet_member\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(
+        quiet.join("src/lib.rs"),
+        "pub const NAME: &str = \"quiet\";\n\n\n",
+    )
+    .map_err(|e| e.to_string())?;
+    init_repo(&outer)?;
+    run_git(&outer, &["add", "Cargo.toml", "quiet", "gap"])?;
+    git_commit(&outer, "two member fixture")?;
+    let before = tree_snapshot(&gap)?;
+
+    let stub = run_ripr(
+        &quiet,
+        &["agent", "stub", "--at", "src/lib.rs:2", "--write"],
+    )?;
+    assert_ne!(stub.status.code(), Some(0), "{}", stderr_text(&stub));
+    assert_eq!(
+        tree_snapshot(&gap)?,
+        before,
+        "stub must not touch the sibling"
+    );
+
+    let repair = run_ripr(&quiet, &["repair", "src/lib.rs:2"])?;
+    assert_ne!(repair.status.code(), Some(0), "{}", stderr_text(&repair));
+    assert!(attempt_ids(&outer).is_empty(), "no attempt on the sibling");
+    assert_eq!(tree_snapshot(&gap)?, before);
+
+    // A file that exists only in the sibling must be refused, not suffix-matched.
+    let stub = run_ripr(
+        &quiet,
+        &["agent", "stub", "--at", "src/only_in_gap.rs:2", "--write"],
+    )?;
+    assert_ne!(stub.status.code(), Some(0), "{}", stderr_text(&stub));
+    assert!(
+        stderr_text(&stub).contains("--root ."),
+        "{}",
+        stderr_text(&stub)
+    );
+    let repair = run_ripr(&quiet, &["repair", "src/only_in_gap.rs:2"])?;
+    assert_ne!(repair.status.code(), Some(0), "{}", stderr_text(&repair));
+    assert!(
+        stderr_text(&repair).contains("--root ."),
+        "{}",
+        stderr_text(&repair)
+    );
+    assert!(attempt_ids(&outer).is_empty(), "no attempt on the sibling");
+    assert_eq!(tree_snapshot(&gap)?, before);
+
+    // Structured ids ending in digits are not file selectors: they must reach
+    // the id resolvers, never the member-selector refusal.
+    for id in [
+        "repo-probe:src/lib.rs:predicate:12345678",
+        "probe:src/lib.rs:predicate:12345678",
+        "gap:rust:src/lib.rs:price:predicate:3",
+    ] {
+        let output = run_ripr(&quiet, &["repair", id])?;
+        assert!(
+            !stderr_text(&output).contains("names no file under the invocation directory"),
+            "{id} must not be refused as a file selector:\n{}",
+            stderr_text(&output)
+        );
+    }
+    assert!(attempt_ids(&outer).is_empty());
+
+    // Positive control: the same selector typed from the member that owns the gap.
+    let owned = run_ripr(&gap, &["repair", "src/lib.rs:2"])?;
+    assert_exit(&owned, 0, "repair from the member that owns the gap");
+    assert_eq!(attempt_ids(&outer).len(), 1);
+    Ok(())
+}
+
 fn run_ripr_env(
     current_dir: &Path,
     args: &[&str],
