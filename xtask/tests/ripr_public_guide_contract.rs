@@ -708,6 +708,9 @@ const PORTABLE_TESTS: &[&str] = &[
     "agent_help_makes_repair_primary_without_removing_control_surfaces",
     "agent_repair_help_names_the_primary_transaction_and_its_limits",
     "agent_status_help_names_the_selected_store_and_exact_attempt_selection",
+    "agent_subcommand_typos_render_scoped_recovery",
+    "agent_subcommand_far_and_sibling_misses_render_no_suggestion",
+    "agent_recovery_preserves_group_and_child_help",
     "help_index_routes_agent_repair_to_repair_help",
     "mode_help_names_index_scope_and_points_at_the_mode_table",
     "check_and_diff_help_state_the_real_base_default",
@@ -742,7 +745,7 @@ fn packaged_help_target_runs_every_case_and_rejects_missing_shared_asset() -> Re
         .iter()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
-    if actual != expected || actual.len() != 24 {
+    if actual != expected || actual.len() != 27 {
         return Err(format!(
             "portable test inventory drifted: expected {expected:?}, got {actual:?}"
         ));
@@ -751,10 +754,10 @@ fn packaged_help_target_runs_every_case_and_rejects_missing_shared_asset() -> Re
     execute.arg("--test-threads=1").current_dir(&scratch.0);
     let result = require_success(run(execute)?, "extracted help execution")?;
     let text = String::from_utf8(result.stdout).map_err(|error| error.to_string())?;
-    if !text.contains("test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out")
+    if !text.contains("test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out")
     {
         return Err(format!(
-            "extracted target did not run all 24 portable cases:\n{text}"
+            "extracted target did not run all 27 portable cases:\n{text}"
         ));
     }
     // The successful compile, exact inventory and execution above establish
