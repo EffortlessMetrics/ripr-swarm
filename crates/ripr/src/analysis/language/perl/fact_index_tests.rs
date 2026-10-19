@@ -32,33 +32,6 @@ fn ptr<T>(v: Option<&T>) -> Option<*const T> {
     v.map(|r| r as *const T)
 }
 
-/// Grow the packet with `n` extra changes/tests/relations/commands.
-fn scale(packet: &mut PerlFactPacket, n: usize) -> Result<(), String> {
-    let change = packet.changes.first().cloned().ok_or("change")?;
-    let test = packet.tests.first().cloned().ok_or("test")?;
-    let relation = packet.relations.first().cloned().ok_or("relation")?;
-    let command = packet.verify_commands.first().cloned().ok_or("command")?;
-    for i in 0..n {
-        let mut c = change.clone();
-        c.change_id = format!("change:scale:{i}");
-        let mut t = test.clone();
-        t.test_id = format!("test:scale:{i}");
-        let mut r = relation.clone();
-        r.relation_id = format!("relation:scale:{i}");
-        r.change_id = c.change_id.clone();
-        r.test_id = t.test_id.clone();
-        r.oracle_id = None;
-        let mut v = command.clone();
-        v.command_id = format!("command:scale:{i}");
-        v.test_id = Some(t.test_id.clone());
-        packet.changes.push(c);
-        packet.tests.push(t);
-        packet.relations.push(r);
-        packet.verify_commands.push(v);
-    }
-    Ok(())
-}
-
 #[test]
 fn indexed_lookups_match_linear_first_match_semantics_with_duplicates() -> Result<(), String> {
     let mut packet = base_packet()?;
@@ -189,33 +162,5 @@ fn index_is_invisible_to_clone_and_equality() -> Result<(), String> {
     cloned.tests.push(extra);
     assert!(cloned.test("test:added-after-clone").is_some());
     assert!(packet.test("test:added-after-clone").is_none());
-    Ok(())
-}
-
-/// Discriminating scale proof: at the 10,000-entry cap the original linear
-/// scans cost ~15 s for a single change in a debug build (hours for every
-/// change); the indexed path finishes in well under a second. The generous
-/// bound only fails on a quadratic regression, not on a slow runner.
-#[test]
-fn analysis_of_a_packet_at_the_array_cap_is_not_quadratic() -> Result<(), String> {
-    let mut packet = base_packet()?;
-    scale(&mut packet, 10_000)?;
-    assert!(packet.relations.len() > 10_000);
-
-    let started = std::time::Instant::now();
-    let mut evidence_total = 0usize;
-    for change in &packet.changes {
-        evidence_total += packet
-            .related_test_evidence_for_change(&change.change_id)
-            .len();
-        let _ = packet.classify_change_from_related_tests(&change.change_id);
-    }
-    let elapsed = started.elapsed();
-    assert!(evidence_total >= 10_000, "scaled relations resolved");
-    assert!(
-        elapsed < std::time::Duration::from_secs(30),
-        "per-change analysis over {} changes took {elapsed:?}",
-        packet.changes.len()
-    );
     Ok(())
 }

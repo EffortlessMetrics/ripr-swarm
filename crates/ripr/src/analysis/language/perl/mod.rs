@@ -1553,6 +1553,9 @@ impl PerlFactPacket {
     }
 
     fn index(&self) -> &fact_index::PacketIndex {
+        // Length-only guard: it catches added/removed entries but not a
+        // same-length reorder or id edit. Production packets are immutable
+        // after ingestion; tests that mutate a used packet call `reset_index`.
         let index = self.index.get_or_build(self);
         debug_assert_eq!(
             index.lens,
@@ -2212,11 +2215,7 @@ impl PerlFactPacket {
         }
         if let Some(verify_command_id) = evidence.verify_command_id.as_ref() {
             ids.insert(verify_command_id.clone());
-            if let Some(verify_command) = self
-                .verify_commands
-                .iter()
-                .find(|command| command.command_id == *verify_command_id)
-            {
+            if let Some(verify_command) = self.verify_command(verify_command_id) {
                 ids.extend(verify_command.provenance_refs.iter().cloned());
             }
         }
@@ -2244,9 +2243,12 @@ impl PerlFactPacket {
     ) -> Option<CanonicalPerlGapIdentity> {
         let change = self.change(change_id)?;
         let assertion_shape = self
-            .relations
+            .index()
+            .relations_by_change
+            .get(change.change_id.as_str())
+            .map_or(&[][..], Vec::as_slice)
             .iter()
-            .filter(|relation| relation.change_id == change.change_id)
+            .filter_map(|&position| self.relations.get(position))
             .find_map(|relation| {
                 relation
                     .oracle_id
@@ -3739,6 +3741,8 @@ fn stable_repo_path_arg(path: String, field: &str) -> Result<String, String> {
     Ok(path)
 }
 
+#[cfg(test)]
+mod fact_index_projection_tests;
 #[cfg(test)]
 mod fact_index_tests;
 #[cfg(test)]
