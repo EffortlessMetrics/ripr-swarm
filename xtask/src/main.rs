@@ -1274,7 +1274,7 @@ mod check_fast_selector_tests {
                 return Err(format!("unexpected native selector paths: {paths:?}"));
             }
             for path in paths {
-                if !categorize_changed_files(&[path.clone()]).rust_src {
+                if !categorize_changed_files(std::slice::from_ref(&path)).rust_src {
                     return Err(format!(
                         "workspace Rust test did not select Rust gates: {path}"
                     ));
