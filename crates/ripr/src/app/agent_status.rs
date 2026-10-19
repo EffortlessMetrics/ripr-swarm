@@ -831,8 +831,6 @@ fn unconfirmed_receipt_reason(attempt: &AgentStatusRepairAttempt) -> String {
     }
 }
 
-/// The documented start of the repair transaction. It creates every artifact
-/// it needs, so it never depends on a workflow directory already existing.
 /// The warning that replaces a refused repair-start command (#8766).
 fn repair_start_withheld_warning(
     root_display: &str,
@@ -847,6 +845,8 @@ fn repair_start_withheld_warning(
     }
 }
 
+/// The documented start of the repair transaction. It creates every artifact
+/// it needs, so it never depends on a workflow directory already existing.
 fn new_repair_attempt_command(root_display: &str, seam_id: &str, store_flag: &str) -> String {
     format!(
         "ripr agent repair --root {}{store_flag} --seam-id {} --phase before",
