@@ -635,7 +635,17 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
         check_allow_attributes()?;
         check_local_context()?;
     }
-    check_file_policy()?;
+    // #8793: an infrastructure timeout in file policy (cargo lock wait or a
+    // slow enumeration) must not hide the later checks, but it is never a pass:
+    // the remaining checks run and the instrument failure is returned before
+    // any passing report is published.
+    let deferred_instrument_failure = match check_file_policy() {
+        Err(error) if policy::is_covered_by_instrument_failure(&error) => Some(error),
+        other => {
+            other?;
+            None
+        }
+    };
     if !collect_all {
         check_covered_by()?;
         check_executable_files()?;
@@ -682,6 +692,11 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
         check_process_policy()?;
         check_network_policy()?;
         check_lint_policy()?;
+    }
+    if let Some(error) = deferred_instrument_failure {
+        return Err(format!(
+            "precommit ran its remaining checks, but check-file-policy hit an instrument failure and did not pass: {error}"
+        ));
     }
     publish_precommit_policy_report(collect_all)
 }

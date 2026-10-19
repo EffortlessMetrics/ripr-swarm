@@ -17,6 +17,51 @@ const TEST_COVERED_BY_LIST_TIMEOUT: Duration = Duration::from_mins(5);
 /// the list cap or reported as an unresolved `covered_by` pointer (#4141).
 const TEST_COVERED_BY_BUILD_TIMEOUT: Duration = Duration::from_mins(30);
 const COVERED_BY_INSTRUMENT_PREFIX: &str = "covered_by_instrument_timeout:";
+/// Infrastructure state: the spawn timed out while Cargo was blocked on a
+/// build/package lock held by another process (#8793). Still an instrument
+/// failure, never a policy violation and never a pass.
+const COVERED_BY_LOCK_WAIT_PREFIX: &str = "covered_by_lock_wait_timeout:";
+/// Cargo prints this line while it waits on a lock another process holds.
+const CARGO_LOCK_WAIT_MARKER: &str = "waiting for file lock";
+/// A spawn that timed out while only waiting on a cargo lock is retried this
+/// many times, so time spent queued behind another process's build does not
+/// consume the enumeration budget. The bound keeps the gate fail-closed.
+const LOCK_WAIT_RETRIES: usize = 6;
+const INSTRUMENT_FAILURE_PHRASE: &str = "instrument timeout, not an unresolved pointer";
+
+/// True when `error` is a `check-file-policy` instrument failure (timeout or
+/// lock wait), as opposed to a policy violation. `precommit` uses this to run
+/// its remaining checks and still fail at the end.
+pub(crate) fn is_covered_by_instrument_failure(error: &str) -> bool {
+    error.contains(INSTRUMENT_FAILURE_PHRASE)
+}
+
+fn lock_wait_note(stderr: &str) -> Option<&str> {
+    stderr
+        .lines()
+        .find(|line| line.contains(CARGO_LOCK_WAIT_MARKER))
+}
+
+/// Run `capture`, retrying while the only observed cause of a timeout is a
+/// cargo lock wait. Any other timeout, or exhausted lock-wait retries, is
+/// returned as a timed-out output and stays a failure.
+fn capture_past_lock_wait(
+    spawn: &CoveredBySpawn,
+    capture: &mut impl FnMut(&CoveredBySpawn) -> Result<TimedOutput, String>,
+) -> Result<TimedOutput, String> {
+    let mut attempts = 0;
+    loop {
+        let output = capture(spawn)?;
+        if output.timed_out
+            && lock_wait_note(&output.stderr).is_some()
+            && attempts < LOCK_WAIT_RETRIES
+        {
+            attempts += 1;
+            continue;
+        }
+        return Ok(output);
+    }
+}
 
 /// Validate the repository's non-Rust file policy and write its standard
 /// report. The parser and shared path predicates remain in `main.rs` until
@@ -204,7 +249,7 @@ fn validate_test_covered_by_recorded_with(
             if key.as_ref().is_some_and(|key| warmed.contains(key)) {
                 continue;
             }
-            let captured = capture(&spawn);
+            let captured = capture_past_lock_wait(&spawn, &mut capture);
             diagnostics.push(CommandDiagnostic::captured("cargo", &spawn.args, &captured));
             let output = captured?;
             if output.timed_out || !output.status.is_some_and(|status| status.success()) {
@@ -457,7 +502,13 @@ fn enumeration_result(output: TimedOutput, timeout: Duration) -> (bool, String, 
         .map(|status| status.to_string())
         .unwrap_or_else(|| "not available".to_string());
     let timeout_note = if output.timed_out {
-        format!("{COVERED_BY_INSTRUMENT_PREFIX} timed out after {timeout:?}; ")
+        match lock_wait_note(&output.stderr) {
+            Some(line) => format!(
+                "{COVERED_BY_LOCK_WAIT_PREFIX} timed out after {timeout:?} blocked on a cargo lock held by another process ({}); ",
+                line.trim()
+            ),
+            None => format!("{COVERED_BY_INSTRUMENT_PREFIX} timed out after {timeout:?}; "),
+        }
     } else {
         String::new()
     };
@@ -511,9 +562,11 @@ fn validate_test_covered_by_with(
             None => enumerate(&args)
                 .map_err(|error| format!("{path}:{line} enumerate `{command}`: {error}"))?,
         };
-        if stderr.starts_with(COVERED_BY_INSTRUMENT_PREFIX) {
+        if stderr.starts_with(COVERED_BY_INSTRUMENT_PREFIX)
+            || stderr.starts_with(COVERED_BY_LOCK_WAIT_PREFIX)
+        {
             return Err(format!(
-                "{path}:{line} test-valued `covered_by` enumeration did not finish (instrument timeout, not an unresolved pointer): `{command}`\nstdout: {stdout}\nstderr: {stderr}"
+                "{path}:{line} test-valued `covered_by` enumeration did not finish ({INSTRUMENT_FAILURE_PHRASE}): `{command}`\nstdout: {stdout}\nstderr: {stderr}"
             ));
         }
         if !success {
@@ -545,11 +598,16 @@ mod tests {
     use std::time::Duration;
 
     use super::COVERED_BY_INSTRUMENT_PREFIX;
+    use super::COVERED_BY_LOCK_WAIT_PREFIX;
+    use super::CoveredBySpawn;
+    use super::LOCK_WAIT_RETRIES;
     use super::TEST_COVERED_BY_BUILD_TIMEOUT;
     use super::TEST_COVERED_BY_LIST_TIMEOUT;
     use super::build_args_before_list;
+    use super::capture_past_lock_wait;
     use super::enumeration_result;
     use super::enumeration_spawns;
+    use super::is_covered_by_instrument_failure;
     use super::validate_test_covered_by;
     use super::validate_test_covered_by_with;
     use crate::run::{CommandDiagnostic, TimedOutput};
@@ -1527,6 +1585,88 @@ mod tests {
                 "instrument timeout was reported as an unresolved pointer: {error}"
             ))
         }
+    }
+
+    fn lock_wait_output(timed_out: bool) -> TimedOutput {
+        timed_output(
+            None,
+            "",
+            "    Blocking waiting for file lock on build directory\n",
+            timed_out,
+        )
+    }
+
+    fn lock_spawn() -> CoveredBySpawn {
+        CoveredBySpawn {
+            args: vec!["test".to_string()],
+            timeout: TEST_COVERED_BY_LIST_TIMEOUT,
+            description: "test",
+        }
+    }
+
+    #[test]
+    fn test_covered_by_lock_wait_does_not_consume_the_budget_but_stays_bounded()
+    -> Result<(), String> {
+        // A lock wait that clears within the retry bound completes.
+        let mut calls = 0;
+        let output = capture_past_lock_wait(&lock_spawn(), &mut |_| {
+            calls += 1;
+            Ok(if calls <= 3 {
+                lock_wait_output(true)
+            } else {
+                timed_output(Some(status(0)), "case: test\n", "", false)
+            })
+        })?;
+        if output.timed_out || calls != 4 {
+            return Err(format!("lock wait was not retried to completion: {calls}"));
+        }
+        // Negative experiment: a lock that never clears still fails, distinctly.
+        let mut calls = 0;
+        let output = capture_past_lock_wait(&lock_spawn(), &mut |_| {
+            calls += 1;
+            Ok(lock_wait_output(true))
+        })?;
+        if !output.timed_out || calls != LOCK_WAIT_RETRIES + 1 {
+            return Err(format!("unbounded or swallowed lock wait: {calls}"));
+        }
+        let (success, _, stderr) = enumeration_result(output, TEST_COVERED_BY_LIST_TIMEOUT);
+        if success || !stderr.starts_with(COVERED_BY_LOCK_WAIT_PREFIX) {
+            return Err(format!("lock-wait timeout was not distinct: {stderr}"));
+        }
+        // Negative experiment: a real timeout with no lock wait is not retried.
+        let mut calls = 0;
+        let output = capture_past_lock_wait(&lock_spawn(), &mut |_| {
+            calls += 1;
+            Ok(timed_output(None, "", "Compiling x\n", true))
+        })?;
+        let (_, _, stderr) = enumeration_result(output, TEST_COVERED_BY_LIST_TIMEOUT);
+        if calls != 1 || !stderr.starts_with(COVERED_BY_INSTRUMENT_PREFIX) {
+            return Err(format!("real timeout was retried or mislabeled: {calls}"));
+        }
+        // Both timeouts surface as instrument failures through the validator.
+        let commands = [common(4, "cargo test -p xtask slow_filter")];
+        let error = match validate_test_covered_by_with(
+            "policy.toml",
+            &commands,
+            FilePolicyHost::Unix,
+            |_| {
+                Ok((
+                    false,
+                    String::new(),
+                    format!("{COVERED_BY_LOCK_WAIT_PREFIX} timed out"),
+                ))
+            },
+        ) {
+            Ok(_) => return Err("lock-wait timeout unexpectedly passed".to_string()),
+            Err(error) => error,
+        };
+        if !is_covered_by_instrument_failure(&error) {
+            return Err(format!("lock wait not an instrument failure: {error}"));
+        }
+        if is_covered_by_instrument_failure("policy.toml:9 selects zero tests") {
+            return Err("unresolved pointer read as instrument failure".to_string());
+        }
+        Ok(())
     }
 
     #[test]
