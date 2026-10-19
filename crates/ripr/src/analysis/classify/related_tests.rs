@@ -2580,19 +2580,29 @@ fn initializer_type_head(expr: &str) -> Option<&str> {
     }
 }
 
-/// `Type::factory(..)` where the one workspace declaration of `factory` in
-/// `impl Type` is a plain associated fn returning `Self`/`Type` (#7415).
-/// The call spelling alone never names the result type.
-fn factory_call_names_type(
+/// Whether a receiver initializer names `impl_type` for the bounded receiver
+/// rule. Only an unqualified spelling counts: a qualifier (`foreign::Site`)
+/// is not established as the owner's module. A struct literal, tuple-struct call
+/// or CamelCase variant names the type directly; every associated call,
+/// including `new`/`from_*`/`with_*`, needs the indexed declaration to return
+/// `Self`/the type (`factory`), so a constructor-sounding name alone grants
+/// nothing and no index fails closed.
+fn initializer_names_impl_type(
     expr: &str,
     impl_type: &str,
     factory: &dyn Fn(&str, &str) -> bool,
 ) -> bool {
-    matches!(
-        type_head(expr),
-        Some((segments, Some(b'(')))
-            if matches!(segments.as_slice(), [.., ty, name] if *ty == impl_type && factory(ty, name))
-    )
+    let Some((segments, next)) = type_head(expr) else {
+        return false;
+    };
+    match (segments.as_slice(), next) {
+        ([ty], Some(b'(' | b'{')) => *ty == impl_type,
+        ([ty, name], Some(b'(')) => {
+            *ty == impl_type && (is_variant_name(name) || factory(ty, name))
+        }
+        ([ty, name], _) => *ty == impl_type && is_variant_name(name),
+        _ => false,
+    }
 }
 
 /// The only indexed `fn name` in an inherent `impl ty` block is a synchronous
@@ -3492,9 +3502,7 @@ fn scoped_receiver_names_type(
         _ => return false,
     }
     let text = mask_comments_and_strings(&receiver.syntax().text().to_string());
-    initializer_is_one_head_expr(&text)
-        && (initializer_type_head(&text) == Some(impl_type)
-            || factory_call_names_type(&text, impl_type, factory))
+    initializer_is_one_head_expr(&text) && initializer_names_impl_type(&text, impl_type, factory)
 }
 
 fn visible_receiver_binding_names_type(
@@ -3585,8 +3593,7 @@ fn visible_receiver_binding_names_type(
                 return binding.initializer().is_some_and(|initializer| {
                     let text = mask_comments_and_strings(&initializer.syntax().text().to_string());
                     initializer_is_one_head_expr(&text)
-                        && (initializer_type_head(&text) == Some(impl_type)
-                            || factory_call_names_type(&text, impl_type, factory)
+                        && (initializer_names_impl_type(&text, impl_type, factory)
                             // A bare type name is a value only for a verified
                             // unit struct, not a same-spelled constant/import.
                             || (text.trim() == impl_type && unit_struct(impl_type)))
@@ -10371,10 +10378,13 @@ let r = try_parse_summary(\"x\");",
                 false,
             ),
             (
+                // Constructor-named calls need the indexed return type; without
+                // an index the rule fails closed (index-backed positive control
+                // lives in the test_grip_evidence receiver-rule tests).
                 "fn t() { assert_eq!(ByteSize::new(43).as_kib(), 1.0); }",
                 "as_kib",
                 "ByteSize",
-                true,
+                false,
             ),
             (
                 "fn t() { let size: ByteSize = make(); assert_eq!(size.as_kib(), 1.0); }",

@@ -19785,3 +19785,52 @@ fn inherent_helper_hop_credits_only_a_sync_helper_that_binds_the_owner_type() ->
     }
     Ok(())
 }
+
+#[test]
+fn inherent_receiver_initializer_needs_indexed_return_type_and_unqualified_path()
+-> Result<(), String> {
+    for (receiver, expected) in [
+        // Positive controls: indexed Self/type-returning constructors,
+        // unqualified struct literal and enum-style variant spelling.
+        ("Site::new()", true),
+        ("Site::with_x()", true),
+        ("Site::from_parts(1)", true),
+        ("Site { v: 1 }", true),
+        // Constructor-sounding names that return a foreign type.
+        ("Site::with_cache()", false),
+        ("Site::new_cache()", false),
+        ("Site::from_cache(1)", false),
+        // Qualified paths do not establish the owner's type.
+        ("foreign::Site::new()", false),
+        ("foreign::Site { v: 1 }", false),
+        ("crate::foreign::Site::with_x()", false),
+        // Undeclared associated call.
+        ("Site::missing()", false),
+    ] {
+        for form in ["bound", "inline"] {
+            let body = if form == "bound" {
+                format!("let s = {receiver};\n    assert_eq!(s.area(), 1);")
+            } else {
+                format!("assert_eq!({receiver}.area(), 1);")
+            };
+            let source = format!(
+                "pub struct Site {{ v: u32 }}\npub struct Cache;\nimpl Site {{\n\
+                 pub fn new() -> Self {{ Site {{ v: 1 }} }}\n\
+                 pub fn with_x() -> Self {{ Site {{ v: 1 }} }}\n\
+                 pub fn from_parts(v: u32) -> Site {{ Site {{ v }} }}\n\
+                 pub fn with_cache() -> Cache {{ Cache }}\n\
+                 pub fn new_cache() -> Cache {{ Cache }}\n\
+                 pub fn from_cache(_v: u32) -> Cache {{ Cache }}\n\
+                 pub fn area(&self) -> u32 {{ self.v }}\n}}\n#[test]\nfn t() {{\n    {body}\n}}\n"
+            );
+            let index = receiver_rule_index(&source)?;
+            let (owner, caller) = receiver_rule_parts(&index, "area", "t")?;
+            assert_eq!(
+                crate::analysis::classify::inherent_owner_call_resolves(caller, owner, &index),
+                expected,
+                "{receiver} ({form})"
+            );
+        }
+    }
+    Ok(())
+}
