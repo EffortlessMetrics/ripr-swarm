@@ -49,7 +49,7 @@ pub(super) mod short_circuit;
 pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
 
 use super::super::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSummary};
-use super::call_identity::{CallTarget, OwnerCallIdentity};
+use super::call_identity::{CallTarget, ConstantTable, OwnerCallIdentity};
 use super::reveal::{
     UsePath, assertion_comparison_operands, contains_as_whole_word,
     file_imports_foreign_callee_name, file_imports_own_item, file_use_statements,
@@ -9829,7 +9829,7 @@ fn immutable_let_value(test: &TestSummary, binding: &str) -> Option<String> {
     let value = assigned_value(&binding)?;
     // #8112: an immutable binding of an interior-mutable value
     // (`let e = Cell::new(f(2)); e.set(6);`) can change after its initializer.
-    if has_interior_mutability(value) {
+    if may_mutate_through_shared(declared_type(&binding), value) {
         return None;
     }
     Some(value.to_string())
@@ -9864,6 +9864,51 @@ fn has_interior_mutability(initializer: &str) -> bool {
     ]
     .iter()
     .any(|word| contains_as_whole_word(initializer, word))
+}
+
+/// #8112: whether a binding or `static` whose declared type is `declared`
+/// (`None` when unannotated or unreadable) and whose initializer is
+/// `initializer` can change through a shared reference. The declared type
+/// decides when it names a known interior-mutable type (refuse) or is a
+/// plain scalar (`u32`, `&'static str`, `[u8; 4]`; keep, whatever the
+/// initializer block mentions). Any other type (a user type, an alias, an
+/// unannotated binding) falls back to the initializer text. Limit: a user
+/// type that merely holds an atomic (`Counter`) is not recognized from its
+/// name; only a known interior-mutable type name in the type or the
+/// initializer text refuses it.
+fn may_mutate_through_shared(declared: Option<&str>, initializer: &str) -> bool {
+    match declared {
+        Some(declared) if has_interior_mutability(declared) => true,
+        Some(declared) if is_plain_scalar_type(declared) => false,
+        _ => has_interior_mutability(initializer),
+    }
+}
+
+/// Whether every word of the type text is a primitive scalar, `str`,
+/// `'static` or an array length digit run: `u32`, `&'static str`, `[u8; 4]`.
+fn is_plain_scalar_type(declared: &str) -> bool {
+    const SCALARS: [&str; 17] = [
+        "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
+        "f32", "f64", "bool", "char", "str",
+    ];
+    let mut words = declared
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|word| !word.is_empty())
+        .peekable();
+    words.peek().is_some()
+        && words.all(|word| {
+            SCALARS.contains(&word) || word == "static" || word.chars().all(|c| c.is_ascii_digit())
+        })
+}
+
+/// The `T` of `[: T] = value` text, when annotated.
+fn declared_type(text: &str) -> Option<&str> {
+    let trimmed = text.trim_start();
+    let after = trimmed
+        .strip_prefix(':')
+        .filter(|after| !after.starts_with(':'))?;
+    let end = assigned_value_offset(after)?;
+    after.get(..end.saturating_sub(1))
 }
 
 /// #8112: whether `file` declares `static mut name`, whose value the test
@@ -9920,15 +9965,17 @@ fn single_constant_value(
     let mut matches = constants
         .get(name)?
         .iter()
-        .filter(|(file, _)| in_scope(file));
-    let (file, initializer) = matches.next()?;
+        .filter(|(file, _, _)| in_scope(file));
+    let (file, initializer, declared) = matches.next()?;
     if matches.next().is_some() || declares_static_mut(index, file, name) {
         return None;
     }
-    // #8112: a non-`mut` `static` of interior-mutable type
+    // #8112: a non-`mut` `static` of interior-mutable declared type
     // (`static C: AtomicUsize = ..; C.store(6)`) can change after its
     // initializer. A `const` is rebuilt at each use, so it stays readable.
-    if has_interior_mutability(initializer) && declares_static(index, file, name) {
+    if declares_static(index, file, name)
+        && may_mutate_through_shared(declared.as_deref(), initializer)
+    {
         return None;
     }
     let initializer_text = initializer.trim_start();
@@ -9942,6 +9989,11 @@ fn single_constant_value(
 /// The text after the assignment `=` of `[: T] = value`: the first `=`
 /// outside angle brackets that is not part of `==`, `=>`, `<=`, `>=` or `!=`.
 fn assigned_value(text: &str) -> Option<&str> {
+    text.get(assigned_value_offset(text)?..)
+}
+
+/// The offset just after the assignment `=` that [`assigned_value`] finds.
+fn assigned_value_offset(text: &str) -> Option<usize> {
     let bytes = text.as_bytes();
     let mut depth = 0usize;
     for (position, byte) in bytes.iter().enumerate() {
@@ -9957,7 +10009,7 @@ fn assigned_value(text: &str) -> Option<&str> {
                     Some(b'=' | b'!' | b'<' | b'>')
                 ) =>
             {
-                return text.get(position + 1..);
+                return Some(position + 1);
             }
             _ => {}
         }
@@ -10062,7 +10114,8 @@ fn expected_constant_reaches_owner(
             let Some(initializers) = constants.get(&word) else {
                 continue;
             };
-            for (file, initializer) in initializers.iter().filter(|(file, _)| in_scope(file)) {
+            for (file, initializer, _) in initializers.iter().filter(|(file, _, _)| in_scope(file))
+            {
                 if initializer_calls_owner(initializer, name, call)
                     || owner_aliases(index, file, name)
                         .iter()
@@ -10141,46 +10194,53 @@ fn initializer_calls_owner(initializer: &str, name: &str, call: &PinCall) -> boo
 /// masked initializer: one parse per file per index. Items a macro call
 /// declares (`thread_local!`, `lazy_static!`) and items of a file that does
 /// not parse cleanly are read from their text.
-fn workspace_constant_table(index: &RustIndex) -> BTreeMap<String, Vec<(PathBuf, String)>> {
-    let mut table: BTreeMap<String, Vec<(PathBuf, String)>> = BTreeMap::new();
+fn workspace_constant_table(index: &RustIndex) -> ConstantTable {
+    let mut table = ConstantTable::new();
     for (path, facts) in index.files().iter() {
         let source = &facts.source;
         if !source.contains("const") && !source.contains("static") {
             continue;
         }
-        let mut add = |name: &str, initializer: String| {
+        let mut add = |name: &str, initializer: String, declared: Option<String>| {
             let name = name.strip_prefix("r#").unwrap_or(name);
             table
                 .entry(name.to_string())
                 .or_default()
-                .push((path.clone(), initializer));
+                .push((path.clone(), initializer, declared));
         };
         let Some(parsed) = parse_clean_source_file(source) else {
             for (name, initializer) in text_declared_constants(&mask_comments_and_strings(source)) {
-                add(&name, initializer);
+                let declared = declared_type(&initializer).map(str::to_string);
+                add(&name, initializer, declared);
             }
             continue;
         };
         for node in parsed.tree().syntax().descendants() {
             let item = if let Some(item) = ast::Const::cast(node.clone()) {
-                item.name().zip(item.body())
+                item.name()
+                    .zip(item.body())
+                    .map(|(name, body)| (name, body, item.ty()))
             } else if let Some(item) = ast::Static::cast(node.clone()) {
-                item.name().zip(item.body())
+                item.name()
+                    .zip(item.body())
+                    .map(|(name, body)| (name, body, item.ty()))
             } else {
                 if let Some(macro_call) = ast::MacroCall::cast(node)
                     && let Some(tokens) = macro_call.token_tree()
                 {
                     let text = mask_comments_and_strings(&tokens.syntax().to_string());
                     for (name, initializer) in text_declared_constants(&text) {
-                        add(&name, initializer);
+                        let declared = declared_type(&initializer).map(str::to_string);
+                        add(&name, initializer, declared);
                     }
                 }
                 None
             };
-            if let Some((item_name, body)) = item {
+            if let Some((item_name, body, ty)) = item {
                 add(
                     item_name.text(),
                     mask_comments_and_strings(&body.syntax().to_string()),
+                    ty.map(|ty| mask_comments_and_strings(&ty.syntax().to_string())),
                 );
             }
         }

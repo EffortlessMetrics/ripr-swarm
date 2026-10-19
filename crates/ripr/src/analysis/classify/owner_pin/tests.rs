@@ -2570,6 +2570,33 @@ fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_const
         ),
         Some("weight(4)".to_string())
     );
+    // #8112: the declared type decides, not words the initializer mentions:
+    // a scalar static whose block merely names an atomic stays readable,
+    // as does a scalar `let` and a `const` of atomic type (rebuilt per use).
+    assert_eq!(
+        value(
+            "static EXPECTED: u32 = { let _t = AtomicUsize::new(0); weight(4) };",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED"
+        ),
+        Some("{ let _t = AtomicUsize::new(0); weight(4) }".to_string())
+    );
+    assert_eq!(
+        value(
+            "",
+            "let e: u32 = { let _t = AtomicUsize::new(0); weight(2) };\nassert_eq!(weight(2), e);",
+            "e"
+        ),
+        Some("{ let _t = AtomicUsize::new(0); weight(2) }".to_string())
+    );
+    assert_eq!(
+        value(
+            "const EXPECTED: AtomicUsize = AtomicUsize::new(weight(4));",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED"
+        ),
+        Some("AtomicUsize::new(weight(4))".to_string())
+    );
     // An operand that is not a plain name, a name the test binds twice or
     // outside a `let` (a loop variable), the owner's own name, and a name
     // nothing binds yield nothing to read.
@@ -2643,6 +2670,40 @@ fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_const
         (
             "lazy_static! { static ref EXPECTED: AtomicUsize = AtomicUsize::new(weight(4)); }",
             "EXPECTED.store(6, Ordering::SeqCst);\nassert_eq!(weight(4), EXPECTED);",
+            "EXPECTED",
+        ),
+        // #8112: the declared type refuses even when the initializer text
+        // shows no interior mutability.
+        (
+            "const ZERO: usize = 0;\nstatic EXPECTED: AtomicUsize = ZERO;",
+            "EXPECTED.store(6, Ordering::SeqCst);\nassert_eq!(weight(4), EXPECTED);",
+            "EXPECTED",
+        ),
+        (
+            "static EXPECTED: Cell<u32> = make();",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED",
+        ),
+        (
+            "const INIT: AtomicUsize = AtomicUsize::new(0);\nstatic EXPECTED: AtomicUsize = INIT;",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED",
+        ),
+        (
+            "lazy_static! { static ref EXPECTED: Mutex<u32> = make(); }",
+            "assert_eq!(weight(4), *EXPECTED.lock().unwrap());",
+            "EXPECTED",
+        ),
+        (
+            "",
+            "let e: Cell<u32> = make();\nassert_eq!(weight(2), e);",
+            "e",
+        ),
+        // A user type holding an atomic is refused only when its type or
+        // initializer names a known interior-mutable type (documented limit).
+        (
+            "static EXPECTED: Counter = Counter::new(AtomicUsize::new(weight(4)));",
+            "assert_eq!(weight(4), EXPECTED);",
             "EXPECTED",
         ),
         (

@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- The reveal side refuses a non-`mut` `static` (and an annotated `let`) by its declared type: `static C: AtomicUsize = ZERO;` and `static C: Cell<u32> = make();` are no longer followed to their initializer, and a scalar `static X: u32 = { .. AtomicUsize .. }` is no longer refused for words in its initializer. A user type that only holds an atomic is still recognized by name and initializer text alone (#8112).
