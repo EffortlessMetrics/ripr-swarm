@@ -10683,6 +10683,7 @@ tests = [
   "crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::resolver_stays_unresolved_without_diff_evidence",
   "crates/ripr/src/analysis/language/perl/tests.rs::perl_finding_is_candidate_current_only_for_an_observed_changed_line",
   "crates/ripr/src/analysis/language/perl/tests.rs::perl_finding_through_a_symlink_out_of_the_root_stays_unresolved",
+  "crates/ripr/src/analysis/language/perl/tests.rs::perl_changed_file_count_ignores_packet_changes_in_untouched_files",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
