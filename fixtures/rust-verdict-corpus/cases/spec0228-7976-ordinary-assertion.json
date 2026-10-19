@@ -1,0 +1,51 @@
+{
+  "case_id": "spec0228-7976-ordinary-assertion",
+  "subject_id": "authored-7976-ordinary-assertion",
+  "diff": "cases/spec0228-7976-ordinary-assertion.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 5
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect_push",
+  "test_shape": "unit_test_argument_free_getter_ordinary_assertion",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.log.push(qty + 1);",
+        "mutated_line": "self.log.push(qty + 1);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::observes_entries",
+        "equivalence_review": "Not equivalent: add records 4 instead of 3."
+      },
+      {
+        "replacement": "",
+        "mutated_line": "",
+        "outcome": "tests_failed",
+        "failing_test": "tests::observes_entries",
+        "equivalence_review": "Not equivalent: add records no value."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "An ordinary assertion directly compares the observed owner binding entries() with &[3]. Both changed-value and deleted-push mutants fail tests::observes_entries. This positive pairs with the should_panic negative. RIPR-SPEC-0228 argument-free collection read guard; exact expected classification is exposed.",
+  "labeling_observation": {
+    "ripr_commit": "ffe737fd4636c57b48b5049f98284d3c67019877",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
