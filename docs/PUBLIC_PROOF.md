@@ -760,11 +760,30 @@ Repositories the speed scoreboard ran on:
 
 ## Reproduce and refresh
 
+These commands regenerate the measured receipts; a fresh local measurement is only promoted into `metrics/public-proof/` by the `cp` steps, and `--refresh-receipts` then re-copies the canonical sources and re-renders this page.
+
 ```bash
-cargo xtask dx-scoreboard --clone            # speed, memory, CI size, pasted commands
-cargo xtask first-run                        # the new-developer walk
+cargo xtask dx-scoreboard --clone            # writes target/ripr/reports/dx-scoreboard.json
+cp target/ripr/reports/dx-scoreboard.json metrics/dx-scoreboard/baseline.json  # promote the run to the canonical baseline
+cargo xtask first-run                        # writes target/ripr/first-run/first-run.json
+cp target/ripr/first-run/first-run.json metrics/public-proof/first-run-current.json  # promote the walk to its receipt
 cargo xtask public-proof --refresh-receipts  # re-copy canonical outputs, then render
 cargo xtask public-proof --check             # fail if this page is stale
 ```
+
+A local rerun lands in the same receipt shape but will not reproduce the committed dx-scoreboard numbers: they were measured on runner class `github-hosted-linux-x86_64-4cpu-amd-epyc-7763-64-core-processor`, and wall-time and memory bars compare only against a baseline from the same runner class.
+
+Per-receipt regeneration:
+
+| Receipt | Produced by | Harness output |
+| --- | --- | --- |
+| `dx-scoreboard.json` | `cargo xtask dx-scoreboard --clone`, promoted as above | `target/ripr/reports/dx-scoreboard.json` |
+| `verdict-corpus.json` | the report `fixtures/rust-verdict-corpus/expected/rows/` describes | summarized from the row files |
+| `corpus-manifest.json` | the corpus pin list itself | `benchmarks/rust_corpus/manifest.json` |
+| `mutation-spot-check.json` | `cargo xtask mutation-spot-check` | `target/ripr/reports/mutation-spot-check.json` |
+| `first-run-current.json` / `first-run-previous.json` | `cargo xtask first-run`, promoted as above | `target/ripr/first-run/first-run.json` |
+| `agent-as-user.json` | no in-repo command; committed harness output, the runs `docs/AGENT_AS_USER_RUNS.md` documents | none |
+| `install.json` | no in-repo command; committed manual measurement in a cloud container | none |
+
 
 Receipts live in `metrics/public-proof/`. `dx-scoreboard.json`, `verdict-corpus.json` and `corpus-manifest.json` are copies of `metrics/dx-scoreboard/baseline.json`, the report `fixtures/rust-verdict-corpus/expected/rows/` describes (its summary derived from the row files, then the rows in file-name order) and `benchmarks/rust_corpus/manifest.json`; `--check` fails when a source moves ahead of its copy, and `--refresh-receipts` re-copies them. Verdict corpus case PRs do not refresh this page, so its corpus section is a snapshot that can trail the committed rows until the next refresh. Corpus and ranking scoreboard rows are read from `metrics/dx-scoreboard/corpus-full-baseline.json` (falling back to `corpus-fast-baseline.json`) and `metrics/dx-scoreboard/pilot-ranking-baseline.json` when the copied scoreboard receipt did not ingest those boards. The mutation, first-run, agent and install receipts have no in-repo source to compare against: they are committed copies of harness output from the revisions named in their sections, and `--check` cannot detect a hand edit to them. The mutation spot-check receipt is harness output from `cargo xtask mutation-spot-check`.

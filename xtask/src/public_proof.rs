@@ -1097,7 +1097,7 @@ fn render(root: &Path) -> Result<String, String> {
     agent_section(&mut page, &r.agent)?;
     corpus_section(&mut page, &r)?;
     boundaries(&mut page, &r)?;
-    reproduce(&mut page);
+    reproduce(&mut page, &r)?;
     Ok(page.0)
 }
 
@@ -2155,21 +2155,80 @@ fn boundaries(page: &mut Page, r: &Receipts) -> Result<(), String> {
     Ok(())
 }
 
-fn reproduce(page: &mut Page) {
+fn reproduce(page: &mut Page, r: &Receipts) -> Result<(), String> {
     page.line("## Reproduce and refresh");
+    page.blank();
+    page.line(
+        "These commands regenerate the measured receipts; a fresh local measurement is only promoted into `metrics/public-proof/` by the `cp` steps, and `--refresh-receipts` then re-copies the canonical sources and re-renders this page.",
+    );
     page.blank();
     page.line("```bash");
     page.line(
-        "cargo xtask dx-scoreboard --clone            # speed, memory, CI size, pasted commands",
+        "cargo xtask dx-scoreboard --clone            # writes target/ripr/reports/dx-scoreboard.json",
     );
-    page.line("cargo xtask first-run                        # the new-developer walk");
+    page.line(
+        "cp target/ripr/reports/dx-scoreboard.json metrics/dx-scoreboard/baseline.json  # promote the run to the canonical baseline",
+    );
+    page.line("cargo xtask first-run                        # writes target/ripr/first-run/first-run.json");
+    page.line(
+        "cp target/ripr/first-run/first-run.json metrics/public-proof/first-run-current.json  # promote the walk to its receipt",
+    );
     page.line(
         "cargo xtask public-proof --refresh-receipts  # re-copy canonical outputs, then render",
     );
     page.line("cargo xtask public-proof --check             # fail if this page is stale");
     page.line("```");
     page.blank();
+    page.line(format!(
+        "A local rerun lands in the same receipt shape but will not reproduce the committed dx-scoreboard numbers: they were measured on runner class `{}`, and wall-time and memory bars compare only against a baseline from the same runner class.",
+        text(&r.dx, "runner_class")
+    ));
+    page.blank();
+    page.line("Per-receipt regeneration:");
+    page.blank();
+    page.table(
+        &["Receipt", "Produced by", "Harness output"],
+        &[
+            vec![
+                "`dx-scoreboard.json`".to_string(),
+                "`cargo xtask dx-scoreboard --clone`, promoted as above".to_string(),
+                "`target/ripr/reports/dx-scoreboard.json`".to_string(),
+            ],
+            vec![
+                "`verdict-corpus.json`".to_string(),
+                "the report `fixtures/rust-verdict-corpus/expected/rows/` describes".to_string(),
+                "summarized from the row files".to_string(),
+            ],
+            vec![
+                "`corpus-manifest.json`".to_string(),
+                "the corpus pin list itself".to_string(),
+                "`benchmarks/rust_corpus/manifest.json`".to_string(),
+            ],
+            vec![
+                "`mutation-spot-check.json`".to_string(),
+                "`cargo xtask mutation-spot-check`".to_string(),
+                "`target/ripr/reports/mutation-spot-check.json`".to_string(),
+            ],
+            vec![
+                "`first-run-current.json` / `first-run-previous.json`".to_string(),
+                "`cargo xtask first-run`, promoted as above".to_string(),
+                "`target/ripr/first-run/first-run.json`".to_string(),
+            ],
+            vec![
+                "`agent-as-user.json`".to_string(),
+                "no in-repo command; committed harness output, the runs `docs/AGENT_AS_USER_RUNS.md` documents".to_string(),
+                "none".to_string(),
+            ],
+            vec![
+                "`install.json`".to_string(),
+                "no in-repo command; committed manual measurement in a cloud container".to_string(),
+                "none".to_string(),
+            ],
+        ],
+    );
+    page.blank();
     page.line("Receipts live in `metrics/public-proof/`. `dx-scoreboard.json`, `verdict-corpus.json` and `corpus-manifest.json` are copies of `metrics/dx-scoreboard/baseline.json`, the report `fixtures/rust-verdict-corpus/expected/rows/` describes (its summary derived from the row files, then the rows in file-name order) and `benchmarks/rust_corpus/manifest.json`; `--check` fails when a source moves ahead of its copy, and `--refresh-receipts` re-copies them. Verdict corpus case PRs do not refresh this page, so its corpus section is a snapshot that can trail the committed rows until the next refresh. Corpus and ranking scoreboard rows are read from `metrics/dx-scoreboard/corpus-full-baseline.json` (falling back to `corpus-fast-baseline.json`) and `metrics/dx-scoreboard/pilot-ranking-baseline.json` when the copied scoreboard receipt did not ingest those boards. The mutation, first-run, agent and install receipts have no in-repo source to compare against: they are committed copies of harness output from the revisions named in their sections, and `--check` cannot detect a hand edit to them. The mutation spot-check receipt is harness output from `cargo xtask mutation-spot-check`.");
+    Ok(())
 }
 
 fn lane_revision(receipt: &Value) -> String {
@@ -2273,6 +2332,33 @@ mod tests {
         assert!(
             prose.contains("scoreboards.toml"),
             "speed section must name the population it actually measured"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn reproduce_section_promotes_local_runs_into_the_receipts() -> Result<(), String> {
+        let rendered = render(&workspace_root())?;
+        let start = rendered
+            .find("## Reproduce and refresh")
+            .ok_or("no reproduce section")?;
+        let end = rendered.len().min(start + 6000);
+        let section = &rendered[start..end];
+        assert!(
+            section.contains(
+                "cp target/ripr/reports/dx-scoreboard.json metrics/dx-scoreboard/baseline.json"
+            ),
+            "dx-scoreboard rerun must be promoted into the canonical baseline the receipt copies"
+        );
+        assert!(
+            section.contains(
+                "cp target/ripr/first-run/first-run.json metrics/public-proof/first-run-current.json"
+            ),
+            "first-run rerun must be promoted into the receipt the page renders"
+        );
+        assert!(
+            section.contains("target/ripr/reports/mutation-spot-check"),
+            "mutation receipt producer output path must be named"
         );
         Ok(())
     }
