@@ -181,16 +181,40 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
     if written.is_none() {
         println!("Write it: {}", write_command(&options));
     }
-    match &run {
-        Some(run) => println!("Run it: {run}"),
-        None if owning_manifest.is_some() => println!(
-            "Run it: cargo target name for {file} is not established (check [[test]] entries and autotests in Cargo.toml); run its tests by that target."
-        ),
-        None => {
-            println!("Run it: no Cargo package owns {file}; add it to one, then run its tests.")
-        }
-    }
+    println!(
+        "{}",
+        run_line(run.as_deref(), owning_manifest.is_some(), &file)
+    );
     Ok(())
+}
+
+/// The human "Run it" line: the command, or why none is offered.
+fn run_line(run: Option<&str>, has_owning_manifest: bool, file: &str) -> String {
+    match run {
+        Some(run) => format!("Run it: {run}"),
+        None if has_owning_manifest => format!(
+            "Run it: {file} is not a registered cargo test target (check [[test]] entries, harness, required-features and autotests in Cargo.toml); the target name is not established, so no command is offered."
+        ),
+        None => format!("Run it: no Cargo package owns {file}; add it to one, then run its tests."),
+    }
+}
+
+#[cfg(test)]
+mod run_line_tests {
+    use super::run_line;
+
+    #[test]
+    fn unestablished_target_says_the_file_is_not_a_registered_cargo_target() {
+        let line = run_line(None, true, "tests/discount.rs");
+        assert!(line.contains("tests/discount.rs is not a registered cargo test target"));
+        assert!(line.contains("not established"));
+        assert!(!line.contains("cargo test --"));
+        assert_eq!(
+            run_line(Some("cargo test --test x t"), true, "tests/x.rs"),
+            "Run it: cargo test --test x t"
+        );
+        assert!(run_line(None, false, "tests/x.rs").contains("no Cargo package owns"));
+    }
 }
 
 fn write_command(options: &AgentStubOptions) -> String {

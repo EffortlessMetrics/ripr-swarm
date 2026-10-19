@@ -316,7 +316,7 @@ Its `run_command` runs only that test through the owning package's
 `--manifest-path` and, for an integration file, the effective cargo target
 name (an explicit `[[test]]` name wins over the file stem). It is `null` when
 no Cargo package owns the file or that target name cannot be established
-(for example `autotests = false` without an explicit entry). A
+(for example `autotests = false` without an explicit entry, an edition-2015 package whose explicit `[[test]]` entries disable auto-discovery, or `harness = false`). A
 `--at` path that matches files with gaps in several crates is refused; pass
 the full path or the seam ID.
 

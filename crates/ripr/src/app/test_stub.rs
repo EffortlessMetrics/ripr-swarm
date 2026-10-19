@@ -1000,8 +1000,24 @@ pub(crate) fn integration_target_name(
     let entry_path = |entry: &toml::Table| -> Option<String> {
         match entry.get("path").and_then(toml::Value::as_str) {
             Some(path) => normalize_components(Path::new(path)),
-            None => normalize_components(Path::new(&format!("tests/{}.rs", entry_name(entry)?))),
+            None => None,
         }
+    };
+    // Without `path`, cargo looks for tests/<name>.rs, then tests/<name>/main.rs.
+    let entry_matches = |entry: &toml::Table| -> bool {
+        if let Some(path) = entry_path(entry) {
+            return path == relative;
+        }
+        entry_name(entry).is_some_and(|name| {
+            relative == format!("tests/{name}.rs") || relative == format!("tests/{name}/main.rs")
+        })
+    };
+    let runnable = |entry: &toml::Table| {
+        // `harness = false` targets are not run by a plain test command.
+        entry
+            .get("harness")
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(true)
     };
     let enabled = |entry: &toml::Table| {
         entry
@@ -1009,19 +1025,19 @@ pub(crate) fn integration_target_name(
             .and_then(toml::Value::as_array)
             .is_none_or(Vec::is_empty)
     };
-    if let Some(entry) = explicit
-        .iter()
-        .find(|entry| entry_path(entry).as_deref() == Some(relative.as_str()))
-    {
+    if let Some(entry) = explicit.iter().find(|entry| entry_matches(entry)) {
         return entry_name(entry)
             .filter(|name| !name.trim().is_empty())
-            .filter(|_| enabled(entry));
+            .filter(|_| enabled(entry) && runnable(entry));
     }
-    if package
-        .get("autotests")
-        .and_then(toml::Value::as_bool)
-        .is_some_and(|enabled| !enabled)
-    {
+    // Cargo's default for `autotests`: on for edition 2018+, but in edition
+    // 2015 any explicit `[[test]]` turns legacy auto-discovery off unless
+    // `autotests = true` is written. Uncertain edition fails closed.
+    let autotests = match package.get("autotests") {
+        None => package_edition(root, manifest, package)? >= 2018 || explicit.is_empty(),
+        Some(value) => value.as_bool()?,
+    };
+    if !autotests {
         return None;
     }
     let inferred = match relative
@@ -1043,6 +1059,31 @@ pub(crate) fn integration_target_name(
         return None;
     }
     Some(inferred.to_string())
+}
+
+/// The package's effective edition year: its own `edition`, or the workspace
+/// root's `[workspace.package] edition` for `edition.workspace = true`, or 2015
+/// when absent. `None` when it cannot be resolved.
+fn package_edition(root: &Path, manifest: &Path, package: &toml::Table) -> Option<u32> {
+    let parse = |value: &toml::Value| value.as_str()?.trim().parse::<u32>().ok();
+    match package.get("edition") {
+        None => Some(2015),
+        Some(value @ toml::Value::String(_)) => parse(value),
+        Some(toml::Value::Table(table)) if table.get("workspace")?.as_bool()? => {
+            let start = manifest.parent().unwrap_or(Path::new(""));
+            start.ancestors().skip(1).find_map(|dir| {
+                let text = std::fs::read_to_string(root.join(dir).join("Cargo.toml")).ok()?;
+                let parsed = text.parse::<toml::Table>().ok()?;
+                let workspace = parsed.get("workspace")?.as_table()?;
+                workspace
+                    .get("package")?
+                    .as_table()?
+                    .get("edition")
+                    .and_then(parse)
+            })
+        }
+        Some(_) => None,
+    }
 }
 
 /// `/`-joined normal components of a relative path; `None` for `..`, roots
@@ -1373,7 +1414,14 @@ mod tests {
         let got = |tail: &str, file: &str| -> Result<Option<String>, String> {
             std::fs::write(
                 root.join("pkg/Cargo.toml"),
-                format!("[package]\nname = \"pkg\"\n{tail}"),
+                format!(
+                    "[package]\nname = \"pkg\"\n{}{tail}",
+                    if tail.contains("edition") || tail.starts_with("[[test]]\nname = \"other\"") {
+                        ""
+                    } else {
+                        "edition = \"2021\"\n"
+                    }
+                ),
             )
             .map_err(|error| error.to_string())?;
             Ok(integration_target_name(
@@ -1417,6 +1465,43 @@ mod tests {
             // a target that needs features is not runnable by a bare command
             let gated = format!("{renamed}required-features = [\"extra\"]\n");
             assert_eq!(got(&gated, "pkg/tests/discount.rs")?, None);
+            // `harness = false` is not run by a plain test command
+            let no_harness = format!("{renamed}harness = false\n");
+            assert_eq!(got(&no_harness, "pkg/tests/discount.rs")?, None);
+            // a pathless entry may live at tests/<name>/main.rs
+            let dir_default = "[[test]]\nname = \"grp\"\n";
+            assert_eq!(got(dir_default, "pkg/tests/grp/main.rs")?, some("grp"));
+            assert_eq!(got(dir_default, "pkg/tests/grp.rs")?, some("grp"));
+            // edition 2015: an explicit entry disables legacy auto-discovery
+            let other = "[[test]]\nname = \"other\"\npath = \"tests/other.rs\"\n";
+            let e2015 = format!("edition = \"2015\"\n{other}");
+            assert_eq!(got(&e2015, "pkg/tests/discount.rs")?, None);
+            assert_eq!(got(other, "pkg/tests/discount.rs")?, None);
+            // ...unless autotests = true is explicit
+            let e2015_on = format!("edition = \"2015\"\nautotests = true\n{other}");
+            assert_eq!(got(&e2015_on, "pkg/tests/discount.rs")?, some("discount"));
+            // 2015 with no explicit entry still auto-discovers
+            let bare = got("edition = \"2015\"\n", "pkg/tests/discount.rs")?;
+            assert_eq!(bare, some("discount"));
+            // 2018+ with an explicit entry still auto-discovers
+            let e2018 = format!("edition = \"2018\"\n{other}");
+            assert_eq!(got(&e2018, "pkg/tests/discount.rs")?, some("discount"));
+            // inherited edition comes from the workspace root
+            let inherit = format!("edition.workspace = true\n{other}");
+            let ws = |edition: &str| {
+                std::fs::write(
+                    root.join("Cargo.toml"),
+                    format!("[workspace]\nmembers = [\"pkg\"]\n[workspace.package]\nedition = \"{edition}\"\n"),
+                )
+                .map_err(|error| error.to_string())
+            };
+            ws("2021")?;
+            assert_eq!(got(&inherit, "pkg/tests/discount.rs")?, some("discount"));
+            ws("2015")?;
+            assert_eq!(got(&inherit, "pkg/tests/discount.rs")?, None);
+            // unresolvable inheritance fails closed
+            std::fs::remove_file(root.join("Cargo.toml")).map_err(|error| error.to_string())?;
+            assert_eq!(got(&inherit, "pkg/tests/discount.rs")?, None);
             Ok::<(), String>(())
         })();
         let _ = std::fs::remove_dir_all(&root);
