@@ -56,6 +56,9 @@ fn failed_write_and_identical_retry(derived_ledger: bool) -> TestResult {
         "first-pr-packet-write"
     })?;
     let reports = fixture.0.join("target/ripr/reports");
+    // Keep preflight's directory-existence observation identical for the
+    // complete setup report, failed write, and repaired retry.
+    std::fs::create_dir_all(&reports)?;
     let ledger = reports.join("gap-decision-ledger.json");
     let mut args = vec![
         "first-pr".to_string(),
