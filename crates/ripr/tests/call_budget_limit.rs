@@ -67,6 +67,14 @@ struct TempRepo {
 
 impl TempRepo {
     fn create(lib: &str, extra: Option<(&str, &str)>) -> Result<Self, String> {
+        Self::create_with_diff(lib, extra, GUARD_DIFF)
+    }
+
+    fn create_with_diff(
+        lib: &str,
+        extra: Option<(&str, &str)>,
+        diff: &str,
+    ) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "ripr-call-budget-limit-{}-{}",
@@ -90,7 +98,7 @@ impl TempRepo {
             }
             std::fs::write(&file, text).map_err(|error| format!("write {path} failed: {error}"))?;
         }
-        std::fs::write(root.join("diff.patch"), GUARD_DIFF)
+        std::fs::write(root.join("diff.patch"), diff)
             .map_err(|error| format!("write diff failed: {error}"))?;
         Ok(Self { root })
     }
@@ -243,5 +251,84 @@ fn a_saturated_test_past_the_related_row_cap_still_withholds_the_gap() -> Result
     );
     assert_eq!(finding.class, ExposureClass::StaticUnknown);
     assert_eq!(limit(&finding), Some("rust_call_fact_budget"));
+    Ok(())
+}
+
+/// A slice owner whose `== 0` guard changed; a table of slices the test loops
+/// over leaves infection unknown even without saturation.
+const SLICE_OWNER: &str = "pub fn weight(samples: &[u64]) -> u64 {
+    if samples.len() == 0 { return 0; }
+    samples[0]
+}
+";
+
+const SLICE_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,3 @@
+ pub fn weight(samples: &[u64]) -> u64 {
+-    if samples.is_empty() { return 0; }
++    if samples.len() == 0 { return 0; }
+     samples[0]
+";
+
+#[test]
+fn an_already_unknown_finding_names_the_budget_and_drops_call_derived_absence() -> Result<(), String>
+{
+    let helpers: String = (0..400).map(|i| format!("fn h{i}() {{}}\n")).collect();
+    let build = |noise: usize| {
+        let calls: String = (0..noise).map(|i| format!("h{i}();")).collect();
+        format!(
+            "{SLICE_OWNER}#[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn checks() {{\n        {calls}\n        let samples: [&[u64]; 2] = [&[5], &[6]]; for s in samples {{ let _ = weight(s); }}\n    }}\n}}\n{helpers}"
+        )
+    };
+    let finding_of = |lib: String| -> Result<Finding, String> {
+        let repo = TempRepo::create_with_diff(&lib, None, SLICE_DIFF)?;
+        let findings = repo.findings()?;
+        findings
+            .into_iter()
+            .find(|finding| finding.probe.location.line == 2)
+            .ok_or_else(|| "premise: a finding on the changed guard".to_string())
+    };
+    // Control: the table alone already leaves infection unknown, with no
+    // budget reason, so the next assertions read what saturation changes.
+    let control = finding_of(build(10))?;
+    assert_eq!(
+        control.class,
+        ExposureClass::InfectionUnknown,
+        "{control:?}"
+    );
+    assert_eq!(limit(&control), None);
+    let finding = finding_of(build(300))?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::InfectionUnknown,
+        "{finding:?}"
+    );
+    assert_eq!(limit(&finding), Some("rust_call_fact_budget"));
+    for line in &finding.missing {
+        assert!(
+            !line.starts_with("No ") && !line.starts_with("Missing discriminator value"),
+            "call-derived absence line remained: {line}"
+        );
+    }
+    assert!(finding.activation.missing_discriminators.is_empty());
+    assert!(
+        finding
+            .recommended_next_step
+            .as_deref()
+            .is_none_or(|step| !step.contains("Trace the related test input")),
+        "{:?}",
+        finding.recommended_next_step
+    );
+    for related in &finding.related_tests {
+        assert!(
+            !matches!(
+                related.miss.map(|miss| miss.as_str()),
+                Some("no_call_path" | "no_assertion" | "missing_input" | "assertion_not_observing")
+            ),
+            "{related:?}"
+        );
+    }
     Ok(())
 }

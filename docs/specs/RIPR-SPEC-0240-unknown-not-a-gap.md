@@ -217,7 +217,7 @@ absence claims. An `infection_unknown`, `propagation_unknown` or
 `static_unknown` finding keeps its class and gains the reason. `exposed`,
 `no_static_path`, a finding with a producer-named limit, and a finding whose
 related tests have no saturated line are untouched. Exactly 256 is
-conservatively limited: it does not prove a call was dropped. Saturation is read over every matched related test before the eight-row render cap trims the rows, and a saturated test's `no_call_path` / `no_assertion` row misses read as `observation_unconfirmed`. An already-unknown finding drops its "no relevant oracle" and "no strong discriminator" absence lines. The reason never
+conservatively limited: it does not prove a call was dropped. Saturation is read over every matched related test before the eight-row render cap trims the rows, and a saturated test's `no_call_path`, `no_assertion`, `missing_input` and `assertion_not_observing` row misses read as `observation_unconfirmed` (`weak_assertion` and `missing_exact_assertion` describe an assertion ripr read and stay). An already-unknown finding drops its call-derived absence lines (no oracle, no discriminator, no exact variant, no boundary input, missing-discriminator values), clears its missing discriminators and replaces its next step, as a withheld gap does. The reason never
 raises a class. Scope: the finding surfaces (`check`, JSON, human, SARIF, LSP);
 the `repo-exposure-json` seam reading keeps its own generic limitations and
 non-actionable canonical item and does not yet carry the typed reason.
@@ -316,7 +316,8 @@ Integration: `crates/ripr/tests/owner_pin_execution.rs`
 (`a_saturated_related_test_line_withholds_the_gap_under_the_budget_reason`,
 `saturation_that_does_not_limit_the_proof_keeps_the_finding`,
 `an_independently_established_positive_keeps_its_class`,
-`a_saturated_test_past_the_related_row_cap_still_withholds_the_gap`), plus the unit test
+`a_saturated_test_past_the_related_row_cap_still_withholds_the_gap`,
+`an_already_unknown_finding_names_the_budget_and_drops_call_derived_absence`), plus the unit test
 `gap_admission.rs::tests::a_related_test_line_at_the_call_budget_withholds_a_gap_and_names_an_unknown`.
 
 Fixtures: `gap_withheld_feature_gated_test`, `gap_kept_ignored_test`.

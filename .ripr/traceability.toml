@@ -16281,6 +16281,7 @@ tests = [
   "crates/ripr/tests/call_budget_limit.rs::saturation_that_does_not_limit_the_proof_keeps_the_finding",
   "crates/ripr/tests/call_budget_limit.rs::an_independently_established_positive_keeps_its_class",
   "crates/ripr/tests/call_budget_limit.rs::a_saturated_test_past_the_related_row_cap_still_withholds_the_gap",
+  "crates/ripr/tests/call_budget_limit.rs::an_already_unknown_finding_names_the_budget_and_drops_call_derived_absence",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::analyzer_limit_refusals_are_limits_of_ripr_reading",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::refusals_that_can_keep_an_assertion_from_running_are_not_limits",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_outcome_settling_attribute_is_the_refusal_wherever_it_sits",

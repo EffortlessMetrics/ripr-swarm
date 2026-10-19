@@ -712,6 +712,14 @@ fn names(text: &str, ident: &str) -> bool {
 pub(in crate::analysis) const CALL_BUDGET_SATURATED: &str =
     "gap_admission: a related test line is at the call-fact budget";
 
+/// Absence lines `missing_evidence` derives from a test's calls and inputs.
+const BUDGET_ABSENCE_LINES: [&str; 4] = [
+    "No relevant oracle was detected",
+    "No strong discriminator was detected",
+    "No exact error variant discriminator was detected",
+    "No detected boundary input for the changed predicate",
+];
+
 const BUDGET_LIMIT: StaticLimitKind = StaticLimitKind::RustCallFactBudget;
 const BUDGET_FIRST_UNRESOLVED_EDGE: &str =
     "whether a related test line holds more calls than the per-line call-fact budget kept";
@@ -779,7 +787,10 @@ pub(in crate::analysis) fn withhold_call_budget_gap(
     if saturated.is_empty() && !marked {
         return false;
     }
-    // A saturated test's "no call path" / "no assertion" rows are absence
+    // A saturated test's absence rows (no call path, no assertion, no input
+    // reaching the value, no observing assertion) are claims over its calls
+    // or assertion helpers. `weak_assertion` and `missing_exact_assertion`
+    // describe an assertion ripr did read, so they stay. Absence rows are
     // claims over its calls; a dropped call may be the owner call or the
     // assertion helper, so they read as unconfirmed, not as established.
     for related in &mut finding.related_tests {
@@ -792,7 +803,12 @@ pub(in crate::analysis) fn withhold_call_budget_gap(
         if is_saturated
             && matches!(
                 related.miss,
-                Some(RelatedTestMiss::NoCallPath | RelatedTestMiss::NoAssertion)
+                Some(
+                    RelatedTestMiss::NoCallPath
+                        | RelatedTestMiss::NoAssertion
+                        | RelatedTestMiss::MissingInput
+                        | RelatedTestMiss::AssertionNotObserving
+                )
             )
         {
             related.miss = Some(RelatedTestMiss::ObservationUnconfirmed);
@@ -818,19 +834,28 @@ pub(in crate::analysis) fn withhold_call_budget_gap(
         return true;
     }
     finding.static_limit_kind = Some(BUDGET_LIMIT);
-    // Drop only the oracle/discriminator absence lines: they are claims over
-    // the test's calls. Keep the finding's other missing evidence, and name
-    // the limit in their place.
+    // Drop the absence claims over the test's calls, as `withhold_gap` does
+    // for a gap: no oracle, no discriminator, no exact variant, no boundary
+    // input (a dropped call such as `row(99)` could be the input), and the
+    // missing-discriminator values and prescription built from them. The
+    // finding's other missing evidence stays; the limit takes their place.
     let before_missing = finding.missing.len();
     finding.missing.retain(|line| {
-        line != "No relevant oracle was detected" && line != "No strong discriminator was detected"
+        !BUDGET_ABSENCE_LINES.contains(&line.as_str())
+            && !line.starts_with(MISSING_DISCRIMINATOR_VALUE_PREFIX)
     });
-    if finding.missing.len() != before_missing {
+    let had_discriminators = !finding.activation.missing_discriminators.is_empty();
+    finding.activation.missing_discriminators.clear();
+    if finding.missing.len() != before_missing || had_discriminators {
         finding.missing.push(
             BUDGET_LIMIT
                 .describe_for_family(&finding.probe.family)
                 .into_owned(),
         );
+        finding.recommended_next_step = Some(format!(
+            "{subject} has a line with {} distinct calls, the per-line call budget, so ripr may not see every call or input there. Split that line or check the test directly; add a test only if none checks the change.",
+            crate::analysis::extract::MAX_CALL_FACTS_PER_LINE
+        ));
     }
     finding.evidence.extend([
         format!(
@@ -2082,8 +2107,13 @@ fn plain() { row(100); }
                 finding.missing = vec![
                     "No relevant oracle was detected".to_string(),
                     "No strong discriminator was detected".to_string(),
+                    "No exact error variant discriminator was detected".to_string(),
+                    "No detected boundary input for the changed predicate".to_string(),
+                    format!("{MISSING_DISCRIMINATOR_VALUE_PREFIX}n == 100"),
                     "keep this unrelated line".to_string(),
                 ];
+                finding.recommended_next_step = Some("Add a test with input n == 100".to_string());
+                assert!(!finding.activation.missing_discriminators.is_empty());
                 finding.related_tests[0].miss = Some(RelatedTestMiss::NoAssertion);
                 assert!(withhold_call_budget_gap(&mut finding, &index), "{calls}");
                 assert_eq!(finding.class, class);
@@ -2100,9 +2130,36 @@ fn plain() { row(100); }
                 );
                 assert!(finding.missing.iter().all(|line| !line.starts_with("No ")));
                 assert!(finding.missing.iter().any(|line| line.contains("per line")));
+                assert!(finding.activation.missing_discriminators.is_empty());
+                assert!(
+                    finding
+                        .recommended_next_step
+                        .as_deref()
+                        .is_some_and(|step| step.contains("per-line call budget")
+                            && !step.contains("n == 100"))
+                );
+                for call_derived in [
+                    RelatedTestMiss::NoCallPath,
+                    RelatedTestMiss::NoAssertion,
+                    RelatedTestMiss::MissingInput,
+                    RelatedTestMiss::AssertionNotObserving,
+                ] {
+                    let mut again = finding_for(class.clone(), &related);
+                    again.related_tests[0].miss = Some(call_derived);
+                    assert!(withhold_call_budget_gap(&mut again, &index));
+                    assert_eq!(
+                        again.related_tests[0].miss,
+                        Some(RelatedTestMiss::ObservationUnconfirmed),
+                        "{call_derived:?}"
+                    );
+                }
+                // An assertion ripr read keeps its strength miss.
+                let mut weak = finding_for(class.clone(), &related);
+                weak.related_tests[0].miss = Some(RelatedTestMiss::WeakAssertion);
+                assert!(withhold_call_budget_gap(&mut weak, &index));
                 assert_eq!(
-                    finding.related_tests[0].miss,
-                    Some(RelatedTestMiss::ObservationUnconfirmed)
+                    weak.related_tests[0].miss,
+                    Some(RelatedTestMiss::WeakAssertion)
                 );
             }
             // A positive, an absent path and a producer-named limit are left
