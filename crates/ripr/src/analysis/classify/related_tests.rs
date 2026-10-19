@@ -10,6 +10,7 @@
 use super::super::rust_index::{
     FunctionSummary, RustIndex, TestSummary, extract_identifier_tokens,
 };
+use super::text::is_rust_whitespace;
 use crate::analysis::extract::{
     ShadowAuthority, fact_body_defines_callee_fn, fact_body_let_shadow_line,
     mask_comments_and_strings, test_body_defines_callee_fn, test_body_let_shadow_line,
@@ -2564,11 +2565,7 @@ fn skip_annotation_generic_args(bytes: &[u8], open: usize) -> Option<usize> {
             b'(' => groups.push(b')'),
             b'[' => groups.push(b']'),
             b'{' => groups.push(b'}'),
-            b')' | b']' | b'}' => {
-                if groups.pop() != Some(*byte) {
-                    return None;
-                }
-            }
+            b')' | b']' | b'}' if groups.pop() != Some(*byte) => return None,
             b'<' if groups.is_empty() => depth += 1,
             b'>' if groups.is_empty() && bytes.get(open + offset - 1) != Some(&b'-') => {
                 depth = depth.saturating_sub(1);
@@ -3008,12 +3005,16 @@ fn bracketed_expr_has_type(
             whole = true;
             continue;
         }
-        if (before > 0 && bytes[before - 1] == b'.')
-            || qualified_head_prefix(&text[..before])
+        // Rust whitespace includes NEL, line separators and direction marks.
+        // Keep a qualifier visible across all of them without changing the
+        // separate parenthesis/call checks above.
+        let prefix = text[..start].trim_end_matches(is_rust_whitespace);
+        if prefix.ends_with('.')
+            || qualified_head_prefix(prefix)
             || text[..start]
                 .chars()
                 .next_back()
-                .is_some_and(|ch| !ch.is_ascii() && !ch.is_whitespace())
+                .is_some_and(|ch| !ch.is_ascii() && !is_rust_whitespace(ch))
         {
             return false;
         }
@@ -9929,6 +9930,26 @@ let r = try_parse_summary(\"x\");",
                 !method_call_resolves_to_impl(&summary, "build", "Site", Some("Render")),
                 "a compact Site name cannot identify the qualified receiver: {body}"
             );
+        }
+    }
+
+    #[test]
+    fn rust_source_whitespace_cannot_hide_receiver_qualification() {
+        for whitespace in ['\u{0085}', '\u{200E}', '\u{200F}', '\u{2028}', '\u{2029}'] {
+            for initializer in ["Site { langs: 1 }", "Site(1)"] {
+                let body = format!("foreign::{whitespace}{initializer}.build();");
+                let summary = test("tests/site.rs", "qualified_whitespace", &body);
+                assert!(
+                    !method_call_resolves_to_impl_type(&summary, "build", "Site"),
+                    "Rust whitespace erased the qualifier: {body:?}"
+                );
+                let body = format!("return{whitespace}{initializer}.build();");
+                let summary = test("tests/site.rs", "bare_whitespace", &body);
+                assert!(
+                    method_call_resolves_to_impl_type(&summary, "build", "Site"),
+                    "Rust whitespace hid a bare receiver: {body:?}"
+                );
+            }
         }
     }
 

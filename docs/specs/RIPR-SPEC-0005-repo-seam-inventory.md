@@ -76,7 +76,8 @@ When competing methods need receiver identity, a compact impl type name does
 not establish the module of a qualified initializer or type annotation
 (#8782). `foreign::Type { .. }`, `foreign::Type(..)`,
 `foreign::Type::new(..)` and `let x: foreign::Type = ..` remain unresolved
-in that matcher. Whitespace and raw identifiers cannot erase the qualifier.
+in that matcher. Rust lexical whitespace, including non-ASCII line separators
+and direction marks, and raw identifiers cannot erase the qualifier.
 Bare type heads and enum variants retain their existing bounded handling;
 an independent supported local call can still establish the relation.
 Bare generic annotations retain function-pointer, associated-type and

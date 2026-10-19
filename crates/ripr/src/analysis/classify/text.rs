@@ -14,4 +14,5 @@ pub(in crate::analysis) use error_variant::{
     variant_carries_payload,
 };
 pub(in crate::analysis) use variants::{enum_variant_values, path_value_is_constant};
+pub(super) use wildcard::is_rust_whitespace;
 pub(in crate::analysis) use wildcard::is_wildcard_discard_binding;

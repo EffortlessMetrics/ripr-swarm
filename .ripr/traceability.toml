@@ -451,6 +451,7 @@ name = "repo seam inventory and test grip"
 spec = "docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md"
 tests = [
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::qualified_receiver_initializers_cannot_resolve_from_a_compact_type_name",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::rust_source_whitespace_cannot_hide_receiver_qualification",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::an_independent_bare_receiver_still_resolves_beside_a_foreign_call",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::bare_generic_type_annotations_keep_receiver_identity",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::annotation_compatibility_does_not_expand_initializer_admission",
