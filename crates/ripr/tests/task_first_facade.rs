@@ -3675,6 +3675,66 @@ fn member_selector_shadowed_by_a_root_package_file_is_refused() -> Result<(), St
             "{}",
             stderr_text(&pinned)
         );
+        if member_has_gap {
+            assert_exit(&pinned, 0, "`--root .` explains the member's own finding");
+            assert!(
+                stdout_text(&pinned).contains("src/lib.rs:2")
+                    && !stdout_text(&pinned).contains("pkg/"),
+                "{}",
+                stdout_text(&pinned)
+            );
+        } else {
+            assert_ne!(pinned.status.code(), Some(0), "member has no finding");
+        }
     }
+    Ok(())
+}
+
+/// #8872 review: the `--diff` replay arm re-anchors a selector whose file the
+/// working tree lacks; it must still refuse when a proper suffix of the
+/// anchored path names a real root file (`crates/pkg/src/lib.rs` vs the root
+/// package directory `pkg/src/lib.rs`).
+#[cfg(unix)]
+#[test]
+fn member_explain_replay_anchor_shadowed_by_a_root_directory_is_refused() -> Result<(), String> {
+    let fixture = Fixture::dir("member-replay-shadow")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let member = outer.join("crates/pkg");
+    let shadow = outer.join("pkg");
+    for (dir, name) in [(&member, "member_pkg"), (&shadow, "shadow_pkg")] {
+        std::fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"),
+        )
+        .map_err(|e| e.to_string())?;
+        std::fs::write(dir.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/pkg\", \"pkg\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    init_repo(&outer)?;
+    run_git(&outer, &["add", "."])?;
+    git_commit(&outer, "member and root directory share a suffix")?;
+    weaken_boundary_predicate(&member)?;
+    weaken_boundary_predicate(&shadow)?;
+    let patch = outer.join("both.patch");
+    std::fs::write(&patch, run_git(&outer, &["diff"])?).map_err(|e| e.to_string())?;
+    std::fs::remove_file(member.join("src/lib.rs")).map_err(|e| e.to_string())?;
+    let patch_arg = patch.to_string_lossy().into_owned();
+    let output = run_ripr(&member, &["explain", "--diff", &patch_arg, "src/lib.rs:2"])?;
+    assert_ne!(output.status.code(), Some(0), "{}", stderr_text(&output));
+    assert!(
+        stderr_text(&output).contains("also matches the workspace-root file"),
+        "{}",
+        stderr_text(&output)
+    );
+    assert!(
+        !stdout_text(&output).contains("pkg/src/lib.rs"),
+        "{}",
+        stdout_text(&output)
+    );
     Ok(())
 }

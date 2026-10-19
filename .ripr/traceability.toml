@@ -1254,6 +1254,7 @@ tests = [
   "crates/ripr/tests/task_first_facade.rs::member_rerun_missing_selector_matches_the_explicit_root_json_report",
   "crates/ripr/tests/task_first_facade.rs::member_explain_diff_replay_selector_never_reaches_a_sibling_finding",
   "crates/ripr/tests/task_first_facade.rs::member_selector_shadowed_by_a_root_package_file_is_refused",
+  "crates/ripr/tests/task_first_facade.rs::member_explain_replay_anchor_shadowed_by_a_root_directory_is_refused",
   "crates/ripr/tests/task_first_facade.rs::advanced_agent_repair_unbindable_selector_exits_2_on_both_routes",
   "crates/ripr/src/config.rs::tests::generated_init_config_is_conservative_and_parseable",
   "crates/ripr/src/config.rs::tests::generated_init_config_matches_checked_in_example",

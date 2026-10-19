@@ -41,6 +41,11 @@ repair-eligible seam — repair starts the before phase for that exact
 subject. A cross-namespace ID the current seams no longer map refuses with
 the recovery route instead of guessing a seam.
 
+Run from a workspace member, a `file:line` item is bound to that member and
+is refused (fail closed) when a workspace-root file with the same path suffix
+exists, even if the root has no finding there; use `--root .` or a seam or
+gap ID instead.
+
 A successful start prints the before-phase summary and the compact repair
 card for the seam. If the card cannot render after the start published,
 repair refuses with exit 3 and empty stdout, naming the retained attempt

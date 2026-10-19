@@ -322,7 +322,11 @@ Usage: ripr agent repair [--root PATH] [--store PATH] --seam-id ID --phase befor
 Options:
   --root PATH          Workspace root. Defaults to the current directory, then
                        walks up to the enclosing workspace or package, or the git
-                       top level; `--root .` pins this directory.
+                       top level; `--root .` pins this directory. A member-
+                       relative `file:line` --seam-id is refused when a
+                       workspace-root file with the same path suffix exists,
+                       even without a root finding there; use `--root .` or
+                       a seam or gap ID.
   --store PATH         Explicit repair-attempt store, resolved against --root.
                        Defaults to `target/ripr/repair-attempts`. Missing
                        explicit stores do not fall back to the default.

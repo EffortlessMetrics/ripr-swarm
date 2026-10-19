@@ -346,7 +346,10 @@ pub(super) fn bind_member_selector_item(
 pub(super) fn refuse_root_shadowed_selector(root: &Path, bound: &str) -> Result<(), String> {
     for (index, _) in bound.match_indices('/') {
         let suffix = &bound[index + 1..];
-        if !suffix.is_empty() && root.join(suffix).is_file() {
+        if suffix.is_empty() || suffix.split('/').any(|part| part == "..") {
+            continue;
+        }
+        if root.join(suffix).is_file() {
             return Err(format!(
                 "`{bound}` also matches the workspace-root file `{suffix}` by path suffix, and a file:line selector cannot tell them apart; pass `--root .` to analyze this directory alone, or select the gap by its seam or gap ID"
             ));

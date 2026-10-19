@@ -451,7 +451,10 @@ Options:
   --root PATH  Workspace root. Defaults to the current directory, then
                walks up to the enclosing workspace or package, or the git
                top level; `--root .` pins this directory. A member-relative
-               `file:line` selector binds to the directory you ran from (with
+               `file:line` selector binds to the directory you ran from and
+               is refused when a workspace-root file with the same path
+               suffix exists, even without a root finding there (use
+               `--root .` or a finding ID; with
                --from or --diff, a selector naming no file is anchored to that
                directory).
   --quiet      Suppress analysis progress and heartbeats on stderr, like
