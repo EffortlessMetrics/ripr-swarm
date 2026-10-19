@@ -116,7 +116,9 @@ coordinate-stability shapes plus the content-addressed-id guard.
 the Perl rule: only an on-disk source with an added line inside the change
 is `candidate_current`;
 `perl_finding_through_a_symlink_out_of_the_root_stays_unresolved` pins that a
-source reached through a symlink out of the root is not. The
+source reached through a symlink out of the root is not;
+`perl_changed_file_count_ignores_packet_changes_in_untouched_files` pins that
+the changed-file count includes only files the diff adds a line to. The
 re-blessed golden corpus (176 fixtures) carries the field on every
 finding with no other behavioral delta.
 
