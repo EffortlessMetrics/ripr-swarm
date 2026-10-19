@@ -124,9 +124,23 @@ receipt strength, and currentness as separate facts:
   manifest's own limitations/non-claims, and the store resolver's
   non-claims.
 
-The command remains read-only end to end: it runs no analysis, executes
-nothing a returned route names, writes no file, and introduces no
-execution or mutation authority.
+- A restart or fresh-start route is named only when the shared repair
+  admission gate (`repair_refusal_reason`, the gate `ripr repair` and
+  `ripr agent repair --phase before` apply) admits the seam (#8766). When it
+  refuses the seam, for example `repair route not ready` after the input is
+  covered but the producer-owned discriminator fact is missing, `next_action`
+  is absent, the canonical decision does not recommend a restart, and the
+  claim boundary (selected attempt) or a `repair_start_withheld` warning
+  (inventory) states that the remaining work is strengthening the oracle of
+  the named related test by hand. `ripr continue` applies the same gate to
+  its start-fresh tails. When the gate cannot decide (unreadable config,
+  truncated inventory, seam no longer in the inventory) the recorded route is
+  kept, because the start re-checks admission itself.
+
+The command remains read-only end to end: it executes nothing a returned
+route names, writes no file, and introduces no execution or mutation
+authority. Its only analysis is the seam-eligibility re-check above, run
+solely before a restart route would be named.
 
 ## Required Evidence
 
@@ -198,6 +212,8 @@ execution or mutation authority.
 - `crates/ripr/tests/cli_smoke.rs::agent_status_attempt_never_reconstructs_a_tampered_result`
 - `crates/ripr/tests/cli_smoke.rs::agent_status_attempt_reports_legacy_manifest_at_compatibility_strength`
 - `crates/ripr/tests/cli_help_hierarchy.rs::agent_status_help_names_the_selected_store_and_exact_attempt_selection`
+- `crates/ripr/tests/task_first_facade.rs::status_and_continue_do_not_offer_a_start_the_repair_gate_refuses`
+- `crates/ripr/tests/task_first_facade.rs::status_keeps_the_restart_when_the_repair_gate_admits_the_seam`
 
 ## Implementation Mapping
 

@@ -19,6 +19,9 @@ use crate::app::repair_attempt::{
     load_repair_attempt_manifest_from, quoted_store_flag, repair_attempt_head_reading,
     repair_attempt_state_label, resolve_store, validate_issued_receipt_evidence,
 };
+use crate::app::task_first::{
+    RepairStartRefusal, repair_start_refusal, repair_start_withheld_note,
+};
 use crate::domain::{
     CanonicalNextActionV1, NextActionAttemptView, NextActionClass, NextActionCurrentness,
     NextActionDiffSource, NextActionInput, NextActionProducer, current_command_platform,
@@ -412,6 +415,7 @@ fn inspect_repair_attempts(
     }
     if trusted {
         warnings.extend(finished_attempt_warnings(
+            root,
             root_display,
             &attempts,
             current_head.as_deref(),
@@ -692,6 +696,7 @@ fn status_after_disposition(
 /// each finished attempt whose evidence describes another HEAD is stale, and
 /// each attempt whose receipt does not report improved grip says why.
 fn finished_attempt_warnings(
+    root: &Path,
     root_display: &str,
     attempts: &[AgentStatusRepairAttempt],
     current_head: Option<&str>,
@@ -735,11 +740,28 @@ fn finished_attempt_warnings(
                     attempt.seam_id,
                     unconfirmed_receipt_reason(attempt),
                     match &attempt.receipt {
-                        AgentStatusAttemptReceipt::Superseded { .. } => format!(
-                            ". If seam `{}` still has its gap open, start a new attempt with `{}`",
-                            attempt.seam_id,
-                            new_repair_attempt_command(root_display, &attempt.seam_id, store_flag)
-                        ),
+                        // #8766: the start is named only when the repair gate admits it.
+                        AgentStatusAttemptReceipt::Superseded { .. } => {
+                            match repair_start_refusal(root, &attempt.seam_id) {
+                                Some(refusal) => format!(
+                                    ". {}",
+                                    repair_start_withheld_note(
+                                        root_display,
+                                        &attempt.seam_id,
+                                        &refusal
+                                    )
+                                ),
+                                None => format!(
+                                    ". If seam `{}` still has its gap open, start a new attempt with `{}`",
+                                    attempt.seam_id,
+                                    new_repair_attempt_command(
+                                        root_display,
+                                        &attempt.seam_id,
+                                        store_flag
+                                    )
+                                ),
+                            }
+                        }
                         _ => String::new(),
                     },
                     match &attempt.last_after_refusal {
@@ -800,6 +822,20 @@ fn unconfirmed_receipt_reason(attempt: &AgentStatusRepairAttempt) -> String {
 
 /// The documented start of the repair transaction. It creates every artifact
 /// it needs, so it never depends on a workflow directory already existing.
+/// The warning that replaces a refused repair-start command (#8766).
+fn repair_start_withheld_warning(
+    root_display: &str,
+    seam_id: &str,
+    refusal: &RepairStartRefusal,
+    artifact: &str,
+) -> AgentStatusWarning {
+    AgentStatusWarning {
+        kind: "repair_start_withheld".to_string(),
+        artifact: artifact.to_string(),
+        message: repair_start_withheld_note(root_display, seam_id, refusal),
+    }
+}
+
 fn new_repair_attempt_command(root_display: &str, seam_id: &str, store_flag: &str) -> String {
     format!(
         "ripr agent repair --root {}{store_flag} --seam-id {} --phase before",
@@ -1047,6 +1083,16 @@ fn select_next_command(
                 })
                 .collect::<Vec<_>>()
                 .join("; ");
+            // #8766: never print a start the same build refuses.
+            if let Some(refusal) = repair_start_refusal(root, seam_id) {
+                warnings.push(repair_start_withheld_warning(
+                    root_display,
+                    seam_id,
+                    &refusal,
+                    store.locator,
+                ));
+                return None;
+            }
             return Some(AgentStatusCommand {
                 step: "repair_attempt_before".to_string(),
                 artifact: store.locator.to_string(),
@@ -1071,9 +1117,26 @@ fn select_next_command(
             });
         }
         (Some((first, _)), second) => {
-            let mut seams = vec![first];
-            seams.extend(second.map(|(seam_id, _)| seam_id));
-            seams.extend(open_seams.map(|(seam_id, _)| seam_id));
+            let mut all_seams = vec![first];
+            all_seams.extend(second.map(|(seam_id, _)| seam_id));
+            all_seams.extend(open_seams.map(|(seam_id, _)| seam_id));
+            // #8766: a seam the repair gate refuses is named by its own
+            // warning instead of listed with a start command.
+            let mut seams = Vec::new();
+            for seam_id in all_seams {
+                match repair_start_refusal(root, seam_id) {
+                    Some(refusal) => warnings.push(repair_start_withheld_warning(
+                        root_display,
+                        seam_id,
+                        &refusal,
+                        store.locator,
+                    )),
+                    None => seams.push(seam_id),
+                }
+            }
+            if seams.is_empty() {
+                return None;
+            }
             warnings.push(AgentStatusWarning {
                 kind: "multiple_open_repair_seams".to_string(),
                 artifact: store.locator.to_string(),
@@ -1566,6 +1629,16 @@ fn legacy_next_command(
         .parent()
         .is_none_or(|parent| root.join(parent).is_dir());
     if !target_directory_exists {
+        // #8766: never print a start the same build refuses.
+        if let Some(refusal) = repair_start_refusal(root, &seam.seam_id) {
+            warnings.push(repair_start_withheld_warning(
+                root_display,
+                &seam.seam_id,
+                &refusal,
+                store.locator,
+            ));
+            return None;
+        }
         return Some(AgentStatusCommand {
             step: "repair_attempt_before".to_string(),
             artifact: store.locator.to_string(),
@@ -1809,7 +1882,7 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
 
     rendered.push_str("\n## Limits\n\n");
     rendered.push_str("- Reads existing artifacts only.\n");
-    rendered.push_str("- No repo analysis is run by this command.\n");
+    rendered.push_str("- No repo analysis is run by this command, apart from the seam-eligibility re-check that guards a named repair start.\n");
     rendered.push_str("- No runtime mutation execution.\n");
     rendered.push_str("- No automatic source edits.\n");
     rendered.push_str("- No generated tests.\n");
@@ -2055,6 +2128,9 @@ pub(crate) struct SelectedAttemptStatusReading {
     /// the producer state cannot bind a subject, in which case `next_action`
     /// is `None` too.
     pub(crate) canonical_next_action: Option<CanonicalNextActionV1>,
+    /// Set when a restart would be recommended but the shared repair gate
+    /// refuses the seam (#8766): the by-hand remaining work, in prose.
+    pub(crate) restart_withheld: Option<String>,
 }
 
 /// One validated manifest's selected-attempt interpretation, shared by CLI
@@ -2086,14 +2162,27 @@ pub(crate) fn selected_attempt_status_reading(
         store_locator,
         manifest.repair_attempt_id.as_str()
     );
-    let next_action = attempt_next_action(
-        manifest,
-        &view,
-        status_class,
-        &command_root,
-        &manifest_label,
-        store_flag,
-    );
+    // #8766: a restart is recommended only when the shared repair gate
+    // admits the seam; otherwise status names the by-hand work instead.
+    let restart_withheld = if restart_recommended_for(status_class, &view) {
+        repair_start_refusal(root, &manifest.seam_id)
+            .map(|refusal| repair_start_withheld_note(&command_root, &manifest.seam_id, &refusal))
+    } else {
+        None
+    };
+    let withheld = restart_withheld.is_some();
+    let next_action = if withheld {
+        None
+    } else {
+        attempt_next_action(
+            manifest,
+            &view,
+            status_class,
+            &command_root,
+            &manifest_label,
+            store_flag,
+        )
+    };
     let canonical_next_action = canonical_next_action_for_attempt(
         manifest,
         &view,
@@ -2101,6 +2190,7 @@ pub(crate) fn selected_attempt_status_reading(
         &command_root,
         &manifest_label,
         store_flag,
+        withheld,
     )
     .ok();
     SelectedAttemptStatusReading {
@@ -2109,6 +2199,7 @@ pub(crate) fn selected_attempt_status_reading(
         status_class,
         next_action,
         canonical_next_action,
+        restart_withheld,
     }
 }
 
@@ -2163,6 +2254,7 @@ pub(crate) fn build_agent_attempt_status(
         currentness,
         next_action,
         canonical_next_action,
+        restart_withheld,
     } = selected_attempt_status_reading(
         root,
         root_argument,
@@ -2181,6 +2273,7 @@ pub(crate) fn build_agent_attempt_status(
         ATTEMPT_STATUS_READ_ONLY_NON_CLAIM.to_string(),
         "a finished result is retained static evidence; it does not establish that the proposed repair is correct or that any project test ran".to_string(),
     ];
+    claim_boundary.extend(restart_withheld);
     match status_class {
         "finished_historical" => claim_boundary.push(
             "historical validity and current applicability are reported separately: this retained result is readable but is not current proof".to_string(),
@@ -2327,6 +2420,22 @@ fn attempt_status_class(
     }
 }
 
+/// Whether this status class would recommend a fresh before phase, before the
+/// repair gate is consulted (#8766).
+fn restart_recommended_for(status_class: &str, view: &AgentStatusRepairAttempt) -> bool {
+    match status_class {
+        "prepared" | "stale" | "incomparable" | "failed" | "corrupt_or_unavailable" => true,
+        "limited" => matches!(
+            &view.receipt,
+            AgentStatusAttemptReceipt::Issued { reading, .. } if reading.leaves_gap_open()
+        ),
+        "legacy_compatibility_only" => {
+            !matches!(&view.receipt, AgentStatusAttemptReceipt::Issued { .. })
+        }
+        _ => false,
+    }
+}
+
 /// Project the status producer's canonical action for one validated
 /// attempt. Status owns the lifecycle reading (terminality, edit obligation,
 /// restart recommendation); the selector owns the class decision. Status
@@ -2341,21 +2450,12 @@ fn canonical_next_action_for_attempt(
     root_display: &str,
     manifest_label: &str,
     store_flag: &str,
+    restart_withheld: bool,
 ) -> Result<CanonicalNextActionV1, String> {
     let id = manifest.repair_attempt_id.as_str();
     let seam = manifest.seam_id.as_str();
     let restart_route = new_repair_attempt_command(root_display, seam, store_flag);
-    let restart_recommended = match status_class {
-        "prepared" | "stale" | "incomparable" | "failed" | "corrupt_or_unavailable" => true,
-        "limited" => matches!(
-            &view.receipt,
-            AgentStatusAttemptReceipt::Issued { reading, .. } if reading.leaves_gap_open()
-        ),
-        "legacy_compatibility_only" => {
-            !matches!(&view.receipt, AgentStatusAttemptReceipt::Issued { .. })
-        }
-        _ => false,
-    };
+    let restart_recommended = restart_recommended_for(status_class, view) && !restart_withheld;
     // The subject root is the caller's bound root (#3999), never the
     // manifest's recorded spelling: the before phase may have stored a
     // working-directory-relative value ("." in fixtures), while the
@@ -2451,6 +2551,7 @@ fn attempt_next_action(
         root_display,
         manifest_label,
         store_flag,
+        false,
     )
     .ok()?;
     match canonical.action_class() {
@@ -5442,6 +5543,7 @@ mod tests {
                 ".",
                 manifest_label,
                 "",
+                false,
             )
             .map_err(|error| format!("{} must project: {error}", row.status_class))?;
             if canonical.action_class() != row.dto_class {
@@ -5525,6 +5627,7 @@ mod tests {
             "/repo/checkout",
             "store/repair-attempt-01/attempt.json",
             "",
+            false,
         )?;
         if canonical.subject().root.as_str() != "/repo/checkout" {
             return Err(format!(
@@ -5547,6 +5650,7 @@ mod tests {
             ".",
             manifest_label,
             "",
+            false,
         )?;
         match canonical.stop() {
             Some(crate::domain::NextActionStop::TerminalComplete { receipt_ref })
@@ -5615,6 +5719,7 @@ mod tests {
                 ".",
                 "store/repair-attempt-01/attempt.json",
                 "",
+                false,
             )
             .ok(),
             test_run: None,

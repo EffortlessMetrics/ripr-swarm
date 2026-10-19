@@ -167,9 +167,18 @@ fn repair_refusal_reason(
 ) -> Option<String> {
     let eligibility = repair_packet_eligibility(entry);
     if !eligibility.eligible() {
-        return eligibility
-            .ineligibility
-            .map(|reason| ineligibility_label(reason).to_string());
+        return eligibility.ineligibility.map(|reason| {
+            let label = ineligibility_label(reason);
+            // #8766: an already-gripped seam has nothing left to repair;
+            // say so instead of the bare "not a headline repair target".
+            if reason == RepairPacketIneligibility::ClassNotHeadlineEligible
+                && entry.class == crate::analysis::seams::SeamGripClass::StronglyGripped
+            {
+                format!("{label}: its existing tests already grip it (exposed), so there is no gap to repair")
+            } else {
+                label.to_string()
+            }
+        });
     }
     policy.omission_reason_for_class(entry.class)
 }
@@ -379,6 +388,90 @@ pub(crate) fn resolve_repair_subject_outcome(
                 .collect(),
         )),
     }
+}
+
+/// Why one named seam may not start a repair attempt right now (#8766), as
+/// computed by the shared admission gate ([`repair_refusal_reason`]).
+pub(crate) struct RepairStartRefusal {
+    /// The gate's own label, for example "repair route not ready".
+    pub(crate) reason: String,
+    /// The related test the remaining by-hand work targets, rendered as
+    /// `name` (file:line), when the seam's evidence names one.
+    pub(crate) related_test: Option<String>,
+}
+
+/// Whether the shared repair-admission gate refuses a start for `seam_id`.
+/// `status` and `continue` call this before printing any repair-start
+/// command so they never offer a start the same build refuses (#8766), for
+/// example after the input is covered and the producer-owned discriminator
+/// fact is missing (`RouteNotReady`). It reuses [`repair_refusal_reason`], the
+/// gate `ripr repair` and `ripr agent repair --phase before` apply, and never
+/// forks a validator. Fail-open only where the gate cannot decide: an
+/// unreadable config, an unreadable or truncated inventory, or a seam the
+/// inventory no longer names return `None`, leaving the pre-existing
+/// recorded command, because the start itself re-checks admission.
+pub(crate) fn repair_start_refusal(root: &Path, seam_id: &str) -> Option<RepairStartRefusal> {
+    let config = load_for_root(root).ok()?;
+    let (classified, limit_info) =
+        crate::analysis::inventory_classified_seams_at_with_config(root, &config).ok()?;
+    if limit_info
+        .as_ref()
+        .is_some_and(|info| info.analyzed < info.total)
+    {
+        return None;
+    }
+    let entry = classified
+        .iter()
+        .find(|entry| entry.seam.id().as_str() == seam_id)?;
+    repair_start_refusal_for_entry(root, entry, AgentBriefPolicy::from_config(&config))
+}
+
+/// The gate applied to one classified seam: [`repair_refusal_reason`] plus
+/// the related test the by-hand work targets.
+fn repair_start_refusal_for_entry(
+    root: &Path,
+    entry: &crate::analysis::ClassifiedSeam,
+    policy: AgentBriefPolicy<'_>,
+) -> Option<RepairStartRefusal> {
+    let reason = repair_refusal_reason(entry, policy)?;
+    let related = entry
+        .evidence
+        .related_tests
+        .iter()
+        .find(|test| test.relation_reason == crate::domain::RelationReason::DirectOwnerCall)
+        .or_else(|| entry.evidence.related_tests.first());
+    let related_test = related.map(|test| {
+        let file = test.file.strip_prefix(root).unwrap_or(&test.file);
+        format!(
+            "`{}` ({}:{})",
+            test.test_name,
+            file.to_string_lossy().replace('\\', "/"),
+            test.line
+        )
+    });
+    Some(RepairStartRefusal {
+        reason,
+        related_test,
+    })
+}
+
+/// The prose that replaces a refused repair-start command: it states the
+/// refusal and that the remaining work is strengthening the named test's
+/// oracle by hand (#8766; automated strengthening of existing tests is #7217).
+pub(crate) fn repair_start_withheld_note(
+    root_display: &str,
+    seam_id: &str,
+    refusal: &RepairStartRefusal,
+) -> String {
+    let work = match &refusal.related_test {
+        Some(test) => format!("strengthening the oracle of the related test {test} by hand"),
+        None => "adding or strengthening a test for that seam by hand".to_string(),
+    };
+    format!(
+        "no new repair attempt is offered for seam `{seam_id}`: {} (the repair gate behind `ripr repair` and the before phase refuses it). The remaining work is {work}; then rerun `ripr check --root {}` to re-read the seam",
+        refusal.reason,
+        shell_arg(root_display)
+    )
 }
 
 /// The repair route for the one finding the default human `ripr check`
@@ -870,6 +963,109 @@ mod tests {
         missing.target_selection = RepairTargetSelection::Missing;
         assert_eq!(held_inline_target(&root, &missing), None);
         let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    fn gate_entry(
+        class: crate::analysis::seams::SeamGripClass,
+        related: Vec<crate::analysis::test_grip_evidence::RelatedTestGrip>,
+    ) -> crate::analysis::ClassifiedSeam {
+        use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
+        use crate::domain::{Confidence, StageEvidence, StageState};
+        let stage = || StageEvidence::new(StageState::Yes, Confidence::Medium, "test stage");
+        let seam = RepoSeam::new(
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            SeamKind::PredicateBoundary,
+            42,
+            88,
+            "amount >= discount_threshold",
+            RequiredDiscriminator::BoundaryValue {
+                description: "amount >= discount_threshold".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        let seam_id = seam.id().clone();
+        crate::analysis::ClassifiedSeam {
+            seam,
+            evidence: crate::analysis::test_grip_evidence::TestGripEvidence {
+                seam_id,
+                related_tests: related.into_iter().map(std::sync::Arc::new).collect(),
+                reach: stage(),
+                activate: stage(),
+                propagate: stage(),
+                observe: stage(),
+                discriminate: stage(),
+                observed_values: Vec::new(),
+                missing_discriminators: Vec::new(),
+                new_test_target: None,
+                statically_contradicted_related_tests: 0,
+            },
+            class,
+        }
+    }
+
+    fn weak_related_test() -> crate::analysis::test_grip_evidence::RelatedTestGrip {
+        crate::analysis::test_grip_evidence::RelatedTestGrip {
+            test_name: "at_threshold_runs".to_string(),
+            file: std::path::PathBuf::from("tests/pricing.rs"),
+            line: 12,
+            test_target: None,
+            oracle_kind: crate::domain::OracleKind::RelationalCheck,
+            oracle_strength: crate::domain::OracleStrength::Weak,
+            evidence_summary: "relational assertion".to_string(),
+            relation_reason: crate::domain::RelationReason::DirectOwnerCall,
+            relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
+        }
+    }
+
+    /// #8766: a weakly gripped seam whose route is not ready is refused by
+    /// the shared gate, the related test is named for the by-hand work, and
+    /// the withheld note replaces a start command. The admitted-seam control
+    /// (a restart still printed) lives in the facade integration test.
+    #[test]
+    fn route_not_ready_seam_is_refused_with_the_related_test_named() -> Result<(), String> {
+        use crate::analysis::seams::SeamGripClass;
+        let config = crate::config::RiprConfig::default();
+        let policy = AgentBriefPolicy::from_config(&config);
+        let root = Path::new("/repo");
+
+        let not_ready = gate_entry(SeamGripClass::WeaklyGripped, vec![weak_related_test()]);
+        assert!(
+            !repair_packet_eligibility(&not_ready).eligible(),
+            "precondition: the producer flip must refuse this seam"
+        );
+        let refusal = repair_start_refusal_for_entry(root, &not_ready, policy)
+            .ok_or("the shared gate must refuse a route that is not ready")?;
+        assert_eq!(refusal.reason, "repair route not ready");
+        assert_eq!(
+            refusal.related_test.as_deref(),
+            Some("`at_threshold_runs` (tests/pricing.rs:12)")
+        );
+        let note = repair_start_withheld_note("/repo", "seam-1", &refusal);
+        assert!(
+            note.contains("strengthening the oracle of the related test `at_threshold_runs`")
+                && note.contains("by hand")
+                && !note.contains("--phase before"),
+            "{note}"
+        );
+
+        // An already-gripped seam is refused with the exposed wording and,
+        // having no related test, points at adding one by hand.
+        let gripped = gate_entry(SeamGripClass::StronglyGripped, Vec::new());
+        let gripped_refusal = repair_start_refusal_for_entry(root, &gripped, policy)
+            .ok_or("an already gripped seam has no gap to repair")?;
+        assert!(
+            gripped_refusal.reason.contains("already grip it (exposed)"),
+            "{}",
+            gripped_refusal.reason
+        );
+        assert_eq!(gripped_refusal.related_test, None);
+        let no_test_note = repair_start_withheld_note("/repo", "seam-2", &gripped_refusal);
+        assert!(
+            no_test_note.contains("adding or strengthening a test for that seam by hand"),
+            "{no_test_note}"
+        );
         Ok(())
     }
 
