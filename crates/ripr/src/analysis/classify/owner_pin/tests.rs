@@ -2745,6 +2745,88 @@ fn serial_test_locks_keep_the_pin_and_other_attributes_refuse_it() {
 }
 
 #[test]
+fn a_rebound_test_attribute_refuses_the_pin_and_the_builtin_keeps_it() {
+    for items in [
+        "",
+        "use super::*;",
+        // A glob of the workspace's own crate, or of its own modules.
+        "use demo::*;",
+        "use crate::common::*;",
+        "use serial_test::serial;",
+        "use my_macros::skip_body as other_name;",
+        // An import in a function body or a sibling module binds nothing here.
+        "mod a { use my_macros::skip_body as test; }",
+        "fn helper() { use my_macros::skip_body as test; }",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{items}\n#[test]\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert_eq!(weight_admitted(&tests).len(), 1, "{tests}");
+    }
+    for items in [
+        // The issue's repro, raw and plain spellings, and a re-export.
+        "use skipper::serial as test;",
+        "use skipper::serial as r#test;",
+        "use skipper::test;",
+        "use skipper::{serial as test, other};",
+        "use std::prelude::v1::test;",
+        // A glob of a crate outside the workspace may bring one, and so may
+        // a prelude glob of std.
+        "use skipper::*;",
+        "use std::prelude::v1::*;",
+        "extern crate skipper as test;",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{items}\n#[test]\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+    // A macro-generated test's module is not in the file's text, so the
+    // file's own rebinding answers for it.
+    for (outer, refused) in [
+        ("use skipper::serial as test;", true),
+        ("extern crate skipper as test;", true),
+        ("", false),
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{outer}\nmacro_rules! generate {{\n    ($name:ident) => {{\n        #[test]\n        fn $name() {{\n            assert_eq!(weight(4), 12);\n        }}\n    }};\n}}\ngenerate!(weighs);\n"
+        );
+        let mut index = index(&[(LIB, WEIGHT_LIB), (TESTS, &tests)]);
+        crate::analysis::facts::register_macro_generated_tests_for_test(&mut index);
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.file == Path::new(TESTS));
+        let assertion = test.and_then(|test| test.assertions.first());
+        assert!(assertion.is_some(), "{tests}");
+        let (Some(test), Some(assertion)) = (test, assertion) else {
+            continue;
+        };
+        let refusal = OwnerPinSyntax::default().refusal(test, assertion, &index);
+        assert_eq!(refusal.is_some(), refused, "{tests}");
+    }
+    // `super::*` reaches the enclosing module's private imports, however
+    // many levels up.
+    let tests = "use demo::weight;\nuse skipper::serial as test;\nmod outer {\n    mod tests {\n        use super::super::*;\n        #[test]\n        fn weighs() {\n            assert_eq!(weight(4), 12);\n        }\n    }\n}\n";
+    assert!(weight_admitted(tests).is_empty(), "{tests}");
+    // `super::*` reaches the enclosing module's private imports.
+    for (outer, admitted) in [
+        ("use skipper::serial as test;", false),
+        ("use skipper::*;", false),
+        ("use skipper::serial;", true),
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{outer}\nmod tests {{\n    use super::*;\n    #[test]\n    fn weighs() {{\n        assert_eq!(weight(4), 12);\n    }}\n}}\n"
+        );
+        assert_eq!(
+            weight_admitted(&tests).len(),
+            usize::from(admitted),
+            "{tests}"
+        );
+    }
+}
+
+#[test]
 fn a_tokio_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse() {
     for attributes in [
         "#[tokio::test]",

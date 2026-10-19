@@ -1237,6 +1237,20 @@ impl OwnerPinSyntax {
                     })
             })
             .collect::<Vec<_>>();
+        if !generated_verdicts.is_empty() {
+            // #6749: a generated test's module is not in the file's text, so
+            // its expansion cannot show a rebound `test`; the file answers.
+            if by_file
+                .get(&test.file)
+                .is_some_and(OwnerPinAssertions::file_binds_test)
+            {
+                return Some(AssertionRefusal::Syntax(
+                    AssertionContextRefusal::TestAttribute(
+                        "#[test] (the file may rebind `test`)".to_string(),
+                    ),
+                ));
+            }
+        }
         if generated_verdicts.iter().any(|verdict| verdict.is_none()) {
             return None;
         }
