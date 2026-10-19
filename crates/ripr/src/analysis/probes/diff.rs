@@ -690,7 +690,9 @@ fn is_behavior_neutral_respelling(after: &str, before: &str) -> bool {
     let (after, before) = (after.trim(), before.trim());
     // String and comment text is output or prose, so a line holding either is
     // never a respelling.
-    let prose = |line: &str| line.contains('"') || line.contains("//") || line.contains("/*");
+    let prose = |line: &str| {
+        line.contains('"') || line.contains("//") || line.contains("/*") || observes_tokens(line)
+    };
     !prose(after)
         && !prose(before)
         && after != before
@@ -709,7 +711,9 @@ fn is_behavior_neutral_rewrap(after: &[&str], before: &[&str]) -> bool {
     if after.len() > MAX_REWRAP_LINES || before.len() > MAX_REWRAP_LINES {
         return false;
     }
-    let prose = |line: &&str| line.contains('"') || line.contains("//") || line.contains("/*");
+    let prose = |line: &&str| {
+        line.contains('"') || line.contains("//") || line.contains("/*") || observes_tokens(line)
+    };
     if after.iter().any(prose) || before.iter().any(prose) {
         return false;
     }
@@ -783,6 +787,12 @@ fn only_char_literals(original: &str, masked: &str) -> bool {
         }
     }
     true
+}
+
+/// Whether `line` holds a macro that reads its argument as source text, so a
+/// respelled path inside it changes the produced string.
+fn observes_tokens(line: &str) -> bool {
+    line.contains("stringify!")
 }
 
 fn neutral_spelling(line: &str) -> String {
@@ -2194,6 +2204,20 @@ mod tests {
             !kept.is_empty(),
             "a quote on the removed side keeps the probe"
         );
+    }
+
+    /// `stringify!` reads source tokens, so a respelled path inside it
+    /// changes the produced text.
+    #[test]
+    fn a_respelling_inside_stringify_is_not_neutral() {
+        assert!(!is_behavior_neutral_respelling(
+            "let label = stringify!(i32::MAX);",
+            "let label = stringify!(core::i32::MAX);",
+        ));
+        assert!(!is_behavior_neutral_rewrap(
+            &["let label = stringify!(i32::MAX);"],
+            &["let label = stringify!(", "    core::i32::MAX);"],
+        ));
     }
 
     #[test]
