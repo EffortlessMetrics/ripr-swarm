@@ -61,10 +61,12 @@ where
     let Some(budget) = budget else {
         return work();
     };
-    // A standalone check's first-SIGINT token is already active on the
-    // caller. Carry it into the budget worker so exporter waits observe the
-    // same cancellation request before the outer CLI renders status 130.
-    let token = current_token().unwrap_or_else(AnalysisCancellationToken::new);
+    // The standalone caller owns first-SIGINT flags, but a budget expiry
+    // must cancel only this worker. Copy the flags into a separate token so
+    // exporter waits can settle before the caller renders status 130.
+    let token = current_token().map_or_else(AnalysisCancellationToken::new, |caller| {
+        caller.for_check_budget_worker()
+    });
     let worker_token = token.clone();
     let (tx, rx) = mpsc::channel();
     // The worker replaces the main thread's analysis stack, so it gets at
@@ -129,6 +131,29 @@ mod tests {
         });
         assert!(interrupted.load(Ordering::SeqCst));
         assert_eq!(result, Ok(Some(AnalysisAbortKind::Cancelled)));
+    }
+
+    #[test]
+    fn budget_timeout_does_not_cancel_caller_token() {
+        let caller = AnalysisCancellationToken::new();
+        let result: Result<(), _> = with_token(&caller, || {
+            run_with_budget(
+                Some(Duration::from_millis(30)),
+                || {},
+                || {
+                    while crate::analysis::cancellation::checkpoint_typed().is_ok() {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Ok(())
+                },
+            )
+        });
+        assert!(result.is_err(), "worker deadline must remain a refusal");
+        assert_eq!(
+            caller.abort_kind(),
+            None,
+            "caller must still publish refusal"
+        );
     }
 
     #[test]
