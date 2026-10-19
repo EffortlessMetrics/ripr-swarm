@@ -1323,13 +1323,16 @@ fn mock_factories(statements: &[Statement<'_>], code: &str) -> Vec<(String, Stri
 /// spread copies it (RIPR-SPEC-0247 rule 1, amended 2026-10-18).
 fn mock_spread_sources(statements: &[Statement<'_>], code: &str) -> Vec<(String, String)> {
     // The masker shrinks multi-byte characters inside strings and comments,
-    // so offsets into `code` only index `masked` when the lengths agree;
-    // otherwise nothing is recorded.
-    let masked = ts_mask_literals_and_comments(code);
-    if file_is_opaque(code)
-        || masked.len() != code.len()
-        || masked.chars().count() != code.chars().count()
-    {
+    // so each is first widened to one `_` per byte (a word character, which
+    // the masker blanks inside literals and which cannot start or end a
+    // spread elsewhere); offsets into `code` then index `masked`. Should the
+    // lengths still disagree, nothing is recorded.
+    let widened: String = code
+        .chars()
+        .flat_map(|c| std::iter::repeat_n(if c.is_ascii() { c } else { '_' }, c.len_utf8()))
+        .collect();
+    let masked = ts_mask_literals_and_comments(&widened);
+    if file_is_opaque(code) || masked.len() != code.len() {
         return Vec::new();
     }
     statements

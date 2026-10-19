@@ -176,7 +176,13 @@ fn offsets_and_trailing_text_cannot_smuggle_a_mutation_past_the_spread_check() {
         "const d = {{ a: 1 }};\nconst s = \"{}\";\nconst o = {{ k: d.z = 1, ...q }};\n{test}",
         "\u{e9}".repeat(12)
     );
-    assert_eq!(names(&drift), 0);
+    // Offsets stay aligned now, so the write through `d` is seen and refused;
+    // only the unrelated `o` literal qualifies.
+    let recorded = extract_tests(Path::new("test/save.test.ts"), &drift)
+        .first()
+        .map(|test| test.mock_spread_sources_in_file.clone())
+        .unwrap_or_default();
+    assert!(recorded.iter().all(|(name, _)| name != "d"), "{recorded:?}");
     // Text after the name: a rest target assigns through the source.
     let after = format!("const d = {{ a: 1 }};\nconst x = {{ ...d.write }} = y;\n{test}");
     assert_eq!(names(&after), 0);
@@ -193,4 +199,23 @@ fn offsets_and_trailing_text_cannot_smuggle_a_mutation_past_the_spread_check() {
             format!("const d = {{ a: 1 }};\nconst x = {{ k: 1, ...d }};\n{shadow}\n{test}");
         assert_eq!(names(&source), 0, "{shadow}");
     }
+}
+
+#[test]
+fn non_ascii_titles_comments_and_strings_keep_the_spread_source() {
+    let count = |source: &str| {
+        extract_tests(Path::new("test/save.test.ts"), source)
+            .first()
+            .map_or(0, |test| test.mock_spread_sources_in_file.len())
+    };
+    let decl = "const defaults = { flush: 1 };\n";
+    let body = "const db = { write: jest.fn(), ...defaults };\n  save(db, 1);\n";
+    // Same verdict as the ASCII title: the title's width must not drop the source.
+    for title in ["t", "\u{e9}", "caf\u{e9} \u{1f600}"] {
+        let source = format!("{decl}test(\"{title}\", () => {{\n  {body}}});\n");
+        assert_eq!(count(&source), 1, "{title}");
+    }
+    let comment =
+        format!("// caf\u{e9}\nconst s = \"\u{e9}\";\n{decl}test(\"t\", () => {{\n  {body}}});\n");
+    assert_eq!(count(&comment), 1);
 }
