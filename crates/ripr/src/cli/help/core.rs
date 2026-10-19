@@ -471,6 +471,10 @@ Options:
   --suppression-policy PATH
                Apply the explicit suppression policy for replay.
 
+Filesystem effects:
+  Fresh analysis may create or refresh disposable cache files under
+  target/ripr/cache/ (or RIPR_CACHE_DIR when set).
+
 Performance:
   Use --from to skip re-analysis when you already ran
   `ripr check --write-artifact PATH`. This avoids re-parsing the diff and
@@ -513,6 +517,10 @@ Options:
                Use the explicit Perl facts packet for replay.
   --suppression-policy PATH
                Apply the explicit suppression policy for replay.
+
+Filesystem effects:
+  Fresh analysis may create or refresh disposable cache files under
+  target/ripr/cache/ (or RIPR_CACHE_DIR when set).
 
 Performance:
   Use --from to skip re-analysis when you already ran
