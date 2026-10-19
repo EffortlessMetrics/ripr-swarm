@@ -1361,12 +1361,14 @@ fn run_pipeline_for_diff_text_with_language_config(
         eprintln!("{message}");
     }
 
+    // Rename metadata can register a binary file without any text hunks.
+    // That path must retain the same non-text refusal as an unrenamed blob.
     if !diff_text.trim().is_empty()
-        && changed_files.is_empty()
+        && ((changed_files.is_empty() && renamed_file_count == 0)
+            || has_only_non_text_changes(diff_text))
         && own_artifact_files.is_empty()
         && deleted_file_count == 0
         && submodule_file_count == 0
-        && renamed_file_count == 0
         && limitations.len() == supplied_evidence_limitations
     {
         // The schema token stays `malformed_diff` (a new limitation kind is a

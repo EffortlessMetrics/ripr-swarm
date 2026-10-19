@@ -8630,6 +8630,7 @@ tests = [
   "crates/ripr/tests/cli_smoke/parse_failure_path_outcome.rs::long_parser_causes_keep_nonportable_source_samples",
   "crates/ripr/tests/cli_smoke/parse_failure_path_outcome.rs::distinct_long_nonportable_paths_keep_distinct_parse_failures",
   "crates/ripr/tests/cli_smoke/unsupported_diff_exit.rs::diff_json_outcomes_preserve_report_and_exit_contract",
+  "crates/ripr/tests/cli_smoke/unsupported_diff_exit.rs::edited_binary_rename_is_unsupported_for_check_and_diff",
   "crates/ripr/tests/cli_smoke/unsupported_diff_exit.rs::diff_human_unsupported_and_usage_keep_stream_contracts",
   "crates/ripr/tests/cli_smoke/unsupported_diff_exit.rs::diff_discovery_names_unsupported_and_partial_exits",
   "crates/ripr/tests/cli_smoke/unsupported_check_exit.rs::check_json_outcome_exit_preserves_subject_and_coverage",
