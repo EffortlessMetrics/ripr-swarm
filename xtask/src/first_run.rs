@@ -985,12 +985,17 @@ fn friction_detail(result: &StepResult, workflow: Option<&str>) -> (Vec<String>,
             }));
         }
     }
+    // Compare the recorded (hundredth-rounded) duration, not the raw sample:
+    // the receipt's `secs` field, the row export and the nightly ingest all
+    // compare the rounded value, so a 5.004 s step on a 5 s budget must not
+    // flag here and vanish there (#8722 review).
     let budget = budget_secs(&result.name);
-    if result.secs > budget {
-        flags.push(format!("{:.1}s, over the {budget:.0}s budget", result.secs));
+    let secs = (result.secs * 100.0).round() / 100.0;
+    if secs > budget {
+        flags.push(format!("{secs:.1}s, over the {budget:.0}s budget"));
         breaches.push(json!({
             "metric": "secs",
-            "value": (result.secs * 100.0).round() / 100.0,
+            "value": secs,
             "budget": budget,
         }));
     }
@@ -1571,6 +1576,25 @@ mod tests {
         assert_eq!(breaches[0]["metric"], "workflow_lines");
         assert_eq!(breaches[0]["value"], json!(1601));
         assert_eq!(breaches[0]["budget"], json!(1500));
+    }
+
+    #[test]
+    fn budget_breach_uses_the_recorded_rounded_duration_at_the_boundary() {
+        // The receipt, the row export and the nightly ingest all compare the
+        // hundredth-rounded duration; a step just over its budget in raw
+        // samples must not flag here and vanish in ingest (#8722 review).
+        let borderline = step("doctor", 0, "", "", 5.004);
+        let (flags, breaches) = friction_detail(&borderline, None);
+        assert!(
+            breaches.is_empty(),
+            "5.004 s rounds to the 5 s budget and must not flag: {flags:?}"
+        );
+        let over = step("doctor", 0, "", "", 5.006);
+        let (flags, breaches) = friction_detail(&over, None);
+        assert_eq!(breaches.len(), 1, "{flags:?}");
+        assert_eq!(breaches[0]["metric"], "secs");
+        assert_eq!(breaches[0]["value"], json!(5.01));
+        assert_eq!(breaches[0]["budget"], json!(5.0));
     }
 
     #[test]

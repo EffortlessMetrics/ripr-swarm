@@ -2186,12 +2186,15 @@ fn reproduce(page: &mut Page, r: &Receipts) -> Result<(), String> {
     page.blank();
     page.line("```bash");
     page.line(
-        "cargo xtask dx-scoreboard --clone            # writes target/ripr/reports/dx-scoreboard.json",
+        "cargo build --release                          # the walks below measure this binary",
+    );
+    page.line(
+        "cargo xtask dx-scoreboard --clone --include-heavy  # writes target/ripr/reports/dx-scoreboard.json (all four pinned repos)",
     );
     page.line(
         "cp target/ripr/reports/dx-scoreboard.json metrics/dx-scoreboard/baseline.json  # promote the run to the canonical baseline",
     );
-    page.line("cargo xtask first-run                        # writes target/ripr/first-run/first-run.json");
+    page.line("cargo xtask first-run --ripr target/release/ripr  # writes target/ripr/first-run/first-run.json");
     page.line(
         "cp target/ripr/first-run/first-run.json metrics/public-proof/first-run-current.json  # promote the walk to its receipt",
     );
@@ -2213,7 +2216,7 @@ fn reproduce(page: &mut Page, r: &Receipts) -> Result<(), String> {
         &[
             vec![
                 "`dx-scoreboard.json`".to_string(),
-                "`cargo xtask dx-scoreboard --clone`, promoted as above".to_string(),
+                "`cargo xtask dx-scoreboard --clone --include-heavy`, promoted as above".to_string(),
                 "`target/ripr/reports/dx-scoreboard.json`".to_string(),
             ],
             vec![
@@ -2233,7 +2236,7 @@ fn reproduce(page: &mut Page, r: &Receipts) -> Result<(), String> {
             ],
             vec![
                 "`first-run-current.json` / `first-run-previous.json`".to_string(),
-                "`cargo xtask first-run`, promoted as above".to_string(),
+                "`cargo xtask first-run --ripr target/release/ripr`, promoted as above".to_string(),
                 "`target/ripr/first-run/first-run.json`".to_string(),
             ],
             vec![
@@ -2387,6 +2390,14 @@ mod tests {
         assert!(
             section.contains("target/ripr/reports/mutation-spot-check"),
             "mutation receipt producer output path must be named"
+        );
+        assert!(
+            section.contains("dx-scoreboard --clone --include-heavy"),
+            "the reproduce commands must measure all four pinned repositories"
+        );
+        assert!(
+            section.contains("first-run --ripr target/release/ripr"),
+            "the reproduce commands must name the measured binary"
         );
         Ok(())
     }
@@ -3330,6 +3341,23 @@ mod tests {
             "with structured fields present, prose mentioning a budget must not count as a breach"
         );
         Ok(())
+    }
+
+    #[test]
+    fn dual_metric_breach_counts_once_per_step() {
+        // The bar's unit is steps (its title and scoreboards.toml wording), so
+        // a step over both its secs and stdout_lines budgets counts once here
+        // even though the nightly ingest lists one evidence row per metric.
+        let step = serde_json::json!({
+            "step": "check",
+            "friction": [],
+            "budget_breaches": [
+                {"metric": "secs", "value": 11.0, "budget": 10.0},
+                {"metric": "stdout_lines", "value": 61, "budget": 60},
+            ],
+        });
+        assert!(step_over_budget(&step, false));
+        assert!(!step_over_budget(&step, true));
     }
 
     #[test]

@@ -763,9 +763,10 @@ Repositories the speed scoreboard ran on:
 These commands regenerate the measured receipts; a fresh local measurement is only promoted into `metrics/public-proof/` by the `cp` steps, and `--refresh-receipts` then re-copies the canonical sources and re-renders this page.
 
 ```bash
-cargo xtask dx-scoreboard --clone            # writes target/ripr/reports/dx-scoreboard.json
+cargo build --release                          # the walks below measure this binary
+cargo xtask dx-scoreboard --clone --include-heavy  # writes target/ripr/reports/dx-scoreboard.json (all four pinned repos)
 cp target/ripr/reports/dx-scoreboard.json metrics/dx-scoreboard/baseline.json  # promote the run to the canonical baseline
-cargo xtask first-run                        # writes target/ripr/first-run/first-run.json
+cargo xtask first-run --ripr target/release/ripr  # writes target/ripr/first-run/first-run.json
 cp target/ripr/first-run/first-run.json metrics/public-proof/first-run-current.json  # promote the walk to its receipt
 cargo xtask public-proof --refresh-receipts  # re-copy canonical outputs, then render
 cargo xtask public-proof --check             # fail if this page is stale
@@ -777,11 +778,11 @@ Per-receipt regeneration:
 
 | Receipt | Produced by | Harness output |
 | --- | --- | --- |
-| `dx-scoreboard.json` | `cargo xtask dx-scoreboard --clone`, promoted as above | `target/ripr/reports/dx-scoreboard.json` |
+| `dx-scoreboard.json` | `cargo xtask dx-scoreboard --clone --include-heavy`, promoted as above | `target/ripr/reports/dx-scoreboard.json` |
 | `verdict-corpus.json` | the report `fixtures/rust-verdict-corpus/expected/rows/` describes | summarized from the row files |
 | `corpus-manifest.json` | the corpus pin list itself | `benchmarks/rust_corpus/manifest.json` |
 | `mutation-spot-check.json` | `cargo xtask mutation-spot-check` | `target/ripr/reports/mutation-spot-check.json` |
-| `first-run-current.json` / `first-run-previous.json` | `cargo xtask first-run`, promoted as above | `target/ripr/first-run/first-run.json` |
+| `first-run-current.json` / `first-run-previous.json` | `cargo xtask first-run --ripr target/release/ripr`, promoted as above | `target/ripr/first-run/first-run.json` |
 | `agent-as-user.json` | no in-repo command; committed harness output, the runs `docs/AGENT_AS_USER_RUNS.md` documents | none |
 | `install.json` | no in-repo command; committed manual measurement in a cloud container | none |
 
