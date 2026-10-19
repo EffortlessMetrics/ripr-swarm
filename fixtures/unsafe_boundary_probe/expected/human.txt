@@ -28,6 +28,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/unsafe_boundary_probe/input --diff <cwd>/fixtures/unsafe_boundary_probe/diff.patch --mode fast probe:src_lib.rs:static_unknown:eff3c10e
   ripr context --root <cwd>/fixtures/unsafe_boundary_probe/input --diff <cwd>/fixtures/unsafe_boundary_probe/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:eff3c10e
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:static_unknown:eff3c10e --root <cwd>/fixtures/unsafe_boundary_probe/input` for the full gate's answer
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.

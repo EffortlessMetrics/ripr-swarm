@@ -201,6 +201,19 @@ Updated:
 ## Pending — error_path_operand_error_lexeme (16)
 
 Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless error_path_operand_error_lexeme --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_path_operand_error_lexeme (17)
+
+Reason:
 RIPR-SPEC-0268: human evidence window glosses the unknown-sink row with its meaning (#8744)
 
 Command:

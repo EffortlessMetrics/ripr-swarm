@@ -67,6 +67,19 @@ Updated:
 ## Pending — python_empty_sink_module_comparison (6)
 
 Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless python_empty_sink_module_comparison --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_empty_sink_module_comparison (7)
+
+Reason:
 RIPR-SPEC-0268: human evidence window glosses the unknown-sink row with its meaning (#8744)
 
 Command:

@@ -28,6 +28,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/diff.patch --mode fast probe:src_lib.rs:error_path:51fc5156
   ripr context --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:error_path:51fc5156
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:error_path:51fc5156 --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input --at src/lib.rs:29 --kind error_path
 

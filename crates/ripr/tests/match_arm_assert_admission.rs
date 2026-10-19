@@ -162,6 +162,18 @@ fn self_import_binding_the_std_root_keeps_the_glob_foreign() -> Result<(), Strin
     )
 }
 #[test]
+fn grouped_and_nested_imports_binding_the_std_root_keep_the_glob_foreign() -> Result<(), String> {
+    let body = "assert!(matches!(actual, super::SelectionRequest::Unresolved(_)));";
+    for binding in [
+        "use other::{std};",
+        "use other::{inner::{std}};",
+        "use r#std;",
+    ] {
+        check(&format!("{binding}\nuse std::prelude::v1::*;"), body, false)?;
+    }
+    Ok(())
+}
+#[test]
 fn unrelated_assertion_remains_unconfirmed() -> Result<(), String> {
     let finding = analyze("", "assert!(true);")?;
     assert_ne!(finding.class, ExposureClass::Exposed, "{finding:?}");

@@ -116,6 +116,19 @@ Updated:
 ## Pending — rust_test_written_expected_file (10)
 
 Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless rust_test_written_expected_file --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_test_written_expected_file (11)
+
+Reason:
 RIPR-SPEC-0268: human evidence window glosses the unknown-sink row with its meaning (#8744)
 
 Command:

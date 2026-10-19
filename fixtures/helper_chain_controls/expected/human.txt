@@ -27,6 +27,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/helper_chain_controls/input --diff <cwd>/fixtures/helper_chain_controls/diff.patch --mode fast probe:src_lib.rs:predicate:ac178c7f
   ripr context --root <cwd>/fixtures/helper_chain_controls/input --diff <cwd>/fixtures/helper_chain_controls/diff.patch --mode fast --at probe:src_lib.rs:predicate:ac178c7f
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:predicate:ac178c7f --root <cwd>/fixtures/helper_chain_controls/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/helper_chain_controls/input --at src/lib.rs:4 --kind predicate
 

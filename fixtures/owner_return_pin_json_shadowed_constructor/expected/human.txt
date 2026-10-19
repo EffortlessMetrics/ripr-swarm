@@ -31,6 +31,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/owner_return_pin_json_shadowed_constructor/input --diff <cwd>/fixtures/owner_return_pin_json_shadowed_constructor/diff.patch --mode fast probe:src_lib.rs:return_value:9659b9fa
   ripr context --root <cwd>/fixtures/owner_return_pin_json_shadowed_constructor/input --diff <cwd>/fixtures/owner_return_pin_json_shadowed_constructor/diff.patch --mode fast --at probe:src_lib.rs:return_value:9659b9fa
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:return_value:9659b9fa --root <cwd>/fixtures/owner_return_pin_json_shadowed_constructor/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/owner_return_pin_json_shadowed_constructor/input --at src/lib.rs:5 --kind return_value
 
