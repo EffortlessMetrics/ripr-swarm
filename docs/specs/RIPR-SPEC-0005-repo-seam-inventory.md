@@ -79,6 +79,9 @@ not establish the module of a qualified initializer or type annotation
 in that matcher. Whitespace and raw identifiers cannot erase the qualifier.
 Bare type heads and enum variants retain their existing bounded handling;
 an independent supported local call can still establish the relation.
+Bare generic annotations retain function-pointer, associated-type and
+const-expression arguments; punctuation inside those arguments cannot truncate
+the type or hide a qualified trailing path.
 Owner-aware direct call paths keep their existing authority. This rule adds
 no general type resolution, factory-return inference, unique-name receiver
 proof or borrowed-helper context expansion.

@@ -2493,7 +2493,13 @@ fn last_let_statement<'a>(body: &'a str, binding: &str) -> Option<&'a str> {
                 .find(';')
                 .map(|offset| i + offset)
                 .unwrap_or(body.len());
-            last = Some(&body[let_at..stmt_end]);
+            let stmt = &body[let_at..stmt_end];
+            // A previously admitted annotation may contain a semicolon in a
+            // const argument after an inner '='. Its reader now needs the
+            // complete type. Preserve the old prefix requirement and keep
+            // initializer-only bindings at their existing statement boundary.
+            let typed = stmt.find('=').is_some_and(|eq| stmt[..eq].contains(':'));
+            last = Some(if typed { &body[let_at..] } else { stmt });
         }
         search = let_at + 1;
     }
@@ -2514,21 +2520,60 @@ fn let_statement_type_head(stmt: &str) -> Option<&str> {
     let eq = stmt.find('=')?;
     let pattern = &stmt[..eq];
     if let Some(colon) = pattern.find(':') {
-        let annotation = &pattern[colon + 1..];
-        let (segments, next) = type_head(annotation)?;
-        return match (segments.as_slice(), next) {
-            ([name], None) => Some(name),
-            ([name], Some(b'<')) => {
-                let end = skip_generic_args(annotation.as_bytes(), annotation.find('<')?)?;
-                annotation[end..].trim().is_empty().then_some(*name)
-            }
-            _ => None,
+        // The first '=' may belong to an associated-type binding or a const
+        // argument. Read the complete annotation before finding its assignment.
+        let annotation = &stmt[colon + 1..];
+        let (segments, tail) = type_head_tail(annotation, skip_annotation_generic_args)?;
+        let [name] = segments.as_slice() else {
+            return None;
         };
+        let tail = tail.strip_prefix("::").map_or(tail, str::trim_start);
+        let tail = if tail.starts_with('<') {
+            &tail[skip_annotation_generic_args(tail.as_bytes(), 0)?..]
+        } else {
+            tail
+        };
+        let tail = tail.trim_start();
+        return (tail.starts_with('=') && !tail.starts_with("==") && !tail.starts_with("=>"))
+            .then_some(*name);
     }
     let init = &stmt[eq + 1..];
     initializer_is_one_head_expr(init)
         .then(|| initializer_type_head(init))
         .flatten()
+}
+
+/// Complete a type annotation's generic arguments without treating function
+/// arrows or grouped const expressions as angle delimiters. Callers already
+/// mask literals and comments. Keep this separate from initializer turbofish
+/// admission so preserving annotations cannot widen constructor recognition.
+fn skip_annotation_generic_args(bytes: &[u8], open: usize) -> Option<usize> {
+    if bytes.get(open) != Some(&b'<') {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut groups = Vec::new();
+    for (offset, byte) in bytes.get(open..)?.iter().enumerate() {
+        match byte {
+            b'(' => groups.push(b')'),
+            b'[' => groups.push(b']'),
+            b'{' => groups.push(b'}'),
+            b')' | b']' | b'}' => {
+                if groups.pop() != Some(*byte) {
+                    return None;
+                }
+            }
+            b'<' if groups.is_empty() => depth += 1,
+            b'>' if groups.is_empty() && bytes.get(open + offset - 1) != Some(&b'-') => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(open + offset + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Whether an initializer is a single path, call or struct literal with
@@ -2609,6 +2654,14 @@ fn is_constructor_name(name: &str) -> bool {
 /// first non-space byte after it. A turbofish (`Site::<T>::new`) is skipped;
 /// any other generic argument list ends the path.
 fn type_head(text: &str) -> Option<(Vec<&str>, Option<u8>)> {
+    let (segments, tail) = type_head_tail(text, skip_generic_args)?;
+    Some((segments, tail.bytes().next()))
+}
+
+fn type_head_tail(
+    text: &str,
+    skip_args: fn(&[u8], usize) -> Option<usize>,
+) -> Option<(Vec<&str>, &str)> {
     let mut rest = text.trim_start();
     loop {
         let trimmed = rest
@@ -2644,14 +2697,13 @@ fn type_head(text: &str) -> Option<(Vec<&str>, Option<u8>)> {
         }
         end += 2;
         if rest[end..].starts_with('<') {
-            end = skip_generic_args(bytes, end)?;
+            end = skip_args(bytes, end)?;
         }
     }
     if segments.is_empty() {
         return None;
     }
-    let next = rest[end..].trim_start().bytes().next();
-    Some((segments, next))
+    Some((segments, rest[end..].trim_start()))
 }
 
 /// Index just past the `<..>` starting at `open`, or `None` if unbalanced.
@@ -9892,6 +9944,58 @@ let r = try_parse_summary(\"x\");",
             assert!(
                 method_call_resolves_to_impl_type(&summary, "build", impl_type),
                 "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn bare_generic_type_annotations_keep_receiver_identity() {
+        for annotation in [
+            "Site<u8>",
+            "Site<fn() -> ()>",
+            "Site<fn() -> Vec<u8>>",
+            "Site::<fn() -> ()>",
+            "Site :: <fn() -> ()>",
+            "Site:: <fn() -> ()>",
+            "Site::<{ 1 == 1 }>",
+            "Site<{ 1 > 0 }>",
+            "Site<{ 1 < 2 }>",
+            "Site<{ 1 == 1 }>",
+            "Site<Box<dyn Iterator<Item = u8>>>",
+            "Site<{ let n = 1; n == 1 }>",
+            "Site<'>'>",
+        ] {
+            let body = format!("let s: {annotation} = make(); s.build();");
+            let summary = test("tests/site.rs", "bare_generic", &body);
+            assert!(
+                method_call_resolves_to_impl_type(&summary, "build", "Site"),
+                "bare annotation lost its receiver identity: {body}"
+            );
+            let body = format!("let s: {annotation} :: Foreign = make(); s.build();");
+            let summary = test("tests/site.rs", "qualified_generic", &body);
+            assert!(
+                !method_call_resolves_to_impl_type(&summary, "build", "Site"),
+                "generic arguments cannot hide a qualified type tail: {body}"
+            );
+        }
+    }
+
+    #[test]
+    fn annotation_compatibility_does_not_expand_initializer_admission() {
+        for body in [
+            "let s: Site<[u8; 4]> = make(); s.build();",
+            "let s: Site<{ true; false }> = make(); s.build();",
+            "let s = Site::with_cache::<fn() -> ()>(); s.build();",
+            "let s: Site<fn() -> ()] = make(); s.build();",
+            "let s: Site<u8> == make(); s.build();",
+            "let s: Site<u8> => make(); s.build();",
+            "let s: Site == make(); s.build();",
+            "let s: Site => make(); s.build();",
+        ] {
+            let summary = test("tests/site.rs", "unsupported", body);
+            assert!(
+                !method_call_resolves_to_impl_type(&summary, "build", "Site"),
+                "annotation preservation expanded an unsupported path: {body}"
             );
         }
     }
