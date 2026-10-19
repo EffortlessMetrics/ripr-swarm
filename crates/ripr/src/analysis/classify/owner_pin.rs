@@ -5478,7 +5478,8 @@ fn macro_invocations(masked: &str) -> Vec<(&str, usize)> {
 
 /// Keywords a `!` negation can follow; never macro names.
 const NEGATING_KEYWORDS: &[&str] = &[
-    "if", "while", "return", "match", "in", "else", "break", "let", "mut", "move", "as",
+    "if", "while", "return", "match", "in", "else", "break", "let", "mut", "move", "as", "yield",
+    "ref", "unsafe", "async",
 ];
 
 /// #6578: whether the part of the changed tail that differs from its old
@@ -10414,14 +10415,21 @@ fn index_operand(before: &str) -> bool {
                     depth -= 1;
                     continue;
                 }
-                return character == '['
-                    && before[..at]
-                        .trim_end()
-                        .chars()
-                        .next_back()
-                        .is_some_and(|prev| {
-                            prev.is_ascii_alphanumeric() || matches!(prev, '_' | ')' | ']')
-                        });
+                if character != '[' {
+                    return false;
+                }
+                let head = before[..at].trim_end();
+                // A keyword before `[` (`match [e, o] = p`, `return [e, o] = p`)
+                // starts an array pattern or value, not an index.
+                let word_start = head
+                    .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .map_or(0, |at| at + 1);
+                if NEGATING_KEYWORDS.contains(&&head[word_start..]) {
+                    return false;
+                }
+                return head.chars().next_back().is_some_and(|prev| {
+                    prev.is_ascii_alphanumeric() || matches!(prev, '_' | ')' | ']')
+                });
             }
             ';' if depth == 0 => return false,
             _ => {}
@@ -10432,10 +10440,10 @@ fn index_operand(before: &str) -> bool {
 
 /// Whether every `let` binding of a name (the text after the name, as
 /// `receiver_let_bindings` returns it) initializes it with a plain value: a
-/// literal, a tuple or array of plain values, a `String` built from a
-/// literal, or an uppercase constructor / struct literal of plain values.
-/// Such a value has no interior mutability, so a shared borrow of it cannot
-/// be written by a callee (#8795). No binding at all (a static, a const) is
+/// literal, or a tuple or array (`[plain; N]` included) of plain values.
+/// Such a value is a primitive aggregate with no interior mutability and no
+/// `Deref`, so a shared borrow of it cannot be written by a callee (#8795).
+/// Named struct literals and constructor calls are never plain. No binding at all (a static, a const) is
 /// not plain.
 fn plain_let_values(bindings: &[&str]) -> bool {
     !bindings.is_empty()
@@ -10462,9 +10470,7 @@ fn is_plain_value(expression: &str) -> bool {
         .strip_prefix('-')
         .map_or(expression, str::trim_start);
     if unsigned.starts_with(|c: char| c.is_ascii_digit()) {
-        return unsigned
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.'));
+        return is_numeric_literal(unsigned);
     }
     if unsigned.len() != expression.len() {
         return false;
@@ -10490,31 +10496,37 @@ fn is_plain_value(expression: &str) -> bool {
             .iter()
             .all(|part| part.trim().is_empty() || is_plain_value(part));
     }
-    let Some(open) = expression.find(['(', '{']) else {
-        return false;
-    };
-    let head = expression[..open].trim();
-    let constructor = head.rsplit("::").next().unwrap_or(head);
-    if !constructor.starts_with(|c: char| c.is_ascii_uppercase())
-        || !head
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | ':'))
-    {
-        return false;
+    // Anything else, including a named struct literal (it may `Deref` to an
+    // interior-mutable type) or a constructor call, is not plain.
+    false
+}
+
+/// A numeric literal: digits and `_`, at most one `.` that is followed by a
+/// digit (so `1..n` and `1.method()` are not literals), then an optional
+/// exponent or alphanumeric suffix (`1_000u32`, `0xff`, `1.5e3f64`).
+fn is_numeric_literal(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut dots = 0;
+    for (at, byte) in bytes.iter().enumerate() {
+        match byte {
+            b'.' => {
+                dots += 1;
+                if dots > 1 || !bytes.get(at + 1).is_some_and(u8::is_ascii_digit) {
+                    return false;
+                }
+            }
+            b'-' | b'+' => {
+                if !matches!(bytes.get(at.wrapping_sub(1)), Some(b'e' | b'E'))
+                    || !bytes.get(at + 1).is_some_and(u8::is_ascii_digit)
+                {
+                    return false;
+                }
+            }
+            byte if byte.is_ascii_alphanumeric() || *byte == b'_' => {}
+            _ => return false,
+        }
     }
-    // Only a struct literal: a parenthesized uppercase call may be a
-    // test-local function, which can return an interior-mutable value.
-    if expression.as_bytes()[open] != b'{' {
-        return false;
-    }
-    group_inner(&expression[open..], '{', '}').is_some_and(|inner| {
-        split_top_level(inner).iter().all(|field| {
-            field.trim().is_empty()
-                || field.split_once(':').is_some_and(|(name, value)| {
-                    is_plain_identifier(name.trim()) && is_plain_value(value)
-                })
-        })
-    })
+    true
 }
 
 fn is_string_literal(text: &str) -> bool {

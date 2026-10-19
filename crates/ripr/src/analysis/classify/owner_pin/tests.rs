@@ -8630,6 +8630,16 @@ fn an_expected_value_a_macro_or_a_static_rebinds_from_the_owner_is_not_a_pin() {
             "struct S { f: u32, g: u32 }\n\n",
             "let mut expected = 0;\n        S { f: expected, .. } = S { f: crate::weight(4), g: 0 };\n        assert_eq!(crate::weight(4), expected);",
         ),
+        // #8795 review: a struct of literals may `Deref` to an atomic.
+        (
+            "struct E {\n    tag: u32,\n    cell: AtomicU32,\n}\nimpl std::ops::Deref for E {\n    type Target = AtomicU32;\n    fn deref(&self) -> &AtomicU32 {\n        &self.cell\n    }\n}\n\n",
+            "let expected = E { tag: 0 };\n        AtomicU32::store(&expected, crate::weight(4), Ordering::SeqCst);\n        assert_eq!(crate::weight(4), expected.load(Ordering::SeqCst));",
+        ),
+        // #8795 review: a keyword before `[` starts an array pattern, not an index.
+        (
+            "",
+            "let mut expected = 0;\n        let mut o = 0;\n        match [expected, o] = [crate::weight(4), 0] {\n            _ => {}\n        }\n        assert_eq!(crate::weight(4), expected);",
+        ),
         // #8795 review: a test-local type may define `replace` / `take`
         // with any arity and mutate the value with the owner's result, and
         // a test-local `String` may hold a `Cell`.
@@ -8841,6 +8851,9 @@ fn written_by_test_reads_operators_and_let_boundaries() {
         "let S { f: EXPECTED } = p; EXPECTED = 1;",
         "let a = 1; Some(&EXPECTED);",
         "[EXPECTED, 1] = p;",
+        "match [EXPECTED, o] = p { _ => {} }",
+        "return [EXPECTED, o] = p;",
+        "break [EXPECTED, o] = p;",
         "(EXPECTED, v[0]) = p;",
         "EXPECTED.replace(f(4));",
         "EXPECTED.take();",
@@ -8875,11 +8888,12 @@ fn written_by_test_reads_operators_and_let_boundaries() {
     for init in [
         ": u32 = 12;",
         " = -1.5;",
+        " = 1.5e-3f64;",
+        " = 0xff_u8;",
         " = \"x\";",
         " = (1, \"a\");",
         " = [1, 2];",
         " = [12; 2];",
-        " = Config { retries: 3, name: \"a\" };",
     ] {
         assert!(super::plain_let_values(&[init]), "{init}");
     }
@@ -8899,6 +8913,11 @@ fn written_by_test_reads_operators_and_let_boundaries() {
         " = Some(3);",
         " = Config(1, 2);",
         " = [f(1); 2];",
+        " = Config { retries: 3, name: \"a\" };",
+        " = E { tag: 0 };",
+        " = 1..n;",
+        " = 0..10;",
+        " = 1.max(f(4));",
         " = [1; n];",
         " = Config { name: String::new() };",
         ";",
