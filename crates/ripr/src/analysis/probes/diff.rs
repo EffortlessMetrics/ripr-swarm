@@ -755,13 +755,14 @@ fn join_tokens(lines: &[&str]) -> String {
     out
 }
 
-/// 1-based lines of `source` that hold string or comment text, read from the
+/// 1-based lines of `source` that hold string or comment text, or sit inside a
+/// token-observing macro (see [`token_macro_lines`]), read from the
 /// whole file so a continuation line inside a multi-line literal counts (the
 /// per-line quote check cannot see it). A line whose only masked spans are
 /// character literals (`'x'`) holds code, which the mask also erases.
 fn prose_lines(source: &str) -> std::collections::BTreeSet<usize> {
     let masked = mask_comments_and_strings(source);
-    source
+    let mut lines = source
         .lines()
         .zip(masked.lines())
         .enumerate()
@@ -769,7 +770,9 @@ fn prose_lines(source: &str) -> std::collections::BTreeSet<usize> {
             original != masked && !only_char_literals(original, masked)
         })
         .map(|(at, _)| at + 1)
-        .collect()
+        .collect::<std::collections::BTreeSet<_>>();
+    lines.extend(token_macro_lines(source));
+    lines
 }
 
 /// Whether every span the mask erased from `original` is shaped like a
@@ -799,10 +802,86 @@ fn only_char_literals(original: &str, masked: &str) -> bool {
     true
 }
 
-/// Whether `line` holds a macro that reads its argument as source text, so a
-/// respelled path inside it changes the produced string.
+/// Macros that render an argument as source text (`stringify!`, the assert
+/// family's failure message, `dbg!`), so a respelled path inside one changes
+/// the produced string.
+const TOKEN_MACROS: [&str; 8] = [
+    "stringify",
+    "dbg",
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+];
+
+/// Whether `line` holds a token-observing macro invocation. A single-line
+/// check for callers without the whole file; [`token_macro_lines`] also
+/// covers the continuation lines of a multi-line invocation.
 fn observes_tokens(line: &str) -> bool {
-    line.contains("stringify!")
+    TOKEN_MACROS.iter().any(|name| {
+        line.match_indices(&format!("{name}!")).any(|(at, _)| {
+            line[..at]
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'))
+        })
+    })
+}
+
+/// 1-based lines of `source` inside a token-observing macro invocation, from
+/// the macro name through its closing delimiter, read from the masked file so
+/// a name inside a string or comment does not count. An invocation that never
+/// closes runs to the end of the file, which keeps its probes.
+fn token_macro_lines(source: &str) -> std::collections::BTreeSet<usize> {
+    let masked = mask_comments_and_strings(source);
+    let bytes = masked.as_bytes();
+    let newlines = bytes
+        .iter()
+        .enumerate()
+        .filter(|(_, byte)| **byte == b'\n')
+        .map(|(at, _)| at)
+        .collect::<Vec<_>>();
+    let line_of = |at: usize| newlines.partition_point(|&newline| newline < at) + 1;
+    let mut lines = std::collections::BTreeSet::new();
+    for name in TOKEN_MACROS {
+        for (at, _) in masked.match_indices(&format!("{name}!")) {
+            let boundary = bytes[..at]
+                .last()
+                .is_none_or(|byte| !(byte.is_ascii_alphanumeric() || *byte == b'_'));
+            if !boundary {
+                continue;
+            }
+            let mut cursor = at + name.len() + 1;
+            while bytes
+                .get(cursor)
+                .is_some_and(|byte| byte.is_ascii_whitespace())
+            {
+                cursor += 1;
+            }
+            if !matches!(bytes.get(cursor), Some(b'(' | b'[' | b'{')) {
+                continue;
+            }
+            let mut depth = 0usize;
+            let mut end = bytes.len();
+            for (offset, byte) in bytes[cursor..].iter().enumerate() {
+                match byte {
+                    b'(' | b'[' | b'{' => depth += 1,
+                    b')' | b']' | b'}' => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            end = cursor + offset;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            lines.extend(line_of(at)..=line_of(end));
+        }
+    }
+    lines
 }
 
 fn neutral_spelling(line: &str) -> String {
@@ -2238,6 +2317,41 @@ mod tests {
             &["let v = (x, i32::MAX); a .. b"],
             &["let v = (x, core::i32::MAX); a .", ". b"],
         ));
+    }
+
+    /// `assert!` and `dbg!` render their argument as source text too, and a
+    /// continuation line of a multi-line invocation holds neither the macro
+    /// name nor a quote.
+    #[test]
+    fn a_respelling_inside_a_token_macro_is_not_neutral() {
+        for line in [
+            "assert!(x == core::i32::MAX);",
+            "dbg!(core::i32::MAX);",
+            "debug_assert_eq!(x, core::i32::MAX);",
+        ] {
+            assert!(observes_tokens(line), "{line}");
+        }
+        assert!(!observes_tokens("let my_assert = core::i32::MAX;"));
+        assert!(!observes_tokens("let a = x.assert_ok(core::i32::MAX);"));
+        let source = "fn f() {\n    let a = 1;\n    let s = stringify!(\n        i32::MAX\n    );\n    let b = 2;\n}\n";
+        let lines = token_macro_lines(source);
+        assert_eq!(
+            lines,
+            std::collections::BTreeSet::from([3, 4, 5]),
+            "{lines:?}"
+        );
+        let inside = block_probes(
+            source,
+            &[(4, "        i32::MAX")],
+            &[(4, 4, "        core::i32::MAX")],
+        );
+        let outside = block_probes(
+            "let a = i32::MAX;\n",
+            &[(1, "let a = i32::MAX;")],
+            &[(1, 1, "let a = core::i32::MAX;")],
+        );
+        assert!(outside.is_empty(), "{outside:?}");
+        assert!(!inside.is_empty(), "macro argument text keeps its probe");
     }
 
     #[test]
