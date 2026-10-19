@@ -41,6 +41,7 @@ python_transitive_reach_unresolved
 rust_assertion_context_unresolved
 rust_log_capture_unresolved
 rust_panic_outcome_unresolved
+rust_framework_oracle_unresolved
 ```
 
 When `static_limit_kind` is absent but stable static-limit text is present,
@@ -73,6 +74,7 @@ action.
 | `rust_assertion_context_unresolved` | A related Rust test has an `assert_eq!`, but RIPR refused it for a limit of its own reading: the file did not parse or could not be placed, the test could not be identified, it carries a feature `cfg`, or a glob import or unresolved `#[macro_use]` may rebind the macro. | The gap is withheld (`static_unknown`, RIPR-SPEC-0240). The "not credited" note names the refused assertion; check that it compares the changed value, and add a test only if none does. |
 | `rust_log_capture_unresolved` | A changed `log::` record is checked by a related Rust test that installs a capturing logger (`log::set_logger` or `log::set_boxed_logger`, directly or through a same-file helper that returns the installed logger) before calling the owner and asserts exactly on a value read from the captured store, against a string literal that carries the record's static template text, but RIPR does not resolve the logger or match the format template against the asserted text. | The gap is withheld (`static_unknown`, #7133). Check that the assertion compares the changed record; add a test only if none does. |
 | `rust_panic_outcome_unresolved` | A related Rust test with no assertion carries `#[should_panic]` (bare, `expected = ""`, or an `expected` message found in a literal argument of a panicking macro on or after the change; not `#[ignore]`), calls the owner directly, and the owner invokes a panicking macro on or after the changed line, but RIPR does not resolve whether the changed code decides the panic the test expects. | The gap is withheld (`static_unknown`, RIPR-SPEC-0240). Check that the test's input reaches the changed check and that no earlier call can panic first; add a test only if either fails. |
+| `rust_framework_oracle_unresolved` | A related Rust test checks the changed code through a test-framework idiom RIPR does not evaluate and the finding would otherwise read as a weak or unrevealed gap: a branch of an owner that reads `std::env::var`, in a directly calling test that calls `set_var` or `remove_var` of the same literal variable name and asserts an exact value; a mockall `.returning(|..|)` closure that reads a named argument, for a mocked method the changed line calls, in a test with an exact assertion; a non-empty `expect![[..]]` literal compared with `assert_debug_eq`; or an insta snapshot macro (no inline `@` literal) on a changed struct field that no redaction names. | The gap is withheld (`static_unknown`, RIPR-SPEC-0240). Check that the setup reaches the changed code and that the expectation differs between the old and new behavior; add a test only if either fails. |
 
 ## Seam Readings: `opaque` and `activation_unknown`
 
