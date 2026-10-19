@@ -13,6 +13,8 @@ use std::path::{Component, Path, PathBuf};
 
 mod diagnostic;
 mod model;
+#[cfg(test)]
+mod perl_executable_tests;
 mod python;
 mod toolchain_file;
 #[cfg(feature = "lang-typescript")]
