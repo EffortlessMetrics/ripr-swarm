@@ -30,7 +30,8 @@ pub(crate) use oracles::{
     extract_assertions, extract_assertions_in, extract_line_scanned_oracles,
     guarded_result_match_scan_with_shadow_authority, has_oracle_text_shape,
     is_inequality_assertion, is_unwrap_err_bound_error_assertion, outer_assertion_condition,
-    terminal_err_return_guard_oracle, uncompared_unwrap_err, unwrap_err_bound_variables,
+    retain_reached_oracles, terminal_err_return_guard_oracle, uncompared_unwrap_err,
+    unwrap_err_bound_variables,
 };
 pub(crate) use returns::extract_return_facts;
 pub(crate) use shadow::{

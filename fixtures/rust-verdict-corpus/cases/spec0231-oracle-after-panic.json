@@ -1,0 +1,54 @@
+{
+  "case_id": "spec0231-oracle-after-panic",
+  "subject_id": "authored-spec0231-37",
+  "diff": "cases/spec0231-oracle-after-panic.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "scalar_return_value",
+  "test_shape": "assertion_after_panic",
+  "hard_case": "The only assertion follows an unconditional `panic!` in a `#[should_panic]` test, so it never runs. Before #7638 ripr read it as an exact_value / strong related-test oracle; the verdict was already a gap (checked with the reach filter disabled), so the case pins that the never-run assertion cannot earn credit.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x * 3",
+        "mutated_line": "x * 3",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: score(2) becomes 6, but the only assertion never executes"
+      },
+      {
+        "replacement": "x * 0",
+        "mutated_line": "x * 0",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: score(2) becomes 0, but the only assertion never executes"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "score_doubles binds score(2), panics with the expected message, and only then asserts the value equals 4; the assertion never runs and the test passes through its expected panic, so every mutant passes. Spec cells: RIPR-SPEC-0231 example 37 (rule 8: a statement after an unconditional `panic!` in the same block is not an oracle). Adversarial shape (false-credit trap).",
+  "labeling_observation": {
+    "ripr_commit": "ea962974+7638",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#37"
+  ]
+}
