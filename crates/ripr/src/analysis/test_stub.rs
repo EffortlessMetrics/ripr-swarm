@@ -16,7 +16,9 @@
 //! repair-cage authorization; edit admission stays with `edit_cage`.
 
 use super::ClassifiedSeam;
-use super::new_test_target::{NewTestKind, NewTestTargetProposal};
+use super::new_test_target::{
+    NewTestKind, NewTestTargetProposal, library_crate_name_for_root_file,
+};
 use super::repair_route::{
     RepairTargetSelection, cross_language_test_target_unresolved, repair_packet_eligibility,
 };
@@ -26,8 +28,9 @@ use super::syntax::fn_signature::{
     identifier_offsets, owner_signature_at, single_comparison,
 };
 use super::syntax::{GovernedCfgTestModule, governed_cfg_test_modules, parse_clean_source_file};
+use super::test_grip_evidence::TestKind;
 use ra_ap_syntax::AstNode;
-use ra_ap_syntax::ast::{self, HasName};
+use ra_ap_syntax::ast::{self, HasName, HasVisibility};
 use std::path::{Path, PathBuf};
 
 /// Where the stub text goes.
@@ -45,6 +48,11 @@ pub(crate) enum TestStubPlacement {
     NewInlineModule { file: PathBuf, offset: usize },
     /// Create `file` with `text` as its whole content.
     NewIntegrationFile { file: PathBuf },
+    /// Append `text` to the end of `file`, an existing integration test file
+    /// the repair target already names. The file is read when the stub is
+    /// computed so the test name is unique within it; the write re-reads and
+    /// appends to its current bytes.
+    ExistingIntegrationFile { file: PathBuf },
 }
 
 impl TestStubPlacement {
@@ -52,7 +60,8 @@ impl TestStubPlacement {
         match self {
             Self::ExistingInlineModule { file, .. }
             | Self::NewInlineModule { file, .. }
-            | Self::NewIntegrationFile { file } => file,
+            | Self::NewIntegrationFile { file }
+            | Self::ExistingIntegrationFile { file } => file,
         }
     }
 
@@ -61,6 +70,7 @@ impl TestStubPlacement {
             Self::ExistingInlineModule { .. } => "existing_inline_module",
             Self::NewInlineModule { .. } => "new_inline_module",
             Self::NewIntegrationFile { .. } => "new_integration_file",
+            Self::ExistingIntegrationFile { .. } => "existing_integration_file",
         }
     }
 
@@ -69,7 +79,7 @@ impl TestStubPlacement {
             Self::ExistingInlineModule { offset, .. } | Self::NewInlineModule { offset, .. } => {
                 Some(*offset)
             }
-            Self::NewIntegrationFile { .. } => None,
+            Self::NewIntegrationFile { .. } | Self::ExistingIntegrationFile { .. } => None,
         }
     }
 }
@@ -177,6 +187,7 @@ impl TestStubRefusal {
 
 /// Stub for one classified seam given the current text of its file.
 pub(crate) fn rust_test_stub_for_classified_seam(
+    root: &Path,
     entry: &ClassifiedSeam,
     source: &str,
 ) -> Result<RustTestStub, TestStubRefusal> {
@@ -189,13 +200,45 @@ pub(crate) fn rust_test_stub_for_classified_seam(
     // Only the producer's target selection is read here. A stub is suggestion
     // text, so it does not wait on the repair-packet flip; that stays with
     // the packet surfaces.
-    let integration = match repair_packet_eligibility(entry).readiness.target_selection {
+    let selection = repair_packet_eligibility(entry).readiness.target_selection;
+    let target = match &selection {
         RepairTargetSelection::Proposed(proposal) if proposal.kind == NewTestKind::Integration => {
-            Some(proposal)
+            Some(IntegrationTarget::New(proposal))
+        }
+        // The repair packet's edit cage allows only this existing integration
+        // file, so the stub goes there rather than into the production file.
+        RepairTargetSelection::Existing(existing)
+            if existing.test_kind() == TestKind::Integration =>
+        {
+            let file = existing.file().to_path_buf();
+            let crate_name = library_crate_name_for_root_file(root, entry.seam.file(), Some(&file));
+            let target_source = std::fs::read_to_string(root.join(&file)).ok();
+            match (crate_name, target_source) {
+                (Some(crate_name), Some(source)) => Some(IntegrationTarget::Existing {
+                    file,
+                    crate_name,
+                    source,
+                }),
+                _ => None,
+            }
         }
         _ => None,
     };
-    rust_test_stub(&entry.seam, integration.as_ref(), source)
+    rust_test_stub_for_target(&entry.seam, target, source)
+}
+
+/// An integration test file a stub is routed to instead of the owner file.
+pub(crate) enum IntegrationTarget<'a> {
+    /// A producer-admitted new file.
+    New(&'a NewTestTargetProposal),
+    /// The existing integration test file the repair target names, for an
+    /// owner in the library crate root of `crate_name`.
+    Existing {
+        file: PathBuf,
+        crate_name: String,
+        /// Current content of `file`, the test-name uniqueness scope.
+        source: String,
+    },
 }
 
 /// Stub for one seam. `integration` is a producer-admitted integration
@@ -203,6 +246,14 @@ pub(crate) fn rust_test_stub_for_classified_seam(
 pub(crate) fn rust_test_stub(
     seam: &RepoSeam,
     integration: Option<&NewTestTargetProposal>,
+    source: &str,
+) -> Result<RustTestStub, TestStubRefusal> {
+    rust_test_stub_for_target(seam, integration.map(IntegrationTarget::New), source)
+}
+
+fn rust_test_stub_for_target(
+    seam: &RepoSeam,
+    integration: Option<IntegrationTarget<'_>>,
     source: &str,
 ) -> Result<RustTestStub, TestStubRefusal> {
     if seam.file().extension().and_then(|ext| ext.to_str()) != Some("rs") {
@@ -229,24 +280,58 @@ pub(crate) fn rust_test_stub(
         return Err(TestStubRefusal::FieldNotReturned);
     }
 
-    let integration_crate = integration
-        .and_then(|proposal| proposal.owner.split("::").next())
-        .filter(|name| !name.is_empty());
-    let (placement, indent, existing_source) = match (integration, integration_crate) {
-        (Some(proposal), Some(_)) if matches!(signature.container, OwnerContainer::Free) => (
-            TestStubPlacement::NewIntegrationFile {
-                file: proposal.file.clone(),
-            },
-            String::new(),
-            None,
-        ),
+    let integration_crate = match &integration {
+        Some(IntegrationTarget::New(proposal)) => proposal
+            .owner
+            .split("::")
+            .next()
+            .filter(|name| !name.is_empty()),
+        Some(IntegrationTarget::Existing { crate_name, .. }) => Some(crate_name.as_str()),
+        None => None,
+    };
+    let (placement, indent, existing_source) = match (&integration, integration_crate) {
+        (Some(IntegrationTarget::New(proposal)), Some(_))
+            if matches!(signature.container, OwnerContainer::Free) =>
+        {
+            (
+                TestStubPlacement::NewIntegrationFile {
+                    file: proposal.file.clone(),
+                },
+                String::new(),
+                None,
+            )
+        }
+        // A crate-root `pub fn` is the only free owner an integration test
+        // can name through `use <crate>::*`; any other owner keeps the
+        // inline placement.
+        (
+            Some(IntegrationTarget::Existing {
+                file,
+                source: target_source,
+                ..
+            }),
+            Some(_),
+        ) if matches!(signature.container, OwnerContainer::Free)
+            && signature.parent_modules.is_empty()
+            && owner_is_plain_pub(source, seam.byte_offset()) =>
+        {
+            (
+                TestStubPlacement::ExistingIntegrationFile { file: file.clone() },
+                String::new(),
+                Some(target_source.as_str()),
+            )
+        }
         _ => inline_placement(seam.file(), source, &signature, seam.byte_offset())?,
     };
-    let scope_import = match &placement {
-        TestStubPlacement::NewIntegrationFile { .. } => {
-            format!("use {}::*;", integration_crate.unwrap_or("crate"))
-        }
-        _ => "use super::*;".to_string(),
+    let integration_placement = matches!(
+        placement,
+        TestStubPlacement::NewIntegrationFile { .. }
+            | TestStubPlacement::ExistingIntegrationFile { .. }
+    );
+    let scope_import = if integration_placement {
+        format!("use {}::*;", integration_crate.unwrap_or("crate"))
+    } else {
+        "use super::*;".to_string()
     };
 
     let base_name = format!(
@@ -255,11 +340,10 @@ pub(crate) fn rust_test_stub(
         name_suffix(seam.kind())
     );
     let test_name = unique_test_name(&base_name, existing_source.unwrap_or(source));
-    let path_scope = match &placement {
-        TestStubPlacement::NewIntegrationFile { .. } => {
-            PathScope::Integration(integration_crate.unwrap_or("crate"))
-        }
-        _ => PathScope::ChildModule,
+    let path_scope = if integration_placement {
+        PathScope::Integration(integration_crate.unwrap_or("crate"))
+    } else {
+        PathScope::ChildModule
     };
     let body = stub_body(seam, &signature, &scope_import, source, path_scope)?;
     let test_fn = render_test_fn(seam, &signature, &test_name, &body, &indent);
@@ -271,6 +355,7 @@ pub(crate) fn rust_test_stub(
             format!("{separator}#[cfg(test)]\nmod ripr_tests {{\n{test_fn}}}\n")
         }
         TestStubPlacement::NewIntegrationFile { .. } => test_fn,
+        TestStubPlacement::ExistingIntegrationFile { .. } => format!("\n{test_fn}"),
     };
     Ok(RustTestStub {
         placement,
@@ -279,6 +364,26 @@ pub(crate) fn rust_test_stub(
         fill_ins: body.fill_ins,
         derived_inputs: body.derived_inputs,
     })
+}
+
+/// Whether the innermost `fn` at `offset` is declared with plain `pub` (not
+/// `pub(crate)` or another restriction), so a `use <crate>::*` can see it.
+fn owner_is_plain_pub(source: &str, offset: usize) -> bool {
+    let Some(parse) = parse_clean_source_file(source) else {
+        return false;
+    };
+    let Ok(offset) = ra_ap_syntax::TextSize::try_from(offset) else {
+        return false;
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| function.syntax().text_range().contains_inclusive(offset))
+        .min_by_key(|function| function.syntax().text_range().len())
+        .and_then(|function| function.visibility())
+        .is_some_and(|visibility| visibility.syntax().text() == "pub")
 }
 
 fn check_signature(signature: &OwnerSignature) -> Result<(), TestStubRefusal> {

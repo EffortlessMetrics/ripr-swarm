@@ -84,6 +84,33 @@ use std::time::{Duration, Instant};
 /// Explicit refresh and config reload bypass the debounce (#1908).
 const INTERACTIVE_REFRESH_DEBOUNCE: Duration = Duration::from_millis(200);
 
+/// Claims the one in-flight interactive debounce window (#8528).
+///
+/// `try_acquire` fails when a window is already open: that trigger has
+/// already advanced the workspace revision, so it returns without parking a
+/// notification slot. The owner drops the claim after the sleep, then reads
+/// `workspace_revision` so a folded trigger cannot be sampled into a request
+/// that has already chosen its revision.
+struct InteractiveDebounceClaim<'a> {
+    flag: &'a AtomicBool,
+}
+
+impl<'a> InteractiveDebounceClaim<'a> {
+    fn try_acquire(flag: &'a AtomicBool) -> Option<Self> {
+        if flag.swap(true, Ordering::AcqRel) {
+            None
+        } else {
+            Some(Self { flag })
+        }
+    }
+}
+
+impl Drop for InteractiveDebounceClaim<'_> {
+    fn drop(&mut self) {
+        self.flag.store(false, Ordering::Release);
+    }
+}
+
 /// Upper bound on the optional client disclosures that follow an
 /// initialize-time failure commit (#3802). The owning session failure is
 /// recorded synchronously first, so a wedged or undriven peer can delay only
@@ -96,7 +123,7 @@ const INITIALIZE_FAILURE_DISCLOSURE_BUDGET: Duration = Duration::from_secs(2);
 const SAVED_WORKTREE_LIMITS_NOTE: &str = "Static evidence only; staged and unstaged tracked files are analyzed; untracked files remain out of scope until staged or supplied through an explicit diff.";
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 use tower_lsp_server::jsonrpc::{Error as LspError, Result as LspResult};
-use tower_lsp_server::ls_types::notification::LogTrace;
+use tower_lsp_server::ls_types::notification::{LogTrace, ShowMessage};
 use tower_lsp_server::ls_types::{
     CodeAction, CodeActionParams, CodeActionResponse, CodeLens, CodeLensParams, ConfigurationItem,
     Diagnostic, DidChangeConfigurationParams, DidChangeTextDocumentParams,
@@ -105,10 +132,11 @@ use tower_lsp_server::ls_types::{
     DocumentDiagnosticReport, DocumentDiagnosticReportResult, ExecuteCommandParams, FileEvent,
     Hover, HoverParams, InitializeParams, InitializeResult, InitializedParams, LSPAny,
     LogTraceParams, MessageType, PositionEncodingKind, Registration,
-    RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport, TraceValue,
-    UnchangedDocumentDiagnosticReport, Unregistration, Uri, WorkspaceDiagnosticParams,
-    WorkspaceDiagnosticReport, WorkspaceDiagnosticReportResult, WorkspaceDocumentDiagnosticReport,
-    WorkspaceFullDocumentDiagnosticReport, WorkspaceUnchangedDocumentDiagnosticReport,
+    RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport,
+    ShowMessageParams, TraceValue, UnchangedDocumentDiagnosticReport, Unregistration, Uri,
+    WorkspaceDiagnosticParams, WorkspaceDiagnosticReport, WorkspaceDiagnosticReportResult,
+    WorkspaceDocumentDiagnosticReport, WorkspaceFullDocumentDiagnosticReport,
+    WorkspaceUnchangedDocumentDiagnosticReport,
 };
 use tower_lsp_server::{Client, LanguageServer};
 
@@ -179,20 +207,28 @@ pub(super) struct Backend {
     /// snapshot: a byte-identical repeated degradation warns once, a new
     /// signature warns again, and a cleared signature logs one recovery line.
     last_component_degradation: Mutex<Option<String>>,
+    /// The failure signature covered by the last generic-client
+    /// `window/showMessage` analysis-failure disclosure (#8583). Compared
+    /// per status publication: a byte-identical repeated failure shows
+    /// once, a changed signature shows again, and a succeeded publication
+    /// clears it so a later recurrence shows again. Mirrors
+    /// `last_component_degradation`.
+    last_analysis_failure_shown: Mutex<Option<String>>,
     /// Set when the bounded disclosure window after an initialize-time
     /// failure commit expired without completing client delivery (#3802).
     /// The owning session failure stays committed; this records the delivery
     /// omission locally instead of dropping it silently. Reflects the most
     /// recent disclosure attempt.
     initialize_failure_disclosure_omitted: AtomicBool,
-    /// Whether a generic client has already been shown one `window/showMessage`
-    /// for a refresh failure (#8583). Cleared when a refresh publishes so the
-    /// next transition into failure can warn again. The VS Code path never
-    /// consults this flag.
-    refresh_failure_shown: AtomicBool,
     refresh_scheduler: RefreshScheduler,
     workspace_revision: Mutex<u64>,
+    /// One in-flight interactive debounce window (#8528). A trigger that
+    /// finds this set returns immediately; the owner sleeps, then drops the
+    /// claim before reading the latest workspace revision.
+    interactive_debounce_window_open: AtomicBool,
     refresh_idle: Notify,
+    #[cfg(test)]
+    last_requested_workspace_revision: AtomicU64,
     /// Liveness bound for one server→client request round-trip (#5278,
     /// `transport_bounds::CLIENT_REQUEST_TIMEOUT`): after the transport read
     /// loop fuses, a client response can never arrive, so an unbounded await
@@ -318,11 +354,14 @@ impl Backend {
             watched_files_relative_pattern_support: AtomicBool::new(false),
             diagnostics_input_watch: AsyncMutex::new(DiagnosticsInputWatch::default()),
             last_component_degradation: Mutex::new(None),
+            last_analysis_failure_shown: Mutex::new(None),
             initialize_failure_disclosure_omitted: AtomicBool::new(false),
-            refresh_failure_shown: AtomicBool::new(false),
             refresh_scheduler: RefreshScheduler::default(),
             workspace_revision: Mutex::new(0),
+            interactive_debounce_window_open: AtomicBool::new(false),
             refresh_idle: Notify::new(),
+            #[cfg(test)]
+            last_requested_workspace_revision: AtomicU64::new(0),
             client_request_timeout: crate::lsp::transport_bounds::CLIENT_REQUEST_TIMEOUT,
             #[cfg(test)]
             consumed_source_barrier: Mutex::new(None),
@@ -403,16 +442,18 @@ impl Backend {
             return;
         };
         // Debounce interactive triggers (did_open/did_save/did_close) so
-        // rapid saves collapse into one analysis run. Explicit refresh and
-        // config reload bypass the debounce (#1908).
+        // rapid saves collapse into one analysis run. Explicit refresh,
+        // config reload, and watched-input bypass the debounce (#1908).
         //
-        // The collapse itself is handled by the refresh scheduler:
-        // `refresh_scheduler.request()` deduplicates matching active/pending
-        // work before incrementing `next_generation`, so rapid equivalent
-        // saves do not each obtain a new generation. The sleep here just
-        // delays the request so a second save arriving within the window
-        // can coalesce with the first rather than triggering a cancel +
-        // re-queue cycle on the scheduler.
+        // #8528: park at most one notification handler in this sleep.
+        // tower-lsp-server runs four handlers at a time; sleeping in each
+        // didOpen filled every slot, stopped stdin reads, and published one
+        // status burst per open. A trigger that finds a window already open
+        // has already advanced `workspace_revision` and returns immediately.
+        // The owner drops the claim after waking, then reads the latest
+        // revision so a folded trigger is not sampled into a request that
+        // already chose its revision. The scheduler still deduplicates
+        // matching active/pending work once a request is issued.
         //
         // The earlier version of this block used a `tokio::select!` arm on
         // `refresh_idle.notified()` to "cancel" when a superseding
@@ -426,18 +467,28 @@ impl Backend {
             RefreshReason::DidOpen | RefreshReason::DidSave | RefreshReason::DidClose
         );
         if is_interactive {
-            tokio::time::sleep(INTERACTIVE_REFRESH_DEBOUNCE).await;
-            // Re-check preconditions after the debounce window — config or
-            // authority may have changed during the wait.
-            if self.configuration_failure().is_some() {
-                return;
-            }
-            let post_authority = self.workspace_root_authority();
-            if !post_authority.allows_analysis() {
-                return;
+            {
+                let Some(_claim) =
+                    InteractiveDebounceClaim::try_acquire(&self.interactive_debounce_window_open)
+                else {
+                    return;
+                };
+                tokio::time::sleep(INTERACTIVE_REFRESH_DEBOUNCE).await;
+                // Re-check preconditions after the debounce window — config or
+                // authority may have changed during the wait.
+                if self.configuration_failure().is_some() {
+                    return;
+                }
+                let post_authority = self.workspace_root_authority();
+                if !post_authority.allows_analysis() {
+                    return;
+                }
             }
         }
         let workspace_revision = self.workspace_revision();
+        #[cfg(test)]
+        self.last_requested_workspace_revision
+            .store(workspace_revision, Ordering::Release);
         let authority_epoch = self.workspace_root_epoch.load(Ordering::SeqCst);
         let decision = self.refresh_scheduler.request(
             root,
@@ -998,39 +1049,6 @@ impl Backend {
             .await;
         self.mark_attempt_failed(request, kind, &message);
         self.publish_analysis_status().await;
-        self.disclose_refresh_failure_to_generic_client(&message)
-            .await;
-    }
-
-    /// The warning always goes to the log and `ripr/analysisStatus`; clients
-    /// without the `riprEditor` integration also get one `window/showMessage`
-    /// per transition into failure (#8583). Generic editors do not render the
-    /// custom status notification, so without this a failed analysis looks
-    /// like silence. The VS Code extension renders the failure from
-    /// `ripr/analysisStatus`. Repeated failures do not flood the editor;
-    /// a successful publish clears the latch.
-    async fn disclose_refresh_failure_to_generic_client(&self, message: &str) {
-        let generic_client = self
-            .client_features
-            .lock()
-            .map(|features| features.ripr_editor.is_none())
-            .unwrap_or(true);
-        if !generic_client {
-            return;
-        }
-        if self.refresh_failure_shown.swap(true, Ordering::AcqRel) {
-            return;
-        }
-        // Detach from the refresh worker: `Client` uses a capacity-1 channel,
-        // and the preceding `window/logMessage` may still occupy it. A live
-        // transport loop drains that slot; awaiting here would stall any
-        // in-process caller that has not yet polled the socket. The spawned
-        // warning is still the retained `Client::show_message` path.
-        let client = self.client.clone();
-        let shown = refresh_failure_notice(message);
-        let _delivery = tokio::spawn(async move {
-            client.show_message(MessageType::WARNING, shown).await;
-        });
     }
 
     #[cfg(test)]
@@ -1362,6 +1380,12 @@ impl Backend {
         &self,
     ) -> super::refresh_scheduler::RefreshTelemetrySnapshot {
         self.refresh_scheduler.telemetry()
+    }
+
+    #[cfg(test)]
+    pub(super) fn last_requested_workspace_revision_for_test(&self) -> u64 {
+        self.last_requested_workspace_revision
+            .load(Ordering::Acquire)
     }
 
     pub(super) fn workspace_revision(&self) -> u64 {
@@ -1890,7 +1914,6 @@ impl Backend {
         health.requested_scope = Some(request.scope.as_str().to_string());
         match outcome {
             RefreshAttemptOutcome::Published => {
-                self.refresh_failure_shown.store(false, Ordering::Release);
                 health.state = AnalysisAttemptState::Succeeded;
                 health.failure = None;
                 let snapshot_id = snapshot_id_for_generation(request.generation);
@@ -1965,9 +1988,94 @@ impl Backend {
     }
 
     async fn publish_analysis_status(&self) {
+        let payload = self.analysis_status_payload();
         self.client
-            .send_notification::<AnalysisStatusNotification>(self.analysis_status_payload())
+            .send_notification::<AnalysisStatusNotification>(payload.clone())
             .await;
+        self.disclose_analysis_failure_to_generic_client(&payload)
+            .await;
+    }
+
+    /// Show a failed analysis to clients without the `riprEditor`
+    /// integration (#8583). Generic editors do not render
+    /// `ripr/analysisStatus`, so without this a failed run is
+    /// indistinguishable from a run that found nothing — the same reason
+    /// `disclose_blocked_root` and the config-failure paths use
+    /// `window/showMessage` for these clients. The VS Code extension
+    /// renders the failure from the status payload itself. One bounded
+    /// `window/showMessage` WARNING per distinct failure signature: a
+    /// byte-identical repeated failure does not re-show on every refresh,
+    /// a changed failure shows once, and a succeeded publication clears
+    /// the signature so a later recurrence shows again (transient
+    /// queued/running publications between two attempts of the same
+    /// failure do not clear it). The text
+    /// passes through the same `bounded_failure_message` length and
+    /// redaction bound as every other client-visible failure message.
+    /// Dedicated disclosures that already showed a failure (initialize
+    /// and config reload) record their signature through
+    /// `note_analysis_failure_disclosed` so this path does not show it a
+    /// second time with different wording.
+    async fn disclose_analysis_failure_to_generic_client(&self, payload: &LSPAny) {
+        let Some(failure) = payload.get("failure").filter(|failure| !failure.is_null()) else {
+            if payload.get("state").and_then(serde_json::Value::as_str)
+                == Some(AnalysisAttemptState::Succeeded.as_str())
+                && let Ok(mut last) = self.last_analysis_failure_shown.lock()
+            {
+                *last = None;
+            }
+            return;
+        };
+        let (Some(kind), Some(message)) = (
+            failure.get("kind").and_then(serde_json::Value::as_str),
+            failure.get("message").and_then(serde_json::Value::as_str),
+        ) else {
+            return;
+        };
+        let generic_client = self
+            .client_features
+            .lock()
+            .map(|features| features.ripr_editor.is_none())
+            .unwrap_or(true);
+        if !generic_client {
+            return;
+        }
+        let signature = format!("{kind}:{message}");
+        let previous = {
+            let Ok(mut last) = self.last_analysis_failure_shown.lock() else {
+                return;
+            };
+            last.replace(signature.clone())
+        };
+        if previous.as_deref() == Some(signature.as_str()) {
+            return;
+        }
+        // Send through the checked notification path, like
+        // `ripr/analysisStatus` itself: `Client::show_message` is
+        // unchecked, so a status publication before initialization (or
+        // in an in-process context whose client socket is not driven)
+        // would block on the client channel instead of being suppressed
+        // with the status it discloses.
+        self.client
+            .send_notification::<ShowMessage>(ShowMessageParams {
+                typ: MessageType::WARNING,
+                message: bounded_failure_message(&format!("ripr analysis failed: {message}")),
+            })
+            .await;
+    }
+
+    /// Record the current health failure as already disclosed on screen,
+    /// so `disclose_analysis_failure_to_generic_client` does not repeat a
+    /// failure that a dedicated path (initialize, config reload) showed
+    /// with its own wording — or deliberately did not show because the
+    /// client renders it from `ripr/analysisStatus` (#8583).
+    fn note_analysis_failure_disclosed(&self) {
+        let signature = self
+            .analysis_health_snapshot()
+            .failure
+            .map(|failure| format!("{}:{}", failure.kind.as_str(), failure.message));
+        if let Ok(mut last) = self.last_analysis_failure_shown.lock() {
+            *last = signature;
+        }
     }
 
     /// The selected root to keep when a folder event leaves several folders
@@ -2092,6 +2200,11 @@ impl Backend {
     /// screen saying why. The client profile is not stored yet at
     /// initialize, so the caller decides from the negotiated profile.
     async fn deliver_initialize_failure_disclosures(&self, warning: String, shown: Option<String>) {
+        // The status publication inside this delivery must not re-show
+        // the failure through the generic analysis-failure disclosure
+        // (#8583): this path already decides the on-screen wording, and
+        // the client profile is not stored yet at initialize.
+        self.note_analysis_failure_disclosed();
         self.initialize_failure_disclosure_omitted
             .store(false, Ordering::Release);
         let delivery = tokio::time::timeout(INITIALIZE_FAILURE_DISCLOSURE_BUDGET, async {
@@ -2572,6 +2685,9 @@ impl Backend {
         if let Ok(mut last) = self.last_component_degradation.lock() {
             *last = None;
         }
+        if let Ok(mut last) = self.last_analysis_failure_shown.lock() {
+            *last = None;
+        }
         if let Ok(mut health) = self.analysis_health.lock() {
             health.state = AnalysisAttemptState::Stopped;
             health.attempt_id = None;
@@ -2722,6 +2838,11 @@ impl Backend {
                 let warning = format!("ripr config load failed; analysis is paused: {error}");
                 let shown = config_failure_notice(&error);
                 self.set_configuration_failure(error);
+                // The disclosure below owns the on-screen wording (the
+                // source-free summary); keep the generic analysis-failure
+                // disclosure in the status publication from showing the
+                // same failure a second time (#8583).
+                self.note_analysis_failure_disclosed();
                 self.publish_analysis_status().await;
                 if !repeated {
                     self.disclose_configuration_reload_failure(warning, shown)
@@ -4530,13 +4651,6 @@ fn config_failure_notice(error: &str) -> String {
     )
 }
 
-/// On-screen refresh-failure notice for clients without `riprEditor` (#8583).
-/// The body is path-redacted and length-bounded by the same owner as
-/// `ripr/analysisStatus` `failure.message` (#8584 / #8604).
-fn refresh_failure_notice(message: &str) -> String {
-    bounded_failure_message(&format!("ripr analysis failed: {message}"))
-}
-
 fn bounded_failure_message(message: &str) -> String {
     // Single-source bounding/redaction for LSP client-visible error text
     // (#1997): the implementation lives in the component-outcome module so
@@ -4545,7 +4659,7 @@ fn bounded_failure_message(message: &str) -> String {
 }
 
 #[cfg(test)]
-mod refresh_failure_show_message_tests;
+mod interactive_debounce_fold_tests;
 
 #[cfg(test)]
 mod bounded_failure_message_tests {

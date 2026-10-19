@@ -835,7 +835,7 @@ pub(super) fn strong_owner_call_rows_with_gaps(
                     };
                     candidate_rows += 1;
                     let line = first_line + text[..offset].matches('\n').count();
-                    let text = call_line_text(text, offset);
+                    let text = call_line_text(text, offset, name.len() + arglist.len() + 2);
                     match (&candidate.test.parametrize, case_arguments.is_empty()) {
                         (Some(parametrize), false) => {
                             rows.extend(parametrize.cases.iter().map(|case| {
@@ -880,12 +880,44 @@ fn owner_call_names(owner: &PythonOwner, test: &PythonTest, method_call: bool) -
     names
 }
 
-fn call_line_text(body: &str, offset: usize) -> String {
+/// The longest source excerpt, in bytes, a call row keeps as evidence text.
+/// A row is kept per owner call and its text is cloned into every value fact
+/// of that call, so an unbounded physical line (`assert f(0) == 1 and f(1) == 1
+/// and ...`) would cost O(calls x line length) memory. An ordinary line is
+/// shown whole; only a longer one is cut to a window of at most this many
+/// bytes around the call (plus up to six bytes of `...` cut markers).
+const CALL_ROW_TEXT_LIMIT: usize = 240;
+/// How much of a cut line is kept before the call; the rest follows it.
+const CALL_ROW_TEXT_LEAD: usize = 60;
+
+fn call_line_text(body: &str, offset: usize, call_len: usize) -> String {
     let start = body[..offset].rfind('\n').map_or(0, |idx| idx + 1);
     let end = body[offset..]
         .find('\n')
         .map_or(body.len(), |idx| offset + idx);
-    body[start..end].trim().to_string()
+    let line = body[start..end].trim();
+    if line.len() <= CALL_ROW_TEXT_LIMIT {
+        return line.to_string();
+    }
+    // Cut to a window that starts a little before the call, on character
+    // boundaries, and mark each cut side.
+    // A call that fits the window is kept whole: the lead shrinks so its
+    // closing parenthesis stays inside.
+    let lead = CALL_ROW_TEXT_LEAD.min(CALL_ROW_TEXT_LIMIT.saturating_sub(call_len));
+    let mut from = offset.saturating_sub(lead).max(start);
+    while !body.is_char_boundary(from) {
+        from -= 1;
+    }
+    let mut to = (from + CALL_ROW_TEXT_LIMIT).min(end);
+    while !body.is_char_boundary(to) {
+        to -= 1;
+    }
+    let window = body[from..to].trim();
+    format!(
+        "{}{window}{}",
+        if from > start { "..." } else { "" },
+        if to < end { "..." } else { "" }
+    )
 }
 
 /// Bind a call's literal arguments to owner parameters. Positional arguments

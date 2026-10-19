@@ -120,7 +120,7 @@ pub(crate) fn resolve_test_stub(
                 .find(|entry| entry.seam.id().as_str() == id)
                 .ok_or_else(|| TestStubError::NotFound(format!("seam_id {id} was not found")))?;
             let source = read_owner_source(root, &entry.seam)?;
-            Ok(resolution_for(entry, source))
+            Ok(resolution_for(root, entry, source))
         }
         TestStubSelector::At { file, line, kind } => {
             let mut seam_index = None;
@@ -222,7 +222,7 @@ impl<'a> AtCandidate<'a> {
         }
     }
 
-    fn resolution(self, source: String) -> TestStubResolution {
+    fn resolution(self, root: &Path, source: String) -> TestStubResolution {
         match self {
             Self::Shape(seam) => {
                 let outcome = rust_test_stub(seam, None, &source);
@@ -235,7 +235,7 @@ impl<'a> AtCandidate<'a> {
                     at_note: None,
                 }
             }
-            Self::Classified(entry) => resolution_for(entry, source),
+            Self::Classified(entry) => resolution_for(root, entry, source),
         }
     }
 }
@@ -766,7 +766,7 @@ fn resolve_at(
     let mut first_refusal = None;
     for candidate in candidates {
         let seam_line = candidate.seam().display_line();
-        let mut resolution = candidate.resolution(source.clone());
+        let mut resolution = candidate.resolution(root, source.clone());
         // A finding line is the changed line, which need not hold a gap of
         // its own; when the stub is for a different line, say so (#6298).
         if seam_line != line {
@@ -822,8 +822,8 @@ fn read_owner_source(root: &Path, seam: &RepoSeam) -> Result<String, TestStubErr
     })
 }
 
-fn resolution_for(entry: &ClassifiedSeam, source: String) -> TestStubResolution {
-    let outcome = rust_test_stub_for_classified_seam(entry, &source);
+fn resolution_for(root: &Path, entry: &ClassifiedSeam, source: String) -> TestStubResolution {
+    let outcome = rust_test_stub_for_classified_seam(root, entry, &source);
     TestStubResolution {
         seam_id: entry.seam.id().as_str().to_string(),
         owner: entry.seam.owner().to_string(),
@@ -911,7 +911,19 @@ pub(crate) fn write_test_stub(
                     relative.display()
                 )
             })?;
-            let updated = format!("{head}{}{tail}", stub.text);
+            let text = match_line_endings(&stub.text, &current);
+            let updated = format!("{head}{text}{tail}");
+            crate::atomic_file::write(&path, updated.as_bytes(), "test stub")?;
+        }
+        TestStubPlacement::ExistingIntegrationFile { .. } => {
+            let current = std::fs::read_to_string(&path)
+                .map_err(|error| format!("failed to read {}: {error}", relative.display()))?;
+            let separator = if current.ends_with('\n') || current.is_empty() {
+                ""
+            } else {
+                "\n"
+            };
+            let updated = format!("{current}{separator}{}", stub.text);
             crate::atomic_file::write(&path, updated.as_bytes(), "test stub")?;
         }
         TestStubPlacement::NewIntegrationFile { .. } => {
@@ -931,6 +943,19 @@ pub(crate) fn write_test_stub(
     Ok(relative.to_path_buf())
 }
 
+/// The stub is produced with `\n` line breaks. Splice it into a file that
+/// is predominantly CRLF with CRLF breaks so the write does not leave mixed
+/// line endings behind.
+fn match_line_endings(text: &str, file: &str) -> String {
+    let crlf = file.matches("\r\n").count();
+    let lf = file.matches('\n').count();
+    if crlf > 0 && crlf * 2 > lf {
+        text.replace("\r\n", "\n").replace('\n', "\r\n")
+    } else {
+        text.to_string()
+    }
+}
+
 /// The root-relative manifest of the Cargo package that will own the stub:
 /// the nearest `Cargo.toml` with a `[package]` table at or above the stub's
 /// file, bounded by `root`. `None` when no package owns it, so no run command
@@ -948,7 +973,8 @@ pub(crate) fn package_manifest_for(root: &Path, stub: &RustTestStub) -> Option<P
 /// `manifest` is the package manifest as the caller should spell it.
 pub(crate) fn run_command(manifest: &str, stub: &RustTestStub) -> String {
     match &stub.placement {
-        TestStubPlacement::NewIntegrationFile { file } => {
+        TestStubPlacement::NewIntegrationFile { file }
+        | TestStubPlacement::ExistingIntegrationFile { file } => {
             let target = file
                 .file_stem()
                 .map(|stem| stem.to_string_lossy().to_string())

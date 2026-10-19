@@ -34,6 +34,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_no_config_repair_gap/input --diff <cwd>/fixtures/python_no_config_repair_gap/diff.patch --mode fast probe:src_promotions.py:python_preview:32b0094f
   ripr context --root <cwd>/fixtures/python_no_config_repair_gap/input --diff <cwd>/fixtures/python_no_config_repair_gap/diff.patch --mode fast --at probe:src_promotions.py:python_preview:32b0094f
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_promotions.py:python_preview:32b0094f --root <cwd>/fixtures/python_no_config_repair_gap/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

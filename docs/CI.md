@@ -680,8 +680,11 @@ labeled / unlabeled (any label):
   no Routed Rust Small run; labels never create or refresh the required context
   (only `labeled` of `merge-ready` admits the gated non-required lanes)
 
-push to main / workflow_dispatch:
-  launch under their own authorities, unchanged
+push to main / workflow_dispatch on main or master:
+  launch under their own authorities
+
+workflow_dispatch on another branch or tag:
+  diagnostic jobs may run; the required Result explicitly fails
 ```
 
 `windows-ci` continues to opt into `.github/workflows/windows-advisory.yml` only.
@@ -690,10 +693,13 @@ group is qualified by `github.event_name`, so a second Ready transition replaces
 the prior admission attempt while independent main and manual work cannot replace
 each other. No run posts a pseudo-result, so a Draft PR with no required check
 blocks rather than inheriting stale proof. The result job keeps its static
-`Ripr Rust Small Result` name on every run. One gap is not enforced: a
-`workflow_dispatch` of `routed-rust.yml` on a PR branch also posts that context
-on the branch head, without the `pull_request`-scoped PR-evidence steps.
-Do not dispatch on PR branches; #5394 tracks enforcing this.
+`Ripr Rust Small Result` name on every run. A manual dispatch on a branch or
+tag other than `refs/heads/main` or `refs/heads/master` is diagnostic-only:
+its implementation jobs may run, but Result fails explicitly even if they all
+pass (#5394). The summary names the Draft to Ready handoff. This preserves
+workflow-testing diagnostics without letting a run that skips PR-only evidence
+qualify a PR. A skipped Result would report success, so the refusal runs inside
+the Result shell; it is not a job-level skip or a renamed required check.
 
 What this means for authors and agents:
 
@@ -1414,15 +1420,25 @@ configure the workflow, so changing a mode never means editing the file:
   nothing and leaves findings in artifacts; `plan` computes and uploads a
   comment plan without posting; `inline` publishes inline review comments on
   changed lines.
+- `RIPR_SUMMARY_COMMENT` controls the one summary comment on the pull request
+  conversation. `true` (the default) posts a short digest of the changed-behavior
+  findings and updates that same comment on every push, so a reviewer sees the
+  result without opening the Actions run; `false` turns it off. A clean pull
+  request gets no comment, and a comment left by an earlier push is updated to
+  say the findings are gone. It is skipped for fork and Dependabot pull
+  requests, whose token cannot write; those still get the job summary, check
+  annotations and SARIF. Only the comment `github-actions[bot]` posted is ever
+  updated.
 - `RIPR_UPLOAD_SARIF` is set in the file, not as a variable. `"true"` uploads
   SARIF to the Security tab; set `"false"` if the repository does not use code
   scanning.
 
 Permissions and job settings:
 
-- `pull-requests: write` is used only when `RIPR_COMMENT_MODE` is `inline`.
-  With `off`, nothing writes to the pull request; set it to `read` if you keep
-  comments off.
+- `pull-requests: write` is used by the summary comment and by
+  `RIPR_COMMENT_MODE=inline`. If you set `RIPR_SUMMARY_COMMENT` to `false` and
+  keep `RIPR_COMMENT_MODE` at `off`, nothing writes to the pull request; set it
+  to `read` then.
 - `security-events: write` is used only for the SARIF upload. Remove it and set
   `RIPR_UPLOAD_SARIF` to `"false"` if the repository does not use code
   scanning.
@@ -1478,6 +1494,17 @@ Steps:
   another author must not suppress a RIPR card or be PATCHed by this job.
 - **Run RIPR** is the one command above. It reads no token; the comment steps
   around it hold that.
+- **Publish RIPR summary comment** pipes the pull request's conversation
+  comments into `ripr pr-comments summary`, which renders the digest and writes
+  one POST (or a PATCH of the bot's earlier comment); the step sends it with
+  `gh api`. It is `continue-on-error` and skips fork and Dependabot heads.
+  Two known limits: it runs only when `Run RIPR` left
+  `target/ripr/review/comments.json`, so if that step fails before writing it,
+  an earlier push's comment stays as it was (stale) rather than being marked
+  incomplete; and two overlapping runs can each find no earlier comment and
+  post two, after which the later runs update only the first. Concurrency
+  groups on the workflow narrow the race; neither is a correctness claim about
+  the code under review.
 - **Publish RIPR inline comments** runs `ripr pr-comments requests`, which turns
   the publish plan into an ordered list of GitHub API requests (updates first,
   then one review for new cards), and the step sends each one with `gh api`.

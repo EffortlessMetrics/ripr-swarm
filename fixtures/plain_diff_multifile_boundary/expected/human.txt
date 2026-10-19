@@ -28,6 +28,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/plain_diff_multifile_boundary/input --diff <cwd>/fixtures/plain_diff_multifile_boundary/diff.patch --mode fast probe:src_a.rs:predicate:668eac8e
   ripr context --root <cwd>/fixtures/plain_diff_multifile_boundary/input --diff <cwd>/fixtures/plain_diff_multifile_boundary/diff.patch --mode fast --at probe:src_a.rs:predicate:668eac8e
+  no repair start offered: repair route not ready; run `ripr repair probe:src_a.rs:predicate:668eac8e --root <cwd>/fixtures/plain_diff_multifile_boundary/input` for the full gate's answer
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

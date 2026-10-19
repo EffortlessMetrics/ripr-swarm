@@ -34,6 +34,7 @@ mod sort;
 #[cfg(test)]
 mod source_role_corpus;
 mod summary;
+mod sync_memo;
 mod syntax;
 pub(crate) mod test_grip_evidence;
 pub(crate) mod test_stub;
