@@ -112,6 +112,8 @@ pub(crate) use bun::{bun_ub_calibration, bun_ub_preview_summary, configured_brid
 pub(crate) use ci_budget::ci_budget;
 pub(crate) use dogfood::dogfood;
 pub(crate) use dx_scoreboard::dx_scoreboard;
+#[cfg(test)]
+pub(crate) use dx_scoreboard::{first_run_rows_to_input, parse_ingest_text};
 pub(crate) use eval_sweep::eval_sweep;
 pub(crate) use first_pr::first_pr;
 pub(crate) use fixtures::{

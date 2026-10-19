@@ -1,7 +1,7 @@
 //! Real first-run receipt/export/ingest parity, with literal step-count oracles.
 
 use super::*;
-use crate::reports::dx_scoreboard::{first_run_rows_to_input, parse_ingest_text};
+use crate::reports::{first_run_rows_to_input, parse_ingest_text};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn metric<'a>(input: &'a Value, id: &str) -> Result<&'a Value, String> {
