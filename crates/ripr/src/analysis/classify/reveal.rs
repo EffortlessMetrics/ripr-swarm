@@ -705,8 +705,8 @@ fn owner_call_reaches_read_unrewritten(
         .find('\n')
         .map_or(masked.len(), |found| read_at + found);
     let read_end = masked[read_at..line_end]
-        .find("assert")
-        .map_or(read_at, |found| read_at + found);
+        .rfind("assert")
+        .map_or(line_end, |found| read_at + found);
     let call = format!("{binding}.{method}(");
     owner_calls_before_read(&test.body, test.start_line, binding, method, read_line)
         .into_iter()
@@ -778,19 +778,34 @@ fn only_field_reads_between(
             .iter()
             .any(|read| method.starts_with(read)),
             None => {
-                // Allowlist what may follow a bare `binding.path`: a
-                // statement or argument end, or a comparison. Indexing,
-                // assignment and compound assignment may rewrite it, and a
-                // `&mut binding.path` borrow can be mutated through an alias.
+                // Allowlist what may follow a bare `binding.path`, and what
+                // may precede it. Indexing, assignment, compound assignment,
+                // `&mut` / `ref mut` borrows (possibly parenthesized) and
+                // place-taking macros (`write!(o.log, ..)`) may rewrite it;
+                // only a statement end, a comparison, a shared borrow or an
+                // assertion argument is a read.
+                let pre = window[..at].trim_end();
                 let next = rest.trim_start();
-                !window[..at]
-                    .trim_end_matches(|ch: char| ch == '(' || ch.is_whitespace())
-                    .ends_with("&mut")
-                    && [";", ",", ")", "}", "==", "!=", "<", ">"]
-                        .iter()
-                        .any(|ok| next.starts_with(ok))
-                    && !next.starts_with("<=")
-                    && !next.starts_with(">=")
+                let shared_borrow = pre.ends_with('&') && !pre.ends_with("&&");
+                let assert_argument = pre.strip_suffix('(').is_some_and(|before| {
+                    before.trim_end().strip_suffix('!').is_some_and(|name| {
+                        let name = name.rsplit(|ch: char| !ident(ch)).next().unwrap_or("");
+                        name.starts_with("assert") || name.starts_with("debug_assert")
+                    })
+                });
+                let compared = next.starts_with("==")
+                    || next.starts_with("!=")
+                    || ((next.starts_with('<') || next.starts_with('>'))
+                        && !next.starts_with("<<")
+                        && !next.starts_with(">>")
+                        && !next.starts_with("<=")
+                        && !next.starts_with(">="));
+                !pre.ends_with("ref mut")
+                    && !pre.ends_with("&mut")
+                    && ((next.starts_with(';') && !pre.ends_with('='))
+                        || compared
+                        || ((shared_borrow || assert_argument)
+                            && [",", ")", "}"].iter().any(|ok| next.starts_with(ok))))
             }
         }
     })
@@ -5246,6 +5261,12 @@ mod tests {
         }
         for rewrite in [
             "let v = &mut o.log; v.clear(); v.push(4);",
+            "write!(o.log, \"x\").unwrap();",
+            "(o.log).clear();",
+            "(o.log)[0] = 4;",
+            "let ref mut v = o.log; v.clear();",
+            "o.log <<= 1;",
+            "assert!(o.reset_to(&[4]).is_ok()); assert_eq!(1, 1);",
             "std::mem::take(&mut o.log);",
             "o.log[0] = 4;",
             "o.log[0] += 1;",
