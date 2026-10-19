@@ -1092,7 +1092,7 @@ fn render(root: &Path) -> Result<String, String> {
     shortfalls(&mut page, &r, &bars)?;
     mutation_section(&mut page, &r.mutation)?;
     verdict_section(&mut page, &r.verdicts)?;
-    speed_section(&mut page, &r.dx)?;
+    speed_section(&mut page, &r)?;
     first_run_section(&mut page, &r.first_previous, &r.first_current, &r.install)?;
     agent_section(&mut page, &r.agent)?;
     corpus_section(&mut page, &r)?;
@@ -1815,7 +1815,8 @@ fn verdict_section(page: &mut Page, verdicts: &Value) -> Result<(), String> {
     Ok(())
 }
 
-fn speed_section(page: &mut Page, dx: &Value) -> Result<(), String> {
+fn speed_section(page: &mut Page, r: &Receipts) -> Result<(), String> {
+    let dx = &r.dx;
     let ctx = "dx-scoreboard";
     page.line("## Speed and memory");
     page.blank();
@@ -1838,7 +1839,8 @@ fn speed_section(page: &mut Page, dx: &Value) -> Result<(), String> {
         ));
     }
     let mut rows = vec![target_row];
-    for repo in req_arr(dx, "repos", ctx)? {
+    let dx_repos = req_arr(dx, "repos", ctx)?;
+    for repo in dx_repos {
         let mut row = vec![format!("{} ({})", text(repo, "id"), text(repo, "note"))];
         for id in ids {
             let entry = items(repo, "metrics")
@@ -1861,9 +1863,31 @@ fn speed_section(page: &mut Page, dx: &Value) -> Result<(), String> {
         }
         rows.push(row);
     }
+    let manifest = items(&r.corpus, "repos");
+    let on_manifest = dx_repos
+        .iter()
+        .filter(|repo| {
+            manifest.iter().any(|entry| {
+                text(entry, "id") == text(repo, "id") && text(entry, "sha") == text(repo, "sha")
+            })
+        })
+        .count();
+    let population = if on_manifest == dx_repos.len() {
+        format!(
+            "All of them also appear in the {}-repository corpus manifest below at the same revision",
+            manifest.len()
+        )
+    } else {
+        format!(
+            "This is a different population from the {}-repository corpus manifest below: {} of these repositories appear there at the same revision; the rest were measured at a different revision or are not in that manifest",
+            manifest.len(),
+            on_manifest
+        )
+    };
     let head_refs: Vec<&str> = head.iter().map(String::as_str).collect();
     page.line(format!(
-        "Measured on the pinned corpus repositories at the revisions in the receipt, with a release build, on runner class `{}`. Bold values miss the bar. Cold is a fresh cache; warm is the second `ripr check` against the last commit. Peak memory is the process's high-water mark sampled every 10 ms on Linux, a lower bound.",
+        "Measured on the {} repositories named in this table, pinned in `benchmarks/dx_scoreboard/scoreboards.toml` at the revisions in the receipt, with a release build, on runner class `{}`. {population}. Bold values miss the bar. Cold is a fresh cache; warm is the second `ripr check` against the last commit. Peak memory is the process's high-water mark sampled every 10 ms on Linux, a lower bound.",
+        dx_repos.len(),
         text(dx, "runner_class")
     ));
     page.blank();
@@ -2229,6 +2253,27 @@ mod tests {
             .find("## Mutation agreement")
             .ok_or("no mutation section")?;
         assert!(shortfalls < mutation);
+        Ok(())
+    }
+
+    #[test]
+    fn speed_section_names_its_real_population() -> Result<(), String> {
+        let rendered = render(&workspace_root())?;
+        let speed = rendered
+            .find("## Speed and memory")
+            .ok_or("no speed section")?;
+        let corpus = rendered
+            .find("## The corpus behind the numbers")
+            .ok_or("no corpus section")?;
+        let prose = &rendered[speed..corpus];
+        assert!(
+            !prose.contains("pinned corpus repositories"),
+            "speed section must not claim the corpus manifest identity it contradicts"
+        );
+        assert!(
+            prose.contains("scoreboards.toml"),
+            "speed section must name the population it actually measured"
+        );
         Ok(())
     }
 

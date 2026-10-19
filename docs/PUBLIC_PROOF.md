@@ -671,7 +671,7 @@ What the corpus does not claim:
 
 ## Speed and memory
 
-Measured on the pinned corpus repositories at the revisions in the receipt, with a release build, on runner class `github-hosted-linux-x86_64-4cpu-amd-epyc-7763-64-core-processor`. Bold values miss the bar. Cold is a fresh cache; warm is the second `ripr check` against the last commit. Peak memory is the process's high-water mark sampled every 10 ms on Linux, a lower bound.
+Measured on the 4 repositories named in this table, pinned in `benchmarks/dx_scoreboard/scoreboards.toml` at the revisions in the receipt, with a release build, on runner class `github-hosted-linux-x86_64-4cpu-amd-epyc-7763-64-core-processor`. This is a different population from the 34-repository corpus manifest below: 0 of these repositories appear there at the same revision; the rest were measured at a different revision or are not in that manifest. Bold values miss the bar. Cold is a fresh cache; warm is the second `ripr check` against the last commit. Peak memory is the process's high-water mark sampled every 10 ms on Linux, a lower bound.
 
 | Repository | Cold `ripr pilot` to first useful result | Cold `ripr pilot` peak memory | Warm `ripr check` on the last commit | Warm `ripr check` peak memory |
 | --- | --- | --- | --- | --- |
