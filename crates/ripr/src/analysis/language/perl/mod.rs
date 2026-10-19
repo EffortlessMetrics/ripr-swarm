@@ -24,6 +24,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+mod fact_index;
 mod static_limit;
 
 /// The `ripr-perl-facts-v1` packet schema. Re-uses the canonical declaration
@@ -1109,6 +1110,9 @@ struct PerlFactPacket {
     verify_commands: Vec<VerifyCommandFact>,
     limitations: Vec<LimitationFact>,
     provenance: Vec<ProvenanceFact>,
+    /// Lazily built id index; not part of the wire format or of equality.
+    #[serde(skip)]
+    index: fact_index::LazyPacketIndex,
 }
 
 impl PerlFactPacket {
@@ -1548,49 +1552,54 @@ impl PerlFactPacket {
         format!("sha256:{}", hex_bytes(&digest))
     }
 
+    fn index(&self) -> &fact_index::PacketIndex {
+        let index = self.index.get_or_build(self);
+        debug_assert_eq!(
+            index.lens,
+            self.lens(),
+            "Perl packet mutated after its index was built; call reset_index()"
+        );
+        index
+    }
+
     fn file(&self, file_id: &str) -> Option<&FileFact> {
-        self.files.iter().find(|file| file.file_id == file_id)
+        self.files.get(*self.index().files.get(file_id)?)
     }
 
     fn owner(&self, owner_id: &str) -> Option<&OwnerFact> {
-        self.owners.iter().find(|owner| owner.owner_id == owner_id)
+        self.owners.get(*self.index().owners.get(owner_id)?)
     }
 
     fn change(&self, change_id: &str) -> Option<&ChangeFact> {
-        self.changes
-            .iter()
-            .find(|change| change.change_id == change_id)
+        self.changes.get(*self.index().changes.get(change_id)?)
     }
 
     fn oracle(&self, oracle_id: &str) -> Option<&OracleFact> {
-        self.oracles
-            .iter()
-            .find(|oracle| oracle.oracle_id == oracle_id)
+        self.oracles.get(*self.index().oracles.get(oracle_id)?)
     }
 
     fn relation(&self, relation_id: &str) -> Option<&RelationFact> {
         self.relations
-            .iter()
-            .find(|relation| relation.relation_id == relation_id)
+            .get(*self.index().relations.get(relation_id)?)
+    }
+
+    fn verify_command(&self, command_id: &str) -> Option<&VerifyCommandFact> {
+        self.verify_commands
+            .get(*self.index().verify_commands.get(command_id)?)
     }
 
     fn verify_command_for_test(&self, test_id: &str) -> Option<&VerifyCommandFact> {
         self.verify_commands
-            .iter()
-            .filter(|command| {
-                command.test_id.as_deref() == Some(test_id) && !command.argv.is_empty()
-            })
-            .min_by(|left, right| left.command_id.cmp(&right.command_id))
+            .get(*self.index().verify_by_test.get(test_id)?)
     }
 
     fn test(&self, test_id: &str) -> Option<&TestFact> {
-        self.tests.iter().find(|test| test.test_id == test_id)
+        self.tests.get(*self.index().tests.get(test_id)?)
     }
 
     fn provenance(&self, provenance_id: &str) -> Option<&ProvenanceFact> {
         self.provenance
-            .iter()
-            .find(|provenance| provenance.provenance_id == provenance_id)
+            .get(*self.index().provenance.get(provenance_id)?)
     }
 
     fn files_with_role(&self, role: FileRole) -> Vec<&FileFact> {
@@ -1643,9 +1652,14 @@ impl PerlFactPacket {
             return Vec::new();
         };
 
-        self.relations
+        let positions = self
+            .index()
+            .relations_by_change
+            .get(change_id)
+            .map_or(&[][..], Vec::as_slice);
+        positions
             .iter()
-            .filter(|relation| relation.change_id == change_id)
+            .filter_map(|&position| self.relations.get(position))
             .filter(|relation| relation.owner_id == change.owner_id)
             .filter_map(|relation| self.related_test_evidence(relation))
             .collect()
@@ -1677,10 +1691,7 @@ impl PerlFactPacket {
     }
 
     fn related_test_evidence(&self, relation: &RelationFact) -> Option<PerlRelatedTestEvidence> {
-        let test = self
-            .tests
-            .iter()
-            .find(|test| test.test_id == relation.test_id)?;
+        let test = self.test(&relation.test_id)?;
         let test_file = self.file(&test.file_id)?;
         // RIPR-SPEC-0235 rule 5: another test's oracle is absent for this
         // relation, so it is neither classified nor displayed as its oracle.
@@ -1980,11 +1991,7 @@ impl PerlFactPacket {
         let verify = evidence
             .verify_command_id
             .as_deref()
-            .and_then(|command_id| {
-                self.verify_commands
-                    .iter()
-                    .find(|command| command.command_id == command_id)
-            })
+            .and_then(|command_id| self.verify_command(command_id))
             .ok_or(PerlActionabilityBlocker::MissingEvidenceRefs)?;
 
         push_actionability_ref(
@@ -3732,6 +3739,8 @@ fn stable_repo_path_arg(path: String, field: &str) -> Result<String, String> {
     Ok(path)
 }
 
+#[cfg(test)]
+mod fact_index_tests;
 #[cfg(test)]
 mod tests;
 /// Packet-backed findings the output, LSP and MCP projection tests share

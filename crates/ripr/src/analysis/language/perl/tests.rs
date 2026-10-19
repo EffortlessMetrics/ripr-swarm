@@ -71,7 +71,7 @@ fn packet_test_options() -> crate::analysis::AnalysisOptions {
 }
 
 /// Convenience wrapper: consume a packet text with the default test options.
-fn consume(packet_text: &str) -> Result<PerlFactPacket, String> {
+pub(super) fn consume(packet_text: &str) -> Result<PerlFactPacket, String> {
     PerlAdapter.consume_fact_packet(packet_text, &packet_test_options())
 }
 
