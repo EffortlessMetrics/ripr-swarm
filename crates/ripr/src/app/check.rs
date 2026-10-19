@@ -612,32 +612,43 @@ const PERL_STDERR_SCAN_BUDGET: u64 = 1024 * 1024;
 fn bounded_stderr_tail<R: std::io::Read + std::io::Seek>(reader: &mut R) -> Option<String> {
     use std::io::{Read, SeekFrom};
     const LIMIT: usize = 600;
+    // Slack for replacement characters a window boundary can create in the
+    // oldest bytes of the accumulated suffix.
+    const BOUNDARY_SLACK: usize = 4;
     let len = reader.seek(SeekFrom::End(0)).ok()?;
-    let mut end = len;
+    let mut start = len;
     let mut scanned: u64 = 0;
-    // Step back one window at a time while the window is blank (a diagnostic
-    // followed by a long run of whitespace), up to a fixed total scan budget.
-    while end > 0 && scanned < PERL_STDERR_SCAN_BUDGET {
-        let start = end.saturating_sub(PERL_STDERR_READ_WINDOW);
-        reader.seek(SeekFrom::Start(start)).ok()?;
-        let mut bytes = Vec::new();
-        reader.take(end - start).read_to_end(&mut bytes).ok()?;
-        scanned += end - start;
-        end = start;
-        let text = String::from_utf8_lossy(&bytes);
-        let text = text.trim();
-        if text.is_empty() {
-            continue;
+    // Earlier windows are prepended until the trimmed suffix holds enough
+    // characters, the start is reached, or the scan budget is spent.
+    let mut suffix: Vec<u8> = Vec::new();
+    loop {
+        let more = start > 0 && scanned < PERL_STDERR_SCAN_BUDGET;
+        if more {
+            let next = start.saturating_sub(PERL_STDERR_READ_WINDOW);
+            reader.seek(SeekFrom::Start(next)).ok()?;
+            let mut window = Vec::new();
+            reader.take(start - next).read_to_end(&mut window).ok()?;
+            scanned += start - next;
+            start = next;
+            window.extend_from_slice(&suffix);
+            suffix = window;
         }
-        let from = text
-            .char_indices()
-            .rev()
-            .map(|(index, _)| index)
-            .nth(LIMIT - 1)
-            .unwrap_or(0);
-        return Some(text[from..].trim().to_string());
+        let text = String::from_utf8_lossy(&suffix);
+        let text = text.trim();
+        let enough = text.chars().count() >= LIMIT + BOUNDARY_SLACK;
+        if enough || !more {
+            if text.is_empty() {
+                return None;
+            }
+            let from = text
+                .char_indices()
+                .rev()
+                .map(|(index, _)| index)
+                .nth(LIMIT - 1)
+                .unwrap_or(0);
+            return Some(text[from..].to_string());
+        }
     }
-    None
 }
 
 impl PerlProducerStaging {
@@ -1839,6 +1850,38 @@ mod tests {
             Some(text) if text.ends_with("exporter failed: boom") => Ok(()),
             other => Err(format!("unexpected tail {other:?}")),
         }
+    }
+
+    #[test]
+    fn stderr_tail_diagnostic_straddling_a_window_boundary_keeps_its_tail() -> Result<(), String> {
+        let mut data = "a".repeat(599).into_bytes();
+        data.push(b'b');
+        data.extend(std::iter::repeat_n(b' ', 65_535));
+        let mut cursor = std::io::Cursor::new(data);
+        let tail = bounded_stderr_tail(&mut cursor).ok_or("expected a tail")?;
+        let expected = format!("{}b", "a".repeat(599));
+        if tail != expected {
+            return Err(format!(
+                "straddling tail was {} chars: {tail:?}",
+                tail.len()
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn stderr_tail_selected_suffix_keeps_a_leading_space() -> Result<(), String> {
+        let data = format!("a {}", "b".repeat(599)).into_bytes();
+        let mut cursor = std::io::Cursor::new(data);
+        let tail = bounded_stderr_tail(&mut cursor).ok_or("expected a tail")?;
+        let expected = format!(" {}", "b".repeat(599));
+        if tail != expected {
+            return Err(format!(
+                "expected a leading space, got {} chars",
+                tail.chars().count()
+            ));
+        }
+        Ok(())
     }
 
     #[test]
