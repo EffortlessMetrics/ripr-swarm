@@ -62,7 +62,7 @@ PR. Ready is review state and requests nothing; any other label posts only
   unchanged head; re-applying the label cancels it.
 - Re-check auto-merge against the current exact-head prerequisites after a
   transition.
-- Labels such as `full-ci` take effect at the next Ready transition.
+- Labels such as `full-ci` must be present when `merge-ready` is applied; add them first.
 - Do not `workflow_dispatch` `routed-rust.yml` on a PR branch (#5394).
 
 ## Combined-tree check

@@ -360,7 +360,7 @@ implement and validate the lane-selection logic.
 | Label | Effect |
 | --- | --- |
 | `merge-ready` | Start pull-request CI for the non-required lanes. The gated lanes do not run on a Draft or plain Ready PR without this label (Routed Rust Small, ub-review, wheel and source-of-truth keep their own triggers). It is a per-head request: a later push to a labeled PR does not rerun the lanes; remove and re-add the label for the new head. Add auxiliary labels (`full-ci`, `windows-ci`, ...) first, then `merge-ready`; they have no effect without it. Does not change the required `Ripr Rust Small Result` (#4984). |
-| `full-ci` | Run required, advisory, and release-like lanes. Demotes `ripr-waive` for this PR. Expected to cost more. For Routed Rust Small, read at the next Draft -> Ready transition. |
+| `full-ci` | Run required, advisory, and release-like lanes. Demotes `ripr-waive` for this PR. Expected to cost more. For Routed Rust Small, it must be present when `merge-ready` is applied; adding it afterward does not rerun the lanes. |
 | `release-check` | Run the currently wired release-surface proof without opting into every `full-ci` lane: package list, publish dry-run, unlocked install resolution, and release-readiness. |
 | `vscode` | Run editor extension lanes even when no editor path changed. |
 | `coverage` | Run coverage lanes and upload coverage artifacts. |
@@ -1089,13 +1089,13 @@ no required check to retry (#4937; incidents #4528/#4537 ~9 hours dark,
 same-repo, non-draft PR heads with no `Ripr Rust Small Result` check run on the
 head SHA, and reports them (step-summary row plus a workflow warning). It is
 alert-only (#4986; issue #4937 option ii): it never dispatches
-`routed-rust.yml` and holds no `actions: write` permission. With Ready-only
-admission, a Ready head without the required check is a dropped
-Ready-triggered delivery, a push made after Ready, or a conflicting head with
-no merge ref (#7079). A conflicting (`dirty`) PR silently gets zero
+`routed-rust.yml` and holds no `actions: write` permission. With
+merge-ready-label admission, a labeled head without the required check is a
+dropped label-triggered delivery, a push made after the label, or a conflicting
+head with no merge ref (#7079). A conflicting (`dirty`) PR silently gets zero
 `pull_request` runs because `routed-rust.yml` evaluates from the merge ref,
 which does not exist while the PR conflicts. The watchdog cannot tell a
-dropped delivery from a post-Ready push, but its summary row carries each PR's
+dropped delivery from a post-label push, but its summary row carries each PR's
 `mergeable_state`, so the conflicted dark mode is distinguishable from both at
 a glance. A head mutated after the request has revoked its own admission
 and must not be qualified by a lighter branch-head dispatch (which skips the

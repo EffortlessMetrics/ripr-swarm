@@ -813,6 +813,11 @@ pub fn routed_rust_job_block_any(
     let job_header = format!("{job}:");
     let mut in_block = false;
     for line in workflow.lines() {
+        // Comments are not workflow structure: a guard word in a `#` line must
+        // neither satisfy a predicate nor open or close a job block.
+        if line.trim_start().starts_with('#') {
+            continue;
+        }
         let job_level_key = line.starts_with("  ")
             && !line.starts_with("   ")
             && line.trim_end().ends_with(':')
