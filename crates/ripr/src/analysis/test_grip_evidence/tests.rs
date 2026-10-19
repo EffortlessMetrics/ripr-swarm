@@ -19638,3 +19638,23 @@ fn field_projected_collection_repo_seam_retains_indexed_target() -> Result<(), S
     }
     Ok(())
 }
+
+#[test]
+fn named_call_scan_sees_calls_after_an_earlier_line_comment() {
+    // The single-line stripper truncated a whole body at its first `//`.
+    let body = "// delegates to compute\nfn wrapper() {\n    compute(1);\n}\n";
+    assert!(call_text_contains_named_call(body, "compute"));
+    // Positive/negative controls: commented, quoted or declared-only names.
+    assert!(!call_text_contains_named_call(
+        "fn wrapper() {\n    // compute(1);\n}\n",
+        "compute"
+    ));
+    assert!(!call_text_contains_named_call(
+        "fn wrapper() {\n    let s = \"compute(1)\";\n}\n",
+        "compute"
+    ));
+    assert!(!call_text_contains_named_call(
+        "fn compute() {}\n",
+        "compute"
+    ));
+}

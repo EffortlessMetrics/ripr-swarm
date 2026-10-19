@@ -8117,18 +8117,26 @@ impl OwnerPinSyntax {
                 &index.source_syntax.get(index, file)?.tree()?,
             )))
         };
+        // Build outside the index-wide lock; re-lock and keep the first entry
+        // stored for this exact source so concurrent callers share one table.
+        if let Ok(memo) = index.call_identity_memos.owner_file_scopes.lock()
+            && let Some((known_source, scopes)) = memo.get(file)
+            && Arc::ptr_eq(known_source, source)
+        {
+            return scopes.clone();
+        }
+        let scopes = compute();
         match index.call_identity_memos.owner_file_scopes.lock() {
             Ok(mut memo) => {
-                if let Some((known_source, scopes)) = memo.get(file)
+                if let Some((known_source, stored)) = memo.get(file)
                     && Arc::ptr_eq(known_source, source)
                 {
-                    return scopes.clone();
+                    return stored.clone();
                 }
-                let scopes = compute();
                 memo.insert(file.to_path_buf(), (Arc::clone(source), scopes.clone()));
                 scopes
             }
-            Err(_) => compute(),
+            Err(_) => scopes,
         }
     }
 }

@@ -647,27 +647,20 @@ impl<'a> CompactGripContext<'a> {
     pub(in crate::analysis::test_grip_evidence) fn inherent_helper_reaches_owner(
         &self,
         test_index: usize,
-        owner_id: &str,
+        owner: &FunctionSummary,
     ) -> bool {
-        let key = (test_index, owner_id.to_owned());
+        let key = (test_index, owner.id.0.clone());
         if let Some(answer) = memo(&self.inherent_helper_reach).get(&key) {
             return *answer;
         }
-        let owner = self
-            .index
-            .functions()
-            .iter()
-            .find(|owner| owner.id.0 == owner_id);
-        let answer = owner.is_some_and(|owner| {
-            self.tests.get(test_index).is_some_and(|test| {
-                inherent_helper_path_reaches_owner(
-                    test.test,
-                    owner,
-                    self.index,
-                    HELPER_OWNER_CALL_GRAPH_MAX_HOPS,
-                    &mut BTreeSet::new(),
-                )
-            })
+        let answer = self.tests.get(test_index).is_some_and(|test| {
+            inherent_helper_path_reaches_owner(
+                test.test,
+                owner,
+                self.index,
+                HELPER_OWNER_CALL_GRAPH_MAX_HOPS,
+                &mut BTreeSet::new(),
+            )
         });
         memo(&self.inherent_helper_reach).insert(key, answer);
         answer
@@ -3295,7 +3288,9 @@ pub(in crate::analysis::test_grip_evidence) fn call_text_contains_named_call(
     text: &str,
     name: &str,
 ) -> bool {
-    let text = strip_comments_and_strings(text);
+    // Whole-source masker: callers pass multi-line bodies, and the per-line
+    // stripper would truncate at the first `//` and drop later code.
+    let text = crate::analysis::extract::mask_comments_and_strings(text);
     text.match_indices(name).any(|(start, _)| {
         let prefix = text[..start].trim_end();
         if trailing_rust_identifier(prefix) == "fn" {

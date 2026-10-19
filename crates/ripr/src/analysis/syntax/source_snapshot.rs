@@ -70,16 +70,17 @@ impl std::fmt::Debug for SourceSyntaxMemos {
 
 impl SourceSyntaxMemos {
     pub(crate) fn parse_fragment(&self, text: &str) -> Option<Parse<SourceFile>> {
+        // Parse outside the index-wide lock; the first stored entry wins so
+        // concurrent callers converge on one shared green tree.
+        if let Ok(fragments) = self.fragments.lock()
+            && let Some(parse) = fragments.get(text)
+        {
+            return parse.clone();
+        }
+        let parse = parse_clean_source_file(text);
         match self.fragments.lock() {
-            Ok(mut fragments) => {
-                if let Some(parse) = fragments.get(text) {
-                    return parse.clone();
-                }
-                let parse = parse_clean_source_file(text);
-                fragments.insert(text.to_string(), parse.clone());
-                parse
-            }
-            Err(_) => parse_clean_source_file(text),
+            Ok(mut fragments) => fragments.entry(text.to_string()).or_insert(parse).clone(),
+            Err(_) => parse,
         }
     }
 

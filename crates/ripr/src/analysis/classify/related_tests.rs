@@ -2611,20 +2611,24 @@ fn associated_fn_returns_own_type(index: &RustIndex, ty: &str, name: &str) -> bo
     if function.item.has_self_param || !function.item.has_body {
         return false;
     }
-    let masked = mask_comments_and_strings(&function.body);
-    let Some(signature) = masked.split('{').next() else {
+    // Read the declared return type from the parsed signature: a textual
+    // `->` search can land on a where-bound (`F: Fn() -> Self`) instead.
+    let Some(parse) = index.source_syntax.parse_fragment(&function.body) else {
         return false;
     };
-    if signature
-        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-        .any(|word| word == "async")
-    {
+    let tree = parse.tree();
+    let mut fns = tree.syntax().children().filter_map(ast::Fn::cast);
+    let (Some(declared), None) = (fns.next(), fns.next()) else {
+        return false;
+    };
+    if declared.async_token().is_some() {
         return false;
     }
-    let Some((_, returned)) = signature.rsplit_once("->") else {
+    let Some(returned) = declared.ret_type().and_then(|ret| ret.ty()) else {
         return false;
     };
-    let returned = returned.split("where").next().unwrap_or(returned).trim();
+    let returned = returned.syntax().text().to_string();
+    let returned = returned.trim();
     returned == "Self" || returned == ty
 }
 
@@ -10423,6 +10427,45 @@ let r = try_parse_summary(\"x\");",
             let summary = test("src/lib.rs", "t", body);
             assert_eq!(
                 inherent_receiver_call_resolves(&summary, method, ty, None),
+                expected,
+                "{body}"
+            );
+        }
+    }
+
+    /// #7415 review: the declared return type is read from the signature AST,
+    /// never from the last textual `->`, which can belong to a where-bound.
+    #[test]
+    fn factory_return_type_is_read_from_the_declaration_not_a_where_bound() {
+        for (body, expected) in [
+            ("fn make() -> Self { Site }", true),
+            ("fn make() -> Site { Site }", true),
+            ("fn make() -> Foreign { Foreign }", false),
+            ("fn make() -> Result<Self, ()> { Ok(Site) }", false),
+            ("async fn make() -> Self { Site }", false),
+            ("fn make() { }", false),
+            (
+                "fn make<F>(f: F) -> Foreign where F: Fn() -> Self { Foreign }",
+                false,
+            ),
+            (
+                "fn make<F>(f: F) -> Self where F: Fn() -> Foreign { Site }",
+                true,
+            ),
+        ] {
+            let mut factory = function("src/lib.rs", "make");
+            factory.item.container = FunctionContainer::Inherent {
+                self_ty: "Site".to_string(),
+            };
+            factory.item.has_self_param = false;
+            factory.item.has_body = true;
+            factory.body = body.into();
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions: vec![factory],
+                ..Default::default()
+            });
+            assert_eq!(
+                associated_fn_returns_own_type(&index, "Site", "make"),
                 expected,
                 "{body}"
             );

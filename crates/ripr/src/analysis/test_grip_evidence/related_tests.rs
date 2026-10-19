@@ -323,7 +323,7 @@ pub(super) fn match_helper_owner_call(
     for test_index in indices {
         if owner.inherent_receiver
             && !owner.inherent_owner.is_some_and(|function| {
-                context.inherent_helper_reaches_owner(*test_index, &function.id.0)
+                context.inherent_helper_reaches_owner(*test_index, function)
             })
         {
             continue;
@@ -370,7 +370,7 @@ pub(super) fn match_target_affinity_owner_call(
         if !test_assertion_mentions_any_target_token(test, target_tokens)
             || (owner.inherent_receiver
                 && !owner.inherent_owner.is_some_and(|function| {
-                    context.inherent_helper_reaches_owner(*test_index, &function.id.0)
+                    context.inherent_helper_reaches_owner(*test_index, function)
                 }))
         {
             continue;
