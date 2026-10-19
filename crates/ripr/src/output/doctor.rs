@@ -711,8 +711,9 @@ pub(crate) struct DoctorCacheStatus {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DoctorArtifactIgnore {
-    /// `target/ripr` does not exist under the root: there is nothing to
-    /// cover yet.
+    /// None of ripr's artifact roots (the default `target/ripr` or a
+    /// relocated in-repository base) exists under the root: there is
+    /// nothing to cover yet.
     NoArtifacts,
     /// Git ignore rules cover the artifact root.
     Ignored,
@@ -728,8 +729,10 @@ pub(crate) enum DoctorArtifactIgnore {
     NotChecked,
 }
 
-/// Whether git's index tracks files under ripr's artifact root
-/// (`target/ripr`) (#8276).
+/// Whether git's index tracks files under ripr's artifact roots — the
+/// default `target/ripr` plus any in-repository relocated writer base
+/// (`RIPR_CACHE_DIR`, `[perl].cache_dir`) (#7663 / #8276, relocated bases
+/// #8751).
 ///
 /// Orthogonal to [`DoctorArtifactIgnore`]: a repository can ignore
 /// `/target/ripr/` while earlier reports stay tracked, so the reports keep

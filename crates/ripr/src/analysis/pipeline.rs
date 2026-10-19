@@ -62,6 +62,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy(
         languages,
         &crate::config::RustLanguageConfig::default(),
         &crate::config::LanguagesConfig::default(),
+        None,
     )
 }
 
@@ -71,6 +72,9 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
     languages: &[LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
     language_config: &crate::config::LanguagesConfig,
+    // Repository-relative configured `[perl].cache_dir`, when one is set;
+    // the intake exclusion also covers that writer base (#8751).
+    perl_cache_dir: Option<&std::path::Path>,
 ) -> Result<AnalysisResult, CoreError> {
     #[cfg(test)]
     {
@@ -124,6 +128,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
             languages,
             rust_config,
             language_config,
+            perl_cache_dir,
             &resolved.diff,
         )?;
         // #3279 R4: finding locations name the user's repository, not
@@ -190,6 +195,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
                 languages,
                 rust_config,
                 language_config,
+                perl_cache_dir,
                 &loaded.text,
             )
         });
@@ -267,6 +273,9 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
     languages: &[LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
     language_config: &crate::config::LanguagesConfig,
+    // Repository-relative configured `[perl].cache_dir`, when one is set;
+    // the intake exclusion also covers that writer base (#8751).
+    perl_cache_dir: Option<&std::path::Path>,
     disclosure_probes: super::DisclosureProbes,
 ) -> Result<AnalysisResult, CoreError> {
     if options.diff_file.is_some() {
@@ -310,6 +319,7 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
             languages,
             rust_config,
             language_config,
+            perl_cache_dir,
             &loaded.text,
         )?;
         bind_effective_base(&mut result, loaded.effective_base)?;
@@ -379,6 +389,7 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
             languages,
             rust_config,
             language_config,
+            perl_cache_dir,
             &loaded.text,
         );
         let (excluded, analyzed) = match probes.join() {
@@ -892,6 +903,7 @@ fn run_pipeline_for_diff_text(
         languages,
         rust_config,
         &crate::config::LanguagesConfig::default(),
+        None,
         diff_text,
     )
 }
@@ -906,6 +918,9 @@ fn run_pipeline_for_diff_text_with_language_config(
     languages: &[LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
     language_config: &crate::config::LanguagesConfig,
+    // Repository-relative configured `[perl].cache_dir`, when one is set;
+    // the intake exclusion also covers that writer base (#8751).
+    perl_cache_dir: Option<&std::path::Path>,
     diff_text: &str,
 ) -> Result<AnalysisResult, String> {
     let parsed_diff = diff::parse_unified_diff_bounded_with_metadata(diff_text)?;
@@ -915,11 +930,19 @@ fn run_pipeline_for_diff_text_with_language_config(
     // the next analysis would count ripr's own output as changed scope and
     // inflate every downstream count. Partition them out at the intake so
     // counts, adapter dispatch, and disclosures all see the same user
-    // scope, and disclose the exclusion by name below.
+    // scope, and disclose the exclusion by name below. #8751: the roots
+    // follow the writers — a relocated `RIPR_CACHE_DIR` or `[perl].cache_dir`
+    // moves ripr's own output out of `target/ripr`, and the exclusion must
+    // follow it or committed relocated artifacts reopen the same inflation.
+    let artifact_roots = diff::ripr_artifact_roots(
+        &options.root,
+        &crate::analysis::seam_cache::cache_base_dir(&options.root),
+        perl_cache_dir,
+    );
     let (changed_files, own_artifact_files): (Vec<_>, Vec<_>) = parsed_diff
         .changed_files
         .into_iter()
-        .partition(|file| !diff::is_ripr_artifact_path(&file.path));
+        .partition(|file| !diff::is_ripr_artifact_path_under(&file.path, &artifact_roots));
     let mut limitations = parsed_diff
         .limitations
         .into_iter()
@@ -6375,6 +6398,7 @@ index 0000000..1111111 100644
                 &[LanguageId::Rust],
                 &RustLanguageConfig::default(),
                 &crate::config::LanguagesConfig::default(),
+                None,
                 crate::analysis::DisclosureProbes::Run,
             );
             let elapsed = started.elapsed();
@@ -6518,6 +6542,7 @@ index 0000000..1111111 100644
                 &[LanguageId::Rust],
                 &RustLanguageConfig::default(),
                 &crate::config::LanguagesConfig::default(),
+                None,
                 crate::analysis::DisclosureProbes::Skip,
             )
             .map_err(|err| format!("worktree pipeline failed: {err}"))?;
