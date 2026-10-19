@@ -802,18 +802,15 @@ fn only_char_literals(original: &str, masked: &str) -> bool {
     true
 }
 
-/// Macros that render an argument as source text (`stringify!`, the assert
-/// family's failure message, `dbg!`), so a respelled path inside one changes
-/// the produced string.
-const TOKEN_MACROS: [&str; 10] = [
+/// Macros that render an argument as source text (`stringify!`, the failure
+/// message of `assert!` and `assert_matches!`, `dbg!`), so a respelled path
+/// inside one changes the produced string. `assert_eq!` and `assert_ne!` print
+/// operand values, not source text, and are not listed.
+const TOKEN_MACROS: [&str; 6] = [
     "stringify",
     "dbg",
     "assert",
-    "assert_eq",
-    "assert_ne",
     "debug_assert",
-    "debug_assert_eq",
-    "debug_assert_ne",
     "assert_matches",
     "debug_assert_matches",
 ];
@@ -849,9 +846,10 @@ fn token_macro_lines(source: &str) -> std::collections::BTreeSet<usize> {
     let mut lines = std::collections::BTreeSet::new();
     for name in TOKEN_MACROS {
         for (at, _) in masked.match_indices(&format!("{name}!")) {
-            let boundary = bytes[..at]
-                .last()
-                .is_none_or(|byte| !(byte.is_ascii_alphanumeric() || *byte == b'_'));
+            let boundary = masked[..at]
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'));
             if !boundary {
                 continue;
             }
@@ -2329,10 +2327,11 @@ mod tests {
         for line in [
             "assert!(x == core::i32::MAX);",
             "dbg!(core::i32::MAX);",
-            "debug_assert_eq!(x, core::i32::MAX);",
+            "debug_assert!(x == core::i32::MAX);",
         ] {
             assert!(observes_tokens(line), "{line}");
         }
+        assert!(!observes_tokens("assert_eq!(x, core::i32::MAX);"));
         assert!(!observes_tokens("let my_assert = core::i32::MAX;"));
         assert!(!observes_tokens("let a = x.assert_ok(core::i32::MAX);"));
         let source = "fn f() {\n    let a = 1;\n    let s = stringify!(\n        i32::MAX\n    );\n    let b = 2;\n}\n";
@@ -2361,6 +2360,16 @@ mod tests {
         );
         assert!(outside.is_empty(), "{outside:?}");
         assert!(!inside.is_empty(), "macro argument text keeps its probe");
+        let in_assert = block_probes(
+            multi,
+            &[(3, "        x == i32::MAX")],
+            &[(3, 3, "        x == core::i32::MAX")],
+        );
+        assert!(
+            !in_assert.is_empty(),
+            "assert! argument text keeps its probe"
+        );
+        assert!(token_macro_lines("fn f() {\n    éassert!(\n        x\n    );\n}\n").is_empty());
     }
 
     #[test]

@@ -6,5 +6,5 @@
   here" finding (#8747). The same holds when the respelled statement is
   rewrapped across a different number of lines, and a respelling inside a
   multi-line string literal, or inside an invocation of a macro that renders
-  its argument as text (`stringify!`, `dbg!`, the `assert!` family, including
+  its argument as text (`stringify!`, `dbg!`, `assert!`, `assert_matches!`, including
   continuation lines of a multi-line call), keeps its probe.
