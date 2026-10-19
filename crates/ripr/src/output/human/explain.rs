@@ -39,12 +39,26 @@ pub(crate) fn render_verdict_explanation(
                 .min_by_key(|row| strength_order(&row.oracle_strength))
                 .unwrap_or(rows[0]);
             let lead_verdict = row_verdict(lead, finding);
-            out.push_str(&format!(
-                "  - {}:{} {}: {lead_verdict}\n",
-                display_path(&lead.file),
-                lead.line,
-                lead.name
-            ));
+            // #8746: when the lead row's assertion text was not recorded but
+            // another row of the same test printed one below, the bare
+            // "assertion not recorded" fallback is suppressed — it would
+            // contradict the `checked:` lines the reader is about to see.
+            let group_printed_an_assertion = rows.iter().any(|row| row.oracle.is_some());
+            if lead_verdict == ASSERTION_NOT_RECORDED && group_printed_an_assertion {
+                out.push_str(&format!(
+                    "  - {}:{} {}\n",
+                    display_path(&lead.file),
+                    lead.line,
+                    lead.name
+                ));
+            } else {
+                out.push_str(&format!(
+                    "  - {}:{} {}: {lead_verdict}\n",
+                    display_path(&lead.file),
+                    lead.line,
+                    lead.name
+                ));
+            }
             for row in &rows {
                 if let Some(oracle) = &row.oracle {
                     let verdict = row_verdict(row, finding);
@@ -113,10 +127,19 @@ fn row_verdict(row: &RelatedTest, finding: &Finding) -> String {
                 row.oracle_strength.as_str(),
                 row.oracle_kind.as_str().replace('_', " ")
             ),
-            None => "no oracle row".to_string(),
+            // #8746: the row is a retention fact, not evidence the test
+            // lacks an oracle — the test may well assert something ripr
+            // simply did not keep. Name the limit in user vocabulary
+            // instead of the producer's "no oracle row" record shape.
+            None => ASSERTION_NOT_RECORDED.to_string(),
         },
     }
 }
+
+/// #8746: user-facing label for a row whose assertion text ripr did not
+/// retain. Shared so the render loop can recognize and suppress the bare
+/// fallback when the same test's other rows already printed an assertion.
+const ASSERTION_NOT_RECORDED: &str = "assertion not recorded";
 
 /// Strongest first, so the minimum is the assertion a test is judged by.
 fn strength_order(strength: &OracleStrength) -> u8 {
@@ -307,6 +330,22 @@ mod tests {
         }
     }
 
+    /// A matched row (no miss reason), with assertion retention controlled by
+    /// the caller — `oracle: None` is the retention fact #8746 glosses.
+    fn matched_row(oracle: Option<&str>, strength: OracleStrength) -> RelatedTest {
+        RelatedTest {
+            name: "parses_empty".to_string(),
+            file: PathBuf::from("tests/parse.rs"),
+            line: 7,
+            oracle: oracle.map(str::to_string),
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: strength,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+        }
+    }
+
     #[test]
     fn verdict_change_recipe_carries_the_observed_call_shape_when_known() {
         let mut finding = sample_perl_finding();
@@ -460,5 +499,51 @@ mod tests {
         let text = render_verdict_explanation(&finding, None);
 
         assert!(!text.contains("provisional"), "{text}");
+    }
+
+    #[test]
+    fn unrecorded_assertion_row_names_the_retention_limit() {
+        // #8746: "no oracle row" is producer vocabulary and under-describes
+        // the situation — the test may assert something ripr did not keep.
+        let mut finding = sample_perl_finding();
+        finding.related_tests = vec![matched_row(None, OracleStrength::Strong)];
+
+        let text = render_verdict_explanation(&finding, None);
+
+        assert!(
+            text.contains("  - tests/parse.rs:7 parses_empty: assertion not recorded\n"),
+            "{text}"
+        );
+        assert!(!text.contains("no oracle row"), "{text}");
+    }
+
+    #[test]
+    fn bare_fallback_suppressed_when_sibling_row_printed_an_assertion() {
+        // #8746: when the same test's other rows printed an assertion, the
+        // bare fallback contradicts them and is suppressed entirely.
+        let mut finding = sample_perl_finding();
+        finding.related_tests = vec![
+            matched_row(None, OracleStrength::Strong),
+            matched_row(
+                Some("assert_eq!(parse(\"a\"), Ok(1))"),
+                OracleStrength::Weak,
+            ),
+        ];
+
+        let text = render_verdict_explanation(&finding, None);
+
+        assert!(
+            text.contains("  - tests/parse.rs:7 parses_empty\n"),
+            "{text}"
+        );
+        assert!(!text.contains("assertion not recorded"), "{text}");
+        // The sibling row keeps its own verdict as a note, since the
+        // suppressed lead no longer states one.
+        assert!(
+            text.contains(
+                "      checked: assert_eq!(parse(\"a\"), Ok(1)) (weak exact value oracle)\n"
+            ),
+            "{text}"
+        );
     }
 }
