@@ -1,6 +1,6 @@
 //! Bounded raw Git-object inventory and observed checkout byte custody.
 use super::super::{input::read_snapshot, safe_artifact_path};
-use crate::run::{ByteCaptureBudget, TimedBytesOutput, capture_bytes_in_dir_with_budget_envs};
+use crate::run::{ByteCaptureBudget, TimedBytesOutput, capture_bytes_in_dir_with_budget};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Duration;
@@ -42,30 +42,11 @@ pub(super) fn git_capture(
         .chain(args.iter().copied())
         .map(str::to_string)
         .collect::<Vec<_>>();
-    // Source identity must not vary with the operator's Git configuration: a
-    // user/system `url.<base>.insteadOf` rewrite would change the origin the
-    // admission check sees. Repository-local config stays in effect. Removing
-    // `GIT_CONFIG_COUNT` also makes any `GIT_CONFIG_KEY_n/VALUE_n` inert.
-    let null_config = if cfg!(windows) { "NUL" } else { "/dev/null" };
-    capture_bytes_in_dir_with_budget_envs(
+    capture_bytes_in_dir_with_budget(
         Path::new("git"),
         &args,
         (root, input),
-        (
-            &[
-                ("GIT_CONFIG_NOSYSTEM", "1"),
-                ("GIT_CONFIG_SYSTEM", null_config),
-                ("GIT_CONFIG_GLOBAL", null_config),
-            ],
-            &[
-                "GIT_DIR",
-                "GIT_WORK_TREE",
-                "GIT_INDEX_FILE",
-                "GIT_CONFIG",
-                "GIT_CONFIG_COUNT",
-                "GIT_CONFIG_PARAMETERS",
-            ],
-        ),
+        &["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"],
         ByteCaptureBudget {
             timeout: Duration::from_secs(30),
             stdout_bytes,

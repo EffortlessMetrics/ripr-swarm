@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- Release-candidate source identity Git reads ignore user, system and environment Git configuration, so a `url.<base>.insteadOf` rewrite can no longer change which origin source admission sees; repository-local config still applies (#8868).
+- Release-candidate source admission judges the checkout's configured `remote.origin.url` instead of Git's `insteadOf`-rewritten URL, so neither an operator's nor the checkout's own URL rewrite can turn an undocumented transport or foreign origin into an approved one, and the result no longer varies with the operator's Git config (#8868).
