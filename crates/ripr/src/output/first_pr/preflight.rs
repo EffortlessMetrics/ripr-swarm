@@ -728,7 +728,7 @@ mod tests {
         // behavior that stays correct for unprivileged users.
         if crate::testing::access_denial::skip_unless_denied(
             "unreadable_regular_ripr_toml_is_present_not_ok",
-            crate::testing::access_denial::file_read_denied(&config),
+            crate::testing::access_denial::file_read_denied(&config)?,
         ) {
             return Ok(());
         }

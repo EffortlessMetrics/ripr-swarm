@@ -3450,9 +3450,18 @@ mod tests {
                 .map_err(|err| format!("restore parent mode {mode:#o}: {err}"))
         };
         restore(0o000)?;
+        let denied =
+            match crate::testing::access_denial::denied_by_permission(std::fs::metadata(&child)) {
+                Ok(denied) => denied,
+                Err(error) => {
+                    restore(0o755)?;
+                    let _ = std::fs::remove_dir_all(&parent);
+                    return Err(error);
+                }
+            };
         if crate::testing::access_denial::skip_unless_denied(
             "an_unreadable_root_is_not_reported_as_missing",
-            std::fs::metadata(&child).is_err(),
+            denied,
         ) {
             restore(0o755)?;
             let _ = std::fs::remove_dir_all(&parent);
@@ -3495,9 +3504,18 @@ mod tests {
                 .map_err(|err| format!("restore jail mode {mode:#o}: {err}"))
         };
         restore(0o000)?;
+        let denied =
+            match crate::testing::access_denial::denied_by_permission(std::fs::metadata(&link)) {
+                Ok(denied) => denied,
+                Err(error) => {
+                    restore(0o755)?;
+                    let _ = std::fs::remove_dir_all(&parent);
+                    return Err(error);
+                }
+            };
         if crate::testing::access_denial::skip_unless_denied(
             "a_symlink_into_an_unreadable_directory_is_not_reported_as_a_file",
-            std::fs::metadata(&link).is_err(),
+            denied,
         ) {
             restore(0o755)?;
             let _ = std::fs::remove_dir_all(&parent);

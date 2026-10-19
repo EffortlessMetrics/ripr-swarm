@@ -784,7 +784,9 @@ mod tests {
         // A privileged process can still traverse mode 000; skip visibly
         // rather than fail production behavior that stays correct for
         // unprivileged users.
-        let denied = std::fs::symlink_metadata(dir.path.join("ripr.toml")).is_err();
+        let denied = crate::testing::access_denial::denied_by_permission(
+            std::fs::symlink_metadata(dir.path.join("ripr.toml")),
+        )?;
         if crate::testing::access_denial::skip_unless_denied(
             "unreadable_ripr_toml_lookup_is_not_built_in_defaults",
             denied,

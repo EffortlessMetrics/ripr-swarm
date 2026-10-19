@@ -528,7 +528,7 @@ mod output_dir_tests {
         let env = OutputDirFixture::unwritable("helper", "pilot")?;
         if crate::testing::access_denial::skip_unless_denied(
             "unwritable_parent_create_names_the_flag",
-            env.denies_creation(),
+            env.denies_creation()?,
         ) {
             return Ok(());
         }

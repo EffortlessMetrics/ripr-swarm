@@ -2064,7 +2064,7 @@ mod tests {
         // the builder error. The skip prints, so it is not a silent green.
         if crate::testing::access_denial::skip_unless_denied(
             "review_comments_ordinary_canonical_analysis_failure_records_failed",
-            crate::testing::access_denial::file_read_denied(&fixture.unreadable),
+            crate::testing::access_denial::file_read_denied(&fixture.unreadable)?,
         ) {
             return Ok(());
         }

@@ -1293,7 +1293,7 @@ mod tests {
         let env = OutputDirFixture::unwritable("pilot-ro", "pilot")?;
         if crate::testing::access_denial::skip_unless_denied(
             "unwritable_out_dir_names_out_not_out_dir",
-            env.denies_creation(),
+            env.denies_creation()?,
         ) {
             return Ok(());
         }

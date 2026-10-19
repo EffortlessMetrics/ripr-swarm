@@ -25,19 +25,32 @@ pub(crate) fn skip_unless_denied(test: &str, denied: bool) -> bool {
     !denied
 }
 
-/// True when `file` cannot be read by this process.
-pub(crate) fn file_read_denied(file: &Path) -> bool {
-    std::fs::read(file).is_err()
+/// Classifies a probe result: `PermissionDenied` is the denial, success is
+/// no denial, and any other error is a broken probe that must fail the test
+/// rather than satisfy it.
+pub(crate) fn denied_by_permission<T>(result: std::io::Result<T>) -> Result<bool, String> {
+    match result {
+        Ok(_) => Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Ok(true),
+        Err(error) => Err(format!(
+            "access probe failed for a non-permission reason: {error}"
+        )),
+    }
+}
+
+/// True when `file` cannot be read by this process. A caller whose denial is a
+/// mode-000 parent directory should probe the leaf with `symlink_metadata`
+/// through [`denied_by_permission`] instead.
+pub(crate) fn file_read_denied(file: &Path) -> Result<bool, String> {
+    denied_by_permission(std::fs::read(file))
 }
 
 /// True when this process cannot create an entry inside `dir`.
-pub(crate) fn dir_creation_denied(dir: &Path) -> bool {
+pub(crate) fn dir_creation_denied(dir: &Path) -> Result<bool, String> {
     let probe = dir.join(".ripr-access-probe");
-    match std::fs::create_dir(&probe) {
-        Ok(()) => {
-            let _ = std::fs::remove_dir(&probe);
-            false
-        }
-        Err(_) => true,
+    let denied = denied_by_permission(std::fs::create_dir(&probe))?;
+    if !denied {
+        let _ = std::fs::remove_dir(&probe);
     }
+    Ok(denied)
 }

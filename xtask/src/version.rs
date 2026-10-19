@@ -710,10 +710,11 @@ mod tests {
             // A process that bypasses mode bits (typically euid 0) can still
             // write the read-only manifest, so the injected failure cannot
             // occur. Probe the stimulus and skip visibly (#8867).
-            let write_denied = fs::OpenOptions::new()
-                .append(true)
-                .open(&launcher_path)
-                .is_err();
+            let write_denied = match fs::OpenOptions::new().append(true).open(&launcher_path) {
+                Ok(_) => false,
+                Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => true,
+                Err(error) => return Err(error.to_string()),
+            };
             if !write_denied {
                 #[cfg(not(windows))]
                 {

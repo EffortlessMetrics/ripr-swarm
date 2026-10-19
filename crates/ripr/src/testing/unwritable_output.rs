@@ -65,7 +65,7 @@ impl OutputDirFixture {
 
     /// Whether this process is actually denied creation under the read-only parent.
     #[cfg(unix)]
-    pub(crate) fn denies_creation(&self) -> bool {
+    pub(crate) fn denies_creation(&self) -> Result<bool, String> {
         crate::testing::access_denial::dir_creation_denied(&self.parent)
     }
 

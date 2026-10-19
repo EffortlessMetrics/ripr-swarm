@@ -3321,7 +3321,14 @@ mod python_eval_sweep_refresh {
         std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o000))
             .map_err(|error| format!("chmod sealed: {error}"))?;
 
-        let listing_denied = std::fs::read_dir(&sealed).is_err();
+        let listing = std::fs::read_dir(&sealed);
+        let listing_denied =
+            matches!(&listing, Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied);
+        // Any other listing error would satisfy the control without the denial.
+        let listing_error = match listing {
+            Err(error) if error.kind() != std::io::ErrorKind::PermissionDenied => Some(error),
+            _ => None,
+        };
         let counts = if listing_denied {
             Some(count_corpus(&dir))
         } else {
@@ -3330,6 +3337,9 @@ mod python_eval_sweep_refresh {
         std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o755))
             .map_err(|error| format!("restore sealed permissions: {error}"))?;
         super::discard_partial_dir(&dir);
+        if let Some(error) = listing_error {
+            return Err(format!("list sealed directory: {error}"));
+        }
 
         let Some(counts) = counts else {
             // A process that bypasses mode bits (typically euid 0) cannot
@@ -3373,7 +3383,14 @@ mod python_eval_sweep_refresh {
         )
         .map_err(|error| format!("deny the sealed subtree: {error}"))?;
 
-        let listing_denied = std::fs::read_dir(&sealed).is_err();
+        let listing = std::fs::read_dir(&sealed);
+        let listing_denied =
+            matches!(&listing, Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied);
+        // Any other listing error would satisfy the control without the denial.
+        let listing_error = match listing {
+            Err(error) if error.kind() != std::io::ErrorKind::PermissionDenied => Some(error),
+            _ => None,
+        };
         let counts = if listing_denied {
             Some(count_corpus(&dir))
         } else {
@@ -3386,6 +3403,9 @@ mod python_eval_sweep_refresh {
         );
         super::discard_partial_dir(&dir);
         restore.map_err(|error| format!("restore the sealed subtree ACL: {error}"))?;
+        if let Some(error) = listing_error {
+            return Err(format!("list sealed directory: {error}"));
+        }
         if dir.exists() {
             return Err(format!(
                 "NOT_ESTABLISHED: the sealed test tree at {} could not be removed; a denied subtree must not remain at the PID/thread-derived temp path for a later run",
