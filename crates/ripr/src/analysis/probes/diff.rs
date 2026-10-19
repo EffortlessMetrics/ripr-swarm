@@ -815,10 +815,35 @@ const TOKEN_MACROS: [&str; 6] = [
     "debug_assert_matches",
 ];
 
-/// Whether `ch` can continue a Rust identifier. Every non-ASCII char counts,
-/// so combining marks and other identifier continuations never split a name.
+/// Rust's `Pattern_White_Space`: the whitespace the lexer skips between a
+/// macro name, its `!` and its delimiter (ASCII plus U+0085, U+200E/F, U+2028/9).
+fn is_rust_whitespace(ch: char) -> bool {
+    matches!(
+        ch,
+        '\t' | '\n'
+            | '\u{b}'
+            | '\u{c}'
+            | '\r'
+            | ' '
+            | '\u{85}'
+            | '\u{200e}'
+            | '\u{200f}'
+            | '\u{2028}'
+            | '\u{2029}'
+    )
+}
+
+/// Byte offset of the first non-whitespace char of `text` at or after `from`.
+fn skip_rust_whitespace(text: &str, from: usize) -> usize {
+    let rest = &text[from..];
+    from + rest.len() - rest.trim_start_matches(is_rust_whitespace).len()
+}
+
+/// Whether `ch` can continue a Rust identifier. Every non-ASCII char except
+/// Rust whitespace counts, so combining marks and other identifier
+/// continuations never split a name.
 fn continues_identifier(ch: char) -> bool {
-    ch.is_alphanumeric() || ch == '_' || !ch.is_ascii()
+    !is_rust_whitespace(ch) && (ch.is_alphanumeric() || ch == '_' || !ch.is_ascii())
 }
 
 /// Each token-observing macro invocation in `masked` text as the byte offset
@@ -843,10 +868,7 @@ fn token_macro_bangs(masked: &str) -> Vec<(usize, usize)> {
             if !before_ok || !after_ok {
                 continue;
             }
-            let mut cursor = after;
-            while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
-                cursor += 1;
-            }
+            let cursor = skip_rust_whitespace(masked, after);
             if bytes.get(cursor) == Some(&b'!') && bytes.get(cursor + 1) != Some(&b'=') {
                 found.push((at, cursor + 1));
             }
@@ -880,13 +902,11 @@ fn token_macro_lines(source: &str) -> std::collections::BTreeSet<usize> {
     let mut bangs = token_macro_bangs(&masked);
     bangs.sort_unstable();
     let mut covered_to = 0usize;
-    for (at, mut cursor) in bangs {
+    for (at, after_bang) in bangs {
         if at < covered_to {
             continue;
         }
-        while bytes.get(cursor).is_some_and(u8::is_ascii_whitespace) {
-            cursor += 1;
-        }
+        let cursor = skip_rust_whitespace(&masked, after_bang);
         if !matches!(bytes.get(cursor), Some(b'(' | b'[' | b'{')) {
             continue;
         }
@@ -2432,6 +2452,19 @@ mod tests {
         );
         let unclosed = "assert!(x == 1;\n".repeat(2000);
         assert!(token_macro_lines(&unclosed).len() >= 2000);
+        for (prefix, gap, after_bang) in
+            [("\u{85}", "", ""), ("", "\u{85}", ""), ("", "", "\u{85}")]
+        {
+            let source = format!(
+                "fn f() {{\n    let s = {prefix}stringify{gap}!{after_bang}(\n        i32::MAX\n    );\n}}\n"
+            );
+            let probes = block_probes(
+                &source,
+                &[(3, "        i32::MAX")],
+                &[(3, 3, "        core::i32::MAX")],
+            );
+            assert!(!probes.is_empty(), "{source:?}");
+        }
         let combining = "fn f() {\n    e\u{301}assert!(\n        x\n    );\n}\n";
         assert!(token_macro_lines(combining).is_empty());
     }
