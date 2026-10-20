@@ -171,6 +171,26 @@ cargo xtask dx-scoreboard --boards ranking --ingest target/ripr/reports/pilot-ra
   --baseline metrics/dx-scoreboard/pilot-ranking-baseline.json --gate
 ```
 
+The ranking gate is advisory and compares pooled counts and rates with the
+committed baseline. The refuted counts (`ranking.pilot_refuted_top5` and
+`ranking.pilot_refuted_top10`) set `pick_growth_allowance` in
+`scoreboards.toml`: besides their zero worsening margin they may rise by the
+number of picks the run admitted beyond the baseline's, read from the
+`refuted of N picks` evidence of both rows. A bigger judged set adds picks of
+every verdict, so an absolute count alone turned the lane red on growth that
+improved precision (#7167; #8572 added three refuted picks, #8940 re-blessed
+the baseline, and a pull request whose merge ref predated that baseline
+still failed on the old counts). At a flat or smaller pick count the margin is
+zero, so one flipped or newly refuted pick still fails; precision, scored
+share, distinct-function share and pick count keep their own floors and judge
+the mix of the added picks. A baseline without the pick count (hand-written or
+legacy evidence) gets no margin. The baseline schema is unchanged. The margin
+is not a pick-level join: it cannot say which picks are new or whether a
+matched pick changed verdict, so a refuted pick that arrives with growth passes
+this row when precision holds. A matched-set comparison needs the baseline to
+record each pick's identity (repository pin, file, line, owner, tier and
+verdict) and the answer-key caveats of #6696 and #6913 resolved first.
+
 ### The corpus lane
 
 `.github/workflows/rust-corpus.yml` runs the fast tier on demand and the full
