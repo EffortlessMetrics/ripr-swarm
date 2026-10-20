@@ -640,6 +640,241 @@ fn member_directory_diff_uses_the_resolved_workspace_root() -> Result<(), String
     Ok(())
 }
 
+/// #8872: the remaining agent subcommands (`agent start/repair/card/status/
+/// verify`), `rerun`, `diff` and `explain` resolve the implicit workspace root
+/// from a member directory exactly as `check` and the #8767 commands do:
+/// stderr disclosure, workspace-rooted artifacts, member-relative file
+/// selectors bound to the invocation directory, and `--root .` as the opt-out.
+#[cfg(unix)]
+#[test]
+fn member_directory_agent_rerun_diff_explain_use_the_resolved_workspace_root() -> Result<(), String>
+{
+    let fixture = Fixture::dir("facade-member-agent-root")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let member = outer.join("pkg");
+    std::fs::create_dir_all(member.join("src")).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(member.join("tests")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"pkg\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(member.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(member.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    std::fs::write(member.join("tests/pricing.rs"), FIXTURE_WEAK_TEST)
+        .map_err(|e| e.to_string())?;
+    init_repo(&outer)?;
+    run_git(&outer, &["add", "Cargo.toml", "pkg"])?;
+    git_commit(&outer, "member fixture source")?;
+    let disclosure = format!("ripr: resolved workspace root to {} ", outer.display());
+
+    // Seed one attempt from the member; it lands in the workspace store.
+    let repair = run_ripr(&member, &["repair"])?;
+    assert_exit(&repair, 0, "repair from a member directory");
+    let ids = attempt_ids(&outer);
+    assert_eq!(ids.len(), 1, "attempt store must live under the workspace");
+    let seam_id = read_manifest(&outer, &ids[0])?["seam_id"]
+        .as_str()
+        .ok_or("attempt manifest has no seam_id")?
+        .to_string();
+    std::fs::write(member.join("snap.json"), "{}\n").map_err(|e| e.to_string())?;
+
+    let commands: Vec<(&str, Vec<&str>)> = vec![
+        ("agent start", vec!["agent", "start", "--seam-id", &seam_id]),
+        ("agent card", vec!["agent", "card", "--seam-id", &seam_id]),
+        ("agent status", vec!["agent", "status"]),
+        (
+            "agent repair",
+            vec![
+                "agent",
+                "repair",
+                "--phase",
+                "before",
+                "--seam-id",
+                &seam_id,
+            ],
+        ),
+        (
+            "agent verify",
+            vec![
+                "agent",
+                "verify",
+                "--before",
+                "snap.json",
+                "--after",
+                "snap.json",
+                "--json",
+            ],
+        ),
+        ("rerun", vec!["rerun", "--changed-test", "tests/pricing.rs"]),
+        ("diff", vec!["diff", "--base", "HEAD", "--head", "HEAD"]),
+        ("explain", vec!["explain", "src/lib.rs:2"]),
+    ];
+    for (label, args) in &commands {
+        let output = run_ripr(&member, args)?;
+        assert!(
+            stderr_text(&output).contains(&disclosure),
+            "{label} must disclose the resolved root:\nstdout:\n{}\nstderr:\n{}",
+            stdout_text(&output),
+            stderr_text(&output)
+        );
+        assert!(
+            !member.join("target/ripr").exists(),
+            "{label} must not create a member-local target/ripr"
+        );
+    }
+    assert!(
+        outer.join("target/ripr/workflow").exists(),
+        "agent start artifacts belong under the workspace target/ripr"
+    );
+
+    // Positive bindings: member-relative selectors reach the member's files.
+    let status = run_ripr(&member, &["agent", "status"])?;
+    assert!(
+        stdout_text(&status).contains(&ids[0]),
+        "agent status must read the workspace attempt store:\n{}",
+        stdout_text(&status)
+    );
+    let rerun = run_ripr(
+        &member,
+        &["rerun", "--changed-test", "tests/pricing.rs", "--json"],
+    )?;
+    assert!(
+        stdout_text(&rerun).contains("pkg/tests/pricing.rs"),
+        "rerun must bind the member-relative test file:\n{}\n{}",
+        stdout_text(&rerun),
+        stderr_text(&rerun)
+    );
+    let verify = run_ripr(
+        &member,
+        &[
+            "agent",
+            "verify",
+            "--before",
+            "snap.json",
+            "--after",
+            "snap.json",
+            "--json",
+        ],
+    )?;
+    assert!(
+        stderr_text(&verify).contains("not a canonical repo-exposure artifact"),
+        "an existing member-relative snapshot must bind and reach content validation:\n{}",
+        stderr_text(&verify)
+    );
+    // RIPR-SPEC-0123: a changed test that resolves to nothing is a named
+    // limitation (exit 0), never a binding refusal.
+    let missing = run_ripr(&member, &["rerun", "--changed-test", "tests/nope.rs"])?;
+    assert_exit(&missing, 0, "rerun of an unresolved changed test");
+    assert!(
+        stdout_text(&missing).contains("State: limited")
+            && stdout_text(&missing).contains("changed_test_unresolved"),
+        "{}",
+        stdout_text(&missing)
+    );
+
+    // Negative control: a selector naming no file is refused, never suffix-matched.
+    for args in [
+        &["explain", "src/nope.rs:2"][..],
+        &[
+            "agent",
+            "verify",
+            "--before",
+            "nope.json",
+            "--after",
+            "nope.json",
+            "--json",
+        ][..],
+    ] {
+        let output = run_ripr(&member, args)?;
+        assert_ne!(output.status.code(), Some(0), "{args:?}");
+        assert!(
+            stderr_text(&output).contains("names no file under the invocation directory"),
+            "{args:?}:\n{}",
+            stderr_text(&output)
+        );
+    }
+
+    // Negative control: `--root .` keeps the member directory for every command.
+    for (label, args) in &commands {
+        let mut pinned = args.clone();
+        pinned.extend(["--root", "."]);
+        let output = run_ripr(&member, &pinned)?;
+        assert!(
+            !stderr_text(&output).contains("resolved workspace root"),
+            "{label} --root . must keep the member directory:\n{}",
+            stderr_text(&output)
+        );
+    }
+    assert!(
+        member.join("target/ripr").exists(),
+        "`--root .` runs write their artifacts under the member's target/ripr"
+    );
+
+    // Positive binding with a colliding sibling: both members carry a changed
+    // `src/lib.rs`, so only the invocation-directory binding selects pkg's.
+    let other = outer.join("other");
+    std::fs::create_dir_all(other.join("src")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"pkg\", \"other\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(
+        other.join("Cargo.toml"),
+        "[package]\nname = \"other_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(other.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    weaken_boundary_predicate(&member)?;
+    weaken_boundary_predicate(&other)?;
+    let explain = run_ripr(&member, &["explain", "--worktree", "src/lib.rs:2"])?;
+    assert_exit(&explain, 0, "explain of a member-relative selector");
+    assert!(
+        stdout_text(&explain).contains("pkg/src/lib.rs:2")
+            && !stdout_text(&explain).contains("other/src/lib.rs"),
+        "explain must bind to the invocation directory's file:\n{}",
+        stdout_text(&explain)
+    );
+    Ok(())
+}
+
+/// #8872: a root-resolution failure of `diff --json` / `rerun --json` is a
+/// post-argv failure, so it still writes the #7331 refusal envelope on stdout.
+#[cfg(unix)]
+#[test]
+fn member_directory_root_resolution_failure_keeps_the_json_refusal_envelope() -> Result<(), String>
+{
+    let fixture = Fixture::dir("facade-root-envelope")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let project = outer.join("proj");
+    std::fs::create_dir_all(&project).map_err(|e| e.to_string())?;
+    std::fs::write(outer.join("Cargo.toml"), "[workspace]\nmembers = []\n")
+        .map_err(|e| e.to_string())?;
+    init_repo(&project)?;
+    let programs = outer.join("programs");
+    std::fs::create_dir_all(&programs).map_err(|e| e.to_string())?;
+    // A present, non-executable program is a launch failure, not missing Git.
+    std::fs::write(programs.join("git"), "not executable\n").map_err(|e| e.to_string())?;
+    let path = programs.to_str().ok_or("fixture PATH is not UTF-8")?;
+    for args in [
+        &["diff", "--json"][..],
+        &["rerun", "--json", "--changed-test", "tests/x.rs"][..],
+    ] {
+        let output = run_ripr_env(&project, args, &[("PATH", path), ("RIPR_CACHE_DIR", "")])?;
+        assert_exit(&output, 2, &format!("{args:?} root resolution failure"));
+        let document: serde_json::Value = serde_json::from_str(&stdout_text(&output))
+            .map_err(|e| format!("{args:?} stdout must be the refusal envelope: {e}"))?;
+        assert!(
+            document
+                .to_string()
+                .contains("cannot verify implicit Git root"),
+            "{args:?}: {document}"
+        );
+    }
+    Ok(())
+}
+
 #[cfg(unix)]
 fn tree_snapshot(dir: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
     let mut files = Vec::new();
@@ -3110,3 +3345,396 @@ fn repair_skips_severity_off_seams_with_named_omission() -> Result<(), String> {
 
 #[path = "task_first_facade/inspection_cache_disclosure.rs"]
 mod inspection_cache_disclosure;
+
+/// #8872 review: the advanced `agent repair --phase before` spelling binds a
+/// member-relative `file:line` selector to the invocation directory before
+/// subject translation, so `quiet` never publishes an attempt at the sibling's
+/// `gap/src/lib.rs:2`; the owning member still can.
+#[cfg(unix)]
+#[test]
+fn advanced_agent_repair_member_selector_must_not_target_sibling() -> Result<(), String> {
+    let fixture = Fixture::dir("advanced-member-selector")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let quiet = outer.join("quiet");
+    let gap = outer.join("gap");
+    for member in [&quiet, &gap] {
+        std::fs::create_dir_all(member.join("src")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(member.join("tests")).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"quiet\", \"gap\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(gap.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(gap.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    std::fs::write(gap.join("tests/pricing.rs"), FIXTURE_WEAK_TEST).map_err(|e| e.to_string())?;
+    std::fs::write(
+        quiet.join("Cargo.toml"),
+        "[package]\nname = \"quiet_member\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(
+        quiet.join("src/lib.rs"),
+        "pub const NAME: &str = \"quiet\";\n\n\n",
+    )
+    .map_err(|e| e.to_string())?;
+    init_repo(&outer)?;
+    run_git(&outer, &["add", "Cargo.toml", "quiet", "gap"])?;
+    git_commit(&outer, "two member selector fixture")?;
+    let gap_before = tree_snapshot(&gap)?;
+    let args = [
+        "agent",
+        "repair",
+        "--phase",
+        "before",
+        "--seam-id",
+        "src/lib.rs:2",
+    ];
+
+    let refused = run_ripr(&quiet, &args)?;
+    assert_ne!(refused.status.code(), Some(0), "{}", stderr_text(&refused));
+    assert!(
+        attempt_ids(&outer).is_empty(),
+        "no sibling attempt may be published"
+    );
+    assert_eq!(tree_snapshot(&gap)?, gap_before, "source files unchanged");
+
+    // Positive control: the same selector typed from the member that owns it.
+    let owned = run_ripr(&gap, &args)?;
+    assert_exit(&owned, 0, "advanced repair from the owning member");
+    assert_eq!(attempt_ids(&outer).len(), 1);
+    Ok(())
+}
+
+/// #8872 review: an unresolved `rerun --changed-test` stays RIPR-SPEC-0123's
+/// named limitation from a member directory, identical to the explicit-root
+/// control, and `--json` keeps one parseable `ripr-targeted-rerun-v1` document.
+#[cfg(unix)]
+#[test]
+fn member_rerun_missing_selector_matches_the_explicit_root_json_report() -> Result<(), String> {
+    let fixture = Fixture::dir("member-rerun-missing-json")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let member = outer.join("pkg");
+    std::fs::create_dir_all(member.join("src")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"pkg\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(member.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(member.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    init_repo(&outer)?;
+    run_git(&outer, &["add", "Cargo.toml", "pkg"])?;
+    git_commit(&outer, "missing test selector fixture")?;
+    let root_arg = outer.to_string_lossy().into_owned();
+    let selector = ["rerun", "--changed-test", "tests/missing.rs", "--json"];
+    let explicit = run_ripr(&member, &[&selector[..], &["--root", &root_arg]].concat())?;
+    let implicit = run_ripr(&member, &selector)?;
+    for (label, output) in [("explicit", &explicit), ("implicit", &implicit)] {
+        assert_exit(output, 0, label);
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .map_err(|e| format!("{label} stdout must be one JSON document: {e}"))?;
+        assert_eq!(
+            report["schema_version"], "ripr-targeted-rerun-v1",
+            "{label}"
+        );
+        assert_eq!(report["state"], "limited", "{label}");
+        assert!(
+            stdout_text(output).contains("changed_test_unresolved")
+                && stdout_text(output).contains("tests/missing.rs"),
+            "{label}: {}",
+            stdout_text(output)
+        );
+    }
+    Ok(())
+}
+
+/// #8872 review: with `--diff`, a member-relative `file:line` whose file the
+/// working tree no longer has is anchored to the invocation directory, so it
+/// cannot suffix-match a sibling member's finding; with the file present the
+/// owning member's own finding is explained.
+#[cfg(unix)]
+#[test]
+fn member_explain_diff_replay_selector_never_reaches_a_sibling_finding() -> Result<(), String> {
+    let fixture = Fixture::dir("member-explain-replay")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let member = outer.join("pkg");
+    let other = outer.join("other");
+    for (dir, name) in [(&member, "boundary_gap_fixture"), (&other, "other_fixture")] {
+        std::fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"),
+        )
+        .map_err(|e| e.to_string())?;
+        std::fs::write(dir.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"pkg\", \"other\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    init_repo(&outer)?;
+    run_git(&outer, &["add", "Cargo.toml", "pkg", "other"])?;
+    git_commit(&outer, "two member replay fixture")?;
+    weaken_boundary_predicate(&member)?;
+    weaken_boundary_predicate(&other)?;
+    let sibling_only = run_git(&outer, &["diff", "--", "other"])?;
+    let both = run_git(&outer, &["diff"])?;
+    let sibling_patch = outer.join("sibling.patch");
+    let both_patch = outer.join("both.patch");
+    std::fs::write(&sibling_patch, sibling_only).map_err(|e| e.to_string())?;
+    std::fs::write(&both_patch, both).map_err(|e| e.to_string())?;
+    // The working tree no longer has the member's file the patch edits.
+    std::fs::remove_file(member.join("src/lib.rs")).map_err(|e| e.to_string())?;
+    let sibling_arg = sibling_patch.to_string_lossy().into_owned();
+    let both_arg = both_patch.to_string_lossy().into_owned();
+
+    let negative = run_ripr(
+        &member,
+        &["explain", "--diff", &sibling_arg, "src/lib.rs:2"],
+    )?;
+    assert!(
+        !stdout_text(&negative).contains("other/src/lib.rs"),
+        "a member selector must not explain the sibling's finding:\n{}",
+        stdout_text(&negative)
+    );
+    assert_ne!(
+        negative.status.code(),
+        Some(0),
+        "{}",
+        stderr_text(&negative)
+    );
+
+    // A selector already typed workspace-relative is not prefixed twice.
+    let relative = run_ripr(
+        &member,
+        &["explain", "--diff", &sibling_arg, "pkg/src/lib.rs:2"],
+    )?;
+    assert_ne!(
+        relative.status.code(),
+        Some(0),
+        "{}",
+        stderr_text(&relative)
+    );
+    assert!(
+        stderr_text(&relative).contains("no finding matched \"pkg/src/lib.rs:2\""),
+        "{}",
+        stderr_text(&relative)
+    );
+
+    // `./` is normalized before the prefix check.
+    let dotted = run_ripr(
+        &member,
+        &["explain", "--diff", &sibling_arg, "./pkg/src/lib.rs:2"],
+    )?;
+    assert_ne!(dotted.status.code(), Some(0), "{}", stderr_text(&dotted));
+    assert!(
+        stderr_text(&dotted).contains("no finding matched \"pkg/src/lib.rs:2\""),
+        "{}",
+        stderr_text(&dotted)
+    );
+
+    // Positive control: with the member's file back, the same selector explains
+    // the member's own finding, never the sibling's.
+    std::fs::write(member.join("src/lib.rs"), FIXTURE_LIB.replace(">=", ">"))
+        .map_err(|e| e.to_string())?;
+    let positive = run_ripr(&member, &["explain", "--diff", &both_arg, "src/lib.rs:2"])?;
+    assert_exit(&positive, 0, "selector in the owning member");
+    assert!(
+        stdout_text(&positive).contains("pkg/src/lib.rs:2")
+            && !stdout_text(&positive).contains("other/src/lib.rs"),
+        "{}",
+        stdout_text(&positive)
+    );
+    Ok(())
+}
+
+/// #8872 review: a member-relative `agent repair --seam-id` naming no file is
+/// refused with exit 2 on both the before-phase route (driven from `cli::run`)
+/// and the dispatched route, and publishes no attempt.
+#[cfg(unix)]
+#[test]
+fn advanced_agent_repair_unbindable_selector_exits_2_on_both_routes() -> Result<(), String> {
+    let fixture = Fixture::dir("advanced-unbindable-selector")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let member = outer.join("pkg");
+    std::fs::create_dir_all(member.join("src")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"pkg\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(member.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(member.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    init_repo(&outer)?;
+    run_git(&outer, &["add", "Cargo.toml", "pkg"])?;
+    git_commit(&outer, "unbindable selector fixture")?;
+    for phase in ["before", "after"] {
+        let output = run_ripr(
+            &member,
+            &[
+                "agent",
+                "repair",
+                "--phase",
+                phase,
+                "--seam-id",
+                "src/nope.rs:2",
+            ],
+        )?;
+        assert_exit(&output, 2, &format!("{phase} phase unbindable selector"));
+        assert!(
+            stderr_text(&output).contains("names no file under the invocation directory"),
+            "{phase}:\n{}",
+            stderr_text(&output)
+        );
+        assert!(attempt_ids(&outer).is_empty(), "{phase}: no attempt");
+    }
+    Ok(())
+}
+
+/// #8872 review: the shared `file:line` matcher accepts path suffixes, so a
+/// selector bound to `pkg/src/lib.rs` would also match a workspace-root
+/// package's `src/lib.rs` at the same line. Such a selector is refused for
+/// `repair`, `agent repair` and `explain` whether the root package has the
+/// only gap or both packages do, and nothing is published.
+#[cfg(unix)]
+#[test]
+fn member_selector_shadowed_by_a_root_package_file_is_refused() -> Result<(), String> {
+    for member_has_gap in [false, true] {
+        let fixture = Fixture::dir("member-selector-root-shadow")?;
+        let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+        let member = outer.join("pkg");
+        for dir in [&outer, &member] {
+            std::fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
+            std::fs::create_dir_all(dir.join("tests")).map_err(|e| e.to_string())?;
+        }
+        // Root package (with the workspace) and one member, same src/lib.rs.
+        std::fs::write(
+            outer.join("Cargo.toml"),
+            format!("{FIXTURE_CARGO_TOML}\n[workspace]\nmembers = [\"pkg\"]\n"),
+        )
+        .map_err(|e| e.to_string())?;
+        std::fs::write(outer.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+        std::fs::write(outer.join("tests/pricing.rs"), FIXTURE_WEAK_TEST)
+            .map_err(|e| e.to_string())?;
+        std::fs::write(
+            member.join("Cargo.toml"),
+            "[package]\nname = \"member_pkg\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|e| e.to_string())?;
+        let member_lib = if member_has_gap {
+            FIXTURE_LIB
+        } else {
+            "pub const NAME: &str = \"member\";\n\n\n"
+        };
+        std::fs::write(member.join("src/lib.rs"), member_lib).map_err(|e| e.to_string())?;
+        init_repo(&outer)?;
+        run_git(&outer, &["add", "."])?;
+        git_commit(&outer, "root and member share src/lib.rs")?;
+        if member_has_gap {
+            weaken_boundary_predicate(&member)?;
+        }
+        weaken_boundary_predicate(&outer)?;
+
+        for args in [
+            &["repair", "src/lib.rs:2"][..],
+            &[
+                "agent",
+                "repair",
+                "--phase",
+                "before",
+                "--seam-id",
+                "src/lib.rs:2",
+            ][..],
+            &["explain", "--worktree", "src/lib.rs:2"][..],
+        ] {
+            let output = run_ripr(&member, args)?;
+            let label = format!("member_has_gap={member_has_gap} {args:?}");
+            assert_ne!(output.status.code(), Some(0), "{label}");
+            assert!(
+                stderr_text(&output).contains("also matches the workspace-root file"),
+                "{label}:\n{}",
+                stderr_text(&output)
+            );
+            assert!(
+                !stdout_text(&output).contains("src/lib.rs:2"),
+                "{label} must not explain either file:\n{}",
+                stdout_text(&output)
+            );
+            assert!(attempt_ids(&outer).is_empty(), "{label}: no attempt");
+        }
+        // Control: `--root .` analyzes the member alone and is not refused as shadowed.
+        let pinned = run_ripr(
+            &member,
+            &["explain", "--worktree", "src/lib.rs:2", "--root", "."],
+        )?;
+        assert!(
+            !stderr_text(&pinned).contains("also matches the workspace-root file"),
+            "{}",
+            stderr_text(&pinned)
+        );
+        if member_has_gap {
+            assert_exit(&pinned, 0, "`--root .` explains the member's own finding");
+            assert!(
+                stdout_text(&pinned).contains("src/lib.rs:2")
+                    && !stdout_text(&pinned).contains("pkg/"),
+                "{}",
+                stdout_text(&pinned)
+            );
+        } else {
+            assert_ne!(pinned.status.code(), Some(0), "member has no finding");
+        }
+    }
+    Ok(())
+}
+
+/// #8872 review: the `--diff` replay arm re-anchors a selector whose file the
+/// working tree lacks; it must still refuse when a proper suffix of the
+/// anchored path names a real root file (`crates/pkg/src/lib.rs` vs the root
+/// package directory `pkg/src/lib.rs`).
+#[cfg(unix)]
+#[test]
+fn member_explain_replay_anchor_shadowed_by_a_root_directory_is_refused() -> Result<(), String> {
+    let fixture = Fixture::dir("member-replay-shadow")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let member = outer.join("crates/pkg");
+    let shadow = outer.join("pkg");
+    for (dir, name) in [(&member, "member_pkg"), (&shadow, "shadow_pkg")] {
+        std::fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"),
+        )
+        .map_err(|e| e.to_string())?;
+        std::fs::write(dir.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/pkg\", \"pkg\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    init_repo(&outer)?;
+    run_git(&outer, &["add", "."])?;
+    git_commit(&outer, "member and root directory share a suffix")?;
+    weaken_boundary_predicate(&member)?;
+    weaken_boundary_predicate(&shadow)?;
+    let patch = outer.join("both.patch");
+    std::fs::write(&patch, run_git(&outer, &["diff"])?).map_err(|e| e.to_string())?;
+    std::fs::remove_file(member.join("src/lib.rs")).map_err(|e| e.to_string())?;
+    let patch_arg = patch.to_string_lossy().into_owned();
+    let output = run_ripr(&member, &["explain", "--diff", &patch_arg, "src/lib.rs:2"])?;
+    assert_ne!(output.status.code(), Some(0), "{}", stderr_text(&output));
+    assert!(
+        stderr_text(&output).contains("also matches the workspace-root file"),
+        "{}",
+        stderr_text(&output)
+    );
+    assert!(
+        !stdout_text(&output).contains("pkg/src/lib.rs"),
+        "{}",
+        stdout_text(&output)
+    );
+    Ok(())
+}
