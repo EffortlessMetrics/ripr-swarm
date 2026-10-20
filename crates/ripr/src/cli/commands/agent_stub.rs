@@ -76,7 +76,7 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
         match revalidate_already_present_stub(&options.root, &config, &options.selector) {
             Ok(AlreadyPresentRevalidation::Current) => {}
             Ok(AlreadyPresentRevalidation::Rewrite(fresh)) => {
-                resolution = fresh;
+                resolution = *fresh;
             }
             Err(message) => return Err(CommandError::Failure(message)),
         }
@@ -653,9 +653,7 @@ weakly_gripped = "off"
         let root = scratch_crate("rewrite-stale", OPEN_GAP)?;
         stub_write_at(&root, "src/lib.rs:2", "predicate")
             .map_err(|error| format!("first write must succeed: {error:?}"))?;
-        let selector = TestStubSelector::parse_at("src/lib.rs:2")
-            .and_then(|selector| selector.with_kind("predicate"))
-            .map_err(|error| error)?;
+        let selector = TestStubSelector::parse_at("src/lib.rs:2")?.with_kind("predicate")?;
         // Resolve while the stub is on disk: already_present.
         let resolution = resolve_test_stub(&root, &RiprConfig::default(), &selector)
             .map_err(|error| format!("{error:?}"))?;
@@ -683,9 +681,8 @@ weakly_gripped = "off"
         // path.
         std::fs::write(root.join("src/lib.rs"), OPEN_GAP).map_err(|error| error.to_string())?;
         let outcome = revalidate_already_present_stub(&root, &RiprConfig::default(), &selector);
-        let AlreadyPresentRevalidation::Rewrite(fresh) = outcome.map_err(|message| {
+        let AlreadyPresentRevalidation::Rewrite(fresh) = outcome.inspect_err(|_| {
             let _ = std::fs::remove_dir_all(&root);
-            message
         })?
         else {
             let _ = std::fs::remove_dir_all(&root);
@@ -699,9 +696,8 @@ weakly_gripped = "off"
             let _ = std::fs::remove_dir_all(&root);
             return Err("the fresh stub after removal must not flag already_present".to_string());
         }
-        write_test_stub(&root, &fresh, stub).map_err(|error| {
+        write_test_stub(&root, &fresh, stub).inspect_err(|_| {
             let _ = std::fs::remove_dir_all(&root);
-            error
         })?;
         let rewritten =
             std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?;

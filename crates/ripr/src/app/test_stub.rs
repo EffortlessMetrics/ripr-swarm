@@ -946,7 +946,7 @@ pub(crate) enum AlreadyPresentRevalidation {
     /// is not `already_present`, so the caller writes it through the normal
     /// guarded path instead of reporting success from bytes the resolver
     /// read before a concurrent edit.
-    Rewrite(TestStubResolution),
+    Rewrite(Box<TestStubResolution>),
 }
 
 /// Re-resolve a seam whose stub resolved as `already_present`, immediately
@@ -971,7 +971,7 @@ pub(crate) fn revalidate_already_present_stub(
     })?;
     match &fresh.outcome {
         Ok(stub) if stub.already_present => Ok(AlreadyPresentRevalidation::Current),
-        Ok(_) => Ok(AlreadyPresentRevalidation::Rewrite(fresh)),
+        Ok(_) => Ok(AlreadyPresentRevalidation::Rewrite(Box::new(fresh))),
         Err(refusal) => Err(format!(
             "the workspace changed after the stub was computed ({}: {}); rerun `ripr agent stub`",
             refusal.as_str(),

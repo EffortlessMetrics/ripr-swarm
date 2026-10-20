@@ -459,8 +459,7 @@ fn scope_contains_test_fn(scope: &StubScope<'_>, rendered: &str, name: &str) -> 
         .descendants()
         .filter_map(ast::Fn::cast)
         .any(|function| {
-            if !has_test_attribute(&function) || !function.name().is_some_and(|n| n.text() == name)
-            {
+            if !has_test_attribute(&function) || function.name().is_none_or(|n| n.text() != name) {
                 return false;
             }
             let range = function.syntax().text_range();
