@@ -82,6 +82,12 @@ fn registration_bindings_reject_local_noop_callbacks() -> Result<(), String> {
         ),
         format!("import {{ describe as test }} from 'vitest'; {TEST}"),
         format!("import {{ test }} from './local-helper'; {TEST}"),
+        format!("enum test {{ A }}; {TEST}"),
+        format!("export enum test {{ A }}; {TEST}"),
+        format!("export namespace test {{ export const value = 1; }} {TEST}"),
+        format!("namespace test {{ export const value = 1; }} {TEST}"),
+        format!("describe('setup', () => {{ test = {NOOP}; }}); await {TEST}"),
+        format!("describe('setup', () => {{ test = {NOOP}; }}); {TEST}"),
     ] {
         assert_eq!(
             registration_finding("registration-noop", &source)?.class,
@@ -102,6 +108,9 @@ fn registration_bindings_preserve_unrelated_valid_evidence() -> Result<(), Strin
         format!("{{ function test() {{}} }} describe('real', () => {{ {TEST} }});"),
         format!(
             "describe('shadow', () => {{ {{ let test; test = {NOOP}; }} }}); describe('real', () => {{ {TEST} }});"
+        ),
+        format!(
+            "describe('shadow', () => {{ {{ var test; }} test = {NOOP}; }}); describe('real', () => {{ {TEST} }});"
         ),
         format!("[1].forEach(() => {{ {TEST} }});"),
         format!("describe('real', () => {{ [1].forEach(() => {{ {TEST} }}); }});"),

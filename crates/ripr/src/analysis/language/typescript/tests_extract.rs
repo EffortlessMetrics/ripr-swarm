@@ -692,7 +692,13 @@ pub(crate) fn collect_tests_from_statements(
             collect_const_iterables(stmt, &mut iterables);
         }
         let start = level.len();
-        collect_scope_bindings(stmt, source, &mut level, &mut sites);
+        collect_scope_bindings(
+            stmt,
+            source,
+            &mut level,
+            &mut sites,
+            scope.admission.block_functions_are_lexical,
+        );
         // After a possible early `return`, a binding may never run.
         if returned {
             level[start..]
@@ -770,8 +776,8 @@ pub(crate) fn collect_tests_from_statements(
         // Both bare and awaited roots need runner provenance before an
         // assertion can receive credit. Restrict this check to registration
         // shapes so supported registration loops (including forEach) survive.
-        // Receiver hook-write approximations are not lexical declarations:
-        // a sibling callback's local assignment cannot shadow this root.
+        // Keep known writes to registration globals refused as well; local
+        // callback/block writes are filtered by the scope collector.
         if let Some(call) = statement_call(stmt)
             && (call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
                 || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
@@ -786,10 +792,9 @@ pub(crate) fn collect_tests_from_statements(
                     .iter()
                     .enumerate()
                     .flat_map(|(depth, level)| {
-                        level
-                            .iter()
-                            .filter(|(_, _, phase)| *phase == Phase::Declaration)
-                            .map(move |(name, _, _)| (name.clone(), depth == 0))
+                        level.iter().map(move |(name, _, phase)| {
+                            (name.clone(), depth == 0 && *phase == Phase::Declaration)
+                        })
                     })
                     .chain(scope.registration_levels.iter().flatten().cloned()),
             )
@@ -1017,6 +1022,7 @@ fn collect_scope_bindings(
     source: &str,
     out: &mut Vec<ScopeEntry>,
     sites: &mut Vec<usize>,
+    block_functions_are_lexical: bool,
 ) {
     match stmt {
         // `declare` forms are erased before the test runs: no runtime binding.
@@ -1089,9 +1095,26 @@ fn collect_scope_bindings(
                     .map(|name| (name, ScopeValue::Other, Phase::Declaration))
                     .collect();
                 for inner in body {
-                    collect_scope_bindings(inner, source, &mut locals, &mut Vec::new());
+                    collect_scope_bindings(
+                        inner,
+                        source,
+                        &mut locals,
+                        &mut Vec::new(),
+                        block_functions_are_lexical,
+                    );
                 }
                 locals.retain(|(_, _, phase)| *phase == Phase::Declaration);
+                let mut declared_names = Vec::new();
+                collect_registration_scope_names(
+                    body,
+                    &mut declared_names,
+                    block_functions_are_lexical,
+                );
+                locals.extend(
+                    declared_names
+                        .into_iter()
+                        .map(|name| (name, ScopeValue::Other, Phase::Declaration)),
+                );
                 let mut writes = Vec::new();
                 let mut returned = false;
                 for inner in body {
@@ -1155,6 +1178,24 @@ fn collect_hook_assignment(
     sites: &mut Vec<usize>,
 ) {
     match stmt {
+        Statement::BlockStatement(block) => {
+            let mut locals = Vec::new();
+            // Every direct declaration belongs to this block; nested `var`
+            // declarations also belong to the surrounding callback.
+            collect_registration_scope_names(&block.body, &mut locals, true);
+            let mut writes = Vec::new();
+            for inner in &block.body {
+                collect_hook_assignment(inner, source, &mut writes, &mut Vec::new());
+            }
+            out.extend(
+                writes
+                    .into_iter()
+                    .filter(|(name, _)| !locals.contains(name))
+                    .map(|(name, _)| (name, ScopeValue::Other)),
+            );
+            return;
+        }
+
         // A hook's own declarations are local to the hook, but an
         // initializer may still write an outer name (`const r = (cart = x)`
         // or a closure that assigns it).
@@ -2143,6 +2184,25 @@ pub(super) fn collect_registration_scope_names(
     block_functions_are_lexical: bool,
 ) {
     for statement in statements {
+        let declaration = match statement {
+            Statement::ExportNamedDeclaration(export) => export.declaration.as_ref(),
+            other => other.as_declaration(),
+        };
+        match declaration {
+            Some(oxc_ast::ast::Declaration::TSEnumDeclaration(declaration))
+                if !declaration.declare =>
+            {
+                out.push(declaration.id.name.to_string());
+            }
+            Some(oxc_ast::ast::Declaration::TSModuleDeclaration(declaration))
+                if !declaration.declare =>
+            {
+                if let oxc_ast::ast::TSModuleDeclarationName::Identifier(id) = &declaration.id {
+                    out.push(id.name.to_string());
+                }
+            }
+            _ => {}
+        }
         match statement {
             Statement::BlockStatement(_)
             | Statement::IfStatement(_)
