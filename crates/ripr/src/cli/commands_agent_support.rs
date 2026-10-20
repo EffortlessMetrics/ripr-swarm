@@ -308,7 +308,8 @@ fn agent_brief_checked_lines_from_diff(
     root: &Path,
     diff_text: &str,
 ) -> Result<Vec<AgentBriefLine>, crate::core_error::CoreError> {
-    let parsed = analysis::parse_unified_diff_bounded_with_metadata(diff_text)?;
+    let parsed = analysis::parse_unified_diff_bounded_with_metadata(diff_text)
+        .map_err(crate::core_error::CoreError::diff_input_unsupported)?;
     if let Some(limitation) = parsed.limitations.first() {
         return Err(crate::core_error::CoreError::diff_input_unsupported(
             format!(

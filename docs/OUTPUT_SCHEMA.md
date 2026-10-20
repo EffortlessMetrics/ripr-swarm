@@ -15949,7 +15949,10 @@ unresolved conflict regions, or malformed hunks) refuse the invocation before
 selection. The command exits `2` with the refusal envelope above, identity
 `diff_input_unsupported`, `downstream_consumable: false`, and the parser's
 reason and recovery in the diagnostic. This also applies when ordinary hunks
-are present. A valid empty patch still succeeds: an empty inventory returns
+are present and to parser admission errors such as changed-file-count and
+path-depth bounds. The brief keeps `diff_input_unsupported` for these errors;
+`check` retains its existing budget-refusal identities. A valid empty patch
+still succeeds: an empty inventory returns
 empty `top_seams`; a nonempty inventory retains the disclosed repository
 fallback. Successful emptiness does not establish test adequacy.
 

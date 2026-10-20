@@ -1,4 +1,6 @@
-use super::{Fixture, assert_exit, git_commit, run_git, run_ripr, weaken_boundary_predicate};
+use super::{
+    Fixture, assert_exit, git_commit, run_git, run_ripr, run_ripr_env, weaken_boundary_predicate,
+};
 use serde_json::Value;
 use std::process::Output;
 
@@ -6,9 +8,13 @@ const COMBINED: &str = "diff --cc src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs
 const ORDINARY: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-old\n+new\n";
 
 fn brief(fixture: &Fixture, patch: &str) -> Result<Output, String> {
+    brief_env(fixture, patch, &[])
+}
+
+fn brief_env(fixture: &Fixture, patch: &str, envs: &[(&str, &str)]) -> Result<Output, String> {
     let path = fixture.root.join("change.patch");
     std::fs::write(&path, patch).map_err(|e| e.to_string())?;
-    run_ripr(
+    run_ripr_env(
         &fixture.root,
         &[
             "agent",
@@ -19,7 +25,105 @@ fn brief(fixture: &Fixture, patch: &str) -> Result<Output, String> {
             &path.to_string_lossy(),
             "--json",
         ],
+        envs,
     )
+}
+
+#[test]
+fn brief_parser_errors_keep_diff_input_identity_and_budget_guards() -> Result<(), String> {
+    let fixture = Fixture::boundary("brief-parser-errors")?;
+    std::fs::write(
+        fixture.root.join("src/second.rs"),
+        "// a second source file\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let two_files = format!(
+        "{ORDINARY}{}",
+        ORDINARY.replace("src/lib.rs", "src/second.rs")
+    );
+    let one_file = brief_env(&fixture, ORDINARY, &[("RIPR_MAX_DIFF_INDEX_FILES", "1")])?;
+    assert_exit(&one_file, 0, "one file at the parser limit");
+    assert!(
+        document(&one_file)?["top_seams"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty())
+    );
+    assert_refusal(
+        &brief_env(&fixture, &two_files, &[("RIPR_MAX_DIFF_INDEX_FILES", "1")])?,
+        "diff_scope_oversized",
+    )?;
+    let admitted = brief_env(&fixture, &two_files, &[("RIPR_MAX_DIFF_INDEX_FILES", "2")])?;
+    assert_exit(&admitted, 0, "two files at the parser limit");
+    assert!(
+        document(&admitted)?["top_seams"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty())
+    );
+
+    let patch = fixture.root.join("change.patch");
+    let legacy = run_ripr_env(
+        &fixture.root,
+        &[
+            "check",
+            "--root",
+            &fixture.root.to_string_lossy(),
+            "--diff",
+            &patch.to_string_lossy(),
+            "--format",
+            "json",
+        ],
+        &[("RIPR_MAX_DIFF_INDEX_FILES", "1")],
+    )?;
+    assert_exit(&legacy, 2, "check retains its existing budget envelope");
+    let legacy = document(&legacy)?;
+    assert_eq!(
+        legacy["analysis_scope"]["run_status"],
+        "diff_scope_oversized"
+    );
+    assert_eq!(
+        legacy["analysis_scope"]["repair_route"],
+        "analysis/diff-scope-budget"
+    );
+
+    let deep_path = format!("{}lib.rs", "deep/".repeat(600));
+    assert_refusal(
+        &brief(
+            &fixture,
+            &format!("--- a/{deep_path}\n+++ b/{deep_path}\n@@ -1 +1 @@\n-old\n+new\n"),
+        )?,
+        "diff_path_too_deep",
+    )?;
+
+    weaken_boundary_predicate(&fixture.root)?;
+    std::fs::write(
+        fixture.root.join("src/second.rs"),
+        "// a second changed file\n",
+    )
+    .map_err(|e| e.to_string())?;
+    run_git(&fixture.root, &["add", "src"])?;
+    git_commit(&fixture.root, "two-file base input")?;
+    let diff = run_git(&fixture.root, &["diff", "HEAD^...HEAD", "--", "src"])?;
+    assert_eq!(
+        diff.matches("diff --git").count(),
+        2,
+        "base fixture must have two real changed files"
+    );
+    let base = run_ripr_env(
+        &fixture.root,
+        &[
+            "agent",
+            "brief",
+            "--root",
+            &fixture.root.to_string_lossy(),
+            "--base",
+            "HEAD^",
+            "--json",
+        ],
+        &[("RIPR_MAX_DIFF_INDEX_FILES", "1")],
+    )?;
+    assert_refusal(&base, "diff_scope_oversized")?;
+    assert_eq!(document(&base)?["base"], "HEAD^");
+    Ok(())
 }
 
 fn document(output: &Output) -> Result<Value, String> {

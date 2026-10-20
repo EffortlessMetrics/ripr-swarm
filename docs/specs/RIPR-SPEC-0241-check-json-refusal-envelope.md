@@ -221,6 +221,10 @@ all renderers.
 
 ## Test Mapping (Amendment #7331, #7332)
 
+- `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_empty_and_ordinary_patches_keep_successful_selection`
+- `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_refusals_cannot_become_empty_or_fallback_successes`
+- `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_base_uses_the_same_parser_refusal_before_inventory`
+- `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_errors_keep_diff_input_identity_and_budget_guards`
 - `crates/ripr/tests/cli_smoke.rs::diff_json_unresolvable_base_emits_refusal_envelope`
 - `crates/ripr/tests/cli_smoke.rs::diff_json_outside_work_tree_emits_refusal_envelope`
 - `crates/ripr/tests/cli_smoke.rs::rerun_json_unreadable_gap_ledger_emits_refusal_envelope`
@@ -242,7 +246,8 @@ all renderers.
 
 ## Implementation Mapping (Amendment #7331, #7332)
 
-- `crates/ripr/src/core_error.rs::CheckFailureKind::{CheckArtifactUnusable, GapLedgerUnusable, SeamIdUnknown}`
+- `crates/ripr/src/core_error.rs::CheckFailureKind::{CheckArtifactUnusable, GapLedgerUnusable, SeamIdUnknown, DiffInputUnsupported}`
+- `crates/ripr/src/cli/commands_agent_support.rs::agent_brief_checked_lines_from_diff`
 - `crates/ripr/src/core_error.rs::RefusalNotice`
 - `crates/ripr/src/core_error.rs::refusal_notice`
 - `crates/ripr/src/output/limited_check.rs::RefusalEnvelopeContext`
