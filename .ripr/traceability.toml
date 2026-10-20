@@ -1583,6 +1583,8 @@ id = "RIPR-SPEC-0011"
 name = "LLM work loop"
 spec = "docs/specs/RIPR-SPEC-0011-llm-work-loop.md"
 tests = [
+  "crates/ripr/src/cli/agent.rs::tests::agent_repair_phase_values_keep_their_exact_meaning",
+  "crates/ripr/tests/cli_help_hierarchy.rs::agent_repair_phase_refusals_render_scoped_recovery_without_writes",
   "crates/ripr/tests/cli_smoke/retained_evidence_guidance.rs::missing_retained_evidence_names_executable_status_without_mutation",
   "crates/ripr/tests/cli_smoke/retained_evidence_guidance.rs::continue_selection_failure_names_one_status_command",
   "crates/ripr/src/app/repair_attempt/mod.rs::tests::commit_retry_refusal_rejects_embedded_messages_and_invalid_ids",

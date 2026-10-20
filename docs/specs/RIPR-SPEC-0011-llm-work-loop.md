@@ -160,6 +160,18 @@ report's `root` field and analysis-outcome presentation key retain display
 formatting. Unix literal filename backslashes remain distinct from Windows
 separators (#6313).
 
+### Repair phase value recovery (#5059)
+
+`ripr agent repair --phase` accepts only `before`, `after`, and `verify`.
+An unknown value uses the shared CLI value-suggestion rules: `befor`, `aftr`,
+and `verfy` suggest their corresponding phase; an empty, distant, or unrelated
+value lists the accepted phases without a suggestion. Suggestions never accept
+or execute the rejected spelling. Invalid occurrences, including one followed
+by a valid repeated flag, exit 2 with empty stdout and the refusal on stderr
+before configuration loading or repair/store writes. A missing value retains
+its missing-value refusal. Canonical phase meanings and the existing `--help`
+short circuit remain unchanged.
+
 ## JSON Shape
 
 The status report uses schema version `0.1`:
