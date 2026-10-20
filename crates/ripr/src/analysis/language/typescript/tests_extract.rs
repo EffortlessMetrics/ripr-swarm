@@ -873,7 +873,10 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             );
             scope.iterables.push(Vec::new());
             scope.describe_names.push(describe_name);
+            let inherited_strict = scope.admission.block_functions_are_lexical;
+            scope.admission.block_functions_are_lexical |= statement_callback_is_strict(stmt);
             collect_tests_from_statements(body, file, source, mocks, imports, scope, tests);
+            scope.admission.block_functions_are_lexical = inherited_strict;
             scope.describe_names.pop();
             scope.iterables.pop();
             scope.levels.pop();
@@ -890,7 +893,10 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
                     .collect(),
             );
             scope.iterables.push(Vec::new());
+            let inherited_strict = scope.admission.block_functions_are_lexical;
+            scope.admission.block_functions_are_lexical |= statement_callback_is_strict(stmt);
             collect_tests_from_statements(body, file, source, mocks, imports, scope, tests);
+            scope.admission.block_functions_are_lexical = inherited_strict;
             scope.iterables.pop();
             scope.levels.pop();
             continue;
@@ -1129,6 +1135,8 @@ fn collect_scope_bindings(
                 let Some(body) = function_body_statements_from_argument(argument) else {
                     continue;
                 };
+                let block_functions_are_lexical =
+                    block_functions_are_lexical || argument_has_use_strict(argument);
                 // A generator hook's body does not run when the hook is
                 // called (Vitest awaits the returned generator object).
                 let phase = match argument {
@@ -2648,6 +2656,39 @@ fn unused_function_reach_body(
     })
 }
 
+fn collect_unused_function_declaration(
+    declaration: &oxc_ast::ast::VariableDeclaration<'_>,
+    code: &str,
+    offset: usize,
+    ranges: &mut Vec<std::ops::Range<usize>>,
+) {
+    if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const || declaration.declare {
+        return;
+    }
+    for declarator in &declaration.declarations {
+        let BindingPattern::BindingIdentifier(id) = &declarator.id else {
+            continue;
+        };
+        let Some(initializer) = &declarator.init else {
+            continue;
+        };
+        if !matches!(
+            initializer.get_inner_expression(),
+            Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_)
+        ) {
+            continue;
+        }
+        let declaration_range =
+            (declarator.span.start as usize - offset)..(declarator.span.end as usize - offset);
+        if identifier_occurrences(code, id.name.as_str()).any(|at| !declaration_range.contains(&at))
+        {
+            continue;
+        }
+        let span = initializer.span();
+        ranges.push((span.start as usize - offset)..(span.end as usize - offset));
+    }
+}
+
 fn collect_unused_function_ranges(
     statements: &[Statement<'_>],
     code: &str,
@@ -2656,32 +2697,65 @@ fn collect_unused_function_ranges(
 ) {
     for statement in statements {
         match statement {
-            Statement::VariableDeclaration(declaration)
-                if declaration.kind == oxc_ast::ast::VariableDeclarationKind::Const
-                    && !declaration.declare =>
-            {
-                for declarator in &declaration.declarations {
-                    let BindingPattern::BindingIdentifier(id) = &declarator.id else {
-                        continue;
-                    };
-                    let Some(initializer) = &declarator.init else {
-                        continue;
-                    };
-                    if !matches!(
-                        initializer.get_inner_expression(),
-                        Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_)
-                    ) {
-                        continue;
-                    }
-                    let declaration_range = (declarator.span.start as usize - offset)
-                        ..(declarator.span.end as usize - offset);
-                    if identifier_occurrences(code, id.name.as_str())
-                        .any(|at| !declaration_range.contains(&at))
-                    {
-                        continue;
-                    }
-                    let span = initializer.span();
-                    ranges.push((span.start as usize - offset)..(span.end as usize - offset));
+            Statement::VariableDeclaration(declaration) => {
+                collect_unused_function_declaration(declaration, code, offset, ranges);
+            }
+            Statement::ForStatement(loop_) => {
+                if let Some(oxc_ast::ast::ForStatementInit::VariableDeclaration(declaration)) =
+                    &loop_.init
+                {
+                    collect_unused_function_declaration(declaration, code, offset, ranges);
+                }
+                collect_unused_function_ranges(
+                    std::slice::from_ref(&loop_.body),
+                    code,
+                    offset,
+                    ranges,
+                );
+            }
+            Statement::ForOfStatement(loop_) => {
+                collect_unused_function_ranges(
+                    std::slice::from_ref(&loop_.body),
+                    code,
+                    offset,
+                    ranges,
+                );
+            }
+            Statement::ForInStatement(loop_) => {
+                collect_unused_function_ranges(
+                    std::slice::from_ref(&loop_.body),
+                    code,
+                    offset,
+                    ranges,
+                );
+            }
+            Statement::WhileStatement(loop_) => {
+                collect_unused_function_ranges(
+                    std::slice::from_ref(&loop_.body),
+                    code,
+                    offset,
+                    ranges,
+                );
+            }
+            Statement::DoWhileStatement(loop_) => {
+                collect_unused_function_ranges(
+                    std::slice::from_ref(&loop_.body),
+                    code,
+                    offset,
+                    ranges,
+                );
+            }
+            Statement::LabeledStatement(label) => {
+                collect_unused_function_ranges(
+                    std::slice::from_ref(&label.body),
+                    code,
+                    offset,
+                    ranges,
+                );
+            }
+            Statement::SwitchStatement(switch) => {
+                for case in &switch.cases {
+                    collect_unused_function_ranges(&case.consequent, code, offset, ranges);
                 }
             }
             Statement::BlockStatement(block) => {
@@ -3260,6 +3334,33 @@ fn counted_loop_runs(
         oxc_ast::ast::BinaryOperator::LessEqualThan => start.value <= bound.value,
         _ => false,
     }
+}
+
+fn argument_has_use_strict(argument: &oxc_ast::ast::Argument<'_>) -> bool {
+    match argument {
+        oxc_ast::ast::Argument::ArrowFunctionExpression(function) => {
+            function.has_use_strict_directive()
+        }
+        oxc_ast::ast::Argument::FunctionExpression(function) => function.has_use_strict_directive(),
+        _ => false,
+    }
+}
+
+fn statement_callback_is_strict(statement: &Statement<'_>) -> bool {
+    let Some(call) = statement_call(statement) else {
+        return false;
+    };
+    let index = if call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
+        || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe)
+    {
+        declaration_callback_index(call)
+    } else {
+        // The other supported callback traversal is Array#forEach.
+        0
+    };
+    call.arguments
+        .get(index)
+        .is_some_and(argument_has_use_strict)
 }
 
 pub(crate) fn function_body_statements_from_argument<'a>(

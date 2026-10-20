@@ -12,12 +12,7 @@ fn registration_finding(label: &str, source: &str) -> Result<Finding, String> {
 
 fn registration_finding_at(label: &str, file: &str, input: &str) -> Result<Finding, String> {
     let allocator = oxc_allocator::Allocator::default();
-    let parsed = Parser::new(
-        &allocator,
-        input,
-        source_type_for(Path::new(file)),
-    )
-    .parse();
+    let parsed = Parser::new(&allocator, input, source_type_for(Path::new(file))).parse();
     assert!(parsed.errors.is_empty(), "{label}: {:?}", parsed.errors);
     let root = ts_unique_tempdir(label)?;
     ts_write_file(&root.join("src/sum.ts"), OWNER)?;
@@ -380,8 +375,10 @@ fn registration_bindings_dead_closure_containers() -> Result<(), String> {
         "switch (1) { case 1: { const unused = () => sumAll([2, 3, 4]); } }",
         "label: { const unused = () => sumAll([2, 3, 4]); }",
     ] {
-        for (live, expected) in [("", ExposureClass::NoStaticPath),
-            ("expect(sumAll([2, 3, 4])).toBe(9);", ExposureClass::Exposed)] {
+        for (live, expected) in [
+            ("", ExposureClass::NoStaticPath),
+            ("expect(sumAll([2, 3, 4])).toBe(9);", ExposureClass::Exposed),
+        ] {
             let source = format!("test('sumAll', () => {{ {body} {live} }});");
             let finding = registration_finding("dead-containers", &source)?;
             assert_eq!(finding.class, expected, "{source}");
@@ -390,7 +387,10 @@ fn registration_bindings_dead_closure_containers() -> Result<(), String> {
             } else {
                 assert_eq!(finding.related_tests.len(), 1, "{finding:?}");
                 assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::ExactValue);
-                assert_eq!(finding.related_tests[0].oracle_strength, OracleStrength::Strong);
+                assert_eq!(
+                    finding.related_tests[0].oracle_strength,
+                    OracleStrength::Strong
+                );
             }
         }
     }
@@ -400,12 +400,30 @@ fn registration_bindings_dead_closure_containers() -> Result<(), String> {
 #[test]
 fn registration_bindings_callback_strictness_is_local() -> Result<(), String> {
     for callback in ["function ()", "() =>"] {
-        for (directive, expected) in [("'use strict';", ExposureClass::Exposed),
-            ("", ExposureClass::NoStaticPath)] {
-            let source = format!("const {{ sumAll }} = require('../src/sum'); describe('first', function () {{ 'use strict'; }}); describe('sum', {callback} {{ {directive} {{ function test() {{}} }} {TEST} }});");
-            let finding = registration_finding_at("callback-strict", "tests/sum.test.cjs", &source)?;
-            assert_eq!(finding.class, expected, "{source}");
-            assert_eq!(finding.related_tests.len(), usize::from(!directive.is_empty()), "{finding:?}");
+        for (directive, expected) in [
+            ("'use strict';", ExposureClass::Exposed),
+            ("", ExposureClass::NoStaticPath),
+        ] {
+            for registration in ["describe('sum',", "[1].forEach("] {
+                let source = format!(
+                    "const {{ sumAll }} = require('../src/sum'); describe('first', function () {{ 'use strict'; }}); {registration} {callback} {{ {directive} {{ function test() {{}} }} {TEST} }});"
+                );
+                let finding =
+                    registration_finding_at("callback-strict", "tests/sum.test.cjs", &source)?;
+                assert_eq!(finding.class, expected, "{source}");
+                assert_eq!(
+                    finding.related_tests.len(),
+                    usize::from(!directive.is_empty()),
+                    "{finding:?}"
+                );
+                if !directive.is_empty() {
+                    assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::ExactValue);
+                    assert_eq!(
+                        finding.related_tests[0].oracle_strength,
+                        OracleStrength::Strong
+                    );
+                }
+            }
         }
     }
     Ok(())
