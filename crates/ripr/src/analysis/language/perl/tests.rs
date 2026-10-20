@@ -50,7 +50,7 @@ fn command_args(args: &[&str]) -> Vec<String> {
 /// root, no base/diff. Coherence checks pass (no consumer base to compare
 /// against); freshness checks no-op (no source files exist on disk under the
 /// temp root, so the loop skips each file).
-fn packet_test_options() -> crate::analysis::AnalysisOptions {
+pub(super) fn packet_test_options() -> crate::analysis::AnalysisOptions {
     use crate::analysis::{AnalysisMode, AnalysisOptions};
     AnalysisOptions {
         root: std::env::temp_dir().join(format!("ripr-perl-packet-test-{}", std::process::id())),
@@ -71,7 +71,7 @@ fn packet_test_options() -> crate::analysis::AnalysisOptions {
 }
 
 /// Convenience wrapper: consume a packet text with the default test options.
-fn consume(packet_text: &str) -> Result<PerlFactPacket, String> {
+pub(super) fn consume(packet_text: &str) -> Result<PerlFactPacket, String> {
     PerlAdapter.consume_fact_packet(packet_text, &packet_test_options())
 }
 
@@ -4652,6 +4652,38 @@ fn perl_finding_through_a_symlink_out_of_the_root_stays_unresolved() -> Result<(
     std::fs::remove_dir_all(root.join("lib/My")).map_err(|error| error.to_string())?;
     std::os::unix::fs::symlink(&outside, root.join("lib/My")).map_err(|error| error.to_string())?;
     assert_eq!(currentness()?, SourceCurrentness::UnresolvedSubject);
+    Ok(())
+}
+
+/// #8661: the changed-file count names files the diff adds lines to. A packet
+/// change in an untouched file still yields its unresolved finding.
+#[test]
+fn perl_changed_file_count_ignores_packet_changes_in_untouched_files() -> Result<(), String> {
+    let packet_path = std::env::temp_dir().join(format!(
+        "ripr-perl-untouched-count-{}.json",
+        std::process::id()
+    ));
+    std::fs::write(&packet_path, bless_fingerprint(EXACT_RETURN_PACKET))
+        .map_err(|error| error.to_string())?;
+    struct TempPacketGuard(std::path::PathBuf);
+    impl Drop for TempPacketGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+    let _guard = TempPacketGuard(packet_path.clone());
+    let mut options = packet_test_options();
+    options.perl_facts_path = Some(packet_path);
+    let count = |changed: &[ChangedFile]| -> Result<(usize, usize), String> {
+        let result = PerlAdapter.analyze_diff(&options, &OraclePolicy::default(), changed)?;
+        Ok((result.changed_files, result.findings.len()))
+    };
+    // Control: the diff adds a line to the packet change's file.
+    assert_eq!(count(&[diff_adding("lib/My/App.pm", &[15])])?, (1, 1));
+    // Another file changed, or only deletions in this one: not counted, and
+    // the packet's finding stays (SPEC-0151).
+    assert_eq!(count(&[diff_adding("lib/Other.pm", &[3])])?, (0, 1));
+    assert_eq!(count(&[diff_adding("lib/My/App.pm", &[])])?, (0, 1));
     Ok(())
 }
 

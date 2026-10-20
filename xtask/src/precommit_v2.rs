@@ -294,16 +294,28 @@ fn run_composition(ci_policy: bool) -> Result<(), String> {
     } else {
         crate::precommit()
     };
-    if let Err(error) = policy_result {
-        return fail_with_report(
-            &root,
-            &mut report,
-            PrecommitFailureKind::SourceOrPolicy,
-            "existing repository policy precommit",
-            error,
-        );
+    // #8793: a file-policy instrument failure (cargo lock wait or timeout)
+    // alone is infrastructure state, not a source failure. The outer checks
+    // still run; the failure is recorded now so any later report keeps it, and
+    // the run still fails at the end.
+    let mut deferred_instrument = None;
+    match policy_result {
+        Ok(()) => record_pass(&mut report, "existing repository policy precommit"),
+        Err(error) if error.starts_with(crate::PRECOMMIT_INSTRUMENT_PREFIX) => {
+            report.limitations.push(error.clone());
+            record_failure(&mut report, "existing repository policy precommit", &error);
+            deferred_instrument = Some(error);
+        }
+        Err(error) => {
+            return fail_with_report(
+                &root,
+                &mut report,
+                PrecommitFailureKind::SourceOrPolicy,
+                "existing repository policy precommit",
+                error,
+            );
+        }
     }
-    record_pass(&mut report, "existing repository policy precommit");
 
     let committed_diff = format!("{}...HEAD", merge_base_sha);
     let diff_checks = [
@@ -359,6 +371,16 @@ fn run_composition(ci_policy: bool) -> Result<(), String> {
         }
     }
 
+    if let Some(error) = deferred_instrument {
+        report.status = PrecommitFailureKind::Infrastructure.status().to_string();
+        report.failure_kind = Some(PrecommitFailureKind::Infrastructure);
+        return match write_report(&root, &report) {
+            Ok(()) => Err(error),
+            Err(report_error) => Err(format!(
+                "{error}; failed to publish current report: {report_error}"
+            )),
+        };
+    }
     report.status = "pass".to_string();
     write_report(&root, &report)
 }
@@ -1186,6 +1208,33 @@ fn is_sha(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deferred_instrument_failure_is_infrastructure_alone_and_never_hides_a_real_failure() {
+        let instrument = "policy.toml:1 enumeration did not finish".to_string();
+        // Alone: classified as infrastructure by its prefix, never a pass.
+        let alone = crate::finish_precommit_policy(Some(instrument.clone()), Ok(()), false);
+        assert!(
+            matches!(&alone, Err(error) if error.starts_with(crate::PRECOMMIT_INSTRUMENT_PREFIX)),
+            "{alone:?}"
+        );
+        // With a real later failure: both are reported and it is not infrastructure.
+        let both = crate::finish_precommit_policy(
+            Some(instrument.clone()),
+            Err("check-spec-format failed".to_string()),
+            false,
+        );
+        assert!(
+            matches!(&both, Err(error)
+                if !error.starts_with(crate::PRECOMMIT_INSTRUMENT_PREFIX)
+                    && error.contains("check-spec-format failed")
+                    && error.contains(&instrument)),
+            "{both:?}"
+        );
+        // No instrument failure: a later failure passes through unchanged.
+        let plain = crate::finish_precommit_policy(None, Err("plain".to_string()), false);
+        assert_eq!(plain, Err("plain".to_string()));
+    }
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_TEST_REPO_SEQUENCE: AtomicU64 = AtomicU64::new(0);

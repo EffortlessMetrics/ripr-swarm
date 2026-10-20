@@ -42,7 +42,8 @@ mod swarm_command;
 mod task_first;
 
 pub(super) use agent::{
-    agent, before_phase_stdout, run_before_repair_with_identity, translate_agent_repair_seam_id,
+    agent, before_phase_stdout, resolve_agent_repair_root, run_before_repair_with_identity,
+    translate_agent_repair_seam_id,
 };
 pub(super) use context::context;
 // Flag-documenting help bodies live beside their parsers so `cli::help`
@@ -133,6 +134,7 @@ mod check_fanout;
 pub(super) use check::check;
 #[cfg(unix)]
 pub(super) use check::check_with_interrupt_flags;
+pub(super) use check::{bind_member_selector_file, resolve_implicit_command_root};
 
 #[path = "commands/review_comments.rs"]
 mod review_comments;
@@ -2862,12 +2864,24 @@ pub(super) fn diff(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let mut options = parse_diff_options(args)?;
-    // #8872: same implicit root `ripr check` uses; `--root .` opts out.
-    // Resolution must run before `load_for_root` so config, base, and the
-    // diff range share the widened workspace. The member prefix is unused:
-    // `diff` has no file selector.
-    let _ = check::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
     let json = matches!(options.format, DiffReportFormat::Json);
+    // #8872: same implicit root `ripr check` uses; `--root .` opts out. A
+    // resolution failure is a post-argv failure, so a JSON run still gets the
+    // refusal envelope (#7331), keyed to the root as typed.
+    let typed_root = options.root.clone();
+    if let Err(error) = resolve_implicit_command_root(&mut options.root, options.root_explicit) {
+        if !json {
+            return Err(error);
+        }
+        return Err(crate::cli::commands_context::refuse_json_envelope(
+            DIFF_REFUSAL_SCHEMA_VERSION,
+            "diff",
+            Some(options.mode.as_str()),
+            &typed_root,
+            options.base.as_deref(),
+            crate::core_error::CoreError::from(error),
+        ));
+    }
     // #7331: every post-argv-parse failure of a JSON diff run writes the
     // shared refusal envelope (the diff report's own schema version) to
     // stdout before the prose error reaches stderr. Argv usage errors above
@@ -3227,7 +3241,42 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
             "ripr check --json",
         ));
     }
-    resolve_worktree_root(&mut input, worktree, root_explicitly_provided)?;
+    // #8872: the implicit workspace root `ripr check` uses (this subsumes the
+    // `--worktree` resolution); `--root .` opts out. A member-relative
+    // `file:line` selector binds to the invocation directory.
+    let prefix = resolve_implicit_command_root(&mut input.root, root_explicitly_provided)?;
+    // With `--from` or `--diff` the named file need not exist in the working
+    // tree (for example a file the diff deletes), so a selector that binds to
+    // nothing is not refused. It is anchored to the invocation directory
+    // instead (never left as a bare suffix that could match a sibling member's
+    // finding); with an unmoved root it is used as typed.
+    let replay = from_artifact.is_some() || input.diff_file.is_some();
+    let selector = selector
+        .map(
+            |item| match check::bind_member_selector_item(prefix.as_deref(), &input.root, &item) {
+                Err(_) if replay => match prefix.as_deref() {
+                    Some(prefix) => {
+                        // Normalize `./` first so `./pkg/x.rs:2` is not prefixed twice.
+                        let bare = item.trim_start_matches("./");
+                        let anchored = if bare.starts_with(&format!("{prefix}/")) {
+                            bare.to_string()
+                        } else {
+                            format!("{prefix}/{bare}")
+                        };
+                        match anchored.rsplit_once(':') {
+                            Some((file, _)) => {
+                                check::refuse_root_shadowed_selector(&input.root, file)
+                                    .map(|()| anchored)
+                            }
+                            None => Ok(anchored),
+                        }
+                    }
+                    None => Ok(item),
+                },
+                bound => bound,
+            },
+        )
+        .transpose()?;
     let config = load_for_root(&input.root)?;
     apply_to_check_input(&mut input, &config, explicit);
     let Some(selector) = selector else {
