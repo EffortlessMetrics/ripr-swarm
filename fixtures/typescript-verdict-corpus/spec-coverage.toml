@@ -586,6 +586,6 @@ id = "RIPR-SPEC-0281"
 scope = "out"
 reason = "advisory ranking-scoreboard gate rule in xtask; not an analyzer verdict, so no corpus case can label it"
 [[spec]]
-id = "RIPR-SPEC-0282"
+id = "RIPR-SPEC-0285"
 scope = "out"
 reason = "doctor/repo-input framework-scan admission, ordering, and string-awareness hygiene; not an exposure-verdict example a corpus case labels"
