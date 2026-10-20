@@ -194,10 +194,22 @@ fn extract_tests_expanding_suite_factories(
     // Rerun on the source with the factory calls expanded; a test found in
     // an appended expansion reports its call's line.
     let (mut tests, gap) = extract_tests_expanding_suite_factories(file, &expansion.source, false);
+    // A substitution that lands inside a string can leave the expanded source
+    // unparsable, which would drop every test the file yielded before
+    // expansion; fall back to the unexpanded extraction then.
+    let (original_tests, original_gap) =
+        extract_tests_expanding_suite_factories(file, source, false);
+    if tests.len() < original_tests.len() {
+        return (original_tests, original_gap);
+    }
     for test in &mut tests {
-        test.line = expansion.reported_line(test.line);
+        // Assertion lines stay offsets from the test line: the classifier
+        // indexes `body_text` by `assertion.line - test.line`.
+        let expanded_start = test.line;
+        let reported_start = expansion.reported_line(expanded_start);
+        test.line = reported_start;
         for assertion in &mut test.assertions {
-            assertion.line = expansion.reported_line(assertion.line);
+            assertion.line = reported_start + assertion.line.saturating_sub(expanded_start);
         }
     }
     (tests, gap)

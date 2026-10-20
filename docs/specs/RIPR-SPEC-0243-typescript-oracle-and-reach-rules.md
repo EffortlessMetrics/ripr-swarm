@@ -161,16 +161,16 @@ when all of these hold, and otherwise the call registers nothing as before:
   only call statements (registrations and hooks), with no declaration,
   `return` or control flow;
 - the file mentions the factory only at its declaration and at top-level
-  expression-statement calls with exactly one plain argument per parameter
-  (no spread, no type arguments, not awaited, not nested in another
-  function or `describe`); a reassignment, export, alias, method call
-  (`.call`, `.bind`) or second declaration leaves every call unexpanded;
+  expression-statement calls; a reassignment, export, alias, method call
+  (`.call`, `.bind`), nested call or second declaration leaves every call
+  unexpanded, while a call with other than exactly one plain argument per
+  parameter (spread, type arguments, awaited) is skipped on its own;
 - each argument is a string or number literal or a plain identifier. A
   parameter bound to an identifier is used in the body only as a callee
-  (`impl(...)`); one bound to a literal only as an argument
-  (`describe(name, ...)`), not inside a template or as a member or value;
-- the body does not rebind a parameter and does not already mention a bound
-  identifier, so the renaming captures nothing;
+  (`impl(...)`); one bound to a literal only as a whole call argument
+  (`describe(name, ...)`), not inside a template or as a member;
+- the body does not rebind a parameter and does not already mention an
+  identifier argument, so the renaming captures nothing;
 - the file contains no `\u` escape, and at most eight calls expand per file.
 
 **Rule 12. A named function passed as the callback is the test body

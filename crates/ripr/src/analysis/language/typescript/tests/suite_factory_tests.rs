@@ -205,3 +205,16 @@ fn a_call_with_a_computed_argument_credits_nothing() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn a_substitution_that_breaks_the_parse_keeps_the_unexpanded_tests() -> Result<(), String> {
+    // `name` inside the title string is rewritten to `'sum'`, leaving
+    // `'f('sum')'`: the expanded source no longer parses, and the plain test
+    // beside the factory must keep its credit.
+    let written_out = written_out_class()?;
+    let factory = "function runSuite(name: string, impl: (values: number[]) => number) {\n  describe(name, () => {\n    test('f(name)', () => {\n      expect(impl([2, 3, 4])).toBe(9);\n    });\n  });\n}\n";
+    let plain = "test('direct', () => {\n  expect(sumAll([2, 3, 4])).toBe(9);\n});\n";
+    let class = class_of("broken-parse", &file(&format!("{plain}{factory}{CALL}")))?;
+    assert_eq!(class, written_out);
+    Ok(())
+}
