@@ -9880,9 +9880,94 @@ fn has_interior_mutability(initializer: &str) -> bool {
         "AtomicU64",
         "AtomicUsize",
         "AtomicPtr",
+        "AtomicU128",
+        "AtomicI128",
+        "AtomicCell",
+        "AtomicRefCell",
+        "ArcSwap",
+        "ArcSwapOption",
+        "AtomicOption",
+        "Condvar",
+        "SyncUnsafeCell",
+        "Lazy",
+        "LazyLock",
+        "OnceBox",
     ]
     .iter()
     .any(|word| contains_as_whole_word(initializer, word))
+}
+
+/// #8928: the names of types declared in `source` (`struct`, `enum`,
+/// `union`, `type`) whose definition names an interior-mutable type, directly
+/// or through another such declared type (`type Slot = AtomicUsize;`,
+/// `struct Counter(Slot);`). Same-file only: a type declared elsewhere stays
+/// unrecognized.
+fn interior_mutable_declared_types(source: &str) -> BTreeSet<String> {
+    let masked = mask_comments_and_strings(source);
+    let bytes = masked.as_bytes();
+    let mut items: Vec<(String, &str)> = Vec::new();
+    for keyword in ["struct", "enum", "union", "type"] {
+        for offset in whole_word_offsets(&masked, keyword) {
+            let rest = masked[offset + keyword.len()..].trim_start();
+            let rest = rest.strip_prefix("r#").unwrap_or(rest);
+            let name: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect();
+            if name.is_empty() {
+                continue;
+            }
+            let start = offset + keyword.len();
+            let mut depth = 0usize;
+            let mut end = bytes.len();
+            for (at, byte) in bytes.iter().enumerate().skip(start) {
+                match byte {
+                    b'{' | b'(' | b'[' => depth += 1,
+                    b'}' | b')' | b']' => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 && *byte == b'}' && keyword != "type" {
+                            end = at + 1;
+                            break;
+                        }
+                    }
+                    b';' if depth == 0 => {
+                        end = at + 1;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            items.push((name, &masked[start..end]));
+        }
+    }
+    let mut holders = BTreeSet::new();
+    loop {
+        let before = holders.len();
+        for (name, body) in &items {
+            if !holders.contains(name)
+                && (has_interior_mutability(body)
+                    || holders
+                        .iter()
+                        .any(|holder: &String| contains_as_whole_word(body, holder)))
+            {
+                holders.insert(name.clone());
+            }
+        }
+        if holders.len() == before {
+            return holders;
+        }
+    }
+}
+
+/// #8928: whether `text` names a type `source` declares as holding an
+/// interior-mutable value.
+fn names_interior_mutable_declared_type(text: &str, source: Option<&str>) -> bool {
+    source.is_some_and(|source| {
+        let text = mask_comments_and_strings(text);
+        interior_mutable_declared_types(source)
+            .iter()
+            .any(|holder| contains_as_whole_word(&text, holder))
+    })
 }
 
 /// #8112: whether a binding or `static` whose declared type is `declared`
@@ -9902,13 +9987,18 @@ fn may_mutate_through_shared(
 ) -> bool {
     match declared {
         Some(declared) if has_interior_mutability(declared) => true,
-        Some(declared)
-            if is_plain_scalar_type(declared)
-                && source.is_some_and(|source| !scalar_names_rebound(declared, source)) =>
-        {
-            false
+        Some(declared) if names_interior_mutable_declared_type(declared, source) => true,
+        Some(declared) if is_plain_scalar_type(declared) => match source {
+            Some(source) if !scalar_names_rebound(declared, source) => false,
+            // #8928: a rebound or unreadable scalar name proves nothing, so
+            // an opaque initializer (`make()`) cannot be trusted either.
+            Some(source) if !glob_only_rebound(declared, source) => true,
+            Some(_) | None => has_interior_mutability(initializer),
+        },
+        _ => {
+            has_interior_mutability(initializer)
+                || names_interior_mutable_declared_type(initializer, source)
         }
-        _ => has_interior_mutability(initializer),
     }
 }
 
@@ -9939,20 +10029,49 @@ fn is_plain_scalar_type(declared: &str) -> bool {
 /// not. Limits: `include!`, `#[path]` and macro-generated types are not
 /// scanned.
 fn scalar_names_rebound(declared: &str, source: &str) -> bool {
+    scalar_names_rebound_with(declared, source, true)
+}
+
+/// #8928: whether a glob import is the only reason `declared` is no longer
+/// proven scalar, which keeps the initializer-text fallback (`use super::*`
+/// in a test module is common and names no specific rebinding).
+fn glob_only_rebound(declared: &str, source: &str) -> bool {
+    scalar_names_rebound(declared, source) && !scalar_names_rebound_with(declared, source, false)
+}
+
+fn scalar_names_rebound_with(declared: &str, source: &str, globs: bool) -> bool {
     let masked = mask_comments_and_strings(source);
     let is_word = |c: char| c.is_ascii_alphanumeric() || c == '_';
     let imports = |statement: &str| {
         !whole_word_offsets(statement, "use").is_empty()
             || !whole_word_offsets(statement, "extern").is_empty()
     };
-    if whole_word_offsets(&masked, "use")
+    if globs
+        && whole_word_offsets(&masked, "use")
+            .into_iter()
+            .any(|offset| {
+                masked[offset..]
+                    .split(';')
+                    .next()
+                    .is_some_and(|statement| statement.contains('*'))
+            })
+    {
+        return true;
+    }
+    // #8928: items the scan cannot read (`include!`, `#[path]` modules,
+    // macro-introduced items) may rebind any primitive name.
+    let path_attribute = whole_word_offsets(&masked, "path")
         .into_iter()
         .any(|offset| {
-            masked[offset..]
-                .split(';')
-                .next()
-                .is_some_and(|statement| statement.contains('*'))
-        })
+            let before = masked[..offset].trim_end();
+            masked[offset + "path".len()..]
+                .trim_start()
+                .starts_with('=')
+                && (before.ends_with('[') || before.ends_with(','))
+        });
+    if path_attribute
+        || !whole_word_offsets(&masked, "include").is_empty()
+        || !whole_word_offsets(&masked, "macro_rules").is_empty()
     {
         return true;
     }
@@ -9962,10 +10081,20 @@ fn scalar_names_rebound(declared: &str, source: &str) -> bool {
         .any(|word| {
             whole_word_offsets(&masked, word).into_iter().any(|offset| {
                 let before = masked[..offset].trim_end();
+                // `r#u32` is the raw spelling of the same name.
+                let before = before.strip_suffix("r#").unwrap_or(before).trim_end();
                 let after = masked[offset + word.len()..].trim_start();
                 let statement = before.rsplit(';').next().unwrap_or(before);
                 if imports(statement) {
-                    return !after.starts_with("::") && !before.ends_with('<');
+                    // `use m::u32::{self}` imports the module as `u32`.
+                    let tail = masked[offset + word.len()..]
+                        .split(';')
+                        .next()
+                        .unwrap_or("");
+                    let self_import = after.starts_with("::")
+                        && tail.trim_start()[2..].trim_start().starts_with('{')
+                        && !whole_word_offsets(tail, "self").is_empty();
+                    return (!after.starts_with("::") || self_import) && !before.ends_with('<');
                 }
                 if before.ends_with("::") {
                     return !after.starts_with("::");

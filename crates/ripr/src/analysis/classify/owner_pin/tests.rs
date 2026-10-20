@@ -2756,6 +2756,76 @@ fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_const
 }
 
 #[test]
+fn declared_holder_types_and_unreadable_items_refuse_the_static_pin_but_plain_scalars_admit() {
+    let value = |items: &str, body: &str, operand: &str| -> Option<String> {
+        let tests = format!("use demo::weight;\n{items}\n#[test]\nfn weighs() {{\n{body}\n}}\n");
+        let index = index(&[(LIB, WEIGHT_LIB), (TESTS, &tests)]);
+        assert_eq!(index.tests().len(), 1, "fixture must hold exactly one test");
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "weight")?;
+        expected_operand_value(&index, index.tests().at(0), operand, owner)
+            .map(|value| value.trim().to_string())
+    };
+    let read = "assert_eq!(weight(4), EXPECTED);";
+    // Refuse (#8928): a user type or alias that holds an atomic, a missing
+    // interior-mutable name, and items the scan cannot read.
+    for items in [
+        "struct Counter(AtomicUsize);\nstatic EXPECTED: Counter = make();",
+        "struct Counter { n: AtomicUsize }\nstatic EXPECTED: Counter = Counter::new(weight(4));",
+        "type Slot = AtomicUsize;\nstatic EXPECTED: Slot = ZERO;",
+        "type Slot = AtomicUsize;\nstruct Counter(Slot);\nstatic EXPECTED: Counter = make();",
+        "struct Counter(AtomicUsize);\nstatic EXPECTED = Counter::new(weight(4));",
+        "static EXPECTED: AtomicU128 = make();",
+        "static EXPECTED: AtomicCell<u32> = make();",
+        "static EXPECTED: ArcSwap<u32> = make();",
+        "static EXPECTED: Condvar = make();",
+        "type r#u32 = AtomicUsize;\nstatic EXPECTED: u32 = make();",
+        "use m::u32::{self};\nstatic EXPECTED: u32 = make();",
+        "use m::{u32::{self, A}};\nstatic EXPECTED: u32 = make();",
+        "include!(\"gen.rs\");\nstatic EXPECTED: u32 = weight(4);",
+        "#[path = \"gen.rs\"]\nmod gen;\nstatic EXPECTED: u32 = weight(4);",
+        "macro_rules! t { () => { type u32 = AtomicUsize; } }\nstatic EXPECTED: u32 = weight(4);",
+    ] {
+        assert_eq!(value(items, read, "EXPECTED"), None, "{items}");
+    }
+    // Controls: the same shapes over plain scalars still admit.
+    for items in [
+        "struct Counter(u32);\nstatic EXPECTED: Counter = Counter(weight(4));",
+        "type Slot = u32;\nstatic EXPECTED: Slot = weight(4);",
+        "static EXPECTED: u32 = weight(4);",
+        "use m::*;\nstatic EXPECTED: u32 = weight(4);",
+        "use m::u32_helper::{self};\nstatic EXPECTED: u32 = weight(4);",
+    ] {
+        let got = value(items, read, "EXPECTED");
+        assert!(got.is_some(), "{items}");
+    }
+}
+
+#[test]
+fn scalar_names_rebound_sees_raw_identifier_and_self_imports() {
+    for source in [
+        "type r#u32 = X;",
+        "use m::r#u32;",
+        "use m::u32::{self};",
+        "use m::{u32::{self, A}};",
+        "include!(\"x.rs\");",
+        "#[path = \"x.rs\"]\nmod m;",
+        "macro_rules! t { () => {}; }",
+    ] {
+        assert!(scalar_names_rebound("u32", source), "{source}");
+    }
+    for source in [
+        "use m::u32::MAX;",
+        "fn f(path: &str) {}",
+        "let x = include_str;",
+    ] {
+        assert!(!scalar_names_rebound("u32", source), "{source}");
+    }
+}
+
+#[test]
 fn serial_test_locks_keep_the_pin_and_other_attributes_refuse_it() {
     for attributes in [
         "use serial_test::serial;\n#[test]\n#[serial]",
