@@ -1747,7 +1747,7 @@ impl PerlFactPacket {
             relation_kind: relation.relation_kind,
             reachability_hint: relation.reachability_hint,
             oracle_shape: oracle.map(|oracle| oracle.kind.assertion_shape().to_string()),
-            oracle_strength: oracle.map(|oracle| oracle.strength),
+            oracle_strength: oracle.map(OracleFact::effective_strength),
             class,
             confidence,
             verify_command,
@@ -3000,15 +3000,43 @@ enum OracleStrength {
 }
 
 impl OracleFact {
+    /// The strength ripr reads. `isnt(got, v)` rejects one value, so it passes
+    /// for every wrong result but `v` and cannot pin the changed behavior; a
+    /// producer that grades it `strong_exact` is read as a smoke check here,
+    /// which credits nothing and is not an unresolved broad matcher either
+    /// (RIPR-SPEC-0235 rule 17).
+    fn effective_strength(&self) -> OracleStrength {
+        if self.strength == OracleStrength::StrongExact && self.is_negated_comparison() {
+            OracleStrength::WeakSmoke
+        } else {
+            self.strength
+        }
+    }
+
+    fn is_negated_comparison(&self) -> bool {
+        let Some(expression) = self.expression.as_deref() else {
+            return false;
+        };
+        let call = expression.trim_start();
+        let call = call
+            .strip_prefix("Test::More::")
+            .or_else(|| call.strip_prefix("Test2::V0::"))
+            .unwrap_or(call);
+        call.strip_prefix("isnt").is_some_and(|rest| {
+            !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_' || c == ':')
+        })
+    }
+
     fn is_strong_exact(&self) -> bool {
-        self.strength == OracleStrength::StrongExact && self.kind.supports_strong_exact()
+        self.effective_strength() == OracleStrength::StrongExact
+            && self.kind.supports_strong_exact()
     }
 
     /// A `weak_broad` label on a kind that can pin the changed behavior. The
     /// packet does not say whether the matcher pins a message, a class or
     /// nothing, and ripr does not parse Perl to find out.
     fn is_broad_unresolved(&self) -> bool {
-        self.strength == OracleStrength::WeakBroad && self.kind.supports_strong_exact()
+        self.effective_strength() == OracleStrength::WeakBroad && self.kind.supports_strong_exact()
     }
 }
 

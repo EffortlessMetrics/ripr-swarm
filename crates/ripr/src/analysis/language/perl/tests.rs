@@ -5722,3 +5722,36 @@ mod recommendation_tests;
 
 #[path = "composition_tests.rs"]
 mod composition_tests;
+
+/// RIPR-SPEC-0235 rule 17: `isnt` rejects one value, so passing it does not
+/// show the changed value is the right one. The producer grades it
+/// `strong_exact`; a reading that credits it names a mutant `isnt` still
+/// passes (the corpus rows `perl-test2-fee-isnt-zero`, `perl-testmore-clamp-isnt`).
+#[test]
+fn perl_isnt_is_a_smoke_oracle_not_an_exact_one() -> Result<(), String> {
+    use crate::domain::ExposureClass;
+    let (exact_class, _) = first_finding_misses(EXACT_RETURN_PACKET)?;
+    for spelling in [
+        "isnt($got, 10, 'discount threshold')",
+        "isnt ($got, 10, 'discount threshold')",
+        "Test::More::isnt($got, 10, 'discount threshold')",
+        "  isnt($got, 10)",
+    ] {
+        let packet = EXACT_RETURN_PACKET.replace("is($got, 10, 'discount threshold')", spelling);
+        let findings = findings_from_packet(&packet)?;
+        let finding = findings.first().ok_or("expected one finding")?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::ReachableUnrevealed,
+            "{spelling}"
+        );
+    }
+    // Controls: the exact reading of `is` is unchanged, and a name that only
+    // starts with `isnt` is not the negative matcher.
+    assert_ne!(exact_class, ExposureClass::StaticUnknown);
+    let packet =
+        EXACT_RETURN_PACKET.replace("is($got, 10, 'discount threshold')", "isnt_zero($got, 10)");
+    let (class, _) = first_finding_misses(&packet)?;
+    assert_eq!(class, exact_class);
+    Ok(())
+}

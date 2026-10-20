@@ -315,6 +315,17 @@ For each change, the first match wins:
     `dynamic_framework_indirection` kinds stay `reachable_unrevealed`. The
     recommended next step says the producer grades the assertion broad and that
     no change is needed if it asserts the message, class or value.
+17. **`isnt` pins nothing.** An oracle whose recorded expression begins with
+    the call `isnt` (bare, or qualified `Test::More::` / `Test2::V0::`) is
+    read as `weak_smoke` whatever strength the producer graded it, because
+    `isnt($got, $v)` passes for every wrong result but `$v` and cannot
+    notice the changed behavior. It earns no rule 6 credit and is not a
+    rule 16 broad oracle, so its relation reads `reachable_unrevealed`.
+    Only the leading call token is read (a name such as `isnt_zero` is not
+    `isnt`); ripr does not parse the argument list. The producer fix is to
+    grade `isnt` weak at the source; this keeps older packets from earning
+    `weakly_exposed` meanwhile (corpus: `perl-test2-fee-isnt-zero`,
+    `perl-testmore-clamp-isnt` were credited, truth not discriminated).
 
 ### Decisions
 
@@ -564,7 +575,7 @@ cases.
   - `PerlFactPacket::classify_related_relation`: rules 4 to 7;
   - `PerlFactPacket::classify_change_from_related_tests`: rule 8;
   - `sink_aligned_observation`: rules 5 and 9;
-  - `OracleFact::is_strong_exact`: rule 6; `is_broad_unresolved`: rule 16;
+  - `OracleFact::is_strong_exact`: rule 6; `is_broad_unresolved`: rule 16; `effective_strength`: rule 17;
   - `RelationKind::supports_positive_reachability`: rule 7;
   - `perl_oracle_kind_to_domain`, `perl_oracle_strength_to_domain`,
     `perl_relation_to_domain`: rule 12;
