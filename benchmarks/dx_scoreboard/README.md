@@ -184,7 +184,9 @@ still failed on the old counts). At a flat or smaller pick count the margin is
 zero, so one flipped or newly refuted pick still fails; precision, scored
 share, distinct-function share and pick count keep their own floors and judge
 the mix of the added picks. A baseline without the pick count (hand-written or
-legacy evidence) gets no margin. The baseline schema is unchanged. The margin
+legacy evidence) gets no margin. With several repository samples, each
+repository's own verdict decides these two rows (an unchanged repository does
+not revoke another's margin). The rule is RIPR-SPEC-0281. The baseline schema is unchanged. The margin
 is not a pick-level join: it cannot say which picks are new or whether a
 matched pick changed verdict, so a refuted pick that arrives with growth passes
 this row when precision holds. A matched-set comparison needs the baseline to

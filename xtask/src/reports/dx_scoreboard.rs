@@ -2196,17 +2196,19 @@ fn repo_pick_growth(def: &MetricDef, row: &Value, base_row: &Value, repo: &str) 
     }
 }
 
-/// The growth margin for the metric's compared worst: the smallest growth
-/// over the repositories both runs completed, so no repository's growth
-/// excuses another's.
-fn pick_growth(def: &MetricDef, row: &Value, base_row: &Value) -> f64 {
+/// The growth margin shown for the metric's compared worst: the smallest
+/// growth over the repositories both runs completed. `None` when no
+/// repository completed in both, so no per-repository verdict exists. The
+/// margin is for display only; a metric with `pick_growth_allowance` fails on
+/// its own repositories' verdicts, so an unchanged repository cannot revoke
+/// another's allowance.
+fn pick_growth(def: &MetricDef, row: &Value, base_row: &Value) -> Option<f64> {
     let base = completed_repo_values(base_row);
     completed_repo_values(row)
         .iter()
         .filter(|(repo, _)| base.iter().any(|(id, _)| id == repo))
         .map(|(repo, _)| repo_pick_growth(def, row, base_row, repo))
         .reduce(f64::min)
-        .unwrap_or(0.0)
 }
 
 /// Per-repository values of the samples that completed. An incomplete
@@ -2455,15 +2457,24 @@ pub(crate) fn compare_with_baseline(
             "recovered_repos": recovered,
         });
     };
-    let allowed = allowed_worsening(def, base) + pick_growth(def, row, base_row);
+    let growth = pick_growth(def, row, base_row);
+    let allowed = allowed_worsening(def, base) + growth.unwrap_or(0.0);
     let by_repo = repo_regressions(def, row, base_row);
+    // Each repository's own verdict decides a growth-allowance metric: the
+    // worst values compared above can come from different repositories.
+    let aggregate_regressed = worsening(def, base, current) > allowed;
+    let regressed = if def.pick_growth_allowance && growth.is_some() {
+        !by_repo.is_empty()
+    } else {
+        aggregate_regressed || !by_repo.is_empty()
+    };
     let missing = missing_repos(row, base_row);
     json!({
         "comparable": true,
         "value": round(base),
         "delta": round(current - base),
         "allowed_worsening": round(allowed),
-        "regressed": worsening(def, base, current) > allowed || !by_repo.is_empty(),
+        "regressed": regressed,
         "regressed_repos": by_repo,
         "new_repos": new_repos,
         "missing_repos": missing,

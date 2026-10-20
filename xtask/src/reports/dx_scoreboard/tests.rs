@@ -2691,6 +2691,55 @@ fn ranking_gate_allows_refuted_counts_to_grow_with_admitted_picks_only() -> Resu
     Ok(())
 }
 
+/// Across repositories each one's own verdict decides a growth-allowance
+/// metric: an unchanged repository must not revoke another's allowance, and a
+/// repository that worsens without admitting picks must still fail.
+#[test]
+fn pick_growth_allowance_is_judged_per_repository() -> Result<(), String> {
+    let config = load_config(&committed_config())?;
+    let def = config
+        .metric
+        .iter()
+        .find(|def| def.id == "ranking.pilot_refuted_top10")
+        .ok_or("refuted metric is configured")?;
+    let sample = |repo: &str, refuted: u64, picks: u64| {
+        json!({
+            "repo": repo,
+            "status": "below_target",
+            "value": refuted as f64,
+            "detail": format!("0 confirmed, {refuted} refuted of {picks} picks"),
+        })
+    };
+    let row = |a: (u64, u64), b: (u64, u64)| {
+        let worst = a.0.max(b.0) as f64;
+        json!({
+            "id": def.id,
+            "value": worst,
+            "samples": [sample("a", a.0, a.1), sample("b", b.0, b.1)],
+        })
+    };
+    let compare = |now: &Value, before: &Value| {
+        compare_with_baseline(def, now, &context("r"), Some(&json!({"metrics": [before]})))
+    };
+    let before = row((0, 5), (10, 20));
+    // Only repository b admitted picks (20 -> 22) and its refuted count rose
+    // by that many; repository a is unchanged.
+    let grown = compare(&row((0, 5), (12, 22)), &before);
+    assert_eq!(grown["regressed"], json!(false), "{grown}");
+    // Repository b refuted one more pick without admitting any: fails.
+    let flipped = compare(&row((0, 5), (11, 20)), &before);
+    assert_eq!(flipped["regressed"], json!(true), "{flipped}");
+    // Growth in repository a does not excuse repository b.
+    let borrowed = compare(&row((2, 7), (11, 20)), &before);
+    assert_eq!(borrowed["regressed"], json!(true), "{borrowed}");
+    // A baseline whose evidence lacks the pick count gets no margin.
+    let mut legacy = before.clone();
+    legacy["samples"][1]["detail"] = json!("10 refuted");
+    let strict = compare(&row((0, 5), (12, 22)), &legacy);
+    assert_eq!(strict["regressed"], json!(true), "{strict}");
+    Ok(())
+}
+
 #[test]
 fn evidence_picks_reads_the_pick_count_only_from_the_ranking_wording() {
     assert_eq!(

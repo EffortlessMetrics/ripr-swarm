@@ -16828,3 +16828,26 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0281"
+name = "Pilot ranking refuted-count growth allowance"
+spec = "docs/specs/RIPR-SPEC-0281-pilot-ranking-refuted-count-growth-allowance.md"
+tests = [
+  "xtask/src/reports/dx_scoreboard/tests.rs::ranking_gate_allows_refuted_counts_to_grow_with_admitted_picks_only",
+  "xtask/src/reports/dx_scoreboard/tests.rs::pick_growth_allowance_is_judged_per_repository",
+  "xtask/src/reports/dx_scoreboard/tests.rs::pick_growth_allowance_is_limited_to_lower_is_better_ingested_metrics",
+  "xtask/src/reports/dx_scoreboard/tests.rs::evidence_picks_reads_the_pick_count_only_from_the_ranking_wording",
+  "xtask/src/reports/dx_scoreboard/tests.rs::ranking_gate_fails_one_flipped_pick_and_one_lost_pick",
+]
+fixtures = []
+code = [
+  "xtask/src/reports/dx_scoreboard.rs",
+  "benchmarks/dx_scoreboard/scoreboards.toml",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0281-pilot-ranking-refuted-count-growth-allowance.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
