@@ -538,7 +538,8 @@ never an anchor for a bare call.
 
 Amended 2026-10-19 (decision 15): a default import is also the receiver of
 `local.name(...)` when the owner module's one `export default { ... }`
-object holds the top-level function `name` under its own name (`{ name }` or
+object holds the top-level function (or `const` arrow function) `name` under
+its own name (`{ name }` or
 `{ name: name }`). The object must be made only of such plain entries; a
 spread, computed key, method, getter, renamed entry or duplicate key leaves
 every owner unmarked. The test file must use `local` for nothing but calls of
@@ -1005,8 +1006,8 @@ to `amount - 20`, and `tests/lib.test.ts` has
   `expect` binding facts rule 3 reads.
 - `crates/ripr/src/analysis/language/typescript/owners.rs`:
   `mark_default_object_members` (decision 15); `related_tests.rs`
-  `import_references_owner_call` and `every_use_is_member_call`,
-  `tests_extract.rs` `default_member_only_locals` (the whole-file use check), and
+  `import_references_owner_call` and `tests_extract.rs`
+  `default_member_only_locals` (the whole-file use check), and
   `classifier.rs` `owner_namespace_receivers`, read the marker.
 - `crates/ripr/src/analysis/language/typescript/related_tests.rs`: rule 5
   (`direct_owner_call_has_declaration_anchor`,

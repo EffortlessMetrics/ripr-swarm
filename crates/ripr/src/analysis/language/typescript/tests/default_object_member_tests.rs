@@ -147,8 +147,8 @@ fn a_function_the_object_does_not_hold_is_not_a_member() -> Result<(), String> {
     Ok(())
 }
 
-// The enclosing-scope guards, not `every_use_is_member_call` (which sees only
-// the test body), refuse a replacement or use outside the body.
+// The whole-file use check refuses a replacement or use anywhere in the file,
+// setup hooks included.
 #[test]
 fn a_file_level_or_setup_replacement_of_the_member_credits_nothing() -> Result<(), String> {
     let header = "import { it, expect, vi, beforeEach } from 'vitest';\nimport utils from '../src/utils';\n\n";
@@ -177,6 +177,49 @@ fn a_file_level_or_setup_replacement_of_the_member_credits_nothing() -> Result<(
     // Control: the same file without a setup use still credits.
     assert_eq!(
         class_of("control", OWNER, &format!("{header}{test}"))?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_const_arrow_member_is_reached_like_a_function() -> Result<(), String> {
+    let owner = "const merge = (base: any, extra: any): any => {\n  const out = { ...base };\n  for (const key of Object.keys(extra)) {\n    out[key] = (out[key] ?? 0) + extra[key];\n  }\n  return out;\n};\n\nexport default { merge };\n";
+    assert_eq!(
+        class_of("arrow-member", owner, &test_with(CALL))?,
+        ExposureClass::Exposed
+    );
+    // A `let` arrow reassigned before the export is not the member the
+    // object holds, so the owner is dropped.
+    let reassignable = owner
+        .replacen("const merge", "let merge", 1)
+        .replace("\nexport default", "\nmerge = () => ({});\nexport default");
+    // No finding for the dropped owner counts as uncredited.
+    assert!(
+        class_of("let-arrow-member", &reassignable, &test_with(CALL))
+            .map_or(true, |class| class != ExposureClass::Exposed)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_title_or_comment_naming_the_local_does_not_veto_the_call() -> Result<(), String> {
+    let test = format!(
+        "import {{ it, expect }} from 'vitest';\nimport utils from '../src/utils';\n\nit('utils merges', () => {{\n  // utils.merge is the member under test\n{CALL}\n}});\n"
+    );
+    assert_eq!(
+        class_of("title-mention", OWNER, &test)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_named_import_call_cannot_launder_a_replaced_default_member() -> Result<(), String> {
+    let owner = OWNER.replace("function merge", "export function merge");
+    let test = "import { it, expect } from 'vitest';\nimport { merge } from '../src/utils';\nimport utils from '../src/utils';\n\nit('merges', () => {\n  utils.merge = () => ({ a: 1, b: 5, c: 4 });\n  merge({ a: 1, b: 2 }, { b: 3, c: 4 });\n  expect(utils.merge({ a: 1, b: 2 }, { b: 3, c: 4 })).toEqual({ a: 1, b: 5, c: 4 });\n});\n";
+    assert_ne!(
+        class_of("named-plus-replaced-default", &owner, test)?,
         ExposureClass::Exposed
     );
     Ok(())

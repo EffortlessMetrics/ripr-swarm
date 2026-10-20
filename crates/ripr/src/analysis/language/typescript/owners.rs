@@ -551,7 +551,7 @@ fn mark_default_exported_bindings(body: &[Statement<'_>], owners: &mut [TypeScri
     }
 }
 
-/// Mark top-level function owners held by the module's `export default {
+/// Mark top-level function (or const arrow) owners held by the module's `export default {
 /// name }` object (RIPR-SPEC-0243 rule 5). Only an object made entirely of
 /// plain same-name entries qualifies: a spread, computed key, method, getter,
 /// renamed entry or duplicate key could replace or rebind a member, so any
@@ -597,7 +597,10 @@ fn mark_default_object_members(body: &[Statement<'_>], owners: &mut [TypeScriptO
     }
     for owner in owners.iter_mut() {
         if owner.class_name.is_none()
-            && owner.owner_kind == OwnerKind::Function
+            && matches!(
+                owner.owner_kind,
+                OwnerKind::Function | OwnerKind::ArrowFunction
+            )
             && members.contains(&owner.name)
         {
             owner.default_object_member = true;

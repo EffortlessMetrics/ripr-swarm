@@ -3345,6 +3345,10 @@ pub(crate) fn owner_namespace_receivers(
                 .filter(|import| {
                     !import.namespace
                         && import.imported.as_deref() == Some("default")
+                        && test
+                            .default_member_only_locals_in_file
+                            .iter()
+                            .any(|(local, member)| *local == import.local && *member == owner.name)
                         && import_source_matches_owner(
                             import,
                             &test.file,
