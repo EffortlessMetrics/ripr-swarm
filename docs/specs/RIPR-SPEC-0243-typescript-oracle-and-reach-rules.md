@@ -160,7 +160,8 @@ a titled `test` / `it` call (`.only`, `.concurrent`, `.sequential` allowed;
 a title with an escape or a template substitution is not read). A call, a
 reassignment, a same-named parameter or variable, an export, a second
 declaration or the name inside a title leaves the reference unresolved, as
-does any `.each` or `.skip` form. The runner shadow checks of rule 3 read
+does any `.each` or `.skip` form, or an options object between the title
+and the name (`test(title, { timeout }, name)`). The runner shadow checks of rule 3 read
 the function body. Arrow and function-expression bindings (`const name =
 ...`) are not resolved.
 
