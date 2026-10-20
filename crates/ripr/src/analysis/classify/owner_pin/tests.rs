@@ -8894,6 +8894,69 @@ fn an_expected_value_a_macro_or_a_static_rebinds_from_the_owner_is_not_a_pin() {
             "struct S { f: u32, g: u32 }\n\n",
             "let mut expected = 0;\n        S { f: expected, .. } = S { f: crate::weight(4), g: 0 };\n        assert_eq!(crate::weight(4), expected);",
         ),
+        // #8795 review: a struct of literals may `Deref` to an atomic.
+        (
+            "use std::sync::atomic::{AtomicU32, Ordering};\nstruct E {\n    tag: u32,\n}\nstatic VALUE: AtomicU32 = AtomicU32::new(0);\nimpl std::ops::Deref for E {\n    type Target = AtomicU32;\n    fn deref(&self) -> &Self::Target {\n        &VALUE\n    }\n}\n\n",
+            "let expected = E { tag: 0 };\n        AtomicU32::store(&expected, crate::weight(4), Ordering::SeqCst);\n        assert_eq!(crate::weight(4), expected.load(Ordering::SeqCst));",
+        ),
+        // #8795 review: a loop label before `[` is not an indexed place.
+        (
+            "",
+            "let mut expected = 0;\n        let mut o = 0;\n        'a: {\n            break 'a [expected, o] = [crate::weight(4), 0];\n        }\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        (
+            "",
+            "let mut expected = 0;\n        let mut o = 0;\n        'a: loop {\n            break 'a [expected, o] = [crate::weight(4), 0];\n        }\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        // #8795 review: a later `let` shadows the static the earlier
+        // shared borrow writes; the assertion before it still names the static.
+        (
+            "static EXPECTED: AtomicU32 = AtomicU32::new(0);\nfn same(_: u32, _: &AtomicU32) {}\n\n",
+            "same(crate::weight(4), &EXPECTED);\n        assert_eq!(crate::weight(4), EXPECTED.load(Ordering::SeqCst));\n        let EXPECTED = 0;",
+        ),
+        // #8795 review: a keyword before `[` starts an array pattern, not an index.
+        (
+            "",
+            "let mut expected = 0;\n        let mut o = 0;\n        match [expected, o] = [crate::weight(4), 0] {\n            _ => {}\n        }\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        // #8795 review: a test-local type may define `replace` / `take`
+        // with any arity and mutate the value with the owner's result, and
+        // a test-local `String` may hold a `Cell`.
+        (
+            "struct Counter(u32);\nimpl Counter {\n    fn replace(&mut self, value: u32, _: u32) {\n        self.0 = value;\n    }\n}\n\n",
+            "let mut expected = Counter(0);\n        expected.replace(crate::weight(4), 0);\n        assert_eq!(crate::weight(4), expected.0);",
+        ),
+        (
+            "struct Counter(u32);\nimpl Counter {\n    fn take(&mut self, value: u32) {\n        self.0 = value;\n    }\n}\n\n",
+            "let mut expected = Counter(0);\n        expected.take(crate::weight(4));\n        assert_eq!(crate::weight(4), expected.0);",
+        ),
+        (
+            "struct String(Cell<u32>);\nimpl String {\n    fn new() -> Self {\n        Self(Cell::new(0))\n    }\n}\n\n",
+            "let expected = String::new();\n        Cell::set(&expected.0, crate::weight(4));\n        assert_eq!(crate::weight(4), expected.0.get());",
+        ),
+        // #8795 negative controls: a non-plain value still refuses a shared
+        // borrow, the one-argument `replace` and the argument-free `take`
+        // still write, and a pattern is not an annotation.
+        (
+            "fn same(_: u32, _: &Cell<u32>) {}\n\n",
+            "let expected = Cell::new(0);\n        same(crate::weight(4), &expected);\n        assert_eq!(crate::weight(4), expected.get());",
+        ),
+        (
+            "",
+            "let expected = Cell::new(0);\n        let _ = Some(&expected);\n        expected.replace(crate::weight(4));\n        assert_eq!(crate::weight(4), expected.get());",
+        ),
+        (
+            "",
+            "let mut expected = Some(0);\n        expected.replace(crate::weight(4));\n        assert_eq!(crate::weight(4), expected.unwrap());",
+        ),
+        (
+            "static EXPECTED: AtomicU32 = AtomicU32::new(0);\nfn same(_: u32, _: &AtomicU32) {}\n\n",
+            "same(crate::weight(4), &EXPECTED);\n        assert_eq!(crate::weight(4), EXPECTED.load(Ordering::SeqCst));",
+        ),
+        (
+            "",
+            "let mut expected = (0, 0);\n        let (a, expected2): (u32, u32) = (1, 2);\n        (expected, _) = (crate::weight(4), a + expected2);\n        assert_eq!(crate::weight(4), expected);",
+        ),
         (
             "",
             "let mut expected = String::new();\n        write!(expected, \"{}\", crate::weight(4)).unwrap();\n        assert_eq!(crate::weight(4).to_string(), expected);",
@@ -8931,6 +8994,37 @@ fn an_expected_value_a_macro_or_a_static_rebinds_from_the_owner_is_not_a_pin() {
     }
     // Controls: an independent `let`, and a static the test only reads.
     for (prelude, body) in [
+        // #8795: annotation shapes naming the type are not writes.
+        (
+            "struct Config { v: u32 }\n\n",
+            "let expected: crate::Config = Config { v: 12 };\n        assert_eq!(crate::weight(4), expected.v);",
+        ),
+        (
+            "struct Config { v: u32 }\n\n",
+            "let expected: &Config = &Config { v: 12 };\n        assert_eq!(crate::weight(4), expected.v);",
+        ),
+        // #8795: a shared borrow of a plain literal value is a read.
+        (
+            "fn same(_: u32, _: &u32) {}\n\n",
+            "let expected = 12;\n        same(crate::weight(4), &expected);\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        (
+            "",
+            "let expected = 12;\n        let _ = Some(&expected);\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        // #8795: the name only indexes another place.
+        (
+            "",
+            "let expected = 12;\n        let mut v = [0; 16];\n        v [expected] = 7;\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        (
+            "",
+            "let expected = [12; 2];\n        let _ = Some(&expected);\n        assert_eq!(crate::weight(4), expected[0]);",
+        ),
+        (
+            "",
+            "let expected = 12;\n        let mut v = [0; 16];\n        v[expected] = 7;\n        assert_eq!(crate::weight(4), expected);",
+        ),
         (
             "",
             "let expected = 12;\n        assert_eq!(crate::weight(4), expected);",
@@ -8983,8 +9077,23 @@ fn written_by_test_reads_operators_and_let_boundaries() {
         "EXPECTED.next_power_of_two();",
         "EXPECTED.next_multiple_of(4);",
         "if (EXPECTED, 1) == t {}",
+        // #8795: any `let` annotation shape that names the type.
+        "let e: crate::EXPECTED = 1;",
+        "let e: &EXPECTED = &1;",
+        "let mut EXPECTED = 1; let r = &EXPECTED;",
+        "let e: &mut EXPECTED = g();",
+        "let e: (EXPECTED, u8) = p;",
+        "let e: Vec<EXPECTED> = p;",
+        "let (a, e): (EXPECTED, u8) = p;",
+        // #8795: the name indexes another place.
+        "v[EXPECTED] = 1;",
+        "v[i][EXPECTED] += 1;",
+        "v [EXPECTED] = 1;",
+        "v[EXPECTED][0] = 1;",
+        "foo(EXPECTED);",
+        "f(a)[EXPECTED] = 1;",
     ] {
-        assert!(!super::written_by_test(read, "EXPECTED"), "{read}");
+        assert!(!super::written_by_test(read, "EXPECTED", false), "{read}");
     }
     for write in [
         "EXPECTED = 1;",
@@ -9015,9 +9124,119 @@ fn written_by_test_reads_operators_and_let_boundaries() {
         "(EXPECTED, _) = p;",
         "[EXPECTED, ..] = p;",
         "S { f: EXPECTED, .. } = p;",
+        // #8795 negative controls: the annotation skip needs a real
+        // annotation, and an index skip needs a real index.
+        "let (a, EXPECTED) = p; EXPECTED = 1;",
+        "let (a, EXPECTED): (u8, u8) = p; EXPECTED = 1;",
+        "let a: u8 = 1; EXPECTED = 2;",
+        "let a: u8; EXPECTED = 2;",
+        "let S { f: EXPECTED } = p; EXPECTED = 1;",
+        "let a = 1; Some(&EXPECTED);",
+        "[EXPECTED, 1] = p;",
+        "match [EXPECTED, o] = p { _ => {} }",
+        "return [EXPECTED, o] = p;",
+        "break [EXPECTED, o] = p;",
+        "break 'a [EXPECTED, o] = p;",
+        // Postfix keyspace: a place chain after a closing group, a `?`
+        // before the bracket, and macro-built arrays all refuse.
+        "(EXPECTED)[0] = 1;",
+        "(EXPECTED).f = 1;",
+        "foo()?[EXPECTED] = 1;",
+        "EXPECTED?[0] = 1;",
+        "vec![EXPECTED][0] = 1;",
+        "m![EXPECTED][i] = 1;",
+        "foo(EXPECTED).x = 1;",
+        "let r = & mut EXPECTED; *r = 1;",
+        "let r = &raw mut EXPECTED;",
+        "let r = &\n mut EXPECTED;",
+        "continue 'a [EXPECTED, o] = p;",
+        "(EXPECTED, v[0]) = p;",
+        "EXPECTED.replace(f(4));",
+        "EXPECTED.take();",
+        "EXPECTED.lock();",
+        "EXPECTED.replace(1, 2);",
+        "EXPECTED.take(2);",
     ] {
-        assert!(super::written_by_test(write, "EXPECTED"), "{write}");
+        assert!(super::written_by_test(write, "EXPECTED", false), "{write}");
     }
+    // #8795: on a plain `let` value a shared borrow is a read; every
+    // `replace`, `take`, `lock`, assignment and `&mut` stays a write (a
+    // test-local type may define any method arity).
+    for read in [
+        "Some(&EXPECTED);",
+        "Ok(&EXPECTED);",
+        "helper(f(4), &EXPECTED);",
+    ] {
+        assert!(!super::written_by_test(read, "EXPECTED", true), "{read}");
+    }
+    for write in [
+        "EXPECTED.replace(f(4));",
+        "EXPECTED.replace(1, 2);",
+        "EXPECTED.take();",
+        "EXPECTED.take(2);",
+        "g(&mut EXPECTED);",
+        "EXPECTED = 1;",
+        "EXPECTED.lock();",
+    ] {
+        assert!(super::written_by_test(write, "EXPECTED", true), "{write}");
+    }
+    // Which bindings are plain: literals and values built only of them.
+    for init in [
+        ": u32 = 12;",
+        " = -1.5;",
+        " = 1.5e-3f64;",
+        " = 0xff_u8;",
+        " = \"x\";",
+        " = (1, \"a\");",
+        " = [1, 2];",
+        " = [12; 2];",
+    ] {
+        assert!(super::plain_let_values(&[init]), "{init}");
+    }
+    for init in [
+        " = f(4);",
+        " = Cell::new(0);",
+        " = Mutex::new(0);",
+        " = x;",
+        " = (1, y);",
+        " = Config { retries: n };",
+        " = Config { retries: 1, ..Default::default() };",
+        " = &mut v;",
+        " = [1, f(2)];",
+        " = String::from(\"x\");",
+        " = String::new();",
+        " = \"x\".to_string();",
+        " = Some(3);",
+        " = Config(1, 2);",
+        " = [f(1); 2];",
+        " = Config { retries: 3, name: \"a\" };",
+        " = E { tag: 0 };",
+        " = 1..n;",
+        " = 0..10;",
+        " = 1.max(f(4));",
+        " = [1; n];",
+        " = Config { name: String::new() };",
+        ";",
+    ] {
+        assert!(!super::plain_let_values(&[init]), "{init}");
+    }
+    assert!(!super::plain_let_values(&[]));
+    // Only a first-use top-level `let` makes a name plain.
+    for (body, plain) in [
+        ("{ let e = 1; f(&e); }", true),
+        ("{ let mut e = 1; f(&e); }", true),
+        ("{ f(&e); let e = 1; }", false),
+        ("{ { let e = 1; } f(&e); }", false),
+        ("{ if c { let e = 1; } }", false),
+        ("{ f(); }", false),
+    ] {
+        assert_eq!(
+            super::first_use_is_top_level_let(body, "e"),
+            plain,
+            "{body}"
+        );
+    }
+    assert!(!super::plain_let_values(&[" = 1;", " = f();"]));
 }
 
 #[test]

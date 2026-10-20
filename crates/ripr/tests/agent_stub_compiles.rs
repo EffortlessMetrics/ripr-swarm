@@ -2249,6 +2249,75 @@ fn existing_target_scratch(
     Ok(scratch)
 }
 
+/// #8794: edition 2015 disables legacy test auto-discovery once any explicit
+/// `[[test]]` exists, so the file is not a registered target and no command is
+/// offered; edition 2018+ still auto-discovers, and `autotests = true` restores
+/// discovery in 2015. The human output says the file is not a registered target.
+#[test]
+fn legacy_edition_discovery_fails_closed_and_controls_register() -> Result<(), String> {
+    let other = "\n[[test]]\nname = \"other\"\npath = \"tests/other.rs\"\n";
+    let cases = [
+        ("2015", other.to_string(), false),
+        ("2015", format!("autotests = true\n{other}"), true),
+        ("2018", other.to_string(), true),
+    ];
+    for (edition, tail, registered) in cases {
+        let scratch = existing_target_scratch(
+            &tail,
+            "src/lib.rs",
+            EXISTING_LIB,
+            "tests/discount.rs",
+            &format!("extern crate stub_existing;\n{EXISTING_TEST}"),
+        )?;
+        let root = &scratch.directory;
+        let manifest = root.join("Cargo.toml");
+        let text = std::fs::read_to_string(&manifest).map_err(|error| error.to_string())?;
+        std::fs::write(
+            &manifest,
+            text.replace("edition = \"2024\"", &format!("edition = \"{edition}\"")),
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("tests/other.rs"), "#[test]\nfn unrelated() {}\n")
+            .map_err(|error| error.to_string())?;
+        if !registered {
+            let human = ripr_stub(root, "src/lib.rs:2");
+            let out = run_bounded(human, root, "human-stub", Duration::from_mins(2))?;
+            let text = String::from_utf8_lossy(&out.stdout).to_string();
+            assert!(
+                out.status.success()
+                    && text.contains("tests/discount.rs is not a registered cargo test target"),
+                "{edition}: {text}"
+            );
+        }
+        let document = stub_json(root, "src/lib.rs:2")?;
+        let case = format!("{edition} {tail}: {document}");
+        assert_eq!(document["placement"]["file"], "tests/discount.rs", "{case}");
+        if registered {
+            let run = document["run_command"].as_str().ok_or(case.clone())?;
+            assert!(run.contains("--test discount "), "{case}");
+            let out = run_bounded(
+                cargo_from_run_command(run, root)?,
+                root,
+                "cargo-test",
+                Duration::from_mins(2),
+            )?;
+            let text = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert!(
+                text.contains("not yet implemented: ripr:"),
+                "{case}: {text}"
+            );
+        } else {
+            assert!(document["run_command"].is_null(), "{case}");
+        }
+        scratch.cleanup()?;
+    }
+    Ok(())
+}
+
 fn stub_json(root: &Path, location: &str) -> Result<serde_json::Value, String> {
     let output = run_bounded(
         ripr_stub_write(root, location),
@@ -2352,6 +2421,71 @@ fn assert_not_appended(
     scratch.cleanup()
 }
 
+/// #8794: `[[test]] name = "pricing" path = "tests/discount.rs"` registers the
+/// file as `pricing`, so the printed command must say `--test pricing` and,
+/// executed, must reach the stub's own todo (not "no test target named").
+/// With `autotests = false` the explicit entry is still honored; without one
+/// the file is no target at all and no command is printed.
+#[test]
+fn run_command_uses_the_effective_cargo_target_name() -> Result<(), String> {
+    let renamed = "\n[[test]]\nname = \"pricing\"\npath = \"tests/discount.rs\"\n";
+    for tail in [renamed.to_string(), format!("autotests = false\n{renamed}")] {
+        let scratch = existing_target_scratch(
+            &tail,
+            "src/lib.rs",
+            EXISTING_LIB,
+            "tests/discount.rs",
+            EXISTING_TEST,
+        )?;
+        let root = scratch.directory.clone();
+        let document = stub_json(&root, "src/lib.rs:2")?;
+        assert_eq!(
+            document["placement"]["kind"], "existing_integration_file",
+            "{document}"
+        );
+        let run = document["run_command"]
+            .as_str()
+            .ok_or_else(|| format!("run_command: {document}"))?;
+        assert!(
+            run.contains("--test pricing ") && !run.contains("--test discount"),
+            "{run}"
+        );
+        let cargo = cargo_from_run_command(run, &root)?;
+        let out = run_bounded(cargo, &root, "cargo-test", Duration::from_mins(2))?;
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            !out.status.success() && text.contains("not yet implemented: ripr:"),
+            "the emitted command must run the stub under its renamed target:\n{text}"
+        );
+        scratch.cleanup()?;
+    }
+
+    // The target name cannot be established: omit the command rather than
+    // print one (`--test discount`) that cargo would reject.
+    let scratch = existing_target_scratch(
+        "autotests = false\n",
+        "src/lib.rs",
+        EXISTING_LIB,
+        "tests/discount.rs",
+        EXISTING_TEST,
+    )?;
+    let root = scratch.directory.clone();
+    let document = stub_json(&root, "src/lib.rs:2")?;
+    assert_eq!(
+        document["placement"]["kind"], "existing_integration_file",
+        "{document}"
+    );
+    assert!(
+        document["run_command"].is_null(),
+        "no command when the target is not registered: {document}"
+    );
+    scratch.cleanup()
+}
+
 #[test]
 fn stub_for_an_unservable_existing_target_keeps_the_old_placement() -> Result<(), String> {
     assert_not_appended(
@@ -2408,11 +2542,17 @@ fn cargo_from_run_command(run: &str, root: &Path) -> Result<Command, String> {
     Ok(command)
 }
 
-fn ripr_stub_write(root: &Path, at: &str) -> Command {
+fn ripr_stub(root: &Path, at: &str) -> Command {
     let mut stub = Command::new(env!("CARGO_BIN_EXE_ripr"));
     stub.args(["agent", "stub", "--root"])
         .arg(root)
-        .args(["--at", at, "--write", "--json"]);
+        .args(["--at", at]);
+    stub
+}
+
+fn ripr_stub_write(root: &Path, at: &str) -> Command {
+    let mut stub = ripr_stub(root, at);
+    stub.args(["--write", "--json"]);
     stub
 }
 
