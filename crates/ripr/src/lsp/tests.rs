@@ -3048,7 +3048,7 @@ fn finding_hover_renders_related_tests_and_oracle_text() -> Result<(), String> {
             assert!(
                 markup
                     .value
-                    .contains("\u{2014} strong exact_value oracle: assert_eq!(total, expected)")
+                    .contains("\u{2014} strong exact value oracle: assert_eq!(total, expected)")
             );
             Ok(())
         }
@@ -8806,7 +8806,7 @@ fn diagnostic_for_finding_attaches_related_test_information() -> Result<(), Stri
     assert_eq!(related[0].location.range.start.line, 11);
     assert_eq!(
         related[0].message,
-        "Fix site: related test `discount_boundary_is_exact` has strong exact_value oracle: assert_eq!(total, expected)"
+        "Fix site: related test `discount_boundary_is_exact` has strong exact value oracle: assert_eq!(total, expected)"
     );
     Ok(())
 }
@@ -15176,7 +15176,7 @@ fn finding_hover_response_includes_evidence_details() -> Result<(), String> {
             assert!(
                 markup
                     .value
-                    .contains("strong exact_value oracle: assert_eq!(total, expected)")
+                    .contains("strong exact value oracle: assert_eq!(total, expected)")
             );
             assert!(markup.value.contains("Add an exact boundary assertion."));
             Ok(())
@@ -27246,7 +27246,7 @@ fn hover_keeps_oracle_kind_on_a_matched_row_that_still_misses() -> Result<(), St
     };
     assert_eq!(
         row("observes_score")?,
-        "- `src/lib.rs:8` `observes_score` \u{2014} weak relational_check oracle: \
+        "- `src/lib.rs:8` `observes_score` \u{2014} weak relational check oracle: \
          assert!(matches!(value, _)); misses: assertion too weak to tell the old \
          behavior from the new"
     );
@@ -27264,7 +27264,7 @@ fn hover_keeps_oracle_kind_on_a_matched_row_that_still_misses() -> Result<(), St
     // and keeps the oracle it could not confirm.
     assert_eq!(
         row("observer_unconfirmed")?,
-        "- `src/lib.rs:40` `observer_unconfirmed` \u{2014} weak relational_check oracle: \
+        "- `src/lib.rs:40` `observer_unconfirmed` \u{2014} weak relational check oracle: \
          assert!(matches!(value, _)); unconfirmed: ripr could not confirm that this \
          assertion observes the changed behavior"
     );
@@ -27415,12 +27415,47 @@ fn absent_assertion_oracle_wording_keeps_reason_only_hover() -> Result<(), Strin
             row,
             "- `tests/pricing.rs:12` `selected_observer` misses: has no assertion"
         );
-        assert!(
-            diagnostic
-                .related_information
-                .iter()
-                .flatten()
-                .all(|row| !row.message.starts_with("Fix site:"))
+    }
+    Ok(())
+}
+
+#[test]
+fn diagnostic_oracle_wording_follows_producer_selection_over_a_stronger_row() -> Result<(), String>
+{
+    let mut finding = oracle_wording_finding(OracleKind::Unknown, OracleStrength::Unknown);
+    finding.language = Some(LanguageId::Python);
+    finding.related_tests[0].file = PathBuf::from("tests/pricing.py");
+    finding.related_tests[0].oracle = Some("assert total == expected".to_string());
+    finding.evidence = vec![
+        "suggested_test_file: tests/pricing.py".to_string(),
+        "suggested_test_name: selected_observer".to_string(),
+        "suggested_test_line: 12".to_string(),
+    ];
+    let mut stronger = finding.related_tests[0].clone();
+    stronger.name = "another_observer".to_string();
+    stronger.file = PathBuf::from("tests/other.py");
+    stronger.line = 40;
+    stronger.oracle_kind = OracleKind::ExactValue;
+    stronger.oracle_strength = OracleStrength::Strong;
+    finding.related_tests.push(stronger);
+    for reverse in [false, true] {
+        if reverse {
+            finding.related_tests.reverse();
+        }
+        let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+        let rows = diagnostic
+            .related_information
+            .as_ref()
+            .ok_or_else(|| "expected selected fix-site row".to_string())?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].location.uri.as_str(),
+            "file:///workspace/tests/pricing.py"
+        );
+        assert_eq!(rows[0].location.range.start.line, 11);
+        assert_eq!(
+            rows[0].message,
+            "Fix site: related test `selected_observer` has an unclassified oracle, not graded against this probe: assert total == expected"
         );
     }
     Ok(())

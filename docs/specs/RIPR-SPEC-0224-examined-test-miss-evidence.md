@@ -95,6 +95,11 @@ developer who disagreed had to re-derive the analysis.
   oracle, not graded against this probe` when the kind is also `unknown` and
   an assertion was selected; and `no oracle` when no assertion was selected.
   Pinned by `oracle_projection_separates_ungraded_assertions_from_absent_ones`.
+  Finding hover, fix-site diagnostic links, seam diagnostic links and targeted
+  agent briefs use this same phrase (#8951). The diagnostic witness owns the
+  selected test; prose does not reselect a stronger row. Finding hover retains
+  its reason-only form when no assertion is recorded. Compact seam-hover
+  metadata and structured oracle kind/strength fields retain their raw tags.
 - `ripr explain` adds a "Why this verdict" section: every retained examined
   test with its verdict and checked assertion, what a test would need to change
   the verdict (gap classes only), and the meaning of each stop reason.
@@ -300,6 +305,10 @@ actionability or rendered output.
 
 ## Test Mapping
 
+- The `oracle_wording` controls in `lsp/tests.rs`, the seam diagnostic tests and
+  `output/agent_seam_packets.rs` pin ungraded classified and unclassified rows,
+  graded rows, reason-only absent-assertion hover and producer-owned fix-site
+  selection beside a stronger row.
 - `crates/ripr/src/analysis/classify/reveal.rs::tests` — examined misses are
   listed and rank after matched tests.
 - `crates/ripr/src/output/related_test_miss.rs::tests` — reason prose.
