@@ -35,6 +35,8 @@ Support-tier impact:
   its admission, ordering, cap, and string-awareness rules are internal
   evidence hygiene, not a new oracle kind, strength, class, relation
   reason or limitation kind.
+- Claim boundaries remain governed by
+  [support tiers](../status/SUPPORT_TIERS.md).
 
 Policy impact:
 
