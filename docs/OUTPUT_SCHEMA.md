@@ -1479,7 +1479,8 @@ The evidence-first fields are additive in schema `0.2`:
   assertions observe the changed value; `oracle` then carries the first
   assertion as checked text and `oracle_strength` is `none`.
   `assertion_not_credited`: an assertion exists but ripr could not establish
-  that it runs as the standard macro. `weak_assertion`: the matched oracle is
+  that this assertion counts here (a local macro, a feature cfg or another
+  limit can each cause it). `weak_assertion`: the matched oracle is
   weak or smoke-only. `missing_input`: on a predicate probe, the oracle
   observes the behavior but no input reaches the boundary value in
   `missing_discriminators` (the `left == right` entry); on a match-arm probe,

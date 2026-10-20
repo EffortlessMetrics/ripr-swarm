@@ -258,3 +258,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_shadowed (21)
+
+Reason:
+RIPR-SPEC-0224: cause-neutral assertion_not_credited sentence (#8780)
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_shadowed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

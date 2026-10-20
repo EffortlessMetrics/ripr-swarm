@@ -409,3 +409,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — guarded_result_match_fail_closed (31)
+
+Reason:
+RIPR-SPEC-0224: cause-neutral assertion_not_credited sentence (#8780)
+
+Command:
+`cargo xtask goldens bless guarded_result_match_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

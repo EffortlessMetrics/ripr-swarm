@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_return_pin_rebound_test_attribute (3)
+
+Reason:
+RIPR-SPEC-0224: cause-neutral assertion_not_credited sentence (#8780)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_rebound_test_attribute --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
