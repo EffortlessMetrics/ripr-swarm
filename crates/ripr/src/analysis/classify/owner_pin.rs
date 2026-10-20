@@ -10672,7 +10672,7 @@ fn addr_of_mut_before(before: &str) -> bool {
 /// text after the name. The binding is a mutable reference into the place,
 /// so a later `*r = ..` writes it; the scan cannot follow `r`, so it refuses.
 fn ref_mut_scrutinee(before: &str, rest: &str) -> bool {
-    let head = before.trim_end().trim_end_matches('(').trim_end();
+    let head = peel_group_and_path(before);
     if let Some(pattern_end) = head.strip_suffix('=') {
         // `==`, `<=`, `+=` and the like compare or assign; only a bare `=`
         // after a `let` pattern binds.
