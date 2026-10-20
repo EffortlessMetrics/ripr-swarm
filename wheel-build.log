@@ -1,0 +1,1948 @@
+﻿2026-10-20T01:05:42.0444327Z Current runner version: '2.337.0'
+2026-10-20T01:05:42.0480699Z ##[group]Runner Image Provisioner
+2026-10-20T01:05:42.0482030Z Hosted Compute Agent
+2026-10-20T01:05:42.0483169Z Version: 20261012.601
+2026-10-20T01:05:42.0484337Z Commit: f3dc54e1fb89da6852db922499a0233137369e1d
+2026-10-20T01:05:42.0485652Z Build Date: 2026-10-12T17:48:21Z
+2026-10-20T01:05:42.0487174Z Worker ID: {b5cef4e6-ace0-4498-9a6a-628ac05a58ca}
+2026-10-20T01:05:42.0488458Z Region: eastus
+2026-10-20T01:05:42.0489528Z Cloud: Azure
+2026-10-20T01:05:42.0490472Z ##[endgroup]
+2026-10-20T01:05:42.0492908Z ##[group]Operating System
+2026-10-20T01:05:42.0494130Z Ubuntu
+2026-10-20T01:05:42.0495008Z 22.04.5
+2026-10-20T01:05:42.0495980Z LTS
+2026-10-20T01:05:42.0497282Z ##[endgroup]
+2026-10-20T01:05:42.0498336Z ##[group]Runner Image
+2026-10-20T01:05:42.0499443Z Image: ubuntu-22.04
+2026-10-20T01:05:42.0500399Z Version: 20261012.322.1
+2026-10-20T01:05:42.0502674Z Included Software: https://github.com/actions/runner-images/blob/ubuntu22/20261012.322/images/ubuntu/Ubuntu2204-Readme.md
+2026-10-20T01:05:42.0505464Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu22%2F20261012.322
+2026-10-20T01:05:42.0507535Z ##[endgroup]
+2026-10-20T01:05:42.0509564Z ##[group]GITHUB_TOKEN Permissions
+2026-10-20T01:05:42.0512351Z Contents: read
+2026-10-20T01:05:42.0513315Z Metadata: read
+2026-10-20T01:05:42.0514395Z ##[endgroup]
+2026-10-20T01:05:42.0517853Z Secret source: Actions
+2026-10-20T01:05:42.0519630Z Cache mode: write
+2026-10-20T01:05:42.0520856Z Prepare workflow directory
+2026-10-20T01:05:42.1310781Z Prepare all required actions
+2026-10-20T01:05:42.1384482Z Getting action download info
+2026-10-20T01:05:42.2995385Z Download action repository 'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803' (SHA:d23441a48e516b6c34aea4fa41551a30e30af803)
+2026-10-20T01:05:42.4261085Z Download action repository 'dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4' (SHA:4cda84d5c5c54efe2404f9d843567869ab1699d4)
+2026-10-20T01:05:42.5027611Z Download action repository 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a' (SHA:043fb46d1a93c77aae656e7c1c64a875d1fc6a0a)
+2026-10-20T01:05:42.7832518Z Complete job name: build and inspect Linux x64 wheel
+2026-10-20T01:05:42.8599089Z ##[group]Run actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+2026-10-20T01:05:42.8600158Z with:
+2026-10-20T01:05:42.8600624Z   ref: 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:05:42.8601252Z   persist-credentials: false
+2026-10-20T01:05:42.8601796Z   repository: EffortlessMetrics/ripr-swarm
+2026-10-20T01:05:42.8605637Z   token: ***
+2026-10-20T01:05:42.8606065Z   ssh-strict: true
+2026-10-20T01:05:42.8606706Z   ssh-user: git
+2026-10-20T01:05:42.8607128Z   clean: true
+2026-10-20T01:05:42.8607576Z   sparse-checkout-cone-mode: true
+2026-10-20T01:05:42.8608102Z   fetch-depth: 1
+2026-10-20T01:05:42.8608532Z   fetch-tags: false
+2026-10-20T01:05:42.8608991Z   show-progress: true
+2026-10-20T01:05:42.8609442Z   lfs: false
+2026-10-20T01:05:42.8609855Z   submodules: false
+2026-10-20T01:05:42.8610322Z   set-safe-directory: true
+2026-10-20T01:05:42.8610829Z   allow-unsafe-pr-checkout: false
+2026-10-20T01:05:42.8611600Z env:
+2026-10-20T01:05:42.8612131Z   CANDIDATE_SHA: 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:05:42.8612783Z   RUST_TARGET: x86_64-unknown-linux-gnu
+2026-10-20T01:05:42.8613320Z   MATURIN_VERSION: 1.14.1
+2026-10-20T01:05:42.8613785Z   TWINE_VERSION: 7.0.0
+2026-10-20T01:05:42.8614229Z   UV_VERSION: 0.12.19
+2026-10-20T01:05:42.8614675Z   PIP_VERSION: 26.2.1
+2026-10-20T01:05:42.8615136Z   PACKAGING_VERSION: 26.3
+2026-10-20T01:05:42.8615595Z ##[endgroup]
+2026-10-20T01:05:42.9671357Z Syncing repository: EffortlessMetrics/ripr-swarm
+2026-10-20T01:05:42.9673212Z ##[group]Getting Git version info
+2026-10-20T01:05:42.9674067Z Working directory is '/home/runner/work/ripr-swarm/ripr-swarm'
+2026-10-20T01:05:42.9675083Z [command]/usr/bin/git version
+2026-10-20T01:05:42.9758161Z git version 2.55.0
+2026-10-20T01:05:42.9814050Z ##[endgroup]
+2026-10-20T01:05:42.9828744Z Temporarily overriding HOME='/home/runner/work/_temp/613187fe-6c59-40c5-a07b-c36dd27ae218' before making global git config changes
+2026-10-20T01:05:42.9830186Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-20T01:05:42.9835066Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/ripr-swarm/ripr-swarm
+2026-10-20T01:05:42.9873073Z Deleting the contents of '/home/runner/work/ripr-swarm/ripr-swarm'
+2026-10-20T01:05:42.9877677Z ##[group]Determining repository object format
+2026-10-20T01:05:42.9879802Z ##[endgroup]
+2026-10-20T01:05:42.9880732Z ##[group]Initializing the repository
+2026-10-20T01:05:42.9884260Z [command]/usr/bin/git init /home/runner/work/ripr-swarm/ripr-swarm
+2026-10-20T01:05:43.0022041Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-10-20T01:05:43.0024161Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-10-20T01:05:43.0028055Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-10-20T01:05:43.0029743Z hint: call:
+2026-10-20T01:05:43.0030724Z hint:
+2026-10-20T01:05:43.0031890Z hint: 	git config --global init.defaultBranch <name>
+2026-10-20T01:05:43.0033232Z hint:
+2026-10-20T01:05:43.0036167Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-10-20T01:05:43.0038554Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-10-20T01:05:43.0040458Z hint:
+2026-10-20T01:05:43.0041583Z hint: 	git branch -m <name>
+2026-10-20T01:05:43.0042764Z hint:
+2026-10-20T01:05:43.0044307Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-10-20T01:05:43.0046765Z Initialized empty Git repository in /home/runner/work/ripr-swarm/ripr-swarm/.git/
+2026-10-20T01:05:43.0050733Z [command]/usr/bin/git remote add origin https://github.com/EffortlessMetrics/ripr-swarm
+2026-10-20T01:05:43.0076844Z ##[endgroup]
+2026-10-20T01:05:43.0077672Z ##[group]Disabling automatic garbage collection
+2026-10-20T01:05:43.0081251Z [command]/usr/bin/git config --local gc.auto 0
+2026-10-20T01:05:43.0115340Z ##[endgroup]
+2026-10-20T01:05:43.0116090Z ##[group]Setting up auth
+2026-10-20T01:05:43.0117461Z Removing SSH command configuration
+2026-10-20T01:05:43.0123881Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-20T01:05:43.0254046Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-20T01:05:43.0572340Z Removing HTTP extra header
+2026-10-20T01:05:43.0578972Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-20T01:05:43.0619356Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-20T01:05:43.0931279Z Removing includeIf entries pointing to credentials config files
+2026-10-20T01:05:43.0938946Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-20T01:05:43.0978354Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-20T01:05:43.1255624Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-49aa845e-1d02-4659-b7e6-8e09f177628a.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-10-20T01:05:43.1297724Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/ripr-swarm/ripr-swarm/.git.path /home/runner/work/_temp/git-credentials-49aa845e-1d02-4659-b7e6-8e09f177628a.config
+2026-10-20T01:05:43.1333425Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/ripr-swarm/ripr-swarm/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-49aa845e-1d02-4659-b7e6-8e09f177628a.config
+2026-10-20T01:05:43.1367366Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-49aa845e-1d02-4659-b7e6-8e09f177628a.config
+2026-10-20T01:05:43.1400130Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-49aa845e-1d02-4659-b7e6-8e09f177628a.config
+2026-10-20T01:05:43.1432169Z ##[endgroup]
+2026-10-20T01:05:43.1432932Z ##[group]Fetching the repository
+2026-10-20T01:05:43.1441210Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:05:45.8999527Z From https://github.com/EffortlessMetrics/ripr-swarm
+2026-10-20T01:05:45.9001688Z  * branch              99ff69b63e38a3e0627d859be898e74299f8bb69 -> FETCH_HEAD
+2026-10-20T01:05:45.9012634Z [command]/usr/bin/git rev-parse --verify --quiet 99ff69b63e38a3e0627d859be898e74299f8bb69^{object}
+2026-10-20T01:05:45.9041642Z 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:05:45.9048080Z ##[endgroup]
+2026-10-20T01:05:45.9049624Z ##[group]Determining the checkout info
+2026-10-20T01:05:45.9051275Z ##[endgroup]
+2026-10-20T01:05:45.9056017Z [command]/usr/bin/git sparse-checkout disable
+2026-10-20T01:05:45.9108935Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-10-20T01:05:45.9142812Z ##[group]Checking out the ref
+2026-10-20T01:05:45.9147485Z [command]/usr/bin/git checkout --progress --force 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:05:46.9375949Z Updating files:  99% (13426/13454)
+2026-10-20T01:05:46.9377184Z Updating files: 100% (13454/13454)
+2026-10-20T01:05:46.9378570Z Updating files: 100% (13454/13454), done.
+2026-10-20T01:05:46.9557185Z Note: switching to '99ff69b63e38a3e0627d859be898e74299f8bb69'.
+2026-10-20T01:05:46.9558014Z 
+2026-10-20T01:05:46.9558558Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-10-20T01:05:46.9559808Z changes and commit them, and you can discard any commits you make in this
+2026-10-20T01:05:46.9561213Z state without impacting any branches by switching back to a branch.
+2026-10-20T01:05:46.9561986Z 
+2026-10-20T01:05:46.9562828Z If you want to create a new branch to retain commits you create, you may
+2026-10-20T01:05:46.9564021Z do so (now or later) by using -c with the switch command. Example:
+2026-10-20T01:05:46.9564973Z 
+2026-10-20T01:05:46.9577678Z   git switch -c <new-branch-name>
+2026-10-20T01:05:46.9578151Z 
+2026-10-20T01:05:46.9578375Z Or undo this operation with:
+2026-10-20T01:05:46.9578710Z 
+2026-10-20T01:05:46.9578896Z   git switch -
+2026-10-20T01:05:46.9579159Z 
+2026-10-20T01:05:46.9579630Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-10-20T01:05:46.9580204Z 
+2026-10-20T01:05:46.9580649Z HEAD is now at 99ff69b6 docs(workspace): clarify connected traversal union boundary
+2026-10-20T01:05:46.9586535Z ##[endgroup]
+2026-10-20T01:05:46.9630239Z [command]/usr/bin/git log -1 --format=%H
+2026-10-20T01:05:46.9657343Z 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:05:46.9668983Z ##[group]Removing auth
+2026-10-20T01:05:46.9669557Z Removing SSH command configuration
+2026-10-20T01:05:46.9673040Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-20T01:05:46.9712188Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-20T01:05:47.0002956Z Removing HTTP extra header
+2026-10-20T01:05:47.0006843Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-20T01:05:47.0044069Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-20T01:05:47.0329551Z Removing includeIf entries pointing to credentials config files
+2026-10-20T01:05:47.0333166Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-20T01:05:47.0361877Z includeif.gitdir:/home/runner/work/ripr-swarm/ripr-swarm/.git.path
+2026-10-20T01:05:47.0362927Z includeif.gitdir:/home/runner/work/ripr-swarm/ripr-swarm/.git/worktrees/*.path
+2026-10-20T01:05:47.0363467Z includeif.gitdir:/github/workspace/.git.path
+2026-10-20T01:05:47.0363892Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-10-20T01:05:47.0371863Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/ripr-swarm/ripr-swarm/.git.path
+2026-10-20T01:05:47.0396151Z /home/runner/work/_temp/git-credentials-49aa845e-1d02-4659-b7e6-8e09f177628a.config
+2026-10-20T01:05:47.0406692Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/ripr-swarm/ripr-swarm/.git.path /home/runner/work/_temp/git-credentials-49aa845e-1d02-4659-b7e6-8e09f177628a.config
+2026-10-20T01:05:47.0444186Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/ripr-swarm/ripr-swarm/.git/worktrees/*.path
+2026-10-20T01:05:47.0474618Z /home/runner/work/_temp/git-credentials-49aa845e-1d02-4659-b7e6-8e09f177628a.config
+2026-10-20T01:05:47.0485974Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/ripr-swarm/ripr-swarm/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-49aa845e-1d02-4659-b7e6-8e09f177628a.config
+2026-10-20T01:05:47.0522304Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-10-20T01:05:47.0547228Z /github/runner_temp/git-credentials-49aa845e-1d02-4659-b7e6-8e09f177628a.config
+2026-10-20T01:05:47.0557696Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-49aa845e-1d02-4659-b7e6-8e09f177628a.config
+2026-10-20T01:05:47.0601868Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-10-20T01:05:47.0625324Z /github/runner_temp/git-credentials-49aa845e-1d02-4659-b7e6-8e09f177628a.config
+2026-10-20T01:05:47.0634583Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-49aa845e-1d02-4659-b7e6-8e09f177628a.config
+2026-10-20T01:05:47.0670350Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-20T01:05:47.0948405Z Removing credentials config '/home/runner/work/_temp/git-credentials-49aa845e-1d02-4659-b7e6-8e09f177628a.config'
+2026-10-20T01:05:47.0957952Z ##[endgroup]
+2026-10-20T01:05:47.1303195Z ##[group]Run dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+2026-10-20T01:05:47.1303717Z with:
+2026-10-20T01:05:47.1303958Z   toolchain: 1.95.0
+2026-10-20T01:05:47.1304233Z   targets: x86_64-unknown-linux-gnu
+2026-10-20T01:05:47.1304524Z env:
+2026-10-20T01:05:47.1304805Z   CANDIDATE_SHA: 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:05:47.1305214Z   RUST_TARGET: x86_64-unknown-linux-gnu
+2026-10-20T01:05:47.1305538Z   MATURIN_VERSION: 1.14.1
+2026-10-20T01:05:47.1305809Z   TWINE_VERSION: 7.0.0
+2026-10-20T01:05:47.1306065Z   UV_VERSION: 0.12.19
+2026-10-20T01:05:47.1306319Z   PIP_VERSION: 26.2.1
+2026-10-20T01:05:47.1306803Z   PACKAGING_VERSION: 26.3
+2026-10-20T01:05:47.1307073Z ##[endgroup]
+2026-10-20T01:05:47.1398342Z ##[start-action display=Run : parse toolchain version;id=__dtolnay_rust-toolchain.parse]
+2026-10-20T01:05:47.1446662Z ##[group]Run : parse toolchain version
+2026-10-20T01:05:47.1447253Z [36;1m: parse toolchain version[0m
+2026-10-20T01:05:47.1447651Z [36;1mif [[ -z $toolchain ]]; then[0m
+2026-10-20T01:05:47.1448232Z [36;1m  # GitHub does not enforce `required: true` inputs itself. https://github.com/actions/runner/issues/1070[0m
+2026-10-20T01:05:47.1448835Z [36;1m  echo "'toolchain' is a required input" >&2[0m
+2026-10-20T01:05:47.1449176Z [36;1m  exit 1[0m
+2026-10-20T01:05:47.1449662Z [36;1melif [[ $toolchain =~ ^stable' '[0-9]+' '(year|month|week|day)s?' 'ago$ ]]; then[0m
+2026-10-20T01:05:47.1450459Z [36;1m  if [[ Linux == macOS ]]; then[0m
+2026-10-20T01:05:47.1451229Z [36;1m    echo "toolchain=1.$((($(date -v-$(sed 's/stable \([0-9]*\) \(.\).*/\1\2/' <<< $toolchain) +%s)/60/60/24-16569)/7/6))" >> $GITHUB_OUTPUT[0m
+2026-10-20T01:05:47.1451821Z [36;1m  else[0m
+2026-10-20T01:05:47.1452536Z [36;1m    echo "toolchain=1.$((($(date --date "${toolchain#stable }" +%s)/60/60/24-16569)/7/6))" >> $GITHUB_OUTPUT[0m
+2026-10-20T01:05:47.1453133Z [36;1m  fi[0m
+2026-10-20T01:05:47.1453631Z [36;1melif [[ $toolchain =~ ^stable' 'minus' '[0-9]+' 'releases?$ ]]; then[0m
+2026-10-20T01:05:47.1454206Z [36;1m  echo "toolchain=1.$((($(date +%s)/60/60/24-16569)/7/6-${toolchain//[^0-9]/}))" >> $GITHUB_OUTPUT[0m
+2026-10-20T01:05:47.1454866Z [36;1melif [[ $toolchain =~ ^1\.[0-9]+$ ]]; then[0m
+2026-10-20T01:05:47.1455441Z [36;1m  echo "toolchain=1.$((i=${toolchain#1.}, c=($(date +%s)/60/60/24-16569)/7/6, i+9*i*(10*i<=c)+90*i*(100*i<=c)))" >> $GITHUB_OUTPUT[0m
+2026-10-20T01:05:47.1456146Z [36;1melse[0m
+2026-10-20T01:05:47.1456635Z [36;1m  echo "toolchain=$toolchain" >> $GITHUB_OUTPUT[0m
+2026-10-20T01:05:47.1457163Z [36;1mfi[0m
+2026-10-20T01:05:47.2152173Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T01:05:47.2152853Z env:
+2026-10-20T01:05:47.2153282Z   CANDIDATE_SHA: 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:05:47.2153812Z   RUST_TARGET: x86_64-unknown-linux-gnu
+2026-10-20T01:05:47.2154243Z   MATURIN_VERSION: 1.14.1
+2026-10-20T01:05:47.2154625Z   TWINE_VERSION: 7.0.0
+2026-10-20T01:05:47.2155009Z   UV_VERSION: 0.12.19
+2026-10-20T01:05:47.2155355Z   PIP_VERSION: 26.2.1
+2026-10-20T01:05:47.2155707Z   PACKAGING_VERSION: 26.3
+2026-10-20T01:05:47.2156069Z   toolchain: 1.95.0
+2026-10-20T01:05:47.2156741Z ##[endgroup]
+2026-10-20T01:05:47.2313766Z ##[end-action id=__dtolnay_rust-toolchain.parse;outcome=success;conclusion=success;duration_ms=91]
+2026-10-20T01:05:47.2333004Z ##[start-action display=Run : construct rustup command line;id=__dtolnay_rust-toolchain.flags]
+2026-10-20T01:05:47.2363581Z ##[group]Run : construct rustup command line
+2026-10-20T01:05:47.2363980Z [36;1m: construct rustup command line[0m
+2026-10-20T01:05:47.2364482Z [36;1mecho "targets=$(for t in ${targets//,/ }; do echo -n ' --target' $t; done)" >> $GITHUB_OUTPUT[0m
+2026-10-20T01:05:47.2365151Z [36;1mecho "components=$(for c in ${components//,/ }; do echo -n ' --component' $c; done)" >> $GITHUB_OUTPUT[0m
+2026-10-20T01:05:47.2365687Z [36;1mecho "downgrade=" >> $GITHUB_OUTPUT[0m
+2026-10-20T01:05:47.2436719Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T01:05:47.2437149Z env:
+2026-10-20T01:05:47.2437451Z   CANDIDATE_SHA: 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:05:47.2437841Z   RUST_TARGET: x86_64-unknown-linux-gnu
+2026-10-20T01:05:47.2438163Z   MATURIN_VERSION: 1.14.1
+2026-10-20T01:05:47.2438431Z   TWINE_VERSION: 7.0.0
+2026-10-20T01:05:47.2438687Z   UV_VERSION: 0.12.19
+2026-10-20T01:05:47.2438979Z   PIP_VERSION: 26.2.1
+2026-10-20T01:05:47.2439240Z   PACKAGING_VERSION: 26.3
+2026-10-20T01:05:47.2439529Z   targets: x86_64-unknown-linux-gnu
+2026-10-20T01:05:47.2439830Z   components: 
+2026-10-20T01:05:47.2440071Z ##[endgroup]
+2026-10-20T01:05:47.2550298Z ##[end-action id=__dtolnay_rust-toolchain.flags;outcome=success;conclusion=success;duration_ms=21]
+2026-10-20T01:05:47.2555010Z ##[start-action display=Run : set $CARGO_HOME;id=__dtolnay_rust-toolchain.__run]
+2026-10-20T01:05:47.2590366Z ##[group]Run : set $CARGO_HOME
+2026-10-20T01:05:47.2590710Z [36;1m: set $CARGO_HOME[0m
+2026-10-20T01:05:47.2591112Z [36;1mecho CARGO_HOME=${CARGO_HOME:-"$HOME/.cargo"} >> $GITHUB_ENV[0m
+2026-10-20T01:05:47.2659069Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T01:05:47.2659484Z env:
+2026-10-20T01:05:47.2659799Z   CANDIDATE_SHA: 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:05:47.2660205Z   RUST_TARGET: x86_64-unknown-linux-gnu
+2026-10-20T01:05:47.2660538Z   MATURIN_VERSION: 1.14.1
+2026-10-20T01:05:47.2661020Z   TWINE_VERSION: 7.0.0
+2026-10-20T01:05:47.2661293Z   UV_VERSION: 0.12.19
+2026-10-20T01:05:47.2661563Z   PIP_VERSION: 26.2.1
+2026-10-20T01:05:47.2661846Z   PACKAGING_VERSION: 26.3
+2026-10-20T01:05:47.2662128Z ##[endgroup]
+2026-10-20T01:05:47.2763063Z ##[end-action id=__dtolnay_rust-toolchain.__run;outcome=success;conclusion=success;duration_ms=20]
+2026-10-20T01:05:47.2765808Z ##[start-action display=Run : install rustup if needed;id=__dtolnay_rust-toolchain.__run_2]
+2026-10-20T01:05:47.2803589Z ##[group]Run : install rustup if needed
+2026-10-20T01:05:47.2803970Z [36;1m: install rustup if needed[0m
+2026-10-20T01:05:47.2804319Z [36;1mif ! command -v rustup &>/dev/null; then[0m
+2026-10-20T01:05:47.2805135Z [36;1m  curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail https://sh.rustup.rs | sh -s -- --default-toolchain none -y[0m
+2026-10-20T01:05:47.2805901Z [36;1m  echo "$CARGO_HOME/bin" >> $GITHUB_PATH[0m
+2026-10-20T01:05:47.2806239Z [36;1mfi[0m
+2026-10-20T01:05:47.2873897Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T01:05:47.2874290Z env:
+2026-10-20T01:05:47.2874586Z   CANDIDATE_SHA: 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:05:47.2874966Z   RUST_TARGET: x86_64-unknown-linux-gnu
+2026-10-20T01:05:47.2875280Z   MATURIN_VERSION: 1.14.1
+2026-10-20T01:05:47.2875547Z   TWINE_VERSION: 7.0.0
+2026-10-20T01:05:47.2875810Z   UV_VERSION: 0.12.19
+2026-10-20T01:05:47.2876063Z   PIP_VERSION: 26.2.1
+2026-10-20T01:05:47.2876483Z   PACKAGING_VERSION: 26.3
+2026-10-20T01:05:47.2876778Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T01:05:47.2877082Z ##[endgroup]
+2026-10-20T01:05:47.2989155Z ##[end-action id=__dtolnay_rust-toolchain.__run_2;outcome=success;conclusion=success;duration_ms=22]
+2026-10-20T01:05:47.2994824Z ##[start-action display=Run : install rustup if needed on windows;id=__dtolnay_rust-toolchain.__run_3]
+2026-10-20T01:05:47.3002613Z ##[end-action id=__dtolnay_rust-toolchain.__run_3;outcome=skipped;conclusion=skipped;duration_ms=0]
+2026-10-20T01:05:47.3007162Z ##[start-action display=rustup toolchain install 1.95.0;id=__dtolnay_rust-toolchain.__run_4]
+2026-10-20T01:05:47.3039107Z ##[group]Run rustup toolchain install 1.95.0 --target x86_64-unknown-linux-gnu --profile minimal --no-self-update
+2026-10-20T01:05:47.3039942Z [36;1mrustup toolchain install 1.95.0 --target x86_64-unknown-linux-gnu --profile minimal --no-self-update[0m
+2026-10-20T01:05:47.3111420Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T01:05:47.3111862Z env:
+2026-10-20T01:05:47.3112383Z   CANDIDATE_SHA: 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:05:47.3112825Z   RUST_TARGET: x86_64-unknown-linux-gnu
+2026-10-20T01:05:47.3113180Z   MATURIN_VERSION: 1.14.1
+2026-10-20T01:05:47.3113474Z   TWINE_VERSION: 7.0.0
+2026-10-20T01:05:47.3113756Z   UV_VERSION: 0.12.19
+2026-10-20T01:05:47.3114037Z   PIP_VERSION: 26.2.1
+2026-10-20T01:05:47.3114332Z   PACKAGING_VERSION: 26.3
+2026-10-20T01:05:47.3114652Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T01:05:47.3114991Z   RUSTUP_PERMIT_COPY_RENAME: 1
+2026-10-20T01:05:47.3115298Z ##[endgroup]
+2026-10-20T01:05:47.7597088Z info: syncing channel updates for 1.95.0-x86_64-unknown-linux-gnu
+2026-10-20T01:05:48.0014663Z info: latest update on 2026-04-16 for version 1.95.0 (59807616e 2026-04-14)
+2026-10-20T01:05:48.0018027Z info: downloading 3 components
+2026-10-20T01:05:56.9082971Z 
+2026-10-20T01:05:56.9180914Z   1.95.0-x86_64-unknown-linux-gnu installed - rustc 1.95.0 (59807616e 2026-04-14)
+2026-10-20T01:05:56.9181773Z 
+2026-10-20T01:05:56.9373530Z ##[end-action id=__dtolnay_rust-toolchain.__run_4;outcome=success;conclusion=success;duration_ms=9636]
+2026-10-20T01:05:56.9381870Z ##[start-action display=Run rustup default 1.95.0;id=__dtolnay_rust-toolchain.__run_5]
+2026-10-20T01:05:56.9417775Z ##[group]Run rustup default 1.95.0
+2026-10-20T01:05:56.9418110Z [36;1mrustup default 1.95.0[0m
+2026-10-20T01:05:56.9491484Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T01:05:56.9492085Z env:
+2026-10-20T01:05:56.9492346Z   CANDIDATE_SHA: 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:05:56.9492707Z   RUST_TARGET: x86_64-unknown-linux-gnu
+2026-10-20T01:05:56.9492996Z   MATURIN_VERSION: 1.14.1
+2026-10-20T01:05:56.9493250Z   TWINE_VERSION: 7.0.0
+2026-10-20T01:05:56.9493473Z   UV_VERSION: 0.12.19
+2026-10-20T01:05:56.9493690Z   PIP_VERSION: 26.2.1
+2026-10-20T01:05:56.9493915Z   PACKAGING_VERSION: 26.3
+2026-10-20T01:05:56.9494160Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T01:05:56.9494413Z ##[endgroup]
+2026-10-20T01:05:56.9634356Z info: using existing install for 1.95.0-x86_64-unknown-linux-gnu
+2026-10-20T01:05:56.9639996Z info: default toolchain set to 1.95.0-x86_64-unknown-linux-gnu
+2026-10-20T01:05:56.9640390Z 
+2026-10-20T01:05:56.9739405Z   1.95.0-x86_64-unknown-linux-gnu unchanged - rustc 1.95.0 (59807616e 2026-04-14)
+2026-10-20T01:05:56.9740210Z 
+2026-10-20T01:05:56.9742992Z info: note that the toolchain '1.95.0-x86_64-unknown-linux-gnu' is currently in use (overridden by '/home/runner/work/ripr-swarm/ripr-swarm/rust-toolchain.toml')
+2026-10-20T01:05:56.9758815Z ##[end-action id=__dtolnay_rust-toolchain.__run_5;outcome=success;conclusion=success;duration_ms=37]
+2026-10-20T01:05:56.9763915Z ##[start-action display=Run : create cachekey;id=__dtolnay_rust-toolchain.rustc-version]
+2026-10-20T01:05:56.9854604Z ##[group]Run : create cachekey
+2026-10-20T01:05:56.9854945Z [36;1m: create cachekey[0m
+2026-10-20T01:05:56.9855488Z [36;1mDATE=$(rustc +1.95.0 --version --verbose | sed -ne 's/^commit-date: \(20[0-9][0-9]\)-\([01][0-9]\)-\([0-3][0-9]\)$/\1\2\3/p')[0m
+2026-10-20T01:05:56.9856190Z [36;1mHASH=$(rustc +1.95.0 --version --verbose | sed -ne 's/^commit-hash: //p')[0m
+2026-10-20T01:05:56.9857010Z [36;1mecho "cachekey=$(echo $DATE$HASH | head -c12)" >> $GITHUB_OUTPUT[0m
+2026-10-20T01:05:56.9930513Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T01:05:56.9930881Z env:
+2026-10-20T01:05:56.9931153Z   CANDIDATE_SHA: 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:05:56.9931526Z   RUST_TARGET: x86_64-unknown-linux-gnu
+2026-10-20T01:05:56.9931826Z   MATURIN_VERSION: 1.14.1
+2026-10-20T01:05:56.9932078Z   TWINE_VERSION: 7.0.0
+2026-10-20T01:05:56.9932314Z   UV_VERSION: 0.12.19
+2026-10-20T01:05:56.9932551Z   PIP_VERSION: 26.2.1
+2026-10-20T01:05:56.9932793Z   PACKAGING_VERSION: 26.3
+2026-10-20T01:05:56.9933057Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T01:05:56.9933327Z ##[endgroup]
+2026-10-20T01:05:57.0375723Z ##[end-action id=__dtolnay_rust-toolchain.rustc-version;outcome=success;conclusion=success;duration_ms=61]
+2026-10-20T01:05:57.0379322Z ##[start-action display=Run : disable incremental compilation;id=__dtolnay_rust-toolchain.__run_6]
+2026-10-20T01:05:57.0410792Z ##[group]Run : disable incremental compilation
+2026-10-20T01:05:57.0411166Z [36;1m: disable incremental compilation[0m
+2026-10-20T01:05:57.0411499Z [36;1mif [ -z "${CARGO_INCREMENTAL+set}" ]; then[0m
+2026-10-20T01:05:57.0411824Z [36;1m  echo CARGO_INCREMENTAL=0 >> $GITHUB_ENV[0m
+2026-10-20T01:05:57.0412124Z [36;1mfi[0m
+2026-10-20T01:05:57.0489390Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T01:05:57.0489755Z env:
+2026-10-20T01:05:57.0490034Z   CANDIDATE_SHA: 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:05:57.0490386Z   RUST_TARGET: x86_64-unknown-linux-gnu
+2026-10-20T01:05:57.0490666Z   MATURIN_VERSION: 1.14.1
+2026-10-20T01:05:57.0490896Z   TWINE_VERSION: 7.0.0
+2026-10-20T01:05:57.0491116Z   UV_VERSION: 0.12.19
+2026-10-20T01:05:57.0491334Z   PIP_VERSION: 26.2.1
+2026-10-20T01:05:57.0491556Z   PACKAGING_VERSION: 26.3
+2026-10-20T01:05:57.0491822Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T01:05:57.0492079Z ##[endgroup]
+2026-10-20T01:05:57.0597187Z ##[end-action id=__dtolnay_rust-toolchain.__run_6;outcome=success;conclusion=success;duration_ms=21]
+2026-10-20T01:05:57.0599849Z ##[start-action display=Run : enable colors in Cargo output;id=__dtolnay_rust-toolchain.__run_7]
+2026-10-20T01:05:57.0630696Z ##[group]Run : enable colors in Cargo output
+2026-10-20T01:05:57.0631237Z [36;1m: enable colors in Cargo output[0m
+2026-10-20T01:05:57.0631590Z [36;1mif [ -z "${CARGO_TERM_COLOR+set}" ]; then[0m
+2026-10-20T01:05:57.0631958Z [36;1m  echo CARGO_TERM_COLOR=always >> $GITHUB_ENV[0m
+2026-10-20T01:05:57.0632266Z [36;1mfi[0m
+2026-10-20T01:05:57.0704017Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T01:05:57.0704403Z env:
+2026-10-20T01:05:57.0704681Z   CANDIDATE_SHA: 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:05:57.0705048Z   RUST_TARGET: x86_64-unknown-linux-gnu
+2026-10-20T01:05:57.0705353Z   MATURIN_VERSION: 1.14.1
+2026-10-20T01:05:57.0705617Z   TWINE_VERSION: 7.0.0
+2026-10-20T01:05:57.0705860Z   UV_VERSION: 0.12.19
+2026-10-20T01:05:57.0706097Z   PIP_VERSION: 26.2.1
+2026-10-20T01:05:57.0706623Z   PACKAGING_VERSION: 26.3
+2026-10-20T01:05:57.0706919Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T01:05:57.0707197Z   CARGO_INCREMENTAL: 0
+2026-10-20T01:05:57.0707437Z ##[endgroup]
+2026-10-20T01:05:57.0807585Z ##[end-action id=__dtolnay_rust-toolchain.__run_7;outcome=success;conclusion=success;duration_ms=20]
+2026-10-20T01:05:57.0812521Z ##[start-action display=Run : enable Cargo sparse registry;id=__dtolnay_rust-toolchain.__run_8]
+2026-10-20T01:05:57.0843980Z ##[group]Run : enable Cargo sparse registry
+2026-10-20T01:05:57.0844328Z [36;1m: enable Cargo sparse registry[0m
+2026-10-20T01:05:57.0844716Z [36;1m# implemented in 1.66, stabilized in 1.68, made default in 1.70[0m
+2026-10-20T01:05:57.0845460Z [36;1mif [ -z "${CARGO_REGISTRIES_CRATES_IO_PROTOCOL+set}" -o -f "/home/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol ]; then[0m
+2026-10-20T01:05:57.0846204Z [36;1m  if rustc +1.95.0 --version --verbose | grep -q '^release: 1\.6[89]\.'; then[0m
+2026-10-20T01:05:57.0847074Z [36;1m    touch "/home/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol || true[0m
+2026-10-20T01:05:57.0847639Z [36;1m    echo CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse >> $GITHUB_ENV[0m
+2026-10-20T01:05:57.0848165Z [36;1m  elif rustc +1.95.0 --version --verbose | grep -q '^release: 1\.6[67]\.'; then[0m
+2026-10-20T01:05:57.0848735Z [36;1m    touch "/home/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol || true[0m
+2026-10-20T01:05:57.0849268Z [36;1m    echo CARGO_REGISTRIES_CRATES_IO_PROTOCOL=git >> $GITHUB_ENV[0m
+2026-10-20T01:05:57.0849639Z [36;1m  fi[0m
+2026-10-20T01:05:57.0849851Z [36;1mfi[0m
+2026-10-20T01:05:57.0919320Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T01:05:57.0919689Z env:
+2026-10-20T01:05:57.0919963Z   CANDIDATE_SHA: 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:05:57.0920490Z   RUST_TARGET: x86_64-unknown-linux-gnu
+2026-10-20T01:05:57.0920791Z   MATURIN_VERSION: 1.14.1
+2026-10-20T01:05:57.0921039Z   TWINE_VERSION: 7.0.0
+2026-10-20T01:05:57.0921273Z   UV_VERSION: 0.12.19
+2026-10-20T01:05:57.0921509Z   PIP_VERSION: 26.2.1
+2026-10-20T01:05:57.0921748Z   PACKAGING_VERSION: 26.3
+2026-10-20T01:05:57.0922020Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T01:05:57.0922305Z   CARGO_INCREMENTAL: 0
+2026-10-20T01:05:57.0922546Z   CARGO_TERM_COLOR: always
+2026-10-20T01:05:57.0922791Z ##[endgroup]
+2026-10-20T01:05:57.1329628Z ##[end-action id=__dtolnay_rust-toolchain.__run_8;outcome=success;conclusion=success;duration_ms=51]
+2026-10-20T01:05:57.1333871Z ##[start-action display=Run : work around spurious network errors in curl 8.0;id=__dtolnay_rust-toolchain.__run_9]
+2026-10-20T01:05:57.1364626Z ##[group]Run : work around spurious network errors in curl 8.0
+2026-10-20T01:05:57.1365096Z [36;1m: work around spurious network errors in curl 8.0[0m
+2026-10-20T01:05:57.1365697Z [36;1m# https://rust-lang.zulipchat.com/#narrow/stream/246057-t-cargo/topic/timeout.20investigation[0m
+2026-10-20T01:05:57.1366582Z [36;1mif rustc +1.95.0 --version --verbose | grep -q '^release: 1\.7[01]\.'; then[0m
+2026-10-20T01:05:57.1367198Z [36;1m  echo CARGO_HTTP_MULTIPLEXING=false >> $GITHUB_ENV[0m
+2026-10-20T01:05:57.1367533Z [36;1mfi[0m
+2026-10-20T01:05:57.1444143Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T01:05:57.1444495Z env:
+2026-10-20T01:05:57.1444751Z   CANDIDATE_SHA: 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:05:57.1445084Z   RUST_TARGET: x86_64-unknown-linux-gnu
+2026-10-20T01:05:57.1445358Z   MATURIN_VERSION: 1.14.1
+2026-10-20T01:05:57.1445595Z   TWINE_VERSION: 7.0.0
+2026-10-20T01:05:57.1445810Z   UV_VERSION: 0.12.19
+2026-10-20T01:05:57.1446023Z   PIP_VERSION: 26.2.1
+2026-10-20T01:05:57.1446248Z   PACKAGING_VERSION: 26.3
+2026-10-20T01:05:57.1446787Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T01:05:57.1447044Z   CARGO_INCREMENTAL: 0
+2026-10-20T01:05:57.1447271Z   CARGO_TERM_COLOR: always
+2026-10-20T01:05:57.1447497Z ##[endgroup]
+2026-10-20T01:05:57.1709501Z ##[end-action id=__dtolnay_rust-toolchain.__run_9;outcome=success;conclusion=success;duration_ms=37]
+2026-10-20T01:05:57.1770942Z ##[start-action display=Run rustc +1.95.0 --version --verbose;id=__dtolnay_rust-toolchain.__run_10]
+2026-10-20T01:05:57.1797480Z ##[group]Run rustc +1.95.0 --version --verbose
+2026-10-20T01:05:57.1797834Z [36;1mrustc +1.95.0 --version --verbose[0m
+2026-10-20T01:05:57.1877992Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T01:05:57.1878343Z env:
+2026-10-20T01:05:57.1878594Z   CANDIDATE_SHA: 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:05:57.1878928Z   RUST_TARGET: x86_64-unknown-linux-gnu
+2026-10-20T01:05:57.1879205Z   MATURIN_VERSION: 1.14.1
+2026-10-20T01:05:57.1879432Z   TWINE_VERSION: 7.0.0
+2026-10-20T01:05:57.1879644Z   UV_VERSION: 0.12.19
+2026-10-20T01:05:57.1879858Z   PIP_VERSION: 26.2.1
+2026-10-20T01:05:57.1880079Z   PACKAGING_VERSION: 26.3
+2026-10-20T01:05:57.1880314Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T01:05:57.1880562Z   CARGO_INCREMENTAL: 0
+2026-10-20T01:05:57.1880790Z   CARGO_TERM_COLOR: always
+2026-10-20T01:05:57.1881018Z ##[endgroup]
+2026-10-20T01:05:57.2103287Z rustc 1.95.0 (59807616e 2026-04-14)
+2026-10-20T01:05:57.2103823Z binary: rustc
+2026-10-20T01:05:57.2104272Z commit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860
+2026-10-20T01:05:57.2104855Z commit-date: 2026-04-14
+2026-10-20T01:05:57.2105252Z host: x86_64-unknown-linux-gnu
+2026-10-20T01:05:57.2105659Z release: 1.95.0
+2026-10-20T01:05:57.2106013Z LLVM version: 22.1.2
+2026-10-20T01:05:57.2130491Z ##[end-action id=__dtolnay_rust-toolchain.__run_10;outcome=success;conclusion=success;duration_ms=35]
+2026-10-20T01:05:57.2189410Z ##[group]Run set -euo pipefail
+2026-10-20T01:05:57.2189737Z [36;1mset -euo pipefail[0m
+2026-10-20T01:05:57.2190089Z [36;1mtest "${GITHUB_REPOSITORY}" = "EffortlessMetrics/ripr-swarm"[0m
+2026-10-20T01:05:57.2190499Z [36;1m[[ "${CANDIDATE_SHA}" =~ ^[0-9a-fA-F]{40}$ ]][0m
+2026-10-20T01:05:57.2190857Z [36;1mtest "$(git rev-parse HEAD)" = "${CANDIDATE_SHA,,}"[0m
+2026-10-20T01:05:57.2191478Z [36;1mnative_version="$(cargo metadata --no-deps --format-version 1 | jq -er '.packages[] | select(.name == "ripr") | .version')"[0m
+2026-10-20T01:05:57.2192043Z [36;1mtest -n "${native_version}"[0m
+2026-10-20T01:05:57.2192402Z [36;1mecho "native_version=${native_version}" >> "${GITHUB_OUTPUT}"[0m
+2026-10-20T01:05:57.2192844Z [36;1mecho "RIPR_NATIVE_VERSION=${native_version}" >> "${GITHUB_ENV}"[0m
+2026-10-20T01:05:57.2264779Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T01:05:57.2265144Z env:
+2026-10-20T01:05:57.2265437Z   CANDIDATE_SHA: 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:05:57.2265792Z   RUST_TARGET: x86_64-unknown-linux-gnu
+2026-10-20T01:05:57.2266083Z   MATURIN_VERSION: 1.14.1
+2026-10-20T01:05:57.2266502Z   TWINE_VERSION: 7.0.0
+2026-10-20T01:05:57.2266726Z   UV_VERSION: 0.12.19
+2026-10-20T01:05:57.2266943Z   PIP_VERSION: 26.2.1
+2026-10-20T01:05:57.2267170Z   PACKAGING_VERSION: 26.3
+2026-10-20T01:05:57.2267419Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T01:05:57.2267712Z   CARGO_INCREMENTAL: 0
+2026-10-20T01:05:57.2267979Z   CARGO_TERM_COLOR: always
+2026-10-20T01:05:57.2268212Z ##[endgroup]
+2026-10-20T01:05:57.3017750Z info: syncing channel updates for 1.95.0-x86_64-unknown-linux-gnu
+2026-10-20T01:05:57.4179321Z info: latest update on 2026-04-16 for version 1.95.0 (59807616e 2026-04-14)
+2026-10-20T01:05:57.4308579Z info: downloading 2 components
+2026-10-20T01:05:58.1674455Z ##[group]Run set -euo pipefail
+2026-10-20T01:05:58.1674818Z [36;1mset -euo pipefail[0m
+2026-10-20T01:05:58.1675152Z [36;1mvenv="${GITHUB_WORKSPACE}/target/ripr/python-build/venv"[0m
+2026-10-20T01:05:58.1675617Z [36;1mevidence="${GITHUB_WORKSPACE}/target/ripr/python-wheel-evidence"[0m
+2026-10-20T01:05:58.1676008Z [36;1mpython3 -m venv "${venv}"[0m
+2026-10-20T01:05:58.1676839Z [36;1m"${venv}/bin/python" -m pip install --disable-pip-version-check --upgrade "pip==${PIP_VERSION}"[0m
+2026-10-20T01:05:58.1677447Z [36;1m"${venv}/bin/python" -m pip install --disable-pip-version-check \[0m
+2026-10-20T01:05:58.1677836Z [36;1m  "maturin==${MATURIN_VERSION}" \[0m
+2026-10-20T01:05:58.1678130Z [36;1m  "twine==${TWINE_VERSION}" \[0m
+2026-10-20T01:05:58.1678395Z [36;1m  "uv==${UV_VERSION}" \[0m
+2026-10-20T01:05:58.1678676Z [36;1m  "packaging==${PACKAGING_VERSION}"[0m
+2026-10-20T01:05:58.1678959Z [36;1mmkdir -p \[0m
+2026-10-20T01:05:58.1679221Z [36;1m  "${evidence}/wheelhouse" \[0m
+2026-10-20T01:05:58.1679515Z [36;1m  "${evidence}/broken/missing-script" \[0m
+2026-10-20T01:05:58.1679830Z [36;1m  "${evidence}/broken/stale-record" \[0m
+2026-10-20T01:05:58.1680115Z [36;1m  "${evidence}/tooling"[0m
+2026-10-20T01:05:58.1680392Z [36;1m"${venv}/bin/python" -m pip download \[0m
+2026-10-20T01:05:58.1680722Z [36;1m  --disable-pip-version-check \[0m
+2026-10-20T01:05:58.1680999Z [36;1m  --no-deps \[0m
+2026-10-20T01:05:58.1681229Z [36;1m  --only-binary=:all: \[0m
+2026-10-20T01:05:58.1681497Z [36;1m  --dest "${evidence}/tooling" \[0m
+2026-10-20T01:05:58.1681775Z [36;1m  "pip==${PIP_VERSION}" \[0m
+2026-10-20T01:05:58.1682029Z [36;1m  "uv==${UV_VERSION}"[0m
+2026-10-20T01:05:58.1682275Z [36;1m"${venv}/bin/python" -VV[0m
+2026-10-20T01:05:58.1682548Z [36;1m"${venv}/bin/python" -m pip --version[0m
+2026-10-20T01:05:58.1682868Z [36;1m"${venv}/bin/python" -m maturin --version[0m
+2026-10-20T01:05:58.1683181Z [36;1m"${venv}/bin/python" -m twine --version[0m
+2026-10-20T01:05:58.1683489Z [36;1m"${venv}/bin/python" -m uv --version[0m
+2026-10-20T01:05:58.1683940Z [36;1m"${venv}/bin/python" -c 'import packaging; print(f"packaging {packaging.__version__}")'[0m
+2026-10-20T01:05:58.1756840Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T01:05:58.1757187Z env:
+2026-10-20T01:05:58.1757439Z   CANDIDATE_SHA: 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:05:58.1757783Z   RUST_TARGET: x86_64-unknown-linux-gnu
+2026-10-20T01:05:58.1758052Z   MATURIN_VERSION: 1.14.1
+2026-10-20T01:05:58.1758273Z   TWINE_VERSION: 7.0.0
+2026-10-20T01:05:58.1758485Z   UV_VERSION: 0.12.19
+2026-10-20T01:05:58.1758698Z   PIP_VERSION: 26.2.1
+2026-10-20T01:05:58.1758919Z   PACKAGING_VERSION: 26.3
+2026-10-20T01:05:58.1759160Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T01:05:58.1759408Z   CARGO_INCREMENTAL: 0
+2026-10-20T01:05:58.1759642Z   CARGO_TERM_COLOR: always
+2026-10-20T01:05:58.1759874Z   RIPR_NATIVE_VERSION: 0.11.0
+2026-10-20T01:05:58.1760102Z ##[endgroup]
+2026-10-20T01:06:01.8815874Z Collecting pip==26.2.1
+2026-10-20T01:06:01.9600070Z   Downloading pip-26.2.1-py3-none-any.whl (1.8 MB)
+2026-10-20T01:06:02.0610325Z      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.8/1.8 MB 18.4 MB/s eta 0:00:00
+2026-10-20T01:06:02.0920209Z Installing collected packages: pip
+2026-10-20T01:06:02.0927474Z   Attempting uninstall: pip
+2026-10-20T01:06:02.0928594Z     Found existing installation: pip 22.0.2
+2026-10-20T01:06:02.4967624Z     Uninstalling pip-22.0.2:
+2026-10-20T01:06:02.5042014Z       Successfully uninstalled pip-22.0.2
+2026-10-20T01:06:03.1666047Z Successfully installed pip-26.2.1
+2026-10-20T01:06:04.0199973Z Collecting maturin==1.14.1
+2026-10-20T01:06:04.0939170Z   Downloading maturin-1.14.1-py3-none-manylinux_2_12_x86_64.manylinux2010_x86_64.musllinux_1_1_x86_64.whl.metadata (16 kB)
+2026-10-20T01:06:04.1645539Z Collecting twine==7.0.0
+2026-10-20T01:06:04.1834971Z   Downloading twine-7.0.0-py3-none-any.whl.metadata (3.5 kB)
+2026-10-20T01:06:04.5785742Z Collecting uv==0.12.19
+2026-10-20T01:06:04.5973765Z   Downloading uv-0.12.19-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (11 kB)
+2026-10-20T01:06:04.6664180Z Collecting packaging==26.3
+2026-10-20T01:06:04.6825100Z   Downloading packaging-26.3-py3-none-any.whl.metadata (3.5 kB)
+2026-10-20T01:06:04.7627230Z Collecting tomli>=1.1.0 (from maturin==1.14.1)
+2026-10-20T01:06:04.7788923Z   Downloading tomli-2.5.0-py3-none-any.whl.metadata (10 kB)
+2026-10-20T01:06:04.8619324Z Collecting readme-renderer>=35.0 (from twine==7.0.0)
+2026-10-20T01:06:04.8782551Z   Downloading readme_renderer-46.0-py3-none-any.whl.metadata (3.0 kB)
+2026-10-20T01:06:04.9520782Z Collecting requests>=2.20 (from twine==7.0.0)
+2026-10-20T01:06:04.9684583Z   Downloading requests-2.34.2-py3-none-any.whl.metadata (4.8 kB)
+2026-10-20T01:06:05.0322261Z Collecting requests-toolbelt!=0.9.0,>=0.8.0 (from twine==7.0.0)
+2026-10-20T01:06:05.0485566Z   Downloading requests_toolbelt-1.0.0-py2.py3-none-any.whl.metadata (14 kB)
+2026-10-20T01:06:05.1230434Z Collecting urllib3>=1.26.0 (from twine==7.0.0)
+2026-10-20T01:06:05.1402972Z   Downloading urllib3-2.8.0-py3-none-any.whl.metadata (7.4 kB)
+2026-10-20T01:06:05.2217162Z Collecting keyring>=21.2.0 (from twine==7.0.0)
+2026-10-20T01:06:05.2382318Z   Downloading keyring-25.7.0-py3-none-any.whl.metadata (21 kB)
+2026-10-20T01:06:05.3069165Z Collecting rfc3986>=1.4.0 (from twine==7.0.0)
+2026-10-20T01:06:05.3232280Z   Downloading rfc3986-2.0.0-py2.py3-none-any.whl.metadata (6.6 kB)
+2026-10-20T01:06:05.4054974Z Collecting rich>=14.3.3 (from twine==7.0.0)
+2026-10-20T01:06:05.4219264Z   Downloading rich-15.0.0-py3-none-any.whl.metadata (18 kB)
+2026-10-20T01:06:05.4869120Z Collecting id (from twine==7.0.0)
+2026-10-20T01:06:05.5052613Z   Downloading id-1.6.1-py3-none-any.whl.metadata (5.1 kB)
+2026-10-20T01:06:05.5700864Z Collecting SecretStorage>=3.2 (from keyring>=21.2.0->twine==7.0.0)
+2026-10-20T01:06:05.5877808Z   Downloading secretstorage-3.5.0-py3-none-any.whl.metadata (4.0 kB)
+2026-10-20T01:06:05.6504043Z Collecting jeepney>=0.4.2 (from keyring>=21.2.0->twine==7.0.0)
+2026-10-20T01:06:05.6661924Z   Downloading jeepney-0.9.0-py3-none-any.whl.metadata (1.2 kB)
+2026-10-20T01:06:05.7425583Z Collecting importlib_metadata>=4.11.4 (from keyring>=21.2.0->twine==7.0.0)
+2026-10-20T01:06:05.7594907Z   Downloading importlib_metadata-9.0.1-py3-none-any.whl.metadata (4.5 kB)
+2026-10-20T01:06:05.8261637Z Collecting jaraco.classes (from keyring>=21.2.0->twine==7.0.0)
+2026-10-20T01:06:05.8425472Z   Downloading jaraco.classes-3.4.0-py3-none-any.whl.metadata (2.6 kB)
+2026-10-20T01:06:05.9108250Z Collecting jaraco.functools (from keyring>=21.2.0->twine==7.0.0)
+2026-10-20T01:06:05.9301084Z   Downloading jaraco_functools-4.6.0-py3-none-any.whl.metadata (2.9 kB)
+2026-10-20T01:06:05.9966023Z Collecting jaraco.context (from keyring>=21.2.0->twine==7.0.0)
+2026-10-20T01:06:06.0138995Z   Downloading jaraco_context-6.1.2-py3-none-any.whl.metadata (4.2 kB)
+2026-10-20T01:06:06.0837021Z Collecting zipp>=3.20 (from importlib_metadata>=4.11.4->keyring>=21.2.0->twine==7.0.0)
+2026-10-20T01:06:06.0997398Z   Downloading zipp-4.1.1-py3-none-any.whl.metadata (3.6 kB)
+2026-10-20T01:06:06.1961712Z Collecting nh3>=0.2.14 (from readme-renderer>=35.0->twine==7.0.0)
+2026-10-20T01:06:06.2125818Z   Downloading nh3-0.3.7-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (2.0 kB)
+2026-10-20T01:06:06.2789085Z Collecting docutils>=0.21.2 (from readme-renderer>=35.0->twine==7.0.0)
+2026-10-20T01:06:06.2957220Z   Downloading docutils-0.23-py3-none-any.whl.metadata (15 kB)
+2026-10-20T01:06:06.3665588Z Collecting Pygments>=2.5.1 (from readme-renderer>=35.0->twine==7.0.0)
+2026-10-20T01:06:06.3827441Z   Downloading pygments-2.21.0-py3-none-any.whl.metadata (2.5 kB)
+2026-10-20T01:06:06.5664671Z Collecting charset_normalizer<4,>=2 (from requests>=2.20->twine==7.0.0)
+2026-10-20T01:06:06.5842229Z   Downloading charset_normalizer-3.5.2-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (46 kB)
+2026-10-20T01:06:06.6571610Z Collecting idna<4,>=2.5 (from requests>=2.20->twine==7.0.0)
+2026-10-20T01:06:06.6736940Z   Downloading idna-3.20-py3-none-any.whl.metadata (7.2 kB)
+2026-10-20T01:06:06.7470483Z Collecting certifi>=2023.5.7 (from requests>=2.20->twine==7.0.0)
+2026-10-20T01:06:06.7651936Z   Downloading certifi-2026.10.18-py3-none-any.whl.metadata (2.5 kB)
+2026-10-20T01:06:06.8369361Z Collecting markdown-it-py>=2.2.0 (from rich>=14.3.3->twine==7.0.0)
+2026-10-20T01:06:06.8530367Z   Downloading markdown_it_py-4.2.0-py3-none-any.whl.metadata (7.4 kB)
+2026-10-20T01:06:06.9197578Z Collecting mdurl~=0.1 (from markdown-it-py>=2.2.0->rich>=14.3.3->twine==7.0.0)
+2026-10-20T01:06:06.9362372Z   Downloading mdurl-0.1.2-py3-none-any.whl.metadata (1.6 kB)
+2026-10-20T01:06:07.2031878Z Collecting cryptography>=2.0 (from SecretStorage>=3.2->keyring>=21.2.0->twine==7.0.0)
+2026-10-20T01:06:07.2195952Z   Downloading cryptography-50.0.2-cp39-abi3-manylinux_2_34_x86_64.whl.metadata (4.4 kB)
+2026-10-20T01:06:07.3813382Z Collecting cffi>=2.0.0 (from cryptography>=2.0->SecretStorage>=3.2->keyring>=21.2.0->twine==7.0.0)
+2026-10-20T01:06:07.3979858Z   Downloading cffi-2.1.1-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (2.5 kB)
+2026-10-20T01:06:07.4652433Z Collecting typing-extensions>=4.13.2 (from cryptography>=2.0->SecretStorage>=3.2->keyring>=21.2.0->twine==7.0.0)
+2026-10-20T01:06:07.4814773Z   Downloading typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+2026-10-20T01:06:07.5445384Z Collecting pycparser (from cffi>=2.0.0->cryptography>=2.0->SecretStorage>=3.2->keyring>=21.2.0->twine==7.0.0)
+2026-10-20T01:06:07.5622079Z   Downloading pycparser-3.11-py3-none-any.whl.metadata (8.2 kB)
+2026-10-20T01:06:07.6367731Z Collecting more-itertools (from jaraco.classes->keyring>=21.2.0->twine==7.0.0)
+2026-10-20T01:06:07.6540739Z   Downloading more_itertools-11.1.0-py3-none-any.whl.metadata (41 kB)
+2026-10-20T01:06:07.7178846Z Collecting backports.tarfile (from jaraco.context->keyring>=21.2.0->twine==7.0.0)
+2026-10-20T01:06:07.7341855Z   Downloading backports.tarfile-1.2.0-py3-none-any.whl.metadata (2.0 kB)
+2026-10-20T01:06:07.7645486Z Downloading maturin-1.14.1-py3-none-manylinux_2_12_x86_64.manylinux2010_x86_64.musllinux_1_1_x86_64.whl (10.6 MB)
+2026-10-20T01:06:07.8803944Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 10.6/10.6 MB 110.5 MB/s  0:00:00
+2026-10-20T01:06:07.8975492Z Downloading twine-7.0.0-py3-none-any.whl (43 kB)
+2026-10-20T01:06:07.9177820Z Downloading uv-0.12.19-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (20.5 MB)
+2026-10-20T01:06:08.0267968Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 20.5/20.5 MB 190.7 MB/s  0:00:00
+2026-10-20T01:06:08.0437382Z Downloading packaging-26.3-py3-none-any.whl (129 kB)
+2026-10-20T01:06:08.0625968Z Downloading keyring-25.7.0-py3-none-any.whl (39 kB)
+2026-10-20T01:06:08.0810139Z Downloading importlib_metadata-9.0.1-py3-none-any.whl (27 kB)
+2026-10-20T01:06:08.1162707Z Downloading jeepney-0.9.0-py3-none-any.whl (49 kB)
+2026-10-20T01:06:08.1352360Z Downloading readme_renderer-46.0-py3-none-any.whl (14 kB)
+2026-10-20T01:06:08.1540294Z Downloading docutils-0.23-py3-none-any.whl (634 kB)
+2026-10-20T01:06:08.1606280Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 634.7/634.7 kB 97.1 MB/s  0:00:00
+2026-10-20T01:06:08.1771689Z Downloading nh3-0.3.7-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (832 kB)
+2026-10-20T01:06:08.1852274Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 832.2/832.2 kB 122.1 MB/s  0:00:00
+2026-10-20T01:06:08.2021119Z Downloading pygments-2.21.0-py3-none-any.whl (1.3 MB)
+2026-10-20T01:06:08.2112474Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.3/1.3 MB 158.7 MB/s  0:00:00
+2026-10-20T01:06:08.2275117Z Downloading requests-2.34.2-py3-none-any.whl (73 kB)
+2026-10-20T01:06:08.2489633Z Downloading charset_normalizer-3.5.2-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (271 kB)
+2026-10-20T01:06:08.2697812Z Downloading idna-3.20-py3-none-any.whl (69 kB)
+2026-10-20T01:06:08.2878464Z Downloading urllib3-2.8.0-py3-none-any.whl (135 kB)
+2026-10-20T01:06:08.3075973Z Downloading certifi-2026.10.18-py3-none-any.whl (134 kB)
+2026-10-20T01:06:08.3265807Z Downloading requests_toolbelt-1.0.0-py2.py3-none-any.whl (54 kB)
+2026-10-20T01:06:08.3467670Z Downloading rfc3986-2.0.0-py2.py3-none-any.whl (31 kB)
+2026-10-20T01:06:08.3650906Z Downloading rich-15.0.0-py3-none-any.whl (310 kB)
+2026-10-20T01:06:08.3841553Z Downloading markdown_it_py-4.2.0-py3-none-any.whl (91 kB)
+2026-10-20T01:06:08.4024418Z Downloading mdurl-0.1.2-py3-none-any.whl (10.0 kB)
+2026-10-20T01:06:08.4200123Z Downloading secretstorage-3.5.0-py3-none-any.whl (15 kB)
+2026-10-20T01:06:08.4379510Z Downloading cryptography-50.0.2-cp39-abi3-manylinux_2_34_x86_64.whl (4.8 MB)
+2026-10-20T01:06:08.4655038Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.8/4.8 MB 182.0 MB/s  0:00:00
+2026-10-20T01:06:08.4825062Z Downloading cffi-2.1.1-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (218 kB)
+2026-10-20T01:06:08.5015368Z Downloading tomli-2.5.0-py3-none-any.whl (14 kB)
+2026-10-20T01:06:08.5200290Z Downloading typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+2026-10-20T01:06:08.5452819Z Downloading zipp-4.1.1-py3-none-any.whl (10 kB)
+2026-10-20T01:06:08.5643740Z Downloading id-1.6.1-py3-none-any.whl (14 kB)
+2026-10-20T01:06:08.5835362Z Downloading jaraco.classes-3.4.0-py3-none-any.whl (6.8 kB)
+2026-10-20T01:06:08.6021490Z Downloading jaraco_context-6.1.2-py3-none-any.whl (7.9 kB)
+2026-10-20T01:06:08.6205565Z Downloading backports.tarfile-1.2.0-py3-none-any.whl (30 kB)
+2026-10-20T01:06:08.6387041Z Downloading jaraco_functools-4.6.0-py3-none-any.whl (11 kB)
+2026-10-20T01:06:08.6572627Z Downloading more_itertools-11.1.0-py3-none-any.whl (72 kB)
+2026-10-20T01:06:08.6776137Z Downloading pycparser-3.11-py3-none-any.whl (51 kB)
+2026-10-20T01:06:08.8577712Z Installing collected packages: zipp, uv, urllib3, typing-extensions, tomli, rfc3986, Pygments, pycparser, packaging, nh3, more-itertools, mdurl, jeepney, idna, docutils, charset_normalizer, certifi, backports.tarfile, requests, readme-renderer, maturin, markdown-it-py, jaraco.functools, jaraco.context, jaraco.classes, importlib_metadata, id, cffi, rich, requests-toolbelt, cryptography, SecretStorage, keyring, twine
+2026-10-20T01:06:11.0245568Z 
+2026-10-20T01:06:11.0297556Z Successfully installed Pygments-2.21.0 SecretStorage-3.5.0 backports.tarfile-1.2.0 certifi-2026.10.18 cffi-2.1.1 charset_normalizer-3.5.2 cryptography-50.0.2 docutils-0.23 id-1.6.1 idna-3.20 importlib_metadata-9.0.1 jaraco.classes-3.4.0 jaraco.context-6.1.2 jaraco.functools-4.6.0 jeepney-0.9.0 keyring-25.7.0 markdown-it-py-4.2.0 maturin-1.14.1 mdurl-0.1.2 more-itertools-11.1.0 nh3-0.3.7 packaging-26.3 pycparser-3.11 readme-renderer-46.0 requests-2.34.2 requests-toolbelt-1.0.0 rfc3986-2.0.0 rich-15.0.0 tomli-2.5.0 twine-7.0.0 typing-extensions-4.16.0 urllib3-2.8.0 uv-0.12.19 zipp-4.1.1
+2026-10-20T01:06:11.6101569Z Collecting pip==26.2.1
+2026-10-20T01:06:11.7078743Z   Downloading pip-26.2.1-py3-none-any.whl.metadata (4.6 kB)
+2026-10-20T01:06:11.9974712Z Collecting uv==0.12.19
+2026-10-20T01:06:11.9992273Z   Using cached uv-0.12.19-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (11 kB)
+2026-10-20T01:06:12.0267665Z Downloading pip-26.2.1-py3-none-any.whl (1.8 MB)
+2026-10-20T01:06:12.4934057Z    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.8/1.8 MB 4.6 MB/s  0:00:00
+2026-10-20T01:06:12.4948873Z Using cached uv-0.12.19-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (20.5 MB)
+2026-10-20T01:06:12.5433016Z Saved ./target/ripr/python-wheel-evidence/tooling/pip-26.2.1-py3-none-any.whl
+2026-10-20T01:06:12.5590216Z Saved ./target/ripr/python-wheel-evidence/tooling/uv-0.12.19-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+2026-10-20T01:06:12.5591293Z Successfully downloaded pip uv
+2026-10-20T01:06:12.6085053Z Python 3.10.12 (main, Aug 31 2026, 10:18:17) [GCC 11.4.0]
+2026-10-20T01:06:12.7366825Z pip 26.2.1 from /home/runner/work/ripr-swarm/ripr-swarm/target/ripr/python-build/venv/lib/python3.10/site-packages/pip (python 3.10)
+2026-10-20T01:06:12.7877082Z maturin 1.14.1
+2026-10-20T01:06:13.0090958Z twine version 7.0.0 (readme-renderer: 46.0, requests: 2.34.2, requests-
+2026-10-20T01:06:13.0091633Z toolbelt: 1.0.0, urllib3: 2.8.0, keyring: 25.7.0, rfc3986: 2.0.0, rich:
+2026-10-20T01:06:13.0092105Z 15.0.0, packaging: 26.3, id: 1.6.1)
+2026-10-20T01:06:13.0513709Z uv 0.12.19 (x86_64-unknown-linux-gnu)
+2026-10-20T01:06:13.0619602Z packaging 26.3
+2026-10-20T01:06:13.0689136Z ##[group]Run set -euo pipefail
+2026-10-20T01:06:13.0689693Z [36;1mset -euo pipefail[0m
+2026-10-20T01:06:13.0690081Z [36;1mcargo xtask check-release-targets[0m
+2026-10-20T01:06:13.0690510Z [36;1mcargo test -p xtask --locked policy::distribution::tests -- --nocapture[0m
+2026-10-20T01:06:13.0759589Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T01:06:13.0759920Z env:
+2026-10-20T01:06:13.0760162Z   CANDIDATE_SHA: 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:06:13.0760506Z   RUST_TARGET: x86_64-unknown-linux-gnu
+2026-10-20T01:06:13.0760773Z   MATURIN_VERSION: 1.14.1
+2026-10-20T01:06:13.0760982Z   TWINE_VERSION: 7.0.0
+2026-10-20T01:06:13.0761182Z   UV_VERSION: 0.12.19
+2026-10-20T01:06:13.0761385Z   PIP_VERSION: 26.2.1
+2026-10-20T01:06:13.0761594Z   PACKAGING_VERSION: 26.3
+2026-10-20T01:06:13.0761830Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T01:06:13.0762075Z   CARGO_INCREMENTAL: 0
+2026-10-20T01:06:13.0762281Z   CARGO_TERM_COLOR: always
+2026-10-20T01:06:13.0762545Z   RIPR_NATIVE_VERSION: 0.11.0
+2026-10-20T01:06:13.0762771Z ##[endgroup]
+2026-10-20T01:06:13.1556134Z [1m[92m    Updating[0m crates.io index
+2026-10-20T01:06:13.5855887Z [1m[92m Downloading[0m crates ...
+2026-10-20T01:06:13.6612477Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6618598Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6623455Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6628936Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6634767Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6640535Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6698504Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6704207Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6710095Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6715323Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6734044Z [1m[92m  Downloaded[0m block-buffer v0.10.4
+2026-10-20T01:06:13.6753064Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6756669Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6760331Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6763927Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6767412Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6771005Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6774405Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6778558Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6781921Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6785454Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6789280Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6792666Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6796209Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6799887Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6803385Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6806972Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6810557Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6813926Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6817519Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6820907Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6824297Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6828094Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6831426Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6834815Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6838820Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6842207Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6845588Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6849525Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6853268Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6856920Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6860607Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6864603Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6868795Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6871805Z [1m[92m  Downloaded[0m borrow-or-share v0.2.4
+2026-10-20T01:06:13.6888456Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6891717Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6895541Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6902043Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6905568Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6909469Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6912894Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6916246Z [1m[92m  Downloaded[0m adler2 v2.0.1
+2026-10-20T01:06:13.6934430Z [1m[92m  Downloaded[0m siphasher v1.0.3
+2026-10-20T01:06:13.6954293Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6969909Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6971061Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [55] Failed sending data to the peer (Send failure: Broken pipe)
+2026-10-20T01:06:13.6972508Z [1m[33mwarning[0m: spurious network error (3 tries remaining): [16] Error in the HTTP2 framing layer (Send failure: Connection reset by peer)
+2026-10-20T01:06:13.6981543Z [1m[92m  Downloaded[0m zerovec-derive v0.11.6
+2026-10-20T01:06:13.7010262Z [1m[92m  Downloaded[0m zerotrie v0.2.5
+2026-10-20T01:06:13.7070922Z [1m[92m  Downloaded[0m jod-thread v1.0.0
+2026-10-20T01:06:13.7097263Z [1m[92m  Downloaded[0m zerocopy v0.8.57
+2026-10-20T01:06:13.7354593Z [1m[92m  Downloaded[0m zerofrom-derive v0.1.8
+2026-10-20T01:06:13.7370089Z [1m[92m  Downloaded[0m unic-ucd-version v0.9.0
+2026-10-20T01:06:13.7385540Z [1m[92m  Downloaded[0m tower-lsp-server v0.23.0
+2026-10-20T01:06:13.7431370Z [1m[92m  Downloaded[0m sync_wrapper v1.0.2
+2026-10-20T01:06:13.7442708Z [1m[92m  Downloaded[0m smol_str v0.3.6
+2026-10-20T01:06:13.7463162Z [1m[92m  Downloaded[0m cfg-if v1.0.5
+2026-10-20T01:06:13.7486853Z [1m[92m  Downloaded[0m xattr v1.6.1
+2026-10-20T01:06:13.7515455Z [1m[92m  Downloaded[0m oxc_ast_macros v0.130.0
+2026-10-20T01:06:13.7535467Z [1m[92m  Downloaded[0m smawk v0.3.3
+2026-10-20T01:06:13.7557235Z [1m[92m  Downloaded[0m stable_deref_trait v1.2.1
+2026-10-20T01:06:13.7568899Z [1m[92m  Downloaded[0m errno v0.3.14
+2026-10-20T01:06:13.7591249Z [1m[92m  Downloaded[0m utf8_iter v1.0.4
+2026-10-20T01:06:13.7604880Z [1m[92m  Downloaded[0m unic-emoji-char v0.9.0
+2026-10-20T01:06:13.7630905Z [1m[92m  Downloaded[0m unicode-segmentation v1.13.3
+2026-10-20T01:06:13.7676756Z [1m[92m  Downloaded[0m oxc_span v0.130.0
+2026-10-20T01:06:13.7704433Z [1m[92m  Downloaded[0m unic-ucd-ident v0.9.0
+2026-10-20T01:06:13.7724361Z [1m[92m  Downloaded[0m dragonbox_ecma v0.1.12
+2026-10-20T01:06:13.7757727Z [1m[92m  Downloaded[0m unicode_names2_generator v1.3.0
+2026-10-20T01:06:13.7780999Z [1m[92m  Downloaded[0m writeable v0.6.4
+2026-10-20T01:06:13.7825048Z [1m[92m  Downloaded[0m zopfli v0.8.3
+2026-10-20T01:06:13.7863039Z [1m[92m  Downloaded[0m unicode-properties v0.1.4
+2026-10-20T01:06:13.7892389Z [1m[92m  Downloaded[0m textwrap v0.16.4
+2026-10-20T01:06:13.7934062Z [1m[92m  Downloaded[0m tar v0.4.46
+2026-10-20T01:06:13.7975043Z [1m[92m  Downloaded[0m oxc_allocator v0.130.0
+2026-10-20T01:06:13.8033581Z [1m[92m  Downloaded[0m zerovec v0.11.8
+2026-10-20T01:06:13.8106187Z [1m[92m  Downloaded[0m winnow v0.7.15
+2026-10-20T01:06:13.8217658Z [1m[92m  Downloaded[0m futures-util v0.3.34
+2026-10-20T01:06:13.8369564Z [1m[92m  Downloaded[0m zip v9.0.3
+2026-10-20T01:06:13.8442295Z [1m[92m  Downloaded[0m zlib-rs v0.6.8
+2026-10-20T01:06:13.8507045Z [1m[92m  Downloaded[0m chrono v0.4.45
+2026-10-20T01:06:13.8583773Z [1m[92m  Downloaded[0m syn v3.0.6
+2026-10-20T01:06:13.8703628Z [1m[92m  Downloaded[0m winnow v1.0.4
+2026-10-20T01:06:13.8815311Z [1m[92m  Downloaded[0m oxc_ast v0.130.0
+2026-10-20T01:06:13.8887586Z [1m[92m  Downloaded[0m tokio-util v0.7.20
+2026-10-20T01:06:13.8977015Z [1m[92m  Downloaded[0m unicode_names2 v1.3.0
+2026-10-20T01:06:13.9043992Z [1m[92m  Downloaded[0m syn v2.0.119
+2026-10-20T01:06:13.9162303Z [1m[92m  Downloaded[0m unicode-width v0.2.2
+2026-10-20T01:06:13.9223239Z [1m[92m  Downloaded[0m oxc_parser v0.130.0
+2026-10-20T01:06:13.9285756Z [1m[92m  Downloaded[0m itertools v0.15.0
+2026-10-20T01:06:13.9368255Z [1m[92m  Downloaded[0m hashbrown v0.17.1
+2026-10-20T01:06:13.9427335Z [1m[92m  Downloaded[0m typenum v1.20.1
+2026-10-20T01:06:13.9467892Z [1m[92m  Downloaded[0m hashbrown v0.14.5
+2026-10-20T01:06:13.9521897Z [1m[92m  Downloaded[0m indexmap v2.14.2
+2026-10-20T01:06:13.9572077Z [1m[92m  Downloaded[0m num-bigint v0.4.8
+2026-10-20T01:06:13.9629026Z [1m[92m  Downloaded[0m itertools v0.11.0
+2026-10-20T01:06:13.9705228Z [1m[92m  Downloaded[0m compact_str v0.9.1
+2026-10-20T01:06:13.9744362Z [1m[92m  Downloaded[0m oxc-miette v2.7.1
+2026-10-20T01:06:13.9793570Z [1m[92m  Downloaded[0m memchr v2.8.3
+2026-10-20T01:06:13.9857336Z [1m[92m  Downloaded[0m icu_collections v2.3.0
+2026-10-20T01:06:13.9929392Z [1m[92m  Downloaded[0m flate2 v1.1.10
+2026-10-20T01:06:13.9984509Z [1m[92m  Downloaded[0m tracing v0.1.44
+2026-10-20T01:06:14.0174038Z [1m[92m  Downloaded[0m crossbeam-channel v0.5.17
+2026-10-20T01:06:14.0220275Z [1m[92m  Downloaded[0m bytes v1.12.1
+2026-10-20T01:06:14.0260342Z [1m[92m  Downloaded[0m bumpalo v3.20.3
+2026-10-20T01:06:14.0290488Z [1m[92m  Downloaded[0m triomphe v0.1.16
+2026-10-20T01:06:14.0314502Z [1m[92m  Downloaded[0m toml_parser v1.1.5+spec-1.1.0
+2026-10-20T01:06:14.0340627Z [1m[92m  Downloaded[0m thiserror-impl v2.0.20
+2026-10-20T01:06:14.0357693Z [1m[92m  Downloaded[0m synstructure v0.14.0
+2026-10-20T01:06:14.0370200Z [1m[92m  Downloaded[0m smallvec v1.16.1
+2026-10-20T01:06:14.0385282Z [1m[92m  Downloaded[0m slab v0.4.12
+2026-10-20T01:06:14.0401415Z [1m[92m  Downloaded[0m oxc_regular_expression v0.130.0
+2026-10-20T01:06:14.0447288Z [1m[92m  Downloaded[0m oxc_ecmascript v0.130.0
+2026-10-20T01:06:14.0489553Z [1m[92m  Downloaded[0m libc v0.2.190
+2026-10-20T01:06:14.1028376Z [1m[92m  Downloaded[0m miniz_oxide v0.9.1
+2026-10-20T01:06:14.1057289Z [1m[92m  Downloaded[0m ls-types v0.0.6
+2026-10-20T01:06:14.1104354Z [1m[92m  Downloaded[0m tokio v1.53.2
+2026-10-20T01:06:14.1609316Z [1m[92m  Downloaded[0m icu_provider v2.3.1
+2026-10-20T01:06:14.1639063Z [1m[92m  Downloaded[0m icu_locale_core v2.3.0
+2026-10-20T01:06:14.1725635Z [1m[92m  Downloaded[0m futures v0.3.34
+2026-10-20T01:06:14.1788397Z [1m[92m  Downloaded[0m zmij v1.0.23
+2026-10-20T01:06:14.1815930Z [1m[92m  Downloaded[0m unicode-id-start v1.5.0
+2026-10-20T01:06:14.1852484Z [1m[92m  Downloaded[0m tracing-core v0.1.36
+2026-10-20T01:06:14.1883480Z [1m[92m  Downloaded[0m toml_datetime v1.1.2+spec-1.1.0
+2026-10-20T01:06:14.1897562Z [1m[92m  Downloaded[0m tiny-keccak v2.0.2
+2026-10-20T01:06:14.1926438Z [1m[92m  Downloaded[0m text-size v1.1.1
+2026-10-20T01:06:14.1947129Z [1m[92m  Downloaded[0m num-traits v0.2.19
+2026-10-20T01:06:14.1977196Z [1m[92m  Downloaded[0m litemap v0.8.3
+2026-10-20T01:06:14.2004501Z [1m[92m  Downloaded[0m httparse v1.10.1
+2026-10-20T01:06:14.2033446Z [1m[92m  Downloaded[0m getrandom v0.4.3
+2026-10-20T01:06:14.2076242Z [1m[92m  Downloaded[0m fluent-uri v0.4.1
+2026-10-20T01:06:14.2109635Z [1m[92m  Downloaded[0m crossbeam-epoch v0.9.21
+2026-10-20T01:06:14.2138102Z [1m[92m  Downloaded[0m unic-char-range v0.9.0
+2026-10-20T01:06:14.2155193Z [1m[92m  Downloaded[0m tower v0.5.3
+2026-10-20T01:06:14.2273403Z [1m[92m  Downloaded[0m tinystr v0.8.4
+2026-10-20T01:06:14.2297761Z [1m[92m  Downloaded[0m thiserror v2.0.20
+2026-10-20T01:06:14.2371757Z [1m[92m  Downloaded[0m log v0.4.34
+2026-10-20T01:06:14.2400663Z [1m[92m  Downloaded[0m crc32fast v1.5.2
+2026-10-20T01:06:14.2425405Z [1m[92m  Downloaded[0m oxc_data_structures v0.130.0
+2026-10-20T01:06:14.2450377Z [1m[92m  Downloaded[0m once_cell v1.21.4
+2026-10-20T01:06:14.2480039Z [1m[92m  Downloaded[0m iana-time-zone v0.1.65
+2026-10-20T01:06:14.2513919Z [1m[92m  Downloaded[0m futures-channel v0.3.34
+2026-10-20T01:06:14.2535965Z [1m[92m  Downloaded[0m displaydoc v0.2.7
+2026-10-20T01:06:14.2560293Z [1m[92m  Downloaded[0m crossbeam-utils v0.8.23
+2026-10-20T01:06:14.2592026Z [1m[92m  Downloaded[0m bitflags v2.13.2
+2026-10-20T01:06:14.2643467Z [1m[92m  Downloaded[0m allocator-api2 v0.2.21
+2026-10-20T01:06:14.2674019Z [1m[92m  Downloaded[0m unic-char-property v0.9.0
+2026-10-20T01:06:14.2690224Z [1m[92m  Downloaded[0m tower-service v0.3.3
+2026-10-20T01:06:14.2717864Z [1m[92m  Downloaded[0m simd-adler32 v0.3.10
+2026-10-20T01:06:14.2741126Z [1m[92m  Downloaded[0m getrandom v0.2.17
+2026-10-20T01:06:14.2775787Z [1m[92m  Downloaded[0m fastrand v2.5.0
+2026-10-20T01:06:14.2793822Z [1m[92m  Downloaded[0m either v1.18.0
+2026-10-20T01:06:14.2814563Z [1m[92m  Downloaded[0m digest v0.10.7
+2026-10-20T01:06:14.2838269Z [1m[92m  Downloaded[0m crossbeam-deque v0.8.8
+2026-10-20T01:06:14.2858853Z [1m[92m  Downloaded[0m cpufeatures v0.2.17
+2026-10-20T01:06:14.2876586Z [1m[92m  Downloaded[0m anyhow v1.0.104
+2026-10-20T01:06:14.2924808Z [1m[92m  Downloaded[0m oxc_index v4.1.0
+2026-10-20T01:06:14.2941350Z [1m[92m  Downloaded[0m oxc_estree v0.130.0
+2026-10-20T01:06:14.2961256Z [1m[92m  Downloaded[0m oxc_diagnostics v0.130.0
+2026-10-20T01:06:14.2975771Z [1m[92m  Downloaded[0m oxc-miette-derive v2.7.1
+2026-10-20T01:06:14.2995349Z [1m[92m  Downloaded[0m owo-colors v4.4.0
+2026-10-20T01:06:14.3018629Z [1m[92m  Downloaded[0m lock_api v0.4.14
+2026-10-20T01:06:14.3035560Z [1m[92m  Downloaded[0m icu_locale_fallback v2.3.0
+2026-10-20T01:06:14.3050461Z [1m[92m  Downloaded[0m linux-raw-sys v0.12.1
+2026-10-20T01:06:14.3744695Z [1m[92m  Downloaded[0m getopts v0.2.24
+2026-10-20T01:06:14.3765491Z [1m[92m  Downloaded[0m futures-executor v0.3.34
+2026-10-20T01:06:14.3784080Z [1m[92m  Downloaded[0m icu_segmenter_data v2.3.0
+2026-10-20T01:06:14.4203370Z [1m[92m  Downloaded[0m typed-path v0.12.3
+2026-10-20T01:06:14.4284058Z [1m[92m  Downloaded[0m tracing-attributes v0.1.31
+2026-10-20T01:06:14.4316840Z [1m[92m  Downloaded[0m ref-cast v1.0.27
+2026-10-20T01:06:14.4352278Z [1m[92m  Downloaded[0m serde_spanned v1.1.2
+2026-10-20T01:06:14.4365136Z [1m[92m  Downloaded[0m seq-macro v0.3.6
+2026-10-20T01:06:14.4386271Z [1m[92m  Downloaded[0m serde_derive_internals v0.29.1
+2026-10-20T01:06:14.4402479Z [1m[92m  Downloaded[0m phf_generator v0.11.3
+2026-10-20T01:06:14.4415362Z [1m[92m  Downloaded[0m phf_codegen v0.11.3
+2026-10-20T01:06:14.4425120Z [1m[92m  Downloaded[0m serde_derive v1.0.229
+2026-10-20T01:06:14.4459996Z [1m[92m  Downloaded[0m ppv-lite86 v0.2.21
+2026-10-20T01:06:14.4474477Z [1m[92m  Downloaded[0m icu_segmenter v2.3.0
+2026-10-20T01:06:14.5053394Z [1m[92m  Downloaded[0m rustc-literal-escaper v0.0.7
+2026-10-20T01:06:14.5071293Z [1m[92m  Downloaded[0m rowan v0.17.0
+2026-10-20T01:06:14.5096644Z [1m[92m  Downloaded[0m ra_ap_parser v0.0.349
+2026-10-20T01:06:14.5886644Z [1m[92m  Downloaded[0m rayon v1.12.0
+2026-10-20T01:06:14.5991513Z [1m[92m  Downloaded[0m ryu v1.0.23
+2026-10-20T01:06:14.6028407Z [1m[92m  Downloaded[0m pin-project-lite v0.2.17
+2026-10-20T01:06:14.6094760Z [1m[92m  Downloaded[0m quote v1.0.47
+2026-10-20T01:06:14.6125702Z [1m[92m  Downloaded[0m serde_json v1.0.151
+2026-10-20T01:06:14.6207998Z [1m[92m  Downloaded[0m serde v1.0.229
+2026-10-20T01:06:14.6247033Z [1m[92m  Downloaded[0m static_assertions v1.1.0
+2026-10-20T01:06:14.6262614Z [1m[92m  Downloaded[0m num-integer v0.1.47
+2026-10-20T01:06:14.6282546Z [1m[92m  Downloaded[0m rustpython-parser-core v0.4.0
+2026-10-20T01:06:14.6291777Z [1m[92m  Downloaded[0m futures-task v0.3.34
+2026-10-20T01:06:14.6305083Z [1m[92m  Downloaded[0m futures-core v0.3.34
+2026-10-20T01:06:14.6320136Z [1m[92m  Downloaded[0m filetime v0.2.29
+2026-10-20T01:06:14.6340631Z [1m[92m  Downloaded[0m oxc_str v0.130.0
+2026-10-20T01:06:14.6352459Z [1m[92m  Downloaded[0m dashmap v6.2.1
+2026-10-20T01:06:14.6380676Z [1m[92m  Downloaded[0m cfg_aliases v0.2.2
+2026-10-20T01:06:14.6391399Z [1m[92m  Downloaded[0m nonmax v0.5.5
+2026-10-20T01:06:14.6403582Z [1m[92m  Downloaded[0m fs2 v0.4.3
+2026-10-20T01:06:14.6415928Z [1m[92m  Downloaded[0m crunchy v0.2.4
+2026-10-20T01:06:14.6427269Z [1m[92m  Downloaded[0m rayon-core v1.13.0
+2026-10-20T01:06:14.6468305Z [1m[92m  Downloaded[0m countme v3.0.1
+2026-10-20T01:06:14.6483578Z [1m[92m  Downloaded[0m version_check v0.9.5
+2026-10-20T01:06:14.6498053Z [1m[92m  Downloaded[0m tower-layer v0.3.3
+2026-10-20T01:06:14.6510022Z [1m[92m  Downloaded[0m tokio-macros v2.7.2
+2026-10-20T01:06:14.6523557Z [1m[92m  Downloaded[0m ra-ap-rustc_lexer v0.166.0
+2026-10-20T01:06:14.6532032Z [1m[92m  Downloaded[0m percent-encoding v2.3.2
+2026-10-20T01:06:14.6541099Z [1m[92m  Downloaded[0m rmcp v3.5.1
+2026-10-20T01:06:14.6751407Z [1m[92m  Downloaded[0m rand_chacha v0.3.1
+2026-10-20T01:06:14.6763640Z [1m[92m  Downloaded[0m rustc-hash v1.1.0
+2026-10-20T01:06:14.6773333Z [1m[92m  Downloaded[0m rand v0.8.8
+2026-10-20T01:06:14.6810082Z [1m[92m  Downloaded[0m rustversion v1.0.23
+2026-10-20T01:06:14.6840948Z [1m[92m  Downloaded[0m lalrpop-util v0.20.2
+2026-10-20T01:06:14.6851140Z [1m[92m  Downloaded[0m dyn-clone v1.0.20
+2026-10-20T01:06:14.6869227Z [1m[92m  Downloaded[0m castaway v0.2.4
+2026-10-20T01:06:14.6884192Z [1m[92m  Downloaded[0m borsh v1.8.1
+2026-10-20T01:06:14.6964836Z [1m[92m  Downloaded[0m zerofrom v0.1.8
+2026-10-20T01:06:14.6976302Z [1m[92m  Downloaded[0m yoke-derive v0.8.4
+2026-10-20T01:06:14.6989241Z [1m[92m  Downloaded[0m unic-common v0.9.0
+2026-10-20T01:06:14.6999038Z [1m[92m  Downloaded[0m rustpython-parser-vendored v0.4.0
+2026-10-20T01:06:14.7016079Z [1m[92m  Downloaded[0m ref-cast-impl v1.0.27
+2026-10-20T01:06:14.7024715Z [1m[92m  Downloaded[0m sha2 v0.10.9
+2026-10-20T01:06:14.7052889Z [1m[92m  Downloaded[0m toml_writer v1.1.3+spec-1.1.0
+2026-10-20T01:06:14.7067129Z [1m[92m  Downloaded[0m toml v1.1.8+spec-1.1.0
+2026-10-20T01:06:14.7111431Z [1m[92m  Downloaded[0m memoffset v0.9.1
+2026-10-20T01:06:14.7125149Z [1m[92m  Downloaded[0m itoa v1.0.18
+2026-10-20T01:06:14.7142087Z [1m[92m  Downloaded[0m heck v0.5.0
+2026-10-20T01:06:14.7156474Z [1m[92m  Downloaded[0m generic-array v0.14.7
+2026-10-20T01:06:14.7171866Z [1m[92m  Downloaded[0m futures-sink v0.3.34
+2026-10-20T01:06:14.7181128Z [1m[92m  Downloaded[0m futures-macro v0.3.34
+2026-10-20T01:06:14.7192584Z [1m[92m  Downloaded[0m drop_bomb v0.1.5
+2026-10-20T01:06:14.7202530Z [1m[92m  Downloaded[0m cow-utils v0.1.3
+2026-10-20T01:06:14.7215078Z [1m[92m  Downloaded[0m unicode-ident v1.0.24
+2026-10-20T01:06:14.7245455Z [1m[92m  Downloaded[0m autocfg v1.5.1
+2026-10-20T01:06:14.7266105Z [1m[92m  Downloaded[0m is-macro v0.3.8
+2026-10-20T01:06:14.7279397Z [1m[92m  Downloaded[0m icu_locale_fallback_data v2.3.0
+2026-10-20T01:06:14.7290582Z [1m[92m  Downloaded[0m rustix v1.1.5
+2026-10-20T01:06:14.7596310Z [1m[92m  Downloaded[0m phf_generator v0.13.1
+2026-10-20T01:06:14.7607729Z [1m[92m  Downloaded[0m home v0.5.12
+2026-10-20T01:06:14.7617953Z [1m[92m  Downloaded[0m futures-io v0.3.34
+2026-10-20T01:06:14.7626734Z [1m[92m  Downloaded[0m equivalent v1.0.2
+2026-10-20T01:06:14.7637545Z [1m[92m  Downloaded[0m crypto-common v0.1.7
+2026-10-20T01:06:14.7646251Z [1m[92m  Downloaded[0m yoke v0.8.3
+2026-10-20T01:06:14.7665405Z [1m[92m  Downloaded[0m uuid v1.26.0
+2026-10-20T01:06:14.7697280Z [1m[92m  Downloaded[0m signal-hook-registry v1.4.8
+2026-10-20T01:06:14.7992521Z [1m[92m  Downloaded[0m phf v0.13.1
+2026-10-20T01:06:14.8194253Z [1m[92m  Downloaded[0m phf v0.11.3
+2026-10-20T01:06:14.8509588Z [1m[92m  Downloaded[0m ra_ap_edition v0.0.349
+2026-10-20T01:06:14.8748262Z [1m[92m  Downloaded[0m proc-macro2 v1.0.107
+2026-10-20T01:06:14.9007594Z [1m[92m  Downloaded[0m serde_core v1.0.229
+2026-10-20T01:06:14.9411535Z [1m[92m  Downloaded[0m potential_utf v0.1.6
+2026-10-20T01:06:14.9424540Z [1m[92m  Downloaded[0m rustpython-ast v0.4.0
+2026-10-20T01:06:14.9545474Z [1m[92m  Downloaded[0m schemars v1.2.1
+2026-10-20T01:06:14.9740826Z [1m[92m  Downloaded[0m rustc-hash v2.1.3
+2026-10-20T01:06:14.9756538Z [1m[92m  Downloaded[0m parking_lot_core v0.9.12
+2026-10-20T01:06:14.9780981Z [1m[92m  Downloaded[0m rand_core v0.6.4
+2026-10-20T01:06:14.9897943Z [1m[92m  Downloaded[0m rustpython-parser v0.4.0
+2026-10-20T01:06:15.0029073Z [1m[92m  Downloaded[0m scopeguard v1.2.0
+2026-10-20T01:06:15.0042003Z [1m[92m  Downloaded[0m schemars_derive v1.2.1
+2026-10-20T01:06:15.0270064Z [1m[92m  Downloaded[0m phf_macros v0.13.1
+2026-10-20T01:06:15.0281722Z [1m[92m  Downloaded[0m phf_shared v0.11.3
+2026-10-20T01:06:15.0711587Z [1m[92m  Downloaded[0m phf_shared v0.13.1
+2026-10-20T01:06:15.0933942Z [1m[92m  Downloaded[0m signal-hook v0.3.18
+2026-10-20T01:06:15.1292981Z [1m[92m  Downloaded[0m ra_ap_stdx v0.0.349
+2026-10-20T01:06:15.1517289Z [1m[92m  Downloaded[0m pastey v0.2.3
+2026-10-20T01:06:15.1876052Z [1m[92m  Downloaded[0m ra_ap_syntax v0.0.349
+2026-10-20T01:06:15.2160382Z [1m[92m  Downloaded[0m oxc_syntax v0.130.0
+2026-10-20T01:06:15.3239250Z [1m[92m   Compiling[0m unicode-ident v1.0.24
+2026-10-20T01:06:15.3240324Z [1m[92m   Compiling[0m proc-macro2 v1.0.107
+2026-10-20T01:06:15.3241246Z [1m[92m   Compiling[0m quote v1.0.47
+2026-10-20T01:06:15.3242057Z [1m[92m   Compiling[0m cfg-if v1.0.5
+2026-10-20T01:06:15.3605281Z [1m[92m   Compiling[0m siphasher v1.0.3
+2026-10-20T01:06:15.3987667Z [1m[92m   Compiling[0m serde_core v1.0.229
+2026-10-20T01:06:15.5055404Z [1m[92m   Compiling[0m memchr v2.8.3
+2026-10-20T01:06:15.5637791Z [1m[92m   Compiling[0m libc v0.2.190
+2026-10-20T01:06:15.9326692Z [1m[92m   Compiling[0m stable_deref_trait v1.2.1
+2026-10-20T01:06:16.0067853Z [1m[92m   Compiling[0m autocfg v1.5.1
+2026-10-20T01:06:16.5797860Z [1m[92m   Compiling[0m syn v3.0.6
+2026-10-20T01:06:17.3817833Z [1m[92m   Compiling[0m syn v2.0.119
+2026-10-20T01:06:18.1028092Z [1m[92m   Compiling[0m writeable v0.6.4
+2026-10-20T01:06:18.2262294Z [1m[92m   Compiling[0m unicode-width v0.2.2
+2026-10-20T01:06:18.4488100Z [1m[92m   Compiling[0m itoa v1.0.18
+2026-10-20T01:06:18.4778035Z [1m[92m   Compiling[0m zerocopy v0.8.57
+2026-10-20T01:06:18.5897778Z [1m[92m   Compiling[0m smallvec v1.16.1
+2026-10-20T01:06:18.8023434Z [1m[92m   Compiling[0m litemap v0.8.3
+2026-10-20T01:06:19.0213723Z [1m[92m   Compiling[0m icu_locale_fallback_data v2.3.0
+2026-10-20T01:06:19.9437931Z [1m[92m   Compiling[0m getrandom v0.2.17
+2026-10-20T01:06:20.1017863Z [1m[92m   Compiling[0m icu_segmenter_data v2.3.0
+2026-10-20T01:06:20.2187865Z [1m[92m   Compiling[0m allocator-api2 v0.2.21
+2026-10-20T01:06:20.5967705Z [1m[92m   Compiling[0m synstructure v0.14.0
+2026-10-20T01:06:21.2087829Z [1m[92m   Compiling[0m serde v1.0.229
+2026-10-20T01:06:21.4108595Z [1m[92m   Compiling[0m once_cell v1.21.4
+2026-10-20T01:06:21.5790626Z [1m[92m   Compiling[0m pin-project-lite v0.2.17
+2026-10-20T01:06:21.6537715Z [1m[92m   Compiling[0m hashbrown v0.17.1
+2026-10-20T01:06:22.3377835Z [1m[92m   Compiling[0m zerofrom-derive v0.1.8
+2026-10-20T01:06:22.5387681Z [1m[92m   Compiling[0m yoke-derive v0.8.4
+2026-10-20T01:06:22.8258277Z [1m[92m   Compiling[0m zerovec-derive v0.11.6
+2026-10-20T01:06:23.3417827Z [1m[92m   Compiling[0m displaydoc v0.2.7
+2026-10-20T01:06:23.5527984Z [1m[92m   Compiling[0m ppv-lite86 v0.2.21
+2026-10-20T01:06:23.5792283Z [1m[92m   Compiling[0m zerofrom v0.1.8
+2026-10-20T01:06:23.6718303Z [1m[92m   Compiling[0m yoke v0.8.3
+2026-10-20T01:06:23.8477178Z [1m[92m   Compiling[0m serde_derive v1.0.229
+2026-10-20T01:06:23.9337973Z [1m[92m   Compiling[0m rand_core v0.6.4
+2026-10-20T01:06:23.9488423Z [1m[92m   Compiling[0m zerovec v0.11.8
+2026-10-20T01:06:24.0008207Z [1m[92m   Compiling[0m zerotrie v0.2.5
+2026-10-20T01:06:24.1557987Z [1m[92m   Compiling[0m num-traits v0.2.19
+2026-10-20T01:06:24.2797952Z [1m[92m   Compiling[0m phf_shared v0.13.1
+2026-10-20T01:06:24.5317875Z [1m[92m   Compiling[0m crossbeam-utils v0.8.23
+2026-10-20T01:06:24.7247630Z [1m[92m   Compiling[0m rustversion v1.0.23
+2026-10-20T01:06:24.7377716Z [1m[92m   Compiling[0m thiserror v2.0.20
+2026-10-20T01:06:24.9696066Z [1m[92m   Compiling[0m tinystr v0.8.4
+2026-10-20T01:06:24.9738297Z [1m[92m   Compiling[0m potential_utf v0.1.6
+2026-10-20T01:06:25.0067960Z [1m[92m   Compiling[0m utf8_iter v1.0.4
+2026-10-20T01:06:25.0879000Z [1m[92m   Compiling[0m icu_collections v2.3.0
+2026-10-20T01:06:25.1008567Z [1m[92m   Compiling[0m icu_locale_core v2.3.0
+2026-10-20T01:06:25.2937977Z [1m[92m   Compiling[0m rand_chacha v0.3.1
+2026-10-20T01:06:25.7147883Z [1m[92m   Compiling[0m thiserror-impl v2.0.20
+2026-10-20T01:06:25.8577937Z [1m[92m   Compiling[0m static_assertions v1.1.0
+2026-10-20T01:06:25.9015060Z [1m[92m   Compiling[0m bitflags v2.13.2
+2026-10-20T01:06:26.0894709Z [1m[92m   Compiling[0m version_check v0.9.5
+2026-10-20T01:06:26.3759168Z [1m[92m   Compiling[0m icu_provider v2.3.1
+2026-10-20T01:06:26.9578030Z [1m[92m   Compiling[0m icu_locale_fallback v2.3.0
+2026-10-20T01:06:26.9647642Z [1m[92m   Compiling[0m generic-array v0.14.7
+2026-10-20T01:06:27.0487826Z [1m[92m   Compiling[0m rand v0.8.8
+2026-10-20T01:06:27.2456244Z [1m[92m   Compiling[0m icu_segmenter v2.3.0
+2026-10-20T01:06:27.9362005Z [1m[92m   Compiling[0m phf_shared v0.11.3
+2026-10-20T01:06:28.0957808Z [1m[92m   Compiling[0m smawk v0.3.3
+2026-10-20T01:06:28.1620592Z [1m[92m   Compiling[0m rustc-hash v2.1.3
+2026-10-20T01:06:28.1817765Z [1m[92m   Compiling[0m textwrap v0.16.4
+2026-10-20T01:06:28.2208479Z [1m[92m   Compiling[0m phf_generator v0.11.3
+2026-10-20T01:06:28.2659889Z [1m[92m   Compiling[0m oxc-miette-derive v2.7.1
+2026-10-20T01:06:28.3834852Z [1m[92m   Compiling[0m zmij v1.0.23
+2026-10-20T01:06:28.3889631Z [1m[92m   Compiling[0m castaway v0.2.4
+2026-10-20T01:06:28.4487919Z [1m[92m   Compiling[0m futures-core v0.3.34
+2026-10-20T01:06:28.5437869Z [1m[92m   Compiling[0m owo-colors v4.4.0
+2026-10-20T01:06:28.5592384Z [1m[92m   Compiling[0m fastrand v2.5.0
+2026-10-20T01:06:28.6791461Z [1m[92m   Compiling[0m oxc_data_structures v0.130.0
+2026-10-20T01:06:28.6867591Z [1m[92m   Compiling[0m unicode-segmentation v1.13.3
+2026-10-20T01:06:28.8377857Z [1m[92m   Compiling[0m ryu v1.0.23
+2026-10-20T01:06:28.9918583Z [1m[92m   Compiling[0m futures-sink v0.3.34
+2026-10-20T01:06:29.0602373Z [1m[92m   Compiling[0m typenum v1.20.1
+2026-10-20T01:06:29.1129867Z [1m[92m   Compiling[0m compact_str v0.9.1
+2026-10-20T01:06:29.4038404Z [1m[92m   Compiling[0m oxc-miette v2.7.1
+2026-10-20T01:06:29.4148446Z [1m[92m   Compiling[0m oxc_allocator v0.130.0
+2026-10-20T01:06:29.7487698Z [1m[92m   Compiling[0m phf_generator v0.13.1
+2026-10-20T01:06:29.9167855Z [1m[92m   Compiling[0m phf_codegen v0.11.3
+2026-10-20T01:06:29.9347753Z [1m[92m   Compiling[0m phf v0.13.1
+2026-10-20T01:06:29.9947835Z [1m[92m   Compiling[0m serde_json v1.0.151
+2026-10-20T01:06:30.0457758Z [1m[92m   Compiling[0m log v0.4.34
+2026-10-20T01:06:30.1167927Z [1m[92m   Compiling[0m percent-encoding v2.3.2
+2026-10-20T01:06:30.1753167Z [1m[92m   Compiling[0m ref-cast v1.0.27
+2026-10-20T01:06:30.2507930Z [1m[92m   Compiling[0m oxc_estree v0.130.0
+2026-10-20T01:06:30.2909470Z [1m[92m   Compiling[0m oxc_str v0.130.0
+2026-10-20T01:06:30.4148637Z [1m[92m   Compiling[0m oxc_ast_macros v0.130.0
+2026-10-20T01:06:30.4343636Z [1m[92m   Compiling[0m phf_macros v0.13.1
+2026-10-20T01:06:30.7098434Z [1m[92m   Compiling[0m futures-channel v0.3.34
+2026-10-20T01:06:30.7289699Z [1m[92m   Compiling[0m tracing-attributes v0.1.31
+2026-10-20T01:06:30.8207922Z [1m[92m   Compiling[0m futures-macro v0.3.34
+2026-10-20T01:06:30.9217824Z [1m[92m   Compiling[0m ref-cast-impl v1.0.27
+2026-10-20T01:06:31.0869342Z [1m[92m   Compiling[0m tracing-core v0.1.36
+2026-10-20T01:06:31.3277970Z [1m[92m   Compiling[0m crunchy v0.2.4
+2026-10-20T01:06:31.4899523Z [1m[92m   Compiling[0m cow-utils v0.1.3
+2026-10-20T01:06:31.5218733Z [1m[92m   Compiling[0m futures-task v0.3.34
+2026-10-20T01:06:31.6419152Z [1m[92m   Compiling[0m slab v0.4.12
+2026-10-20T01:06:31.6489370Z [1m[92m   Compiling[0m either v1.18.0
+2026-10-20T01:06:31.6528259Z [1m[92m   Compiling[0m dragonbox_ecma v0.1.12
+2026-10-20T01:06:31.7937996Z [1m[92m   Compiling[0m futures-io v0.3.34
+2026-10-20T01:06:31.8905818Z [1m[92m   Compiling[0m futures-util v0.3.34
+2026-10-20T01:06:31.9134038Z [1m[92m   Compiling[0m oxc_span v0.130.0
+2026-10-20T01:06:31.9927697Z [1m[92m   Compiling[0m tracing v0.1.44
+2026-10-20T01:06:32.1577961Z [1m[92m   Compiling[0m crypto-common v0.1.7
+2026-10-20T01:06:32.1887774Z [1m[92m   Compiling[0m block-buffer v0.10.4
+2026-10-20T01:06:32.2397771Z [1m[92m   Compiling[0m num-integer v0.1.47
+2026-10-20T01:06:32.2845481Z [1m[92m   Compiling[0m getopts v0.2.24
+2026-10-20T01:06:32.5777840Z [1m[92m   Compiling[0m crossbeam-epoch v0.9.21
+2026-10-20T01:06:32.6208014Z [1m[92m   Compiling[0m unicode-id-start v1.5.0
+2026-10-20T01:06:32.6957873Z [1m[92m   Compiling[0m nonmax v0.5.5
+2026-10-20T01:06:32.7407779Z [1m[92m   Compiling[0m anyhow v1.0.104
+2026-10-20T01:06:32.9617538Z [1m[92m   Compiling[0m tiny-keccak v2.0.2
+2026-10-20T01:06:33.0773068Z [1m[92m   Compiling[0m oxc_index v4.1.0
+2026-10-20T01:06:33.0916875Z [1m[92m   Compiling[0m num-bigint v0.4.8
+2026-10-20T01:06:33.2247045Z [1m[92m   Compiling[0m unicode_names2_generator v1.3.0
+2026-10-20T01:06:33.4795862Z [1m[92m   Compiling[0m digest v0.10.7
+2026-10-20T01:06:33.8517736Z [1m[92m   Compiling[0m oxc_diagnostics v0.130.0
+2026-10-20T01:06:33.9497958Z [1m[92m   Compiling[0m tokio-macros v2.7.2
+2026-10-20T01:06:34.2177833Z [1m[92m   Compiling[0m memoffset v0.9.1
+2026-10-20T01:06:34.3436183Z [1m[92m   Compiling[0m crossbeam-deque v0.8.8
+2026-10-20T01:06:34.4994448Z [1m[92m   Compiling[0m unic-common v0.9.0
+2026-10-20T01:06:34.5428026Z [1m[92m   Compiling[0m parking_lot_core v0.9.12
+2026-10-20T01:06:34.5667840Z [1m[92m   Compiling[0m hashbrown v0.14.5
+2026-10-20T01:06:34.6987984Z [1m[92m   Compiling[0m unic-char-range v0.9.0
+2026-10-20T01:06:34.7707764Z [1m[92m   Compiling[0m heck v0.5.0
+2026-10-20T01:06:34.8020493Z [1m[92m   Compiling[0m bytes v1.12.1
+2026-10-20T01:06:34.8077464Z [1m[92m   Compiling[0m crc32fast v1.5.2
+2026-10-20T01:06:34.9503707Z [1m[92m   Compiling[0m cpufeatures v0.2.17
+2026-10-20T01:06:34.9841801Z [1m[92m   Compiling[0m getrandom v0.4.3
+2026-10-20T01:06:34.9986758Z [1m[92m   Compiling[0m sha2 v0.10.9
+2026-10-20T01:06:35.1627689Z [1m[92m   Compiling[0m is-macro v0.3.8
+2026-10-20T01:06:35.3167862Z [1m[92m   Compiling[0m unic-char-property v0.9.0
+2026-10-20T01:06:35.3767804Z [1m[92m   Compiling[0m tokio v1.53.2
+2026-10-20T01:06:35.3910674Z [1m[92m   Compiling[0m futures-executor v0.3.34
+2026-10-20T01:06:35.4718808Z [1m[92m   Compiling[0m unic-ucd-version v0.9.0
+2026-10-20T01:06:35.5798472Z [1m[92m   Compiling[0m oxc_regular_expression v0.130.0
+2026-10-20T01:06:35.5917796Z [1m[92m   Compiling[0m unicode_names2 v1.3.0
+2026-10-20T01:06:35.7847928Z [1m[92m   Compiling[0m oxc_syntax v0.130.0
+2026-10-20T01:06:36.4178082Z [1m[92m   Compiling[0m rustpython-parser-vendored v0.4.0
+2026-10-20T01:06:36.6638190Z [1m[92m   Compiling[0m serde_derive_internals v0.29.1
+2026-10-20T01:06:36.8197912Z [1m[92m   Compiling[0m rayon-core v1.13.0
+2026-10-20T01:06:36.9337863Z [1m[92m   Compiling[0m rustix v1.1.5
+2026-10-20T01:06:37.1867969Z [1m[92m   Compiling[0m rustc-hash v1.1.0
+2026-10-20T01:06:37.2427892Z [1m[92m   Compiling[0m simd-adler32 v0.3.10
+2026-10-20T01:06:37.2527611Z [1m[92m   Compiling[0m scopeguard v1.2.0
+2026-10-20T01:06:37.3031794Z [1m[92m   Compiling[0m httparse v1.10.1
+2026-10-20T01:06:37.4797912Z [1m[92m   Compiling[0m equivalent v1.0.2
+2026-10-20T01:06:37.5218962Z [1m[92m   Compiling[0m borrow-or-share v0.2.4
+2026-10-20T01:06:37.5341107Z [1m[92m   Compiling[0m unicode-properties v0.1.4
+2026-10-20T01:06:37.5757623Z [1m[92m   Compiling[0m fluent-uri v0.4.1
+2026-10-20T01:06:37.6069990Z [1m[92m   Compiling[0m schemars_derive v1.2.1
+2026-10-20T01:06:37.6247743Z [1m[92m   Compiling[0m ra-ap-rustc_lexer v0.166.0
+2026-10-20T01:06:38.2837806Z [1m[92m   Compiling[0m indexmap v2.14.2
+2026-10-20T01:06:38.4077536Z [1m[92m   Compiling[0m lock_api v0.4.14
+2026-10-20T01:06:38.6857914Z [1m[92m   Compiling[0m tokio-util v0.7.20
+2026-10-20T01:06:39.0478557Z [1m[92m   Compiling[0m phf v0.11.3
+2026-10-20T01:06:39.1738191Z [1m[92m   Compiling[0m rustpython-parser-core v0.4.0
+2026-10-20T01:06:39.1810223Z [1m[92m   Compiling[0m oxc_ast v0.130.0
+2026-10-20T01:06:39.2357883Z [1m[92m   Compiling[0m rustpython-parser v0.4.0
+2026-10-20T01:06:39.6277756Z [1m[92m   Compiling[0m futures v0.3.34
+2026-10-20T01:06:40.0957811Z [1m[92m   Compiling[0m itertools v0.15.0
+2026-10-20T01:06:40.1968008Z [1m[92m   Compiling[0m crossbeam-channel v0.5.17
+2026-10-20T01:06:40.6807752Z [1m[92m   Compiling[0m chrono v0.4.45
+2026-10-20T01:06:41.7357781Z [1m[92m   Compiling[0m errno v0.3.14
+2026-10-20T01:06:41.8117924Z [1m[92m   Compiling[0m sync_wrapper v1.0.2
+2026-10-20T01:06:41.8597783Z [1m[92m   Compiling[0m adler2 v2.0.1
+2026-10-20T01:06:41.8647732Z [1m[92m   Compiling[0m tower-layer v0.3.3
+2026-10-20T01:06:41.9377900Z [1m[92m   Compiling[0m jod-thread v1.0.0
+2026-10-20T01:06:41.9917898Z [1m[92m   Compiling[0m drop_bomb v0.1.5
+2026-10-20T01:06:42.0017547Z [1m[92m   Compiling[0m winnow v0.7.15
+2026-10-20T01:06:42.0607925Z [1m[92m   Compiling[0m linux-raw-sys v0.12.1
+2026-10-20T01:06:42.2717618Z [1m[92m   Compiling[0m ra_ap_edition v0.0.349
+2026-10-20T01:06:42.3618966Z [1m[92m   Compiling[0m text-size v1.1.1
+2026-10-20T01:06:42.4587791Z [1m[92m   Compiling[0m winnow v1.0.4
+2026-10-20T01:06:42.4755089Z [1m[92m   Compiling[0m signal-hook v0.3.18
+2026-10-20T01:06:42.5997812Z [1m[92m   Compiling[0m tower-service v0.3.3
+2026-10-20T01:06:42.6501693Z [1m[92m   Compiling[0m rmcp v3.5.1
+2026-10-20T01:06:42.8191675Z [1m[92m   Compiling[0m dyn-clone v1.0.20
+2026-10-20T01:06:42.8198202Z [1m[92m   Compiling[0m countme v3.0.1
+2026-10-20T01:06:42.9008025Z [1m[92m   Compiling[0m rustc-literal-escaper v0.0.7
+2026-10-20T01:06:42.9677899Z [1m[92m   Compiling[0m rowan v0.17.0
+2026-10-20T01:06:42.9887745Z [1m[92m   Compiling[0m schemars v1.2.1
+2026-10-20T01:06:43.7317851Z [1m[92m   Compiling[0m ra_ap_parser v0.0.349
+2026-10-20T01:06:44.8057926Z [1m[92m   Compiling[0m toml_parser v1.1.5+spec-1.1.0
+2026-10-20T01:06:45.5908111Z [1m[92m   Compiling[0m oxc_ecmascript v0.130.0
+2026-10-20T01:06:46.0547941Z [1m[92m   Compiling[0m tower v0.5.3
+2026-10-20T01:06:48.0099115Z [1m[92m   Compiling[0m ra_ap_stdx v0.0.349
+2026-10-20T01:06:48.2088030Z [1m[92m   Compiling[0m miniz_oxide v0.9.1
+2026-10-20T01:06:48.6791699Z [1m[92m   Compiling[0m signal-hook-registry v1.4.8
+2026-10-20T01:06:48.7261933Z [1m[92m   Compiling[0m uuid v1.26.0
+2026-10-20T01:06:48.8807898Z [1m[92m   Compiling[0m dashmap v6.2.1
+2026-10-20T01:06:48.9578215Z [1m[92m   Compiling[0m rustpython-ast v0.4.0
+2026-10-20T01:06:49.3707759Z [1m[92m   Compiling[0m ls-types v0.0.6
+2026-10-20T01:06:49.4029240Z [1m[92m   Compiling[0m unic-emoji-char v0.9.0
+2026-10-20T01:06:49.5566851Z [1m[92m   Compiling[0m unic-ucd-ident v0.9.0
+2026-10-20T01:06:49.7213257Z [1m[92m   Compiling[0m repo-policy v0.1.0 (/home/runner/work/ripr-swarm/ripr-swarm/tools/repo-policy)
+2026-10-20T01:06:49.7757886Z [1m[92m   Compiling[0m itertools v0.11.0
+2026-10-20T01:06:50.0564729Z [1m[92m   Compiling[0m toml_datetime v1.1.2+spec-1.1.0
+2026-10-20T01:06:50.3447860Z [1m[92m   Compiling[0m serde_spanned v1.1.2
+2026-10-20T01:06:50.4422747Z [1m[92m   Compiling[0m seq-macro v0.3.6
+2026-10-20T01:06:50.8257850Z [1m[92m   Compiling[0m triomphe v0.1.16
+2026-10-20T01:06:51.0858063Z [1m[92m   Compiling[0m toml_writer v1.1.3+spec-1.1.0
+2026-10-20T01:06:51.1247881Z [1m[92m   Compiling[0m smol_str v0.3.6
+2026-10-20T01:06:51.2474457Z [1m[92m   Compiling[0m bumpalo v3.20.3
+2026-10-20T01:06:51.2550099Z [1m[92m   Compiling[0m lalrpop-util v0.20.2
+2026-10-20T01:06:51.3898011Z [1m[92m   Compiling[0m ripr v0.11.0 (/home/runner/work/ripr-swarm/ripr-swarm/crates/ripr)
+2026-10-20T01:06:51.4478562Z [1m[92m   Compiling[0m pastey v0.2.3
+2026-10-20T01:06:51.4798078Z [1m[92m   Compiling[0m zlib-rs v0.6.8
+2026-10-20T01:06:52.2317753Z [1m[92m   Compiling[0m zopfli v0.8.3
+2026-10-20T01:06:56.3417771Z [1m[92m   Compiling[0m flate2 v1.1.10
+2026-10-20T01:06:56.8197926Z [1m[92m   Compiling[0m ra_ap_syntax v0.0.349
+2026-10-20T01:06:59.4088011Z [1m[92m   Compiling[0m toml v1.1.8+spec-1.1.0
+2026-10-20T01:06:59.9007738Z [1m[92m   Compiling[0m tower-lsp-server v0.23.0
+2026-10-20T01:07:01.0537653Z [1m[92m   Compiling[0m oxc_parser v0.130.0
+2026-10-20T01:07:01.8317768Z [1m[92m   Compiling[0m rayon v1.12.0
+2026-10-20T01:07:04.2737922Z [1m[92m   Compiling[0m xattr v1.6.1
+2026-10-20T01:07:04.5535696Z [1m[92m   Compiling[0m filetime v0.2.29
+2026-10-20T01:07:04.7147926Z [1m[92m   Compiling[0m fs2 v0.4.3
+2026-10-20T01:07:04.8207895Z [1m[92m   Compiling[0m typed-path v0.12.3
+2026-10-20T01:07:05.5687624Z [1m[92m   Compiling[0m home v0.5.12
+2026-10-20T01:07:06.2797968Z [1m[92m   Compiling[0m zip v9.0.3
+2026-10-20T01:07:07.8321576Z [1m[92m   Compiling[0m tar v0.4.46
+2026-10-20T01:08:31.0682001Z [1m[92m   Compiling[0m xtask v0.1.0 (/home/runner/work/ripr-swarm/ripr-swarm/xtask)
+2026-10-20T01:09:28.8373975Z [1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 3m 15s
+2026-10-20T01:09:28.8970081Z [1m[92m     Running[0m `target/debug/xtask check-release-targets`
+2026-10-20T01:09:28.9213825Z check-release-targets: pass (target/ripr/reports/release-targets.md)
+2026-10-20T01:09:28.9284810Z check-release-targets (distribution contract): pass (target/ripr/reports/distribution-contract.md)
+2026-10-20T01:09:29.1321342Z [1m[92m   Compiling[0m xtask v0.1.0 (/home/runner/work/ripr-swarm/ripr-swarm/xtask)
+2026-10-20T01:11:04.4453436Z [1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 1m 35s
+2026-10-20T01:11:04.4834638Z [1m[92m     Running[0m unittests src/main.rs (target/debug/deps/xtask-4506d76d7e4bca3a)
+2026-10-20T01:11:04.4903879Z 
+2026-10-20T01:11:04.4904229Z running 20 tests
+2026-10-20T01:11:04.4958309Z test policy::distribution::tests::npm_launcher_guarded_runner_rejects_missing_controls ... ok
+2026-10-20T01:11:04.4997499Z test policy::distribution::tests::independent_crate_version_is_rejected ... ok
+2026-10-20T01:11:04.4998817Z test policy::distribution::tests::duplicate_target_and_wrong_payload_are_rejected ... ok
+2026-10-20T01:11:04.5000056Z test policy::distribution::tests::missing_target_is_rejected ... ok
+2026-10-20T01:11:04.5023963Z test policy::distribution::tests::npm_launcher_source_guards_reject_removed_safety_rails ... ok
+2026-10-20T01:11:04.5025976Z test policy::distribution::tests::npm_license_copies_match_repository_notices ... ok
+2026-10-20T01:11:04.5027464Z test policy::distribution::tests::npm_license_copy_drift_is_rejected ... ok
+2026-10-20T01:11:04.5043739Z test policy::distribution::tests::python_adapter_rejects_feature_backend_and_target_drift ... ok
+2026-10-20T01:11:04.5061760Z test policy::distribution::tests::python_adapter_rejects_independent_version_and_compatibility_claim ... ok
+2026-10-20T01:11:04.5083497Z test policy::distribution::tests::python_adapter_rejects_unsafe_guidance_and_license_drift ... ok
+2026-10-20T01:11:04.5117400Z test policy::distribution::tests::npm_launcher_platform_and_install_script_drift_are_rejected ... ok
+2026-10-20T01:11:04.5137354Z test policy::distribution::tests::python_guidance_accepts_explicit_ripr_rs_commands ... ok
+2026-10-20T01:11:04.5197515Z test policy::distribution::tests::python_guidance_rejects_unsafe_install_command_variants ... ok
+2026-10-20T01:11:04.5217442Z test policy::distribution::tests::python_qualification_keeps_native_and_pep440_versions_distinct ... ok
+2026-10-20T01:11:04.5227690Z test policy::distribution::tests::npm_launcher_version_and_dependency_drift_are_rejected ... ok
+2026-10-20T01:11:04.5228967Z test policy::distribution::tests::python_qualification_requires_record_integrity_negative_control ... ok
+2026-10-20T01:11:04.5230208Z test policy::distribution::tests::valid_contract_matches_workspace_crate_and_npm_launcher ... ok
+2026-10-20T01:11:04.5231398Z test policy::distribution::tests::valid_python_adapter_matches_distribution_contract ... ok
+2026-10-20T01:11:04.5232408Z test policy::distribution::tests::stale_feature_contract_is_rejected ... ok
+2026-10-20T01:11:04.5304783Z test policy::distribution::tests::npm_launcher_rejects_all_install_time_lifecycle_hooks ... ok
+2026-10-20T01:11:04.5305257Z 
+2026-10-20T01:11:04.5305703Z test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 3931 filtered out; finished in 0.04s
+2026-10-20T01:11:04.5306750Z 
+2026-10-20T01:11:04.5333256Z [1m[92m     Running[0m tests/contabo_result_policy.rs (target/debug/deps/contabo_result_policy-56ae47bf79883c32)
+2026-10-20T01:11:04.5346620Z 
+2026-10-20T01:11:04.5346759Z running 0 tests
+2026-10-20T01:11:04.5347210Z 
+2026-10-20T01:11:04.5347672Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+2026-10-20T01:11:04.5348052Z 
+2026-10-20T01:11:04.5350242Z [1m[92m     Running[0m tests/executable_frontdoor.rs (target/debug/deps/executable_frontdoor-098d39ec9a9fe412)
+2026-10-20T01:11:04.5362823Z 
+2026-10-20T01:11:04.5363149Z running 0 tests
+2026-10-20T01:11:04.5363319Z 
+2026-10-20T01:11:04.5363585Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+2026-10-20T01:11:04.5363934Z 
+2026-10-20T01:11:04.5366759Z [1m[92m     Running[0m tests/hard_cut_admission_selftest.rs (target/debug/deps/hard_cut_admission_selftest-c6665d3d51b23fde)
+2026-10-20T01:11:04.5378533Z 
+2026-10-20T01:11:04.5378670Z running 0 tests
+2026-10-20T01:11:04.5378901Z 
+2026-10-20T01:11:04.5379524Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+2026-10-20T01:11:04.5380145Z 
+2026-10-20T01:11:04.5390267Z [1m[92m     Running[0m tests/help_hierarchy.rs (target/debug/deps/help_hierarchy-962ad8b51cb7e5ee)
+2026-10-20T01:11:04.5396852Z 
+2026-10-20T01:11:04.5397297Z running 0 tests
+2026-10-20T01:11:04.5397530Z 
+2026-10-20T01:11:04.5397966Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+2026-10-20T01:11:04.5398628Z 
+2026-10-20T01:11:04.5399312Z [1m[92m     Running[0m tests/policy_all.rs (target/debug/deps/policy_all-843416f4993f034d)
+2026-10-20T01:11:04.5410150Z 
+2026-10-20T01:11:04.5410388Z running 0 tests
+2026-10-20T01:11:04.5410636Z 
+2026-10-20T01:11:04.5411060Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+2026-10-20T01:11:04.5412050Z 
+2026-10-20T01:11:04.5413935Z [1m[92m     Running[0m tests/pr_readiness_workflow_contract.rs (target/debug/deps/pr_readiness_workflow_contract-cb5af2192bd96186)
+2026-10-20T01:11:04.5425643Z 
+2026-10-20T01:11:04.5425781Z running 0 tests
+2026-10-20T01:11:04.5428488Z 
+2026-10-20T01:11:04.5428943Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s
+2026-10-20T01:11:04.5429308Z 
+2026-10-20T01:11:04.5431118Z [1m[92m     Running[0m tests/ripr_help_process_contract.rs (target/debug/deps/ripr_help_process_contract-dd295dba23fb047a)
+2026-10-20T01:11:04.5441416Z 
+2026-10-20T01:11:04.5441559Z running 0 tests
+2026-10-20T01:11:04.5443871Z 
+2026-10-20T01:11:04.5444330Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+2026-10-20T01:11:04.5444931Z 
+2026-10-20T01:11:04.5445908Z [1m[92m     Running[0m tests/ripr_public_guide_contract.rs (target/debug/deps/ripr_public_guide_contract-7205cd297e6e5b7b)
+2026-10-20T01:11:04.5457520Z 
+2026-10-20T01:11:04.5457748Z running 0 tests
+2026-10-20T01:11:04.5458009Z 
+2026-10-20T01:11:04.5458278Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.00s
+2026-10-20T01:11:04.5458643Z 
+2026-10-20T01:11:04.5461328Z [1m[92m     Running[0m tests/routed_dispatch_result.rs (target/debug/deps/routed_dispatch_result-44f6ddba05de30bb)
+2026-10-20T01:11:04.5472790Z 
+2026-10-20T01:11:04.5472941Z running 0 tests
+2026-10-20T01:11:04.5475177Z 
+2026-10-20T01:11:04.5475656Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+2026-10-20T01:11:04.5477714Z [1m[92m     Running[0m tests/rust_gate_workflow_contract.rs (target/debug/deps/rust_gate_workflow_contract-8b0a858eba2809e3)
+2026-10-20T01:11:04.5478191Z 
+2026-10-20T01:11:04.5488010Z 
+2026-10-20T01:11:04.5488150Z running 0 tests
+2026-10-20T01:11:04.5488444Z 
+2026-10-20T01:11:04.5488796Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.00s
+2026-10-20T01:11:04.5489168Z 
+2026-10-20T01:11:04.5491696Z [1m[92m     Running[0m tests/spec_format_determinism.rs (target/debug/deps/spec_format_determinism-a85a15f17d82fe1b)
+2026-10-20T01:11:04.5503098Z 
+2026-10-20T01:11:04.5503254Z running 0 tests
+2026-10-20T01:11:04.5505522Z 
+2026-10-20T01:11:04.5505963Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+2026-10-20T01:11:04.5507099Z 
+2026-10-20T01:11:04.5507895Z [1m[92m     Running[0m tests/spec_template_contract.rs (target/debug/deps/spec_template_contract-926a93d2d6a78491)
+2026-10-20T01:11:04.5518324Z 
+2026-10-20T01:11:04.5518499Z running 0 tests
+2026-10-20T01:11:04.5518729Z 
+2026-10-20T01:11:04.5519191Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+2026-10-20T01:11:04.5519797Z 
+2026-10-20T01:11:04.5521242Z [1m[92m     Running[0m tests/support_tier_fast_route.rs (target/debug/deps/support_tier_fast_route-ceacc0b18184d04a)
+2026-10-20T01:11:04.5533205Z 
+2026-10-20T01:11:04.5533402Z running 0 tests
+2026-10-20T01:11:04.5535393Z 
+2026-10-20T01:11:04.5535857Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+2026-10-20T01:11:04.5536706Z 
+2026-10-20T01:11:04.5537838Z [1m[92m     Running[0m tests/windows_advisory_identity.rs (target/debug/deps/windows_advisory_identity-fea72c404230feb1)
+2026-10-20T01:11:04.5549020Z 
+2026-10-20T01:11:04.5549191Z running 0 tests
+2026-10-20T01:11:04.5551254Z 
+2026-10-20T01:11:04.5551731Z test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 56 filtered out; finished in 0.00s
+2026-10-20T01:11:04.5552417Z 
+2026-10-20T01:11:04.5649755Z ##[group]Run set -euo pipefail
+2026-10-20T01:11:04.5650110Z [36;1mset -euo pipefail[0m
+2026-10-20T01:11:04.5650497Z [36;1mpython="${GITHUB_WORKSPACE}/target/ripr/python-build/venv/bin/python"[0m
+2026-10-20T01:11:04.5651051Z [36;1mpython_version="$(RIPR_NATIVE_VERSION="${RIPR_NATIVE_VERSION}" "${python}" - <<'PY'[0m
+2026-10-20T01:11:04.5651468Z [36;1mimport os[0m
+2026-10-20T01:11:04.5651901Z [36;1mfrom packaging.version import Version[0m
+2026-10-20T01:11:04.5652177Z [36;1m[0m
+2026-10-20T01:11:04.5652359Z [36;1mcases = {[0m
+2026-10-20T01:11:04.5652560Z [36;1m    "0.11.0": "0.11.0",[0m
+2026-10-20T01:11:04.5652807Z [36;1m    "0.11.0-alpha.1": "0.11.0a1",[0m
+2026-10-20T01:11:04.5653081Z [36;1m    "0.11.0-beta.2": "0.11.0b2",[0m
+2026-10-20T01:11:04.5653346Z [36;1m    "0.11.0-rc.1": "0.11.0rc1",[0m
+2026-10-20T01:11:04.5653583Z [36;1m}[0m
+2026-10-20T01:11:04.5653800Z [36;1mfor native, expected in cases.items():[0m
+2026-10-20T01:11:04.5654139Z [36;1m    actual = Version(native).public[0m
+2026-10-20T01:11:04.5654503Z [36;1m    assert actual == expected, (native, actual, expected)[0m
+2026-10-20T01:11:04.5654827Z [36;1m[0m
+2026-10-20T01:11:04.5655088Z [36;1mprint(Version(os.environ["RIPR_NATIVE_VERSION"]).public)[0m
+2026-10-20T01:11:04.5655412Z [36;1mPY[0m
+2026-10-20T01:11:04.5655587Z [36;1m)"[0m
+2026-10-20T01:11:04.5655782Z [36;1mtest -n "${python_version}"[0m
+2026-10-20T01:11:04.5656135Z [36;1mecho "python_version=${python_version}" >> "${GITHUB_OUTPUT}"[0m
+2026-10-20T01:11:04.5657203Z [36;1mecho "RIPR_PYTHON_VERSION=${python_version}" >> "${GITHUB_ENV}"[0m
+2026-10-20T01:11:04.5727287Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T01:11:04.5727622Z env:
+2026-10-20T01:11:04.5727866Z   CANDIDATE_SHA: 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:11:04.5728200Z   RUST_TARGET: x86_64-unknown-linux-gnu
+2026-10-20T01:11:04.5728470Z   MATURIN_VERSION: 1.14.1
+2026-10-20T01:11:04.5728686Z   TWINE_VERSION: 7.0.0
+2026-10-20T01:11:04.5728897Z   UV_VERSION: 0.12.19
+2026-10-20T01:11:04.5729101Z   PIP_VERSION: 26.2.1
+2026-10-20T01:11:04.5729314Z   PACKAGING_VERSION: 26.3
+2026-10-20T01:11:04.5729550Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T01:11:04.5729790Z   CARGO_INCREMENTAL: 0
+2026-10-20T01:11:04.5730006Z   CARGO_TERM_COLOR: always
+2026-10-20T01:11:04.5730226Z   RIPR_NATIVE_VERSION: 0.11.0
+2026-10-20T01:11:04.5730454Z ##[endgroup]
+2026-10-20T01:11:04.6081558Z ##[group]Run set -euo pipefail
+2026-10-20T01:11:04.6081888Z [36;1mset -euo pipefail[0m
+2026-10-20T01:11:04.6082263Z [36;1mpython="${GITHUB_WORKSPACE}/target/ripr/python-build/venv/bin/python"[0m
+2026-10-20T01:11:04.6082671Z [36;1mcd packaging/python[0m
+2026-10-20T01:11:04.6082977Z [36;1m"${python}" -m maturin build \[0m
+2026-10-20T01:11:04.6083247Z [36;1m  --release \[0m
+2026-10-20T01:11:04.6083481Z [36;1m  --target "${RUST_TARGET}" \[0m
+2026-10-20T01:11:04.6083755Z [36;1m  --compatibility linux \[0m
+2026-10-20T01:11:04.6084147Z [36;1m  --out "${GITHUB_WORKSPACE}/target/ripr/python-wheel-evidence/wheelhouse"[0m
+2026-10-20T01:11:04.6084917Z [36;1mmapfile -t wheels < <(find "${GITHUB_WORKSPACE}/target/ripr/python-wheel-evidence/wheelhouse" -maxdepth 1 -type f -name '*.whl' -print | sort)[0m
+2026-10-20T01:11:04.6085573Z [36;1mtest "${#wheels[@]}" = "1"[0m
+2026-10-20T01:11:04.6086040Z [36;1mtest "$(basename "${wheels[0]}")" = "ripr_rs-${RIPR_PYTHON_VERSION}-py3-none-linux_x86_64.whl"[0m
+2026-10-20T01:11:04.6087181Z [36;1mtest -z "$(find "${GITHUB_WORKSPACE}/target/ripr/python-wheel-evidence/wheelhouse" -maxdepth 1 -type f ! -name '*.whl' -print -quit)"[0m
+2026-10-20T01:11:04.6154704Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T01:11:04.6155037Z env:
+2026-10-20T01:11:04.6155282Z   CANDIDATE_SHA: 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:11:04.6155611Z   RUST_TARGET: x86_64-unknown-linux-gnu
+2026-10-20T01:11:04.6155874Z   MATURIN_VERSION: 1.14.1
+2026-10-20T01:11:04.6156087Z   TWINE_VERSION: 7.0.0
+2026-10-20T01:11:04.6156298Z   UV_VERSION: 0.12.19
+2026-10-20T01:11:04.6156725Z   PIP_VERSION: 26.2.1
+2026-10-20T01:11:04.6156935Z   PACKAGING_VERSION: 26.3
+2026-10-20T01:11:04.6157164Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T01:11:04.6157404Z   CARGO_INCREMENTAL: 0
+2026-10-20T01:11:04.6157614Z   CARGO_TERM_COLOR: always
+2026-10-20T01:11:04.6157841Z   RIPR_NATIVE_VERSION: 0.11.0
+2026-10-20T01:11:04.6158287Z   RIPR_PYTHON_VERSION: 0.11.0
+2026-10-20T01:11:04.6158509Z ##[endgroup]
+2026-10-20T01:11:04.7697545Z [1m[92m Downloading[0m crates ...
+2026-10-20T01:11:04.8530234Z [1m[92m  Downloaded[0m bit-set v0.8.0
+2026-10-20T01:11:04.8565349Z [1m[92m  Downloaded[0m rand v0.9.5
+2026-10-20T01:11:04.8657361Z [1m[92m  Downloaded[0m serial_test v4.0.1
+2026-10-20T01:11:04.8678742Z [1m[92m  Downloaded[0m unarray v0.1.4
+2026-10-20T01:11:04.8701723Z [1m[92m  Downloaded[0m parking_lot v0.12.5
+2026-10-20T01:11:04.8737395Z [1m[92m  Downloaded[0m rand_core v0.9.5
+2026-10-20T01:11:04.8758855Z [1m[92m  Downloaded[0m getrandom v0.3.4
+2026-10-20T01:11:04.8805297Z [1m[92m  Downloaded[0m rand_xorshift v0.4.0
+2026-10-20T01:11:04.8820573Z [1m[92m  Downloaded[0m wait-timeout v0.2.1
+2026-10-20T01:11:04.8840093Z [1m[92m  Downloaded[0m bit-vec v0.8.0
+2026-10-20T01:11:04.8860435Z [1m[92m  Downloaded[0m serial_test_derive v4.0.1
+2026-10-20T01:11:04.8870677Z [1m[92m  Downloaded[0m regex-syntax v0.8.11
+2026-10-20T01:11:04.8944882Z [1m[92m  Downloaded[0m tempfile v3.27.0
+2026-10-20T01:11:04.8973178Z [1m[92m  Downloaded[0m proptest v1.11.0
+2026-10-20T01:11:04.9079020Z [1m[92m  Downloaded[0m fnv v1.0.7
+2026-10-20T01:11:04.9088890Z [1m[92m  Downloaded[0m rand_chacha v0.9.0
+2026-10-20T01:11:04.9102248Z [1m[92m  Downloaded[0m nix v0.31.3
+2026-10-20T01:11:04.9236211Z [1m[92m  Downloaded[0m mio v1.2.3
+2026-10-20T01:11:04.9304605Z [1m[92m  Downloaded[0m tokio-stream v0.1.19
+2026-10-20T01:11:04.9367009Z [1m[92m  Downloaded[0m quick-error v1.2.3
+2026-10-20T01:11:04.9380814Z [1m[92m  Downloaded[0m rusty-fork v0.3.1
+2026-10-20T01:11:05.0133517Z 🔗 Found bin bindings
+2026-10-20T01:11:05.0134357Z 📡 Using build options features, locked, bindings from pyproject.toml
+2026-10-20T01:11:05.0135276Z 🎯 Found 1 Cargo targets in `Cargo.toml`: ripr
+2026-10-20T01:11:05.2663556Z [1m[92m   Compiling[0m proc-macro2 v1.0.107
+2026-10-20T01:11:05.2664693Z [1m[92m   Compiling[0m unicode-ident v1.0.24
+2026-10-20T01:11:05.2666709Z [1m[92m   Compiling[0m quote v1.0.47
+2026-10-20T01:11:05.2667255Z [1m[92m   Compiling[0m siphasher v1.0.3
+2026-10-20T01:11:05.3399596Z [1m[92m   Compiling[0m stable_deref_trait v1.2.1
+2026-10-20T01:11:05.3802768Z [1m[92m   Compiling[0m serde_core v1.0.229
+2026-10-20T01:11:05.4057842Z [1m[92m   Compiling[0m cfg-if v1.0.5
+2026-10-20T01:11:05.4361048Z [1m[92m   Compiling[0m autocfg v1.5.1
+2026-10-20T01:11:05.4410100Z [1m[92m   Compiling[0m memchr v2.8.3
+2026-10-20T01:11:05.7813813Z [1m[92m   Compiling[0m writeable v0.6.4
+2026-10-20T01:11:06.2335066Z [1m[92m   Compiling[0m libc v0.2.190
+2026-10-20T01:11:06.3818037Z [1m[92m   Compiling[0m syn v3.0.6
+2026-10-20T01:11:06.4310359Z [1m[92m   Compiling[0m syn v2.0.119
+2026-10-20T01:11:06.9546773Z [1m[92m   Compiling[0m smallvec v1.16.1
+2026-10-20T01:11:07.1747854Z [1m[92m   Compiling[0m zerocopy v0.8.57
+2026-10-20T01:11:08.6717881Z [1m[92m   Compiling[0m itoa v1.0.18
+2026-10-20T01:11:08.8657014Z [1m[92m   Compiling[0m icu_locale_fallback_data v2.3.0
+2026-10-20T01:11:08.9745074Z [1m[92m   Compiling[0m litemap v0.8.3
+2026-10-20T01:11:09.2187946Z [1m[92m   Compiling[0m getrandom v0.2.17
+2026-10-20T01:11:09.5837703Z [1m[92m   Compiling[0m serde v1.0.229
+2026-10-20T01:11:09.7717915Z [1m[92m   Compiling[0m icu_segmenter_data v2.3.0
+2026-10-20T01:11:09.8767414Z [1m[92m   Compiling[0m pin-project-lite v0.2.17
+2026-10-20T01:11:09.9220479Z [1m[92m   Compiling[0m once_cell v1.21.4
+2026-10-20T01:11:10.0947943Z [1m[92m   Compiling[0m synstructure v0.14.0
+2026-10-20T01:11:10.6797817Z [1m[92m   Compiling[0m rand_core v0.6.4
+2026-10-20T01:11:10.8877905Z [1m[92m   Compiling[0m num-traits v0.2.19
+2026-10-20T01:11:10.9887747Z [1m[92m   Compiling[0m phf_shared v0.13.1
+2026-10-20T01:11:11.2187874Z [1m[92m   Compiling[0m crossbeam-utils v0.8.23
+2026-10-20T01:11:11.4097904Z [1m[92m   Compiling[0m rustversion v1.0.23
+2026-10-20T01:11:11.6974606Z [1m[92m   Compiling[0m utf8_iter v1.0.4
+2026-10-20T01:11:11.7418202Z [1m[92m   Compiling[0m zerofrom-derive v0.1.8
+2026-10-20T01:11:11.7929509Z [1m[92m   Compiling[0m yoke-derive v0.8.4
+2026-10-20T01:11:11.8085374Z [1m[92m   Compiling[0m zerovec-derive v0.11.6
+2026-10-20T01:11:12.7570130Z [1m[92m   Compiling[0m displaydoc v0.2.7
+2026-10-20T01:11:12.8827606Z [1m[92m   Compiling[0m serde_derive v1.0.229
+2026-10-20T01:11:12.9037729Z [1m[92m   Compiling[0m zerofrom v0.1.8
+2026-10-20T01:11:12.9968316Z [1m[92m   Compiling[0m yoke v0.8.3
+2026-10-20T01:11:13.1697808Z [1m[92m   Compiling[0m zerovec v0.11.8
+2026-10-20T01:11:13.3670320Z [1m[92m   Compiling[0m zerotrie v0.2.5
+2026-10-20T01:11:13.5375119Z [1m[92m   Compiling[0m ppv-lite86 v0.2.21
+2026-10-20T01:11:13.9458291Z [1m[92m   Compiling[0m thiserror v2.0.20
+2026-10-20T01:11:14.1798114Z [1m[92m   Compiling[0m allocator-api2 v0.2.21
+2026-10-20T01:11:14.4505169Z [1m[92m   Compiling[0m tinystr v0.8.4
+2026-10-20T01:11:14.4531855Z [1m[92m   Compiling[0m potential_utf v0.1.6
+2026-10-20T01:11:14.5792661Z [1m[92m   Compiling[0m icu_collections v2.3.0
+2026-10-20T01:11:14.6201984Z [1m[92m   Compiling[0m icu_locale_core v2.3.0
+2026-10-20T01:11:14.6309367Z [1m[92m   Compiling[0m hashbrown v0.17.1
+2026-10-20T01:11:15.2533872Z [1m[92m   Compiling[0m rand_chacha v0.3.1
+2026-10-20T01:11:15.3987969Z [1m[92m   Compiling[0m thiserror-impl v2.0.20
+2026-10-20T01:11:16.0210163Z [1m[92m   Compiling[0m icu_provider v2.3.1
+2026-10-20T01:11:16.6120534Z [1m[92m   Compiling[0m icu_locale_fallback v2.3.0
+2026-10-20T01:11:16.8917876Z [1m[92m   Compiling[0m static_assertions v1.1.0
+2026-10-20T01:11:16.9308383Z [1m[92m   Compiling[0m icu_segmenter v2.3.0
+2026-10-20T01:11:17.9201227Z [1m[92m   Compiling[0m rand v0.8.8
+2026-10-20T01:11:17.9787107Z [1m[92m   Compiling[0m phf_shared v0.11.3
+2026-10-20T01:11:18.0878089Z [1m[92m   Compiling[0m smawk v0.3.3
+2026-10-20T01:11:18.1108068Z [1m[92m   Compiling[0m rustc-hash v2.1.3
+2026-10-20T01:11:18.1173405Z [1m[92m   Compiling[0m unicode-width v0.2.2
+2026-10-20T01:11:18.1784999Z [1m[92m   Compiling[0m castaway v0.2.4
+2026-10-20T01:11:18.1927853Z [1m[92m   Compiling[0m oxc-miette-derive v2.7.1
+2026-10-20T01:11:18.2447788Z [1m[92m   Compiling[0m fastrand v2.5.0
+2026-10-20T01:11:18.3623440Z [1m[92m   Compiling[0m textwrap v0.16.4
+2026-10-20T01:11:18.3677690Z [1m[92m   Compiling[0m futures-core v0.3.34
+2026-10-20T01:11:18.4617960Z [1m[92m   Compiling[0m unicode-segmentation v1.13.3
+2026-10-20T01:11:18.6167719Z [1m[92m   Compiling[0m phf_generator v0.11.3
+2026-10-20T01:11:18.7718312Z [1m[92m   Compiling[0m ryu v1.0.23
+2026-10-20T01:11:18.9484156Z [1m[92m   Compiling[0m oxc_data_structures v0.130.0
+2026-10-20T01:11:19.0763868Z [1m[92m   Compiling[0m futures-sink v0.3.34
+2026-10-20T01:11:19.1478171Z [1m[92m   Compiling[0m owo-colors v4.4.0
+2026-10-20T01:11:19.1578013Z [1m[92m   Compiling[0m oxc_allocator v0.130.0
+2026-10-20T01:11:19.3393871Z [1m[92m   Compiling[0m compact_str v0.9.1
+2026-10-20T01:11:19.6567746Z [1m[92m   Compiling[0m phf_codegen v0.11.3
+2026-10-20T01:11:19.7347905Z [1m[92m   Compiling[0m phf_generator v0.13.1
+2026-10-20T01:11:19.8408054Z [1m[92m   Compiling[0m phf v0.13.1
+2026-10-20T01:11:19.8844073Z [1m[92m   Compiling[0m version_check v0.9.5
+2026-10-20T01:11:19.9557974Z [1m[92m   Compiling[0m zmij v1.0.23
+2026-10-20T01:11:20.1209962Z [1m[92m   Compiling[0m oxc-miette v2.7.1
+2026-10-20T01:11:20.1327855Z [1m[92m   Compiling[0m oxc_estree v0.130.0
+2026-10-20T01:11:20.1671595Z [1m[92m   Compiling[0m percent-encoding v2.3.2
+2026-10-20T01:11:20.2163280Z [1m[92m   Compiling[0m bitflags v2.13.2
+2026-10-20T01:11:20.2411851Z [1m[92m   Compiling[0m ref-cast v1.0.27
+2026-10-20T01:11:20.3270571Z [1m[92m   Compiling[0m oxc_str v0.130.0
+2026-10-20T01:11:20.4408087Z [1m[92m   Compiling[0m generic-array v0.14.7
+2026-10-20T01:11:20.5147311Z [1m[92m   Compiling[0m oxc_ast_macros v0.130.0
+2026-10-20T01:11:20.5215423Z [1m[92m   Compiling[0m phf_macros v0.13.1
+2026-10-20T01:11:20.5357194Z [1m[92m   Compiling[0m futures-channel v0.3.34
+2026-10-20T01:11:20.9277834Z [1m[92m   Compiling[0m ref-cast-impl v1.0.27
+2026-10-20T01:11:21.0648384Z [1m[92m   Compiling[0m futures-macro v0.3.34
+2026-10-20T01:11:21.1698034Z [1m[92m   Compiling[0m tracing-attributes v0.1.31
+2026-10-20T01:11:21.3310136Z [1m[92m   Compiling[0m tracing-core v0.1.36
+2026-10-20T01:11:21.8097772Z [1m[92m   Compiling[0m crunchy v0.2.4
+2026-10-20T01:11:21.9582633Z [1m[92m   Compiling[0m cow-utils v0.1.3
+2026-10-20T01:11:22.0900496Z [1m[92m   Compiling[0m futures-task v0.3.34
+2026-10-20T01:11:22.1624683Z [1m[92m   Compiling[0m dragonbox_ecma v0.1.12
+2026-10-20T01:11:22.2126957Z [1m[92m   Compiling[0m either v1.18.0
+2026-10-20T01:11:22.3294629Z [1m[92m   Compiling[0m serde_json v1.0.151
+2026-10-20T01:11:22.3689392Z [1m[92m   Compiling[0m futures-io v0.3.34
+2026-10-20T01:11:22.3698161Z [1m[92m   Compiling[0m slab v0.4.12
+2026-10-20T01:11:22.4502744Z [1m[92m   Compiling[0m tracing v0.1.44
+2026-10-20T01:11:22.5147887Z [1m[92m   Compiling[0m futures-util v0.3.34
+2026-10-20T01:11:22.6657898Z [1m[92m   Compiling[0m getopts v0.2.24
+2026-10-20T01:11:22.7200025Z [1m[92m   Compiling[0m oxc_span v0.130.0
+2026-10-20T01:11:22.9998281Z [1m[92m   Compiling[0m num-integer v0.1.47
+2026-10-20T01:11:23.0547882Z [1m[92m   Compiling[0m unicode-id-start v1.5.0
+2026-10-20T01:11:23.0662316Z [1m[92m   Compiling[0m log v0.4.34
+2026-10-20T01:11:23.1188581Z [1m[92m   Compiling[0m anyhow v1.0.104
+2026-10-20T01:11:23.2027414Z [1m[92m   Compiling[0m crossbeam-epoch v0.9.21
+2026-10-20T01:11:23.3073159Z [1m[92m   Compiling[0m typenum v1.20.1
+2026-10-20T01:11:23.3458233Z [1m[92m   Compiling[0m nonmax v0.5.5
+2026-10-20T01:11:23.3997522Z [1m[92m   Compiling[0m tiny-keccak v2.0.2
+2026-10-20T01:11:23.5638051Z [1m[92m   Compiling[0m num-bigint v0.4.8
+2026-10-20T01:11:23.6667757Z [1m[92m   Compiling[0m oxc_index v4.1.0
+2026-10-20T01:11:24.1838189Z [1m[92m   Compiling[0m unicode_names2_generator v1.3.0
+2026-10-20T01:11:25.0735481Z [1m[92m   Compiling[0m oxc_diagnostics v0.130.0
+2026-10-20T01:11:25.7857833Z [1m[92m   Compiling[0m tokio-macros v2.7.2
+2026-10-20T01:11:25.8137497Z [1m[92m   Compiling[0m memoffset v0.9.1
+2026-10-20T01:11:25.9173361Z [1m[92m   Compiling[0m bytes v1.12.1
+2026-10-20T01:11:26.3402211Z [1m[92m   Compiling[0m parking_lot_core v0.9.12
+2026-10-20T01:11:26.3797776Z [1m[92m   Compiling[0m unic-char-range v0.9.0
+2026-10-20T01:11:26.4511254Z [1m[92m   Compiling[0m heck v0.5.0
+2026-10-20T01:11:26.4766770Z [1m[92m   Compiling[0m getrandom v0.4.3
+2026-10-20T01:11:26.6137053Z [1m[92m   Compiling[0m hashbrown v0.14.5
+2026-10-20T01:11:26.6257810Z [1m[92m   Compiling[0m crossbeam-deque v0.8.8
+2026-10-20T01:11:26.7006093Z [1m[92m   Compiling[0m unic-common v0.9.0
+2026-10-20T01:11:26.7447591Z [1m[92m   Compiling[0m unic-ucd-version v0.9.0
+2026-10-20T01:11:26.7549702Z [1m[92m   Compiling[0m is-macro v0.3.8
+2026-10-20T01:11:26.7776017Z [1m[92m   Compiling[0m tokio v1.53.2
+2026-10-20T01:11:26.7887657Z [1m[92m   Compiling[0m unic-char-property v0.9.0
+2026-10-20T01:11:26.9017795Z [1m[92m   Compiling[0m futures-executor v0.3.34
+2026-10-20T01:11:27.1777704Z [1m[92m   Compiling[0m oxc_regular_expression v0.130.0
+2026-10-20T01:11:27.2499074Z [1m[92m   Compiling[0m oxc_syntax v0.130.0
+2026-10-20T01:11:27.4998112Z [1m[92m   Compiling[0m unicode_names2 v1.3.0
+2026-10-20T01:11:28.3328017Z [1m[92m   Compiling[0m rustpython-parser-vendored v0.4.0
+2026-10-20T01:11:28.4570413Z [1m[92m   Compiling[0m serde_derive_internals v0.29.1
+2026-10-20T01:11:28.6488034Z [1m[92m   Compiling[0m unicode-properties v0.1.4
+2026-10-20T01:11:28.7548026Z [1m[92m   Compiling[0m rustc-hash v1.1.0
+2026-10-20T01:11:28.8147735Z [1m[92m   Compiling[0m scopeguard v1.2.0
+2026-10-20T01:11:28.8717913Z [1m[92m   Compiling[0m rayon-core v1.13.0
+2026-10-20T01:11:28.9587396Z [1m[92m   Compiling[0m httparse v1.10.1
+2026-10-20T01:11:29.1808026Z [1m[92m   Compiling[0m borrow-or-share v0.2.4
+2026-10-20T01:11:29.3027858Z [1m[92m   Compiling[0m ra-ap-rustc_lexer v0.166.0
+2026-10-20T01:11:29.3117476Z [1m[92m   Compiling[0m fluent-uri v0.4.1
+2026-10-20T01:11:29.3960904Z [1m[92m   Compiling[0m schemars_derive v1.2.1
+2026-10-20T01:11:29.8307986Z [1m[92m   Compiling[0m lock_api v0.4.14
+2026-10-20T01:11:30.0517851Z [1m[92m   Compiling[0m rustpython-parser-core v0.4.0
+2026-10-20T01:11:30.2310656Z [1m[92m   Compiling[0m phf v0.11.3
+2026-10-20T01:11:30.4306318Z [1m[92m   Compiling[0m oxc_ast v0.130.0
+2026-10-20T01:11:30.5636233Z [1m[92m   Compiling[0m tokio-util v0.7.20
+2026-10-20T01:11:30.9368074Z [1m[92m   Compiling[0m rustpython-parser v0.4.0
+2026-10-20T01:11:31.3022029Z [1m[92m   Compiling[0m futures v0.3.34
+2026-10-20T01:11:31.7688172Z [1m[92m   Compiling[0m block-buffer v0.10.4
+2026-10-20T01:11:31.8648052Z [1m[92m   Compiling[0m crypto-common v0.1.7
+2026-10-20T01:11:31.9408115Z [1m[92m   Compiling[0m itertools v0.15.0
+2026-10-20T01:11:32.6567695Z [1m[92m   Compiling[0m chrono v0.4.45
+2026-10-20T01:11:33.2987963Z [1m[92m   Compiling[0m crossbeam-channel v0.5.17
+2026-10-20T01:11:33.7884625Z [1m[92m   Compiling[0m errno v0.3.14
+2026-10-20T01:11:33.8904752Z [1m[92m   Compiling[0m winnow v1.0.4
+2026-10-20T01:11:33.9411659Z [1m[92m   Compiling[0m equivalent v1.0.2
+2026-10-20T01:11:33.9829339Z [1m[92m   Compiling[0m tower-layer v0.3.3
+2026-10-20T01:11:34.1726178Z [1m[92m   Compiling[0m drop_bomb v0.1.5
+2026-10-20T01:11:34.2521225Z [1m[92m   Compiling[0m sync_wrapper v1.0.2
+2026-10-20T01:11:34.3008151Z [1m[92m   Compiling[0m rustc-literal-escaper v0.0.7
+2026-10-20T01:11:34.3107536Z [1m[92m   Compiling[0m rmcp v3.5.1
+2026-10-20T01:11:34.4078007Z [1m[92m   Compiling[0m text-size v1.1.1
+2026-10-20T01:11:34.4588096Z [1m[92m   Compiling[0m tower-service v0.3.3
+2026-10-20T01:11:34.5088028Z [1m[92m   Compiling[0m signal-hook v0.3.18
+2026-10-20T01:11:34.5191611Z [1m[92m   Compiling[0m countme v3.0.1
+2026-10-20T01:11:34.5828015Z [1m[92m   Compiling[0m winnow v0.7.15
+2026-10-20T01:11:34.5967049Z [1m[92m   Compiling[0m dyn-clone v1.0.20
+2026-10-20T01:11:34.6818274Z [1m[92m   Compiling[0m ra_ap_edition v0.0.349
+2026-10-20T01:11:34.6901727Z [1m[92m   Compiling[0m jod-thread v1.0.0
+2026-10-20T01:11:34.7478800Z [1m[92m   Compiling[0m ra_ap_stdx v0.0.349
+2026-10-20T01:11:34.7727827Z [1m[92m   Compiling[0m schemars v1.2.1
+2026-10-20T01:11:36.0920028Z [1m[92m   Compiling[0m rowan v0.17.0
+2026-10-20T01:11:36.7030687Z [1m[92m   Compiling[0m ra_ap_parser v0.0.349
+2026-10-20T01:11:37.7163286Z [1m[92m   Compiling[0m oxc_ecmascript v0.130.0
+2026-10-20T01:11:37.8311499Z [1m[92m   Compiling[0m tower v0.5.3
+2026-10-20T01:11:38.2527961Z [1m[92m   Compiling[0m toml_parser v1.1.5+spec-1.1.0
+2026-10-20T01:11:38.2557672Z [1m[92m   Compiling[0m indexmap v2.14.2
+2026-10-20T01:11:38.5178164Z [1m[92m   Compiling[0m signal-hook-registry v1.4.8
+2026-10-20T01:11:39.2478038Z [1m[92m   Compiling[0m digest v0.10.7
+2026-10-20T01:11:39.2929879Z [1m[92m   Compiling[0m uuid v1.26.0
+2026-10-20T01:11:39.4229051Z [1m[92m   Compiling[0m dashmap v6.2.1
+2026-10-20T01:11:39.8394942Z [1m[92m   Compiling[0m rustpython-ast v0.4.0
+2026-10-20T01:11:39.9815568Z [1m[92m   Compiling[0m ls-types v0.0.6
+2026-10-20T01:11:40.7045123Z [1m[92m   Compiling[0m unic-ucd-ident v0.9.0
+2026-10-20T01:11:40.8698088Z [1m[92m   Compiling[0m unic-emoji-char v0.9.0
+2026-10-20T01:11:40.9557804Z [1m[92m   Compiling[0m itertools v0.11.0
+2026-10-20T01:11:41.0762171Z [1m[92m   Compiling[0m toml_datetime v1.1.2+spec-1.1.0
+2026-10-20T01:11:41.4165017Z [1m[92m   Compiling[0m serde_spanned v1.1.2
+2026-10-20T01:11:41.5157990Z [1m[92m   Compiling[0m smol_str v0.3.6
+2026-10-20T01:11:41.7887928Z [1m[92m   Compiling[0m cpufeatures v0.2.17
+2026-10-20T01:11:41.8239804Z [1m[92m   Compiling[0m seq-macro v0.3.6
+2026-10-20T01:11:42.3392530Z [1m[92m   Compiling[0m pastey v0.2.3
+2026-10-20T01:11:42.4867964Z [1m[92m   Compiling[0m toml_writer v1.1.3+spec-1.1.0
+2026-10-20T01:11:42.6782785Z [1m[92m   Compiling[0m lalrpop-util v0.20.2
+2026-10-20T01:11:42.7505637Z [1m[92m   Compiling[0m ripr v0.11.0 (/home/runner/work/ripr-swarm/ripr-swarm/crates/ripr)
+2026-10-20T01:11:42.8156655Z [1m[92m   Compiling[0m triomphe v0.1.16
+2026-10-20T01:11:43.1021328Z [1m[92m   Compiling[0m ra_ap_syntax v0.0.349
+2026-10-20T01:11:52.0997880Z [1m[92m   Compiling[0m tower-lsp-server v0.23.0
+2026-10-20T01:11:52.9457789Z [1m[92m   Compiling[0m toml v1.1.8+spec-1.1.0
+2026-10-20T01:11:53.9982900Z [1m[92m   Compiling[0m oxc_parser v0.130.0
+2026-10-20T01:11:55.0062019Z [1m[92m   Compiling[0m sha2 v0.10.9
+2026-10-20T01:11:55.3648177Z [1m[92m   Compiling[0m rayon v1.12.0
+2026-10-20T01:11:55.8317778Z [1m[92m   Compiling[0m fs2 v0.4.3
+2026-10-20T01:11:55.9492789Z [1m[92m   Compiling[0m home v0.5.12
+2026-10-20T01:16:39.0371666Z [1m[92m    Finished[0m `release` profile [optimized] target(s) in 5m 33s
+2026-10-20T01:16:39.7949919Z 📦 Built wheel to /home/runner/work/ripr-swarm/ripr-swarm/target/ripr/python-wheel-evidence/wheelhouse/ripr_rs-0.11.0-py3-none-linux_x86_64.whl
+2026-10-20T01:16:39.8082683Z ##[group]Run set -euo pipefail
+2026-10-20T01:16:39.8083529Z [36;1mset -euo pipefail[0m
+2026-10-20T01:16:39.8083903Z [36;1mpython="${GITHUB_WORKSPACE}/target/ripr/python-build/venv/bin/python"[0m
+2026-10-20T01:16:39.8084408Z [36;1mevidence="${GITHUB_WORKSPACE}/target/ripr/python-wheel-evidence"[0m
+2026-10-20T01:16:39.8084951Z [36;1mwheel="$(find "${evidence}/wheelhouse" -maxdepth 1 -type f -name '*.whl' -print -quit)"[0m
+2026-10-20T01:16:39.8085539Z [36;1m"${python}" -m twine check --strict "${wheel}" | tee "${evidence}/twine-check.txt"[0m
+2026-10-20T01:16:39.8085962Z [36;1m[0m
+2026-10-20T01:16:39.8086164Z [36;1mexport TOOL_PYTHON_VERSION[0m
+2026-10-20T01:16:39.8086683Z [36;1mexport TOOL_PIP_VERSION[0m
+2026-10-20T01:16:39.8087117Z [36;1mexport TOOL_MATURIN_VERSION[0m
+2026-10-20T01:16:39.8087387Z [36;1mexport TOOL_TWINE_VERSION[0m
+2026-10-20T01:16:39.8087662Z [36;1mexport TOOL_UV_VERSION[0m
+2026-10-20T01:16:39.8087918Z [36;1mexport TOOL_PACKAGING_VERSION[0m
+2026-10-20T01:16:39.8088238Z [36;1mexport CANDIDATE_TREE[0m
+2026-10-20T01:16:39.8088485Z [36;1mexport CARGO_LOCK_SHA256[0m
+2026-10-20T01:16:39.8088747Z [36;1mexport RUSTC_VERBOSE_VERSION[0m
+2026-10-20T01:16:39.8089008Z [36;1mexport CARGO_VERBOSE_VERSION[0m
+2026-10-20T01:16:39.8089338Z [36;1mTOOL_PYTHON_VERSION="$("${python}" -VV 2>&1 | tr '\n' ' ')"[0m
+2026-10-20T01:16:39.8089748Z [36;1mTOOL_PIP_VERSION="$("${python}" -m pip --version)"[0m
+2026-10-20T01:16:39.8090144Z [36;1mTOOL_MATURIN_VERSION="$("${python}" -m maturin --version)"[0m
+2026-10-20T01:16:39.8090586Z [36;1mTOOL_TWINE_VERSION="$("${python}" -m twine --version | head -n 1)"[0m
+2026-10-20T01:16:39.8091009Z [36;1mTOOL_UV_VERSION="$("${python}" -m uv --version)"[0m
+2026-10-20T01:16:39.8091497Z [36;1mTOOL_PACKAGING_VERSION="$("${python}" -c 'import packaging; print(packaging.__version__)')"[0m
+2026-10-20T01:16:39.8092006Z [36;1mCANDIDATE_TREE="$(git rev-parse 'HEAD^{tree}')"[0m
+2026-10-20T01:16:39.8092408Z [36;1mCARGO_LOCK_SHA256="$(sha256sum Cargo.lock | awk '{print $1}')"[0m
+2026-10-20T01:16:39.8092786Z [36;1mRUSTC_VERBOSE_VERSION="$(rustc -vV)"[0m
+2026-10-20T01:16:39.8093084Z [36;1mCARGO_VERBOSE_VERSION="$(cargo -vV)"[0m
+2026-10-20T01:16:39.8093344Z [36;1m[0m
+2026-10-20T01:16:39.8093568Z [36;1m"${python}" - "${wheel}" "${evidence}" <<'PY'[0m
+2026-10-20T01:16:39.8093863Z [36;1mimport base64[0m
+2026-10-20T01:16:39.8094075Z [36;1mimport csv[0m
+2026-10-20T01:16:39.8094280Z [36;1mimport hashlib[0m
+2026-10-20T01:16:39.8094495Z [36;1mimport io[0m
+2026-10-20T01:16:39.8094694Z [36;1mimport json[0m
+2026-10-20T01:16:39.8094892Z [36;1mimport os[0m
+2026-10-20T01:16:39.8095110Z [36;1mfrom email.parser import Parser[0m
+2026-10-20T01:16:39.8095413Z [36;1mfrom pathlib import Path, PurePosixPath[0m
+2026-10-20T01:16:39.8095696Z [36;1mimport sys[0m
+2026-10-20T01:16:39.8095898Z [36;1mimport zipfile[0m
+2026-10-20T01:16:39.8096866Z [36;1m[0m
+2026-10-20T01:16:39.8097083Z [36;1mwheel = Path(sys.argv[1])[0m
+2026-10-20T01:16:39.8097355Z [36;1mevidence = Path(sys.argv[2])[0m
+2026-10-20T01:16:39.8097706Z [36;1mexpected_native_version = os.environ["RIPR_NATIVE_VERSION"][0m
+2026-10-20T01:16:39.8098143Z [36;1mexpected_python_version = os.environ["RIPR_PYTHON_VERSION"][0m
+2026-10-20T01:16:39.8098648Z [36;1mexpected_filename = f"ripr_rs-{expected_python_version}-py3-none-linux_x86_64.whl"[0m
+2026-10-20T01:16:39.8099063Z [36;1m[0m
+2026-10-20T01:16:39.8099268Z [36;1mdef digest_bytes(data: bytes) -> str:[0m
+2026-10-20T01:16:39.8099582Z [36;1m    return hashlib.sha256(data).hexdigest()[0m
+2026-10-20T01:16:39.8099855Z [36;1m[0m
+2026-10-20T01:16:39.8100080Z [36;1mdef validate(path: Path) -> dict[str, str]:[0m
+2026-10-20T01:16:39.8100525Z [36;1m    assert path.name == expected_filename, f"unexpected wheel filename: {path.name}"[0m
+2026-10-20T01:16:39.8100986Z [36;1m    with zipfile.ZipFile(path) as archive:[0m
+2026-10-20T01:16:39.8101300Z [36;1m        names = archive.namelist()[0m
+2026-10-20T01:16:39.8101792Z [36;1m        assert names, "wheel is empty"[0m
+2026-10-20T01:16:39.8102082Z [36;1m        for name in names:[0m
+2026-10-20T01:16:39.8102350Z [36;1m            pure = PurePosixPath(name)[0m
+2026-10-20T01:16:39.8102723Z [36;1m            assert not pure.is_absolute(), f"absolute wheel member: {name}"[0m
+2026-10-20T01:16:39.8103196Z [36;1m            assert ".." not in pure.parts, f"traversal wheel member: {name}"[0m
+2026-10-20T01:16:39.8103545Z [36;1m[0m
+2026-10-20T01:16:39.8103849Z [36;1m        scripts = [name for name in names if name.endswith(".data/scripts/ripr")][0m
+2026-10-20T01:16:39.8104388Z [36;1m        assert len(scripts) == 1, f"expected exactly one ripr script, got {scripts}"[0m
+2026-10-20T01:16:39.8104786Z [36;1m        script = scripts[0][0m
+2026-10-20T01:16:39.8105079Z [36;1m        script_info = archive.getinfo(script)[0m
+2026-10-20T01:16:39.8105425Z [36;1m        script_mode = script_info.external_attr >> 16[0m
+2026-10-20T01:16:39.8105906Z [36;1m        assert script_mode & 0o111, f"ripr script is not executable: mode={oct(script_mode)}"[0m
+2026-10-20T01:16:39.8106539Z [36;1m        script_bytes = archive.read(script)[0m
+2026-10-20T01:16:39.8106888Z [36;1m        assert script_bytes, "ripr script is empty"[0m
+2026-10-20T01:16:39.8107190Z [36;1m[0m
+2026-10-20T01:16:39.8107536Z [36;1m        metadata_paths = [name for name in names if name.endswith(".dist-info/METADATA")][0m
+2026-10-20T01:16:39.8108079Z [36;1m        wheel_paths = [name for name in names if name.endswith(".dist-info/WHEEL")][0m
+2026-10-20T01:16:39.8108604Z [36;1m        record_paths = [name for name in names if name.endswith(".dist-info/RECORD")][0m
+2026-10-20T01:16:39.8109128Z [36;1m        assert len(metadata_paths) == len(wheel_paths) == len(record_paths) == 1[0m
+2026-10-20T01:16:39.8109544Z [36;1m        metadata_path = metadata_paths[0][0m
+2026-10-20T01:16:39.8109846Z [36;1m        wheel_path = wheel_paths[0][0m
+2026-10-20T01:16:39.8110145Z [36;1m        record_path = record_paths[0][0m
+2026-10-20T01:16:39.8110409Z [36;1m[0m
+2026-10-20T01:16:39.8110730Z [36;1m        metadata = Parser().parsestr(archive.read(metadata_path).decode("utf-8"))[0m
+2026-10-20T01:16:39.8111165Z [36;1m        assert metadata["Name"] == "ripr-rs"[0m
+2026-10-20T01:16:39.8111522Z [36;1m        assert metadata["Version"] == expected_python_version[0m
+2026-10-20T01:16:39.8111909Z [36;1m        assert metadata["Requires-Python"] == ">=3.10"[0m
+2026-10-20T01:16:39.8112321Z [36;1m        assert metadata["License-Expression"] == "MIT OR Apache-2.0"[0m
+2026-10-20T01:16:39.8112883Z [36;1m        assert not metadata.get_all("Requires-Dist"), "native wheel acquired runtime dependencies"[0m
+2026-10-20T01:16:39.8113334Z [36;1m[0m
+2026-10-20T01:16:39.8113608Z [36;1m        wheel_metadata = archive.read(wheel_path).decode("utf-8")[0m
+2026-10-20T01:16:39.8113955Z [36;1m        tags = [[0m
+2026-10-20T01:16:39.8114377Z [36;1m            line.removeprefix("Tag: ")[0m
+2026-10-20T01:16:39.8114706Z [36;1m            for line in wheel_metadata.splitlines()[0m
+2026-10-20T01:16:39.8115027Z [36;1m            if line.startswith("Tag: ")[0m
+2026-10-20T01:16:39.8115290Z [36;1m        ][0m
+2026-10-20T01:16:39.8115620Z [36;1m        assert tags == ["py3-none-linux_x86_64"], f"unexpected wheel tags: {tags}"[0m
+2026-10-20T01:16:39.8116087Z [36;1m        assert not any(tag.endswith("-any") for tag in tags)[0m
+2026-10-20T01:16:39.8116561Z [36;1m[0m
+2026-10-20T01:16:39.8117074Z [36;1m        license_mit = [name for name in names if PurePosixPath(name).name == "LICENSE-MIT"][0m
+2026-10-20T01:16:39.8117513Z [36;1m        license_apache = [[0m
+2026-10-20T01:16:39.8117888Z [36;1m            name for name in names if PurePosixPath(name).name == "LICENSE-APACHE"[0m
+2026-10-20T01:16:39.8118266Z [36;1m        ][0m
+2026-10-20T01:16:39.8118531Z [36;1m        assert len(license_mit) == len(license_apache) == 1[0m
+2026-10-20T01:16:39.8119165Z [36;1m        assert archive.read(license_mit[0]) == Path("LICENSE-MIT").read_bytes()[0m
+2026-10-20T01:16:39.8119714Z [36;1m        assert archive.read(license_apache[0]) == Path("LICENSE-APACHE").read_bytes()[0m
+2026-10-20T01:16:39.8120110Z [36;1m[0m
+2026-10-20T01:16:39.8120476Z [36;1m        record_rows = list(csv.reader(io.StringIO(archive.read(record_path).decode("utf-8"))))[0m
+2026-10-20T01:16:39.8120968Z [36;1m        record = {row[0]: row[1:] for row in record_rows}[0m
+2026-10-20T01:16:39.8121432Z [36;1m        assert set(names) == set(record), "RECORD inventory does not equal archive inventory"[0m
+2026-10-20T01:16:39.8121856Z [36;1m        for name in names:[0m
+2026-10-20T01:16:39.8122122Z [36;1m            digest, size = record[name][0m
+2026-10-20T01:16:39.8122410Z [36;1m            if name == record_path:[0m
+2026-10-20T01:16:39.8122708Z [36;1m                assert digest == size == ""[0m
+2026-10-20T01:16:39.8122991Z [36;1m                continue[0m
+2026-10-20T01:16:39.8123265Z [36;1m            payload = archive.read(name)[0m
+2026-10-20T01:16:39.8123558Z [36;1m            expected_digest = ([0m
+2026-10-20T01:16:39.8123914Z [36;1m                base64.urlsafe_b64encode(hashlib.sha256(payload).digest())[0m
+2026-10-20T01:16:39.8124279Z [36;1m                .rstrip(b"=")[0m
+2026-10-20T01:16:39.8124532Z [36;1m                .decode("ascii")[0m
+2026-10-20T01:16:39.8124777Z [36;1m            )[0m
+2026-10-20T01:16:39.8125159Z [36;1m            assert digest == f"sha256={expected_digest}", f"RECORD digest mismatch for {name}"[0m
+2026-10-20T01:16:39.8125698Z [36;1m            assert size == str(len(payload)), f"RECORD size mismatch for {name}"[0m
+2026-10-20T01:16:39.8126064Z [36;1m[0m
+2026-10-20T01:16:39.8126246Z [36;1m        return {[0m
+2026-10-20T01:16:39.8126770Z [36;1m            "script_path": script,[0m
+2026-10-20T01:16:39.8127094Z [36;1m            "script_sha256": digest_bytes(script_bytes),[0m
+2026-10-20T01:16:39.8127421Z [36;1m            "wheel_tag": tags[0],[0m
+2026-10-20T01:16:39.8127674Z [36;1m        }[0m
+2026-10-20T01:16:39.8127872Z [36;1m[0m
+2026-10-20T01:16:39.8128071Z [36;1mpositive = validate(wheel)[0m
+2026-10-20T01:16:39.8128314Z [36;1m[0m
+2026-10-20T01:16:39.8128617Z [36;1mmissing_script = evidence / "broken" / "missing-script" / wheel.name[0m
+2026-10-20T01:16:39.8129194Z [36;1mwith zipfile.ZipFile(wheel) as source, zipfile.ZipFile(missing_script, "w") as destination:[0m
+2026-10-20T01:16:39.8129669Z [36;1m    for info in source.infolist():[0m
+2026-10-20T01:16:39.8130001Z [36;1m        if info.filename == positive["script_path"]:[0m
+2026-10-20T01:16:39.8130318Z [36;1m            continue[0m
+2026-10-20T01:16:39.8130635Z [36;1m        destination.writestr(info, source.read(info.filename))[0m
+2026-10-20T01:16:39.8130976Z [36;1mtry:[0m
+2026-10-20T01:16:39.8131180Z [36;1m    validate(missing_script)[0m
+2026-10-20T01:16:39.8131452Z [36;1mexcept AssertionError as error:[0m
+2026-10-20T01:16:39.8131903Z [36;1m    missing_script_result = str(error)[0m
+2026-10-20T01:16:39.8132265Z [36;1m    assert "exactly one ripr script" in missing_script_result[0m
+2026-10-20T01:16:39.8132595Z [36;1melse:[0m
+2026-10-20T01:16:39.8132977Z [36;1m    raise AssertionError("wheel validator accepted a wheel with its ripr executable removed")[0m
+2026-10-20T01:16:39.8133422Z [36;1m[0m
+2026-10-20T01:16:39.8133704Z [36;1mstale_record = evidence / "broken" / "stale-record" / wheel.name[0m
+2026-10-20T01:16:39.8134246Z [36;1mwith zipfile.ZipFile(wheel) as source, zipfile.ZipFile(stale_record, "w") as destination:[0m
+2026-10-20T01:16:39.8134708Z [36;1m    for info in source.infolist():[0m
+2026-10-20T01:16:39.8135022Z [36;1m        payload = source.read(info.filename)[0m
+2026-10-20T01:16:39.8135361Z [36;1m        if info.filename == positive["script_path"]:[0m
+2026-10-20T01:16:39.8135725Z [36;1m            payload += b"\nrecord-negative-control\n"[0m
+2026-10-20T01:16:39.8136073Z [36;1m        destination.writestr(info, payload)[0m
+2026-10-20T01:16:39.8136531Z [36;1mtry:[0m
+2026-10-20T01:16:39.8136879Z [36;1m    validate(stale_record)[0m
+2026-10-20T01:16:39.8137160Z [36;1mexcept AssertionError as error:[0m
+2026-10-20T01:16:39.8137443Z [36;1m    stale_record_result = str(error)[0m
+2026-10-20T01:16:39.8137783Z [36;1m    assert "RECORD digest mismatch" in stale_record_result[0m
+2026-10-20T01:16:39.8138102Z [36;1melse:[0m
+2026-10-20T01:16:39.8138460Z [36;1m    raise AssertionError("wheel validator accepted payload bytes with a stale RECORD")[0m
+2026-10-20T01:16:39.8138879Z [36;1m[0m
+2026-10-20T01:16:39.8139059Z [36;1mreceipt = {[0m
+2026-10-20T01:16:39.8139272Z [36;1m    "schema_version": 2,[0m
+2026-10-20T01:16:39.8139544Z [36;1m    "channel": "pypi-local-wheelhouse",[0m
+2026-10-20T01:16:39.8139856Z [36;1m    "publication_attempted": False,[0m
+2026-10-20T01:16:39.8140200Z [36;1m    "candidate_sha": os.environ["CANDIDATE_SHA"].lower(),[0m
+2026-10-20T01:16:39.8140593Z [36;1m    "candidate_tree": os.environ["CANDIDATE_TREE"],[0m
+2026-10-20T01:16:39.8140966Z [36;1m    "cargo_lock_sha256": os.environ["CARGO_LOCK_SHA256"],[0m
+2026-10-20T01:16:39.8141325Z [36;1m    "native_version": expected_native_version,[0m
+2026-10-20T01:16:39.8141659Z [36;1m    "python_version": expected_python_version,[0m
+2026-10-20T01:16:39.8141966Z [36;1m    "distribution": "ripr-rs",[0m
+2026-10-20T01:16:39.8142233Z [36;1m    "executable": "ripr",[0m
+2026-10-20T01:16:39.8142521Z [36;1m    "rust_target": os.environ["RUST_TARGET"],[0m
+2026-10-20T01:16:39.8142841Z [36;1m    "compatibility_state": "unqualified",[0m
+2026-10-20T01:16:39.8143148Z [36;1m    "compatibility_owner": "issue:#4489",[0m
+2026-10-20T01:16:39.8143420Z [36;1m    "wheel": {[0m
+2026-10-20T01:16:39.8143647Z [36;1m        "filename": wheel.name,[0m
+2026-10-20T01:16:39.8143950Z [36;1m        "sha256": digest_bytes(wheel.read_bytes()),[0m
+2026-10-20T01:16:39.8144269Z [36;1m        "tag": positive["wheel_tag"],[0m
+2026-10-20T01:16:39.8144623Z [36;1m        "installed_payload_sha256": positive["script_sha256"],[0m
+2026-10-20T01:16:39.8144966Z [36;1m    },[0m
+2026-10-20T01:16:39.8145185Z [36;1m    "negative_controls": [[0m
+2026-10-20T01:16:39.8145422Z [36;1m        {[0m
+2026-10-20T01:16:39.8145672Z [36;1m            "mutation": "removed .data/scripts/ripr",[0m
+2026-10-20T01:16:39.8146006Z [36;1m            "result": missing_script_result,[0m
+2026-10-20T01:16:39.8146277Z [36;1m        },[0m
+2026-10-20T01:16:39.8146605Z [36;1m        {[0m
+2026-10-20T01:16:39.8146914Z [36;1m            "mutation": "mutated .data/scripts/ripr without updating RECORD",[0m
+2026-10-20T01:16:39.8147318Z [36;1m            "result": stale_record_result,[0m
+2026-10-20T01:16:39.8147586Z [36;1m        },[0m
+2026-10-20T01:16:39.8147785Z [36;1m    ],[0m
+2026-10-20T01:16:39.8147978Z [36;1m    "toolchain": {[0m
+2026-10-20T01:16:39.8148258Z [36;1m        "rustc": os.environ["RUSTC_VERBOSE_VERSION"],[0m
+2026-10-20T01:16:39.8148811Z [36;1m        "cargo": os.environ["CARGO_VERBOSE_VERSION"],[0m
+2026-10-20T01:16:39.8149168Z [36;1m        "python": os.environ["TOOL_PYTHON_VERSION"],[0m
+2026-10-20T01:16:39.8149512Z [36;1m        "pip": os.environ["TOOL_PIP_VERSION"],[0m
+2026-10-20T01:16:39.8149858Z [36;1m        "maturin": os.environ["TOOL_MATURIN_VERSION"],[0m
+2026-10-20T01:16:39.8150226Z [36;1m        "twine": os.environ["TOOL_TWINE_VERSION"],[0m
+2026-10-20T01:16:39.8150566Z [36;1m        "uv": os.environ["TOOL_UV_VERSION"],[0m
+2026-10-20T01:16:39.8150915Z [36;1m        "packaging": os.environ["TOOL_PACKAGING_VERSION"],[0m
+2026-10-20T01:16:39.8151228Z [36;1m    },[0m
+2026-10-20T01:16:39.8151422Z [36;1m    "runner": {[0m
+2026-10-20T01:16:39.8151666Z [36;1m        "os": os.environ.get("RUNNER_OS"),[0m
+2026-10-20T01:16:39.8151980Z [36;1m        "arch": os.environ.get("RUNNER_ARCH"),[0m
+2026-10-20T01:16:39.8152297Z [36;1m        "image_os": os.environ.get("ImageOS"),[0m
+2026-10-20T01:16:39.8152643Z [36;1m        "image_version": os.environ.get("ImageVersion"),[0m
+2026-10-20T01:16:39.8152959Z [36;1m    },[0m
+2026-10-20T01:16:39.8153142Z [36;1m}[0m
+2026-10-20T01:16:39.8153513Z [36;1m(evidence / "wheel-receipt.json").write_text([0m
+2026-10-20T01:16:39.8153851Z [36;1m    json.dumps(receipt, indent=2) + "\n",[0m
+2026-10-20T01:16:39.8154137Z [36;1m    encoding="utf-8",[0m
+2026-10-20T01:16:39.8154360Z [36;1m)[0m
+2026-10-20T01:16:39.8154614Z [36;1mprint(json.dumps(receipt, indent=2))[0m
+2026-10-20T01:16:39.8154885Z [36;1mPY[0m
+2026-10-20T01:16:39.8155065Z [36;1m[0m
+2026-10-20T01:16:39.8155233Z [36;1m{[0m
+2026-10-20T01:16:39.8155629Z [36;1m  echo "payload_sha256=$(jq -er '.wheel.installed_payload_sha256' "${evidence}/wheel-receipt.json")"[0m
+2026-10-20T01:16:39.8156240Z [36;1m  echo "wheel_sha256=$(jq -er '.wheel.sha256' "${evidence}/wheel-receipt.json")"[0m
+2026-10-20T01:16:39.8156971Z [36;1m} >> "${GITHUB_OUTPUT}"[0m
+2026-10-20T01:16:39.8226647Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T01:16:39.8226999Z env:
+2026-10-20T01:16:39.8227257Z   CANDIDATE_SHA: 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:16:39.8227590Z   RUST_TARGET: x86_64-unknown-linux-gnu
+2026-10-20T01:16:39.8227853Z   MATURIN_VERSION: 1.14.1
+2026-10-20T01:16:39.8228069Z   TWINE_VERSION: 7.0.0
+2026-10-20T01:16:39.8228275Z   UV_VERSION: 0.12.19
+2026-10-20T01:16:39.8228474Z   PIP_VERSION: 26.2.1
+2026-10-20T01:16:39.8228682Z   PACKAGING_VERSION: 26.3
+2026-10-20T01:16:39.8228915Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T01:16:39.8229179Z   CARGO_INCREMENTAL: 0
+2026-10-20T01:16:39.8229393Z   CARGO_TERM_COLOR: always
+2026-10-20T01:16:39.8229625Z   RIPR_NATIVE_VERSION: 0.11.0
+2026-10-20T01:16:39.8229862Z   RIPR_PYTHON_VERSION: 0.11.0
+2026-10-20T01:16:39.8230088Z ##[endgroup]
+2026-10-20T01:16:40.0360084Z Checking 
+2026-10-20T01:16:40.0360779Z /home/runner/work/ripr-swarm/ripr-swarm/target/ripr/python-wheel-evidence/wheelh
+2026-10-20T01:16:40.0836625Z ouse/ripr_rs-0.11.0-py3-none-linux_x86_64.whl: [32mPASSED[0m
+2026-10-20T01:16:43.9113863Z {
+2026-10-20T01:16:43.9114428Z   "schema_version": 2,
+2026-10-20T01:16:43.9115099Z   "channel": "pypi-local-wheelhouse",
+2026-10-20T01:16:43.9115823Z   "publication_attempted": false,
+2026-10-20T01:16:43.9116970Z   "candidate_sha": "99ff69b63e38a3e0627d859be898e74299f8bb69",
+2026-10-20T01:16:43.9117891Z   "candidate_tree": "24ae3ec11f39ed2dbec175dbb019f168e4db850a",
+2026-10-20T01:16:43.9118936Z   "cargo_lock_sha256": "08706615a21ea0f32a3a8ebfee7daf4bf447843145b5f13b5cc679ac3b4b3a2d",
+2026-10-20T01:16:43.9119645Z   "native_version": "0.11.0",
+2026-10-20T01:16:43.9119956Z   "python_version": "0.11.0",
+2026-10-20T01:16:43.9120270Z   "distribution": "ripr-rs",
+2026-10-20T01:16:43.9120567Z   "executable": "ripr",
+2026-10-20T01:16:43.9120871Z   "rust_target": "x86_64-unknown-linux-gnu",
+2026-10-20T01:16:43.9121250Z   "compatibility_state": "unqualified",
+2026-10-20T01:16:43.9121606Z   "compatibility_owner": "issue:#4489",
+2026-10-20T01:16:43.9121927Z   "wheel": {
+2026-10-20T01:16:43.9122529Z     "filename": "ripr_rs-0.11.0-py3-none-linux_x86_64.whl",
+2026-10-20T01:16:43.9123120Z     "sha256": "e0f529f2df6e1ec1095d84709b8a1b0c05fc1bc5834b797567c2fbda19982cad",
+2026-10-20T01:16:43.9123659Z     "tag": "py3-none-linux_x86_64",
+2026-10-20T01:16:43.9124254Z     "installed_payload_sha256": "b4fd418fc7a9edce9ef9f24e95b1605e1607bea1bad73764695b7911bdf1a289"
+2026-10-20T01:16:43.9124861Z   },
+2026-10-20T01:16:43.9125093Z   "negative_controls": [
+2026-10-20T01:16:43.9125360Z     {
+2026-10-20T01:16:43.9125618Z       "mutation": "removed .data/scripts/ripr",
+2026-10-20T01:16:43.9126041Z       "result": "expected exactly one ripr script, got []"
+2026-10-20T01:16:43.9126730Z     },
+2026-10-20T01:16:43.9126945Z     {
+2026-10-20T01:16:43.9127284Z       "mutation": "mutated .data/scripts/ripr without updating RECORD",
+2026-10-20T01:16:43.9127843Z       "result": "RECORD digest mismatch for ripr_rs-0.11.0.data/scripts/ripr"
+2026-10-20T01:16:43.9128190Z     }
+2026-10-20T01:16:43.9128359Z   ],
+2026-10-20T01:16:43.9128541Z   "toolchain": {
+2026-10-20T01:16:43.9129501Z     "rustc": "rustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.95.0\nLLVM version: 22.1.2",
+2026-10-20T01:16:43.9131281Z     "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)\nrelease: 1.95.0\ncommit-hash: f2d3ce0bd7f24a49f8f72d9000448f8838c4e850\ncommit-date: 2026-03-21\nhost: x86_64-unknown-linux-gnu\nlibgit2: 1.9.2 (sys:0.20.4 vendored)\nlibcurl: 8.15.0-DEV (sys:0.4.83+curl-8.15.0 vendored ssl:OpenSSL/3.5.4)\nssl: OpenSSL 3.5.4 30 Sep 2025\nos: Ubuntu 22.4.0 (jammy) [64-bit]",
+2026-10-20T01:16:43.9132735Z     "python": "Python 3.10.12 (main, Aug 31 2026, 10:18:17) [GCC 11.4.0] ",
+2026-10-20T01:16:43.9133442Z     "pip": "pip 26.2.1 from /home/runner/work/ripr-swarm/ripr-swarm/target/ripr/python-build/venv/lib/python3.10/site-packages/pip (python 3.10)",
+2026-10-20T01:16:43.9134059Z     "maturin": "maturin 1.14.1",
+2026-10-20T01:16:43.9134435Z     "twine": "twine version 7.0.0 (readme-renderer: 46.0, requests: 2.34.2, requests-",
+2026-10-20T01:16:43.9134864Z     "uv": "uv 0.12.19 (x86_64-unknown-linux-gnu)",
+2026-10-20T01:16:43.9135144Z     "packaging": "26.3"
+2026-10-20T01:16:43.9135349Z   },
+2026-10-20T01:16:43.9135515Z   "runner": {
+2026-10-20T01:16:43.9135698Z     "os": "Linux",
+2026-10-20T01:16:43.9135885Z     "arch": "X64",
+2026-10-20T01:16:43.9136081Z     "image_os": "ubuntu22",
+2026-10-20T01:16:43.9136599Z     "image_version": "20261012.322.1"
+2026-10-20T01:16:43.9136859Z   }
+2026-10-20T01:16:43.9137018Z }
+2026-10-20T01:16:43.9653988Z ##[group]Run set -euo pipefail
+2026-10-20T01:16:43.9654311Z [36;1mset -euo pipefail[0m
+2026-10-20T01:16:43.9654663Z [36;1mevidence="${GITHUB_WORKSPACE}/target/ripr/python-wheel-evidence"[0m
+2026-10-20T01:16:43.9655118Z [36;1mtar -czf "${evidence}/python-basic-fixture.tar.gz" \[0m
+2026-10-20T01:16:43.9655468Z [36;1m  -C "${GITHUB_WORKSPACE}" \[0m
+2026-10-20T01:16:43.9655735Z [36;1m  fixtures/python/basic[0m
+2026-10-20T01:16:43.9656062Z [36;1mtar -tzf "${evidence}/python-basic-fixture.tar.gz" \[0m
+2026-10-20T01:16:43.9656721Z [36;1m  | grep -Fx 'fixtures/python/basic/diff.patch'[0m
+2026-10-20T01:16:43.9725911Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T01:16:43.9726257Z env:
+2026-10-20T01:16:43.9726827Z   CANDIDATE_SHA: 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:16:43.9727161Z   RUST_TARGET: x86_64-unknown-linux-gnu
+2026-10-20T01:16:43.9727432Z   MATURIN_VERSION: 1.14.1
+2026-10-20T01:16:43.9727657Z   TWINE_VERSION: 7.0.0
+2026-10-20T01:16:43.9727924Z   UV_VERSION: 0.12.19
+2026-10-20T01:16:43.9728132Z   PIP_VERSION: 26.2.1
+2026-10-20T01:16:43.9728344Z   PACKAGING_VERSION: 26.3
+2026-10-20T01:16:43.9728588Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T01:16:43.9728832Z   CARGO_INCREMENTAL: 0
+2026-10-20T01:16:43.9729046Z   CARGO_TERM_COLOR: always
+2026-10-20T01:16:43.9729274Z   RIPR_NATIVE_VERSION: 0.11.0
+2026-10-20T01:16:43.9729511Z   RIPR_PYTHON_VERSION: 0.11.0
+2026-10-20T01:16:43.9729975Z ##[endgroup]
+2026-10-20T01:16:43.9886790Z fixtures/python/basic/diff.patch
+2026-10-20T01:16:43.9962738Z ##[group]Run actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+2026-10-20T01:16:43.9963170Z with:
+2026-10-20T01:16:43.9963486Z   name: ripr-rs-python-wheel-99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:16:43.9963899Z   path: target/ripr/python-wheel-evidence/
+2026-10-20T01:16:43.9964189Z   if-no-files-found: error
+2026-10-20T01:16:43.9964420Z   retention-days: 7
+2026-10-20T01:16:43.9964636Z   compression-level: 6
+2026-10-20T01:16:43.9964853Z   overwrite: false
+2026-10-20T01:16:43.9965096Z   include-hidden-files: false
+2026-10-20T01:16:43.9965334Z   archive: true
+2026-10-20T01:16:43.9965520Z env:
+2026-10-20T01:16:43.9965757Z   CANDIDATE_SHA: 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T01:16:43.9966091Z   RUST_TARGET: x86_64-unknown-linux-gnu
+2026-10-20T01:16:43.9966660Z   MATURIN_VERSION: 1.14.1
+2026-10-20T01:16:43.9966903Z   TWINE_VERSION: 7.0.0
+2026-10-20T01:16:43.9979043Z   UV_VERSION: 0.12.19
+2026-10-20T01:16:43.9979402Z   PIP_VERSION: 26.2.1
+2026-10-20T01:16:43.9979790Z   PACKAGING_VERSION: 26.3
+2026-10-20T01:16:43.9980143Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T01:16:43.9980529Z   CARGO_INCREMENTAL: 0
+2026-10-20T01:16:43.9980855Z   CARGO_TERM_COLOR: always
+2026-10-20T01:16:43.9981201Z   RIPR_NATIVE_VERSION: 0.11.0
+2026-10-20T01:16:43.9981562Z   RIPR_PYTHON_VERSION: 0.11.0
+2026-10-20T01:16:43.9981896Z ##[endgroup]
+2026-10-20T01:16:44.1603845Z With the provided path, there will be 8 files uploaded
+2026-10-20T01:16:44.1610661Z Artifact name is valid!
+2026-10-20T01:16:44.1611352Z Root directory input is valid!
+2026-10-20T01:16:44.3479209Z Uploading artifact: ripr-rs-python-wheel-99ff69b63e38a3e0627d859be898e74299f8bb69.zip
+2026-10-20T01:16:44.3523324Z Beginning upload of artifact content to blob storage
+2026-10-20T01:16:44.8136224Z Uploaded bytes 8388608
+2026-10-20T01:16:45.0666579Z Uploaded bytes 16777216
+2026-10-20T01:16:45.3462793Z Uploaded bytes 25165824
+2026-10-20T01:16:45.5590776Z Uploaded bytes 33554432
+2026-10-20T01:16:45.8154540Z Uploaded bytes 41943040
+2026-10-20T01:16:46.0963006Z Uploaded bytes 50331648
+2026-10-20T01:16:46.1707146Z Uploaded bytes 53170763
+2026-10-20T01:16:46.1835214Z Finished uploading artifact content to blob storage!
+2026-10-20T01:16:46.1837163Z SHA256 digest of uploaded artifact is ce3a696c6b9b36cc49d763b90a029e85b13fcd215316582c4b1614634988f60d
+2026-10-20T01:16:46.1837964Z Finalizing artifact upload
+2026-10-20T01:16:46.4225953Z Artifact ripr-rs-python-wheel-99ff69b63e38a3e0627d859be898e74299f8bb69 successfully finalized. Artifact ID 12233444628
+2026-10-20T01:16:46.4229463Z Artifact ripr-rs-python-wheel-99ff69b63e38a3e0627d859be898e74299f8bb69 has been successfully uploaded! Final size is 53170763 bytes. Artifact ID is 12233444628
+2026-10-20T01:16:46.4232465Z Artifact download URL: https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39351421358/artifacts/12233444628
+2026-10-20T01:16:46.4460656Z Post job cleanup.
+2026-10-20T01:16:46.5370349Z [command]/usr/bin/git version
+2026-10-20T01:16:46.5445921Z git version 2.55.0
+2026-10-20T01:16:46.5489878Z Temporarily overriding HOME='/home/runner/work/_temp/a249af5f-3978-48d7-9b87-d094e7ed16c3' before making global git config changes
+2026-10-20T01:16:46.5491253Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-20T01:16:46.5496815Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/ripr-swarm/ripr-swarm
+2026-10-20T01:16:46.5533949Z Removing SSH command configuration
+2026-10-20T01:16:46.5541525Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-20T01:16:46.5582342Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-20T01:16:46.5872344Z Removing HTTP extra header
+2026-10-20T01:16:46.5878610Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-20T01:16:46.5920154Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-20T01:16:46.6214709Z Removing includeIf entries pointing to credentials config files
+2026-10-20T01:16:46.6223686Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-20T01:16:46.6266865Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-20T01:16:46.6739466Z Evaluate and set job outputs
+2026-10-20T01:16:46.6744445Z Set output 'native_version'
+2026-10-20T01:16:46.6747315Z Set output 'python_version'
+2026-10-20T01:16:46.6748312Z Set output 'payload_sha256'
+2026-10-20T01:16:46.6748788Z Set output 'wheel_sha256'
+2026-10-20T01:16:46.6749614Z Cleaning up orphan processes

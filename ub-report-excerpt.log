@@ -1,0 +1,71 @@
+2026-10-20T01:36:37.7454184Z ## UB Review advisory evidence
+2026-10-20T01:36:37.7454363Z 
+2026-10-20T01:36:37.7454659Z **INCOMPLETE: missing evidence is recorded below.**
+2026-10-20T01:36:37.7454976Z 
+2026-10-20T01:36:37.7456151Z A green advisory wrapper is not a complete analysis or proof pass. These are execution and receipt limitations, not source findings. This report does not execute proof, validate test adequacy, or change required checks. Results describe this packet only; inspect revision admission and the original receipts before using them as candidate evidence.
+2026-10-20T01:36:37.7461761Z 
+2026-10-20T01:36:37.7461907Z ### Planned sensors
+2026-10-20T01:36:37.7462112Z 
+2026-10-20T01:36:37.7462222Z Artifact: plan.json
+2026-10-20T01:36:37.7462384Z 
+2026-10-20T01:36:37.7462794Z - MISSING EVIDENCE: ripr: status=failed, exit=2, timed\_out=false; exit code Some(2); sensors/ripr/ub-review-sensor-status.json
+2026-10-20T01:36:37.7464094Z - MISSING EVIDENCE: cargo-test: status=timed\_out, exit=null, timed\_out=true; timed out after 900s; sensors/cargo-test/ub-review-sensor-status.json
+2026-10-20T01:36:37.7464798Z - tokmd: status=ok, exit=0, timed\_out=false; 6 tokmd receipts completed; sensors/tokmd/ub-review-sensor-status.json
+2026-10-20T01:36:37.7465300Z - cargo-allow: not planned (cargo-allow policy config not found)
+2026-10-20T01:36:37.7466039Z - unsafe-review: status=ok, exit=0, timed\_out=false; completed; sensors/unsafe-review/ub-review-sensor-status.json
+2026-10-20T01:36:37.7466814Z - ast-grep: status=ok, exit=0, timed\_out=false; completed; sensors/ast-grep/ub-review-sensor-status.json
+2026-10-20T01:36:37.7467272Z - semgrep: not planned (disabled by config)
+2026-10-20T01:36:37.7467590Z - actionlint: not planned (trigger did not match this diff)
+2026-10-20T01:36:37.7467926Z - zizmor: not planned (trigger did not match this diff)
+2026-10-20T01:36:37.7468226Z - gitleaks: not planned (disabled by config)
+2026-10-20T01:36:37.7468515Z - osv-scanner: not planned (disabled by config)
+2026-10-20T01:36:37.7468802Z - cargo-audit: not planned (disabled by config)
+2026-10-20T01:36:37.7469085Z - cargo-deny: not planned (disabled by config)
+2026-10-20T01:36:37.7469359Z - coverage: not planned (disabled by config)
+2026-10-20T01:36:37.7469681Z - build: not planned (heavy/manual witness requires --allow-heavy)
+2026-10-20T01:36:37.7470271Z - cargo-check: not planned (profile disables build leases)
+2026-10-20T01:36:37.7470629Z - cargo-clippy: not planned (profile disables build leases)
+2026-10-20T01:36:37.7470963Z - cargo-doc: not planned (profile disables build leases)
+2026-10-20T01:36:37.7471282Z - cargo-fmt: not planned (profile disables build leases)
+2026-10-20T01:36:37.7471645Z - cargo-mutants: not planned (heavy/manual witness requires --allow-heavy)
+2026-10-20T01:36:37.7471992Z - cppcheck: not planned (disabled by config)
+2026-10-20T01:36:37.7472310Z - miri: not planned (heavy/manual witness requires --allow-heavy)
+2026-10-20T01:36:37.7472679Z - shellcheck: not planned (trigger did not match this diff)
+2026-10-20T01:36:37.7473026Z - test: not planned (heavy/manual witness requires --allow-heavy)
+2026-10-20T01:36:37.7473243Z 
+2026-10-20T01:36:37.7473354Z ### Model request validation
+2026-10-20T01:36:37.7473501Z 
+2026-10-20T01:36:37.7473760Z Artifact: review/observations.json
+2026-10-20T01:36:37.7474167Z 
+2026-10-20T01:36:37.7474349Z - No entries recorded. This is not executed proof.
+2026-10-20T01:36:37.7474570Z 
+2026-10-20T01:36:37.7474701Z ### Proof intent resolution
+2026-10-20T01:36:37.7474863Z 
+2026-10-20T01:36:37.7474993Z Artifact: review/proof_intents.json
+2026-10-20T01:36:37.7475189Z 
+2026-10-20T01:36:37.7476223Z - MISSING EVIDENCE: intent-model-ed4fc56dcc13930d-0: status=unsupported\_target; no approved focused build target matches \`ripr::analysis::workspace::path\_dependencies::reverse\_reachable\_union\`; target=ripr::analysis::workspace::path\_dependencies::reverse\_reachable\_union
+2026-10-20T01:36:37.7478810Z - MISSING EVIDENCE: intent-model-a317cbb5a28119ab-1: status=unsupported\_target; no approved focused test target matches \`crates/ripr/src/analysis/workspace/path\_dependencies.rs::tests::expansion\_matches\_per\_seed\_walks\_on\_all\_three\_node\_graphs\`; target=crates/ripr/src/analysis/workspace/path\_dependencies.rs::tests::expansion\_matches\_per\_seed\_walks\_on\_all\_three\_node\_graphs
+2026-10-20T01:36:37.7481046Z - MISSING EVIDENCE: intent-model-c42cdc91df83e05c-2: status=unsupported\_kind; unsupported proof kind; target=crates/ripr/src/analysis/workspace/path\_dependencies.rs::expansion\_from\_provenance
+2026-10-20T01:36:37.7482756Z - MISSING EVIDENCE: intent-model-570cd0a34a8ed012-3: status=invalid\_timeout; requested timeout 600s is outside the approved per-command budget of 300s; target=ripr::analysis::workspace::path\_dependencies::tests
+2026-10-20T01:36:37.7487155Z - MISSING EVIDENCE: intent-model-fc304331ff695a5a-4: status=unsupported\_target; no approved focused test target matches \`crates/ripr/src/analysis/workspace/path\_dependencies.rs::tests::expansion\_shared\_tail\_visits\_each\_edge\_at\_most\_twice\`; target=crates/ripr/src/analysis/workspace/path\_dependencies.rs::tests::expansion\_shared\_tail\_visits\_each\_edge\_at\_most\_twice
+2026-10-20T01:36:37.7490616Z - MISSING EVIDENCE: intent-model-0294b4532fa8aca3-5: status=unsupported\_target; no approved focused test target matches \`crates/ripr/src/analysis/workspace/path\_dependencies.rs::tests::expansion\_matches\_per\_seed\_walks\_on\_all\_three\_node\_graphs\`; target=crates/ripr/src/analysis/workspace/path\_dependencies.rs::tests::expansion\_matches\_per\_seed\_walks\_on\_all\_three\_node\_graphs
+2026-10-20T01:36:37.7492371Z - MISSING EVIDENCE: intent-model-e58c90a253ef202d-6: status=unsupported\_kind; unsupported proof kind; target=crates/ripr/src/analysis/workspace
+2026-10-20T01:36:37.7493316Z - MISSING EVIDENCE: intent-model-bafffc1643de8c43-7: status=unsupported\_kind; unsupported proof kind; target=crates/ripr/src/analysis/workspace/path\_dependencies.rs::expansion\_from\_provenance
+2026-10-20T01:36:37.7495145Z - intent-8798ac147f8406b0: status=requested; legacy request already has an approved request identity; target=cargo test --locked --package ripr --lib analysis::workspace::path\_dependencies::tests::expansion\_matches\_per\_seed\_walks\_on\_all\_three\_node\_graphs -- --nocapture; resolution is not execution
+2026-10-20T01:36:37.7496766Z - intent-3cfb55a825cdcb63: status=requested; legacy request already has an approved request identity; target=cargo test --locked --package ripr --lib analysis::workspace::path\_dependencies::tests:: -- --nocapture; resolution is not execution
+2026-10-20T01:36:37.7498163Z - intent-2602f983ab152e12: status=requested; legacy request already has an approved request identity; target=cargo test --locked --package ripr --lib analysis::workspace::path\_dependencies::tests::expansion\_matches\_per\_seed\_walks\_on\_all\_three\_node\_graphs -- --nocapture; resolution is not execution
+2026-10-20T01:36:37.7498980Z 
+2026-10-20T01:36:37.7499092Z ### Recorded proof results
+2026-10-20T01:36:37.7499242Z 
+2026-10-20T01:36:37.7499362Z Artifact: review/proof_receipts.json
+2026-10-20T01:36:37.7499546Z 
+2026-10-20T01:36:37.7500078Z - proof-head-0272af8d30d0: producer result=head\_passed; kind=focused-head; head: passed, exit=0, timed\_out=false; HEAD proof passed: completed; HEAD-only success does not establish red/green discrimination
+2026-10-20T01:36:37.7500745Z 
+2026-10-20T01:36:37.7500849Z ### Portfolio task disposition
+2026-10-20T01:36:37.7500994Z 
+2026-10-20T01:36:37.7501103Z Artifact: review/proof_portfolio.json
+2026-10-20T01:36:37.7501266Z 
+2026-10-20T01:36:37.7501771Z - MISSING EVIDENCE: proof-red-green-e64822816f34: deferred\_by\_safe\_wind\_down; kind=focused-red-green; remaining budget was reserved for higher-value candidates; matching recorded receipts=0
+2026-10-20T01:36:37.7502840Z - MISSING EVIDENCE: proof-red-green-be4b7238f9c7: deferred\_by\_safe\_wind\_down; kind=focused-red-green; remaining budget was reserved for higher-value candidates; matching recorded receipts=0
+2026-10-20T01:36:37.7503579Z - Packet subject head=HEAD; phase=broker-final; not current-head qualification
+2026-10-20T01:36:37.7504022Z 

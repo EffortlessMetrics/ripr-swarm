@@ -1,0 +1,9 @@
+{
+  "id": 39351421392,
+  "status": "completed",
+  "conclusion": "cancelled",
+  "head_sha": "99ff69b63e38a3e0627d859be898e74299f8bb69",
+  "run_started_at": "2026-10-20T01:04:59Z",
+  "updated_at": "2026-10-20T01:36:42Z",
+  "run_attempt": 1
+}

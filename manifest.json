@@ -1,0 +1,142 @@
+{
+  "format": "reverse-scope-hosted-evidence.v1",
+  "source": "99ff69b63e38a3e0627d859be898e74299f8bb69",
+  "prior_local_proof_commit": "4f3e69835cf3ac49f3f5b4e25a84f3a3973eb24d",
+  "payloads": [
+    {
+      "path": "README.md",
+      "bytes": 1803,
+      "sha256": "60726a2a654d0e5ac4e6fb1230af3b17608684a12e50a43309958032427b5e0c"
+    },
+    {
+      "path": "advisory-disposition-receipt.json",
+      "bytes": 49,
+      "sha256": "d939e7c5c1468e2707e6ce05918fd4b32a1bc4a4614f51d5adcacabdc40ac222"
+    },
+    {
+      "path": "advisory-findings-disposition.md",
+      "bytes": 2591,
+      "sha256": "d05bf01da5d3e55139f1605313de57e7339e33bbcf194400b5022bda152cda5b"
+    },
+    {
+      "path": "advisory-findings.json",
+      "bytes": 2662,
+      "sha256": "e50a9df22618de92da4610fadaf02b1acdd87d3a372a4528b9e2d61b7e64b84f"
+    },
+    {
+      "path": "all-head-runs-before-request.json",
+      "bytes": 5630,
+      "sha256": "f7f2fd4d85a46307ff2ec5749e5181a26969b5d07164457a26cf243de2e90437"
+    },
+    {
+      "path": "artifact-read-limit.txt",
+      "bytes": 498,
+      "sha256": "4b17c0d763c6143f03463bbad6efc4e42fa355e7ab7982f6ace9b774ffb484b2"
+    },
+    {
+      "path": "blocker-handoff.md",
+      "bytes": 4175,
+      "sha256": "a3c0676434a64234e37ef587a1dc1d59f4f969f1145657c9f7a9eddf501d4a0c"
+    },
+    {
+      "path": "final-inline-threads.json",
+      "bytes": 27,
+      "sha256": "3e8a08aebce453c022e75a478b159f99c0a339d175c62baff78fe85551e8213d"
+    },
+    {
+      "path": "final-pr-state.json",
+      "bytes": 113,
+      "sha256": "3c57a794a974f545948b4ad88c68fe1d8e9feaad4328ca3b39866dd1f28b6e98"
+    },
+    {
+      "path": "final-review-inventory.json",
+      "bytes": 8987,
+      "sha256": "0ca93c8a47b269d842adad89d097af24f84e33bd1617d6a41e03039ca55ffdf4"
+    },
+    {
+      "path": "inline-thread-inventory.json",
+      "bytes": 27,
+      "sha256": "3e8a08aebce453c022e75a478b159f99c0a339d175c62baff78fe85551e8213d"
+    },
+    {
+      "path": "issue-qualification-blocker.md",
+      "bytes": 4906,
+      "sha256": "b4b3f4cef79ed7f8750380e892fdbcac36d93bc9d0e1b670a03499a56cb91793"
+    },
+    {
+      "path": "merge-subject.txt",
+      "bytes": 443,
+      "sha256": "3ddc181ca08d78151fdfe33b13e60b5ca398ce85cad3615e17b4b64048f460ef"
+    },
+    {
+      "path": "post-denial-state.json",
+      "bytes": 202,
+      "sha256": "8c73c2dad0caa8e14bc1f1b6d61b892a5b45fedc1d18f7aaea045bcf3848a7df"
+    },
+    {
+      "path": "read-endpoint-limit.txt",
+      "bytes": 386,
+      "sha256": "ebd66b666d6d4556f7a9fbad7822b4420a45ebb50942b9cabaf459473614c0bb"
+    },
+    {
+      "path": "ready-denial.json",
+      "bytes": 818,
+      "sha256": "093a33735163b0be3cb28c18543a23caf2c07212b7f1f05e86c2cb32acb2ed3b"
+    },
+    {
+      "path": "source-review.json",
+      "bytes": 3287,
+      "sha256": "d1ba6b46448b78943244991db4c8d7391d9859bb8b8f995f8676c60b0d567a29"
+    },
+    {
+      "path": "ub-artifacts.json",
+      "bytes": 855,
+      "sha256": "873040ba8dedfd3504ef20bf214aca44c1ebf966a702f3567531283fa1196c8d"
+    },
+    {
+      "path": "ub-report-excerpt.log",
+      "bytes": 8292,
+      "sha256": "7988ebc923a0a91773ca11ce4d4ed2f6416bb0d7b098d3ef0eeabb74e2dc961c"
+    },
+    {
+      "path": "ub-review.log",
+      "bytes": 246025,
+      "sha256": "5c4b4a5997f0a9132bef803bb0d11885f8872e2348bd4c0607ed3b79c3c65490"
+    },
+    {
+      "path": "ub-terminal-result.json",
+      "bytes": 4169,
+      "sha256": "b8711808a077c8f0ebda29cfde1a2b58f6f2c8446d8647c76bdc4a431cea6e71"
+    },
+    {
+      "path": "ub-terminal-run.json",
+      "bytes": 240,
+      "sha256": "82d3aac692305f52dae1c5e1ecbf4bb1b20847592ebd7f7a2c27a3315b79367a"
+    },
+    {
+      "path": "wheel-artifacts.json",
+      "bytes": 903,
+      "sha256": "cbfda2b480688a46f951b77a8d62904d442eefe352ff522dc48a4f2d5399d8f6"
+    },
+    {
+      "path": "wheel-build.log",
+      "bytes": 157361,
+      "sha256": "c532894860419e3de933c1f9e6ede519dfc523d0c91e4fb90823df660fd6331c"
+    },
+    {
+      "path": "wheel-jobs.json",
+      "bytes": 6834,
+      "sha256": "58631b4f109bb76769d91dc3d01a20917ec89a9cc2e8fcf6b8c8912419c3985a"
+    },
+    {
+      "path": "wheel-pip-consumer.log",
+      "bytes": 27612,
+      "sha256": "639233e8e10c52b6ff4e271cf5efa5d69953850c9c74244d2716f6653906829e"
+    },
+    {
+      "path": "wheel-uv-consumer.log",
+      "bytes": 28345,
+      "sha256": "126d7f2223cd78cebc348ef6b6d1b2d9f0aaaba22882b06edcbdfd6cadf53706"
+    }
+  ]
+}

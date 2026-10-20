@@ -1,0 +1,126 @@
+{
+  "source": "99ff69b63e38a3e0627d859be898e74299f8bb69",
+  "observed_at": "2026-10-20 01:37 UTC",
+  "run": 39351421392,
+  "attempt": 1,
+  "status": "completed",
+  "conclusion": "cancelled",
+  "job": 118396226639,
+  "job_conclusion": "cancelled",
+  "actual_checkout": {
+    "commit": "7c656d3096e5658b80ccb765a831341df66d3253",
+    "parents": [
+      "d8edec61714b65774abf38ce17ba91202207de25",
+      "99ff69b63e38a3e0627d859be898e74299f8bb69"
+    ],
+    "tree": "c3c01de526445a5afe087bdc2fd24b6c0d1e9296",
+    "evidence": "checkout HEAD and git log in decoded job log; parents/tree independently read from Git fetch"
+  },
+  "cancellation_cause": "not established by available decoded log; do not infer product failure or success from conflicting-looking aggregate/step statuses",
+  "steps": [
+    {
+      "name": "Set up job",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 1
+    },
+    {
+      "name": "Run actions/checkout@v5",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 2
+    },
+    {
+      "name": "Run dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 3
+    },
+    {
+      "name": "Run Swatinem/rust-cache@v2",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 4
+    },
+    {
+      "name": "Prepare locked owner-return fixture dependencies",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 5
+    },
+    {
+      "name": "ub-review",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 6
+    },
+    {
+      "name": "Verify advisory receipt reporter",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 7
+    },
+    {
+      "name": "Report advisory evidence dimensions",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 8
+    },
+    {
+      "name": "Upload ub-review artifacts",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 9
+    },
+    {
+      "name": "Post Run Swatinem/rust-cache@v2",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 17
+    },
+    {
+      "name": "Post Run actions/checkout@v5",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 18
+    },
+    {
+      "name": "Complete job",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 19
+    }
+  ],
+  "report": {
+    "complete": false,
+    "ripr_sensor": "failed, exit2",
+    "cargo_test_sensor": "timed_out after900s",
+    "tokmd": "six receipts completed",
+    "proof": "one producer head_passed receipt, unverified exact subject in this read; no red/green discrimination",
+    "refused_requests": "unsupported target/kind and invalid600s timeout against300s command budget",
+    "deferred_red_green": 2,
+    "packet_subject": "head=HEAD; phase=broker-final; explicitly not current-head qualification"
+  },
+  "artifact": {
+    "id": 12233968314,
+    "name": "ub-review-8931",
+    "size_in_bytes": 1022803,
+    "url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/artifacts/12233968314",
+    "archive_download_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/artifacts/12233968314/zip",
+    "expired": false,
+    "created_at": "2026-10-20T01:36:39Z",
+    "expires_at": "2026-10-27T01:36:38Z",
+    "updated_at": "2026-10-20T01:36:39Z",
+    "digest": "sha256:e2440702649f92bdb751443a461481c6e3410c420938824eb54937d7b1aeec1a",
+    "workflow_run": {
+      "id": 39351421392,
+      "repository_id": 1243918801,
+      "head_repository_id": 1243918801,
+      "head_branch": "codex/reverse-scope-union",
+      "head_sha": "99ff69b63e38a3e0627d859be898e74299f8bb69"
+    }
+  },
+  "finding_disposition": "no source repair required; existing documented unknown-seed negative control retained; dequeue origin rejection bounds expansions; source-backed COMMENT review5579770968",
+  "disposition": "REVIEW_INCOMPLETE / EXTERNAL_BLOCKER",
+  "next": "native required Rust qualification remains blocked by automatic approval rejection of Ready; no rerun or alternate request route"
+}

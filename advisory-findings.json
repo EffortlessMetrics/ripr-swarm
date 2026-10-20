@@ -1,0 +1,15 @@
+[
+  {
+    "id": "PRR_kwDOSiSx0c8AAAABTJRkCA",
+    "state": "COMMENTED",
+    "body": "## Decision\n\n- Needs reviewer attention before upstream: findings remain.\n\n## Confirmed findings\n\n- Traceability entry lists 3 new tests but the spec body only cites 'connected reverse edge ... at most twice' and 'union of single-root walks, each excluding only its own seed'; the shared-tail test name and the 'at most twice' wording align. No drift found between spec and test mapping.\n- crates/ripr/src/analysis/workspace/path_dependencies.rs:763 — In expansion_matches_per_seed_walks_on_all_three_node_graphs the unknown 'ghost/' seed is appended to `changed` for every seed_mask including 0. With seed_mask=0 there are no real seeds but ghost is still treated as a seed; expected therefore contains only ghost's direct callers (or nothing). The asserted equality is still meaningful but the test's variable name 'changed' is misleading when seeds == []. Minor; consider skipping seed_mask==0 or documenting intent.\n\n## Verification questions\n\n- Confirm reverse_reachable_union pushes (neighbor, origin) but does not recheck origin divergence when a parent already has two origins, so a second-origin edge can still be visited even when the origin it carries is already represented. This is bounded but not pruned.\n\n## Refuted\n\n- Thread-local Cell<usize> counter escapes cfg(test) into production binary via cfg(test) attribute leakage or build profile, exposing undefined behavior in shipped artifacts.; refuted because: All three increment sites are wrapped in `#[cfg(test)]`; cargo test compiles with --cfg test, production builds do not. Even if leaked, Cell operations are well-defined for the same thread; no unsafe is used.\n- Diff touches Rust only; no JS-backed worker, async runtime, transferable buffer, MessageChannel, or DetachArrayBuffer/ArrayBuffer::detach/transfer is added or crossed. Lane is genuinely out of scope.\n- A JS-backed worker or async detach/transfer boundary might leak between Rust expansion callers through seam_cache, ffi, or wasm glue, causing memory safety or aliasing UB.; refuted because: No js/wasm/worker/ffi surface exists in crates/ripr/src/analysis/workspace or its seams; new code uses only std collections and a std::thread_local under cfg(test); no #[unsafe], no Send/Sync expansion, no Box::from(slice)/detachable allocation pattern. Lane is inapplicable.\n",
+    "submitted_at": "2026-10-20T01:32:15Z",
+    "author": {
+      "login": "github-actions",
+      "name": "github-actions",
+      "email": null,
+      "avatar_url": "https://avatars.githubusercontent.com/in/15368?v=4",
+      "id": null
+    }
+  }
+]
