@@ -1,0 +1,19 @@
+{
+  "timestamp_utc": "2026-10-20T19:03:34.708429+00:00",
+  "base_head": "08fca17212fa9cdf8439911b6f180e23068f1b19",
+  "base_tree": "687bbd46912a54ae2f5c74055c2e1ab95261b1b5",
+  "baseline_scenarios": 264,
+  "baseline_findings": 396,
+  "experiment_scenarios": 264,
+  "experiment_findings": 396,
+  "restored_scenarios": 264,
+  "restored_findings": 396,
+  "restored_matrix_equals_baseline": true,
+  "native_executions": 48,
+  "binaries": {
+    "baseline-probe": "565489f8e8895012de533cbcb1dfff9b10c35c51b5b818f542bdd5e882cbc19e",
+    "admission-only-probe": "826d412b5926f50eccb6f034b304dd483fd6de5769c10fae0dc739e2c9dfea81"
+  },
+  "production_file_restored_sha256": "fa3c9dce9494520f61fb388b710ac9b636c4b210b665c1bb04881989ab8af64f",
+  "experiment_patch_sha256": "14ae617b154d4242c917a4edcaab1dd6a23f3a8a5df82797c1846ba0d5a209a5"
+}

@@ -1,0 +1,15 @@
+diff --git a/crates/ripr/src/analysis/classify/owner_pin.rs b/crates/ripr/src/analysis/classify/owner_pin.rs
+index 4aa05413d..637ee89a8 100644
+--- a/crates/ripr/src/analysis/classify/owner_pin.rs
++++ b/crates/ripr/src/analysis/classify/owner_pin.rs
+@@ -563,6 +563,10 @@ impl OwnerPinSyntax {
+                 probe.family,
+                 ProbeFamily::MatchArm | ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+             ),
++            Some("assert_ne" | "debug_assert_eq" | "debug_assert" | "debug_assert_ne") => matches!(
++                probe.family,
++                ProbeFamily::ReturnValue | ProbeFamily::SideEffect | ProbeFamily::CallDeletion
++            ),
+             _ => false,
+         };
+         !gated || self.admits(test, assertion, index)
