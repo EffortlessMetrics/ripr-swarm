@@ -7501,6 +7501,48 @@ fn an_outcome_settling_attribute_is_the_refusal_wherever_it_sits() {
 }
 
 #[test]
+fn a_feature_gated_test_is_refused_for_its_attribute_not_a_macro_rebinding() {
+    // #8388, rand 94c9078 `uniform_other.rs` `test_char_bad_deser`: a test
+    // carrying `#[cfg(feature = "serde")]` is "assertion not credited" because
+    // the feature may be off in the build under analysis, so the test may not
+    // run at all. No macro is rebound anywhere; the plain `assert!` and
+    // `assert_eq!` spellings are credited without the gate.
+    let body = "fn char_bad_deser() {\n    let result = weight(4);\n    assert!(result > 0);\n    assert_eq!(result, 12);\n}\n";
+    let prelude = "use demo::weight;\n";
+    let gated = format!("{prelude}#[test]\n#[cfg(feature = \"serde\")]\n{body}");
+    let gate = "#[cfg(feature = \"serde\")]".to_string();
+    let refusal = weight_refusal(&gated, &[]);
+    assert_eq!(
+        refusal,
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::TestAttribute(gate.clone())
+        ))
+    );
+    // The gate is unknown availability, not a settled outcome: an analyzer
+    // limit that withholds a gap, and the clause names the attribute.
+    let clause = refusal.as_ref().map(AssertionRefusal::describe);
+    assert!(
+        refusal.is_some_and(|refusal| refusal.is_analyzer_limit())
+            && clause.as_deref().is_some_and(|clause| {
+                clause.contains(&gate) && clause.contains("may change whether or how it runs")
+            }),
+        "{clause:?}"
+    );
+    // The same test without the gate is credited, so the attribute alone is
+    // the cause.
+    let plain = format!("{prelude}#[test]\n{body}");
+    assert_eq!(weight_refusal(&plain, &[]), None);
+    // Fail closed: a glob of a foreign crate still refuses the ungated test.
+    let foreign = format!("use rayon::prelude::*;\n{plain}");
+    assert!(matches!(
+        weight_refusal(&foreign, &[]),
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::MacroBinding(_)
+        ))
+    ));
+}
+
+#[test]
 fn the_workspace_site_is_the_first_rebinding_in_path_order_else_the_first_site() {
     // The workspace scan runs per file on the rayon pool; the reported site
     // must still be the first rebinding in path order, or failing that the
