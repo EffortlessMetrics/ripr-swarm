@@ -149,9 +149,16 @@ fn build_fixture(base: &Path, relative: &Path) -> Result<PathBuf, String> {
 }
 
 fn run_ripr(args: &[&std::ffi::OsStr]) -> Result<Output, String> {
-    Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .args(args)
-        .env_remove("RIPR_CACHE_DIR")
+    run_ripr_from(None, args)
+}
+
+fn run_ripr_from(cwd: Option<&Path>, args: &[&std::ffi::OsStr]) -> Result<Output, String> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command.args(args).env_remove("RIPR_CACHE_DIR");
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    command
         .output()
         .map_err(|err| format!("spawn ripr {args:?}: {err}"))
 }
@@ -343,6 +350,155 @@ fn spaced_root_check_and_file_fact_cache_round_trip() -> Result<(), String> {
 #[test]
 fn unicode_root_check_and_file_fact_cache_round_trip() -> Result<(), String> {
     assert_root_journeys("unicode", &unicode_relative_root())
+}
+
+/// Compare analysis-owned fields, leaving the selected root and generated
+/// next-action commands to their separate output contracts. In particular,
+/// compare the producer's order and relative paths without sorting or
+/// canonicalizing the result in the test.
+fn root_spelling_analysis(cwd: &Path, root: &Path) -> Result<serde_json::Value, String> {
+    let args = [
+        "check".as_ref(),
+        "--root".as_ref(),
+        root.as_os_str(),
+        "--base".as_ref(),
+        "HEAD~1".as_ref(),
+        "--json".as_ref(),
+    ];
+    let first = run_ripr_from(Some(cwd), &args)?;
+    let repeated = run_ripr_from(Some(cwd), &args)?;
+    assert!(first.status.success(), "{}", describe(&first));
+    assert!(repeated.status.success(), "{}", describe(&repeated));
+    assert_eq!(
+        first.stdout, repeated.stdout,
+        "same invocation changed JSON"
+    );
+    let report = parse_json(&first.stdout, "root-spelling check stdout")?;
+    assert_eq!(report["summary"]["changed_rust_files"], 1);
+    assert_eq!(report["analysis_outcome"]["analysis_complete"], true);
+    let findings = report["findings"]
+        .as_array()
+        .filter(|findings| !findings.is_empty())
+        .ok_or_else(|| format!("root spelling selected no findings: {report}"))?;
+    let mut projected = Vec::new();
+    for finding in findings {
+        assert_eq!(finding["probe"]["file"], "./src/lib.rs");
+        for field in [
+            "probe",
+            "canonical_gap_id",
+            "classification",
+            "ripr",
+            "related_tests",
+        ] {
+            assert!(!finding[field].is_null(), "missing {field}: {finding}");
+        }
+        projected.push(serde_json::json!({
+            "probe": finding["probe"],
+            "canonical_gap_id": finding["canonical_gap_id"],
+            "canonical_gap": finding["canonical_gap"],
+            "classification": finding["classification"],
+            "ripr": finding["ripr"],
+            "related_tests": finding["related_tests"],
+        }));
+    }
+    assert!(
+        findings.iter().any(|finding| {
+            finding["probe"]["family"] == "predicate"
+                && finding["related_tests"].as_array().is_some_and(|tests| {
+                    tests.iter().any(|test| {
+                        test["file"] == "tests/end_to_end.rs"
+                            && test["name"] == "gate_state_passes_the_flag"
+                    })
+                })
+        }),
+        "fixture must select its predicate and related test: {report}"
+    );
+    Ok(serde_json::json!({
+        "summary": report["summary"],
+        "analysis_outcome": report["analysis_outcome"],
+        "findings": projected,
+    }))
+}
+
+#[test]
+fn equivalent_root_spellings_preserve_analysis_identity_and_repeated_json() -> Result<(), String> {
+    let base = FixtureBase::new("equivalent")?;
+    let relative = Path::new("it's ünïcødé 😀 repo");
+    let root = build_fixture(&base.path, relative)?;
+    fs::create_dir(root.join("anchor")).map_err(|err| err.to_string())?;
+    let canonical = fs::canonicalize(&root).map_err(|err| err.to_string())?;
+    let expected = root_spelling_analysis(&base.path, &root)?;
+    let mut variants = vec![
+        (base.path.clone(), root.join(".")),
+        (base.path.clone(), root.join("anchor").join("..")),
+        (base.path.clone(), relative.to_path_buf()),
+        (base.path.clone(), Path::new(".").join(relative)),
+        (root.clone(), PathBuf::from(".")),
+        (root.clone(), PathBuf::from("./")),
+    ];
+    #[cfg(unix)]
+    {
+        // The parent of a symlink's target differs from its lexical parent.
+        // Both spellings must still select this exact repository.
+        let alias = base.path.join("alias");
+        std::os::unix::fs::symlink(root.join("anchor"), &alias).map_err(|err| err.to_string())?;
+        variants.push((base.path.clone(), alias.join("..")));
+    }
+    #[cfg(windows)]
+    {
+        variants.push((base.path.clone(), canonical.clone()));
+        variants.push((
+            base.path.clone(),
+            PathBuf::from(root.to_string_lossy().replace('\\', "/")),
+        ));
+    }
+    for (cwd, spelling) in variants {
+        let selected = if spelling.is_absolute() {
+            spelling.clone()
+        } else {
+            cwd.join(&spelling)
+        };
+        assert_eq!(
+            fs::canonicalize(&selected).map_err(|err| err.to_string())?,
+            canonical,
+            "fixture spelling must select the same root: {}",
+            selected.display()
+        );
+        assert_eq!(
+            root_spelling_analysis(&cwd, &spelling)?,
+            expected,
+            "analysis identity changed for {} from {}",
+            spelling.display(),
+            cwd.display()
+        );
+    }
+
+    // A constant or empty identity projection must not satisfy the test.
+    // Change only the predicate, commit it, and analyze the same file/root.
+    fs::write(
+        root.join("src/lib.rs"),
+        "pub fn gate_state(flag: bool) -> bool {\n    if !flag { true } else { false }\n}\n",
+    )
+    .map_err(|err| err.to_string())?;
+    fixture_git_ok(&root, &["add", "src/lib.rs"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "change predicate identity"])?;
+    let changed = root_spelling_analysis(&base.path, &root)?;
+    let predicate_id = |value: &serde_json::Value| -> Result<String, String> {
+        value["findings"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|finding| finding["probe"]["family"] == "predicate")
+            .and_then(|finding| finding["probe"]["id"].as_str())
+            .map(str::to_string)
+            .ok_or_else(|| format!("missing predicate identity: {value}"))
+    };
+    assert_ne!(
+        predicate_id(&expected)?,
+        predicate_id(&changed)?,
+        "a material predicate change must invalidate the finding identity"
+    );
+    Ok(())
 }
 
 /// The text a Windows `ripr check` must lead with under a root past

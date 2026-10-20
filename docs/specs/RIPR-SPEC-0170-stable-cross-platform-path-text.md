@@ -80,6 +80,14 @@ the three characters `%FF` renders as `%25FF`.
 
 - Real Git edits retain separate ordinary and trailing-space filenames. Pure
   renames of both empty and nonempty files retain their exact destination names.
+- Equivalent absolute, relative, dotted and parent-component root spellings
+  select one real fixture and retain the ordered probe identities, canonical
+  gaps, classifications, RIPR evidence and repository-relative test paths.
+  Repeating each invocation produces identical JSON bytes. Unix symlink-parent
+  spellings and native Windows canonical/mixed-separator spellings join this
+  matrix on their respective hosts. A material predicate edit changes its ID.
+  The selected-root fields and generated next-action commands have separate
+  contracts and are outside the cross-spelling comparison.
 
 ## Non-Goals
 
@@ -112,6 +120,7 @@ the three characters `%FF` renders as `%25FF`.
 - `crates/ripr/src/analysis/diff/load/contract_tests.rs::git_patch_preserves_trailing_whitespace_paths_and_empty_renames`
 - `crates/ripr/tests/cli_smoke/portable_diff_paths.rs::plain_patch_json_keeps_portable_locations_and_exact_crlf_provenance`
 - `crates/ripr/tests/cli_smoke/diff_selection.rs::git_named_control_paths_select_the_live_predicate_from_root_and_subdirectory`
+- `crates/ripr/tests/native_path_roots.rs::equivalent_root_spellings_preserve_analysis_identity_and_repeated_json`
 
 ## Implementation Mapping
 
