@@ -27,6 +27,7 @@ Linked issues:
 - #6654 (corpus cases scored false actionable under the first draft)
 - #7315 (literal rejection equality observes the rejected reason)
 - #8714 (conditional-branch assertion guard and disclosure)
+- #8959 (lexically bound runner registrations)
 
 Linked PRs:
 
@@ -148,6 +149,32 @@ assertion is `weakly_exposed`, not `reachable_unrevealed`.
 - A registration is an expression statement whose expression is the root
   call. `const x = test(...)` registers nothing.
 
+**Rule 14. Registration provenance and unused function values (#8959).**
+Bare and awaited registrations use the same runner-binding admission. A
+local no-op, unrelated import or shadow cannot donate its callback's tests.
+A top-level immutable result of a named Vitest/Playwright `test` import's
+`.extend(...)` retains registration provenance when the imported receiver
+has no other uses that could replace or expose its mutable extension method.
+Arbitrary factory results and mutable bindings are not treated as runners.
+
+A plain `const` function value with no reference outside its declaration
+does not execute its body. Relation discovery masks that initializer in a
+separate reach view, including heuristic fallbacks and supported named
+callback bodies, while retaining the original source for evidence. Called, aliased or passed functions retain
+the existing bounded rules; opaque `eval`, `with` and escaped identifiers
+prevent this unused-value proof. Byte-preserving masking keeps Unicode
+source offsets aligned with parser spans. If the owner call is only in that
+unused closure, no test path is established. If the owner executes outside
+the closure but only its assertion is dead, the existing `weakly_exposed`
+with unknown oracle remains correct. Supported executed callbacks retain
+RIPR-SPEC-0246 semantics; this is not a general invocation graph.
+
+The complementary `jest-mined-local-noop-describe` and
+`jest-mined-local-noop-test` corpus cases are incorporated from #8968,
+commit `5d7657fbc7240b2c0a62c9934ca2e7fda3a1b209` (Claude). Their original
+Jest runtime-mutant labels and source hashes are retained with attribution;
+copying those labels does not claim an independent runtime rerun.
+
 **Rule 13. A called suite factory is its expansion (2026-10-20).** A
 top-level `function factory(a, b) { describe(a, () => { ... b(x) ... }); }`
 registers nothing until it is called, and its assertions name the owner only
@@ -211,14 +238,16 @@ exactly as the bare call does. This covers the node:test ESM form
 `await test("name", fn)`. It extends the `test` root RIPR-SPEC-0027 lists;
 no accepted spec names the awaited form. An awaited subtest
 `await t.test(...)` inside a test body is not a registration.
-Before an awaited registration contributes assertions, the existing admission
+Before a bare or awaited registration contributes assertions, the existing admission
 scanner must recognize its runner root at the call site. File-local helpers,
 unrelated imports and enclosing callback/loop bindings cannot turn an unused
-callback into test evidence. This fence applies to the newly supported awaited
-form; it does not change bare-root registration semantics. A sibling suite's
+callback into test evidence. Bare roots use the same binding fence (#8959).
+Hoisted `var` bindings remain visible in nested suites; block-local function
+bindings in modules and strict scripts do not shadow a sibling registration.
+A sibling suite's
 helper is outside this lexical scope. Re-exports do not create local runner
 bindings, and an ESM namespace object is not a callable registration root.
-The awaited CommonJS exemption requires an immutable runner declaration and
+The CommonJS exemption requires an immutable runner declaration and
 either ambient `require` syntax or an immutable loader created by a locally
 imported `node:module`/`module` `createRequire(import.meta.url)`. Mutable loaders
 or runner bindings and same-spelled helper factories remain uncredited.
