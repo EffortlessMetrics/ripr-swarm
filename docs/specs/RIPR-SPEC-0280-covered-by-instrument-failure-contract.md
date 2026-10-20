@@ -155,7 +155,9 @@ failure kind `infrastructure`.
   do not classify as instrument failures.
 - The ceiling test pins an early stop that names the ceiling, the exact-ceiling
   boundary, a sub-ceiling sequence that retries to completion, and a single
-  over-ceiling attempt that is neither retried nor labeled as the ceiling.
+  over-ceiling non-lock timeout (stderr shows `Compiling`, no lock line) that
+  is neither retried nor labeled as the ceiling. A lock-wait attempt that
+  reaches the ceiling is labeled a ceiling failure, per Rule 2.
 - Composition tests drive `run_composition_in` and pin the deferred failure as
   `infrastructure_failure` after the diff checks and selected Clippy run, and a
   real policy failure alongside as `source_or_policy_failure` with no later
