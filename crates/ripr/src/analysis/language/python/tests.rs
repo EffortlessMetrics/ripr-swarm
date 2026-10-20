@@ -7172,6 +7172,34 @@ fn boundary_call_rows_of_one_long_assert_chain_stay_linear() -> Result<(), Strin
 }
 
 #[test]
+fn boundary_call_row_window_counts_whitespace_before_the_paren() -> Result<(), String> {
+    // `price   (5, ...)`: the call extent runs from the name through the gap to
+    // the closing parenthesis. A length that ignored the gap would shrink the
+    // lead too little and cut the closing parenthesis out of the excerpt.
+    let gap = " ".repeat(30);
+    let argument = "x".repeat(170);
+    let lead = "price(0,2)==1 and ".repeat(10);
+    let line = format!("    assert {lead}price{gap}(5,'{argument}')==1");
+    let call = format!("price{gap}(5,'{argument}')");
+    assert!(line.len() > 240, "fixture line must be cut: {}", line.len());
+    assert!(
+        (181..=240).contains(&call.len()),
+        "fixture call length {}",
+        call.len()
+    );
+    let finding = classify_price_boundary_with_test_body(&line)?;
+    assert!(
+        finding
+            .activation
+            .observed_values
+            .iter()
+            .any(|fact| fact.text.contains(&call)),
+        "the excerpt keeps the whole call including the gap"
+    );
+    Ok(())
+}
+
+#[test]
 fn boundary_call_row_window_keeps_a_call_that_fits_whole() -> Result<(), String> {
     // A 181-240 byte call on a cut line must keep its closing parenthesis, or
     // the value facts would name bindings the excerpt does not show.

@@ -235,7 +235,7 @@ fn non_cargo_workspace_marker(dir: &Path) -> Option<ImplicitRootReason> {
 /// Returns the invocation directory relative to the widened root (`crates/app`)
 /// when the root moved, so callers can bind member-relative file selectors with
 /// [`bind_member_selector_file`]; `None` when the root did not change.
-pub(super) fn resolve_implicit_command_root(
+pub(in crate::cli) fn resolve_implicit_command_root(
     root: &mut PathBuf,
     root_explicit: bool,
 ) -> Result<Option<String>, String> {
@@ -288,7 +288,7 @@ pub(super) fn resolve_implicit_command_root(
 /// existing invocation-directory file nor an exact workspace-relative file is
 /// refused rather than left to repo-wide suffix matching, which could land on a
 /// sibling member. Absolute paths and an unmoved root pass through unchanged.
-pub(super) fn bind_member_selector_file(
+pub(in crate::cli) fn bind_member_selector_file(
     prefix: Option<&str>,
     root: &Path,
     file: &str,
@@ -327,13 +327,35 @@ pub(super) fn bind_member_selector_item(
                 && !file.contains(':')
                 && (file.contains('/') || file.contains('.')) =>
         {
-            Ok(format!(
-                "{}:{line}",
-                bind_member_selector_file(prefix, root, file)?
-            ))
+            let bound = bind_member_selector_file(prefix, root, file)?;
+            if bound != file {
+                refuse_root_shadowed_selector(root, &bound)?;
+            }
+            Ok(format!("{bound}:{line}"))
         }
         _ => Ok(item.to_string()),
     }
+}
+
+/// The shared `file:line` matcher also accepts a path suffix (`wanted` ends
+/// with the stored path), so a selector bound to `pkg/src/lib.rs` would match
+/// a workspace-root package's `src/lib.rs` at the same line. When a proper
+/// suffix of the bound path names a real file under the root, the path cannot
+/// distinguish the two, so the bound selector is refused instead of risking a
+/// seam of another package. `--root .` analyzes the invocation directory alone.
+pub(super) fn refuse_root_shadowed_selector(root: &Path, bound: &str) -> Result<(), String> {
+    for (index, _) in bound.match_indices('/') {
+        let suffix = &bound[index + 1..];
+        if suffix.is_empty() || suffix.split('/').any(|part| part == "..") {
+            continue;
+        }
+        if root.join(suffix).is_file() {
+            return Err(format!(
+                "`{bound}` also matches the workspace-root file `{suffix}` by path suffix, and a file:line selector cannot tell them apart; pass `--root .` to analyze this directory alone, or select the gap by its seam or gap ID"
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn resolve_implicit_workspace_root(input: &mut CheckInput) -> Result<(), String> {

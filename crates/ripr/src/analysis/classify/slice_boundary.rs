@@ -43,6 +43,7 @@ pub(in crate::analysis) fn refine_slice_boundary(
             let equality = format!("{} == {}", values.operand, values.boundary);
             if let Some((line, source)) = values.witness {
                 gathered.activation.observed_values.push(ValueFact {
+                    file: None,
                     line,
                     text: format!(
                         "{source} | {} = {} via immutable literal slice table cardinality",
