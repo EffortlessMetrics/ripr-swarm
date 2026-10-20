@@ -591,6 +591,9 @@ reason = "advisory ranking-scoreboard gate rule in xtask; not an analyzer verdic
 id = "RIPR-SPEC-0282"
 scope = "out"
 reason = "agent repair-loop retry bound and status routing; not an analyzer verdict, so no corpus case can label it"
+[[unmeasured]]
+id = "RIPR-SPEC-0283"
+reason = "acceptance examples are bullet prose, not numbered; no corpus case cites an example number"
 [[spec]]
 id = "RIPR-SPEC-0285"
 scope = "out"

@@ -41,6 +41,12 @@ pub(crate) const CODE_NO_SNAPSHOT: &str = "no_snapshot";
 pub(crate) const CODE_ANALYSIS_IN_FLIGHT: &str = "analysis_in_flight";
 pub(crate) const CODE_STALE_SNAPSHOT: &str = "stale_snapshot";
 pub(crate) const CODE_ITEM_NOT_FOUND: &str = "item_not_found";
+/// #8736 review follow-up: one raw resource-id segment can resolve both as
+/// captured (legacy raw URI for a literal-`%` file) and as its percent-
+/// decoded form (a URI-emitting client addressing the decoded file) when
+/// both files exist; the wire form is then ambiguous and the route fails
+/// closed instead of silently picking one item.
+pub(crate) const CODE_ID_AMBIGUOUS: &str = "id_ambiguous";
 pub(crate) const CODE_RESULT_TOO_LARGE: &str = "result_too_large";
 /// #7462: `ripr_get_gap` is already one item. Retrying it cannot shrink the
 /// document. The recovery names `--committed` because the snapshot analyzed

@@ -3193,6 +3193,7 @@ fn fix_site_related_information(
 ) -> Option<DiagnosticRelatedInformation> {
     let witness = DiagnosticWitness::from_finding(finding)?;
     let fix_site = witness.fix_site.as_ref()?;
+    let test = DiagnosticWitness::selected_related_test(finding)?;
     let line = fix_site
         .oracle_location
         .as_ref()
@@ -3206,8 +3207,14 @@ fn fix_site_related_information(
         Path::new(&fix_site.file),
         line,
         format!(
-            "Fix site: related test `{}` has {} {} oracle{}",
-            fix_site.test_name, fix_site.oracle_strength, fix_site.oracle_kind, oracle
+            "Fix site: related test `{}` has {}{}",
+            fix_site.test_name,
+            crate::output::related_test_miss::oracle_projection(
+                &test.oracle_strength,
+                &test.oracle_kind,
+                fix_site.current_oracle.is_some(),
+            ),
+            oracle
         ),
     )
 }
@@ -3235,10 +3242,13 @@ fn related_information_for_seam(
                 &grip.file,
                 grip.line,
                 format!(
-                    "Related test `{}` has {} {} oracle",
+                    "Related test `{}` has {}",
                     grip.test_name,
-                    grip.oracle_strength.as_str(),
-                    grip.oracle_kind.as_str(),
+                    crate::output::related_test_miss::oracle_projection(
+                        &grip.oracle_strength,
+                        &grip.oracle_kind,
+                        !matches!(grip.oracle_strength, crate::domain::OracleStrength::None),
+                    ),
                 ),
             )
         })
@@ -3916,8 +3926,53 @@ mod seam_diagnostic_tests {
         assert_eq!(related[0].location.range.start.line, 11);
         assert_eq!(
             related[0].message,
-            "Related test `below_threshold_has_no_discount` has strong exact_value oracle"
+            "Related test `below_threshold_has_no_discount` has strong exact value oracle"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn seam_diagnostic_oracle_wording_distinguishes_ungraded_assertions() -> Result<(), String> {
+        for (kind, strength, expected) in [
+            (
+                OracleKind::ExactValue,
+                OracleStrength::Unknown,
+                "exact value oracle, not graded against this probe",
+            ),
+            (
+                OracleKind::Unknown,
+                OracleStrength::Unknown,
+                "an unclassified oracle, not graded against this probe",
+            ),
+            (
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+                "strong exact value oracle",
+            ),
+        ] {
+            let mut entry = classified(SeamGripClass::WeaklyGripped);
+            let mut grip = related_grip("observes_price", "tests/pricing.rs", 12);
+            let test = std::sync::Arc::make_mut(&mut grip);
+            test.oracle_kind = kind;
+            test.oracle_strength = strength;
+            entry.evidence.related_tests = vec![grip];
+            let diagnostic = diagnostic_for_classified_seam(Path::new("/repo"), &entry)
+                .ok_or_else(|| "expected seam diagnostic".to_string())?;
+            let rows = diagnostic
+                .related_information
+                .as_ref()
+                .ok_or_else(|| "expected related information".to_string())?;
+            assert_eq!(rows.len(), 1);
+            assert_eq!(
+                rows[0].location.uri.as_str(),
+                "file:///repo/tests/pricing.rs"
+            );
+            assert_eq!(rows[0].location.range.start.line, 11);
+            assert_eq!(
+                rows[0].message,
+                format!("Related test `observes_price` has {expected}")
+            );
+        }
         Ok(())
     }
 
@@ -3938,7 +3993,7 @@ mod seam_diagnostic_tests {
         assert_eq!(related.len(), 1);
         assert_eq!(
             related[0].message,
-            "Related test `kept` has strong exact_value oracle"
+            "Related test `kept` has strong exact value oracle"
         );
         assert_eq!(
             related[0].location.uri.as_str(),
