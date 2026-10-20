@@ -1151,11 +1151,21 @@ fn evidence_path_values(finding: &Finding) -> Vec<String> {
             crate::output::path::display_path(&test.file),
             test.line,
             test.name,
-            crate::output::related_test_miss::oracle_projection(
-                &test.oracle_strength,
-                &test.oracle_kind,
-                test.oracle.is_some()
-            )
+            // TRANSITIONAL (#8747): the JSON evidence path keeps the legacy
+            // "none unknown oracle" phrase until its goldens are re-blessed.
+            if matches!(test.oracle_strength, crate::domain::OracleStrength::None) {
+                format!(
+                    "{} {} oracle",
+                    test.oracle_strength.as_str(),
+                    test.oracle_kind.as_str().replace('_', " ")
+                )
+            } else {
+                crate::output::related_test_miss::oracle_projection(
+                    &test.oracle_strength,
+                    &test.oracle_kind,
+                    test.oracle.is_some(),
+                )
+            }
         );
         if let Some(oracle) = &test.oracle {
             value.push_str(&format!(": {oracle}"));

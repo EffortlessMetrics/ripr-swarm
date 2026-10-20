@@ -81,7 +81,7 @@ developer who disagreed had to re-derive the analysis.
   reason with its own row shapes (a matched row keeps its oracle strength and
   kind, only an unmatched row uses `<label>: ...; checked ...`, and a row with
   no recorded oracle shows only the reason, where human-full still prints its
-  `uses none unknown oracle` projection first), and diagnostics add up to three
+  `uses no oracle` projection first), and diagnostics add up to three
   related-information rows that open the examined test.
 - `output::related_test_miss::related_test_miss_label` owns the word before
   the reason: `unconfirmed` for `observation_unconfirmed`, `misses` otherwise.
