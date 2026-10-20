@@ -548,7 +548,7 @@ fn is_comparison_angle(bytes: &[u8], at: usize) -> bool {
     }
 }
 
-/// `statement` without leading outer attributes (`#[allow(unused)] let x = ..`).
+/// `statement` without leading outer attributes (`#[inline] let x = ..`).
 fn without_attributes(statement: &str) -> &str {
     let mut rest = statement;
     while let Some(attribute) = rest.strip_prefix("#[") {
@@ -780,7 +780,7 @@ mod tests {
             "let x = own(2);\napply(|| {\n    if c {\n        let x = 2usize;",
             "let x = own(2);\napply(|| { let x = 2usize;",
             // An attribute does not hide the shadowing `let`.
-            "let x = own(2);\n#[allow(unused_variables)]\nlet x = 2usize;",
+            "let x = own(2);\n#[inline]\nlet x = 2usize;",
             // A closure body or a borrow that rewrites the binding.
             "let mut x = own(2);\napply(|| { x = 2usize; });",
         ] {
@@ -812,8 +812,8 @@ mod tests {
             Some(super::BindingVerdict::Withdrawn)
         ));
         for text in [
-            "#[allow(unused)] let count = 1;",
-            "#[allow(unused)]\n#[cfg(test)] let count = 1;",
+            "#[inline] let count = 1;",
+            "#[inline]\n#[cfg(test)] let count = 1;",
         ] {
             assert!(
                 matches!(

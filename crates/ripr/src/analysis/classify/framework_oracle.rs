@@ -647,7 +647,7 @@ mod tests {
             "let out = vec![1];",
             "let out = row(1);\napply(|| {\n    let out = vec![1];",
             "let out = row(1);\nlet f = || {\n    if c {\n        let out = vec![1];",
-            "let out = row(1);\n#[allow(unused)]\nlet out = vec![1];",
+            "let out = row(1);\n#[inline]\nlet out = vec![1];",
             "let mut out = row(1); std::mem::replace(&mut out, vec![1]);",
             "let mut out = row(1);\nrun(|| { out = vec![1]; });",
         ] {

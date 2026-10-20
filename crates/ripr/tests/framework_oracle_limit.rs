@@ -696,7 +696,7 @@ fn a_shadow_inside_a_callback_reaches_an_assertion_inside_it() -> Result<(), Str
         // A closure body that rewrites a `mut` owner binding.
         "let mut tokens = tokenize(\"7\");\n        run(|| {\n            tokens = vec![1u32];\n        });",
         // Attribute-prefixed shadow, and a borrow that can rewrite the value.
-        "let tokens = tokenize(\"7\");\n        #[allow(unused_variables)]\n        let tokens = vec![1u32];",
+        "let tokens = tokenize(\"7\");\n        #[inline]\n        let tokens = vec![1u32];",
         "let mut tokens = tokenize(\"7\");\n        std::mem::replace(&mut tokens, vec![1u32]);",
     ] {
         let assertion = if setup.contains("run(|| {")
