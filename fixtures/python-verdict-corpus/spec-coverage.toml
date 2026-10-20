@@ -580,3 +580,9 @@ reason = "repository precommit and xtask instrument contract; not an analyzer ve
 id = "RIPR-SPEC-0281"
 scope = "out"
 reason = "advisory ranking-scoreboard gate rule in xtask; not an analyzer verdict, so no corpus case can label it"
+
+# Repair attempt after-refusal retry budget
+[[spec]]
+id = "RIPR-SPEC-0282"
+scope = "out"
+reason = "agent repair-loop retry bound and status routing; not an analyzer verdict, so no corpus case can label it"
