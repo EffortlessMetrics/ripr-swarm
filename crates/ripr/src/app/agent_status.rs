@@ -19,6 +19,7 @@ use crate::app::repair_attempt::{
     load_repair_attempt_manifest_from, quoted_store_flag, repair_attempt_head_reading,
     repair_attempt_state_label, resolve_store, validate_issued_receipt_evidence,
 };
+use crate::app::task_first::{RepairStartGate, RepairStartRefusal, repair_start_withheld_note};
 use crate::domain::{
     CanonicalNextActionV1, NextActionAttemptView, NextActionClass, NextActionCurrentness,
     NextActionDiffSource, NextActionInput, NextActionProducer, current_command_platform,
@@ -168,6 +169,10 @@ pub(crate) struct AgentStatusRepairAttempt {
     pub(crate) disposition: &'static str,
     pub(crate) manifest: String,
     pub(crate) command: Option<String>,
+    /// True when `command` was a repair start that the shared repair gate
+    /// withheld (#8766): the attempt still counts as an open seam, but the
+    /// start is not printed.
+    pub(crate) start_withheld: bool,
     /// The HEAD the attempt's evidence describes (its after phase's HEAD when
     /// it has one, otherwise its before phase's).
     pub(crate) evidence_head: String,
@@ -315,15 +320,16 @@ pub(crate) fn build_agent_status_report_from(
     warnings.extend(stale_warnings(&artifacts));
     let missing_commands = missing_commands(root_argument, seam.as_ref(), &artifacts);
     let receipt = read_workflow_receipt(root);
+    // One lazily loaded repair-admission gate per status read (#8766).
+    let gate = RepairStartGate::new(root);
     let repair_attempts =
-        inspect_repair_attempts(root, &command_root, &receipt, &mut warnings, store);
+        inspect_repair_attempts(root, &command_root, &receipt, &mut warnings, store, &gate);
     let store_flag = quoted_store_flag(store);
     let store_locator = store
         .map(|path| path.to_string_lossy().replace("\\", "/"))
         .filter(|locator| !locator.is_empty())
         .unwrap_or_else(|| REPAIR_ATTEMPT_DIRECTORY.to_string());
     let next_command = select_next_command(
-        root,
         &command_root,
         seam.as_ref(),
         repair_attempts.as_ref(),
@@ -333,6 +339,7 @@ pub(crate) fn build_agent_status_report_from(
             locator: &store_locator,
             flag: &store_flag,
         },
+        &gate,
     );
 
     AgentStatusReport {
@@ -355,6 +362,7 @@ fn inspect_repair_attempts(
     receipt: &WorkflowReceiptRead,
     warnings: &mut Vec<AgentStatusWarning>,
     store: Option<&Path>,
+    gate: &RepairStartGate,
 ) -> Option<Vec<AgentStatusRepairAttempt>> {
     let resolved = match resolve_store(root, store, RepairAttemptStoreAccess::Open) {
         Ok(resolved) => resolved,
@@ -390,13 +398,13 @@ fn inspect_repair_attempts(
     for entry in entries {
         match entry {
             RepairAttemptInventoryEntry::Valid(manifest) => attempts.push(status_repair_attempt(
-                root,
                 root_display,
                 &store_label,
                 &resolved.quoted_store_flag(),
                 &manifest,
                 current_head.as_deref(),
                 receipt,
+                gate,
             )),
             RepairAttemptInventoryEntry::Invalid { directory, error } => {
                 trusted = false;
@@ -412,6 +420,7 @@ fn inspect_repair_attempts(
     }
     if trusted {
         warnings.extend(finished_attempt_warnings(
+            gate,
             root_display,
             &attempts,
             current_head.as_deref(),
@@ -573,19 +582,17 @@ fn legacy_workflow_attempt_receipt(
 /// attempt a commit that descends from it); for an attempt with an after
 /// verdict, whether HEAD is still the head that verdict recorded.
 fn status_repair_attempt(
-    root: &Path,
     root_display: &str,
     store_locator: &str,
     store_flag: &str,
     manifest: &RepairAttemptManifest,
     current_head: Option<&str>,
     receipt: &WorkflowReceiptRead,
+    gate: &RepairStartGate,
 ) -> AgentStatusRepairAttempt {
-    let restart = Some(new_repair_attempt_command(
-        root_display,
-        &manifest.seam_id,
-        store_flag,
-    ));
+    let root = gate.root();
+    let restart_command = new_repair_attempt_command(root_display, &manifest.seam_id, store_flag);
+    let restart = Some(restart_command.clone());
     let receipt = attempt_receipt(root, manifest, receipt);
     let head_reading = repair_attempt_head_reading(root, manifest, current_head);
     let evidence_head = head_reading.evidence_head;
@@ -631,6 +638,42 @@ fn status_repair_attempt(
             status_after_disposition(manifest, &receipt, restart),
         ),
     };
+    // #8766: the per-attempt `command` is a repair start whenever it is the
+    // restart; it is carried only while the shared repair gate admits the
+    // seam, so `repair_attempts[].command` never prints a start the same
+    // build refuses (the withheld note rides the warnings / claim boundary).
+    let command_is_restart = command.as_deref() == Some(restart_command.as_str());
+    // The recorded refusal text and the diverged-head recovery also embed a
+    // restart recipe (`... --phase before`); they are consulted only when one
+    // is present, so the gate loads at most once and only when needed.
+    let carries_start_recipe = diverged_recovery.is_some()
+        || manifest
+            .last_after_refusal
+            .as_ref()
+            .is_some_and(|refusal| refusal.reason.contains("--phase before"))
+        || matches!(
+            &receipt,
+            AgentStatusAttemptReceipt::Issued { reading, .. }
+                if reading
+                    .recommended_action
+                    .as_deref()
+                    .is_some_and(|action| action.contains("--phase before"))
+        );
+    let seam_refused =
+        (command_is_restart || carries_start_recipe) && gate.check(&manifest.seam_id).is_some();
+    let withheld = command_is_restart && seam_refused;
+    let command = if withheld { None } else { command };
+    if seam_refused && let Some(recovery) = diverged_recovery.as_mut() {
+        // Keep the reset route; the new-attempt route is withheld.
+        recovery.restart = String::new();
+    }
+    let mut receipt = receipt;
+    if seam_refused
+        && let AgentStatusAttemptReceipt::Issued { reading, .. } = &mut receipt
+        && let Some(action) = reading.recommended_action.as_mut()
+    {
+        *action = without_start_recipe(action);
+    }
     AgentStatusRepairAttempt {
         attempt_id: manifest.repair_attempt_id.as_str().to_string(),
         seam_id: manifest.seam_id.clone(),
@@ -642,15 +685,140 @@ fn status_repair_attempt(
             manifest.repair_attempt_id.as_str()
         ),
         command,
+        start_withheld: withheld,
         evidence_head,
         receipt,
         last_after_refusal: manifest.last_after_refusal.as_ref().map(|refusal| {
             AgentStatusAfterRefusal {
-                reason: refusal.reason.clone(),
+                reason: if seam_refused {
+                    without_start_recipe(&refusal.reason)
+                } else {
+                    refusal.reason.clone()
+                },
                 recorded_unix_ms: refusal.recorded_unix_ms,
             }
         }),
         diverged_recovery,
+    }
+}
+
+/// Recorded or narrated recovery text with the new-attempt recipe removed
+/// (#8766). Recovery text ends its `to recover:` / `otherwise,` / `Then start
+/// a new attempt:` sentences with a recipe that runs
+/// `ripr agent repair ... --phase before`; when the repair gate does not
+/// admit a new start, only that recipe is replaced by a statement that no
+/// new attempt is offered. The undo and inspect guidance before it, any
+/// sentence after it, and every `--phase after` rerun stay: the recipe is
+/// bounded to its own sentence, starts at a recipe marker (or at the nearest
+/// `rerun` / `run` before the command), and never reaches back across a
+/// `--phase after` command.
+pub(crate) fn without_start_recipe(text: &str) -> String {
+    text.split('\n')
+        .map(without_start_recipe_in_line)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Byte offsets of every ". " sentence break that is outside a backtick span.
+fn sentence_breaks(line: &str) -> impl Iterator<Item = usize> + '_ {
+    line.match_indices(". ")
+        .map(|(i, _)| i)
+        .filter(|&i| line[..i].matches('`').count().is_multiple_of(2))
+}
+
+fn without_start_recipe_in_line(line: &str) -> String {
+    const WITHHELD: &str =
+        "a new attempt is not offered: the repair gate does not admit a new start";
+    const MARKERS: [&str; 6] = [
+        "Then start a new attempt",
+        "To keep the change,",
+        "start a fresh attempt",
+        "start a new attempt",
+        "otherwise, prepare a new attempt",
+        "set your test edit aside",
+    ];
+    const FALLBACKS: [&str; 4] = [
+        ", then rerun ",
+        " then rerun ",
+        "rerun ",
+        "run `ripr agent repair",
+    ];
+    const AFTER: &str = "--phase after";
+    let mut line = line.to_string();
+    while let Some(at) = line.find("--phase before") {
+        // The recipe lives in one sentence; a sentence ends at ". " outside
+        // a backtick span (a command can contain `--root . --store x`).
+        let sentence_start = sentence_breaks(&line)
+            .filter(|&i| i < at)
+            .last()
+            .map_or(0, |i| i + 2);
+        // Never reach back across a `--phase after` command.
+        let window_start = line[sentence_start..at]
+            .rfind(AFTER)
+            .map_or(sentence_start, |i| {
+                let mut end = sentence_start + i + AFTER.len();
+                if line[end..].starts_with('`') {
+                    end += 1;
+                }
+                end
+            });
+        let window = &line[window_start..at];
+        let start = MARKERS
+            .iter()
+            .filter_map(|marker| window.find(marker))
+            .min()
+            .or_else(|| FALLBACKS.iter().find_map(|marker| window.rfind(marker)))
+            .map_or(at, |i| window_start + i);
+        let tail = &line[at..];
+        let sentence_end = sentence_breaks(&line)
+            .find(|&i| i >= at)
+            .map(|i| i - at)
+            .unwrap_or_else(|| {
+                if tail.ends_with('.') {
+                    tail.len() - 1
+                } else {
+                    tail.len()
+                }
+            });
+        // When a runnable `--phase after` command follows in the same
+        // sentence it is kept: the recipe ends at its own closing backtick.
+        let after_command_follows = tail[..sentence_end].contains("ripr agent repair")
+            && tail[..sentence_end].contains(AFTER);
+        let end = if after_command_follows {
+            at + tail.find('`').map_or(sentence_end, |i| i + 1)
+        } else {
+            at + sentence_end
+        };
+        let kept = line[..start].trim_end_matches([' ', ',']);
+        let separator = if kept.is_empty() { "" } else { " " };
+        line = format!("{kept}{separator}({WITHHELD}){}", &line[end..]);
+    }
+    line
+}
+
+/// The recovery route for an attempt whose prepared head moved, offered when
+/// the new-attempt route is withheld (#8766): restore the prepared head, then
+/// rerun the attempt's after phase. The reason carries the cause, the reset
+/// recipe and why no new attempt is offered.
+fn diverged_recovery_command(
+    root_display: &str,
+    store_flag: &str,
+    attempt_id: &str,
+    artifact: &str,
+    recovery: &DivergedHeadRecovery,
+) -> AgentStatusCommand {
+    AgentStatusCommand {
+        step: "repair_attempt_after".to_string(),
+        artifact: artifact.to_string(),
+        reason: format!(
+            "repair attempt `{attempt_id}` is awaiting an edit, but its after phase would refuse: {} {} A new attempt is not offered (see the repair_start_withheld note)",
+            recovery.cause, recovery.reset
+        ),
+        command: format!(
+            "ripr agent repair --root {}{store_flag} --attempt {} --phase after",
+            shell_arg(root_display),
+            shell_arg(attempt_id)
+        ),
     }
 }
 
@@ -692,6 +860,7 @@ fn status_after_disposition(
 /// each finished attempt whose evidence describes another HEAD is stale, and
 /// each attempt whose receipt does not report improved grip says why.
 fn finished_attempt_warnings(
+    gate: &RepairStartGate,
     root_display: &str,
     attempts: &[AgentStatusRepairAttempt],
     current_head: Option<&str>,
@@ -735,11 +904,28 @@ fn finished_attempt_warnings(
                     attempt.seam_id,
                     unconfirmed_receipt_reason(attempt),
                     match &attempt.receipt {
-                        AgentStatusAttemptReceipt::Superseded { .. } => format!(
-                            ". If seam `{}` still has its gap open, start a new attempt with `{}`",
-                            attempt.seam_id,
-                            new_repair_attempt_command(root_display, &attempt.seam_id, store_flag)
-                        ),
+                        // #8766: the start is named only when the repair gate admits it.
+                        AgentStatusAttemptReceipt::Superseded { .. } => {
+                            match gate.check(&attempt.seam_id) {
+                                Some(refusal) => format!(
+                                    ". {}",
+                                    repair_start_withheld_note(
+                                        root_display,
+                                        &attempt.seam_id,
+                                        &refusal
+                                    )
+                                ),
+                                None => format!(
+                                    ". If seam `{}` still has its gap open, start a new attempt with `{}`",
+                                    attempt.seam_id,
+                                    new_repair_attempt_command(
+                                        root_display,
+                                        &attempt.seam_id,
+                                        store_flag
+                                    )
+                                ),
+                            }
+                        }
                         _ => String::new(),
                     },
                     match &attempt.last_after_refusal {
@@ -798,6 +984,20 @@ fn unconfirmed_receipt_reason(attempt: &AgentStatusRepairAttempt) -> String {
     }
 }
 
+/// The warning that replaces a refused repair-start command (#8766).
+fn repair_start_withheld_warning(
+    root_display: &str,
+    seam_id: &str,
+    refusal: &RepairStartRefusal,
+    artifact: &str,
+) -> AgentStatusWarning {
+    AgentStatusWarning {
+        kind: "repair_start_withheld".to_string(),
+        artifact: artifact.to_string(),
+        message: repair_start_withheld_note(root_display, seam_id, refusal),
+    }
+}
+
 /// The documented start of the repair transaction. It creates every artifact
 /// it needs, so it never depends on a workflow directory already existing.
 fn new_repair_attempt_command(root_display: &str, seam_id: &str, store_flag: &str) -> String {
@@ -832,7 +1032,8 @@ fn canonical_next_action_for_inventory(
             terminal: false,
             awaits_edit: true,
             restart_recommended: false,
-            restart_route: new_repair_attempt_command(root_display, &attempt.seam_id, store.flag),
+            // Not recommended, so no before-phase start is handed over.
+            restart_route: String::new(),
             receipt_ref: Some(attempt.manifest.clone()),
         })
         .collect::<Vec<_>>();
@@ -902,14 +1103,15 @@ fn inventory_requires_choice(
 /// behind [`selected_attempt_status_reading`] routes through
 /// [`canonical_next_action_for_attempt`].
 fn select_next_command(
-    root: &Path,
     root_display: &str,
     seam: Option<&AgentStatusSeam>,
     repair_attempts: Option<&Vec<AgentStatusRepairAttempt>>,
     missing_commands: &[AgentStatusCommand],
     warnings: &mut Vec<AgentStatusWarning>,
     store: StoreFollowUp<'_>,
+    gate: &RepairStartGate,
 ) -> Option<AgentStatusCommand> {
+    let root = gate.root();
     // An inventory status could not read is not an empty one: choosing a
     // command past it could resume or restart the wrong transaction.
     let attempts = repair_attempts?;
@@ -996,7 +1198,9 @@ fn select_next_command(
         .collect::<std::collections::BTreeSet<_>>();
     let mut open = std::collections::BTreeMap::<&str, Vec<&AgentStatusRepairAttempt>>::new();
     for attempt in attempts {
-        if attempt.command.is_some() && !finished_seams.contains(attempt.seam_id.as_str()) {
+        if (attempt.command.is_some() || attempt.start_withheld)
+            && !finished_seams.contains(attempt.seam_id.as_str())
+        {
             open.entry(attempt.seam_id.as_str())
                 .or_default()
                 .push(attempt);
@@ -1016,73 +1220,77 @@ fn select_next_command(
     let mut open_seams = open.into_iter();
     match (open_seams.next(), open_seams.next()) {
         (Some((seam_id, ended)), None) if !choose_seam => {
-            let restart = if ended
-                .iter()
-                .any(|attempt| attempt.disposition == "gap_open")
-            {
-                "the gap is still open, so start a new attempt and strengthen the focused test before its after phase"
-            } else if ended
-                .iter()
-                .any(|attempt| attempt.diverged_recovery.is_some())
-            {
-                "restore the prepared head as described to continue that attempt, or start a new attempt while the gap still exists"
-            } else {
-                "start a new attempt"
-            };
-            // A terminal attempt can carry the recorded after-phase refusal
-            // the inventory projection persisted (#7378); the default path
-            // must project it into the restart reason too, or a fresh
-            // session restarts blind to the cause the refusal names — the
-            // `--attempt` path already does through `restart_attempt_command`.
-            let refusal_note = ended
-                .iter()
-                .filter_map(|attempt| {
-                    attempt.last_after_refusal.as_ref().map(|refusal| {
-                        format!(
-                            "attempt `{}`'s recorded refusal explains why it ended: {}",
-                            attempt.attempt_id,
-                            refusal.reason.trim_end_matches('.')
+            // #8766: never print a start the same build refuses.
+            // Only the restart is withheld: a diverged-head attempt keeps its
+            // reset-and-rerun-after recovery route.
+            if let Some(refusal) = gate.check(seam_id) {
+                warnings.push(repair_start_withheld_warning(
+                    root_display,
+                    seam_id,
+                    &refusal,
+                    store.locator,
+                ));
+                return ended.iter().find_map(|attempt| {
+                    attempt.diverged_recovery.as_ref().map(|recovery| {
+                        diverged_recovery_command(
+                            root_display,
+                            store.flag,
+                            &attempt.attempt_id,
+                            &attempt.manifest,
+                            recovery,
                         )
                     })
-                })
-                .collect::<Vec<_>>()
-                .join("; ");
-            return Some(AgentStatusCommand {
-                step: "repair_attempt_before".to_string(),
-                artifact: store.locator.to_string(),
-                reason: format!(
-                    "no repair attempt for seam `{seam_id}` can continue at the current HEAD ({}); {restart}{}",
-                    ended
-                        .iter()
-                        .map(|attempt| format!(
-                            "`{}` is {}",
-                            attempt.attempt_id,
-                            attempt_condition(attempt)
-                        ))
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    if refusal_note.is_empty() {
-                        String::new()
-                    } else {
-                        format!(". {refusal_note}")
-                    }
-                ),
-                command: new_repair_attempt_command(root_display, seam_id, store.flag),
-            });
+                });
+            }
+            return Some(open_seam_restart_command(
+                root_display,
+                seam_id,
+                &ended,
+                &store,
+            ));
         }
-        (Some((first, _)), second) => {
-            let mut seams = vec![first];
-            seams.extend(second.map(|(seam_id, _)| seam_id));
-            seams.extend(open_seams.map(|(seam_id, _)| seam_id));
+        (Some(first), second) => {
+            let mut all_seams = vec![first];
+            all_seams.extend(second);
+            all_seams.extend(open_seams);
+            // #8766: a seam the repair gate refuses is named by its own
+            // warning instead of listed with a start command.
+            let mut seams = Vec::new();
+            let open_total = all_seams.len();
+            for (seam_id, ended) in all_seams {
+                match gate.check(seam_id) {
+                    Some(refusal) => warnings.push(repair_start_withheld_warning(
+                        root_display,
+                        seam_id,
+                        &refusal,
+                        store.locator,
+                    )),
+                    None => seams.push((seam_id, ended)),
+                }
+            }
+            // With the refused seams named by their own warnings, exactly one
+            // startable seam is no longer a choice: select it like the
+            // single-open-seam case.
+            if let [(seam_id, ended)] = seams.as_slice() {
+                return Some(open_seam_restart_command(
+                    root_display,
+                    seam_id,
+                    ended,
+                    &store,
+                ));
+            }
+            if seams.is_empty() {
+                return None;
+            }
             warnings.push(AgentStatusWarning {
                 kind: "multiple_open_repair_seams".to_string(),
                 artifact: store.locator.to_string(),
                 message: format!(
-                    "repair attempts for {} seams ended without a receipt; status does not choose between them. Start a new attempt for the seam you mean: {}",
+                    "repair attempts for {open_total} seams ended without a receipt; status does not choose between them. Start a new attempt for the seam you mean ({} of them can be started): {}",
                     seams.len(),
                     seams
                         .iter()
-                        .map(|seam_id| format!("`{}`", new_repair_attempt_command(root_display, seam_id, store.flag)))
+                        .map(|(seam_id, _)| format!("`{}`", new_repair_attempt_command(root_display, seam_id, store.flag)))
                         .collect::<Vec<_>>()
                         .join("; ")
                 ),
@@ -1092,7 +1300,15 @@ fn select_next_command(
         (None, _) => {}
     }
 
-    legacy_next_command(root, root_display, seam, missing_commands, warnings, store)
+    legacy_next_command(
+        root,
+        root_display,
+        seam,
+        missing_commands,
+        warnings,
+        store,
+        gate,
+    )
 }
 
 /// Where `ripr pilot` writes its summary by default, relative to the root.
@@ -1122,14 +1338,29 @@ pub(crate) fn pilot_select_command(root: &str) -> String {
 /// verbatim. Pilot fills `next.repair_command` only past the repair-packet
 /// flip, so status repeats that decision instead of re-deriving it. A missing,
 /// unreadable, `null`, or non-repair value leaves status on `select_seam`.
-fn pilot_repair_command(root: &Path) -> Option<String> {
+fn pilot_repair_command(root: &Path) -> Option<PilotRepairStart> {
     let text = std::fs::read_to_string(root.join(PILOT_SUMMARY_ARTIFACT)).ok()?;
     let summary = serde_json::from_str::<Value>(&text).ok()?;
-    summary
+    let command = summary
         .pointer("/next/repair_command")
         .and_then(Value::as_str)
         .filter(|command| command.starts_with("ripr agent repair "))
-        .map(str::to_string)
+        .map(str::to_string)?;
+    // Pilot records `next.repair_command` for its first ranked seam, so that
+    // seam's producer-owned id (not the command text) is the gate's subject.
+    let seam_id = summary
+        .pointer("/top_actionable_seams/0/seam_id")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    Some(PilotRepairStart { command, seam_id })
+}
+
+/// The repair start `ripr pilot` recorded and the seam it was recorded for.
+struct PilotRepairStart {
+    command: String,
+    /// `None` when the summary names no top seam id; the gate then cannot
+    /// verify the start and withholds it.
+    seam_id: Option<String>,
 }
 
 /// Whether a complete `ripr pilot` run ranked a top seam and recorded no
@@ -1475,10 +1706,22 @@ fn legacy_next_command(
     missing_commands: &[AgentStatusCommand],
     warnings: &mut Vec<AgentStatusWarning>,
     store: StoreFollowUp<'_>,
+    gate: &RepairStartGate,
 ) -> Option<AgentStatusCommand> {
     let first = missing_commands.first()?;
     let Some(seam) = seam else {
-        if let Some(command) = pilot_repair_command(root) {
+        if let Some(PilotRepairStart { command, seam_id }) = pilot_repair_command(root) {
+            // #8766: the recorded pilot start was decided when pilot ran; it
+            // is repeated only while the repair gate still admits its seam.
+            if let Some(refusal) = gate.check_optional(seam_id.as_deref()) {
+                warnings.push(repair_start_withheld_warning(
+                    root_display,
+                    seam_id.as_deref().unwrap_or_default(),
+                    &refusal,
+                    PILOT_SUMMARY_ARTIFACT,
+                ));
+                return None;
+            }
             return Some(AgentStatusCommand {
                 step: "repair_attempt_before".to_string(),
                 artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
@@ -1566,6 +1809,16 @@ fn legacy_next_command(
         .parent()
         .is_none_or(|parent| root.join(parent).is_dir());
     if !target_directory_exists {
+        // #8766: never print a start the same build refuses.
+        if let Some(refusal) = gate.check(&seam.seam_id) {
+            warnings.push(repair_start_withheld_warning(
+                root_display,
+                &seam.seam_id,
+                &refusal,
+                store.locator,
+            ));
+            return None;
+        }
         return Some(AgentStatusCommand {
             step: "repair_attempt_before".to_string(),
             artifact: store.locator.to_string(),
@@ -1577,6 +1830,70 @@ fn legacy_next_command(
         });
     }
     Some(first.clone())
+}
+
+/// The restart command for a seam whose attempts all ended without a usable
+/// result: why none can continue, and the new-attempt start (#8766: only
+/// offered for a seam the repair gate admits).
+fn open_seam_restart_command(
+    root_display: &str,
+    seam_id: &str,
+    ended: &[&AgentStatusRepairAttempt],
+    store: &StoreFollowUp<'_>,
+) -> AgentStatusCommand {
+    let restart = if ended
+        .iter()
+        .any(|attempt| attempt.disposition == "gap_open")
+    {
+        "the gap is still open, so start a new attempt and strengthen the focused test before its after phase"
+    } else if ended
+        .iter()
+        .any(|attempt| attempt.diverged_recovery.is_some())
+    {
+        "restore the prepared head as described to continue that attempt, or start a new attempt while the gap still exists"
+    } else {
+        "start a new attempt"
+    };
+    // A terminal attempt can carry the recorded after-phase refusal
+    // the inventory projection persisted (#7378); the default path
+    // must project it into the restart reason too, or a fresh
+    // session restarts blind to the cause the refusal names — the
+    // `--attempt` path already does through `restart_attempt_command`.
+    let refusal_note = ended
+        .iter()
+        .filter_map(|attempt| {
+            attempt.last_after_refusal.as_ref().map(|refusal| {
+                format!(
+                    "attempt `{}`'s recorded refusal explains why it ended: {}",
+                    attempt.attempt_id,
+                    refusal.reason.trim_end_matches('.')
+                )
+            })
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    AgentStatusCommand {
+        step: "repair_attempt_before".to_string(),
+        artifact: store.locator.to_string(),
+        reason: format!(
+            "no repair attempt for seam `{seam_id}` can continue at the current HEAD ({}); {restart}{}",
+            ended
+                .iter()
+                .map(|attempt| format!(
+                    "`{}` is {}",
+                    attempt.attempt_id,
+                    attempt_condition(attempt)
+                ))
+                .collect::<Vec<_>>()
+                .join(", "),
+            if refusal_note.is_empty() {
+                String::new()
+            } else {
+                format!(". {refusal_note}")
+            }
+        ),
+        command: new_repair_attempt_command(root_display, seam_id, store.flag),
+    }
 }
 
 fn attempt_condition(attempt: &AgentStatusRepairAttempt) -> String {
@@ -1809,7 +2126,7 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
 
     rendered.push_str("\n## Limits\n\n");
     rendered.push_str("- Reads existing artifacts only.\n");
-    rendered.push_str("- No repo analysis is run by this command.\n");
+    rendered.push_str("- No repo analysis is run by this command, apart from the seam-eligibility re-check that guards a named repair start.\n");
     rendered.push_str("- No runtime mutation execution.\n");
     rendered.push_str("- No automatic source edits.\n");
     rendered.push_str("- No generated tests.\n");
@@ -2055,6 +2372,9 @@ pub(crate) struct SelectedAttemptStatusReading {
     /// the producer state cannot bind a subject, in which case `next_action`
     /// is `None` too.
     pub(crate) canonical_next_action: Option<CanonicalNextActionV1>,
+    /// Set when a restart would be recommended but the shared repair gate
+    /// refuses the seam (#8766): the by-hand remaining work, in prose.
+    pub(crate) restart_withheld: Option<String>,
 }
 
 /// One validated manifest's selected-attempt interpretation, shared by CLI
@@ -2071,14 +2391,15 @@ pub(crate) fn selected_attempt_status_reading(
 ) -> SelectedAttemptStatusReading {
     let command_root = bound_root(&root_path_display(root_argument));
     let workflow_receipt = read_workflow_receipt(root);
+    let gate = RepairStartGate::new(root);
     let view = status_repair_attempt(
-        root,
         &command_root,
         store_locator,
         store_flag,
         manifest,
         current_head,
         &workflow_receipt,
+        &gate,
     );
     let status_class = attempt_status_class(manifest, &view);
     let manifest_label = format!(
@@ -2086,14 +2407,37 @@ pub(crate) fn selected_attempt_status_reading(
         store_locator,
         manifest.repair_attempt_id.as_str()
     );
-    let next_action = attempt_next_action(
-        manifest,
-        &view,
-        status_class,
-        &command_root,
-        &manifest_label,
-        store_flag,
-    );
+    // #8766: a restart is recommended only when the shared repair gate
+    // admits the seam; otherwise status names the by-hand work instead.
+    let restart_withheld = if restart_recommended_for(status_class, &view) {
+        gate.check(&manifest.seam_id)
+            .map(|refusal| repair_start_withheld_note(&command_root, &manifest.seam_id, &refusal))
+    } else {
+        None
+    };
+    let withheld = restart_withheld.is_some();
+    let next_action = if withheld {
+        // Only the restart is withheld; a diverged-head attempt keeps its
+        // reset-and-rerun-after recovery route.
+        view.diverged_recovery.as_ref().map(|recovery| {
+            diverged_recovery_command(
+                &command_root,
+                store_flag,
+                manifest.repair_attempt_id.as_str(),
+                &manifest_label,
+                recovery,
+            )
+        })
+    } else {
+        attempt_next_action(
+            manifest,
+            &view,
+            status_class,
+            &command_root,
+            &manifest_label,
+            store_flag,
+        )
+    };
     let canonical_next_action = canonical_next_action_for_attempt(
         manifest,
         &view,
@@ -2101,6 +2445,7 @@ pub(crate) fn selected_attempt_status_reading(
         &command_root,
         &manifest_label,
         store_flag,
+        withheld,
     )
     .ok();
     SelectedAttemptStatusReading {
@@ -2109,6 +2454,7 @@ pub(crate) fn selected_attempt_status_reading(
         status_class,
         next_action,
         canonical_next_action,
+        restart_withheld,
     }
 }
 
@@ -2163,6 +2509,7 @@ pub(crate) fn build_agent_attempt_status(
         currentness,
         next_action,
         canonical_next_action,
+        restart_withheld,
     } = selected_attempt_status_reading(
         root,
         root_argument,
@@ -2181,6 +2528,7 @@ pub(crate) fn build_agent_attempt_status(
         ATTEMPT_STATUS_READ_ONLY_NON_CLAIM.to_string(),
         "a finished result is retained static evidence; it does not establish that the proposed repair is correct or that any project test ran".to_string(),
     ];
+    claim_boundary.extend(restart_withheld);
     match status_class {
         "finished_historical" => claim_boundary.push(
             "historical validity and current applicability are reported separately: this retained result is readable but is not current proof".to_string(),
@@ -2327,6 +2675,22 @@ fn attempt_status_class(
     }
 }
 
+/// Whether this status class would recommend a fresh before phase, before the
+/// repair gate is consulted (#8766).
+fn restart_recommended_for(status_class: &str, view: &AgentStatusRepairAttempt) -> bool {
+    match status_class {
+        "prepared" | "stale" | "incomparable" | "failed" | "corrupt_or_unavailable" => true,
+        "limited" => matches!(
+            &view.receipt,
+            AgentStatusAttemptReceipt::Issued { reading, .. } if reading.leaves_gap_open()
+        ),
+        "legacy_compatibility_only" => {
+            !matches!(&view.receipt, AgentStatusAttemptReceipt::Issued { .. })
+        }
+        _ => false,
+    }
+}
+
 /// Project the status producer's canonical action for one validated
 /// attempt. Status owns the lifecycle reading (terminality, edit obligation,
 /// restart recommendation); the selector owns the class decision. Status
@@ -2341,20 +2705,17 @@ fn canonical_next_action_for_attempt(
     root_display: &str,
     manifest_label: &str,
     store_flag: &str,
+    restart_withheld: bool,
 ) -> Result<CanonicalNextActionV1, String> {
     let id = manifest.repair_attempt_id.as_str();
     let seam = manifest.seam_id.as_str();
-    let restart_route = new_repair_attempt_command(root_display, seam, store_flag);
-    let restart_recommended = match status_class {
-        "prepared" | "stale" | "incomparable" | "failed" | "corrupt_or_unavailable" => true,
-        "limited" => matches!(
-            &view.receipt,
-            AgentStatusAttemptReceipt::Issued { reading, .. } if reading.leaves_gap_open()
-        ),
-        "legacy_compatibility_only" => {
-            !matches!(&view.receipt, AgentStatusAttemptReceipt::Issued { .. })
-        }
-        _ => false,
+    let restart_recommended = restart_recommended_for(status_class, view) && !restart_withheld;
+    // The before-phase start is handed to the selector only when it is
+    // recommended, so a withheld start cannot reach the canonical decision.
+    let restart_route = if restart_recommended {
+        new_repair_attempt_command(root_display, seam, store_flag)
+    } else {
+        String::new()
     };
     // The subject root is the caller's bound root (#3999), never the
     // manifest's recorded spelling: the before phase may have stored a
@@ -2451,6 +2812,7 @@ fn attempt_next_action(
         root_display,
         manifest_label,
         store_flag,
+        false,
     )
     .ok()?;
     match canonical.action_class() {
@@ -2593,7 +2955,7 @@ pub(crate) fn render_agent_attempt_status_json(
         serde_json::json!({
             "cause": recovery.cause,
             "reset": recovery.reset,
-            "restart": recovery.restart,
+            "restart": (!recovery.restart.is_empty()).then_some(recovery.restart.as_str()),
         })
     });
     let value = serde_json::json!({
@@ -4314,6 +4676,7 @@ mod tests {
             disposition,
             manifest: format!("{REPAIR_ATTEMPT_DIRECTORY}/{id}/attempt.json"),
             command: command.map(str::to_string),
+            start_withheld: false,
             evidence_head: "0123456789abcdef0123456789abcdef01234567".to_string(),
             receipt: AgentStatusAttemptReceipt::NotApplicable,
             last_after_refusal: None,
@@ -4331,7 +4694,6 @@ mod tests {
         ];
         let mut warnings = Vec::new();
         let next = select_next_command(
-            &root,
             ".",
             None,
             Some(&attempts),
@@ -4341,6 +4703,7 @@ mod tests {
                 locator: REPAIR_ATTEMPT_DIRECTORY,
                 flag: "",
             },
+            &RepairStartGate::new(&root),
         );
         assert_eq!(next, None);
         assert_eq!(warnings.len(), 1);
@@ -4375,13 +4738,13 @@ mod tests {
         assert_eq!(decision.action_class(), NextActionClass::ChooseAttempt);
         let mut warnings = Vec::new();
         let next = select_next_command(
-            &root,
             ".",
             None,
             Some(&vec![one.clone(), two.clone()]),
             &[],
             &mut warnings,
             inventory_store(),
+            &RepairStartGate::new(&root),
         );
         assert_eq!(next, None);
         assert_eq!(warnings.len(), 1);
@@ -4399,13 +4762,13 @@ mod tests {
         assert_eq!(decision.subject().item.as_deref(), Some("seam-a"));
         let mut warnings = Vec::new();
         let next = select_next_command(
-            &root,
             ".",
             None,
             Some(&vec![one.clone()]),
             &[],
             &mut warnings,
             inventory_store(),
+            &RepairStartGate::new(&root),
         )
         .ok_or_else(|| "one resumable attempt must name its after command".to_string())?;
         assert_eq!(next.step, "repair_attempt_after");
@@ -4438,25 +4801,25 @@ mod tests {
         );
         let mut warnings = Vec::new();
         let next = select_next_command(
-            &root,
             "",
             None,
             Some(&vec![one.clone(), two.clone()]),
             &[],
             &mut warnings,
             inventory_store(),
+            &RepairStartGate::new(&root),
         );
         assert_eq!(next, None);
         assert_eq!(warnings[0].kind, "ambiguous_repair_attempts");
         let mut warnings = Vec::new();
         let next = select_next_command(
-            &root,
             "",
             None,
             Some(&vec![one]),
             &[],
             &mut warnings,
             inventory_store(),
+            &RepairStartGate::new(&root),
         )
         .ok_or_else(|| "fallback must still continue one resumable attempt".to_string())?;
         assert_eq!(next.command, "after a");
@@ -4466,13 +4829,13 @@ mod tests {
         ];
         let mut warnings = Vec::new();
         let next = select_next_command(
-            &root,
             "",
             None,
             Some(&open),
             &[],
             &mut warnings,
             inventory_store(),
+            &RepairStartGate::new(&root),
         );
         assert_eq!(next, None);
         assert_eq!(warnings[0].kind, "multiple_open_repair_seams");
@@ -4508,6 +4871,237 @@ mod tests {
         Ok(())
     }
 
+    /// #8766: with a gate that refuses the open seam (route not ready) or
+    /// cannot verify it (stale seam id), the default status path prints no
+    /// start, names the withheld seam in a `repair_start_withheld` warning,
+    /// and the multi-seam branch lists no start either.
+    #[test]
+    fn agent_status_withholds_a_start_the_repair_gate_refuses() -> Result<(), String> {
+        use crate::analysis::seams::SeamGripClass;
+        let root = unique_agent_status_test_dir("withheld-start");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let refused = crate::app::task_first::tests::gate_entry(
+            SeamGripClass::WeaklyGripped,
+            vec![crate::app::task_first::tests::weak_related_test()],
+        );
+        let refused_id = refused.seam.id().as_str().to_string();
+        let gate = RepairStartGate::preloaded(&root, vec![refused]);
+        let store = || StoreFollowUp {
+            locator: REPAIR_ATTEMPT_DIRECTORY,
+            flag: "",
+        };
+
+        // One open seam, refused with "repair route not ready".
+        let attempts = vec![synthetic_attempt(
+            "a",
+            &refused_id,
+            "ended",
+            Some("restart a"),
+        )];
+        let mut warnings = Vec::new();
+        let next = select_next_command(
+            ".",
+            None,
+            Some(&attempts),
+            &[],
+            &mut warnings,
+            store(),
+            &gate,
+        );
+        assert!(
+            next.is_none(),
+            "a refused seam must not get a start: {next:?}"
+        );
+        let kinds = warnings.iter().map(|w| w.kind.as_str()).collect::<Vec<_>>();
+        assert_eq!(kinds, ["repair_start_withheld"], "{warnings:?}");
+        assert!(
+            warnings[0].message.contains("repair route not ready")
+                && warnings[0].message.contains("by hand")
+                && !warnings[0].message.contains("--phase before"),
+            "{}",
+            warnings[0].message
+        );
+
+        // Several open seams: one refused, one the inventory no longer
+        // names (unverified); neither is listed with a start command.
+        let attempts = vec![
+            synthetic_attempt("a", &refused_id, "ended", Some("restart a")),
+            synthetic_attempt("b", "stale-seam-id", "ended", Some("restart b")),
+        ];
+        let mut warnings = Vec::new();
+        let next = select_next_command(
+            ".",
+            None,
+            Some(&attempts),
+            &[],
+            &mut warnings,
+            store(),
+            &gate,
+        );
+        assert!(next.is_none(), "{next:?}");
+        let rendered = warnings
+            .iter()
+            .map(|w| w.message.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            warnings.iter().all(|w| w.kind == "repair_start_withheld")
+                && warnings.len() == 2
+                && rendered.contains("could not verify")
+                && !rendered.contains("--phase before"),
+            "{warnings:?}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    /// #8766: the recorded-refusal sanitizer cuts the `--phase before` recipe
+    /// but keeps the undo guidance before it, on both recorded line shapes and
+    /// on the diverged-head restart line.
+    #[test]
+    fn without_start_recipe_cuts_the_recipe_and_keeps_the_guidance() {
+        let edit_cage = "refused paths: stray.txt\nto recover: undo the refused changes, check for a git-invisible line-ending flip (`core.autocrlf` can rewrite CRLF), set your test edit aside (for example `git stash`), run `ripr agent repair --root '/r' --seam-id abc --phase before` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints.";
+        let cleaned = without_start_recipe(edit_cage);
+        assert!(
+            !cleaned.contains("--phase before")
+                && cleaned.contains("refused paths: stray.txt")
+                && cleaned.contains("undo the refused changes")
+                && cleaned.contains("`core.autocrlf` can rewrite CRLF")
+                && cleaned.contains("a new attempt is not offered"),
+            "{cleaned}"
+        );
+
+        let fresh = "to recover: start a fresh attempt from a clean state: set your test edit aside, run `ripr agent repair --root '/r' --seam-id abc --phase before` from the clean state, restore your test edit, then run the new --attempt command it prints.";
+        let cleaned = without_start_recipe(fresh);
+        assert!(
+            !cleaned.contains("--phase before") && cleaned.contains("a new attempt is not offered"),
+            "{cleaned}"
+        );
+
+        let recovery = diverged_head_recovery(".", "attempt-1", "seam-1", "aaaa", "bbbb", "");
+        let cleaned = without_start_recipe(&recovery.restart);
+        assert!(!cleaned.contains("--phase before"), "{cleaned}");
+
+        // Text with no recipe is untouched.
+        assert_eq!(without_start_recipe("plain refusal."), "plain refusal.");
+    }
+
+    /// #8766: the sanitizer cuts only the `--phase before` recipe's own
+    /// clause. It never cuts mid-word, never drops a legitimate
+    /// `--phase after` rerun, and keeps the guidance after the recipe, on the
+    /// recorded shapes the after phase and the before phase print.
+    #[test]
+    fn without_start_recipe_cuts_only_the_before_clause_on_every_recorded_shape() {
+        let cut = "a new attempt is not offered";
+        // Cage-input change (cli/commands/agent.rs): a legitimate after-phase
+        // rerun, then a keep-the-change sentence carrying the recipe.
+        let inputs = "to recover: restore those files to their before-phase state (for example `git checkout abc -- <path>`), then rerun `ripr agent repair --root '/r' --attempt id --phase after`. To keep the change, set your test edit aside, run `ripr agent repair --root '/r' --seam-id abc --phase before`, restore the edit, then run the new --attempt command it prints.";
+        let cleaned = without_start_recipe(inputs);
+        assert!(
+            cleaned
+                .contains("then rerun `ripr agent repair --root '/r' --attempt id --phase after`")
+                && cleaned.contains("restore those files to their before-phase state")
+                && !cleaned.contains("--phase before`")
+                && !cleaned.contains("then re ")
+                && cleaned.contains(cut),
+            "{cleaned}"
+        );
+
+        // Dirty-premise start refusal: the recipe is the tail of a clause and
+        // a later sentence must survive.
+        let dirty = "repair attempt cannot start: tracked file(s) differ from HEAD: src/lib.rs. to recover: commit the listed file(s) (for example `git commit -- src/lib.rs`), or restore them, then rerun `ripr agent repair --root '/r' --seam-id abc --phase before`. No workflow was prepared and no repair attempt was started.";
+        let cleaned = without_start_recipe(dirty);
+        assert!(
+            !cleaned.contains("--phase before")
+                && cleaned.contains("or restore them")
+                && cleaned.contains("No workflow was prepared and no repair attempt was started.")
+                && cleaned.contains(cut),
+            "{cleaned}"
+        );
+
+        // Before-phase gitignore refusal (no `ripr agent repair` in the
+        // recipe): the guidance after it is kept.
+        let ignore = "Rust repair requires Cargo's build directory `target` to be Git-ignored before the test edit. Add `/target` to the repository's .gitignore (or an equivalent Git exclude rule), then rerun --phase before. A rule for only a child directory is insufficient: Cargo also writes files at the build-directory root.";
+        let cleaned = without_start_recipe(ignore);
+        assert!(
+            !cleaned.contains("--phase before")
+                && cleaned.contains("Add `/target` to the repository's .gitignore")
+                && cleaned.contains("A rule for only a child directory is insufficient")
+                && cleaned.contains(cut),
+            "{cleaned}"
+        );
+
+        // `Then start a new attempt:` sentence after inspect guidance.
+        let moved = "to recover: first inspect what moved (`git diff -- <path>`). Only `git checkout abc -- <path>` restores the before-phase content. Then start a new attempt: set your test edit aside (`git stash`), run `ripr agent repair --root '/r' --seam-id abc --phase before` while the gap still exists, restore the test edit (`git stash pop`), and run the new --attempt command it prints.";
+        let cleaned = without_start_recipe(moved);
+        assert!(
+            !cleaned.contains("--phase before")
+                && cleaned.contains("first inspect what moved")
+                && cleaned.contains("restores the before-phase content")
+                && cleaned.contains(cut),
+            "{cleaned}"
+        );
+
+        // Receipt recommended action: the generic `--phase after` mention
+        // belongs to the new attempt and goes with it.
+        let receipt = "This receipt is not review evidence; rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --seam-id <seam-id> --phase before` and run the `--phase after` command it prints.";
+        let cleaned = without_start_recipe(receipt);
+        assert!(
+            !cleaned.contains("--phase before")
+                && cleaned.contains("rerun agent verify and agent receipt")
+                && cleaned.contains(cut),
+            "{cleaned}"
+        );
+    }
+
+    /// #8766: with several open seams, the refused one is named by its own
+    /// warning and the single remaining startable seam is selected with the
+    /// normal restart command instead of leaving status with no next step.
+    #[test]
+    fn agent_status_selects_the_one_admitted_seam_among_refused_ones() -> Result<(), String> {
+        use crate::analysis::seams::SeamGripClass;
+        let root = unique_agent_status_test_dir("mixed-open-seams");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let refused = crate::app::task_first::tests::gate_entry(
+            SeamGripClass::WeaklyGripped,
+            vec![crate::app::task_first::tests::weak_related_test()],
+        );
+        let refused_id = refused.seam.id().as_str().to_string();
+        let gate = RepairStartGate::preloaded_admitting(&root, vec![refused], &["seam-ok"]);
+        let attempts = vec![
+            synthetic_attempt("a", &refused_id, "ended", Some("restart a")),
+            synthetic_attempt("b", "seam-ok", "ended", Some("restart b")),
+        ];
+        let mut warnings = Vec::new();
+        let next = select_next_command(
+            ".",
+            None,
+            Some(&attempts),
+            &[],
+            &mut warnings,
+            StoreFollowUp {
+                locator: REPAIR_ATTEMPT_DIRECTORY,
+                flag: "",
+            },
+            &gate,
+        )
+        .ok_or("the one admitted seam must be selected")?;
+        assert_eq!(next.step, "repair_attempt_before");
+        assert_eq!(
+            next.command,
+            "ripr agent repair --root . --seam-id seam-ok --phase before"
+        );
+        let kinds = warnings.iter().map(|w| w.kind.as_str()).collect::<Vec<_>>();
+        assert_eq!(kinds, ["repair_start_withheld"], "{warnings:?}");
+        assert!(
+            warnings[0].message.contains(&refused_id),
+            "{}",
+            warnings[0].message
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
     #[test]
     fn agent_status_does_not_restart_a_seam_that_finished() -> Result<(), String> {
         let root = unique_agent_status_test_dir("finished-seam");
@@ -4519,7 +5113,6 @@ mod tests {
         ];
         let mut warnings = Vec::new();
         let next = select_next_command(
-            &root,
             ".",
             None,
             Some(&attempts),
@@ -4529,6 +5122,7 @@ mod tests {
                 locator: REPAIR_ATTEMPT_DIRECTORY,
                 flag: "",
             },
+            &RepairStartGate::new(&root),
         )
         .ok_or_else(|| "expected a restart for the one open seam".to_string())?;
         assert_eq!(next.step, "repair_attempt_before");
@@ -4560,13 +5154,13 @@ mod tests {
         };
         let mut warnings = Vec::new();
         let next = select_next_command(
-            &root,
             ".",
             None,
             Some(&vec![refused]),
             &[],
             &mut warnings,
             store(),
+            &RepairStartGate::new(&root),
         )
         .ok_or_else(|| "expected a restart for the one open seam".to_string())?;
         assert_eq!(next.step, "repair_attempt_before");
@@ -4580,13 +5174,13 @@ mod tests {
         let plain = synthetic_attempt("b", "seam-b", "ended", Some("restart b"));
         let mut warnings = Vec::new();
         let next = select_next_command(
-            &root,
             ".",
             None,
             Some(&vec![plain]),
             &[],
             &mut warnings,
             store(),
+            &RepairStartGate::new(&root),
         )
         .ok_or_else(|| "expected a restart for the one open seam".to_string())?;
         if next.reason.contains("recorded refusal") {
@@ -5300,6 +5894,7 @@ mod tests {
             disposition: "resumable",
             manifest: "target/ripr/repair-attempts/repair-attempt-01/attempt.json".to_string(),
             command: Some("ripr agent repair --phase after".to_string()),
+            start_withheld: false,
             evidence_head: "abc123".to_string(),
             receipt: AgentStatusAttemptReceipt::NotApplicable,
             last_after_refusal: None,
@@ -5442,6 +6037,7 @@ mod tests {
                 ".",
                 manifest_label,
                 "",
+                false,
             )
             .map_err(|error| format!("{} must project: {error}", row.status_class))?;
             if canonical.action_class() != row.dto_class {
@@ -5525,6 +6121,7 @@ mod tests {
             "/repo/checkout",
             "store/repair-attempt-01/attempt.json",
             "",
+            false,
         )?;
         if canonical.subject().root.as_str() != "/repo/checkout" {
             return Err(format!(
@@ -5547,6 +6144,7 @@ mod tests {
             ".",
             manifest_label,
             "",
+            false,
         )?;
         match canonical.stop() {
             Some(crate::domain::NextActionStop::TerminalComplete { receipt_ref })
@@ -5615,6 +6213,7 @@ mod tests {
                 ".",
                 "store/repair-attempt-01/attempt.json",
                 "",
+                false,
             )
             .ok(),
             test_run: None,

@@ -729,6 +729,9 @@ pub(crate) fn owner_call_relation(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> Option<TypeScriptRelationKind> {
+    if let Some(view) = test.reach_view() {
+        return owner_call_relation(&view, owner, reexport_index, alias_map, workspace_root);
+    }
     if owner.owner_kind == OwnerKind::ModuleFunction {
         return module_initializer_observer_relation(test, owner, alias_map, workspace_root)
             .then_some(TypeScriptRelationKind::ModuleValueReference);
@@ -2030,6 +2033,9 @@ fn heuristic_relation(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> Option<TypeScriptRelationKind> {
+    if let Some(view) = test.reach_view() {
+        return heuristic_relation(&view, owner, alias_map, workspace_root);
+    }
     if owner.owner_kind == OwnerKind::ModuleFunction {
         return module_value_use_relation(test, owner, alias_map, workspace_root)
             .then_some(TypeScriptRelationKind::ModuleValueUse);
@@ -2331,6 +2337,9 @@ pub(crate) fn owner_path_disposition(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> TypeScriptOwnerPathDisposition {
+    if let Some(view) = test.reach_view() {
+        return owner_path_disposition(&view, relation, owner, alias_map, workspace_root);
+    }
     if relation == TypeScriptRelationKind::ModuleEntryCall {
         return TypeScriptOwnerPathDisposition::ModuleEntryPath;
     }

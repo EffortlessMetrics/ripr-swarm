@@ -1670,7 +1670,23 @@ standalone_reason = "Issue #4932 records the first real issue-lifecycle rows adm
 [[artifact]]
 id = "RIPR-SPEC-0280"
 kind = "spec"
-path = "docs/specs/RIPR-SPEC-0280-mcp-adapter-clarity-contracts.md"
+path = "docs/specs/RIPR-SPEC-0280-covered-by-instrument-failure-contract.md"
+status = "proposed"
+owner = "test-infra"
+standalone_reason = "States the check-file-policy covered_by enumeration instrument-failure contract implemented by #8905 and #8941 (bounded lock-wait retry, 90-minute summed-duration ceiling, covered_by_lock_wait_timeout versus covered_by_instrument_timeout classification anchored to the validator's first line, precommit-v2 deferral to infrastructure_failure after the remaining stages run, and the fail-closed rule that a real failure always wins) so the behavior sits inside the spec-test-code chain; RIPR-SPEC-0191 governs only host-scoped selection."
+
+[[artifact]]
+id = "RIPR-SPEC-0281"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0281-pilot-ranking-refuted-count-growth-allowance.md"
+status = "proposed"
+owner = "test-infra"
+standalone_reason = "States how the advisory ranking scoreboard compares the pooled refuted counts (pick_growth_allowance: a count may rise by the picks admitted, per repository, zero margin at flat or smaller pick counts, legacy evidence strict) so the gate sits inside the spec-test-code chain; RIPR-SPEC-0237 governs only the pilot ranking order."
+
+[[artifact]]
+id = "RIPR-SPEC-0283"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0283-mcp-adapter-clarity-contracts.md"
 status = "proposed"
 owner = "mcp"
 standalone_reason = "Issues #8734, #8735, #8736 and #8737 record the MCP adapter clarity contracts: the ripr://gap/{canonical_id} and ripr://repair-card/{canonical_id} routes percent-decode the captured id segment once when the raw capture misses (raw capture first, so legacy raw URIs and literal-% ids keep working) and fail closed with the typed id_ambiguous code when both the raw spelling and its decoded form name two distinct items, naming the plain-JSON-string tool route as recovery; the typed page echoes the effective inventory limit and the declared input cap is enforced at the dispatch edge; the status resource carries the same restart recovery as the status tool on an unavailable root; and the two same-shaped per-item tool descriptions disambiguate each other."

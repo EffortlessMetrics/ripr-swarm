@@ -1,4 +1,4 @@
-# RIPR-SPEC-0280: MCP adapter clarity contracts — encoded resource ids, honest paging echoes, and status recovery parity
+# RIPR-SPEC-0283: MCP adapter clarity contracts — encoded resource ids, honest paging echoes, and status recovery parity
 
 Status: proposed
 
