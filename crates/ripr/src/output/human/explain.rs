@@ -108,10 +108,10 @@ fn row_verdict(row: &RelatedTest, finding: &Finding) -> String {
             crate::output::related_test_miss::related_test_miss_label(row)
         ),
         None => match &row.oracle {
-            Some(_) => format!(
-                "{} {} oracle",
-                row.oracle_strength.as_str(),
-                row.oracle_kind.as_str().replace('_', " ")
+            Some(_) => crate::output::related_test_miss::oracle_projection(
+                &row.oracle_strength,
+                &row.oracle_kind,
+                true,
             ),
             None => "no oracle row".to_string(),
         },

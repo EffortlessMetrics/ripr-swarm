@@ -10,8 +10,8 @@ use crate::analysis::seams::SeamGripClass;
 use crate::analysis::test_stub::TestStubPlacement;
 use crate::app::agent_brief::AgentBriefPolicy;
 use crate::app::test_stub::{
-    TestStubError, TestStubSelector, line_of_offset, package_manifest_for, resolve_test_stub,
-    run_command, write_test_stub,
+    TargetLookup, TestStubError, TestStubSelector, integration_target_lookup, line_of_offset,
+    package_manifest_for, resolve_test_stub, run_command, write_test_stub,
 };
 use crate::cli::CommandError;
 use crate::cli::agent::AgentStubOptions;
@@ -105,14 +105,22 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
         .display()
         .to_string()
         .replace('\\', "/");
-    let run = package_manifest_for(&options.root, stub).map(|manifest| {
+    let owning_manifest = package_manifest_for(&options.root, stub);
+    let lookup = owning_manifest
+        .as_ref()
+        .map(|manifest| integration_target_lookup(&options.root, manifest, stub));
+    let run = owning_manifest.as_ref().and_then(|manifest| {
+        let target = match &lookup {
+            Some(TargetLookup::Name(name)) => Some(name.clone()),
+            _ => None,
+        };
         let manifest = options.root.join(manifest);
         let manifest = manifest
             .strip_prefix(".")
             .unwrap_or(&manifest)
             .to_string_lossy()
             .replace('\\', "/");
-        run_command(&shell_arg(&manifest), stub)
+        run_command(&shell_arg(&manifest), stub, target.as_deref())
     });
 
     if options.json {
@@ -179,13 +187,59 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
     if written.is_none() {
         println!("Write it: {}", write_command(&options));
     }
-    match &run {
-        Some(run) => println!("Run it: {run}"),
-        None => {
-            println!("Run it: no Cargo package owns {file}; add it to one, then run its tests.")
-        }
-    }
+    println!(
+        "{}",
+        run_line(
+            run.as_deref(),
+            owning_manifest.is_some(),
+            lookup.as_ref(),
+            &file
+        )
+    );
     Ok(())
+}
+
+/// The human "Run it" line: the command, or why none is offered. Only a
+/// positive determination says the file is not a registered cargo target;
+/// an unresolved lookup says the target is not established.
+fn run_line(
+    run: Option<&str>,
+    has_owning_manifest: bool,
+    lookup: Option<&TargetLookup>,
+    file: &str,
+) -> String {
+    match run {
+        Some(run) => format!("Run it: {run}"),
+        None if has_owning_manifest && lookup == Some(&TargetLookup::NotRegistered) => format!(
+            "Run it: {file} is not a registered cargo test target (check [[test]] entries and autotests in Cargo.toml); no command is offered."
+        ),
+        None if has_owning_manifest => format!(
+            "Run it: the cargo test target for {file} is not established (the manifest, edition, harness or required-features could not be resolved to a runnable target); no command is offered."
+        ),
+        None => format!("Run it: no Cargo package owns {file}; add it to one, then run its tests."),
+    }
+}
+
+#[cfg(test)]
+mod run_line_tests {
+    use super::run_line;
+    use crate::app::test_stub::TargetLookup;
+
+    #[test]
+    fn unestablished_target_says_the_file_is_not_a_registered_cargo_target() {
+        let none = TargetLookup::NotRegistered;
+        let line = run_line(None, true, Some(&none), "tests/discount.rs");
+        assert!(line.contains("tests/discount.rs is not a registered cargo test target"));
+        assert!(!line.contains("cargo test --"));
+        let unresolved = run_line(None, true, Some(&TargetLookup::Unresolved), "tests/d.rs");
+        assert!(unresolved.contains("is not established"));
+        assert!(!unresolved.contains("not a registered"));
+        assert_eq!(
+            run_line(Some("cargo test --test x t"), true, None, "tests/x.rs"),
+            "Run it: cargo test --test x t"
+        );
+        assert!(run_line(None, false, None, "tests/x.rs").contains("no Cargo package owns"));
+    }
 }
 
 fn write_command(options: &AgentStubOptions) -> String {

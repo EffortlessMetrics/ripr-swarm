@@ -284,6 +284,16 @@ write. Unresolved identity/disclosure fields are explicitly null and warnings
 are empty. An exact path or a suggested seam ID can select one behavior;
 nested seams remain governed by the existing nesting rule (#7762).
 
+For an integration-file stub, `run_command` names the effective cargo test
+target (#8794): an explicit `[[test]]` entry for the file supplies the name,
+otherwise the auto-discovered name when discovery is enabled for the package
+edition. When the target name is not established (`autotests = false` without
+an entry, edition-2015 packages whose explicit entries disable discovery,
+`harness = false`, a name-only entry whose `tests/<n>.rs` and
+`tests/<n>/main.rs` both exist, an unusable `path`, a shadowed name, or
+`required-features`, which is omitted conservatively without default-feature
+resolution) the command is `null` and the human output says so.
+
 The stub producer covers free functions and methods of inherent or trait
 impls at module level whose generics are lifetimes only; a trait-impl method
 is called as `<Type as Trait>::method(..)` (#5471). A changed field of the
