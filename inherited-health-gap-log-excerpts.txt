@@ -1,0 +1,36 @@
+2026-10-20T05:28:43.1024434Z Commit: f3dc54e1fb89da6852db922499a0233137369e1d
+2026-10-20T05:28:43.3861473Z Download action repository 'actions/checkout@v6' (SHA:d23441a48e516b6c34aea4fa41551a30e30af803)
+2026-10-20T05:28:43.5941407Z Download action repository 'dtolnay/rust-toolchain@v1' (SHA:683b588c487a69d01f6c6ddf40f036ff682cc2c8)
+2026-10-20T05:28:43.7590241Z Download action repository 'Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32' (SHA:e18b497796c12c097a38f9edb9d0641fb99eee32)
+2026-10-20T05:28:44.4871752Z Download action repository 'taiki-e/install-action@nextest' (SHA:9252097d36d2d3618ad98f5d873696a962b6897c)
+2026-10-20T05:28:45.0047957Z Download action repository 'actions/upload-artifact@v7' (SHA:cf430e030ddbb5b0abf93d22962f4752f3646cd9)
+2026-10-20T05:28:45.5246355Z Download action repository 'codecov/codecov-action@v6' (SHA:fb8b3582c8e4def4969c97caa2f19720cb33a72f)
+2026-10-20T05:28:45.9479134Z Download action repository 'actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd' (SHA:ed597411d8f924073f98dfc5c65a23a2325f34cd)
+2026-10-20T05:28:46.5600369Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +cec602041daf5fe102a0ff0460feb4fbf2bffdcc:refs/remotes/origin/main
+2026-10-20T05:28:49.6675444Z  * [new ref]           cec602041daf5fe102a0ff0460feb4fbf2bffdcc -> origin/main
+2026-10-20T05:28:49.6731076Z cec602041daf5fe102a0ff0460feb4fbf2bffdcc
+2026-10-20T05:28:50.4410880Z cec602041daf5fe102a0ff0460feb4fbf2bffdcc
+2026-10-20T05:28:59.6140403Z commit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860
+2026-10-20T05:28:59.6211411Z ##[group]Run Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+2026-10-20T05:29:01.5648623Z     - 1.95.0 x86_64-unknown-linux-gnu 59807616e1fa2540724bfbac14d7976d7e4a3860
+2026-10-20T05:29:01.5649008Z     - 1.99.0 x86_64-unknown-linux-gnu b940084d7eb6a299eb4bfeb8e34901bc051e7ac4
+2026-10-20T05:29:01.5649499Z     - 1.95.0 x86_64-unknown-linux-gnu 59807616e1fa2540724bfbac14d7976d7e4a3860
+2026-10-20T05:29:02.3257440Z commit-hash: cd1d6d5467322dbc0d39a80cb671d000ac302798
+2026-10-20T05:29:06.1046911Z ##[group]Run cargo nextest run --workspace --all-features --profile ci
+2026-10-20T05:29:06.1047196Z cargo nextest run --workspace --all-features --profile ci
+2026-10-20T05:33:16.4222567Z     Starting 17857 tests across 131 binaries (4 tests skipped)
+2026-10-20T05:35:24.6524942Z         FAIL [   5.013s] (12341/17857) ripr::chaos_interrupted_runs managed_producer::interruption::native_sigint_interrupts_held_stdin
+2026-10-20T05:35:24.6531406Z     Error: "CLI did not reach pipe_read; last wchan=futex_do_wait"
+2026-10-20T05:35:24.7203525Z         FAIL [   5.010s] (12342/17857) ripr::chaos_interrupted_runs managed_producer::interruption::native_sigint_interrupts_unopened_fifo
+2026-10-20T05:35:24.7210776Z     Error: "CLI did not reach wait_for_partner; last wchan=futex_do_wait"
+2026-10-20T05:35:39.7773324Z         FAIL [  20.011s] (12344/17857) ripr::chaos_interrupted_runs managed_producer::interruption::second_sigint_escapes_blocked_interruption_diagnostics
+2026-10-20T05:35:39.7777131Z     Error: "CLI did not reach pipe_write; last wchan=futex_do_wait"
+2026-10-20T05:35:39.7777867Z      Summary [ 143.357s] 12344/17857 tests run: 12341 passed, 3 failed, 4 skipped
+2026-10-20T05:35:39.7778557Z         FAIL [   5.013s] (12341/17857) ripr::chaos_interrupted_runs managed_producer::interruption::native_sigint_interrupts_held_stdin
+2026-10-20T05:35:39.7781292Z     Error: "CLI did not reach pipe_read; last wchan=futex_do_wait"
+2026-10-20T05:35:39.7781795Z         FAIL [   5.010s] (12342/17857) ripr::chaos_interrupted_runs managed_producer::interruption::native_sigint_interrupts_unopened_fifo
+2026-10-20T05:35:39.7784394Z     Error: "CLI did not reach wait_for_partner; last wchan=futex_do_wait"
+2026-10-20T05:35:39.7784937Z         FAIL [  20.011s] (12344/17857) ripr::chaos_interrupted_runs managed_producer::interruption::second_sigint_escapes_blocked_interruption_diagnostics
+2026-10-20T05:35:39.7787912Z     Error: "CLI did not reach pipe_write; last wchan=futex_do_wait"
+2026-10-20T05:35:39.8516409Z error: test run failed
+2026-10-20T05:35:40.7597254Z SHA256 digest of uploaded artifact is 89122f88ccd1e02a6fcc8af6d86bc037df7cbfa57a8d22bd8777398e35ba12fe

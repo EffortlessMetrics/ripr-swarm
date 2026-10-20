@@ -1,0 +1,12 @@
+{
+  "candidate": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+  "basis": "cec602041daf5fe102a0ff0460feb4fbf2bffdcc",
+  "known_issue": "https://github.com/EffortlessMetrics/ripr-swarm/issues/8922",
+  "main_run": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39374814806",
+  "job_id": 118471358903,
+  "command": "cargo nextest run --workspace --all-features --profile ci",
+  "observed": "12344/17857 tests ran; 12341 passed, 3 failed, 4 skipped; 5513 not run",
+  "failure": "Three native SIGINT controls failed arranging their blocking-I/O states with futex_do_wait; signal discriminators not established.",
+  "applicability": "managed_producer is gated Linux + lang-perl + lang-rust. Ordinary required Rust runtime is default-feature --workspace --profile ci; required all-features step is compile-only. This is a current inherited all-feature health gap, not an established failure of ordinary default-feature qualification. No interruption/runner/workflow repair or new issue attempted.",
+  "recorded_at": "2026-10-20T05:53:13.027635+00:00"
+}

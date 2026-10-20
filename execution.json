@@ -1,0 +1,108 @@
+{
+  "observed_at": "2026-10-20T05:59:16.162170+00:00",
+  "repository": "https://github.com/EffortlessMetrics/ripr-swarm.git",
+  "branch": "fix/brief-diff-input-status",
+  "head": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+  "tree": "a95152443df8c08ef30e8ad0fe2b5fc863233cdf",
+  "base": "1e9468f4b0d133f0a50b64134318763d8cf48beb",
+  "integration_basis": "cec602041daf5fe102a0ff0460feb4fbf2bffdcc",
+  "observed_github_merge_ref": {
+    "commit": "4096858e294ceaa0716cd299901be468b49d2518",
+    "parents": [
+      "cec602041daf5fe102a0ff0460feb4fbf2bffdcc",
+      "1a525eaaba07bb416a83a4f4d76c833a20cb5256"
+    ],
+    "tree": "c421235ae8db69cd4fa6c01e9f3a61191a8f96b5"
+  },
+  "runtime": "Linux-6.18.55-x86_64-with-glibc2.41",
+  "shell": "bash",
+  "cargo_build_jobs": 2,
+  "incremental": false,
+  "dev_debug": 0,
+  "storage_admission": {
+    "cumulative_growth_gib": 12,
+    "reserve_gib": 8
+  },
+  "focused_test": {
+    "command": "cargo test --locked -p ripr --test task_first_facade brief_diff_status:: -- --test-threads=1",
+    "native_exit": 0,
+    "passed": 4,
+    "failed": 0,
+    "ignored": 0,
+    "filtered": 51,
+    "cli_invocations": 20,
+    "subject": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+    "log": "green-tests.log"
+  },
+  "red_test": {
+    "subject": "b1998c3907f0470138fd67df0feaec5af5d61d68 production with new fourth test",
+    "native_exit": 101,
+    "observed": "at-limit positive completed before intended analysis_failed vs diff_input_unsupported mismatch; later cases not reached",
+    "log": "red-cap-test.log",
+    "source_binding_limit": "Old-production identity was recorded by the owner; raw log observed independently. Final fixture/source adjustments after the early failing assertion are qualified by the green current-head run, not by the red run."
+  },
+  "historical_evidence": {
+    "commit": "d0e95e2c733541d8e088b04c8ce6a2c0d6fd5cd7",
+    "candidate": "b1998c3907f0470138fd67df0feaec5af5d61d68",
+    "manifest_sha256": "60a90a406e270291e45e23a93f1b7cf9f7bf6bdfbd8b18b568f9096fd3844d8b",
+    "claims": "Unchanged-surface review and historical exact-base/full gate records only; not a fresh current-head pass."
+  },
+  "holds": [
+    "integration",
+    "auto-merge",
+    "release",
+    "deployment"
+  ],
+  "native_gates": {
+    "check_fast": {
+      "command": "cargo xtask check-fast",
+      "native_exit": 0,
+      "ran": 15,
+      "skipped": [
+        "check-fixture-contracts"
+      ],
+      "changed_files": 10,
+      "base_ref": "origin/main",
+      "selector": "stable/pass",
+      "subject": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "log": "check-fast.log"
+    },
+    "precommit": {
+      "command": "cargo xtask precommit",
+      "native_exit": 0,
+      "status": "pass",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "report_digest": "sha256:56b40054d43fcf5b58d98e5ba4224d1d3ca008a2da1288eebb3a4ce4a72e913d",
+      "goldens": "fresh pass; no fixture/lockfile/expected-output changes or blessing",
+      "log": "precommit.log"
+    }
+  },
+  "hosted_qualification": "not yet requested; inspect actual checkout after request",
+  "retained_executables": {
+    "target/debug/ripr": {
+      "bytes": 127224704,
+      "delivered": false,
+      "consumer": "open PR #8961 current CLI/test witness; parent held integration disposition",
+      "qualification_time_sha256": "177c13cd4ab223c40c22c82df02236e36b3efc928df7892d431c2acd58f5e90e",
+      "mutable_path_note": "Later native golden build replaced this mutable convenience path. See retained_current_cli_witnesses for actual hash-matching Cargo artifact path(s); hashes do not authenticate dependencies or SDK bytes."
+    },
+    "target/debug/deps/task_first_facade-76c7a3d2385779ae": {
+      "sha256": "1f71879368e72235cafece57f2c255c233088b939db584c4a1f5f8a5da657917",
+      "bytes": 2642584,
+      "delivered": false,
+      "consumer": "open PR #8961 current CLI/test witness; parent held integration disposition"
+    }
+  },
+  "retained_current_cli_witnesses": [
+    {
+      "path": "/workspace/brief-status/target/debug/deps/ripr-8bdaf7c8e32fe70f",
+      "sha256": "177c13cd4ab223c40c22c82df02236e36b3efc928df7892d431c2acd58f5e90e",
+      "bytes": 127224704
+    },
+    {
+      "path": "/workspace/brief-status/target/debug/deps/ripr-d392b7c6939ea948",
+      "sha256": "9b7a30de657c7432596684012a2cbaa5de839c2a591005359116add62c6a2c32",
+      "bytes": 126977832
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+   Compiling ripr v0.11.0 (/workspace/brief-status/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 1m 50s
+     Running tests/task_first_facade.rs (target/debug/deps/task_first_facade-76c7a3d2385779ae)
+
+running 4 tests
+test brief_diff_status::brief_base_uses_the_same_parser_refusal_before_inventory ... ok
+test brief_diff_status::brief_empty_and_ordinary_patches_keep_successful_selection ... ok
+test brief_diff_status::brief_parser_errors_keep_diff_input_identity_and_budget_guards ... ok
+test brief_diff_status::brief_parser_refusals_cannot_become_empty_or_fallback_successes ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 51 filtered out; finished in 0.41s
+

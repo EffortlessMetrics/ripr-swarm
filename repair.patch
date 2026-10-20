@@ -1,0 +1,244 @@
+diff --git a/.ripr/traceability.toml b/.ripr/traceability.toml
+index 6be4749e1..90bab6ed7 100644
+--- a/.ripr/traceability.toml
++++ b/.ripr/traceability.toml
+@@ -1517,6 +1517,7 @@ tests = [
+   "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_empty_and_ordinary_patches_keep_successful_selection",
+   "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_refusals_cannot_become_empty_or_fallback_successes",
+   "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_base_uses_the_same_parser_refusal_before_inventory",
++  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_errors_keep_diff_input_identity_and_budget_guards",
+   "crates/ripr/src/app/agent_brief.rs::tests::agent_brief_selector_ranks_explicit_seam_id_first",
+   "crates/ripr/src/app/agent_brief.rs::tests::changed_scope_that_fills_the_slots_selects_the_same_seams_as_the_full_scope",
+   "crates/ripr/src/app/agent_brief.rs::tests::changed_scope_does_not_fill_the_slots_with_hidden_or_too_few_seams",
+@@ -16403,6 +16404,10 @@ id = "RIPR-SPEC-0241"
+ name = "check --json refusal envelope"
+ spec = "docs/specs/RIPR-SPEC-0241-check-json-refusal-envelope.md"
+ tests = [
++  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_empty_and_ordinary_patches_keep_successful_selection",
++  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_refusals_cannot_become_empty_or_fallback_successes",
++  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_base_uses_the_same_parser_refusal_before_inventory",
++  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_errors_keep_diff_input_identity_and_budget_guards",
+   "crates/ripr/tests/cli_smoke/sample_output.rs::retained_oracles_reject_wrong_contract_shape_count_and_refusal",
+   "crates/ripr/tests/cli_smoke.rs::check_json_unresolvable_base_emits_refusal_envelope",
+   "crates/ripr/tests/cli_smoke.rs::check_json_unusable_root_emits_repository_root_unusable",
+diff --git a/changelog.d/brief-parser-refusal-status.md b/changelog.d/brief-parser-refusal-status.md
+index 2bb64e0a4..dab73adf5 100644
+--- a/changelog.d/brief-parser-refusal-status.md
++++ b/changelog.d/brief-parser-refusal-status.md
+@@ -1,4 +1,5 @@
+ <!-- section: Fixed -->
+-- `ripr agent brief --diff` and `--base` refuse shared-parser limitations
++- `ripr agent brief --diff` and `--base` refuse shared-parser limitations and
++  admission errors with the typed `diff_input_unsupported` identity
+   instead of emitting a successful empty or repository-fallback brief;
+   valid empty and ordinary patches retain their behavior (#7331).
+diff --git a/crates/ripr/src/cli/commands_agent_support.rs b/crates/ripr/src/cli/commands_agent_support.rs
+index efe98bf7e..ebf4d1ee5 100644
+--- a/crates/ripr/src/cli/commands_agent_support.rs
++++ b/crates/ripr/src/cli/commands_agent_support.rs
+@@ -308,7 +308,8 @@ fn agent_brief_checked_lines_from_diff(
+     root: &Path,
+     diff_text: &str,
+ ) -> Result<Vec<AgentBriefLine>, crate::core_error::CoreError> {
+-    let parsed = analysis::parse_unified_diff_bounded_with_metadata(diff_text)?;
++    let parsed = analysis::parse_unified_diff_bounded_with_metadata(diff_text)
++        .map_err(crate::core_error::CoreError::diff_input_unsupported)?;
+     if let Some(limitation) = parsed.limitations.first() {
+         return Err(crate::core_error::CoreError::diff_input_unsupported(
+             format!(
+diff --git a/crates/ripr/tests/task_first_facade/brief_diff_status.rs b/crates/ripr/tests/task_first_facade/brief_diff_status.rs
+index 15afd9c0d..24cb1948c 100644
+--- a/crates/ripr/tests/task_first_facade/brief_diff_status.rs
++++ b/crates/ripr/tests/task_first_facade/brief_diff_status.rs
+@@ -1,4 +1,6 @@
+-use super::{Fixture, assert_exit, git_commit, run_git, run_ripr, weaken_boundary_predicate};
++use super::{
++    Fixture, assert_exit, git_commit, run_git, run_ripr, run_ripr_env, weaken_boundary_predicate,
++};
+ use serde_json::Value;
+ use std::process::Output;
+ 
+@@ -6,9 +8,13 @@ const COMBINED: &str = "diff --cc src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs
+ const ORDINARY: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-old\n+new\n";
+ 
+ fn brief(fixture: &Fixture, patch: &str) -> Result<Output, String> {
++    brief_env(fixture, patch, &[])
++}
++
++fn brief_env(fixture: &Fixture, patch: &str, envs: &[(&str, &str)]) -> Result<Output, String> {
+     let path = fixture.root.join("change.patch");
+     std::fs::write(&path, patch).map_err(|e| e.to_string())?;
+-    run_ripr(
++    run_ripr_env(
+         &fixture.root,
+         &[
+             "agent",
+@@ -19,7 +25,105 @@ fn brief(fixture: &Fixture, patch: &str) -> Result<Output, String> {
+             &path.to_string_lossy(),
+             "--json",
+         ],
++        envs,
++    )
++}
++
++#[test]
++fn brief_parser_errors_keep_diff_input_identity_and_budget_guards() -> Result<(), String> {
++    let fixture = Fixture::boundary("brief-parser-errors")?;
++    std::fs::write(
++        fixture.root.join("src/second.rs"),
++        "// a second source file\n",
++    )
++    .map_err(|e| e.to_string())?;
++    let two_files = format!(
++        "{ORDINARY}{}",
++        ORDINARY.replace("src/lib.rs", "src/second.rs")
++    );
++    let one_file = brief_env(&fixture, ORDINARY, &[("RIPR_MAX_DIFF_INDEX_FILES", "1")])?;
++    assert_exit(&one_file, 0, "one file at the parser limit");
++    assert!(
++        document(&one_file)?["top_seams"]
++            .as_array()
++            .is_some_and(|rows| !rows.is_empty())
++    );
++    assert_refusal(
++        &brief_env(&fixture, &two_files, &[("RIPR_MAX_DIFF_INDEX_FILES", "1")])?,
++        "diff_scope_oversized",
++    )?;
++    let admitted = brief_env(&fixture, &two_files, &[("RIPR_MAX_DIFF_INDEX_FILES", "2")])?;
++    assert_exit(&admitted, 0, "two files at the parser limit");
++    assert!(
++        document(&admitted)?["top_seams"]
++            .as_array()
++            .is_some_and(|rows| !rows.is_empty())
++    );
++
++    let patch = fixture.root.join("change.patch");
++    let legacy = run_ripr_env(
++        &fixture.root,
++        &[
++            "check",
++            "--root",
++            &fixture.root.to_string_lossy(),
++            "--diff",
++            &patch.to_string_lossy(),
++            "--format",
++            "json",
++        ],
++        &[("RIPR_MAX_DIFF_INDEX_FILES", "1")],
++    )?;
++    assert_exit(&legacy, 2, "check retains its existing budget envelope");
++    let legacy = document(&legacy)?;
++    assert_eq!(
++        legacy["analysis_scope"]["run_status"],
++        "diff_scope_oversized"
++    );
++    assert_eq!(
++        legacy["analysis_scope"]["repair_route"],
++        "analysis/diff-scope-budget"
++    );
++
++    let deep_path = format!("{}lib.rs", "deep/".repeat(600));
++    assert_refusal(
++        &brief(
++            &fixture,
++            &format!("--- a/{deep_path}\n+++ b/{deep_path}\n@@ -1 +1 @@\n-old\n+new\n"),
++        )?,
++        "diff_path_too_deep",
++    )?;
++
++    weaken_boundary_predicate(&fixture.root)?;
++    std::fs::write(
++        fixture.root.join("src/second.rs"),
++        "// a second changed file\n",
+     )
++    .map_err(|e| e.to_string())?;
++    run_git(&fixture.root, &["add", "src"])?;
++    git_commit(&fixture.root, "two-file base input")?;
++    let diff = run_git(&fixture.root, &["diff", "HEAD^...HEAD", "--", "src"])?;
++    assert_eq!(
++        diff.matches("diff --git").count(),
++        2,
++        "base fixture must have two real changed files"
++    );
++    let base = run_ripr_env(
++        &fixture.root,
++        &[
++            "agent",
++            "brief",
++            "--root",
++            &fixture.root.to_string_lossy(),
++            "--base",
++            "HEAD^",
++            "--json",
++        ],
++        &[("RIPR_MAX_DIFF_INDEX_FILES", "1")],
++    )?;
++    assert_refusal(&base, "diff_scope_oversized")?;
++    assert_eq!(document(&base)?["base"], "HEAD^");
++    Ok(())
+ }
+ 
+ fn document(output: &Output) -> Result<Value, String> {
+diff --git a/docs/OUTPUT_SCHEMA.md b/docs/OUTPUT_SCHEMA.md
+index d3eb784a0..f446f37f7 100644
+--- a/docs/OUTPUT_SCHEMA.md
++++ b/docs/OUTPUT_SCHEMA.md
+@@ -15949,7 +15949,10 @@ unresolved conflict regions, or malformed hunks) refuse the invocation before
+ selection. The command exits `2` with the refusal envelope above, identity
+ `diff_input_unsupported`, `downstream_consumable: false`, and the parser's
+ reason and recovery in the diagnostic. This also applies when ordinary hunks
+-are present. A valid empty patch still succeeds: an empty inventory returns
++are present and to parser admission errors such as changed-file-count and
++path-depth bounds. The brief keeps `diff_input_unsupported` for these errors;
++`check` retains its existing budget-refusal identities. A valid empty patch
++still succeeds: an empty inventory returns
+ empty `top_seams`; a nonempty inventory retains the disclosed repository
+ fallback. Successful emptiness does not establish test adequacy.
+ 
+diff --git a/docs/specs/RIPR-SPEC-0010-agent-working-set-brief.md b/docs/specs/RIPR-SPEC-0010-agent-working-set-brief.md
+index 0d920033c..dc8e58267 100644
+--- a/docs/specs/RIPR-SPEC-0010-agent-working-set-brief.md
++++ b/docs/specs/RIPR-SPEC-0010-agent-working-set-brief.md
+@@ -95,6 +95,9 @@ The command should:
+   combined hunks, unresolved conflict regions, or malformed hunks, including
+   mixed ordinary/refused input; exit `2` through the JSON refusal envelope
+   with identity `diff_input_unsupported` before selecting any seams;
++- use that same brief refusal identity for shared-parser admission errors,
++  including changed-file-count and path-depth bounds, without changing the
++  parser's limits or the existing `check` budget-refusal contract;
+ - retain successful empty selection and the documented repository fallback
+   for a valid empty patch; neither is a test-adequacy claim;
+ - avoid automatic edits, generated tests, runtime mutation execution, cache
+@@ -554,6 +557,7 @@ Planned tests:
+ - `brief_empty_and_ordinary_patches_keep_successful_selection`
+ - `brief_parser_refusals_cannot_become_empty_or_fallback_successes`
+ - `brief_base_uses_the_same_parser_refusal_before_inventory`
++- `brief_parser_errors_keep_diff_input_identity_and_budget_guards`
+ - `agent_brief_ranks_changed_line_intersection_first`
+ - `agent_brief_ranks_explicit_seam_id_first`
+ - `agent_brief_selector_routes_changed_owner_function_to_seam`
+diff --git a/docs/specs/RIPR-SPEC-0241-check-json-refusal-envelope.md b/docs/specs/RIPR-SPEC-0241-check-json-refusal-envelope.md
+index e6824c534..19773bde8 100644
+--- a/docs/specs/RIPR-SPEC-0241-check-json-refusal-envelope.md
++++ b/docs/specs/RIPR-SPEC-0241-check-json-refusal-envelope.md
+@@ -221,6 +221,10 @@ all renderers.
+ 
+ ## Test Mapping (Amendment #7331, #7332)
+ 
++- `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_empty_and_ordinary_patches_keep_successful_selection`
++- `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_refusals_cannot_become_empty_or_fallback_successes`
++- `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_base_uses_the_same_parser_refusal_before_inventory`
++- `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_errors_keep_diff_input_identity_and_budget_guards`
+ - `crates/ripr/tests/cli_smoke.rs::diff_json_unresolvable_base_emits_refusal_envelope`
+ - `crates/ripr/tests/cli_smoke.rs::diff_json_outside_work_tree_emits_refusal_envelope`
+ - `crates/ripr/tests/cli_smoke.rs::rerun_json_unreadable_gap_ledger_emits_refusal_envelope`
+@@ -242,7 +246,8 @@ all renderers.
+ 
+ ## Implementation Mapping (Amendment #7331, #7332)
+ 
+-- `crates/ripr/src/core_error.rs::CheckFailureKind::{CheckArtifactUnusable, GapLedgerUnusable, SeamIdUnknown}`
++- `crates/ripr/src/core_error.rs::CheckFailureKind::{CheckArtifactUnusable, GapLedgerUnusable, SeamIdUnknown, DiffInputUnsupported}`
++- `crates/ripr/src/cli/commands_agent_support.rs::agent_brief_checked_lines_from_diff`
+ - `crates/ripr/src/core_error.rs::RefusalNotice`
+ - `crates/ripr/src/core_error.rs::refusal_notice`
+ - `crates/ripr/src/output/limited_check.rs::RefusalEnvelopeContext`

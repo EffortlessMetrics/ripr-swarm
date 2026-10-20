@@ -1,0 +1,17 @@
+{
+  "candidate": "b1998c3907f0470138fd67df0feaec5af5d61d68",
+  "command": [
+    "/workspace/brief-status/target/debug/ripr",
+    "agent",
+    "brief",
+    "--root",
+    "/workspace/scratch/brief-caps-enc87lyo",
+    "--diff",
+    "/workspace/scratch/brief-caps-enc87lyo/change.patch",
+    "--json"
+  ],
+  "RIPR_MAX_DIFF_INDEX_FILES": "1",
+  "exit": 2,
+  "stdout": "{\n  \"analysis_scope\": {\n    \"basis\": \"analysis_failed\",\n    \"downstream_consumable\": false,\n    \"limitation\": \"analysis_failed\",\n    \"repair_route\": \"analysis/failure\",\n    \"run_status\": \"analysis_failed\",\n    \"scope\": \"repo\"\n  },\n  \"findings\": [],\n  \"root\": \"/workspace/scratch/brief-caps-enc87lyo\",\n  \"run_limitations\": [\n    {\n      \"basis\": \"analysis_failed\",\n      \"category\": \"analysis_failed\",\n      \"downstream_consumable\": false,\n      \"message\": \"diff_scope_oversized: at least 2 changed files exceed the RIPR_MAX_DIFF_INDEX_FILES limit (1); parsing stopped before the remaining file bodies and analysis was not run. Repair route: reduce the diff scope, split the extraction PR, run a narrower diff, or raise the limit via RIPR_MAX_DIFF_INDEX_FILES=<number>.\",\n      \"repair_route\": \"analysis/failure\",\n      \"run_status\": \"analysis_failed\"\n    }\n  ],\n  \"schema_version\": \"0.1\",\n  \"summary\": {\n    \"changed_files_by_language\": [],\n    \"changed_rust_files\": 0,\n    \"exposed\": 0,\n    \"findings\": 0,\n    \"infection_unknown\": 0,\n    \"no_static_path\": 0,\n    \"probes\": 0,\n    \"propagation_unknown\": 0,\n    \"reachable_unrevealed\": 0,\n    \"static_unknown\": 0,\n    \"weakly_exposed\": 0\n  },\n  \"tool\": \"ripr\"\n}\n",
+  "stderr": "ripr: diff_scope_oversized: at least 2 changed files exceed the RIPR_MAX_DIFF_INDEX_FILES limit (1); parsing stopped before the remaining file bodies and analysis was not run. Repair route: reduce the diff scope, split the extraction PR, run a narrower diff, or raise the limit via RIPR_MAX_DIFF_INDEX_FILES=<number>.\n"
+}
