@@ -499,3 +499,187 @@ fn a_later_qualifying_snapshot_counts_after_one_that_does_not() -> Result<(), St
         "inline then external",
     )
 }
+
+// RIPR-SPEC-0240 / #8925 / #8926: the framework reader admits only code that
+// runs. The binding that reaches the assertion must be the owner's result, and
+// a comment or quoted text is never a write, a binding or an assertion.
+
+const EXPECT_BINDING: &str = "let tokens = tokenize(\"7\");";
+const INSTA_BINDING: &str = "let record = make_record(\"ord\", &[1, 2]);";
+const EXPECT_ASSERT: &str = "expect![[\"[1]\"]].assert_debug_eq(&tokens);";
+const INSTA_ASSERT: &str = "insta::assert_debug_snapshot!(record);";
+
+fn expect_edit() -> String {
+    diff(
+        3,
+        "        .map(|w| w.parse::<u32>().map_or(0, |n| n * 10))",
+        "        .map(|w| w.parse::<u32>().map_or(0, |n| 10 * n))",
+    )
+}
+
+fn insta_edit() -> String {
+    diff(
+        9,
+        "        items: items.len(),",
+        "        items: items.iter().count(),",
+    )
+}
+
+/// The test body `setup`/`assertion` for each framework, spelled with the
+/// expect-test names and mapped to the insta ones.
+fn both_frameworks(setup: &str, assertion: &str) -> [(String, String, usize, String); 2] {
+    let insta_setup = setup
+        .replace("tokens", "record")
+        .replace("tokenize(\"7\")", "make_record(\"ord\", &[1, 2])")
+        .replace("vec![1u32]", "5");
+    let insta_assertion = assertion
+        .replace("expect![[\"[1]\"]].assert_debug_eq(&tokens);", INSTA_ASSERT)
+        .replace("tokens", "record");
+    [
+        (
+            expect_source(assertion).replacen(EXPECT_BINDING, setup, 1),
+            expect_edit(),
+            3,
+            "expect-test".to_string(),
+        ),
+        (
+            insta_source(&insta_assertion).replacen(INSTA_BINDING, &insta_setup, 1),
+            insta_edit(),
+            9,
+            "insta".to_string(),
+        ),
+    ]
+}
+
+fn all_keep_gap(setup: &str, assertion: &str) -> Result<(), String> {
+    for (lib, edit, line, framework) in both_frameworks(setup, assertion) {
+        keeps_gap(
+            &lib,
+            &edit,
+            line,
+            &format!("{framework}: {setup} / {assertion}"),
+        )?;
+    }
+    Ok(())
+}
+
+fn all_withheld(setup: &str, assertion: &str) -> Result<(), String> {
+    for (lib, edit, line, framework) in both_frameworks(setup, assertion) {
+        withheld(
+            &lib,
+            &edit,
+            line,
+            &format!("{framework}: {setup} / {assertion}"),
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn an_owner_binding_must_reach_the_assertion() -> Result<(), String> {
+    let assertion = EXPECT_ASSERT;
+    // The owner binding is replaced, reassigned or closed before the assertion.
+    for setup in [
+        "let tokens = tokenize(\"7\"); let tokens = vec![1u32];",
+        "let tokens = tokenize(\"7\");\n        let tokens = vec![1u32];",
+        "let mut tokens = tokenize(\"7\"); tokens = vec![1u32];",
+        "let tokens = vec![1u32]; { let tokens = tokenize(\"7\"); }",
+        "let tokens = tokenize(\"7\"); { let tokens = vec![1u32];",
+    ] {
+        all_keep_gap(setup, assertion)?;
+    }
+    // The owner binding is made only after the assertion.
+    all_keep_gap(
+        "let tokens = vec![1u32];",
+        &format!("{EXPECT_ASSERT} let tokens = tokenize(\"7\");"),
+    )
+}
+
+#[test]
+fn a_binding_that_reaches_the_assertion_is_withheld() -> Result<(), String> {
+    // Controls for the shadowing pair: same text with the live binding last,
+    // or the replacement confined to a closed block.
+    for setup in [
+        EXPECT_BINDING,
+        "let mut tokens = tokenize(\"7\");",
+        "let tokens = vec![1u32]; let tokens = tokenize(\"7\");",
+        "let tokens = tokenize(\"7\"); { let tokens = vec![1u32]; }",
+        "let tokens = tokenize(\"7\"); // let tokens = vec![1u32];",
+    ] {
+        all_withheld(setup, EXPECT_ASSERT)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn non_code_cannot_supply_a_binding() -> Result<(), String> {
+    for setup in [
+        "tokenize(\"7\");\n        // let tokens = tokenize(\"7\");\n        let tokens = vec![1u32];",
+        "tokenize(\"7\");\n        /* outer /* nested */ let tokens = tokenize(\"7\"); */\n        let tokens = vec![1u32];",
+        "tokenize(\"7\");\n        let _note = r#\"let tokens = tokenize(\"7\");\"#;\n        let tokens = vec![1u32];",
+    ] {
+        all_keep_gap(setup, EXPECT_ASSERT)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn non_code_cannot_supply_an_assertion() -> Result<(), String> {
+    for assertion in [
+        "// expect![[\"[70]\"]].assert_debug_eq(&tokens);\n        assert!(!tokens.is_empty());",
+        "let _note = r#\"expect![[\"[70]\"]].assert_debug_eq(&tokens);\"#;\n        assert!(!tokens.is_empty());",
+    ] {
+        for (lib, edit, line, framework) in [
+            (expect_source(assertion), expect_edit(), 3, "expect-test"),
+            (
+                insta_source(
+                    &assertion
+                        .replace(
+                            "expect![[\"[70]\"]].assert_debug_eq(&tokens);",
+                            INSTA_ASSERT,
+                        )
+                        .replace("tokens", "record"),
+                ),
+                insta_edit(),
+                9,
+                "insta",
+            ),
+        ] {
+            keeps_gap(&lib, &edit, line, &format!("{framework}: {assertion}"))?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_commented_environment_write_activates_nothing() -> Result<(), String> {
+    let edit = diff(4, "        Err(_) => 3,", "        Err(_) => 1 + 2,");
+    let owner = "std::env::var(\"APP_RETRIES\")";
+    for body in [
+        "// unsafe { std::env::remove_var(\"APP_RETRIES\"); }\n        assert_eq!(retries(), 3);",
+        "/* std::env::remove_var(\"APP_RETRIES\"); */\n        assert_eq!(retries(), 3);",
+        "let _note = r#\"std::env::remove_var(\"APP_RETRIES\");\"#;\n        assert_eq!(retries(), 3);",
+    ] {
+        keeps_gap(&env_source(owner, body), &edit, 4, body)?;
+    }
+    // Control: the same test with the write live is withheld.
+    withheld(
+        &env_source(
+            owner,
+            "unsafe { std::env::remove_var(\"APP_RETRIES\"); }\n        assert_eq!(retries(), 3);",
+        ),
+        &edit,
+        4,
+        "live write",
+    )?;
+    // A commented read in the owner is not a read either.
+    keeps_gap(
+        &env_source(
+            "\"7\".parse::<u32>().map_err(|_| ()) /* std::env::var(\"APP_RETRIES\") */",
+            ENV_EXACT,
+        ),
+        &edit,
+        4,
+        "commented owner read",
+    )
+}

@@ -70,6 +70,17 @@ fn is_identifier_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
+/// How strictly a `let` initializer must name the owner call.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BindingReach {
+    /// The initializer is the owner call itself, with an optional `?` or
+    /// `.unwrap()`; a `mut` binding withdraws the credit.
+    DirectOwnerCall,
+    /// The initializer contains an owner call anywhere and the binding may be
+    /// `mut`; an assignment, shadow or pattern binder still withdraws it.
+    OwnerCallInInitializer,
+}
+
 /// The latest statement before `oracle_line` that introduces or reassigns
 /// `name` must be a plain `let name = <expr naming the owner call>;`.
 /// A `mut` binding, a destructuring pattern, a compound assignment, or a
@@ -80,58 +91,118 @@ fn name_is_direct_owner_result(
     oracle_line: usize,
     test: &TestSummary,
 ) -> bool {
-    // Bindings in scope, innermost last, each with the brace depth it was
-    // introduced at. A block's closing brace drops its inner bindings so a
-    // shadow in a finished block never masks the outer value.
-    let mut scope: Vec<(usize, bool)> = Vec::new();
-    let mut depth = 0usize;
-    let mut statement_depth = 0usize;
-    let mut statement = String::new();
     // Literals and comments are blanked over the whole body first: a `}` or
     // `;` on its own line inside a multi-line string is not code.
     let body = blank_literals_and_comments(&test.body);
-    for (offset, line) in body.lines().enumerate() {
-        if test.start_line + offset >= oracle_line {
-            break;
+    let before: Vec<String> = body
+        .lines()
+        .enumerate()
+        .take_while(|(offset, _)| test.start_line + offset < oracle_line)
+        .map(|(_, line)| strip_comments_and_strings(line))
+        .collect();
+    walk_bindings(
+        &before.join("\n"),
+        name,
+        owner_name,
+        BindingReach::DirectOwnerCall,
+        false,
+    )
+}
+
+/// Whether the live binding of `name` at the end of `code` is bound to the
+/// owner's result. `code` is Rust with comments and strings already masked and
+/// ends exactly where the asserting operation begins, so a binding that
+/// follows the assertion, sits in a closed block, or is replaced by a later
+/// `let` or assignment (even on the same line) never reaches it. A statement
+/// still open at the cut is judged too.
+pub(crate) fn local_is_owner_result_before(
+    code: &str,
+    name: &str,
+    owner_name: &str,
+    reach: BindingReach,
+) -> bool {
+    walk_bindings(code, name, owner_name, reach, true)
+}
+
+/// Walk `code` statement by statement, keeping the bindings of `name` in
+/// scope, innermost last, each with the brace depth it was introduced at. A
+/// block's closing brace drops its inner bindings so a shadow in a finished
+/// block never masks the outer value.
+fn walk_bindings(
+    code: &str,
+    name: &str,
+    owner_name: &str,
+    reach: BindingReach,
+    judge_open_statement: bool,
+) -> bool {
+    let mut scope: Vec<(usize, bool)> = Vec::new();
+    let mut depth = 0usize;
+    let mut statement_depth = 0usize;
+    // Open parentheses, brackets and braces inside one statement (an argument
+    // list, a struct literal initializer): they do not end the statement.
+    let mut inner = 0usize;
+    let mut statement = String::new();
+    let judge = |statement: &mut String, statement_depth: usize, scope: &mut Vec<(usize, bool)>| {
+        match statement_binding_verdict(statement, name, owner_name, reach) {
+            Some(BindingVerdict::Scoped(owner_bound)) => {
+                scope.retain(|(bound_at, _)| *bound_at < statement_depth);
+                scope.push((statement_depth, owner_bound));
+            }
+            // A reassignment or a pattern binder we do not scope-track may
+            // leave any enclosing binding changed after its block ends.
+            Some(BindingVerdict::Withdrawn) => {
+                for (_, owner_bound) in scope.iter_mut() {
+                    *owner_bound = false;
+                }
+                scope.push((statement_depth, false));
+            }
+            None => {}
         }
-        let code = strip_comments_and_strings(line);
-        if statement.is_empty() {
+        statement.clear();
+    };
+    for ch in code.chars() {
+        if statement.trim().is_empty() {
             statement_depth = depth;
         }
-        statement.push_str(&code);
-        statement.push(' ');
-        for ch in code.chars() {
-            match ch {
-                '{' => depth += 1,
-                '}' => {
+        match ch {
+            '(' | '[' => {
+                inner += 1;
+                statement.push(ch);
+            }
+            ')' | ']' => {
+                inner = inner.saturating_sub(1);
+                statement.push(ch);
+            }
+            '{' => {
+                statement.push(ch);
+                if inner > 0 || statement.trim_start().starts_with("let ") {
+                    inner += 1;
+                } else {
+                    judge(&mut statement, statement_depth, &mut scope);
+                    depth += 1;
+                }
+            }
+            '}' => {
+                if inner > 0 {
+                    inner -= 1;
+                    statement.push(ch);
+                } else {
+                    judge(&mut statement, statement_depth, &mut scope);
                     depth = depth.saturating_sub(1);
                     scope.retain(|(bound_at, _)| *bound_at <= depth);
                 }
-                _ => {}
             }
-        }
-        let trimmed = code.trim_end();
-        if !(trimmed.ends_with(';') || trimmed.ends_with('{') || trimmed.ends_with('}')) {
-            continue;
-        }
-        for piece in statement.split_inclusive(';') {
-            match statement_binding_verdict(piece, name, owner_name) {
-                Some(BindingVerdict::Scoped(owner_bound)) => {
-                    scope.retain(|(bound_at, _)| *bound_at < statement_depth);
-                    scope.push((statement_depth, owner_bound));
+            ';' => {
+                statement.push(ch);
+                if inner == 0 {
+                    judge(&mut statement, statement_depth, &mut scope);
                 }
-                // A reassignment or a pattern binder we do not scope-track may
-                // leave any enclosing binding changed after its block ends.
-                Some(BindingVerdict::Withdrawn) => {
-                    for (_, owner_bound) in &mut scope {
-                        *owner_bound = false;
-                    }
-                    scope.push((statement_depth, false));
-                }
-                None => {}
             }
+            _ => statement.push(ch),
         }
-        statement.clear();
+    }
+    if judge_open_statement {
+        judge(&mut statement, statement_depth, &mut scope);
     }
     scope.last().is_some_and(|(_, owner_bound)| *owner_bound)
 }
@@ -261,6 +332,7 @@ fn statement_binding_verdict(
     statement: &str,
     name: &str,
     owner_name: &str,
+    reach: BindingReach,
 ) -> Option<BindingVerdict> {
     let trimmed = statement.trim();
     if let Some(rest) = trimmed.strip_prefix("let ") {
@@ -271,14 +343,26 @@ fn statement_binding_verdict(
         if !contains_word(pattern, name) {
             return binds_by_pattern(rest, name).then_some(BindingVerdict::Withdrawn);
         }
-        let plain = pattern
+        let bound = pattern
             .split_once(':')
-            .map_or(pattern, |(pattern, _)| pattern.trim())
-            == name;
+            .map_or(pattern, |(pattern, _)| pattern.trim());
+        let plain = match reach {
+            BindingReach::DirectOwnerCall => bound == name,
+            BindingReach::OwnerCallInInitializer => {
+                bound == name
+                    || bound
+                        .strip_prefix("mut ")
+                        .is_some_and(|bound| bound.trim() == name)
+            }
+        };
         return Some(BindingVerdict::Scoped(
             plain
-                && initializer
-                    .is_some_and(|initializer| initializer_is_owner_call(initializer, owner_name)),
+                && initializer.is_some_and(|initializer| match reach {
+                    BindingReach::DirectOwnerCall => {
+                        initializer_is_owner_call(initializer, owner_name)
+                    }
+                    BindingReach::OwnerCallInInitializer => text_calls(initializer, owner_name),
+                }),
         ));
     }
     if binds_by_pattern(trimmed, name) {
@@ -388,6 +472,18 @@ fn is_comparison_angle(bytes: &[u8], at: usize) -> bool {
     }
 }
 
+/// Whether `text` calls `name` (`name(` as a whole identifier).
+pub(crate) fn text_calls(text: &str, name: &str) -> bool {
+    !name.is_empty()
+        && text.match_indices(name).any(|(at, _)| {
+            !text[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+                && text[at + name.len()..].trim_start().starts_with('(')
+        })
+}
+
 fn contains_word(text: &str, word: &str) -> bool {
     text.match_indices(word).any(|(start, _)| {
         let before = text[..start].chars().next_back();
@@ -416,7 +512,13 @@ mod tests {
         ] {
             assert_eq!(assignment_target(read), None, "{read}");
             assert!(
-                statement_binding_verdict(read, "count", "make_count").is_none(),
+                statement_binding_verdict(
+                    read,
+                    "count",
+                    "make_count",
+                    super::BindingReach::DirectOwnerCall
+                )
+                .is_none(),
                 "{read}"
             );
         }
@@ -434,7 +536,12 @@ mod tests {
             assert_eq!(assignment_target(write), Some(target), "{write}");
         }
         assert!(matches!(
-            statement_binding_verdict("count = 5;", "count", "make_count"),
+            statement_binding_verdict(
+                "count = 5;",
+                "count",
+                "make_count",
+                super::BindingReach::DirectOwnerCall
+            ),
             Some(super::BindingVerdict::Withdrawn)
         ));
     }
@@ -447,7 +554,12 @@ mod tests {
             "Some(count) => {",
             "let f = |count| count + 1;",
         ] {
-            let verdict = statement_binding_verdict(binder, "count", "make_count");
+            let verdict = statement_binding_verdict(
+                binder,
+                "count",
+                "make_count",
+                super::BindingReach::DirectOwnerCall,
+            );
             assert!(
                 matches!(
                     verdict,
