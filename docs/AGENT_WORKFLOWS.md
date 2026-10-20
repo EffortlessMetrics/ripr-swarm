@@ -316,7 +316,15 @@ Its `run_command` runs only that test through the owning package's
 `--manifest-path` and, for an integration file, the effective cargo target
 name (an explicit `[[test]]` name wins over the file stem). It is `null` when
 no Cargo package owns the file or that target name cannot be established
-(for example `autotests = false` without an explicit entry, an edition-2015 package whose explicit `[[test]]` entries disable auto-discovery, `harness = false`, or `required-features`, which is omitted conservatively because default-feature resolution is not attempted). A
+(for example `autotests = false` without an explicit entry, an edition-2015 package whose explicit `[[test]]` entries disable auto-discovery, `harness = false`, or `required-features`, which is omitted conservatively because default-feature resolution is not attempted). When
+the seam's repair route is established, the stub also names the journey it
+feeds: human output prints `Next repair: ripr agent repair --root <root>
+--seam-id <id> --phase before` after the Write/Run lines, and the
+`rust_test_stub` document carries the same start command, the repair packet's
+admitted `allowed_edit_surface`, and — when the stub's placement differs from
+that surface — a `placement_divergence` naming both files (schema `0.3`,
+#8727). No route is invented when the packet cannot be established, notably
+for `--at --kind` file-parse selections. A
 `--at` path that matches files with gaps in several crates is refused; pass
 the full path or the seam ID.
 

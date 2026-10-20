@@ -1698,3 +1698,11 @@ path = "docs/specs/RIPR-SPEC-0284-agent-context-packet-clarity.md"
 status = "proposed"
 owner = "product-output"
 standalone_reason = "Issues #8743, #8744 and #8746 record the agent context packet clarity contract: the ripr context packet contract is 1.1 and states the exposure verdict outright (classification, severity resolved through the caller severity config, and confidence, wire-identical to the ripr check --json finding fields) so packet consumers never derive the class from the underdetermined stage states, and the context refusal envelope is keyed with the packet version; the human evidence window glosses the unknown sink row with the same contract."
+
+[[artifact]]
+id = "RIPR-SPEC-0287"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0287-agent-stub-repair-journey-pointer.md"
+status = "proposed"
+owner = "agent-loop"
+standalone_reason = "States the agent stub repair-journey pointer (#8727): the rust_test_stub document (schema 0.3, additive on 0.2) may carry a next_repair block naming the ripr agent repair --seam-id start command and the repair packet's admitted allowed_edit_surface, with a placement_divergence naming both files when the stub's owner-shape-driven placement differs from the packet's recommended-test surface, so the divergence is stated at generation time instead of refusing later at the before phase's dirty-premise gate; the block uses the same fail-closed eligibility flip as the pilot's offered repair start and is omitted entirely when the route cannot be established, so no route is invented."

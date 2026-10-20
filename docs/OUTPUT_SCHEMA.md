@@ -131,7 +131,7 @@ map is:
 | `ripr agent card --json` and the `RepairCardV1` DTO (RIPR-SPEC-0192, RIPR-SPEC-0194; `ripr agent card` is the default CLI handoff, #4667) | `schema_version` | `repair_card.v1` |
 | `RepairCardV1` detail references and overflow disclosure (RIPR-SPEC-0193, #4666) | `budget_version` | `repair-card-budget-v1` |
 | `ripr agent card --json` refusal stderr envelope (`agent_card_refusal`; RIPR-SPEC-0202, #5007) | `schema_version` | `0.1` |
-| `ripr agent stub --json` document and its refusal stderr envelope (`kind: rust_test_stub`, `state: ready` or `refused`; #7762) | `schema_version` | `0.2` |
+| `ripr agent stub --json` document and its refusal stderr envelope (`kind: rust_test_stub`, `state: ready` or `refused`; #7762; ready-document `next_repair` is additive on `0.3`, #8727) | `schema_version` | `0.3` |
 
 The MCP tool envelopes carry the schema-versioned document as
 `structuredContent` in every successful response; a result whose complete
@@ -295,7 +295,7 @@ no witness-producing finding still renders its card with the `unavailable`
 instruction (RIPR-SPEC-0194 acceptance) — that in-band card state is typed
 already and is not a refusal.
 
-## Agent stub (`rust_test_stub`, schema `0.2`)
+## Agent stub (`rust_test_stub`, schema `0.3`)
 
 `ripr agent stub --json` emits one `rust_test_stub` document on stdout when
 the producer yields a stub (`state: ready`, exit 0). A producer refusal
@@ -311,6 +311,20 @@ suffix, or disjoint seams of the requested kind tie. Its reason names the
 paths or seam IDs to choose; the unresolved identity and disclosure fields
 stay `null` and `warnings` stays `[]`. Both selector refusals keep exit 3,
 empty stdout, and the human decision prose after the stderr JSON.
+
+Schema `0.3` is additive on `0.2` (#8727): the ready document may carry a
+`next_repair` block naming the repair journey the stub feeds — the
+`ripr agent repair --seam-id <id> --phase before` start command and the repair
+packet's `allowed_edit_surface` file the stub's test must land in. When the
+stub's chosen placement differs from the packet's admitted surface (the stub
+producer routes by owner shape; the packet by its recommended-test authority),
+`placement_divergence` names both files so the divergence is stated at
+generation time instead of refusing later at the repair before phase's
+dirty-premise gate. The block is present only when the classified seam
+establishes the repair route (the same fail-closed flip the pilot's offered
+repair start uses); otherwise the key stays absent rather than inventing a
+route — notably for `--at --kind` file-parse selections, which carry no
+classified entry. The `0.2` field set is unchanged; refused envelopes keep it.
 
 Schema `0.2` replaces `0.1` for all ready and refused stub documents (#7762).
 The field set is unchanged; the new refusal-kind spelling requires the new

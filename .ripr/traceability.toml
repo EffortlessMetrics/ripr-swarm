@@ -16925,3 +16925,30 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0287"
+name = "Agent stub names the repair journey it feeds"
+spec = "docs/specs/RIPR-SPEC-0287-agent-stub-repair-journey-pointer.md"
+tests = [
+  "crates/ripr/src/app/test_stub.rs::tests::next_repair_names_the_start_and_the_agreeing_surface",
+  "crates/ripr/src/app/test_stub.rs::tests::next_repair_warns_when_the_stub_lands_outside_the_packet_surface",
+  "crates/ripr/src/app/test_stub.rs::tests::next_repair_stays_silent_when_the_repair_route_is_not_eligible",
+  "crates/ripr/src/app/test_stub.rs::tests::at_kind_stub_on_an_open_gap_is_not_strongly_gripped",
+  "crates/ripr/src/cli/commands/agent_stub.rs::tests::next_repair_block_carries_the_start_command_and_surface",
+  "crates/ripr/src/cli/commands/agent_stub.rs::tests::divergence_warning_names_both_files_and_the_consequence",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/app/test_stub.rs",
+  "crates/ripr/src/cli/commands/agent_stub.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0287-agent-stub-repair-journey-pointer.md",
+  "docs/OUTPUT_SCHEMA.md",
+  "docs/EXIT_CODES.md",
+  "docs/AGENT_WORKFLOWS.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

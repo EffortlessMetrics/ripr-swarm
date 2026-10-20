@@ -336,7 +336,7 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
             Expect::Refused(kind) => {
                 assert_eq!(output.status.code(), Some(3), "{needle}: {stdout}{stderr}");
                 let (envelope, _) = split_refusal_envelope(&stderr)?;
-                assert_eq!(envelope["schema_version"], "0.2");
+                assert_eq!(envelope["schema_version"], "0.3");
                 assert_eq!(envelope["state"], "refused");
                 assert!(output.stdout.is_empty());
                 assert!(
@@ -354,7 +354,7 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
                 assert!(output.status.success(), "{needle}: {stdout}{stderr}");
                 let ready: serde_json::Value =
                     serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
-                assert_eq!(ready["schema_version"], "0.2");
+                assert_eq!(ready["schema_version"], "0.3");
                 let document: serde_json::Value = serde_json::from_str(&stdout)
                     .map_err(|error| format!("{needle}: stub JSON: {error}: {stdout}"))?;
                 assert_eq!(document["written"], true, "{needle}");
@@ -902,7 +902,7 @@ fn split_refusal_envelope(stderr: &str) -> Result<(serde_json::Value, &str), Str
 }
 
 fn assert_selector_refusal(envelope: &serde_json::Value, kind: &str) {
-    assert_eq!(envelope["schema_version"], "0.2");
+    assert_eq!(envelope["schema_version"], "0.3");
     assert_eq!(envelope["kind"], "rust_test_stub");
     assert_eq!(envelope["state"], "refused");
     assert_eq!(envelope["refusal"]["kind"], kind);
@@ -981,7 +981,7 @@ fn absent_selectors_keep_not_found_and_explicit_disclosures() -> Result<(), Stri
         assert!(output.stdout.is_empty());
         let stderr = String::from_utf8_lossy(&output.stderr);
         let (envelope, prose) = split_refusal_envelope(&stderr)?;
-        assert_eq!(envelope["schema_version"], "0.2");
+        assert_eq!(envelope["schema_version"], "0.3");
         assert_eq!(envelope["state"], "refused");
         assert_eq!(envelope["refusal"]["kind"], "seam_not_found");
         for field in ["owner", "grip_class", "classification"] {
@@ -1078,7 +1078,7 @@ fn ambiguous_at_files_refuse_with_disambiguation_and_no_write() -> Result<(), St
             );
             let ready: serde_json::Value =
                 serde_json::from_slice(&control.stdout).map_err(|error| error.to_string())?;
-            assert_eq!(ready["schema_version"], "0.2");
+            assert_eq!(ready["schema_version"], "0.3");
             assert_eq!(ready["state"], "ready");
             assert_eq!(
                 ready["owner"],
@@ -1141,7 +1141,7 @@ fn ambiguous_at_tied_seams_refuse_without_weakening_nested_selection() -> Result
         );
         let ready: serde_json::Value =
             serde_json::from_slice(&selected.stdout).map_err(|error| error.to_string())?;
-        assert_eq!(ready["schema_version"], "0.2");
+        assert_eq!(ready["schema_version"], "0.3");
         assert_eq!(ready["state"], "ready");
         assert_eq!(ready["seam_id"], id);
         assert_eq!(ready["written"], false);
@@ -1168,7 +1168,7 @@ fn ambiguous_at_tied_seams_refuse_without_weakening_nested_selection() -> Result
     );
     let ready: serde_json::Value =
         serde_json::from_slice(&nested.stdout).map_err(|error| error.to_string())?;
-    assert_eq!(ready["schema_version"], "0.2");
+    assert_eq!(ready["schema_version"], "0.3");
     assert_eq!(ready["state"], "ready");
     assert_eq!(ready["owner"], "src/lib.rs::fallible");
     scratch.cleanup()

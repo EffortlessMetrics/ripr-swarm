@@ -10,8 +10,9 @@ use crate::analysis::seams::SeamGripClass;
 use crate::analysis::test_stub::TestStubPlacement;
 use crate::app::agent_brief::AgentBriefPolicy;
 use crate::app::test_stub::{
-    TargetLookup, TestStubError, TestStubSelector, integration_target_lookup, line_of_offset,
-    package_manifest_for, resolve_test_stub, run_command, write_test_stub,
+    StubNextRepair, StubPlacementDivergence, TargetLookup, TestStubError, TestStubSelector,
+    integration_target_lookup, line_of_offset, package_manifest_for, resolve_test_stub,
+    run_command, write_test_stub,
 };
 use crate::cli::CommandError;
 use crate::cli::agent::AgentStubOptions;
@@ -20,7 +21,7 @@ use crate::config::{RiprConfig, load_for_root};
 use crate::output::gap_vocabulary::exposure_counterpart;
 
 /// Schema version of the `rust_test_stub` JSON document.
-const RUST_TEST_STUB_SCHEMA_VERSION: &str = "0.2";
+const RUST_TEST_STUB_SCHEMA_VERSION: &str = "0.3";
 
 pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), CommandError> {
     // #8767: same implicit root `ripr check` uses; `--root .` opts out.
@@ -124,7 +125,7 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
     });
 
     if options.json {
-        let document = serde_json::json!({
+        let mut document = serde_json::json!({
             "schema_version": RUST_TEST_STUB_SCHEMA_VERSION,
             "kind": "rust_test_stub",
             "seam_id": resolution.seam_id,
@@ -146,6 +147,12 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
             "classification": disclosure.classification,
             "warnings": disclosure.warnings,
         });
+        // #8727: the repair journey this stub feeds. The block is present
+        // only when the classified seam also establishes the repair route;
+        // otherwise the key stays absent rather than inventing a route.
+        if let Some(next_repair) = &resolution.next_repair {
+            document["next_repair"] = next_repair_json(next_repair);
+        }
         println!("{}", render(&document)?);
         return Ok(());
     }
@@ -196,6 +203,16 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
             &file
         )
     );
+    // #8727: the stub feeds a repair journey; name its start, and when the
+    // stub's placement and the repair packet's admitted surface disagree,
+    // name both files here instead of letting the before phase refuse the
+    // edit later at the dirty-premise gate.
+    if let Some(next_repair) = &resolution.next_repair {
+        println!("Next repair: {}", next_repair.start_command);
+        if let Some(divergence) = &next_repair.placement_divergence {
+            println!("{}", divergence_warning_line(divergence));
+        }
+    }
     Ok(())
 }
 
@@ -218,6 +235,28 @@ fn run_line(
         ),
         None => format!("Run it: no Cargo package owns {file}; add it to one, then run its tests."),
     }
+}
+
+/// The `next_repair` block of the ready `rust_test_stub` document (#8727).
+fn next_repair_json(next_repair: &StubNextRepair) -> serde_json::Value {
+    serde_json::json!({
+        "start_command": next_repair.start_command,
+        "allowed_edit_surface": next_repair.allowed_edit_surface,
+        "placement_divergence": next_repair.placement_divergence.as_ref().map(|divergence| serde_json::json!({
+            "stub_file": divergence.stub_file,
+            "packet_file": divergence.packet_file,
+        })),
+    })
+}
+
+/// The plain-language divergence warning: both files named, and the
+/// consequence stated, so the user can place the test where the repair
+/// admits it before writing anything.
+fn divergence_warning_line(divergence: &StubPlacementDivergence) -> String {
+    format!(
+        "Warning: this stub lands in {}, but the repair packet admits only {} as its edit surface. Write the test in {} instead, then run the repair; writing the stub to {} makes the repair's before phase refuse the edit.",
+        divergence.stub_file, divergence.packet_file, divergence.packet_file, divergence.stub_file,
+    )
 }
 
 #[cfg(test)]
@@ -370,7 +409,7 @@ mod tests {
         .map_err(|error| format!("envelope render refused: {error:?}"))?;
         let document: serde_json::Value = serde_json::from_str(&rendered)
             .map_err(|error| format!("envelope was not parseable JSON: {error}"))?;
-        assert_eq!(document["schema_version"], "0.2");
+        assert_eq!(document["schema_version"], "0.3");
         assert_eq!(document["kind"], "rust_test_stub");
         assert_eq!(document["seam_id"], "no-such-seam");
         assert_eq!(document["state"], "refused");
@@ -381,6 +420,62 @@ mod tests {
         );
         assert_eq!(document["warnings"], serde_json::json!([]));
         Ok(())
+    }
+
+    /// The ready document's `next_repair` block (#8727): the repair start
+    /// command, the packet's admitted edit surface, and — when the two
+    /// independent placements disagree — both files named.
+    #[test]
+    fn next_repair_block_carries_the_start_command_and_surface() -> Result<(), String> {
+        let agreement = StubNextRepair {
+            start_command: "ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before"
+                .to_string(),
+            allowed_edit_surface: "tests/clamp_tests.rs".to_string(),
+            placement_divergence: None,
+        };
+        let value = next_repair_json(&agreement);
+        assert_eq!(
+            value["start_command"],
+            "ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before"
+        );
+        assert_eq!(value["allowed_edit_surface"], "tests/clamp_tests.rs");
+        assert!(
+            value["placement_divergence"].is_null(),
+            "agreeing placements must not carry a divergence: {value}"
+        );
+
+        let divergent = StubNextRepair {
+            placement_divergence: Some(StubPlacementDivergence {
+                stub_file: "src/clamp.rs".to_string(),
+                packet_file: "tests/clamp_tests.rs".to_string(),
+            }),
+            ..agreement
+        };
+        let value = next_repair_json(&divergent);
+        assert_eq!(value["placement_divergence"]["stub_file"], "src/clamp.rs");
+        assert_eq!(
+            value["placement_divergence"]["packet_file"],
+            "tests/clamp_tests.rs"
+        );
+        Ok(())
+    }
+
+    /// The divergence warning names both files and states the consequence:
+    /// writing the stub where the stub says refuses the repair's before
+    /// phase, so the user can place the test in the admitted surface first.
+    #[test]
+    fn divergence_warning_names_both_files_and_the_consequence() {
+        let divergence = StubPlacementDivergence {
+            stub_file: "src/clamp.rs".to_string(),
+            packet_file: "tests/clamp_tests.rs".to_string(),
+        };
+        let line = divergence_warning_line(&divergence);
+        assert!(line.contains("src/clamp.rs"), "{line}");
+        assert!(line.contains("tests/clamp_tests.rs"), "{line}");
+        assert!(
+            line.contains("before phase refuse"),
+            "the warning must state the refusal consequence: {line}"
+        );
     }
 
     /// A location selector never resolved to a seam id, so the envelope
