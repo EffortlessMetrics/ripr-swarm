@@ -110,6 +110,32 @@ assertion macro it contains and refused. A root `loop` with no `break` and a roo
 family that reads this admission. Not covered: `assert_ne!` and `debug_assert*!`
 (#8983), and `process::exit` reached through a `use` alias.
 
+Residual fail-open contexts. The admission is a syntactic reading, not a control
+flow proof. These contexts still credit a plain `assert_eq!` / `assert!` as
+`exposed` for `side_effect` and `call_deletion` (non-blocking, disclosed by
+review of #8934; tracked with the #8983 follow-up unless a separate issue says
+otherwise):
+
+- A `macro_rules!` macro that is invoked and swallows its arguments
+  (`macro_rules! w { ($($t:tt)*) => {} } w!(assert_eq!(..));`). The outer macro
+  is `w`, so neither the compound-statement branch nor the macro-name gate
+  applies. This contradicts the "same admission" wording above for effect
+  probes: the return family refuses this shape, effect families do not.
+- An infinite outer loop hidden by a nested exit: `loop { for _ in 0..1 { break; } }`
+  or `loop { let _c = || { loop { break; } }; }` before the assertion. Root
+  divergence detection treats any descendant `break` as an exit of the root loop.
+  The return family credits these too.
+- A non-root `{ std::process::exit(0); }` block, `while true {}`, and
+  `use std::process::exit; exit(0);` before the assertion. Only the `use` alias
+  is named above; the other two are equally undetected.
+
+The admission also over-refuses, failing closed and matching the return family:
+qualified `std::` / `core::` `assert_eq!` / `assert!` whose arguments contain
+`vec!` read `static_unknown` even in direct position, and `if true { assert_eq!(..) }`,
+a called nested fn, a conditional `return` before the assertion and a called
+closure containing `return` are uncredited. These are missed advisories, not
+wrong credits.
+
 1. Oracle shape. The assertion is one plain `assert_eq!`, or that
    `assert_eq!` qualified through a `std` or `core` root (`std::assert_eq!`,
    `::core::assert_eq!`) when the root cannot be rebound (#7857). The test's

@@ -984,9 +984,16 @@ The unchanged-after-attempt before/after corpus generation moves from 1.84 to
 and dependent verify/receipt byte hashes follow that exact change. Routing,
 unchanged movement, incomplete receipt and all tamper controls remain.
 
-### #8927 — classified-cache generation parity
+### #8948 — classified-cache generation parity
 
 The unchanged-after-attempt before/after corpus generation moves from 1.85 to
-1.86 for effect-family assertion execution admission. Content commitments and
+1.86 for the cached observed-value test file. Content commitments and
+dependent verify/receipt byte hashes follow that exact change. Routing,
+unchanged movement, incomplete receipt and all tamper controls remain.
+
+### #8927 — classified-cache generation parity
+
+The unchanged-after-attempt before/after corpus generation moves from 1.86 to
+1.87 for effect-family assertion execution admission. Content commitments and
 dependent verify/receipt byte hashes follow that exact change. Routing,
 unchanged movement, incomplete receipt and all tamper controls remain.
