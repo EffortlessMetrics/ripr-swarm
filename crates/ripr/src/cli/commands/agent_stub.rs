@@ -99,14 +99,13 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
     // own surface, so the written test would still sit where the repair
     // cannot use it. Refuse before the write, naming both files and the
     // supported route (EXIT_CODES.md: a refused `--write` stays exit 2).
-    if options.write {
-        if let Some(message) = resolution
+    if options.write
+        && let Some(message) = resolution
             .next_repair
             .as_ref()
             .and_then(|next| divergent_write_refusal(&resolution.seam_id, next))
-        {
-            return Err(CommandError::Failure(message));
-        }
+    {
+        return Err(CommandError::Failure(message));
     }
     let written = if options.write {
         Some(write_test_stub(&options.root, &resolution, stub).map_err(CommandError::Failure)?)
