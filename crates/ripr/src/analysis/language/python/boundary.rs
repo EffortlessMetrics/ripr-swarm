@@ -269,13 +269,9 @@ pub(super) fn python_boundary_evidence(
         }
     }
     let observed = observed_new || observed_old;
-    observed_values.sort_by(|a, b| {
-        a.line
-            .cmp(&b.line)
-            .then(a.value.cmp(&b.value))
-            .then(a.text.cmp(&b.text))
-    });
-    observed_values.dedup();
+    // File-blind dedup (first file in path order) so identical facts from two
+    // test files still collapse and JSON totals do not move (#8389).
+    crate::analysis::classify::sort_value_facts(&mut observed_values);
 
     // An operand that no strong call resolves (`item.on_hand`, a test local)
     // leaves the boundary unknown rather than missed: the test input may sit

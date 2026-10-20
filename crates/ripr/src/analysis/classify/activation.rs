@@ -4049,7 +4049,7 @@ pub(in crate::analysis) fn has_observed_boundary_equality(activation: &Activatio
         .any(|fact| fact.value.contains(" == "))
 }
 
-pub(super) fn sort_value_facts(facts: &mut Vec<ValueFact>) {
+pub(in crate::analysis) fn sort_value_facts(facts: &mut Vec<ValueFact>) {
     facts.sort_by(|left, right| {
         left.line
             .cmp(&right.line)
@@ -4732,6 +4732,62 @@ mod tests {
         assert!(activation.observed_values.iter().any(|fact| {
             fact.context == ValueContext::FunctionArgument && fact.value == "amount == threshold"
         }));
+    }
+
+    /// #8389: each equality fact names the test file that holds its call line,
+    /// and identical facts from two files collapse to the first path.
+    #[test]
+    fn equality_facts_name_the_test_file_holding_their_call() {
+        let owner = function(
+            "pub fn score(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}",
+        );
+        let in_file = |file: &str, line: usize, call: &str| {
+            let mut test = test_with_call("score_uses_boundary", call);
+            test.file = PathBuf::from(file);
+            test.start_line = line - 1;
+            test.end_line = line + 1;
+            test.calls[0].line = line;
+            test
+        };
+        let a = in_file("tests/a.rs", 11, "score(100, 100);");
+        let b = in_file("tests/b.rs", 31, "score(100, 100);");
+        let probe = probe(ProbeFamily::Predicate, "amount >= threshold");
+
+        let activation = activation_evidence(
+            &probe,
+            Some(&owner),
+            &[&b, &a],
+            &[],
+            None,
+            &crate::analysis::rust_index::RustIndex::default(),
+            false,
+        );
+        let equality = |line: usize| {
+            activation
+                .observed_values
+                .iter()
+                .find(|fact| fact.line == line && fact.value == "amount == threshold")
+                .and_then(|fact| fact.file.clone())
+        };
+        assert_eq!(equality(11), Some(PathBuf::from("tests/a.rs")));
+        assert_eq!(equality(31), Some(PathBuf::from("tests/b.rs")));
+    }
+
+    #[test]
+    fn sort_value_facts_collapses_same_fact_across_files_to_first_path() {
+        let fact = |file: &str| ValueFact {
+            file: Some(PathBuf::from(file)),
+            ..value_fact(4, "score(1)", "1", ValueContext::FunctionArgument)
+        };
+        for order in [["tests/b.rs", "tests/a.rs"], ["tests/a.rs", "tests/b.rs"]] {
+            let mut facts = order.iter().map(|file| fact(file)).collect::<Vec<_>>();
+            sort_value_facts(&mut facts);
+            assert_eq!(facts.len(), 1);
+            assert_eq!(
+                facts[0].file.as_deref(),
+                Some(std::path::Path::new("tests/a.rs"))
+            );
+        }
     }
 
     #[test]
@@ -7473,6 +7529,35 @@ assert_eq!(input.amount, 100);"#
             .iter()
             .map(|fact| (fact.value.clone(), fact.reason.clone()))
             .collect()
+    }
+
+    /// #8389: each element-run fact names the test file of its own run.
+    #[test]
+    fn element_run_facts_name_the_file_of_their_run() {
+        let mut owner = function(
+            "pub fn score(xs: &[i64]) -> usize {\n    xs.iter().filter(|&&x| x > 0).count()\n}",
+        );
+        owner.item.has_body = true;
+        let in_file = |file: &str, line: usize, call: &str| {
+            let mut test = test_with_body_calls(call, &[(line, call)]);
+            test.file = PathBuf::from(file);
+            test.start_line = line - 1;
+            test.end_line = line + 1;
+            test
+        };
+        let a = in_file("tests/a.rs", 11, "assert_eq!(score(&[-1, 0, 3]), 1);");
+        let b = in_file("tests/b.rs", 41, "assert_eq!(score(&[0, 7]), 1);");
+        let gathered = boundary_input(&owner, &probe(ProbeFamily::Predicate, "x > 0"), &[&b, &a]);
+        let file_at = |line: usize| {
+            gathered
+                .activation
+                .observed_values
+                .iter()
+                .find(|fact| fact.line == line && fact.value == "x == 0")
+                .and_then(|fact| fact.file.clone())
+        };
+        assert_eq!(file_at(11), Some(PathBuf::from("tests/a.rs")));
+        assert_eq!(file_at(41), Some(PathBuf::from("tests/b.rs")));
     }
 
     /// A boundary that is not one whole plain decimal literal (`0x10`,

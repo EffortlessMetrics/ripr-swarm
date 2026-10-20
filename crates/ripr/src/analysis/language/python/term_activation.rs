@@ -454,8 +454,7 @@ pub(super) fn python_inactive_term_evidence(
             context: ValueContext::FunctionArgument,
         });
     }
-    observed_values.sort_by(|a, b| a.line.cmp(&b.line).then(a.value.cmp(&b.value)));
-    observed_values.dedup();
+    crate::analysis::classify::sort_value_facts(&mut observed_values);
     let values: Vec<&str> = observed_values
         .iter()
         .map(|fact| fact.value.as_str())

@@ -7113,6 +7113,44 @@ fn classify_price_boundary_with_test_body(body: &str) -> Result<crate::domain::F
         .ok_or_else(|| "changed predicate should classify".to_string())
 }
 
+/// #8389: identical facts read from two test files collapse to one (the first
+/// file in path order), so the observed-value total is the single-file total.
+#[test]
+fn identical_boundary_facts_from_two_test_files_dedup_to_one() -> Result<(), String> {
+    let owner_file = "src/pkg/mod.py";
+    let owners = extract_owners(
+        Path::new(owner_file),
+        "def price(x, k):\n    if x > 5:\n        return 1\n    return 0\n",
+    );
+    let source =
+        "from pkg.mod import price\n\n\ndef test_price():\n    assert price(5, 2) == 0\n\n";
+    let observed = |files: &[&str]| -> Result<Vec<crate::domain::ValueFact>, String> {
+        let tests = files
+            .iter()
+            .flat_map(|file| extract_tests(Path::new(file), source))
+            .collect::<Vec<_>>();
+        assert_eq!(tests.len(), files.len(), "one pytest test per file");
+        let finding = classify_change(Path::new(owner_file), 2, "    if x > 5:", &owners, &tests)
+            .ok_or_else(|| "changed predicate should classify".to_string())?;
+        Ok(finding.activation.observed_values)
+    };
+    let single = observed(&["tests/test_a.py"])?;
+    for order in [
+        ["tests/test_a.py", "tests/test_b.py"],
+        ["tests/test_b.py", "tests/test_a.py"],
+    ] {
+        let both = observed(&order)?;
+        assert!(!single.is_empty());
+        assert_eq!(both.len(), single.len(), "{both:?}");
+        assert!(
+            both.iter()
+                .all(|fact| fact.file.as_deref() == Some(Path::new("tests/test_a.py"))),
+            "{both:?}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn boundary_call_row_keeps_an_ordinary_assert_line_whole() -> Result<(), String> {
     let line = "    assert price(5, 2) == 0";

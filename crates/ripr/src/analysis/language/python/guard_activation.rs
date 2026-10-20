@@ -106,13 +106,7 @@ pub(super) fn python_guarded_arm_gap(
                 })
         })
         .collect();
-    observed_values.sort_by(|left, right| {
-        left.line
-            .cmp(&right.line)
-            .then(left.value.cmp(&right.value))
-            .then(left.text.cmp(&right.text))
-    });
-    observed_values.dedup();
+    crate::analysis::classify::sort_value_facts(&mut observed_values);
 
     let mut parts = Vec::new();
     for (_, condition) in &conditions {
