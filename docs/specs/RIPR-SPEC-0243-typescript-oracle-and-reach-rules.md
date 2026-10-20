@@ -153,7 +153,9 @@ assertion is `weakly_exposed`, not `reachable_unrevealed`.
 supplies the test's assertions and owner calls, as an inline callback would.
 The reference resolves only when `name` is declared exactly once in the file
 as `function name() {...}` (not a generator, not exported) with no
-parameters, and every other mention of `name` in the file is the callback of
+parameters, in the same statement list as the registration (a function from
+an enclosing `describe` or file scope is not resolved, because the test's
+scope bindings come from the registration's scope), and every other mention of `name` in the file is the callback of
 a titled `test` / `it` call (`.only`, `.concurrent`, `.sequential` allowed;
 a title with an escape or a template substitution is not read). A call, a
 reassignment, a same-named parameter or variable, an export, a second
@@ -1028,12 +1030,12 @@ to `amount - 20`, and `tests/lib.test.ts` has
   and 10
   (`expect_call_from_assertion_inner`, `call_expression_is_expect`,
   `oracle_for_matcher`, `safe_error_class_payload_text`).
-- `crates/ripr/src/analysis/language/typescript/tests_extract.rs`: rule 1
-  (`test_from_statement`, `describe_body_from_statement`) and the
+- `crates/ripr/src/analysis/language/typescript/tests_extract.rs`: rule 12
+  (`referenced_callback_function`, `function_used_only_as_test_callback`);
+  rule 1 (`test_from_statement`, `describe_body_from_statement`) and the
   `expect` binding facts rule 3 reads.
 - `crates/ripr/src/analysis/language/typescript/owners.rs`:
-  `mark_default_object_members` (decision 15); `referenced_callback_function`
-  and `function_used_only_as_test_callback` (rule 12); `related_tests.rs`
+  `mark_default_object_members` (decision 15); `related_tests.rs`
   `import_references_owner_call` and `tests_extract.rs`
   `default_member_only_locals` (the whole-file use check), and
   `classifier.rs` `owner_namespace_receivers`, read the marker.

@@ -76,7 +76,13 @@ fn a_named_function_registered_as_the_callback_credits_the_owner() -> Result<(),
         (
             "inside-describe",
             file(&format!(
-                "{DECLARATION}describe('sum', () => {{\n  {registration}}});\n"
+                "describe('sum', () => {{\n{DECLARATION}{registration}}});\n"
+            )),
+        ),
+        (
+            "non-ascii-before-registration",
+            file(&format!(
+                "{DECLARATION}// 例：test('x', sumsEveryValue)\n{registration}"
             )),
         ),
     ] {
@@ -141,6 +147,10 @@ fn only_a_test_registration_resolves_the_reference() -> Result<(), String> {
         ("member-callee", "suite.test('sum', sumsEveryValue);\n"),
         ("each", "test.each([1])('sum', sumsEveryValue);\n"),
         ("untitled", "test(sumsEveryValue);\n"),
+        (
+            "declared-in-an-enclosing-scope",
+            "describe('sum', () => {\n  test('sum adds every value', sumsEveryValue);\n});\n",
+        ),
     ] {
         let source = file(&format!("{DECLARATION}{registration}"));
         assert_ne!(class_of(label, &source)?, inline, "{label}");

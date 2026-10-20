@@ -111,7 +111,6 @@ pub(crate) fn extract_tests_and_conditional_credit_gap(
             &SourceText::new(source),
             &mocks,
             &imports,
-            &[],
             &mut scope,
             &mut tests,
         );
@@ -677,15 +676,18 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
     source: &SourceText<'_>,
     mocks: &[String],
     imports: &[TypeScriptImport],
-    outer_functions: &[DeclaredFunction<'s, 'a>],
     scope: &mut TestScope,
     tests: &mut Vec<TypeScriptTest>,
 ) {
     // Zero-parameter function declarations a `test(title, name)` registration
-    // can reference by name (RIPR-SPEC-0243). Hoisted, so a declaration after
-    // the registration counts.
-    let mut functions = outer_functions.to_vec();
-    functions.extend(statements.iter().filter_map(declared_callback_function));
+    // in this same statement list can reference by name (RIPR-SPEC-0243).
+    // Hoisted, so a declaration after the registration counts. An enclosing
+    // scope's function is not resolved: the test's scope bindings come from
+    // the registration's scope, not from where the body was written.
+    let functions: Vec<_> = statements
+        .iter()
+        .filter_map(declared_callback_function)
+        .collect();
     // Bindings that hold for every test in this scope: variable, function and
     // class declarations and `beforeEach`/`beforeAll` assignments at this
     // level. Collected before any test so a hook written after a test still
@@ -817,9 +819,7 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             );
             scope.iterables.push(Vec::new());
             scope.describe_names.push(describe_name);
-            collect_tests_from_statements(
-                body, file, source, mocks, imports, &functions, scope, tests,
-            );
+            collect_tests_from_statements(body, file, source, mocks, imports, scope, tests);
             scope.describe_names.pop();
             scope.iterables.pop();
             scope.levels.pop();
@@ -836,9 +836,7 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
                     .collect(),
             );
             scope.iterables.push(Vec::new());
-            collect_tests_from_statements(
-                body, file, source, mocks, imports, &functions, scope, tests,
-            );
+            collect_tests_from_statements(body, file, source, mocks, imports, scope, tests);
             scope.iterables.pop();
             scope.levels.pop();
             continue;
@@ -2339,7 +2337,11 @@ fn function_used_only_as_test_callback(source: &str, name: &str) -> bool {
 fn follows_test_title(before: &str) -> bool {
     let word = |ch: char| ch == '_' || ch == '$' || ch.is_alphanumeric();
     let trailing_word = |text: &str| -> (usize, bool) {
-        let start = text.rfind(|ch: char| !word(ch)).map_or(0, |at| at + 1);
+        let start = text
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| !word(*ch))
+            .map_or(0, |(at, ch)| at + ch.len_utf8());
         (start, start > 0 && text[..start].ends_with('.'))
     };
     let Some(rest) = before.strip_suffix(',').map(str::trim_end) else {
