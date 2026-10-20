@@ -1,0 +1,9 @@
+{
+  "source": "/workspace/ripr-reverse-target/debug/deps/ripr-336be1466fa24bd9",
+  "frozen": "/workspace/reverse-scope-evidence/green-ripr-tests",
+  "sha256": "38a4b6d5e2fb3f9741e6d14e026944b703d719878f460ba4f24461c86b050b75",
+  "bytes": 440797776,
+  "mode": 448,
+  "head": "99ff69b63e38a3e0627d859be898e74299f8bb69",
+  "receipt": "final-graph-tests.json"
+}

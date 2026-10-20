@@ -1,0 +1,21 @@
+{
+  "command": [
+    "cargo",
+    "xtask",
+    "check-fast"
+  ],
+  "cwd": "/workspace/ripr-reverse-scope",
+  "head": "99ff69b63e38a3e0627d859be898e74299f8bb69",
+  "worktree_status": "",
+  "started": 1792457366.1886594,
+  "seconds": 262.1202902793884,
+  "exit": 0,
+  "stopped": null,
+  "free": 24452628480,
+  "env": {
+    "CARGO_HOME": "/workspace/.cargo",
+    "RUSTUP_HOME": "/workspace/.rustup",
+    "CARGO_TARGET_DIR": "/workspace/ripr-reverse-target",
+    "CARGO_BUILD_JOBS": "2"
+  }
+}

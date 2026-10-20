@@ -1,0 +1,27 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "-p",
+    "ripr",
+    "--lib",
+    "analysis::workspace::path_dependencies::tests::",
+    "--",
+    "--nocapture"
+  ],
+  "cwd": "/workspace/ripr-reverse-scope",
+  "head": "9b52716fa0dbb4b93eb05994a3b506f8197343ad",
+  "worktree_status": "",
+  "started": 1792456517.7855918,
+  "seconds": 94.09033536911011,
+  "exit": 0,
+  "stopped": null,
+  "free": 20738428928,
+  "env": {
+    "CARGO_HOME": "/workspace/.cargo",
+    "RUSTUP_HOME": "/workspace/.rustup",
+    "CARGO_TARGET_DIR": "/workspace/ripr-reverse-target",
+    "CARGO_BUILD_JOBS": "2"
+  }
+}

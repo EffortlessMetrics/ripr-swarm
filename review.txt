@@ -1,0 +1,17 @@
+reviewed_head_sha: 99ff69b63e38a3e0627d859be898e74299f8bb69
+integration_basis: fe098012eeb27d10a825f3c0f8fd9f3dfc6fdddf
+claim_boundary: exact reverse-scope union semantics with bounded shared-edge expansion; no end-to-end timing or full-workspace qualification claim
+changed_surfaces_and_semantic_owners_inspected: complete three-file diff; PathDependencyAdjacency construction and canonical identities; old DFS; shared union; attribution and declared-target one-hop index; Rust Draft/Fast gating; package-selection consumer; spec and traceability
+blocking_findings: none in source/oracle review
+non_blocking_suggestions: spec wording clarified to distinguish connected traversal from declared-target fallback
+refuted_or_stale_findings: none
+source_review: a separate read-only reviewer inspected committed9b52716fa, then verified99ff69b63 differs only by the accepted spec wording; no builds, edits or external mutations by that reviewer
+proof_observed_by_owner: baseline doctor/check-fast/narrow all-target check; intended RED at7e3995aec (native101,20pass/1failure); final99 graph21/21, selection23/23, Rust-adapter4/4; graph matrix4096 cases; actual edge visits256/1024/4096 ->46/94/190
+oracle_challenge: old traversal fails only count bound; fallback alone cannot supply c1+; overlapping seeds, third-origin cycle, sole-seed cycle and direct self-loop have literal independent outputs; counters increment actual neighbor iterations and are thread-local
+implementation_reasoning: every source follows real edges; at most two distinct origins expand each node. If a third origin is discarded, descendants remain reachable from at least two retained distinct origins, one different from each descendant, preserving membership despite self-seed exclusion
+platform_contract: pure in-memory ordered graph traversal; no platform, filesystem, process, dependency, cache format, schema, public API or workflow delta. Existing producer/disclosure/selection/cap authority retained
+guard_evidence: first check-fast stopped at the original storage admission floor during Clippy, not a source failure or gate pass; process group confirmed terminal; only owned inactive incremental cache reclaimed before warm retry; original target and frozen witnesses preserved
+policy_and_broad_validation: final99 check-fast passes14gates with independently matching3-path selector, including strict workspace/all-target Clippy; precommit native0 with exact-head3-record receipt; prepared goldens native0 with0drift/0fixtureerrors; native dogfood scenario suite native0. Initial goldens availability error retained and repaired through native goldens prepare. Three additional hard-cap controls passed on the retained exact-head executable, total51focused tests. See raw receipts for authoritative outcomes
+proof_or_review_missing: hosted qualification, complete workspace test execution, non-Linux execution, integration and release qualification; no request/Ready/merge action
+affected_currentness_dimensions: source/test/oracle unchanged after99; later unrelated main movement does not itself invalidate source proof
+disposition: REVIEW_INCOMPLETE; source/oracle review does not grant merge clearance

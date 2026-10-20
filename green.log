@@ -1,0 +1,32 @@
+   Compiling ripr v0.11.0 (/workspace/ripr-reverse-scope/crates/ripr)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 33s
+     Running unittests src/lib.rs (/workspace/ripr-reverse-target/debug/deps/ripr-336be1466fa24bd9)
+
+running 21 tests
+test analysis::workspace::path_dependencies::tests::adjacency_excludes_edges_without_resolved_identity_and_discloses_the_remainder ... ok
+test analysis::workspace::path_dependencies::tests::adjacency_excludes_outside_root_and_missing_target_edges ... ok
+test analysis::workspace::path_dependencies::tests::adjacency_limited_status_composes_both_disclosures ... ok
+test analysis::workspace::path_dependencies::tests::adjacency_reverse_leaf_has_an_empty_forward_walk ... ok
+test analysis::workspace::path_dependencies::tests::adjacency_self_loop_deduplicates_and_discloses ... ok
+test analysis::workspace::path_dependencies::tests::adjacency_deduplicates_multiple_declarations_of_the_same_target ... ok
+test analysis::workspace::path_dependencies::tests::adjacency_cycle_walk_terminates_and_discloses_the_cycle_marker ... ok
+test analysis::workspace::path_dependencies::tests::adjacency_status_names_each_honesty_case ... ok
+test analysis::workspace::path_dependencies::tests::adjacency_walks_forward_and_reverse_over_a_path_dep_chain ... ok
+test analysis::workspace::path_dependencies::tests::expansion_adds_nothing_for_unmapped_or_empty_changed_roots ... ok
+test analysis::workspace::path_dependencies::tests::expansion_discloses_limited_and_unavailable_graph_states ... ok
+test analysis::workspace::path_dependencies::tests::expansion_preserves_overlapping_seeds_and_cycle_roots ... ok
+test analysis::workspace::path_dependencies::tests::expansion_reaches_declared_dependents_when_the_dependency_target_is_missing ... ok
+test analysis::workspace::path_dependencies::tests::expansion_attributes_custom_target_files_via_the_manifest_inventory ... ok
+shared-tail seeds=16 edges=31 visits=46
+test analysis::workspace::path_dependencies::tests::forward_dependency_declarations_keep_section_and_declared_name ... ok
+test analysis::workspace::path_dependencies::tests::manifest_identity_from_resolved_path_normalizes_each_shape ... ok
+test analysis::workspace::path_dependencies::tests::expansion_reaches_dependents_of_changed_packages_only ... ok
+test analysis::workspace::path_dependencies::tests::package_root_and_manifest_identities_round_trip ... ok
+test analysis::workspace::path_dependencies::tests::unavailable_provenance_with_limitations_stays_limited_and_keeps_edges ... ok
+shared-tail seeds=32 edges=63 visits=94
+shared-tail seeds=64 edges=127 visits=190
+test analysis::workspace::path_dependencies::tests::expansion_shared_tail_visits_each_edge_at_most_twice ... ok
+test analysis::workspace::path_dependencies::tests::expansion_matches_per_seed_walks_on_all_three_node_graphs ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 11807 filtered out; finished in 0.11s
+

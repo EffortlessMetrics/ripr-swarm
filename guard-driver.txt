@@ -1,0 +1,45 @@
+import json, os, pathlib, shutil, signal, subprocess, sys, time
+
+root = pathlib.Path('/workspace/reverse-scope-evidence')
+cwd = '/workspace/ripr-reverse-scope'
+env = os.environ.copy()
+env.update(CARGO_HOME='/workspace/.cargo', RUSTUP_HOME='/workspace/.rustup',
+           CARGO_TARGET_DIR='/workspace/ripr-reverse-target', CARGO_BUILD_JOBS='2',
+           PATH='/workspace/.cargo/bin:' + env['PATH'])
+admission = root / 'admission.json'
+if not admission.exists():
+    free = shutil.disk_usage('/workspace').free
+    admission.write_text(json.dumps(dict(initial_free=free, reserve=10*2**30,
+        peak_additional=12*2**30, worktree=cwd, target=env['CARGO_TARGET_DIR'],
+        evidence=str(root), owner='reverse-scope-union', base='fe098012eeb27d10a825f3c0f8fd9f3dfc6fdddf'))+'\n')
+budget = json.loads(admission.read_text())
+floor = max(budget['reserve'], budget['initial_free']-budget['peak_additional'])
+label, *cmd = sys.argv[1:]
+started = time.time()
+head = subprocess.check_output(['git','rev-parse','HEAD'], cwd=cwd, text=True).strip()
+status = subprocess.check_output(['git','status','--porcelain'], cwd=cwd, text=True)
+with (root/(label+'.log')).open('w') as log:
+    process = subprocess.Popen(cmd, cwd=cwd, env=env, stdout=log,
+                               stderr=subprocess.STDOUT, start_new_session=True)
+    stop = None
+    while process.poll() is None:
+        if shutil.disk_usage('/workspace').free < floor:
+            stop = 'storage admission floor reached'
+        elif time.time()-started > 1200:
+            stop = '1200-second command budget reached'
+        if stop:
+            os.killpg(process.pid, signal.SIGTERM)
+            try: process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+            break
+        time.sleep(1)
+    code = process.wait()
+receipt = dict(command=cmd, cwd=cwd, head=head, worktree_status=status,
+    started=started, seconds=time.time()-started, exit=code, stopped=stop,
+    free=shutil.disk_usage('/workspace').free, env={k:env[k] for k in
+    ['CARGO_HOME','RUSTUP_HOME','CARGO_TARGET_DIR','CARGO_BUILD_JOBS']})
+(root/(label+'.json')).write_text(json.dumps(receipt,indent=2)+'\n')
+print(json.dumps(receipt), flush=True)
+print((root/(label+'.log')).read_text()[-7000:], flush=True)
+sys.exit(code if code >= 0 else 1)

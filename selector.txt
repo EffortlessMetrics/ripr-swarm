@@ -1,0 +1,6 @@
+fe098012eeb27d10a825f3c0f8fd9f3dfc6fdddf
+99ff69b63e38a3e0627d859be898e74299f8bb69
+24ae3ec11f39ed2dbec175dbb019f168e4db850a
+.ripr/traceability.toml
+crates/ripr/src/analysis/workspace/path_dependencies.rs
+docs/specs/RIPR-SPEC-0171-path-dependency-diff-scope.md

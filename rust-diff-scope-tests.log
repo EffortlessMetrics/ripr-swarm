@@ -1,0 +1,10 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running unittests src/lib.rs (/workspace/ripr-reverse-target/debug/deps/ripr-336be1466fa24bd9)
+
+running 3 tests
+test analysis::language::rust::tests::draft_diff_scope_stays_narrow_without_the_path_dependency_edge ... ok
+test analysis::language::rust::tests::draft_diff_scope_expands_custom_target_files_to_their_path_dependents ... ok
+test analysis::language::rust::tests::draft_diff_scope_reaches_path_dependent_tests_through_the_dependency_edge ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 11825 filtered out; finished in 0.01s
+

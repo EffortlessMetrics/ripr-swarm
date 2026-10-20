@@ -1,0 +1,89 @@
+   Compiling libc v0.2.190
+   Compiling zerocopy v0.8.57
+   Compiling errno v0.3.14
+   Compiling signal-hook-registry v1.4.8
+   Compiling getrandom v0.4.3
+   Compiling getrandom v0.3.4
+   Compiling mio v1.2.3
+   Compiling tokio v1.53.2
+   Compiling ppv-lite86 v0.2.21
+   Compiling rand_chacha v0.3.1
+   Compiling rand v0.8.8
+   Compiling phf_generator v0.11.3
+   Compiling phf_codegen v0.11.3
+   Compiling unicode_names2_generator v1.3.0
+   Compiling rand_core v0.9.5
+   Compiling parking_lot_core v0.9.12
+   Compiling rustix v1.1.5
+   Compiling unicode_names2 v1.3.0
+   Compiling fastrand v2.5.0
+   Compiling tempfile v3.27.0
+   Compiling rustpython-parser v0.4.0
+   Compiling tokio-util v0.7.20
+   Compiling wait-timeout v0.2.1
+   Compiling fnv v1.0.7
+   Compiling quick-error v1.2.3
+   Compiling bit-vec v0.8.0
+   Compiling bit-set v0.8.0
+   Compiling rusty-fork v0.3.1
+   Compiling ra_ap_stdx v0.0.349
+   Compiling rand_chacha v0.9.0
+   Compiling tokio-stream v0.1.19
+   Compiling dashmap v6.2.1
+   Compiling parking_lot v0.12.5
+   Compiling rand v0.9.5
+   Compiling rand_xorshift v0.4.0
+   Compiling uuid v1.26.0
+   Compiling serial_test_derive v4.0.1
+   Compiling regex-syntax v0.8.11
+   Compiling unarray v0.1.4
+   Compiling ripr v0.11.0 (/workspace/ripr-reverse-scope/crates/ripr)
+   Compiling ra_ap_syntax v0.0.349
+   Compiling proptest v1.11.0
+   Compiling serial_test v4.0.1
+   Compiling rmcp v3.5.1
+   Compiling tower-lsp-server v0.23.0
+   Compiling nix v0.31.3
+   Compiling signal-hook v0.3.18
+   Compiling fs2 v0.4.3
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4m 14s
+     Running unittests src/lib.rs (/workspace/ripr-reverse-target/debug/deps/ripr-336be1466fa24bd9)
+
+running 21 tests
+test analysis::workspace::path_dependencies::tests::adjacency_excludes_outside_root_and_missing_target_edges ... ok
+test analysis::workspace::path_dependencies::tests::adjacency_excludes_edges_without_resolved_identity_and_discloses_the_remainder ... ok
+test analysis::workspace::path_dependencies::tests::adjacency_limited_status_composes_both_disclosures ... ok
+test analysis::workspace::path_dependencies::tests::adjacency_self_loop_deduplicates_and_discloses ... ok
+test analysis::workspace::path_dependencies::tests::adjacency_deduplicates_multiple_declarations_of_the_same_target ... ok
+test analysis::workspace::path_dependencies::tests::adjacency_cycle_walk_terminates_and_discloses_the_cycle_marker ... ok
+test analysis::workspace::path_dependencies::tests::adjacency_reverse_leaf_has_an_empty_forward_walk ... ok
+test analysis::workspace::path_dependencies::tests::adjacency_status_names_each_honesty_case ... ok
+test analysis::workspace::path_dependencies::tests::adjacency_walks_forward_and_reverse_over_a_path_dep_chain ... ok
+test analysis::workspace::path_dependencies::tests::expansion_discloses_limited_and_unavailable_graph_states ... ok
+test analysis::workspace::path_dependencies::tests::expansion_preserves_overlapping_seeds_and_cycle_roots ... ok
+test analysis::workspace::path_dependencies::tests::expansion_reaches_declared_dependents_when_the_dependency_target_is_missing ... ok
+test analysis::workspace::path_dependencies::tests::expansion_attributes_custom_target_files_via_the_manifest_inventory ... ok
+test analysis::workspace::path_dependencies::tests::expansion_adds_nothing_for_unmapped_or_empty_changed_roots ... ok
+test analysis::workspace::path_dependencies::tests::forward_dependency_declarations_keep_section_and_declared_name ... ok
+test analysis::workspace::path_dependencies::tests::manifest_identity_from_resolved_path_normalizes_each_shape ... ok
+test analysis::workspace::path_dependencies::tests::package_root_and_manifest_identities_round_trip ... ok
+test analysis::workspace::path_dependencies::tests::unavailable_provenance_with_limitations_stays_limited_and_keeps_edges ... ok
+shared-tail seeds=16 edges=31 visits=256test analysis::workspace::path_dependencies::tests::expansion_reaches_dependents_of_changed_packages_only ... 
+ok
+shared-tail seeds=32 edges=63 visits=1024
+shared-tail seeds=64 edges=127 visits=4096
+
+thread 'analysis::workspace::path_dependencies::tests::expansion_shared_tail_visits_each_edge_at_most_twice' (9544) panicked at crates/ripr/src/analysis/workspace/path_dependencies.rs:663:13:
+16 roots repeated shared graph work: 256 visits for 31 edges
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test analysis::workspace::path_dependencies::tests::expansion_shared_tail_visits_each_edge_at_most_twice ... FAILED
+test analysis::workspace::path_dependencies::tests::expansion_matches_per_seed_walks_on_all_three_node_graphs ... ok
+
+failures:
+
+failures:
+    analysis::workspace::path_dependencies::tests::expansion_shared_tail_visits_each_edge_at_most_twice
+
+test result: FAILED. 20 passed; 1 failed; 0 ignored; 0 measured; 11807 filtered out; finished in 0.11s
+
+error: test failed, to rerun pass `-p ripr --lib`

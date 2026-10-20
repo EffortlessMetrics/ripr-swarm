@@ -1,0 +1,9 @@
+{
+  "source": "/workspace/ripr-reverse-target/debug/deps/ripr-336be1466fa24bd9",
+  "frozen": "/workspace/reverse-scope-evidence/red-ripr-tests",
+  "sha256": "2b3a0c10f58e7948c68bd5186d2b264236682cea09e37c3ee4e11785891678ee",
+  "bytes": 440674544,
+  "mode": 448,
+  "head": "7e3995aec84b86ab52296a9a8fcdae08bcdc78c5",
+  "receipt": "red.json"
+}

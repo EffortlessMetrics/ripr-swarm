@@ -1,0 +1,16 @@
+{
+  "path": "/workspace/ripr-reverse-target/debug/incremental",
+  "owner": "reverse-scope-union",
+  "state": "released",
+  "reason": "terminal guard-stopped check-fast; mutable compiler cache only; original target and frozen RED/GREEN witnesses excluded",
+  "owned_processes": [
+    "  14174       1   10927 Z    cargo-clippy",
+    "  14183       1   10927 Z    cargo",
+    "  14624       1   10927 Z    clippy-driver",
+    "  14873       1   10927 Z    clippy-driver"
+  ],
+  "free_before": 18970677248,
+  "free_after": 25785720832,
+  "reclaimed": 6815043584,
+  "at": 1792457366.157101
+}

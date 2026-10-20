@@ -1,0 +1,391 @@
+From 7e3995aec84b86ab52296a9a8fcdae08bcdc78c5 Mon Sep 17 00:00:00 2001
+From: S Z <szim92@gmail.com>
+Date: Tue, 20 Oct 2026 00:29:54 +0000
+Subject: [PATCH 1/3] test(workspace): bound shared reverse-scope traversal
+ work
+
+---
+ .../analysis/workspace/path_dependencies.rs   | 160 ++++++++++++++++++
+ 1 file changed, 160 insertions(+)
+
+diff --git a/crates/ripr/src/analysis/workspace/path_dependencies.rs b/crates/ripr/src/analysis/workspace/path_dependencies.rs
+index dad9848a3..822be5cc3 100644
+--- a/crates/ripr/src/analysis/workspace/path_dependencies.rs
++++ b/crates/ripr/src/analysis/workspace/path_dependencies.rs
+@@ -333,6 +333,8 @@ impl PathDependencyAdjacency {
+                 .and_then(|(_node, children)| children.next());
+             match advance {
+                 Some(child) => {
++                    #[cfg(test)]
++                    tests::WALK_EDGE_VISITS.with(|count| count.set(count.get() + 1));
+                     if on_path.contains(&child) {
+                         #[cfg(test)]
+                         cycles.insert(child);
+@@ -608,6 +610,164 @@ mod tests {
+     };
+     use std::path::{Path, PathBuf};
+ 
++    std::thread_local! {
++        pub(super) static WALK_EDGE_VISITS: std::cell::Cell<usize> = const {
++            std::cell::Cell::new(0)
++        };
++    }
++
++    /// Exercise the production expansion, including graph construction and
++    /// the declared-target fallback. Each changed root reaches one shared
++    /// tail; the fallback alone reaches only c0, not the rest of that tail.
++    #[test]
++    fn expansion_shared_tail_visits_each_edge_at_most_twice() {
++        let mut samples = Vec::new();
++        for width in [16, 32, 64] {
++            let changed = (0..width).map(|n| format!("r{n}/")).collect();
++            let mut edges = (0..width)
++                .map(|n| {
++                    edge_from_manifest(
++                        "c0/Cargo.toml",
++                        PathDependencyResolution::Resolved,
++                        Some(&format!("r{n}")),
++                    )
++                })
++                .collect::<Vec<_>>();
++            for n in 1..width {
++                edges.push(edge_from_manifest(
++                    &format!("c{n}/Cargo.toml"),
++                    PathDependencyResolution::Resolved,
++                    Some(&format!("c{}", n - 1)),
++                ));
++            }
++            let edge_count = edges.len();
++            let provenance = WorkspaceGraphProvenance {
++                package_graph_status: "complete".to_string(),
++                path_dependency_edges: edges,
++                ..WorkspaceGraphProvenance::default()
++            };
++            WALK_EDGE_VISITS.with(|count| count.set(0));
++            let expansion = expansion_from_provenance(&provenance, &[], &changed, &BTreeSet::new());
++            let visits = WALK_EDGE_VISITS.with(std::cell::Cell::get);
++            assert_eq!(expansion.status(), PathDependencyGraphStatus::Complete);
++            assert_eq!(
++                expansion.into_dependent_package_roots(),
++                (0..width).map(|n| format!("c{n}/")).collect(),
++                "all shared-tail packages must be reached, with no changed roots added"
++            );
++            eprintln!("shared-tail seeds={width} edges={edge_count} visits={visits}");
++            samples.push((width, edge_count, visits));
++        }
++        for (width, edges, visits) in samples {
++            assert!(visits >= edges, "the nonempty traversal must actually run");
++            assert!(
++                visits <= 2 * edges,
++                "{width} roots repeated shared graph work: {visits} visits for {edges} edges"
++            );
++        }
++    }
++
++    fn provenance_for_reverse_edges(edges: &[(&str, &str)]) -> WorkspaceGraphProvenance {
++        WorkspaceGraphProvenance {
++            package_graph_status: "complete".to_string(),
++            path_dependency_edges: edges
++                .iter()
++                .map(|(dependency, dependent)| {
++                    edge_from_manifest(
++                        &format!("{dependent}/Cargo.toml"),
++                        PathDependencyResolution::Resolved,
++                        Some(dependency),
++                    )
++                })
++                .collect(),
++            ..WorkspaceGraphProvenance::default()
++        }
++    }
++
++    #[test]
++    fn expansion_preserves_overlapping_seeds_and_cycle_roots() {
++        let expand = |edges: &[(&str, &str)], changed: &[&str]| {
++            expansion_from_provenance(
++                &provenance_for_reverse_edges(edges),
++                &[],
++                &roots(changed),
++                &BTreeSet::new(),
++            )
++            .into_dependent_package_roots()
++        };
++        assert_eq!(
++            expand(&[("b", "a"), ("a", "c")], &["b/", "c/"]),
++            roots(&["a/", "c/"]),
++            "a changed seed still belongs in the union when another seed reaches it"
++        );
++        assert_eq!(
++            expand(
++                &[("a", "x"), ("b", "x"), ("c", "x"), ("x", "a")],
++                &["a/", "b/", "c/"]
++            ),
++            roots(&["a/", "x/"]),
++            "shared origins must propagate through a cycle back to another seed"
++        );
++        assert_eq!(
++            expand(&[("a", "x"), ("x", "a")], &["a/"]),
++            roots(&["x/"]),
++            "a cycle alone does not put its sole seed in its own walk result"
++        );
++        assert_eq!(
++            expand(&[("a", "a")], &["a/"]),
++            roots(&["a/"]),
++            "the unchanged declared-target fallback includes a directly self-dependent seed"
++        );
++    }
++
++    /// The original per-root DFS is an independent oracle for every directed
++    /// three-node graph (including self edges) and every seed subset. Always
++    /// add an unknown seed, and account independently for the one-hop index.
++    #[test]
++    fn expansion_matches_per_seed_walks_on_all_three_node_graphs() {
++        let names = ["a", "b", "c"];
++        for graph_mask in 0..(1_usize << 9) {
++            let mut edges = Vec::new();
++            for (from, dependency) in names.iter().enumerate() {
++                for (to, dependent) in names.iter().enumerate() {
++                    if graph_mask & (1 << (3 * from + to)) != 0 {
++                        edges.push((*dependency, *dependent));
++                    }
++                }
++            }
++            let provenance = provenance_for_reverse_edges(&edges);
++            let adjacency = PathDependencyAdjacency::build(&provenance);
++            for seed_mask in 0..8 {
++                let mut changed = roots(&["ghost/"]);
++                let mut expected = BTreeSet::new();
++                for (seed, name) in names.iter().enumerate() {
++                    if seed_mask & (1 << seed) == 0 {
++                        continue;
++                    }
++                    changed.insert(format!("{name}/"));
++                    if let Some(walk) = adjacency.reverse_walk(&format!("{name}/Cargo.toml")) {
++                        expected
++                            .extend(walk.reachable().iter().map(|m| package_root_of_manifest(m)));
++                    }
++                    // Every captured edge here is resolved. The secondary
++                    // index contributes exactly the seed's direct callers.
++                    for &(dependency, dependent) in &edges {
++                        if dependency == *name {
++                            expected.insert(format!("{dependent}/"));
++                        }
++                    }
++                }
++                let actual =
++                    expansion_from_provenance(&provenance, &[], &changed, &BTreeSet::new());
++                assert_eq!(
++                    actual.into_dependent_package_roots(),
++                    expected,
++                    "graph={graph_mask}, seeds={seed_mask}"
++                );
++            }
++        }
++    }
++
+     fn unique_dir(label: &str) -> PathBuf {
+         use std::time::{SystemTime, UNIX_EPOCH};
+         let nanos = SystemTime::now()
+-- 
+2.52.0
+
+
+From 9b52716fa0dbb4b93eb05994a3b506f8197343ad Mon Sep 17 00:00:00 2001
+From: S Z <szim92@gmail.com>
+Date: Tue, 20 Oct 2026 00:35:17 +0000
+Subject: [PATCH 2/3] perf(workspace): share reverse-scope graph expansion
+ (#8930)
+
+---
+ .ripr/traceability.toml                       |  3 +
+ .../analysis/workspace/path_dependencies.rs   | 65 ++++++++++++++++---
+ ...PR-SPEC-0171-path-dependency-diff-scope.md |  8 +++
+ 3 files changed, 66 insertions(+), 10 deletions(-)
+
+diff --git a/.ripr/traceability.toml b/.ripr/traceability.toml
+index 5d96858c7..c276cdfbc 100644
+--- a/.ripr/traceability.toml
++++ b/.ripr/traceability.toml
+@@ -11385,6 +11385,9 @@ id = "RIPR-SPEC-0171"
+ name = "path-dependency diff-scope expansion"
+ spec = "docs/specs/RIPR-SPEC-0171-path-dependency-diff-scope.md"
+ tests = [
++  "crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_shared_tail_visits_each_edge_at_most_twice",
++  "crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_matches_per_seed_walks_on_all_three_node_graphs",
++  "crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_preserves_overlapping_seeds_and_cycle_roots",
+   "crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_reaches_dependents_of_changed_packages_only",
+   "crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_adds_nothing_for_unmapped_or_empty_changed_roots",
+   "crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_discloses_limited_and_unavailable_graph_states",
+diff --git a/crates/ripr/src/analysis/workspace/path_dependencies.rs b/crates/ripr/src/analysis/workspace/path_dependencies.rs
+index 822be5cc3..ba6fe2490 100644
+--- a/crates/ripr/src/analysis/workspace/path_dependencies.rs
++++ b/crates/ripr/src/analysis/workspace/path_dependencies.rs
+@@ -31,7 +31,7 @@
+ //! Rust adapter feeds into the Draft/Fast package selection. Dep-driven
+ //! impact analysis beyond scope expansion is still future work.
+ 
+-use std::collections::{BTreeMap, BTreeSet};
++use std::collections::{BTreeMap, BTreeSet, VecDeque};
+ use std::path::Path;
+ 
+ use crate::analysis::seam_cache::{
+@@ -66,8 +66,9 @@ impl PathDependencyGraphStatus {
+ /// One reachability walk result: the transitively reachable manifests plus
+ /// the cycle markers cut to keep the walk finite.
+ ///
+-/// #2970 slice C consumes reverse walks for diff-scope expansion; the
+-/// forward direction has no production consumer yet.
++/// Single-root reference for adjacency/cycle tests. Production scope
++/// expansion uses the shared reverse union instead.
++#[cfg(test)]
+ #[derive(Clone, Debug, PartialEq, Eq)]
+ pub(crate) struct PathDependencyWalk {
+     /// Manifest identities reached from the start node, sorted, excluding the
+@@ -84,6 +85,7 @@ pub(crate) struct PathDependencyWalk {
+     cycle_manifests: Vec<String>,
+ }
+ 
++#[cfg(test)]
+ impl PathDependencyWalk {
+     /// Manifests reached from the start node, sorted, start excluded.
+     pub(crate) fn reachable(&self) -> &[String] {
+@@ -294,9 +296,52 @@ impl PathDependencyAdjacency {
+         self.walk(&self.forward, manifest)
+     }
+ 
+-    /// Transitive reverse reach: every manifest that reaches `manifest`
++    /// Union of the single-root reverse walks, each excluding its own seed.
++    /// A seed reached from another seed must still be included, even when
++    /// their paths meet before cycling back to it. Retain up to two distinct
++    /// origins per node: if further origins meet here, every descendant is
++    /// already reachable from two seeds, at least one different from itself.
++    /// Thus each node/edge expands at most twice, independent of seed count
++    /// (ordered-map lookups still cost O(log nodes)). Borrow canonical names
++    /// from the graph instead of cloning neighbor lists for every walk.
++    fn reverse_reachable_union(&self, starts: impl IntoIterator<Item = String>) -> BTreeSet<&str> {
++        let mut pending = VecDeque::new();
++        for start in starts {
++            if let Some(node) = self.nodes.get(start.as_str()) {
++                pending.push_back((node.as_str(), node.as_str()));
++            }
++        }
++        let mut sources = BTreeMap::<&str, (&str, Option<&str>)>::new();
++        let mut reached = BTreeSet::new();
++        while let Some((node, origin)) = pending.pop_front() {
++            match sources.entry(node) {
++                std::collections::btree_map::Entry::Vacant(entry) => {
++                    entry.insert((origin, None));
++                }
++                std::collections::btree_map::Entry::Occupied(mut entry) => {
++                    let (first, second) = entry.get_mut();
++                    if *first == origin || second.is_some() {
++                        continue;
++                    }
++                    *second = Some(origin);
++                }
++            }
++            if node != origin {
++                reached.insert(node);
++            }
++            for neighbor in self.reverse.get(node).into_iter().flatten() {
++                #[cfg(test)]
++                tests::WALK_EDGE_VISITS.with(|count| count.set(count.get() + 1));
++                pending.push_back((neighbor.as_str(), origin));
++            }
++        }
++        reached
++    }
++
++    /// Reference reverse reach: every manifest that reaches `manifest`
+     /// through path dependencies, with cycles cut and disclosed. `None` when
+     /// the manifest is not a graph node.
++    #[cfg(test)]
+     pub(crate) fn reverse_walk(&self, manifest: &str) -> Option<PathDependencyWalk> {
+         self.walk(&self.reverse, manifest)
+     }
+@@ -306,6 +351,7 @@ impl PathDependencyAdjacency {
+     /// already on the current path is a cycle back-edge: disclosed, never
+     /// recursed. Together the two guards bound the walk to O(nodes + edges)
+     /// steps on any input, cyclic or not.
++    #[cfg(test)]
+     fn walk(
+         &self,
+         adjacency: &BTreeMap<String, BTreeSet<String>>,
+@@ -513,14 +559,13 @@ pub(crate) fn expansion_from_provenance(
+             .insert(edge.from_manifest.clone());
+     }
+ 
+-    let mut dependent_package_roots = BTreeSet::new();
++    let mut dependent_package_roots = adjacency
++        .reverse_reachable_union(seed_roots.iter().map(|root| manifest_of_package_root(root)))
++        .into_iter()
++        .map(package_root_of_manifest)
++        .collect::<BTreeSet<_>>();
+     for changed in &seed_roots {
+         let manifest = manifest_of_package_root(changed);
+-        if let Some(walk) = adjacency.reverse_walk(&manifest) {
+-            for reached in walk.reachable() {
+-                dependent_package_roots.insert(package_root_of_manifest(reached));
+-            }
+-        }
+         if let Some(declarers) = declared_dependents.get(&manifest) {
+             for declarer in declarers {
+                 dependent_package_roots.insert(package_root_of_manifest(declarer));
+diff --git a/docs/specs/RIPR-SPEC-0171-path-dependency-diff-scope.md b/docs/specs/RIPR-SPEC-0171-path-dependency-diff-scope.md
+index dffadbc31..0432d21c5 100644
+--- a/docs/specs/RIPR-SPEC-0171-path-dependency-diff-scope.md
++++ b/docs/specs/RIPR-SPEC-0171-path-dependency-diff-scope.md
+@@ -51,6 +51,11 @@ through the reverse path-dependency adjacency:
+ - the walk is transitive (a change in `a` reaches `b` when `b` depends on
+   `a` and `c` when `c` depends on `b`) and deterministic (`BTreeMap`/
+   `BTreeSet`-ordered);
++- scope expansion shares traversal across changed roots: each connected
++  reverse edge is examined at most twice, independent of the number of
++  changed roots (ordered-map lookup costs still apply). The result remains
++  the union of single-root walks, each excluding only its own seed; a seed
++  reached from another seed stays included;
+ - cycles are cut by the walk and disclosed on the graph surfaces; the
+   reachable set itself stays exact for the walked edges;
+ - selections without package narrowing are unchanged: Instant stays
+@@ -151,6 +156,9 @@ schema. No registry or external dependency resolution.
+ 
+ ## Test Mapping
+ 
++- `crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_shared_tail_visits_each_edge_at_most_twice`
++- `crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_matches_per_seed_walks_on_all_three_node_graphs`
++- `crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_preserves_overlapping_seeds_and_cycle_roots`
+ - `crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_reaches_dependents_of_changed_packages_only`
+ - `crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_adds_nothing_for_unmapped_or_empty_changed_roots`
+ - `crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_discloses_limited_and_unavailable_graph_states`
+-- 
+2.52.0
+
+
+From 99ff69b63e38a3e0627d859be898e74299f8bb69 Mon Sep 17 00:00:00 2001
+From: S Z <szim92@gmail.com>
+Date: Tue, 20 Oct 2026 00:37:12 +0000
+Subject: [PATCH 3/3] docs(workspace): clarify connected traversal union
+ boundary
+
+---
+ docs/specs/RIPR-SPEC-0171-path-dependency-diff-scope.md | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/docs/specs/RIPR-SPEC-0171-path-dependency-diff-scope.md b/docs/specs/RIPR-SPEC-0171-path-dependency-diff-scope.md
+index 0432d21c5..ef5b22a02 100644
+--- a/docs/specs/RIPR-SPEC-0171-path-dependency-diff-scope.md
++++ b/docs/specs/RIPR-SPEC-0171-path-dependency-diff-scope.md
+@@ -53,8 +53,8 @@ through the reverse path-dependency adjacency:
+   `BTreeSet`-ordered);
+ - scope expansion shares traversal across changed roots: each connected
+   reverse edge is examined at most twice, independent of the number of
+-  changed roots (ordered-map lookup costs still apply). The result remains
+-  the union of single-root walks, each excluding only its own seed; a seed
++  changed roots (ordered-map lookup costs still apply). The connected
++  traversal result remains the union of single-root walks, each excluding only its own seed; a seed
+   reached from another seed stays included;
+ - cycles are cut by the walk and disclosed on the graph surfaces; the
+   reachable set itself stays exact for the walked edges;
+-- 
+2.52.0
+

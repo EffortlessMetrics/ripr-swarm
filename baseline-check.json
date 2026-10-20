@@ -1,0 +1,24 @@
+{
+  "command": [
+    "cargo",
+    "check",
+    "--locked",
+    "-p",
+    "ripr",
+    "--all-targets"
+  ],
+  "cwd": "/workspace/ripr-reverse-scope",
+  "head": "fe098012eeb27d10a825f3c0f8fd9f3dfc6fdddf",
+  "worktree_status": "",
+  "started": 1792455977.2203348,
+  "seconds": 150.09968900680542,
+  "exit": 0,
+  "stopped": null,
+  "free": 26520535040,
+  "env": {
+    "CARGO_HOME": "/workspace/.cargo",
+    "RUSTUP_HOME": "/workspace/.rustup",
+    "CARGO_TARGET_DIR": "/workspace/ripr-reverse-target",
+    "CARGO_BUILD_JOBS": "2"
+  }
+}

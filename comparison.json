@@ -1,0 +1,38 @@
+{
+  "source": "99ff69b63e38a3e0627d859be898e74299f8bb69",
+  "red": [
+    [
+      16,
+      31,
+      256
+    ],
+    [
+      32,
+      63,
+      1024
+    ],
+    [
+      64,
+      127,
+      4096
+    ]
+  ],
+  "green": [
+    [
+      16,
+      31,
+      46
+    ],
+    [
+      32,
+      63,
+      94
+    ],
+    [
+      64,
+      127,
+      190
+    ]
+  ],
+  "measure": "actual reverse neighbor iterations in production expansion; no wall-time claim"
+}

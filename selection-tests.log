@@ -1,0 +1,30 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (/workspace/ripr-reverse-target/debug/deps/ripr-336be1466fa24bd9)
+
+running 23 tests
+test analysis::workspace::select::tests::deep_and_ready_index_entire_workspace ... ok
+test analysis::workspace::select::tests::dependent_packages_narrow_selection_without_heuristic_changed_roots ... ok
+test analysis::workspace::select::tests::dependent_custom_target_files_enter_selection_by_root_prefix ... ok
+test analysis::workspace::select::tests::custom_target_change_keeps_its_manifest_package_together ... ok
+test analysis::workspace::select::tests::dependent_packages_enter_draft_and_fast_selection ... ok
+test analysis::workspace::select::tests::dependent_roots_do_not_change_non_narrowing_selections ... ok
+test analysis::workspace::select::tests::draft_and_fast_index_changed_package_files ... ok
+test analysis::workspace::select::tests::draft_and_fast_keep_workspace_root_multi_target_package_together ... ok
+test analysis::workspace::select::tests::draft_and_fast_keep_nested_multi_target_crate_together ... ok
+test analysis::workspace::select::tests::empty_dependent_roots_reproduce_the_unchanged_selection ... ok
+test analysis::workspace::select::tests::instant_indexes_changed_rust_files_only ... ok
+test analysis::workspace::select::tests::module_closure_brings_lib_sibling_for_bin_only_change ... ok
+test analysis::workspace::select::tests::instant_selection_leaves_integration_tests_behind_for_bin_only_change ... ok
+test analysis::workspace::select::tests::narrowed_selection_brings_mod_rs_children_parents ... ok
+test analysis::workspace::select::tests::narrowed_selection_brings_the_include_unit_for_sibling_fragments ... ok
+test analysis::workspace::select::tests::narrowed_selection_brings_out_of_line_module_parents ... ok
+test analysis::workspace::select::tests::narrowed_selection_closure_adds_only_existing_candidates ... ok
+test analysis::workspace::select::tests::no_unchanged_tests_limits_any_mode_to_changed_files ... ok
+test analysis::workspace::select::tests::nested_crate_inside_dependent_stays_out_unless_itself_dependent ... ok
+test analysis::workspace::select::tests::operator_mode_tiers_are_pinned_for_defaults_first_adoption ... ok
+test analysis::workspace::select::tests::source_role_excludes_xtask_automation ... ok
+test analysis::workspace::select::tests::repo_discovery_skips_fixture_tree_but_fixture_roots_still_work ... ok
+test analysis::workspace::select::tests::draft_and_fast_selection_is_stable_and_subset_of_workspace ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 11805 filtered out; finished in 0.03s
+

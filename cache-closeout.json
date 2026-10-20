@@ -1,0 +1,16 @@
+{
+  "path": "/workspace/ripr-reverse-target/debug/incremental",
+  "owner": "reverse-scope-union",
+  "state": "released",
+  "reason": "inactive reproducible Cargo incremental cache; exact RED/GREEN executables and receipts retained separately",
+  "head": "99ff69b63e38a3e0627d859be898e74299f8bb69",
+  "free_before": 20857118720,
+  "free_after": 28069416960,
+  "reclaimed": 7212298240,
+  "at": 1792456711.9866655,
+  "excluded": [
+    "/workspace/ripr-swarm/target",
+    "/workspace/reverse-scope-evidence/red-ripr-tests",
+    "/workspace/reverse-scope-evidence/green-ripr-tests"
+  ]
+}
