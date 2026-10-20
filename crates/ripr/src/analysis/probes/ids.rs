@@ -11,6 +11,8 @@ pub(crate) fn normalize_expression(expr: &str) -> String {
 
 /// Collapse formatting whitespace without collapsing Rust literal values.
 /// Keep the shared lexical scanner's raw-string, escape and lifetime rules.
+/// Consume original source once: flattening a line comment's newline changes
+/// how a second lexical scan would interpret the following literal.
 pub(crate) fn normalize_rust_expression(expr: &str) -> String {
     let trimmed = expr.trim();
     let ranges = crate::analysis::extract::rust_literal_ranges(trimmed);

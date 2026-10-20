@@ -2,7 +2,7 @@ use super::super::rust_index::{RustIndex, error_path_twins, find_owner_function}
 use super::SeededProbe;
 use super::expectations::{expected_sinks, required_oracles};
 use super::family::family_for_probe_shape;
-use super::ids::{normalize_rust_expression as normalize_expression, repo_probe_id};
+use super::ids::repo_probe_id;
 use crate::analysis::diagnostic_origin::ParserByteSpan;
 use crate::domain::{DeltaKind, Probe, SourceLocation};
 use std::collections::HashMap;
@@ -52,9 +52,8 @@ pub(crate) fn probes_for_repo_file_seeded(
             owner.0 = owner.0.replace('\\', "/");
             owner
         });
-        let norm_expr = normalize_expression(&shape.text);
         // Ordinal 1 here; post-hoc dedup below handles collisions.
-        let id = repo_probe_id(path, &family, owner.as_ref(), &norm_expr, 1);
+        let id = repo_probe_id(path, &family, owner.as_ref(), &shape.text, 1);
 
         let expected_sinks = expected_sinks(&shape.text, &family);
         let required_oracles = required_oracles(&shape.text, &family);

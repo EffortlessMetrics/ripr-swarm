@@ -14,7 +14,7 @@ use super::classify::{
 };
 use super::expectations::{expected_sinks, required_oracles};
 use super::family::delta_for_family;
-use super::ids::{diff_probe_id, normalize_rust_expression as normalize_expression};
+use super::ids::diff_probe_id;
 use super::lexical::{classify_changed_line, is_accumulator_rewrite_of};
 use crate::analysis::diagnostic_origin::ParserByteSpan;
 use crate::analysis::extract::mask_comments_and_strings;
@@ -1015,15 +1015,8 @@ fn build_probe(
             find_owner_function(context.index, &context.changed.path, new_line)
                 .map(|function| function.id.clone())
         });
-    let norm_expr = normalize_expression(text);
     // Ordinal 1 here; post-hoc dedup in probes_for_file handles collisions.
-    let id = diff_probe_id(
-        &context.changed.path,
-        &family,
-        owner.as_ref(),
-        &norm_expr,
-        1,
-    );
+    let id = diff_probe_id(&context.changed.path, &family, owner.as_ref(), text, 1);
     let expected_sinks = expected_sinks(text, &family);
     let required_oracles = required_oracles(text, &family);
 

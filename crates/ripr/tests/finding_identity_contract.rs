@@ -303,6 +303,101 @@ fn formatting_whitespace_outside_literal_data_keeps_the_id() -> Result<(), Strin
     Ok(())
 }
 
+fn line_comment_literal_cases() -> [(&'static str, &'static str); 6] {
+    [
+        ("x == // note\n        \"a b\"", "353daaf8"),
+        ("x == // note\n        \"a  b\"", "bd483d1f"),
+        ("x  == //  note\n          \"a  b\"", "bd483d1f"),
+        ("x == // \" fake\n        \"a b\"", "2f8257db"),
+        ("x == // \" fake\n        \"a  b\"", "0075a8f9"),
+        ("x  == // \"  fake\n          \"a  b\"", "0075a8f9"),
+    ]
+}
+
+fn comparison_source(expression: &str) -> String {
+    format!("pub fn equal(x: &str) -> bool {{\n    {expression}\n}}\n")
+}
+
+fn current_predicate_id(output: &CheckOutput, expression: &str) -> String {
+    let selected: Vec<_> = output
+        .findings
+        .iter()
+        .filter(|finding| {
+            finding.probe.family.as_str() == "predicate"
+                && finding.probe.expression == expression
+                && finding.source_currentness.permits_candidate_action()
+        })
+        .collect();
+    assert_eq!(selected.len(), 1, "missing current predicate: {output:?}");
+    selected[0].id.clone()
+}
+
+#[test]
+fn line_comment_diff_ids_preserve_literal_values() -> Result<(), String> {
+    let before = comparison_source("x == \"previous\"");
+    for (expression, fingerprint) in line_comment_literal_cases() {
+        let source = comparison_source(expression);
+        let fixture = Fixture::new(&[("src/lib.rs", &source)])?;
+        let output = fixture.check(&[("src/lib.rs", &before, &source)])?;
+        assert_eq!(
+            current_predicate_id(&output, expression),
+            format!("probe:src_lib.rs:predicate:{fingerprint}"),
+            "literal bytes after a line comment must survive diff identity normalization"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn line_comment_repo_ids_preserve_literal_values() -> Result<(), String> {
+    for (expression, fingerprint) in line_comment_literal_cases() {
+        let source = comparison_source(expression);
+        let fixture = Fixture::new(&[("src/lib.rs", &source)])?;
+        let output = ripr::app::check_workspace_repo(CheckInput {
+            root: fixture.root.clone(),
+            mode: Mode::Draft,
+            format: OutputFormat::Json,
+            ..CheckInput::default()
+        })?;
+        assert_eq!(
+            current_predicate_id(&output, expression),
+            format!("repo-probe:src_lib.rs:predicate:{fingerprint}"),
+            "literal bytes after a line comment must survive repo identity normalization"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn line_comment_literal_change_rejects_stale_suppression() -> Result<(), String> {
+    let before = comparison_source("x == \"previous\"");
+    let source = comparison_source("x == // \" fake\n        \"a  b\"");
+    let fixture = Fixture::new(&[("src/lib.rs", &source)])?;
+    let policy = |fingerprint: &str| {
+        format!(
+            "schema_version = 1\n[[suppressions]]\nkind = \"exposure_gap\"\nfinding_id = \"probe:src_lib.rs:predicate:{fingerprint}\"\nreason = \"reviewed literal\"\nowner = \"identity-test\"\n"
+        )
+    };
+    fixture.write("suppressions.toml", &policy("2f8257db"))?;
+    let stale = fixture.check(&[("src/lib.rs", &before, &source)])?;
+    let suppression = stale.suppression.ok_or("explicit policy outcome missing")?;
+    assert!(
+        suppression.suppressed.is_empty(),
+        "the one-space literal's ID must not suppress the two-space value"
+    );
+    fixture.write("suppressions.toml", &policy("0075a8f9"))?;
+    let current = fixture.check(&[("src/lib.rs", &before, &source)])?;
+    let suppression = current
+        .suppression
+        .ok_or("current policy outcome missing")?;
+    assert_eq!(suppression.suppressed.len(), 1);
+    assert_eq!(
+        suppression.suppressed[0].finding_id,
+        "probe:src_lib.rs:predicate:0075a8f9"
+    );
+    Ok(())
+}
+
 #[test]
 fn stale_literal_suppression_refuses_and_names_the_legacy_replacement() -> Result<(), String> {
     let before = "pub fn label() -> &'static str {\n    \"previous\"\n}\n";
