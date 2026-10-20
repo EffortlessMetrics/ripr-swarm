@@ -12858,6 +12858,7 @@ spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
   "crates/ripr/tests/owner_pin_execution/effect_assertions.rs::effect_assertions_require_execution_but_keep_reachable_oracles",
   "crates/ripr/tests/owner_pin_execution/effect_assertions.rs::effect_assertion_contexts_match_executed_mutant_controls",
+  "crates/ripr/tests/owner_pin_execution/effect_assertion_sweep.rs::effect_assertion_dead_context_sweep_refuses_every_never_run_assertion",
   "crates/ripr/tests/check_helper_argument_pins.rs::a_helper_comparing_its_parameters_pins_the_arguments_the_test_passes",
   "crates/ripr/tests/check_helper_argument_pins.rs::a_direct_template_rendering_pins_a_scalar_owner",
   "crates/ripr/tests/check_helper_argument_pins.rs::a_later_genuine_pin_counts_after_a_wrong_owner_call",
