@@ -18469,8 +18469,9 @@ JSON shape:
 
 Field contract:
 
-- `schema_version` — currently `"0.2"`. 0.2 added `span_containment`,
-  `ambiguous_span_overlap_*`, `unmatched_reason` and runtime span fields.
+- `schema_version` — currently `"0.3"`. 0.3 adds `provenance`. 0.2 added
+  `span_containment`, `ambiguous_span_overlap_*`, `unmatched_reason` and runtime
+  span fields.
 - `status` — always `"advisory"`; this report does not block CI by default.
 - `metrics.static_seams_total` — count of seams imported from
   `repo-exposure.json`.
