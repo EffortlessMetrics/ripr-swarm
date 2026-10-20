@@ -1323,28 +1323,18 @@ Evidence
 }
 
 #[test]
-fn evidence_promotion_human_oracle_line_accepts_ungraded_unknown_wording() {
-    let line = "- related test tests/a.rs:3 t uses exact value oracle, not graded against this probe: assert_eq!(f(), 1)";
+fn evidence_promotion_human_oracle_line_accepts_unclassified_ungraded_wording() {
+    let line = "- related test tests/a.rs:3 t uses an unclassified oracle, not graded against this probe: assert_eq!(f(), 1)";
     assert!(super::evidence_promotion_human_oracle_line_matches(
+        line, "unknown", "unknown"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
         line,
         "exact_value",
         "unknown"
     ));
     assert!(!super::evidence_promotion_human_oracle_line_matches(
-        line,
-        "exact_value",
-        "strong"
-    ));
-    assert!(!super::evidence_promotion_human_oracle_line_matches(
-        line,
-        "smoke_only",
-        "unknown"
-    ));
-    let unclassified = "- related test tests/a.rs:3 t uses an unclassified oracle, not graded against this probe: assert_eq!(f(), 1)";
-    assert!(super::evidence_promotion_human_oracle_line_matches(
-        unclassified,
-        "unknown",
-        "unknown"
+        line, "unknown", "strong"
     ));
 }
 
