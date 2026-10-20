@@ -536,6 +536,20 @@ default binding is an unrelated import that shadows the owner name, for the
 direct-call arm and for the shadowing check alike. A namespace binding is
 never an anchor for a bare call.
 
+Amended 2026-10-19 (decision 15): a default import is also the receiver of
+`local.name(...)` when the owner module's one `export default { ... }`
+object holds the top-level function (or `const` arrow function; a `let` or
+`var` arrow can be rebound in a nested scope and stays unreached) `name` under
+its own name (`{ name }` or
+`{ name: name }`). The object must be made only of such plain entries; a
+spread, computed key, method, getter, renamed entry or duplicate key leaves
+every owner unmarked. The test file must use `local` for nothing but calls of
+that one member, anywhere in the file (setup hooks and file-level code
+included), so an alias (`const m = local.name`), a reassignment, `Object.assign`
+or a body-local rebinding of `local` all refuse the relation. The relation is
+`imported_owner_call` and the observation guard reads `local.name(...)` as a
+call of the owner, as it does for a namespace import.
+
 ### Observation guard
 
 The guard runs at ladder step 4. Predicate, MatchArm, ErrorPath and
@@ -704,6 +718,15 @@ rejected alternative. Any can be reversed later without touching the rest.
     is the same evidence as a hand-written test with those literals.
     Rejected: resolve tables held in a `const`, which needs scope
     resolution the adapter does not have.
+15. **Default-exported object members (2026-10-19).** Adopted: rule 5's
+    default-object arm, for the axios `utils.merge` shape that read
+    `no_static_path` (`jest-mined-default-export-object`). A plain
+    `{ name }` object cannot change which function `name` holds, so a call
+    through it is a direct call. Rejected: crediting a member of any object
+    literal or of a CommonJS `module.exports = { ... }` object (a spread or
+    later write can replace the member), and following a renamed entry
+    (`{ merge: mergeImpl }`), which needs the owner name to differ from the
+    exported name.
 
 ## Required Evidence
 
@@ -952,6 +975,11 @@ to `amount - 20`, and `tests/lib.test.ts` has
   `find_related_tests_module_value_use_masking_only_negatives`,
   `default_import_does_not_credit_named_non_default_owner`,
   `overcredit_4103_spy_fabrication_blocks_owner_credit_and_names_limitation`.
+- `crates/ripr/src/analysis/language/typescript/tests/default_object_member_tests.rs`
+  pins decision 15: the credited shorthand and same-name forms, every object
+  shape that could replace the member, and every test use of the default
+  import other than a member call. The corpus case
+  `jest-mined-default-export-object` reads `credited`.
 - Existing: `crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs`
   and the `tests/` modules beside it: `mock_form_tests.rs`,
   `scope_receiver_tests.rs`, `reexport_chain_tests.rs`.
@@ -977,6 +1005,11 @@ to `amount - 20`, and `tests/lib.test.ts` has
 - `crates/ripr/src/analysis/language/typescript/tests_extract.rs`: rule 1
   (`test_from_statement`, `describe_body_from_statement`) and the
   `expect` binding facts rule 3 reads.
+- `crates/ripr/src/analysis/language/typescript/owners.rs`:
+  `mark_default_object_members` (decision 15); `related_tests.rs`
+  `import_references_owner_call` and `tests_extract.rs`
+  `default_member_only_locals` (the whole-file use check), and
+  `classifier.rs` `owner_namespace_receivers`, read the marker.
 - `crates/ripr/src/analysis/language/typescript/related_tests.rs`: rule 5
   (`direct_owner_call_has_declaration_anchor`,
   `owner_name_shadowed_by_unrelated_import`) and the owner bindings
