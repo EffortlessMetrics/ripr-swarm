@@ -1,11 +1,15 @@
 name: Routed Rust Small
+run-name: ${{ github.event_name == 'pull_request' && (github.event.label.name == 'merge-ready' && format('Merge-ready request {0}', github.event.pull_request.head.sha) || format('Label metadata {0}', github.run_id)) || format('{0} {1}', github.workflow, github.ref_name) }}
 
 on:
   pull_request:
-    # The protected PR qualification is requested exactly once by the native
-    # Draft -> Ready transition. Draft opened/synchronize/reopened activity and
-    # ordinary labels must not create Ripr Rust Small Result.
-    types: [ready_for_review]
+    # The protected PR qualification is requested only by an explicit
+    # `merge-ready` label (#4986, #8082). Ready, push, synchronize and other
+    # labels start no implementation work. Every other label event still runs
+    # this workflow but the result job is then named `Merge-ready Nonrequest`,
+    # never `Ripr Rust Small Result`: a skipped required job reports success,
+    # so the required context must be earned by a merge-ready run or absent.
+    types: [labeled]
   push:
     branches: [main, master]
   workflow_dispatch:
@@ -15,9 +19,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
-  # A second Ready transition means the prior admission transaction was
-  # revoked. Preserve independent main/manual work.
+  group: ${{ github.event_name == 'pull_request' && github.event.label.name != 'merge-ready' && format('{0}-{1}-nonrequest-{2}', github.workflow, github.event.pull_request.number, github.run_id) || format('{0}-{1}-{2}', github.workflow, github.event.pull_request.number || github.ref, github.event_name) }}
+  # A repeated merge-ready request means the prior admission transaction was
+  # revoked. Nonrequest label events use a unique group so an ordinary label
+  # can never cancel an in-flight qualification. Preserve independent
+  # main/manual work.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -26,6 +32,7 @@ env:
 jobs:
   route:
     name: Route Ripr Rust Small
+    if: github.event_name != 'pull_request' || github.event.label.name == 'merge-ready'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -80,6 +87,7 @@ jobs:
           { echo "### Ripr Rust Small Router"; echo ""; echo "- repo: \`$REPOSITORY\`"; echo "- workflow: \`routed-rust\`"; echo "- run: \`$RUN_ID\`"; echo "- target: \`$target\`"; echo "- reason: \`$reason\`"; for row in "runner query:$runner_query" "visible runners:$runner_total" "cx43 online:$cx43_online" "cx43 idle ready:$cx43_idle_ready" "cpx42 online:$cpx42_online" "cpx42 idle ready:$cpx42_idle_ready" "cx53 online:$cx53_online" "cx53 idle ready:$cx53_idle_ready"; do echo "- ${row%%:*}: \`${row#*:}\`"; done; } >> "$GITHUB_STEP_SUMMARY"
 
   detect-docs-only:
+    if: github.event_name != 'pull_request' || github.event.label.name == 'merge-ready'
     name: Detect Docs-Only Surface
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -141,7 +149,7 @@ jobs:
   admission:
     name: Admit PR Candidate
     needs: [detect-docs-only]
-    if: always()
+    if: always() && (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -231,8 +239,8 @@ jobs:
     needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53]
     # Use the not-cancelled status check here, never the unconditional one:
     # both still run after a skipped or tempfailed self-hosted job, but an
-    # unconditional job also survives cancellation, so a second Ready
-    # transition left the obsolete head's full gate running and queued the
+    # unconditional job also survives cancellation, so a repeated merge-ready
+    # request left the obsolete head's full gate running and queued the
     # new head's run behind it (#6729).
     if: >-
       !cancelled() &&
@@ -288,7 +296,10 @@ jobs:
           retention-days: 5
 
   result:
-    name: Ripr Rust Small Result
+    # Static `Ripr Rust Small Result` only for main/manual runs and an explicit
+    # merge-ready request. Any other pull_request label event is a nonrequest
+    # under a different name so the required context is never satisfied by it.
+    name: ${{ (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}
     needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53, rust-github, docs-gate]
     if: always()
     runs-on: ubuntu-latest
@@ -326,6 +337,7 @@ jobs:
           CX53_ONLINE: ${{ needs.route.outputs.cx53_online }}
           CX53_IDLE_READY: ${{ needs.route.outputs.cx53_idle_ready }}
           EVENT_NAME: ${{ github.event_name }}
+          LABEL_NAME: ${{ github.event.label.name }}
           DOCS_DETECT_RESULT: ${{ needs.detect-docs-only.result }}
           DOCS_ONLY: ${{ needs.detect-docs-only.outputs.docs_only }}
           DOCS_GATE_RESULT: ${{ needs.docs-gate.result }}
@@ -333,9 +345,10 @@ jobs:
         run: |
           status=pass
           message="selected implementation job succeeded"
-          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$WORKFLOW_REF" != "refs/heads/main" ] && [ "$WORKFLOW_REF" != "refs/heads/master" ]; then
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "${LABEL_NAME,,}" != "merge-ready" ]; then message="not a merge-ready request; named Merge-ready Nonrequest, never the required context"
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$WORKFLOW_REF" != "refs/heads/main" ] && [ "$WORKFLOW_REF" != "refs/heads/master" ]; then
             status=fail
-            message="branch/tag dispatch is diagnostic-only; PR qualification requires the Draft to Ready handoff"
+            message="branch/tag dispatch is diagnostic-only; PR qualification requires the merge-ready label"
           elif [ "$ADMISSION_RESULT" != "success" ]; then
             status=fail
             message="candidate admission result was $ADMISSION_RESULT"

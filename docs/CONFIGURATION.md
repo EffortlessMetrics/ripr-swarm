@@ -1159,6 +1159,12 @@ languages continue. The accepted managed producer values are
 | `timeout_ms` | integer ≥ 1 | `30000` | Maximum time in milliseconds for the managed producer invocation. `0` is rejected at parse time with a named error — it does not disable the timeout; remove the key for the default. |
 | `cache_dir` | path | `target/ripr/perl-facts` | Directory for generated Perl fact packets in managed mode. Must be a repository-relative path without `..`; an absolute or escaping path is a config error. |
 
+`executable` must be nonempty and contain no NUL characters. These invalid
+values fail configuration validation even when the executable opt-in is unset.
+Other executable paths retain their exact spelling, including spaces, Unicode,
+absolute paths and platform separators; validation does not probe their existence.
+Remove the key to use the producer's default exporter.
+
 A timed-out or failed managed export does not replace the previous published
 packet. Each invocation stages its output separately. Once its process has
 settled, ripr discards that invocation's partial packet; a cleanup blocker is

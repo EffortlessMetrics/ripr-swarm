@@ -392,15 +392,79 @@ fn require_inline_target_at_head(baseline: &AttemptBaseline, path: &str) -> Resu
         .index_entry(path)
         .and_then(|entry| entry.split_ascii_whitespace().nth(1))
         .map(str::to_string);
-    match committed {
-        Some(committed)
-            if worktree.as_deref() == Some(committed.as_str())
-                && index.as_deref() == Some(committed.as_str()) =>
-        {
-            Ok(())
-        }
-        _ => Err(inline_test_region::uncommitted_target_refusal(path)),
+    if inline_target_copies_at_head(committed.as_deref(), worktree.as_deref(), index.as_deref()) {
+        Ok(())
+    } else {
+        Err(inline_test_region::uncommitted_target_refusal(path))
     }
+}
+
+/// The one law for "the inline target is at HEAD": a committed object exists
+/// and both the worktree and index copies equal it.
+fn inline_target_copies_at_head(
+    committed: Option<&str>,
+    worktree: Option<&str>,
+    index: Option<&str>,
+) -> bool {
+    committed.is_some() && worktree == committed && index == committed
+}
+
+/// Whether `ripr repair` would refuse `path` as a confined inline target
+/// because its worktree or index copy differs from HEAD. Uses the same
+/// predicate as the attempt's baseline capture ([`require_inline_target_at_head`])
+/// so `ripr check` can withhold a repair start the attempt would refuse.
+/// Fails open (`false`, leaving the attempt's own refusal authoritative)
+/// whenever the answer is not positively established: `root` is not the exact
+/// Git top-level (the attempt refuses that root itself, and `<rev>:<path>`
+/// would resolve from the top-level rather than `root`), HEAD is unborn, or
+/// any git command fails for a reason other than the file being absent.
+pub(crate) fn inline_target_is_uncommitted(root: &Path, path: &str) -> bool {
+    let Ok(root) = canonical_repository_root(root) else {
+        return false;
+    };
+    let Some(head) = git_text(&root, &["rev-parse", "--verify", "--quiet", "HEAD"])
+        .ok()
+        .filter(|head| !head.is_empty())
+    else {
+        return false;
+    };
+    // `ls-tree` succeeds with empty output for a path HEAD does not carry,
+    // so that case stays distinct from a git failure.
+    let Ok(listing) = git_text(&root, &["ls-tree", &head, "--", path]) else {
+        return false;
+    };
+    if listing.is_empty() {
+        // HEAD exists but does not carry the file: the attempt refuses it too.
+        return true;
+    }
+    // Only a regular-file blob is comparable with `hash-object`; a symlink,
+    // directory or submodule entry defers to the attempt.
+    let mut fields = listing.split_ascii_whitespace();
+    let (Some(mode), Some("blob"), Some(committed)) = (fields.next(), fields.next(), fields.next())
+    else {
+        return false;
+    };
+    if mode == "120000" {
+        return false;
+    }
+    let committed = committed.to_string();
+    let worktree = match fs::symlink_metadata(root.join(path)) {
+        // Deleted from the worktree: differs from HEAD, and the attempt
+        // refuses it as well.
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return true,
+        Err(_) => return false,
+        Ok(_) => match git_text(&root, &["hash-object", "--", path]) {
+            Ok(object) => object,
+            Err(_) => return false,
+        },
+    };
+    // Empty output means the path is not in the index (a staged deletion):
+    // that differs from HEAD. A git failure is not an answer: defer.
+    let Ok(entry) = git_text(&root, &["ls-files", "--stage", "--", path]) else {
+        return false;
+    };
+    let staged = entry.split_ascii_whitespace().nth(1);
+    !inline_target_copies_at_head(Some(&committed), Some(&worktree), staged)
 }
 
 /// Observe the confined selected target: the worktree bytes go through the
@@ -2526,6 +2590,100 @@ mod tests {
             untracked_build_lockfile: None,
             inline_test_module_target: false,
         })
+    }
+
+    #[test]
+    fn inline_target_uncommitted_predicate_agrees_with_the_attempt_refusal() -> Result<(), String> {
+        let fixture = git_fixture("inline-uncommitted-predicate")?;
+        let committed_src =
+            "pub fn price() {}\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn a() {}\n}\n";
+        fs::write(fixture.root.join("src/pricing.rs"), committed_src)
+            .map_err(|err| format!("write inline module: {err}"))?;
+        git_ok(&fixture.root, &["add", "."])?;
+        git_ok(&fixture.root, &["commit", "-qm", "inline module"])?;
+        let mut policy = policy()?;
+        policy.selected_target = CagePathRule::exact("src/pricing.rs")?;
+        policy.allowed_edit_surface = vec![CagePathRule::exact("src/pricing.rs")?];
+        policy.forbidden_paths = vec![CagePathRule::exact("Cargo.toml")?];
+        policy.inline_test_module_target = true;
+
+        // Clean: the predicate and the attempt both admit.
+        assert!(!inline_target_is_uncommitted(
+            &fixture.root,
+            "src/pricing.rs"
+        ));
+        capture_attempt_baseline(&fixture.root, &policy)?;
+
+        // Worktree edit: both refuse, and the refusal is the uncommitted one.
+        fs::write(
+            fixture.root.join("src/pricing.rs"),
+            committed_src.replace("price() {}", "price() { let _ = 1; }"),
+        )
+        .map_err(|err| format!("dirty worktree: {err}"))?;
+        assert!(inline_target_is_uncommitted(
+            &fixture.root,
+            "src/pricing.rs"
+        ));
+        let refusal = capture_attempt_baseline(&fixture.root, &policy)
+            .err()
+            .ok_or("a dirty inline target must be refused")?;
+        assert!(refusal.contains("uncommitted changes"), "{refusal}");
+
+        // Staged-only edit (worktree restored to match the index): still dirty.
+        git_ok(&fixture.root, &["add", "src/pricing.rs"])?;
+        assert!(inline_target_is_uncommitted(
+            &fixture.root,
+            "src/pricing.rs"
+        ));
+
+        // A path HEAD does not carry is uncommitted; a repository with no
+        // HEAD fails open to the attempt's own refusal.
+        assert!(inline_target_is_uncommitted(&fixture.root, "src/new.rs"));
+        // A committed symlink is not a comparable regular-file blob: defer.
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("pricing.rs", fixture.root.join("src/link.rs"))
+                .map_err(|err| format!("symlink: {err}"))?;
+            git_ok(&fixture.root, &["add", "src/link.rs"])?;
+            git_ok(&fixture.root, &["commit", "-qm", "symlink"])?;
+            assert!(!inline_target_is_uncommitted(&fixture.root, "src/link.rs"));
+        }
+        // A subdirectory of the top-level is not an attempt root: defer to the
+        // attempt (false) rather than resolving HEAD paths from the wrong base.
+        fs::create_dir_all(fixture.root.join("sub"))
+            .map_err(|err| format!("create subdirectory: {err}"))?;
+        assert!(!inline_target_is_uncommitted(
+            &fixture.root.join("sub"),
+            "src/pricing.rs"
+        ));
+        // A git failure is not an answer: a corrupt index defers to the attempt.
+        let index_path = fixture.root.join(".git/index");
+        let saved = fs::read(&index_path).map_err(|err| format!("read index: {err}"))?;
+        fs::write(&index_path, b"corrupt").map_err(|err| format!("corrupt index: {err}"))?;
+        assert!(!inline_target_is_uncommitted(
+            &fixture.root,
+            "src/pricing.rs"
+        ));
+        fs::write(&index_path, saved).map_err(|err| format!("restore index: {err}"))?;
+        // A tracked file deleted from the worktree differs from HEAD too.
+        git_ok(&fixture.root, &["reset", "-q", "--hard"])?;
+        assert!(!inline_target_is_uncommitted(
+            &fixture.root,
+            "src/pricing.rs"
+        ));
+        fs::remove_file(fixture.root.join("src/pricing.rs"))
+            .map_err(|err| format!("delete target: {err}"))?;
+        assert!(inline_target_is_uncommitted(
+            &fixture.root,
+            "src/pricing.rs"
+        ));
+        let unborn = external_fixture("inline-uncommitted-unborn")?;
+        git_ok(&unborn.root, &["-c", "init.templateDir=", "init", "-q"])?;
+        assert!(!inline_target_is_uncommitted(
+            &unborn.root,
+            "src/pricing.rs"
+        ));
+        Ok(())
     }
 
     fn commit_target_ignore(fixture: &GitFixture) -> Result<(), String> {

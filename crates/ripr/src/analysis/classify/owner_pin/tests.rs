@@ -2560,6 +2560,70 @@ fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_const
         ),
         Some("weight(4)".to_string())
     );
+    // #8112: a `lazy_static!` `static ref` of plain value type reads like
+    // any other static.
+    assert_eq!(
+        value(
+            "lazy_static! { static ref EXPECTED: u32 = weight(4); }",
+            "assert_eq!(weight(4), *EXPECTED);",
+            "EXPECTED"
+        ),
+        Some("weight(4)".to_string())
+    );
+    // #8112: the declared type decides, not words the initializer mentions:
+    // a scalar static whose block merely names an atomic stays readable,
+    // as does a scalar `let` and a `const` of atomic type (rebuilt per use).
+    assert_eq!(
+        value(
+            "static EXPECTED: u32 = { let _t = AtomicUsize::new(0); weight(4) };",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED"
+        ),
+        Some("{ let _t = AtomicUsize::new(0); weight(4) }".to_string())
+    );
+    assert_eq!(
+        value(
+            "",
+            "let e: u32 = { let _t = AtomicUsize::new(0); weight(2) };\nassert_eq!(weight(2), e);",
+            "e"
+        ),
+        Some("{ let _t = AtomicUsize::new(0); weight(2) }".to_string())
+    );
+    // A grouped `use` import of `u32` may rebind it to a user type: not
+    // followed; the same file without the import is followed.
+    assert_eq!(
+        value(
+            "use crate::types::{Counter, u32};\nstatic EXPECTED: u32 = Counter(AtomicUsize::new(weight(4)));",
+            "assert_eq!(weight(4), EXPECTED.0);",
+            "EXPECTED"
+        ),
+        None
+    );
+    assert_eq!(
+        value(
+            "use crate::types::Counter;\nstatic EXPECTED: u32 = { let _t = AtomicUsize::new(0); weight(4) };",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED"
+        ),
+        Some("{ let _t = AtomicUsize::new(0); weight(4) }".to_string())
+    );
+    // A plain cast `n as u32` elsewhere in the file does not rebind `u32`.
+    assert_eq!(
+        value(
+            "fn narrow(n: u64) -> u32 { n as u32 }\nstatic EXPECTED: u32 = { let _t = AtomicUsize::new(0); weight(4) };",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED"
+        ),
+        Some("{ let _t = AtomicUsize::new(0); weight(4) }".to_string())
+    );
+    assert_eq!(
+        value(
+            "const EXPECTED: AtomicUsize = AtomicUsize::new(weight(4));",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED"
+        ),
+        Some("AtomicUsize::new(weight(4))".to_string())
+    );
     // An operand that is not a plain name, a name the test binds twice or
     // outside a `let` (a loop variable), the owner's own name, and a name
     // nothing binds yield nothing to read.
@@ -2624,6 +2688,62 @@ fn the_reveal_side_reads_an_expected_name_only_through_one_readable_let_or_const
             "",
             "let e = std::sync::atomic::AtomicUsize::new(weight(2));\nassert_eq!(weight(2), e);",
             "e",
+        ),
+        (
+            "static EXPECTED: AtomicUsize = AtomicUsize::new(weight(4));",
+            "EXPECTED.store(6, Ordering::SeqCst);\nassert_eq!(weight(4), EXPECTED);",
+            "EXPECTED",
+        ),
+        (
+            "lazy_static! { static ref EXPECTED: AtomicUsize = AtomicUsize::new(weight(4)); }",
+            "EXPECTED.store(6, Ordering::SeqCst);\nassert_eq!(weight(4), EXPECTED);",
+            "EXPECTED",
+        ),
+        // #8112: the declared type refuses even when the initializer text
+        // shows no interior mutability.
+        (
+            "const ZERO: usize = 0;\nstatic EXPECTED: AtomicUsize = ZERO;",
+            "EXPECTED.store(6, Ordering::SeqCst);\nassert_eq!(weight(4), EXPECTED);",
+            "EXPECTED",
+        ),
+        // `make()` is intentionally opaque: these refuse from the declared type.
+        (
+            "static EXPECTED: Cell<u32> = make();",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED",
+        ),
+        (
+            "const INIT: AtomicUsize = AtomicUsize::new(0);\nstatic EXPECTED: AtomicUsize = INIT;",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED",
+        ),
+        (
+            "lazy_static! { static ref EXPECTED: Mutex<u32> = make(); }",
+            "assert_eq!(weight(4), *EXPECTED.lock().unwrap());",
+            "EXPECTED",
+        ),
+        (
+            "",
+            "let e: Cell<u32> = make();\nassert_eq!(weight(2), e);",
+            "e",
+        ),
+        // A file that rebinds a primitive name no longer proves a scalar.
+        (
+            "struct Counter(AtomicUsize);\ntype u32 = Counter;\nstatic EXPECTED: u32 = Counter(AtomicUsize::new(weight(4)));",
+            "assert_eq!(weight(4), EXPECTED.0);",
+            "EXPECTED",
+        ),
+        (
+            "struct Counter(AtomicUsize);\ntype u32 = Counter;",
+            "let e: u32 = Counter(AtomicUsize::new(weight(2)));\nassert_eq!(weight(2), e);",
+            "e",
+        ),
+        // A user type holding an atomic is refused only when its type or
+        // initializer names a known interior-mutable type (documented limit).
+        (
+            "static EXPECTED: Counter = Counter::new(AtomicUsize::new(weight(4)));",
+            "assert_eq!(weight(4), EXPECTED);",
+            "EXPECTED",
         ),
         (
             "static mut EXPECTED: u32 = weight(4);",
@@ -2721,6 +2841,88 @@ fn serial_test_locks_keep_the_pin_and_other_attributes_refuse_it() {
             "use demo::weight;\n{attributes}\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
         );
         assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+}
+
+#[test]
+fn a_rebound_test_attribute_refuses_the_pin_and_the_builtin_keeps_it() {
+    for items in [
+        "",
+        "use super::*;",
+        // A glob of the workspace's own crate, or of its own modules.
+        "use demo::*;",
+        "use crate::common::*;",
+        "use serial_test::serial;",
+        "use my_macros::skip_body as other_name;",
+        // An import in a function body or a sibling module binds nothing here.
+        "mod a { use my_macros::skip_body as test; }",
+        "fn helper() { use my_macros::skip_body as test; }",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{items}\n#[test]\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert_eq!(weight_admitted(&tests).len(), 1, "{tests}");
+    }
+    for items in [
+        // The issue's repro, raw and plain spellings, and a re-export.
+        "use skipper::serial as test;",
+        "use skipper::serial as r#test;",
+        "use skipper::test;",
+        "use skipper::{serial as test, other};",
+        "use std::prelude::v1::test;",
+        // A glob of a crate outside the workspace may bring one, and so may
+        // a prelude glob of std.
+        "use skipper::*;",
+        "use std::prelude::v1::*;",
+        "extern crate skipper as test;",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{items}\n#[test]\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+    // A macro-generated test's module is not in the file's text, so the
+    // file's own rebinding answers for it.
+    for (outer, refused) in [
+        ("use skipper::serial as test;", true),
+        ("extern crate skipper as test;", true),
+        ("", false),
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{outer}\nmacro_rules! generate {{\n    ($name:ident) => {{\n        #[test]\n        fn $name() {{\n            assert_eq!(weight(4), 12);\n        }}\n    }};\n}}\ngenerate!(weighs);\n"
+        );
+        let mut index = index(&[(LIB, WEIGHT_LIB), (TESTS, &tests)]);
+        crate::analysis::facts::register_macro_generated_tests_for_test(&mut index);
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.file == Path::new(TESTS));
+        let assertion = test.and_then(|test| test.assertions.first());
+        assert!(assertion.is_some(), "{tests}");
+        let (Some(test), Some(assertion)) = (test, assertion) else {
+            continue;
+        };
+        let refusal = OwnerPinSyntax::default().refusal(test, assertion, &index);
+        assert_eq!(refusal.is_some(), refused, "{tests}");
+    }
+    // `super::*` reaches the enclosing module's private imports, however
+    // many levels up.
+    let tests = "use demo::weight;\nuse skipper::serial as test;\nmod outer {\n    mod tests {\n        use super::super::*;\n        #[test]\n        fn weighs() {\n            assert_eq!(weight(4), 12);\n        }\n    }\n}\n";
+    assert!(weight_admitted(tests).is_empty(), "{tests}");
+    // `super::*` reaches the enclosing module's private imports.
+    for (outer, admitted) in [
+        ("use skipper::serial as test;", false),
+        ("use skipper::*;", false),
+        ("use skipper::serial;", true),
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{outer}\nmod tests {{\n    use super::*;\n    #[test]\n    fn weighs() {{\n        assert_eq!(weight(4), 12);\n    }}\n}}\n"
+        );
+        assert_eq!(
+            weight_admitted(&tests).len(),
+            usize::from(admitted),
+            "{tests}"
+        );
     }
 }
 
@@ -11072,4 +11274,44 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
     let refusal = OwnerPinSyntax::default().refusal(test, assertion, &aliased_elsewhere);
     assert!(rebound(refusal.clone()), "{refusal:?}");
     Ok(())
+}
+
+#[test]
+fn scalar_names_rebound_sees_type_struct_and_import_rebinding() {
+    assert_eq!(declared_type(": Foo<{ A == B }> = 1"), None);
+    assert_eq!(declared_type(": u32 = 1"), Some(" u32 "));
+    assert!(!scalar_names_rebound("u32", "static X: u32 = 1;"));
+    for source in [
+        "fn f(x: u64) -> u32 { x as u32 }",
+        "fn f(n: u64) { let y = n as u32; }",
+        "const M: u32 = std::u32::MAX;",
+        "fn f<T>() { <u32 as Tr>::g(); }",
+        "use std::u32::MAX;",
+        "use m::Counter;\nfn f(n: u64) -> u32 { n as u32 }",
+    ] {
+        assert!(!scalar_names_rebound("u32", source), "{source}");
+    }
+    for source in [
+        "use x as u32;",
+        "use a::{b as u32};",
+        "pub use x as u32;",
+        "use m::{Counter, u32};",
+        "use m::{u32};",
+        "use m::*;",
+        "extern crate x as u32;",
+    ] {
+        assert!(scalar_names_rebound("u32", source), "{source}");
+    }
+    assert!(!scalar_names_rebound(
+        "&'static str",
+        "const S: &str = \"type str\";"
+    ));
+    for source in [
+        "type u32 = Counter;",
+        "struct u32;",
+        "use other::u32;",
+        "use other::Counter as u32;",
+    ] {
+        assert!(scalar_names_rebound("u32", source), "{source}");
+    }
 }

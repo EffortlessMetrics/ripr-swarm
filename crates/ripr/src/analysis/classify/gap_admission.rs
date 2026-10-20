@@ -63,7 +63,7 @@ pub(in crate::analysis) fn withhold_unsupported_gap(finding: &mut Finding) -> bo
 /// Rewrite a gap finding to `static_unknown` under the named `limit`:
 /// rescore, record the stop reason and the limitation edges, and drop the
 /// absence claims that would feed repair routes.
-fn withhold_gap(
+pub(super) fn withhold_gap(
     finding: &mut Finding,
     limit: StaticLimitKind,
     first_unresolved_edge: &str,
@@ -1016,7 +1016,7 @@ fn panic_macro_arguments(masked: &str, from: usize) -> Vec<std::ops::Range<usize
 }
 
 /// Whether `test` carries `#[ignore]`, so a default run never executes it.
-fn is_ignored(test: &TestFact) -> bool {
+pub(super) fn is_ignored(test: &TestFact) -> bool {
     test.attrs.iter().any(|attr| {
         let compact: String = attr.chars().filter(|ch| !ch.is_whitespace()).collect();
         compact == "#[ignore]" || compact.starts_with("#[ignore=")

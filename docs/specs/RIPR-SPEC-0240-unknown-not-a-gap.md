@@ -221,12 +221,59 @@ conservatively limited: it does not prove a call was dropped. Saturation is read
 raises a class. Scope: the finding surfaces (`check`, JSON, human, SARIF, LSP);
 the `repo-exposure-json` seam reading keeps its own generic limitations and
 non-actionable canonical item and does not yet carry the typed reason.
+### Framework oracles ripr does not evaluate
+
+Four test idioms check a changed value through machinery ripr reads only at
+the surface, and each used to leave a certain `weakly_exposed` claim.
+`framework_oracle::withhold_framework_oracle_gap` withholds a
+`weakly_exposed` or `reachable_unrevealed` finding with no
+`static_limit_kind` under `rust_framework_oracle_unresolved` when a
+non-ignored related test matches one of these shapes:
+
+- **environment**: a `match_arm`, `predicate` or `error_path` probe, a
+  `direct_owner_call` test with a strong assertion that calls
+  `set_var("NAME", ..)` or `remove_var("NAME")`, and an owner body that calls
+  `env::var("NAME")` or `env::var_os("NAME")` with the same literal name,
+  with the owner called after the first such write. A different variable, a
+  non-literal name, a write after the call or a relational-only test keeps the
+  gap (`lib-serial-test-batch-default-relational`).
+- **mock closure**: a test with a strong assertion and an `expect_<m>()` call
+  whose `.returning(|..|)` closure uses one of its named (non-`_`) parameters,
+  where the changed line calls `.<m>(`. A closure that ignores its arguments,
+  or a changed line that does not call the mocked method (the grace predicate
+  of `lib-mockall-grace-boundary-times`), keeps the gap.
+- **expect-test**: a `direct_owner_call` test comparing a non-empty
+  `expect![[..]]` literal with `.assert_debug_eq(..)`, where the asserted
+  operand is a call to the owner or a local bound by `let [mut] x = ..owner(..)`.
+- **insta**: a `direct_owner_call` test with a snapshot macro that has no
+  inline `@` literal, whose snapshotted value (after an optional literal name)
+  derives from the owner as above, and no `add_redaction`, `with_settings` or `Settings`,
+  on a changed `field:` initializer that no redaction selector (a literal
+  keyed by `=>`, such as `".id"` or `"[].id"`) names. Any other changed line
+  keeps the gap (the `snapshot_oracle` fixture's changed predicate), and so
+  does a redacted field (`lib-insta-json-redacted-id`).
+
+Any one matching related test withholds the finding: a weaker sibling test
+reads as evidence ripr gathered, not as the oracle that decides, and the
+matching test is the strongest oracle ripr cannot evaluate. The shapes read
+the test text. A macro that does not qualify is skipped, so a later one that
+does still counts. Two limits are accepted: the mocked-method match reads the
+method name, not the receiver, and only related tests (the first eight per
+finding) are judged; either can withhold a gap, which only costs an advisory.
+
+It runs after the should-panic rule and before `withhold_unsupported_gap`,
+and writes the finding the same way. Nothing is credited. Corpus effect:
+`lib-serial-test-retries-default-arm`, `lib-mockall-recipient-predicate`,
+`lib-expect-test-assert-debug-eq-variant-payload` and
+`lib-insta-json-unredacted-sibling-field` move from `false_actionable` to
+`abstained`, which their cases accept.
 
 ## Scope boundary
 
 - Rust check findings only. The pilot seam rule is RIPR-SPEC-0230 (#5569).
-- `weakly_exposed` findings are out of scope: a credited weak oracle is read
-  evidence even when a stronger assertion was refused.
+- `weakly_exposed` findings are out of scope except for the framework
+  oracles above: a credited weak oracle is read evidence even when a stronger
+  assertion was refused.
 - Two broader rules were built and dropped. Withholding every refused-context
   gap hid the runtime-controlled gaps above. Withholding `weakly_exposed` when
   a strong oracle's text does not name the changed arm hid the sibling-arm
@@ -297,6 +344,14 @@ Tests in `crates/ripr/src/analysis/classify/gap_admission.rs`:
 - `withholding_twice_adds_one_stop_reason`
 - `a_panic_macro_is_read_by_its_own_name`
 - `a_should_panic_test_expects_the_owner_panic_only_when_the_message_matches`
+
+Tests in `crates/ripr/src/analysis/classify/framework_oracle.rs` and
+`crates/ripr/tests/framework_oracle_limit.rs`:
+
+- `a_mock_closure_counts_only_when_it_reads_a_named_argument`
+- `an_arm_chosen_by_the_environment_is_withheld` and its keeps-the-gap control
+- `an_expect_debug_literal_is_withheld` and its keeps-the-gap control
+- `an_unredacted_insta_field_is_withheld` and its keeps-the-gap control
 
 Tests in `crates/ripr/src/analysis/classify/owner_pin/tests.rs`:
 

@@ -153,7 +153,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that it runs as the standard macro"
+          "why": "assertion not credited: ripr could not establish that this assertion counts here"
         },
         {
           "name": "far",
