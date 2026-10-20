@@ -1323,6 +1323,75 @@ Evidence
 }
 
 #[test]
+fn evidence_promotion_human_oracle_line_accepts_unclassified_ungraded_wording() {
+    let line = "- related test tests/a.rs:3 t uses an unclassified oracle, not graded against this probe: assert_eq!(f(), 1)";
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        line, "unknown", "unknown"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "exact_value",
+        "unknown"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line, "unknown", "strong"
+    ));
+}
+
+#[test]
+fn evidence_promotion_human_oracle_line_accepts_kind_ungraded_wording() {
+    let line = "- related test tests/a.rs:3 t uses exact value oracle, not graded against this probe: assert_eq!(f(), 1)";
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "exact_value",
+        "unknown"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "exact_value",
+        "strong"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "smoke_only",
+        "unknown"
+    ));
+    let stale = "- related test tests/a.rs:3 t uses unknown exact value oracle: assert_eq!(f(), 1)";
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        stale,
+        "exact_value",
+        "unknown"
+    ));
+}
+
+#[test]
+fn evidence_promotion_human_oracle_line_accepts_absent_oracle_wording() {
+    let line = "- related test tests/a.rs:3 t uses no oracle; misses: has no assertion";
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        line, "unknown", "none"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        "- related test tests/a.rs:3 t uses none unknown oracle; misses: has no assertion",
+        "unknown",
+        "none"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        "- related test tests/a.rs:3 t uses no oracles here",
+        "unknown",
+        "none"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line, "unknown", "weak"
+    ));
+    // An absent oracle carries no kind, so a concrete expected kind cannot match it.
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "exact_value",
+        "none"
+    ));
+}
+
+#[test]
 fn evidence_promotion_semantic_assertions_accept_human_oracle_projection() {
     let assertions = vec![super::EvidencePromotionSemanticAssertion::ExpectedOracle {
         kind: "exact_value".to_string(),

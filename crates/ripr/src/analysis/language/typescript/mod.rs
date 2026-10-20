@@ -115,6 +115,7 @@ mod issue7813_alias_member_tests;
 #[cfg(test)]
 #[path = "tests/issue7815_typeof_mixed_tests.rs"]
 mod issue7815_typeof_mixed_tests;
+mod suite_factory;
 mod tests_extract;
 #[cfg(test)]
 mod tests_extract_tests;
@@ -154,6 +155,7 @@ pub(crate) use probe_shape::*;
 pub(crate) use related_tests::*;
 pub(crate) use spread_override_guard::*;
 pub(crate) use static_limit::*;
+use suite_factory::SuiteFactoryExpansion;
 pub(crate) use table_rows::*;
 pub(crate) use tests_extract::*;
 #[cfg(test)]
@@ -372,16 +374,32 @@ impl TypeScriptAdapter {
                 continue;
             }
             if is_test_file(relative) {
-                let (mut tests, conditional_credit_gap) =
-                    extract_tests_and_conditional_credit_gap(relative, source);
+                let (mut tests, conditional_credit_gap, expansion) =
+                    extract_tests_with_expansion(relative, source);
                 // RIPR-SPEC-0258: a committed snapshot entry pins the value.
-                promote_committed_snapshots(&options.root, relative, source, &mut tests);
+                // The tests of a suite-factory call carry the factory's
+                // snapshot call once per expansion, so the file's calls are
+                // counted the same way.
+                let counted = expansion
+                    .as_ref()
+                    .map(SuiteFactoryExpansion::snapshot_source);
+                promote_committed_snapshots(
+                    &options.root,
+                    relative,
+                    counted.as_deref().unwrap_or(source),
+                    &mut tests,
+                );
                 // A recognized test file that parses but registers test
                 // shapes the extractor drops (template-literal titles,
                 // tagged-template `.each`, tests generated in loops or
                 // callbacks) gets a partial-extraction disclosure so a
                 // confident `no_static_path` is known to be possibly false.
-                if let Some(gap) = detect_partial_test_extraction(relative, source, &tests) {
+                if let Some(gap) = detect_partial_test_extraction_expanded(
+                    relative,
+                    source,
+                    &tests,
+                    expansion.as_ref(),
+                ) {
                     extraction_gaps.push(gap);
                 }
                 // #8714: an extracted assertion sitting under an unevaluated

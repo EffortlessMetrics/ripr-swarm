@@ -185,6 +185,11 @@ pub(in crate::analysis) fn build_finding(
     {
         evidence_lines.push(crate::analysis::classify::REFUSALS_ARE_ANALYZER_LIMITS.to_string());
     }
+    // #8600: the render cap trims related rows, so the saturation of every
+    // matched test is handed to the call-budget post-pass, which consumes it.
+    if evidence.related_call_budget_saturated {
+        evidence_lines.push(crate::analysis::classify::CALL_BUDGET_SATURATED.to_string());
+    }
     if invalid_propagation_witness {
         evidence_lines
             .push("propagation witness digest invalid; diagnostic witness withheld".to_string());
@@ -964,6 +969,7 @@ mod tests {
             reach_ruled_out: true,
             assertion_refusal: None,
             refusals_are_analyzer_limits: false,
+            related_call_budget_saturated: false,
         }
     }
 

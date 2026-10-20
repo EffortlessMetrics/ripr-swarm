@@ -59,3 +59,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_json_effectful_operand (6)
+
+Reason:
+RIPR-SPEC-0224: cause-neutral assertion_not_credited sentence (#8780)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_effectful_operand --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

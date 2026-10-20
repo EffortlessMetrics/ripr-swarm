@@ -170,14 +170,16 @@ fn evidence_path<T>(
             ));
             continue;
         }
-        let oracle_kind = display_label(test.oracle_kind.as_str());
         let mut line = format!(
-            "related test {}:{} {} uses {} {} oracle",
+            "related test {}:{} {} uses {}",
             display_path(&test.file),
             test.line,
             test.name,
-            test.oracle_strength.as_str(),
-            oracle_kind
+            crate::output::related_test_miss::oracle_projection(
+                &test.oracle_strength,
+                &test.oracle_kind,
+                test.oracle.is_some()
+            )
         );
         if let Some(oracle) = &test.oracle {
             line.push_str(&format!(": {oracle}"));
@@ -319,8 +321,4 @@ fn is_duplicate_discriminator_missing(missing: &str, discriminator_values: &[&st
         return false;
     };
     discriminator_values.contains(&value)
-}
-
-fn display_label(value: &str) -> String {
-    value.replace('_', " ")
 }

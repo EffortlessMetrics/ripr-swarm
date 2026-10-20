@@ -60,6 +60,9 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     /// related `assert_eq!` was refused for an analyzer limit, so the gap
     /// rests on what ripr could not read (RIPR-SPEC-0240).
     pub(in crate::analysis) refusals_are_analyzer_limits: bool,
+    /// #8600: some related test (before the render cap trims the rows) has a
+    /// line at the per-line call-fact budget, so a call there may be missing.
+    pub(in crate::analysis) related_call_budget_saturated: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1064,6 +1067,11 @@ impl ClassifiedProbeEvidence {
                 && refusals.all(|refusal| is_limit(&refusal))
         };
 
+        let related_call_budget_saturated = context
+            .related_tests
+            .iter()
+            .any(|(test, _)| crate::analysis::extract::has_saturated_line(test.calls.iter()));
+
         Self {
             ripr,
             evidence,
@@ -1080,6 +1088,7 @@ impl ClassifiedProbeEvidence {
             reach_ruled_out,
             assertion_refusal,
             refusals_are_analyzer_limits,
+            related_call_budget_saturated,
         }
     }
 

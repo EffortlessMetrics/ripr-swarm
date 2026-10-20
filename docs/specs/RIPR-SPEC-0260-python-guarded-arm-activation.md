@@ -94,6 +94,21 @@ guard predicate (a pure-expression change).
 5. `if flag == 1:` with `quote(True)` stays `exposed` (`True == 1` in
    Python).
 
+## Call-Row Excerpt
+
+The strong call rows the gate reads carry display text (#8777, #8788). The
+text is display only and never feeds a decision:
+
+- A physical line of at most 240 bytes is shown whole (trimmed).
+- A longer line is cut to a window of at most 240 bytes that starts up to 60
+  bytes before the call name, on character boundaries.
+- A call that fits the window is kept whole: the lead shrinks by the exact
+  call extent (name through the closing parenthesis, whitespace before `(`
+  included), and the start rounds toward the call so a multibyte character
+  never costs the call its trailing bytes.
+- `...` marks a side only where visible text was cut, never for indentation
+  or trailing whitespace alone.
+
 ## Test Mapping
 
 - `analysis::language::python::guard_activation::tests` covers condition

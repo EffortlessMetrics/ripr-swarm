@@ -258,3 +258,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_reached_uncalled (21)
+
+Reason:
+RIPR-SPEC-0224: cause-neutral assertion_not_credited sentence (#8780)
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_reached_uncalled --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_reached_uncalled (22)
+
+Reason:
+RIPR-SPEC-0224: ungraded oracle reads '<kind> oracle, not graded against this probe' (#8388)
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_reached_uncalled --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

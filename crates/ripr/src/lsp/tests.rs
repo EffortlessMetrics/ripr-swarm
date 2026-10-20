@@ -20555,6 +20555,34 @@ fn work_done_progress_no_traffic_when_root_or_config_unavailable_before_start() 
     })
 }
 
+#[test]
+fn explicit_refresh_returns_once_the_scheduler_accepts_a_queued_request() -> Result<(), String> {
+    // #8733: a refresh that finds work active used to park until the
+    // scheduler went fully idle, so the `ripr.refresh` executeCommand
+    // response (and one notification-handler slot) waited out the whole
+    // in-flight analysis. The call must return as soon as the scheduler
+    // accepts the queued request; the queued run itself is unchanged.
+    work_done_progress_runtime()?.block_on(async {
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        backend.initialize_test_workspace_root();
+
+        let first = work_done_progress_request(backend, 1)?;
+        let first_request = started_request(&first)?;
+        backend.emit_progress_for_decision(&first).await;
+        backend.mark_attempt_running_for_test(&first_request);
+
+        backend
+            .refresh_diagnostics(RefreshScope::Full, RefreshReason::ExplicitRefresh)
+            .await;
+
+        if backend.refresh_scheduler_for_test().is_idle() {
+            return Err("queued refresh returned only after the scheduler went idle".to_string());
+        }
+        Ok(())
+    })
+}
+
 /// Drive a real `ripr lsp` server over duplex IO through one explicit
 /// refresh and collect the work-done-progress traffic on the wire (#1971).
 /// Returns (workDoneProgress/create requests, $/progress notifications).
@@ -23893,6 +23921,345 @@ fn framed_push_diagnostics_bind_the_observed_document_version() -> Result<(), St
         if !versions.iter().all(|version| version.as_i64() == Some(8)) {
             return Err(format!(
                 "every push publication must bind the observed version 8: {versions:?}"
+            ));
+        }
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn framed_push_client_receives_analysis_pending_marker_before_first_snapshot() -> Result<(), String>
+{
+    // #8732: a push-only client used to see permanent silence before the
+    // first snapshot commit — byte-for-byte identical to "analysis ran and
+    // found nothing". The typed analysis-pending marker must publish per
+    // tracked URI, bound to the observed document version, and retract with
+    // the established empty clear when the first snapshot commits.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("push-pending-marker")?;
+        let root = temp.path().to_path_buf();
+        let lib_path = root.join("src/lib.rs");
+        let saved_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read fixture lib.rs failed: {err}"))?;
+        let text_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
+        // Break ripr.toml before initialize: the initial config load latches
+        // the typed failure, so the didOpen refresh returns before analysis
+        // and the pending state is observable on the wire.
+        std::fs::write(root.join("ripr.toml"), "mode = [")
+            .map_err(|err| format!("write broken ripr.toml failed: {err}"))?;
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+
+        let root_uri = file_uri_for_path(&root)?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
+                    },
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"versionSupport": true}
+                        },
+                        "window": {"workDoneProgress": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": text_uri,
+                        "languageId": "rust",
+                        "version": 1,
+                        "text": saved_text
+                    }
+                }
+            }),
+        )
+        .await?;
+        // The config failure blocks the refresh; the pending marker is the
+        // only publication a push client can receive pre-analysis.
+        let params = drain_until_publish(&mut client_read, &mut client_write, &text_uri).await?;
+        let published = params.first().ok_or_else(|| {
+            "push client received no publication for the opened document".to_string()
+        })?;
+        if published["version"] != serde_json::json!(1) {
+            return Err(format!(
+                "the pending marker must bind the observed document version: {published}"
+            ));
+        }
+        let diagnostics = published["diagnostics"]
+            .as_array()
+            .ok_or_else(|| format!("pending publish carried no diagnostics: {published}"))?;
+        if diagnostics.len() != 1 {
+            return Err(format!(
+                "expected exactly one analysis-pending marker, got {published}"
+            ));
+        }
+        let marker = &diagnostics[0];
+        if marker["code"]
+            != serde_json::json!(crate::lsp::diagnostic_catalog::DIAGNOSTIC_ANALYSIS_PENDING_CODE)
+        {
+            return Err(format!("wrong marker code: {marker}"));
+        }
+        if marker["data"]["state"] != "no_snapshot" {
+            return Err(format!("wrong marker state: {marker}"));
+        }
+        if marker["data"]["recovery"] != "fix_configuration" {
+            return Err(format!("wrong marker recovery route: {marker}"));
+        }
+
+        // Repair the configuration: the reload clears the failure, schedules
+        // the ConfigReload refresh, and the first commit retracts the marker
+        // with the established empty clear (the clean fixture has no
+        // findings, so the retraction is an honest empty set).
+        std::fs::write(root.join("ripr.toml"), "# repaired configuration\n")
+            .map_err(|err| format!("repair ripr.toml failed: {err}"))?;
+        let config_uri = file_uri_for_path(&root.join("ripr.toml"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "workspace/didChangeWatchedFiles",
+                "params": {"changes": [{"uri": config_uri.as_str(), "type": 2}]}
+            }),
+        )
+        .await?;
+        let notifications = read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+        let published = published_params_for_uri(&notifications, &text_uri);
+        let last = published.last().ok_or_else(|| {
+            format!("refresh published nothing for the tracked URI: {notifications:?}")
+        })?;
+        if last["diagnostics"] != serde_json::json!([]) {
+            return Err(format!(
+                "the pending marker must retract with the empty clear on the first commit: {last}"
+            ));
+        }
+
+        shutdown_framed_session(&mut client_read, &mut client_write, &mut server_task, 2).await?;
+        drop(temp);
+        Ok(())
+    })
+}
+
+#[test]
+#[serial]
+fn framed_push_client_withdraws_diagnostics_when_config_failure_latches() -> Result<(), String> {
+    // #8731 (push surface) / #8732: a push client that already received real
+    // diagnostics must see them withdrawn the moment a config reload failure
+    // latches — the marker names the withdrawal instead of letting the last
+    // published payload sit at full weight for the rest of the session.
+    work_done_progress_runtime()?.block_on(async {
+        let temp = boundary_gap_git_fixture_root("push-withdraw-on-latch")?;
+        let root = temp.path().to_path_buf();
+        let lib_path = root.join("src/lib.rs");
+        let saved_text = std::fs::read_to_string(&lib_path)
+            .map_err(|err| format!("read fixture lib.rs failed: {err}"))?;
+        let text_uri = file_uri_for_path(&lib_path)?.as_str().to_string();
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (mut client_read, mut client_write) = tokio::io::split(client_io);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let mut server_task = tokio::spawn(async move {
+            Server::new(server_read, server_write, socket)
+                .serve(service)
+                .await;
+        });
+
+        let root_uri = file_uri_for_path(&root)?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "processId": null,
+                    "rootUri": root_uri.as_str(),
+                    "initializationOptions": {
+                        "baseRef": "HEAD",
+                        "checkMode": "instant",
+                        "diagnosticProfile": "full"
+                    },
+                    "capabilities": {
+                        "textDocument": {
+                            "publishDiagnostics": {"versionSupport": true}
+                        },
+                        "window": {"workDoneProgress": true}
+                    }
+                }
+            }),
+        )
+        .await?;
+        let initialize = read_lsp_response(&mut client_read, 1).await?;
+        if initialize.get("error").is_some() {
+            return Err(format!("initialize failed: {initialize}"));
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+        )
+        .await?;
+
+        // Establish real published diagnostics first: open, dirty the
+        // boundary, persist it, and let the save refresh publish findings.
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": text_uri,
+                        "languageId": "rust",
+                        "version": 7,
+                        "text": saved_text
+                    }
+                }
+            }),
+        )
+        .await?;
+        let dirty_text = saved_text.replace(">=", ">");
+        if dirty_text == saved_text {
+            return Err(
+                "saved-workspace fixture no longer carries the equality boundary".to_string(),
+            );
+        }
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didChange",
+                "params": {
+                    "textDocument": { "uri": text_uri, "version": 8 },
+                    "contentChanges": [{ "text": dirty_text }]
+                }
+            }),
+        )
+        .await?;
+        std::fs::write(&lib_path, &dirty_text)
+            .map_err(|err| format!("mirror save failed: {err}"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didSave",
+                "params": {
+                    "textDocument": { "uri": text_uri },
+                    "text": dirty_text
+                }
+            }),
+        )
+        .await?;
+        let notifications = read_lsp_notifications_until_refresh_settled(
+            &mut client_read,
+            &mut client_write,
+            "ripr analysis refresh completed in",
+            "seams_deferred",
+        )
+        .await?;
+        let published = published_params_for_uri(&notifications, &text_uri);
+        let last = published.last().ok_or_else(|| {
+            format!("the save refresh must publish diagnostics for the opened document: {notifications:?}")
+        })?;
+        let served = last["diagnostics"]
+            .as_array()
+            .ok_or_else(|| format!("publish carried no diagnostics: {last}"))?;
+        if served.is_empty() {
+            return Err(format!(
+                "expected real findings before the config failure: {last}"
+            ));
+        }
+
+        // Break ripr.toml: the watched-file reload latches the failure and
+        // the withdrawal marker must replace the served findings.
+        std::fs::write(root.join("ripr.toml"), "mode = [")
+            .map_err(|err| format!("write broken ripr.toml failed: {err}"))?;
+        let config_uri = file_uri_for_path(&root.join("ripr.toml"))?;
+        write_lsp_message(
+            &mut client_write,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "workspace/didChangeWatchedFiles",
+                "params": {"changes": [{"uri": config_uri.as_str(), "type": 1}]}
+            }),
+        )
+        .await?;
+        let params = drain_until_publish(&mut client_read, &mut client_write, &text_uri).await?;
+        let withdrawn = params
+            .first()
+            .ok_or_else(|| "config failure published no withdrawal for the tracked URI".to_string())?;
+        let diagnostics = withdrawn["diagnostics"]
+            .as_array()
+            .ok_or_else(|| format!("withdrawal publish carried no diagnostics: {withdrawn}"))?;
+        if diagnostics.len() != 1 {
+            return Err(format!(
+                "expected exactly one withdrawal marker, got {withdrawn}"
+            ));
+        }
+        let marker = &diagnostics[0];
+        if marker["code"]
+            != serde_json::json!(crate::lsp::diagnostic_catalog::DIAGNOSTIC_ANALYSIS_PENDING_CODE)
+        {
+            return Err(format!("wrong marker code: {marker}"));
+        }
+        if marker["data"]["state"] != "withdrawn_configuration_failure" {
+            return Err(format!(
+                "a latched failure with a retained snapshot must name the withdrawal: {marker}"
+            ));
+        }
+        if marker["data"]["recovery"] != "fix_configuration" {
+            return Err(format!("wrong marker recovery route: {marker}"));
+        }
+        let message = marker["message"]
+            .as_str()
+            .ok_or_else(|| format!("marker message missing: {marker}"))?;
+        if !message.contains("withdrawn") {
+            return Err(format!(
+                "withdrawal marker must name the withdrawn findings: {message}"
             ));
         }
 

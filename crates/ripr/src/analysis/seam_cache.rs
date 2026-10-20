@@ -469,8 +469,11 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.82`: name unsupported parameter-field match selectors without changing proof (#8479).
 /// `1.83`: canonical direct-record field match selection (#5500 / #5502).
 /// `1.84`: check-helper argument pins (RIPR-SPEC-0197, RIPR-SPEC-0231 example 12).
-/// `1.85`: effect-family assertions share execution admission (#8927).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.85";
+/// `1.85`: a related test line at the call-fact budget withholds a seam's
+/// absence claims under `rust_call_fact_budget` (#8600). Old entries can keep
+/// an actionable gap beside a line that dropped a call.
+/// `1.86`: effect-family assertions share execution admission (#8927).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.86";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -600,8 +603,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.85";
 /// `0.88`: same field-selector limitation metadata as full `1.82` (#8479).
 /// `0.89`: same direct-record field selectors as full `1.83`.
 /// `0.90`: same check-helper argument pins as full `1.84`.
-/// `0.91`: same effect-assertion execution admission as full `1.85`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.91";
+/// `0.91`: same call-fact budget withholding as full `1.85` (#8600).
+/// `0.92`: same effect-assertion execution admission as full `1.86`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.92";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -733,8 +737,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.91";
 /// `0.88`: same field-selector limitation metadata as full `1.82` (#8479).
 /// `0.89`: same direct-record field selectors as full `1.83`.
 /// `0.90`: same check-helper argument pins as full `1.84`.
-/// `0.91`: same effect-assertion execution admission as full `1.85`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.91";
+/// `0.91`: same call-fact budget withholding as full `1.85` (#8600).
+/// `0.92`: same effect-assertion execution admission as full `1.86`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.92";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -917,7 +922,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `1.43`: direct test-required functions retain evidence-only roles (#3213).
 /// `1.44`: binding candidates include a crate-root `extern crate x as std`
 /// alias (#8388); `1.43` candidates omit it.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.44";
+/// `1.45`: oracle facts drop statements that never run (RIPR-SPEC-0231
+/// rule 8, #7638); `1.44` facts still credit them.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.45";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -4480,7 +4487,8 @@ mod tests {
         // 1.40 -> 1.41: trusted `expect_file` binding candidates (#6578).
         // 1.41 -> 1.42: macro-body binding candidates (#5991).
         // 1.43 -> 1.44: `extern crate x as std` binding candidates (#8388).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.44");
+        // 1.44 -> 1.45: never-executed oracle statements dropped (#7638).
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.45");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -4590,6 +4598,7 @@ mod tests {
         // 1.81 -> 1.82: field-selector limitation metadata (#8479).
         // 1.82 -> 1.83: canonical direct-record field match selection (#5500).
         // 1.83 -> 1.84: check-helper argument pins (RIPR-SPEC-0197).
+        // 1.84 -> 1.85: call-fact budget withholding (#8600).
         // 1.84 -> 1.85: effect assertions require execution admission (#8927).
         assert_eq!(CACHE_SCHEMA_VERSION, "1.85");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same

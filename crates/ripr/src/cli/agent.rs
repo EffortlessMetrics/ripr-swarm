@@ -33,6 +33,8 @@ pub(super) enum AgentCommand {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct AgentStartOptions {
     pub(super) root: PathBuf,
+    /// `--root` was typed, so the root is used as given (#8872).
+    pub(super) root_explicit: bool,
     pub(super) seam_id: String,
     pub(super) out_dir: PathBuf,
     /// Emit one machine-readable JSON document (schema_version "0.1") instead
@@ -61,6 +63,8 @@ pub(super) struct AgentPacketOptions {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct AgentCardOptions {
     pub(super) root: PathBuf,
+    /// `--root` was typed, so the root is used as given (#8872).
+    pub(super) root_explicit: bool,
     pub(super) seam_id: String,
     /// Emit the versioned `RepairCardV1` JSON document instead of the compact
     /// human summary. The card is the default handoff; the JSON document is
@@ -82,6 +86,8 @@ pub(super) struct AgentStubOptions {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct AgentVerifyOptions {
     pub(super) root: PathBuf,
+    /// `--root` was typed, so the root is used as given (#8872).
+    pub(super) root_explicit: bool,
     pub(super) before: PathBuf,
     pub(super) after: PathBuf,
     pub(super) json: bool,
@@ -117,6 +123,8 @@ pub(super) struct AgentReceiptOptions {
 pub(super) struct AgentStatusOptions {
     pub(super) out_dir: Option<PathBuf>,
     pub(super) root: PathBuf,
+    /// `--root` was typed, so the root is used as given (#8872).
+    pub(super) root_explicit: bool,
     pub(super) json: bool,
     /// Explicit repair-attempt store locator, resolved against `root`.
     /// `None` is the repository-local default.
@@ -137,6 +145,8 @@ pub(super) struct AgentReviewSummaryOptions {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct AgentRepairOptions {
     pub(super) root: PathBuf,
+    /// `--root` was typed, so the root is used as given (#8872).
+    pub(super) root_explicit: bool,
     pub(super) seam_id: Option<String>,
     pub(super) attempt_id: Option<String>,
     pub(super) phase: AgentRepairPhase,
@@ -301,6 +311,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
         return Ok(AgentCommand::RepairHelp);
     }
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut seam_id: Option<String> = None;
     let mut attempt_id: Option<String> = None;
     let mut phase: Option<AgentRepairPhase> = None;
@@ -320,6 +331,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
             "--root" => {
                 i += 1;
                 root = PathBuf::from(expect_value(args, i, "--root")?);
+                root_explicit = true;
             }
             "--seam-id" => {
                 i += 1;
@@ -575,6 +587,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
     }
     Ok(AgentCommand::Repair(AgentRepairOptions {
         root,
+        root_explicit,
         seam_id,
         attempt_id,
         phase,
@@ -589,6 +602,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
 
 pub(super) fn parse_agent_start_options(args: &[String]) -> Result<AgentStartOptions, String> {
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut seam_id: Option<String> = None;
     let mut out_dir = PathBuf::from("target/ripr/workflow");
     let mut json = false;
@@ -599,6 +613,7 @@ pub(super) fn parse_agent_start_options(args: &[String]) -> Result<AgentStartOpt
             "--root" => {
                 i += 1;
                 root = PathBuf::from(expect_value(args, i, "--root")?);
+                root_explicit = true;
             }
             "--seam-id" => {
                 i += 1;
@@ -624,6 +639,7 @@ pub(super) fn parse_agent_start_options(args: &[String]) -> Result<AgentStartOpt
 
     Ok(AgentStartOptions {
         root,
+        root_explicit,
         seam_id: seam_id.ok_or_else(|| "agent start requires --seam-id".to_string())?,
         out_dir,
         json,
@@ -786,6 +802,7 @@ pub(super) fn parse_agent_packet_options(args: &[String]) -> Result<AgentPacketO
 
 pub(super) fn parse_agent_card_options(args: &[String]) -> Result<AgentCardOptions, String> {
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut seam_id: Option<String> = None;
     let mut json = false;
 
@@ -795,6 +812,7 @@ pub(super) fn parse_agent_card_options(args: &[String]) -> Result<AgentCardOptio
             "--root" => {
                 i += 1;
                 root = PathBuf::from(expect_value(args, i, "--root")?);
+                root_explicit = true;
             }
             "--seam-id" => {
                 i += 1;
@@ -814,6 +832,7 @@ pub(super) fn parse_agent_card_options(args: &[String]) -> Result<AgentCardOptio
 
     Ok(AgentCardOptions {
         root,
+        root_explicit,
         seam_id,
         json,
     })
@@ -892,6 +911,7 @@ pub(super) fn parse_agent_stub_options(args: &[String]) -> Result<AgentStubOptio
 
 pub(super) fn parse_agent_verify_options(args: &[String]) -> Result<AgentVerifyOptions, String> {
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut before: Option<PathBuf> = None;
     let mut after: Option<PathBuf> = None;
     let mut json = false;
@@ -902,6 +922,7 @@ pub(super) fn parse_agent_verify_options(args: &[String]) -> Result<AgentVerifyO
             "--root" => {
                 i += 1;
                 root = PathBuf::from(expect_value(args, i, "--root")?);
+                root_explicit = true;
             }
             "--before" => {
                 i += 1;
@@ -927,6 +948,7 @@ pub(super) fn parse_agent_verify_options(args: &[String]) -> Result<AgentVerifyO
 
     Ok(AgentVerifyOptions {
         root,
+        root_explicit,
         before,
         after,
         json,
@@ -1084,6 +1106,7 @@ pub(super) fn parse_agent_receipt_options(args: &[String]) -> Result<AgentReceip
 
 pub(super) fn parse_agent_status_options(args: &[String]) -> Result<AgentStatusOptions, String> {
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut json = false;
     let mut out_dir = None;
     let mut store: Option<PathBuf> = None;
@@ -1095,6 +1118,7 @@ pub(super) fn parse_agent_status_options(args: &[String]) -> Result<AgentStatusO
             "--root" => {
                 i += 1;
                 root = PathBuf::from(expect_value(args, i, "--root")?);
+                root_explicit = true;
             }
             "--json" => json = true,
             "--out" => {
@@ -1126,6 +1150,7 @@ pub(super) fn parse_agent_status_options(args: &[String]) -> Result<AgentStatusO
 
     Ok(AgentStatusOptions {
         root,
+        root_explicit,
         json,
         out_dir,
         store,
@@ -1354,6 +1379,7 @@ mod tests {
             ])),
             Ok(AgentCommand::Repair(AgentRepairOptions {
                 root: PathBuf::from("repo"),
+                root_explicit: true,
                 seam_id: Some("seam:sample".to_string()),
                 attempt_id: None,
                 phase: AgentRepairPhase::Before,
@@ -1385,6 +1411,7 @@ mod tests {
             ])),
             Ok(AgentCommand::Repair(AgentRepairOptions {
                 root: PathBuf::from("repo"),
+                root_explicit: true,
                 seam_id: None,
                 attempt_id: Some("repair-attempt-0123456789abcdef01234567".to_string()),
                 phase: AgentRepairPhase::After,
@@ -1422,6 +1449,7 @@ mod tests {
             ])),
             Ok(AgentCommand::Repair(AgentRepairOptions {
                 root: PathBuf::from("repo"),
+                root_explicit: true,
                 seam_id: Some("seam:sample".to_string()),
                 attempt_id: None,
                 phase: AgentRepairPhase::Before,
@@ -1558,6 +1586,7 @@ mod tests {
             ])),
             Ok(AgentCommand::Repair(AgentRepairOptions {
                 root: PathBuf::from("."),
+                root_explicit: false,
                 seam_id: Some("seam:sample".to_string()),
                 attempt_id: None,
                 phase: AgentRepairPhase::After,
@@ -1709,6 +1738,7 @@ mod tests {
             ])),
             Ok(AgentCommand::Start(AgentStartOptions {
                 root: PathBuf::from("repo"),
+                root_explicit: true,
                 seam_id: "f3c9e4d21a0b7c88".to_string(),
                 out_dir: PathBuf::from("target/ripr/workflow"),
                 json: false,
@@ -1722,6 +1752,7 @@ mod tests {
             parse_agent_start_options(&args(&["--seam-id", "f3c9e4d21a0b7c88"])),
             Ok(AgentStartOptions {
                 root: PathBuf::from("."),
+                root_explicit: false,
                 seam_id: "f3c9e4d21a0b7c88".to_string(),
                 out_dir: PathBuf::from("target/ripr/workflow"),
                 json: false,
@@ -1738,6 +1769,7 @@ mod tests {
             ])),
             Ok(AgentCommand::Start(AgentStartOptions {
                 root: PathBuf::from("repo"),
+                root_explicit: true,
                 seam_id: "f3c9e4d21a0b7c88".to_string(),
                 out_dir: PathBuf::from("target/ripr/workflow"),
                 json: true,
@@ -1751,6 +1783,7 @@ mod tests {
             parse_agent_start_options(&args(&["--seam-id", "f3c9e4d21a0b7c88"])),
             Ok(AgentStartOptions {
                 root: PathBuf::from("."),
+                root_explicit: false,
                 seam_id: "f3c9e4d21a0b7c88".to_string(),
                 out_dir: PathBuf::from("target/ripr/workflow"),
                 json: false,
@@ -2055,6 +2088,7 @@ mod tests {
             ])),
             Ok(AgentCardOptions {
                 root: PathBuf::from("repo"),
+                root_explicit: true,
                 seam_id: "f3c9e4d21a0b7c88".to_string(),
                 json: true,
             })
@@ -2064,6 +2098,7 @@ mod tests {
             parse_agent_card_options(&args(&["--seam-id", "f3c9e4d21a0b7c88"])),
             Ok(AgentCardOptions {
                 root: PathBuf::from("."),
+                root_explicit: false,
                 seam_id: "f3c9e4d21a0b7c88".to_string(),
                 json: false,
             })
@@ -2165,6 +2200,7 @@ mod tests {
             ])),
             Ok(AgentVerifyOptions {
                 root: PathBuf::from("repo"),
+                root_explicit: true,
                 before: PathBuf::from("target/ripr/workflow/before.repo-exposure.json"),
                 after: PathBuf::from("target/ripr/workflow/after.repo-exposure.json"),
                 json: true,
@@ -2375,6 +2411,7 @@ mod tests {
             parse_agent_status_options(&args(&["--root", "repo", "--json"])),
             Ok(AgentStatusOptions {
                 root: PathBuf::from("repo"),
+                root_explicit: true,
                 json: true,
                 out_dir: None,
                 store: None,
@@ -2385,6 +2422,7 @@ mod tests {
             parse_agent_args(&args(&["status", "--root", "repo", "--json"])),
             Ok(AgentCommand::Status(AgentStatusOptions {
                 root: PathBuf::from("repo"),
+                root_explicit: true,
                 json: true,
                 out_dir: None,
                 store: None,
@@ -2405,6 +2443,7 @@ mod tests {
             ])),
             Ok(AgentStatusOptions {
                 root: PathBuf::from("repo"),
+                root_explicit: true,
                 json: true,
                 out_dir: None,
                 store: Some(PathBuf::from("target/ripr/alt-attempts")),
@@ -2424,6 +2463,7 @@ mod tests {
             parse_agent_status_options(&args(&["--root", "repo", "--attempt", attempt])),
             Ok(AgentStatusOptions {
                 root: PathBuf::from("repo"),
+                root_explicit: true,
                 json: false,
                 out_dir: None,
                 store: None,
@@ -2440,6 +2480,7 @@ mod tests {
             ])),
             Ok(AgentStatusOptions {
                 root: PathBuf::from("."),
+                root_explicit: false,
                 json: true,
                 out_dir: None,
                 store: Some(PathBuf::from("target/ripr/alt-attempts")),
@@ -2458,6 +2499,7 @@ mod tests {
             parse_agent_status_options(&args(&[])),
             Ok(AgentStatusOptions {
                 root: PathBuf::from("."),
+                root_explicit: false,
                 json: false,
                 out_dir: None,
                 store: None,
