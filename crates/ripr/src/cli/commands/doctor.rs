@@ -2719,14 +2719,18 @@ fn artifact_roots_display(roots: &[String]) -> String {
 /// The untrack command doctor prints, bound to the selected root: pasted from
 /// another directory, a bare `git rm --cached` would untrack files in whatever
 /// repository the shell happens to be in (#8301 review). The default `.` root
-/// keeps the short form. Every pathspec passes through the same shell
-/// quoting as the root: a configured root containing shell metacharacters
-/// must stay one shell word so pasting the printed remedy cannot execute
-/// injected text (PR #8901 security review).
+/// keeps the short form. Every pathspec uses the literal (glob-escaped) form:
+/// shell quoting only protects the argument from the shell, while git
+/// pathspec magic (`*`, `?`, `[`) would still wildcard-match a configured
+/// root like `build/cache*` against `build/cache1` (PR #8901 review,
+/// graphite finding); single-quoted `\*` reaches git as `\*`, which
+/// pathspec unescaping reads as one literal star.
 fn untrack_artifacts_command(root: &Path, artifact_roots: &[PathBuf]) -> String {
     let pathspecs = artifact_roots
         .iter()
-        .map(|root| crate::agent::loop_commands::shell_arg(&analysis::artifact_root_pathspec(root)))
+        .map(|root| {
+            crate::agent::loop_commands::shell_arg(&analysis::literal_artifact_root_pathspec(root))
+        })
         .collect::<Vec<_>>()
         .join(" ");
     if root == Path::new(".") {

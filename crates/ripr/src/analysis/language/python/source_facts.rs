@@ -158,17 +158,24 @@ pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
         // `is_file` gate extends the same discipline to test-named
         // directories: a directory named `test_*.py` cannot be read for
         // evidence, so admitting it toward the cap would starve real test
-        // files behind it (review of #8706, PR #8901).
-        let mut candidates: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
-        candidates.sort();
-        for path in candidates
-            .iter()
-            .filter(|path| path.is_file())
+        // files behind it (review of #8706, PR #8901). The cheap name filter
+        // runs before the `is_file` stat so a huge directory costs one stat
+        // per test-looking name, not per entry (PR #8901 review, graphite
+        // finding); sorting after the filters keeps the capped answer
+        // deterministic without ordering every unrelated entry.
+        let mut candidates: Vec<PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path())
             .filter(|path| {
                 path.file_name()
                     .and_then(|name| name.to_str())
                     .is_some_and(|name| name.ends_with(".py") && is_test_file(path))
             })
+            .filter(|path| path.is_file())
+            .collect();
+        candidates.sort();
+        for path in candidates
+            .iter()
             .take(PYTHON_FRAMEWORK_SCAN_DIR_ENTRY_CAP)
         {
             // Bounded evidence read: the import line is at the top of the

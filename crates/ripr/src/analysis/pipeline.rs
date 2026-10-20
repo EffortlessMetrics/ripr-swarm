@@ -2089,7 +2089,33 @@ fn ripr_artifact_disclosure(
             .map(|file| file.path.to_string_lossy().replace('\\', "/"))
             .collect::<Vec<_>>(),
     );
-    let entries = artifact_roots
+    // Advise only for the roots that actually excluded these files: the
+    // configured root set always contains `target/ripr`, and naming it for
+    // a relocated-cache exclusion sends the user to a stale rule that
+    // covers nothing (PR #8901 review, graphite finding).
+    let normalized_files = own_artifact_files
+        .iter()
+        .map(|file| file.path.to_string_lossy().replace('\\', "/"))
+        .collect::<Vec<_>>();
+    let matched_roots: Vec<&PathBuf> = artifact_roots
+        .iter()
+        .filter(|root| {
+            let root = diff::artifact_root_pathspec(root);
+            normalized_files
+                .iter()
+                .any(|file| file.as_str() == root || file.starts_with(&format!("{root}/")))
+        })
+        .collect();
+    let all_roots: Vec<&PathBuf> = artifact_roots.iter().collect();
+    let advice_roots: &[&PathBuf] = if matched_roots.is_empty() {
+        // The intake identified these files through the roots, so an empty
+        // match means only shape drift; fall back to the full set rather
+        // than printing no recovery at all.
+        &all_roots
+    } else {
+        &matched_roots
+    };
+    let entries = advice_roots
         .iter()
         .map(|root| format!("/{}/", diff::artifact_root_pathspec(root)))
         .collect::<Vec<_>>()
