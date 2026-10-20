@@ -1706,3 +1706,11 @@ path = "docs/specs/RIPR-SPEC-0288-agent-stub-rewrite-clarity.md"
 status = "proposed"
 owner = "product-cli"
 standalone_reason = "Issue #8891 records the agent stub rewrite clarity contract: a second ripr agent stub --write for the same seam reports the stub already written at the file (with the run command; additive JSON already_present, written stays false) instead of suffixing a _2 duplicate, where only a byte-identical recompute counts as already written and a genuinely different test sharing the generated name still suffixes; and the strongly_gripped disclosure on the stub path names the real reason (existing tests already discriminate it, so a stub would add nothing) instead of reusing the packet/brief 'configured off' wording, which stays only for classes a user severity actually disables."
+
+[[artifact]]
+id = "RIPR-SPEC-0285"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0285-python-framework-scan-bounded-deterministic-string-aware.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issues #8706, #8707 and #8751 record the Python framework scan contract: per scanned directory only sorted regular .py test files count toward the 64-candidate cap so non-test entries and test-named directories cannot starve the scan or make it depend on filesystem order; each candidate is read for at most a 4096-byte prefix with a cut final line dropped; and evidence is matched only against code lines (scanning stops at an unquoted #, skips single-line string contents, and only the matching delimiter closes a triple-quoted string) so docstring examples, commented delimiters, and string-literal delimiters neither credit nor hide a real import pytest / import unittest."
