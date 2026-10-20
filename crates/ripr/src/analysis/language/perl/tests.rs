@@ -5735,6 +5735,7 @@ fn perl_isnt_is_a_smoke_oracle_not_an_exact_one() -> Result<(), String> {
         "isnt($got, 10, 'discount threshold')",
         "isnt ($got, 10, 'discount threshold')",
         "Test::More::isnt($got, 10, 'discount threshold')",
+        "Test2::V0::isnt($got, 10, 'discount threshold')",
         "  isnt($got, 10)",
     ] {
         let packet = EXACT_RETURN_PACKET.replace("is($got, 10, 'discount threshold')", spelling);
@@ -5746,9 +5747,17 @@ fn perl_isnt_is_a_smoke_oracle_not_an_exact_one() -> Result<(), String> {
             "{spelling}"
         );
     }
+    // A producer that grades `isnt` broad gets the same reading, not rule 16's
+    // `static_unknown`.
+    let broad = EXACT_RETURN_PACKET
+        .replace("is($got, 10, 'discount threshold')", "isnt($got, 10)")
+        .replace("\"strong_exact\"", "\"weak_broad\"");
+    let findings = findings_from_packet(&broad)?;
+    let finding = findings.first().ok_or("expected one finding")?;
+    assert_eq!(finding.class, ExposureClass::ReachableUnrevealed);
     // Controls: the exact reading of `is` is unchanged, and a name that only
     // starts with `isnt` is not the negative matcher.
-    assert_ne!(exact_class, ExposureClass::StaticUnknown);
+    assert_eq!(exact_class, ExposureClass::WeaklyExposed);
     let packet =
         EXACT_RETURN_PACKET.replace("is($got, 10, 'discount threshold')", "isnt_zero($got, 10)");
     let (class, _) = first_finding_misses(&packet)?;

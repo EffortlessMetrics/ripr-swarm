@@ -3006,7 +3006,11 @@ impl OracleFact {
     /// which credits nothing and is not an unresolved broad matcher either
     /// (RIPR-SPEC-0235 rule 17).
     fn effective_strength(&self) -> OracleStrength {
-        if self.strength == OracleStrength::StrongExact && self.is_negated_comparison() {
+        if matches!(
+            self.strength,
+            OracleStrength::StrongExact | OracleStrength::WeakBroad
+        ) && self.is_negated_comparison()
+        {
             OracleStrength::WeakSmoke
         } else {
             self.strength
