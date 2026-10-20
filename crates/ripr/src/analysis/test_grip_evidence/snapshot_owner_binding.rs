@@ -220,16 +220,21 @@ fn walk_bindings(
                     // Some(x) = ..` in an argument or initializer) is in scope
                     // inside the body only, and the body is where the cut may
                     // fall: the statement is judged again, whole, at its `;`.
-                    if matches!(
-                        statement_binding_verdict(
-                            &statement.skeleton,
-                            &statement.full,
-                            name,
-                            owner_name,
-                            reach,
-                        ),
-                        Some(BindingVerdict::Withdrawn)
-                    ) {
+                    // This holds even when the enclosing `let` binds the same
+                    // name (`let x = |x| {`), which its own verdict calls a
+                    // plain shadow.
+                    if binds_by_pattern(without_attributes(statement.skeleton.trim()), name)
+                        || matches!(
+                            statement_binding_verdict(
+                                &statement.skeleton,
+                                &statement.full,
+                                name,
+                                owner_name,
+                                reach,
+                            ),
+                            Some(BindingVerdict::Withdrawn)
+                        )
+                    {
                         scope.push((depth + 1, false));
                     }
                     // Keep what precedes the brace; the statement resumes at
@@ -873,6 +878,9 @@ mod tests {
             "let x = own(2);\nrun(|| {\n    a || b;\n}, |x| {",
             "let x = own(2);\nlet r = foo(a || b, |x| {",
             "let x = own(2);\nrun(a, b || c,\n    |x|\n    {",
+            // The enclosing `let` binds the same name as the header binder.
+            "let x = own(2);\nlet x = |x: usize| {",
+            "let x = own(2);\nlet x = if let Some(x) = Some(2usize) {",
             // A statement still open at the assertion is judged too.
             "let x = own(2);\nrun(|x|",
             "let x = own(2);\nmatch p {\n    Some(x) =>",
@@ -892,6 +900,7 @@ mod tests {
             "let x = own(2);\nrun(a, |y| {\n    foo();",
             "let x = own(2);\nfoo(if let Some(y) = p {",
             "let x = own(2);\nrun(|| 1, |y| {",
+            "let x = own(2);\nlet z = |y: usize| {",
             "let x = own(2);\nrun(a || b, || {",
             "let x = own(2);\nrun(|| {\n    foo(x);\n});",
             "let x = own(2);\napply(|| {\n    if c {\n        let x = 2usize;\n    }\n});",

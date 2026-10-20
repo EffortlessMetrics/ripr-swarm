@@ -665,6 +665,8 @@ mod tests {
             "let out = row(1);\nlet r = foo(a || b, |out| {",
             "let out = row(1);\nrun(a, b || c,\n    |out|\n    {",
             "let out = row(1);\nrun(|out|",
+            "let out = row(1);\nlet out = |out: usize| {",
+            "let out = row(1);\nlet out = if let Some(out) = Some(2usize) {",
             "let out = row(1);\nlet r = if let Some(out) = p {",
         ] {
             assert!(!derives(replaced, "out"), "{replaced}");
