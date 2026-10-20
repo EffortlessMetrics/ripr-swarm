@@ -88,6 +88,10 @@ pub(crate) fn oracle_projection(
         (OracleStrength::Unknown, OracleKind::Unknown) => {
             "an unclassified oracle, not graded against this probe".to_string()
         }
+        (OracleStrength::Unknown, kind) => format!(
+            "{} oracle, not graded against this probe",
+            kind.as_str().replace('_', " ")
+        ),
         (strength, kind) => format!(
             "{} {} oracle",
             strength.as_str(),
@@ -142,11 +146,11 @@ mod tests {
             "an unclassified oracle, not graded against this probe"
         );
         assert_eq!(oracle_projection(unknown.0, unknown.1, false), "no oracle");
-        // Every other pair keeps the "<strength> <kind> oracle" spelling.
         assert_eq!(
             oracle_projection(&OracleStrength::Unknown, &OracleKind::ExactValue, true),
-            "unknown exact value oracle"
+            "exact value oracle, not graded against this probe"
         );
+        // A graded pair keeps the "<strength> <kind> oracle" spelling.
         assert_eq!(
             oracle_projection(&OracleStrength::Strong, &OracleKind::ExactValue, true),
             "strong exact value oracle"

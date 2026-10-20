@@ -68,8 +68,8 @@ Evidence
   - propagation unknown: No propagation model is available for this changed syntax
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator unknown: Assertions exist, but oracle strength is unknown
-  - local flow reaches unknown sink (line 5) — ripr could not classify where the changed value ends up; propagation confidence is limited
-  - related test src/lib.rs:14 reads_successfully uses unknown exact value oracle: assert_eq!(rdr.len(), 10, r#"read "error", (Err(_))"#);
+  - local flow reaches unknown sink (line 5)
+  - related test src/lib.rs:14 reads_successfully uses exact value oracle, not graded against this probe: assert_eq!(rdr.len(), 10, r#"read "error", (Err(_))"#);
   - source assertion argument value 10 at line 17
   - source assertion argument value ", (Err(_))" at line 18
   - source assertion argument value "read " at line 18

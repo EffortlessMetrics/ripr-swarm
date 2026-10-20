@@ -466,6 +466,14 @@ id = "RIPR-SPEC-0279"
 scope = "out"
 reason = "not a Perl fact-packet rule; a Perl packet case cannot label it"
 
-[[unmeasured]]
+# Covered-by instrument-failure contract
+[[spec]]
+id = "RIPR-SPEC-0280"
+scope = "out"
+reason = "repository precommit and xtask instrument contract; not an analyzer verdict, so no corpus case can label it"
+
+# Pilot ranking refuted-count growth allowance
+[[spec]]
 id = "RIPR-SPEC-0281"
-reason = "acceptance examples are prose field listings, not numbered; no corpus case cites an example number"
+scope = "out"
+reason = "advisory ranking-scoreboard gate rule in xtask; not an analyzer verdict, so no corpus case can label it"
