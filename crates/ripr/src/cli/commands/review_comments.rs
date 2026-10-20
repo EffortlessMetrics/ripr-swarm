@@ -2979,7 +2979,7 @@ mod tests {
                 assert!(
                     report["warnings"].as_array().is_some_and(|warnings| {
                         warnings.iter().any(|warning| {
-                            warning.as_str().is_some_and(|text| {
+                            warning["message"].as_str().is_some_and(|text| {
                                 text.contains("Test-edit attribution is unresolved")
                             })
                         })
