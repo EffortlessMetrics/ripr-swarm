@@ -10140,6 +10140,18 @@
         { "type": "expected_class", "class": "exposed" },
         { "type": "expected_oracle", "kind": "snapshot", "strength": "strong" }
       ]
+    },
+    {
+      "id": "rust_owner_pin_written_expected_not_a_pin",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_pin_written_expected_not_a_pin",
+      "vector": "owner_pin_expected_value_the_test_writes_the_owner_result_into",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" }
+      ]
     }
   ]
 }
