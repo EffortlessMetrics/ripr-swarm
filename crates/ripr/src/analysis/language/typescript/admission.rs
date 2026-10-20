@@ -119,21 +119,28 @@ pub(crate) struct TypeScriptAdmissionContext {
     /// Something the runner runs for every test in the file is
     /// assertion-like (see the module docs).
     setup_assertion_like: bool,
+    /// Modules and strict scripts keep block functions inside their block.
+    pub(super) block_functions_are_lexical: bool,
 }
 
 impl TypeScriptAdmissionContext {
     pub(crate) fn of_program(
-        statements: &[Statement<'_>],
+        program: &oxc_ast::ast::Program<'_>,
         imports: &[TypeScriptImport],
         file: &Path,
     ) -> Self {
+        let statements = program.body.as_slice();
+        let block_functions_are_lexical =
+            program.source_type.is_module() || program.has_use_strict_directive();
         let esm_imports: Vec<_> = statements
             .iter()
             .filter(|statement| matches!(statement, Statement::ImportDeclaration(_)))
             .flat_map(|statement| extract_imports_from_statements(std::slice::from_ref(statement)))
             .collect();
-        let known_require = program_require_is_known(statements, &esm_imports);
+        let known_require =
+            program_require_is_known(statements, &esm_imports, block_functions_are_lexical);
         let mut context = Self {
+            block_functions_are_lexical,
             imports: imports.to_vec(),
             registration_imports: statements
                 .iter()
@@ -202,7 +209,7 @@ impl TypeScriptAdmissionContext {
         }
     }
 
-    /// Root admission for newly supported awaited registrations. Reuse the
+    /// Root admission for bare and awaited registrations. Reuse the
     /// scanner's runner binding decision before a recognized assertion can
     /// take the shortcut in `admission_of`. The extractor supplies visible
     /// bindings and marks file-level declarations. File-wide setup uncertainty
@@ -289,9 +296,17 @@ fn reexport_spellings(statements: &[Statement<'_>]) -> BTreeSet<String> {
 /// Loader identity for the bounded awaited-root import exemption. Mutable
 /// loaders and same-spelled helpers cannot establish a callable runner. The
 /// ambient `require` syntax contract does not prove runtime module resolution.
-fn program_require_is_known(statements: &[Statement<'_>], imports: &[TypeScriptImport]) -> bool {
+fn program_require_is_known(
+    statements: &[Statement<'_>],
+    imports: &[TypeScriptImport],
+    block_functions_are_lexical: bool,
+) -> bool {
     let mut names = Vec::new();
-    super::tests_extract::collect_registration_scope_names(statements, &mut names);
+    super::tests_extract::collect_registration_scope_names(
+        statements,
+        &mut names,
+        block_functions_are_lexical,
+    );
     if !names.iter().any(|name| name == "require") {
         return true;
     }

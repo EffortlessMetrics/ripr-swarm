@@ -519,16 +519,6 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             "function makeInput() { return 1; }\nconst input = makeInput();\ntest('x', () => { checkout(input); });",
             unresolved,
         ),
-        (
-            "custom registration from test.extend",
-            "import { test as base } from 'vitest';\nconst it = base.extend({});\nit('x', () => { checkout(1); });",
-            unresolved,
-        ),
-        (
-            "registration imported from a fixture module",
-            "import { it } from './fixtures';\nit('x', () => { checkout(1); });",
-            unresolved,
-        ),
     ];
     let mut failures = Vec::new();
     for (label, source, expected) in cases {
@@ -599,4 +589,19 @@ fn inactive_registrations_are_not_extracted() -> Result<(), String> {
     }
     // The active form of the same registration is extracted.
     admission_of("test('x', () => { checkout(1); });").map(|_| ())
+}
+
+/// An unresolved registration does not establish a running test at all.
+#[test]
+fn unknown_registration_bindings_do_not_create_assertion_admission() {
+    for source in [
+        "import { test as base } from 'vitest'; const it = base.extend({}); it('x', () => { checkout(1); });",
+        "import { it } from './fixtures'; it('x', () => { checkout(1); });",
+    ] {
+        let full = format!("{OWNER_IMPORT}{source}");
+        assert!(
+            extract_tests(Path::new("tests/cart.test.ts"), &full).is_empty(),
+            "{source}"
+        );
+    }
 }

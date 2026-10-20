@@ -54,7 +54,7 @@ fn registration_bindings_keep_imported_and_global_controls() -> Result<(), Strin
     ] {
         let source = format!("{prelude}\ndescribe('sum', () => {{ {TEST} }});");
         let finding = registration_finding("registration-positive", &source)?;
-        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{source}");
+        assert_eq!(finding.class, ExposureClass::Exposed, "{source}");
         assert_eq!(finding.related_tests.len(), 1, "{finding:?}");
         assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::ExactValue);
         assert_eq!(
@@ -99,6 +99,10 @@ fn registration_bindings_preserve_unrelated_valid_evidence() -> Result<(), Strin
             "describe('shadow', () => {{ const test = {NOOP}; {TEST} }}); describe('real', () => {{ {TEST} }});"
         ),
         format!("{{ const test = {NOOP}; }} describe('real', () => {{ {TEST} }});"),
+        format!("{{ function test() {{}} }} describe('real', () => {{ {TEST} }});"),
+        format!(
+            "describe('shadow', () => {{ {{ let test; test = {NOOP}; }} }}); describe('real', () => {{ {TEST} }});"
+        ),
         format!("[1].forEach(() => {{ {TEST} }});"),
         format!("describe('real', () => {{ [1].forEach(() => {{ {TEST} }}); }});"),
     ] {
@@ -106,7 +110,7 @@ fn registration_bindings_preserve_unrelated_valid_evidence() -> Result<(), Strin
         assert_eq!(tests.len(), 1, "only the genuine test survives: {source}");
         assert_eq!(tests[0].assertions.len(), 1);
         let finding = registration_finding("registration-independent", &source)?;
-        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{source}");
+        assert_eq!(finding.class, ExposureClass::Exposed, "{source}");
         assert_eq!(finding.related_tests.len(), 1);
         assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::ExactValue);
         assert_eq!(
@@ -150,4 +154,14 @@ fn registration_bindings_uncalled_test_closure_has_no_oracle() -> Result<(), Str
     assert_eq!(finding.related_tests.len(), 1);
     assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::Unknown);
     Ok(())
+}
+
+#[test]
+fn registration_bindings_distinguish_script_hoisting_from_strict_blocks() {
+    for (directive, count) in [("", 0), ("'use strict';", 1)] {
+        let source =
+            format!("{directive} {{ function test() {{}} }} describe('sum', () => {{ {TEST} }});");
+        let tests = extract_tests(Path::new("tests/sum.test.cjs"), &source);
+        assert_eq!(tests.len(), count, "{source}");
+    }
 }

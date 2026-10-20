@@ -100,7 +100,7 @@ pub(crate) fn extract_tests_and_conditional_credit_gap(
                 &imports,
             )
             .with_strict_matchers(strict_equality_matchers(&ret.program.body, source)),
-            admission: TypeScriptAdmissionContext::of_program(&ret.program.body, &imports, file),
+            admission: TypeScriptAdmissionContext::of_program(&ret.program, &imports, file),
             ..TestScope::default()
         };
         // One line index per source; every test and assertion line is a
@@ -707,7 +707,11 @@ pub(crate) fn collect_tests_from_statements(
     // `let undefined` cannot erase an ordinary registration outside it. Do not
     // enter unrelated function bodies or count test callback parameters here.
     let mut declared_names = Vec::new();
-    collect_registration_scope_names(statements, &mut declared_names);
+    collect_registration_scope_names(
+        statements,
+        &mut declared_names,
+        scope.admission.block_functions_are_lexical,
+    );
     if declared_names.iter().any(|name| name == "undefined")
         && !level.iter().any(|(name, _, _)| name == "undefined")
     {
@@ -747,6 +751,12 @@ pub(crate) fn collect_tests_from_statements(
         }
     }
     scope.levels.push(level);
+    scope.registration_levels.push(
+        declared_names
+            .into_iter()
+            .map(|name| (name, scope.levels.len() == 1))
+            .collect(),
+    );
     scope.iterables.push(iterables);
     let unshadowed_undefined = !scope
         .levels
@@ -757,13 +767,16 @@ pub(crate) fn collect_tests_from_statements(
         if let Some(span) = name_literal_span(stmt) {
             scope.names.push(span);
         }
-        // Await must not turn a local helper's unused callback into test
-        // evidence. Admit its registration root before assertion extraction
-        // can take the recognized-assertion shortcut. Bare roots retain their
-        // existing behavior; registration API expansion is a separate claim.
-        if let Statement::ExpressionStatement(statement) = stmt
-            && matches!(statement.expression, Expression::AwaitExpression(_))
-            && let Some(call) = statement_call(stmt)
+        // Both bare and awaited roots need runner provenance before an
+        // assertion can receive credit. Restrict this check to registration
+        // shapes so supported registration loops (including forEach) survive.
+        // Receiver hook-write approximations are not lexical declarations:
+        // a sibling callback's local assignment cannot shadow this root.
+        if let Some(call) = statement_call(stmt)
+            && (call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
+                || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
+                || call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
+                || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe))
             && !scope.admission.registration_is_known(
                 call,
                 call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
@@ -773,15 +786,12 @@ pub(crate) fn collect_tests_from_statements(
                     .iter()
                     .enumerate()
                     .flat_map(|(depth, level)| {
-                        level.iter().map(move |(name, _, phase)| {
-                            (name.clone(), depth == 0 && *phase == Phase::Declaration)
-                        })
-                    })
-                    .chain(
-                        declared_names
+                        level
                             .iter()
-                            .map(|name| (name.clone(), scope.levels.len() == 1)),
-                    ),
+                            .filter(|(_, _, phase)| *phase == Phase::Declaration)
+                            .map(move |(name, _, _)| (name.clone(), depth == 0))
+                    })
+                    .chain(scope.registration_levels.iter().flatten().cloned()),
             )
         {
             continue;
@@ -867,6 +877,7 @@ pub(crate) fn collect_tests_from_statements(
         }
     }
     scope.iterables.pop();
+    scope.registration_levels.pop();
     scope.levels.pop();
 }
 
@@ -880,6 +891,10 @@ pub(crate) struct TestScope {
     describe_names: Vec<String>,
     /// Name bindings of the file and each enclosing describe, outermost first.
     levels: Vec<Vec<ScopeEntry>>,
+    /// Lexical registration declarations, including hoisted block `var`
+    /// names, retained while descending into suites. The flag identifies
+    /// file declarations eligible for the immutable import exemption.
+    registration_levels: Vec<Vec<(String, bool)>>,
     /// Per entry of `levels`: the `const` names that level binds to a
     /// non-empty array or object literal, so a loop over one of them is
     /// known to register its tests at least once.
@@ -2125,6 +2140,7 @@ fn first_parameter_destructures_expect(argument: &oxc_ast::ast::Argument<'_>) ->
 pub(super) fn collect_registration_scope_names(
     statements: &[Statement<'_>],
     out: &mut Vec<String>,
+    block_functions_are_lexical: bool,
 ) {
     for statement in statements {
         match statement {
@@ -2137,13 +2153,19 @@ pub(super) fn collect_registration_scope_names(
             | Statement::DoWhileStatement(_)
             | Statement::LabeledStatement(_)
             | Statement::TryStatement(_)
-            | Statement::SwitchStatement(_) => collect_hoisted_names(statement, out),
+            | Statement::SwitchStatement(_) => {
+                collect_hoisted_names(statement, out, block_functions_are_lexical)
+            }
             _ => collect_statement_declared_names(statement, out),
         }
     }
 }
 
-fn collect_hoisted_names(statement: &Statement<'_>, out: &mut Vec<String>) {
+fn collect_hoisted_names(
+    statement: &Statement<'_>,
+    out: &mut Vec<String>,
+    block_functions_are_lexical: bool,
+) {
     let var_names = |declaration: &oxc_ast::ast::VariableDeclaration<'_>, out: &mut Vec<String>| {
         if declaration.kind == oxc_ast::ast::VariableDeclarationKind::Var && !declaration.declare {
             out.extend(declaration_binding_names(declaration));
@@ -2151,23 +2173,25 @@ fn collect_hoisted_names(statement: &Statement<'_>, out: &mut Vec<String>) {
     };
     let each = |statements: &[Statement<'_>], out: &mut Vec<String>| {
         for statement in statements {
-            collect_hoisted_names(statement, out);
+            collect_hoisted_names(statement, out, block_functions_are_lexical);
         }
     };
     match statement {
         Statement::VariableDeclaration(declaration) => var_names(declaration, out),
-        // Sloppy-mode Annex B hoisting can expose a block function's name, so
-        // keep it; over-collection only withholds credit.
-        Statement::FunctionDeclaration(function) if !function.declare => {
+        // Sloppy-mode Annex B hoisting can expose a block function's name.
+        // Modules and strict scripts keep that binding inside the block.
+        Statement::FunctionDeclaration(function)
+            if !function.declare && !block_functions_are_lexical =>
+        {
             if let Some(identifier) = &function.id {
                 out.push(identifier.name.to_string());
             }
         }
         Statement::BlockStatement(block) => each(&block.body, out),
         Statement::IfStatement(if_stmt) => {
-            collect_hoisted_names(&if_stmt.consequent, out);
+            collect_hoisted_names(&if_stmt.consequent, out, block_functions_are_lexical);
             if let Some(alternate) = &if_stmt.alternate {
-                collect_hoisted_names(alternate, out);
+                collect_hoisted_names(alternate, out, block_functions_are_lexical);
             }
         }
         Statement::ForStatement(for_stmt) => {
@@ -2176,23 +2200,29 @@ fn collect_hoisted_names(statement: &Statement<'_>, out: &mut Vec<String>) {
             {
                 var_names(declaration, out);
             }
-            collect_hoisted_names(&for_stmt.body, out);
+            collect_hoisted_names(&for_stmt.body, out, block_functions_are_lexical);
         }
         Statement::ForOfStatement(for_of) => {
             if let oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) = &for_of.left {
                 var_names(declaration, out);
             }
-            collect_hoisted_names(&for_of.body, out);
+            collect_hoisted_names(&for_of.body, out, block_functions_are_lexical);
         }
         Statement::ForInStatement(for_in) => {
             if let oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) = &for_in.left {
                 var_names(declaration, out);
             }
-            collect_hoisted_names(&for_in.body, out);
+            collect_hoisted_names(&for_in.body, out, block_functions_are_lexical);
         }
-        Statement::WhileStatement(while_stmt) => collect_hoisted_names(&while_stmt.body, out),
-        Statement::DoWhileStatement(do_while) => collect_hoisted_names(&do_while.body, out),
-        Statement::LabeledStatement(labeled) => collect_hoisted_names(&labeled.body, out),
+        Statement::WhileStatement(while_stmt) => {
+            collect_hoisted_names(&while_stmt.body, out, block_functions_are_lexical)
+        }
+        Statement::DoWhileStatement(do_while) => {
+            collect_hoisted_names(&do_while.body, out, block_functions_are_lexical)
+        }
+        Statement::LabeledStatement(labeled) => {
+            collect_hoisted_names(&labeled.body, out, block_functions_are_lexical)
+        }
         Statement::TryStatement(try_stmt) => {
             each(&try_stmt.block.body, out);
             if let Some(handler) = &try_stmt.handler {
@@ -2878,7 +2908,7 @@ pub(crate) fn detect_partial_test_extraction(
             return None;
         }
         let imports = extract_imports_from_statements(&ret.program.body);
-        let admission = TypeScriptAdmissionContext::of_program(&ret.program.body, &imports, file);
+        let admission = TypeScriptAdmissionContext::of_program(&ret.program, &imports, file);
         let source = SourceText::new(source);
         let mut finder = UnextractedTestFinder {
             source: &source,

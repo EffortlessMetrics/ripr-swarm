@@ -27,6 +27,7 @@ Linked issues:
 - #6654 (corpus cases scored false actionable under the first draft)
 - #7315 (literal rejection equality observes the rejected reason)
 - #8714 (conditional-branch assertion guard and disclosure)
+- #8959 (lexically bound runner registrations)
 
 Linked PRs:
 
@@ -154,14 +155,16 @@ exactly as the bare call does. This covers the node:test ESM form
 `await test("name", fn)`. It extends the `test` root RIPR-SPEC-0027 lists;
 no accepted spec names the awaited form. An awaited subtest
 `await t.test(...)` inside a test body is not a registration.
-Before an awaited registration contributes assertions, the existing admission
+Before a bare or awaited registration contributes assertions, the existing admission
 scanner must recognize its runner root at the call site. File-local helpers,
 unrelated imports and enclosing callback/loop bindings cannot turn an unused
-callback into test evidence. This fence applies to the newly supported awaited
-form; it does not change bare-root registration semantics. A sibling suite's
+callback into test evidence. Bare roots use the same binding fence (#8959).
+Hoisted `var` bindings remain visible in nested suites; block-local function
+bindings in modules and strict scripts do not shadow a sibling registration.
+A sibling suite's
 helper is outside this lexical scope. Re-exports do not create local runner
 bindings, and an ESM namespace object is not a callable registration root.
-The awaited CommonJS exemption requires an immutable runner declaration and
+The CommonJS exemption requires an immutable runner declaration and
 either ambient `require` syntax or an immutable loader created by a locally
 imported `node:module`/`module` `createRequire(import.meta.url)`. Mutable loaders
 or runner bindings and same-spelled helper factories remain uncredited.

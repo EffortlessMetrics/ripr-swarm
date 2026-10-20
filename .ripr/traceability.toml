@@ -16096,6 +16096,13 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/registration_binding_tests.rs::registration_bindings_keep_imported_and_global_controls",
+  "crates/ripr/src/analysis/language/typescript/tests/registration_binding_tests.rs::registration_bindings_reject_local_noop_callbacks",
+  "crates/ripr/src/analysis/language/typescript/tests/registration_binding_tests.rs::registration_bindings_preserve_unrelated_valid_evidence",
+  "crates/ripr/src/analysis/language/typescript/tests/registration_binding_tests.rs::registration_bindings_do_not_execute_uncalled_closures_or_factories",
+  "crates/ripr/src/analysis/language/typescript/tests/registration_binding_tests.rs::registration_bindings_uncalled_test_closure_has_no_oracle",
+  "crates/ripr/src/analysis/language/typescript/tests/registration_binding_tests.rs::registration_bindings_distinguish_script_hoisting_from_strict_blocks",
+  "crates/ripr/src/analysis/language/typescript/admission_tests.rs::unknown_registration_bindings_do_not_create_assertion_admission",
   "crates/ripr/tests/cli_smoke/typescript_finally_completion.rs::completion_replacing_finalizers_cannot_confirm_the_changed_throw",
   "crates/ripr/tests/cli_smoke/typescript_finally_completion.rs::benign_and_independent_finalizers_keep_credit",
   "crates/ripr/src/analysis/language/typescript/tests.rs::extract_tests_withholds_assertions_a_finalizer_completion_can_replace",
@@ -16145,6 +16152,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/table_case_tests.rs::non_literal_table_stays_unresolved",
 ]
 fixtures = [
+  "fixtures/typescript_local_registration",
   "fixtures/typescript-verdict-corpus",
   "fixtures/javascript_awaited_registration",
   "fixtures/typescript_effect_owner_alias",

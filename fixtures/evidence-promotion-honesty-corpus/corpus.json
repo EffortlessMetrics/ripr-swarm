@@ -185,6 +185,35 @@
       ]
     },
     {
+      "id": "typescript_local_registration_does_not_register_callbacks",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_local_registration",
+      "vector": "local_noop_runner_names_cannot_donate_callback_oracles",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "unknown",
+          "strength": "none"
+        }
+      ]
+    },
+    {
       "id": "typescript_empty_each_registers_no_test_evidence",
       "language": "typescript",
       "tier": "pure",
