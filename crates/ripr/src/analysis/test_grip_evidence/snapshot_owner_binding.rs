@@ -156,6 +156,11 @@ struct OpenBrace {
     /// its brace depth and parenthesis nesting; `None` for a plain block,
     /// which ends its header statement.
     resumes: Option<(Pending, usize, usize)>,
+    /// A struct-like or pattern brace: its text stays visible to binder
+    /// detection (`Foo { x }`), unlike a closure body.
+    keep_text: bool,
+    /// The body of a `match`: a `{` before an arm's `=>` is a pattern.
+    in_match: bool,
     /// The enclosing brace level's text so far.
     outer_text: String,
 }
@@ -214,7 +219,17 @@ fn walk_bindings(
         }
         match ch {
             '{' => {
-                let part_of_statement = nest > 0 || statement.starts_with_let();
+                let in_arm_pattern = open.last().is_some_and(|brace| brace.in_match)
+                    && !statement
+                        .skeleton
+                        .rsplit(',')
+                        .next()
+                        .unwrap_or("")
+                        .contains("=>");
+                let pattern_brace = in_arm_pattern || in_pattern_position(&statement.skeleton);
+                let part_of_statement = nest > 0 || statement.starts_with_let() || pattern_brace;
+                let keep_text = pattern_brace || ends_with_type_like_name(&statement.skeleton);
+                let in_match = contains_word(&statement.skeleton, "match");
                 let resumes = if part_of_statement {
                     // A binder in the header (a closure parameter, `if let
                     // Some(x) = ..` in an argument or initializer) is in scope
@@ -247,6 +262,8 @@ fn walk_bindings(
                 };
                 open.push(OpenBrace {
                     resumes,
+                    keep_text,
+                    in_match,
                     outer_text: std::mem::take(&mut text),
                 });
                 nest = 0;
@@ -263,7 +280,11 @@ fn walk_bindings(
                     Some(brace) => {
                         text = format!("{}{{{}}}", brace.outer_text, inner);
                         if let Some((mut before, before_depth, before_nest)) = brace.resumes {
-                            before.skeleton.push_str("{}");
+                            if brace.keep_text {
+                                before.skeleton.push_str(&format!("{{{inner}}}"));
+                            } else {
+                                before.skeleton.push_str("{}");
+                            }
                             before.full.push_str(&format!("{{{inner}}}"));
                             statement = before;
                             statement_depth = before_depth;
@@ -513,29 +534,70 @@ fn binds_by_pattern(statement: &str, name: &str) -> bool {
     closure_parameters_name(statement, name)
 }
 
-/// A closure parameter list in `statement` names `name`. `||` is an empty
-/// parameter list (or a boolean or); it never hides a later `|name|`.
-fn closure_parameters_name(statement: &str, name: &str) -> bool {
+/// A single `|` in `statement` (a name was already found in it): a closure
+/// parameter list, a bitwise or, or an or-pattern. They are not told apart, so
+/// the statement is read as possibly binding `name`; over-matching only
+/// withdraws credit. `||` (an empty parameter list, or a boolean or) binds
+/// nothing and does not hide a later single `|`.
+fn closure_parameters_name(statement: &str, _name: &str) -> bool {
     let bytes = statement.as_bytes();
     let mut at = 0;
     while at < bytes.len() {
         if bytes[at] != b'|' {
             at += 1;
-            continue;
-        }
-        if bytes.get(at + 1) == Some(&b'|') {
+        } else if bytes.get(at + 1) == Some(&b'|') {
             at += 2;
-            continue;
-        }
-        let Some(len) = statement[at + 1..].find('|') else {
-            return false;
-        };
-        if contains_word(&statement[at + 1..at + 1 + len], name) {
+        } else {
             return true;
         }
-        at += len + 2;
     }
     false
+}
+
+/// `statement` ends in a type-like name (`Foo`, `Some`, `Self`): a brace after
+/// it is a struct pattern or literal, not a block header (`else`, `loop`,
+/// `async`, `unsafe`, `move`, a condition).
+fn ends_with_type_like_name(statement: &str) -> bool {
+    let word: String = statement
+        .trim_end()
+        .chars()
+        .rev()
+        .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    word.chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_uppercase())
+}
+
+/// The statement is inside the pattern of an `if let`, `while let` or `for`
+/// header: the keyword is open and its `=` (or `in`) has not come yet.
+fn in_pattern_position(statement: &str) -> bool {
+    ["if let ", "while let ", "for "]
+        .iter()
+        .filter_map(|keyword| {
+            statement
+                .match_indices(*keyword)
+                .filter(|(at, _)| {
+                    !statement[..*at]
+                        .chars()
+                        .next_back()
+                        .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+                })
+                .last()
+                .map(|(at, _)| (at, *keyword))
+        })
+        .max_by_key(|(at, _)| *at)
+        .is_some_and(|(at, keyword)| {
+            let rest = &statement[at + keyword.len()..];
+            if keyword == "for " {
+                !contains_word(rest, "in")
+            } else {
+                !rest.replace("=>", "").replace("==", "").contains('=')
+            }
+        })
 }
 
 /// The initializer's top-level expression is the owner call itself, with an
@@ -878,6 +940,29 @@ mod tests {
             "let x = own(2);\nrun(|| {\n    a || b;\n}, |x| {",
             "let x = own(2);\nlet r = foo(a || b, |x| {",
             "let x = own(2);\nrun(a, b || c,\n    |x|\n    {",
+            // A bitwise or earlier in the header does not split the real `|x|`.
+            "let x = own(2);\nrun(a | b, |x| {",
+            "let x = own(2);\nrun(FLAG | M, move |x| {",
+            "let x = own(2);\nlet r = foo(a | b, |x| -> u8 {",
+            "let x = own(2);\nrun(|a| a | 1, |x| {",
+            "let x = own(2);\nrun(a & b | c, |x| {",
+            "let x = own(2);\nrun(a ^ b | c, |x| {",
+            "let x = own(2);\nrun(f(a | b), |x| {",
+            "let x = own(2);\nrun([a | b], |x| {",
+            "let x = own(2);\nrun(a || b | c, |x| {",
+            "let x = own(2);\nrun(a | b || c, |x| {",
+            "let x = own(2);\nrun(a | b, c | d, e | f, |x| {",
+            "let x = own(2);\nfoo(a, b | c,\n |x|\n {",
+            // Struct patterns bind inside braces.
+            "let x = own(2);\nif let Foo { x, .. } = foo() {",
+            "let x = own(2);\nif let Foo { x } = foo() {",
+            "let x = own(2);\nif let Some(Foo { x }) = foo() {",
+            "let x = own(2);\nmatch p {\n    Foo { x } =>",
+            "let x = own(2);\nmatch p {\n    Some(Foo { x }) => {",
+            "let x = own(2);\nmatch p {\n    A => 1,\n    Foo { x } => {",
+            "let x = own(2);\nfor Foo { x } in v {",
+            "let x = own(2);\nrun(|Foo { x }| {",
+            "let x = own(2);\nlet g = |Foo { x }| 1;",
             // The enclosing `let` binds the same name as the header binder.
             "let x = own(2);\nlet x = |x: usize| {",
             "let x = own(2);\nlet x = if let Some(x) = Some(2usize) {",
@@ -901,6 +986,10 @@ mod tests {
             "let x = own(2);\nfoo(if let Some(y) = p {",
             "let x = own(2);\nrun(|| 1, |y| {",
             "let x = own(2);\nlet z = |y: usize| {",
+            "let x = own(2);\nif let Foo { y } = foo() {",
+            "let x = own(2);\nmatch p {\n    Foo { y } => {",
+            "let x = own(2);\nrun(a | b, |y| {",
+            "let x = own(2);\nif FLAG {\n    foo();\n}\nlet y = 1;",
             "let x = own(2);\nrun(a || b, || {",
             "let x = own(2);\nrun(|| {\n    foo(x);\n});",
             "let x = own(2);\napply(|| {\n    if c {\n        let x = 2usize;\n    }\n});",
