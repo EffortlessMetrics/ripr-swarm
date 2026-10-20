@@ -148,6 +148,44 @@ assertion is `weakly_exposed`, not `reachable_unrevealed`.
 - A registration is an expression statement whose expression is the root
   call. `const x = test(...)` registers nothing.
 
+**Rule 13. A called suite factory is its expansion (2026-10-20).** A
+top-level `function factory(a, b) { describe(a, () => { ... b(x) ... }); }`
+registers nothing until it is called, and its assertions name the owner only
+through a parameter. Each top-level call `factory("sum", sumAll);` reads as
+the factory's statements with every parameter replaced by its argument, as if
+written out at that point (the line reported is the call's). It expands only
+when all of these hold, and otherwise the call registers nothing as before:
+
+- the factory is a non-async, non-generator declaration whose parameters are
+  distinct plain names (no default, rest or destructuring) and whose body is
+  only call statements (registrations and hooks), with no declaration,
+  `return` or control flow;
+- the file mentions the factory only at its declaration and at top-level
+  expression-statement calls; a reassignment, export, alias, method call
+  (`.call`, `.bind`), nested call or second declaration leaves every call
+  unexpanded, while a call with other than exactly one plain argument per
+  parameter (spread, type arguments, awaited) is skipped on its own;
+- each argument is a string or number literal or a plain identifier. A
+  parameter bound to an identifier is used in the body only as a callee
+  (`impl(...)`); one bound to a literal only as a whole call argument
+  (`describe(name, ...)`), not inside a template or as a member;
+- the body does not rebind a parameter and does not already mention an
+  identifier argument, so the renaming captures nothing;
+- no parameter is spelled inside a string, template or comment of the body,
+  and the body has no bare `/` (a regex or division), so the renaming never
+  changes an expected value or a title;
+- the file contains no `\u` escape, and at most eight calls expand per file.
+
+The file-level passes follow the expansion rather than the declaration. A
+committed snapshot (RIPR-SPEC-0258) counts the file's snapshot calls with each
+fully expanded factory's declaration left out and each expansion in, so two
+calls of one factory each earn their own entry when their titles join to
+different keys. The partial-extraction disclosure skips a fully expanded
+factory's own registrations, still discloses a registration an expansion
+dropped, and names the call's line. A rendered pointer to an expanded test's
+assertion names the call's line; the assertion's own line stays an offset from
+the call, which the classifier indexes.
+
 **Rule 12. A named function passed as the callback is the test body
 (2026-10-20).** `test("title", name)` runs the function `name`, so its body
 supplies the test's assertions and owner calls, as an inline callback would.
@@ -753,6 +791,15 @@ rejected alternative. Any can be reversed later without touching the rest.
     replaced between declaration and registration. Rejected: resolving
     `const` arrow bindings and parameterised factories
     (`jest-mined-suite-factory`), which need call-site parameter binding.
+17. **Suite-factory calls (2026-10-20).** Adopted: rule 13, for the jest
+    shared-suite helper that read `no_static_path`
+    (`jest-mined-suite-factory`). Expanding the call and rerunning the
+    unchanged extractor keeps every existing gate (shadowing, relation,
+    admission) in force, where a parameter-binding model in the extractor
+    would duplicate them. Rejected: factories reached through a wrapper,
+    export or alias, argument expressions (`sumAll.bind(null)`, arrows,
+    members), and parameters used as values or in templates; each needs
+    data flow the adapter does not have.
 
 ## Required Evidence
 
@@ -1011,6 +1058,12 @@ to `amount - 20`, and `tests/lib.test.ts` has
   async, `.only`, inside `describe`) against every mention, signature and
   registration shape that must stay unresolved. The corpus case
   `jest-mined-test-fn-reference` reads `credited`.
+- `crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs`
+  pins rule 13 and decision 17: calls that read like the written-out suite
+  against every factory shape, extra mention and argument form that must stay
+  unexpanded, and the snapshot count, partial-extraction disclosure and
+  evidence pointer of an expanded call. The corpus case
+  `jest-mined-suite-factory` reads `credited`.
 - Existing: `crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs`
   and the `tests/` modules beside it: `mock_form_tests.rs`,
   `scope_receiver_tests.rs`, `reexport_chain_tests.rs`.
@@ -1033,6 +1086,9 @@ to `amount - 20`, and `tests/lib.test.ts` has
   and 10
   (`expect_call_from_assertion_inner`, `call_expression_is_expect`,
   `oracle_for_matcher`, `safe_error_class_payload_text`).
+- `crates/ripr/src/analysis/language/typescript/suite_factory.rs`
+  (`expand_suite_factories`, rule 13) and the rerun in `tests_extract.rs`
+  (`extract_tests_expanding_suite_factories`).
 - `crates/ripr/src/analysis/language/typescript/tests_extract.rs`: rule 12
   (`referenced_callback_function`, `function_used_only_as_test_callback`);
   rule 1 (`test_from_statement`, `describe_body_from_statement`) and the

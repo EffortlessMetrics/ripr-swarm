@@ -11,6 +11,7 @@
 //! confidence, relation reason, oracle strength, activation overlap,
 //! then stable file/name/line tie-breakers.
 
+mod call_budget;
 mod owner_result_binding;
 mod reach_limit;
 mod related_tests;
@@ -386,7 +387,7 @@ fn evidence_for_seam_with_context(
         .filter(|test| test_has_contradicted_assertion(test, owner_fn))
         .count();
 
-    TestGripEvidence {
+    let mut evidence = TestGripEvidence {
         seam_id: seam.id().clone(),
         related_tests,
         reach,
@@ -398,7 +399,11 @@ fn evidence_for_seam_with_context(
         missing_discriminators,
         statically_contradicted_related_tests,
         new_test_target,
-    }
+    };
+    // #8600: read over the full related set, the same set the stages read.
+    let saturated = call_budget::any_saturated(related.iter().copied());
+    call_budget::withhold(&mut evidence, saturated);
+    evidence
 }
 
 fn new_test_target_admission(
@@ -453,7 +458,7 @@ pub(crate) fn compact_evidence_for_seam(
         .filter(|test| test_has_contradicted_assertion(test, owner_fn))
         .count();
 
-    TestGripEvidence {
+    let mut evidence = TestGripEvidence {
         seam_id: seam.id().clone(),
         related_tests: Vec::new(),
         reach,
@@ -465,7 +470,11 @@ pub(crate) fn compact_evidence_for_seam(
         missing_discriminators,
         statically_contradicted_related_tests,
         new_test_target: None,
-    }
+    };
+    // #8600: read over every ranked related test, before the compact cap.
+    let saturated = call_budget::any_saturated(ranked.iter().map(|(indexed, _)| indexed.test));
+    call_budget::withhold(&mut evidence, saturated);
+    evidence
 }
 
 /// Reach evidence: does a related test call the seam's owner?

@@ -837,6 +837,15 @@ fn pilot_summary_with_only_limitations_is_not_a_clean_result() {
         "{md}"
     );
     assert!(!md.contains("Withheld"), "{md}");
+    // #8766: with nothing ranked there is no focused test to run "after
+    // adding", so the terminal screen prints no snapshot/outcome commands.
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        !terminal.contains("Run after adding the focused test")
+            && !terminal.contains("ripr outcome")
+            && terminal.contains("No seam was ranked"),
+        "{terminal}"
+    );
 
     // A seam limit cut seams pilot never classified: they may hold gaps, so
     // the withheld count is a lower bound and "No gap to test" would claim an

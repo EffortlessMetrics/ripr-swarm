@@ -93,6 +93,14 @@ kind and strength; diagnostic text inside the assertion cannot override it.
 The separator follows a complete path, line and test identity, so a path that
 contains ` uses ` does not hide an otherwise valid oracle projection.
 
+A related-test row whose expected strength is `none` has no kind to project, so
+it matches only an expected kind of `unknown` and the absent-oracle phrase
+`uses no oracle`, followed by the end of the line, `;`, `:` or `,`. A row whose
+expected strength is `unknown` matches only the `not graded against this probe`
+phrase. The legacy `none unknown oracle` spelling and `no oracles` prose do not
+match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
+#8747).
+
 ## Behavior
 
 ### The invariant

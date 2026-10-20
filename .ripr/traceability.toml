@@ -14316,10 +14316,14 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::agent_status_attempt_never_reconstructs_a_tampered_result",
   "crates/ripr/tests/cli_smoke.rs::agent_status_attempt_reports_legacy_manifest_at_compatibility_strength",
   "crates/ripr/tests/cli_help_hierarchy.rs::agent_status_help_names_the_selected_store_and_exact_attempt_selection",
+  "crates/ripr/tests/task_first_facade.rs::status_and_continue_do_not_offer_a_start_the_repair_gate_refuses",
+  "crates/ripr/tests/task_first_facade.rs::status_keeps_the_restart_when_the_repair_gate_admits_the_seam",
 ]
 fixtures = [
 ]
 code = [
+  "crates/ripr/src/app/task_first.rs",
+  "crates/ripr/src/cli/commands/task_first.rs",
   "crates/ripr/src/app/agent_status.rs",
   "crates/ripr/src/cli/agent.rs",
   "crates/ripr/src/cli/commands/agent.rs",
@@ -16147,6 +16151,22 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/function_reference_callback_tests.rs::a_reference_that_could_name_another_function_credits_nothing",
   "crates/ripr/src/analysis/language/typescript/tests/function_reference_callback_tests.rs::a_function_the_runner_cannot_call_bare_credits_nothing",
   "crates/ripr/src/analysis/language/typescript/tests/function_reference_callback_tests.rs::only_a_test_registration_resolves_the_reference",
+  "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_called_suite_factory_reads_like_the_written_out_suite",
+  "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_substitution_that_breaks_the_parse_keeps_the_unexpanded_tests",
+  "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_parameter_spelling_inside_a_string_credits_nothing",
+  "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_factory_the_calls_cannot_rename_into_credits_nothing",
+  "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_factory_mentioned_beyond_its_calls_credits_nothing",
+  "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_call_with_a_computed_argument_credits_nothing",
+  "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::each_call_of_a_suite_factory_earns_its_own_committed_snapshot",
+  "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::factory_calls_that_share_a_snapshot_key_stay_medium",
+  "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::an_unexpanded_factory_still_counts_its_snapshot_call",
+  "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::an_expanded_factory_is_not_disclosed_as_partial_extraction",
+  "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_registration_the_expansion_drops_is_still_disclosed_at_its_call",
+  "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::an_expanded_test_points_its_evidence_at_the_call",
+  "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_finding_points_its_oracle_evidence_at_the_factory_call",
+  "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_call_the_expansion_refuses_keeps_the_factory_disclosed",
+  "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_test_the_expansion_leaves_unchanged_is_not_disclosed_as_dropped",
+  "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_conditional_credit_disclosure_names_a_line_of_the_file",
 ]
 fixtures = [
   "fixtures/typescript-verdict-corpus",
@@ -16164,6 +16184,7 @@ code = [
   "crates/ripr/src/analysis/language/typescript/owners.rs",
   "crates/ripr/src/analysis/language/typescript/related_tests.rs",
   "crates/ripr/src/analysis/language/typescript/static_limit.rs",
+  "crates/ripr/src/analysis/language/typescript/suite_factory.rs",
   "crates/ripr/src/analysis/language/typescript/table_rows.rs",
   "crates/ripr/src/analysis/language/typescript/tests_extract.rs",
 ]
@@ -16776,6 +16797,33 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0278-issue-lifecycle-real-closeout-rows.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0280"
+name = "covered_by enumeration instrument-failure contract"
+spec = "docs/specs/RIPR-SPEC-0280-covered-by-instrument-failure-contract.md"
+tests = [
+  "xtask/src/policy/file_policy.rs::tests::test_covered_by_lock_wait_attempts_are_all_recorded_with_their_durations",
+  "xtask/src/policy/file_policy.rs::tests::test_covered_by_lock_wait_does_not_consume_the_budget_but_stays_bounded",
+  "xtask/src/policy/file_policy.rs::tests::test_covered_by_lock_wait_ceiling_stops_retrying_and_names_the_ceiling",
+  "xtask/src/policy/file_policy.rs::tests::test_covered_by_instrument_timeout_is_not_an_unresolved_pointer",
+  "xtask/src/precommit_v2.rs::tests::deferred_instrument_failure_is_infrastructure_alone_and_never_hides_a_real_failure",
+  "xtask/src/precommit_v2.rs::tests::composition_with_deferred_instrument_failure_is_infrastructure_after_remaining_stages",
+  "xtask/src/precommit_v2.rs::tests::composition_with_real_policy_failure_and_instrument_failure_is_not_infrastructure",
+]
+fixtures = []
+code = [
+  "xtask/src/policy/file_policy.rs",
+  "xtask/src/policy/mod.rs",
+  "xtask/src/main.rs",
+  "xtask/src/precommit_v2.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0280-covered-by-instrument-failure-contract.md",
 ]
 metrics = [
   "unit_test_pass_rate",

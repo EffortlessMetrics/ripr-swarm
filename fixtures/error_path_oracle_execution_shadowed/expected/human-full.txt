@@ -67,7 +67,7 @@ Evidence
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator unknown: Assertions exist, but oracle strength is unknown
   - local flow reaches unknown sink (line 5)
-  - related test src/lib.rs:21 reports_read_failure uses unknown exact value oracle: assert_eq!(read_all(rdr).unwrap_err().kind(), io::ErrorKind::Other);
+  - related test src/lib.rs:21 reports_read_failure uses exact value oracle, not graded against this probe: assert_eq!(read_all(rdr).unwrap_err().kind(), io::ErrorKind::Other);
   - source enum variant value io::ErrorKind::Other at line 24
 
 Weakness
