@@ -1035,7 +1035,8 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
             // Handled before the match: flags are masked, then code resumes.
             Mode::RegexFlags => out.push(c),
             Mode::LineComment => {
-                if c == '\n' {
+                // ECMAScript line comments end at all four LineTerminators.
+                if matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}') {
                     mode = Mode::Code;
                     out.push(c);
                 } else {

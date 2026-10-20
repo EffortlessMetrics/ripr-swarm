@@ -811,7 +811,12 @@ pub(crate) fn render_pilot_terminal(
             "Next, by hand: add the focused test named above, then compare against this run:\n",
         );
     } else {
-        out.push_str("Run after adding the focused test:\n");
+        // #8766: nothing was ranked, so no focused test was named and there
+        // is nothing to run "after adding" yet.
+        out.push_str(
+            "No seam was ranked, so there is no focused test to add; rerun `ripr pilot` after the code or its tests change.\n",
+        );
+        return out;
     }
     out.push_str(&format!("  {}\n", commands.after_snapshot));
     out.push_str(&format!("  {}\n", commands.outcome));

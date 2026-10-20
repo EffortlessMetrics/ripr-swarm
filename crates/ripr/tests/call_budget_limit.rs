@@ -332,3 +332,84 @@ fn an_already_unknown_finding_names_the_budget_and_drops_call_derived_absence() 
     }
     Ok(())
 }
+
+/// An owner whose `Err` arm changed; the related test checks it through an
+/// environment variable, which ripr does not evaluate (framework oracle).
+const ENV_OWNER: &str = "pub fn retries() -> u32 {
+    match std::env::var(\"APP_RETRIES\") {
+        Ok(text) => text.parse().unwrap_or(3),
+        Err(_) => 1 + 2,
+    }
+}
+";
+
+const ENV_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -4,1 +4,1 @@
+-        Err(_) => 3,
++        Err(_) => 1 + 2,
+";
+
+/// The environment-activated test with `noise` extra distinct helper callees
+/// on one line, and every finding on the changed `Err` arm (line 4): one edit carries
+/// an error-path and a match-arm probe.
+fn env_finding(noise: usize) -> Result<Vec<Finding>, String> {
+    let calls: String = (0..noise).map(|i| format!("h{i}();")).collect();
+    let helpers: String = (0..400).map(|i| format!("fn h{i}() {{}}\n")).collect();
+    let lib = format!(
+        "{ENV_OWNER}
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    #[test]
+    fn retries_read_the_environment() {{
+        std::env::set_var(\"APP_RETRIES\", \"7\");
+        assert_eq!(retries(), 7);
+        std::env::remove_var(\"APP_RETRIES\");
+        assert_eq!(retries(), 3);
+        {calls}
+    }}
+}}
+
+{helpers}"
+    );
+    let repo = TempRepo::create_with_diff(&lib, None, ENV_DIFF)?;
+    let findings = repo.findings()?;
+    let on_line: Vec<Finding> = findings
+        .into_iter()
+        .filter(|finding| finding.probe.location.line == 4)
+        .collect();
+    if on_line.len() < 2 {
+        return Err(format!("premise: two probes on line 4: {on_line:?}"));
+    }
+    Ok(on_line)
+}
+
+#[test]
+fn the_call_budget_reason_wins_over_the_framework_reason_when_both_apply() -> Result<(), String> {
+    // Premise: below the budget only the framework pass applies, so the
+    // fixture really is an environment-activated oracle the framework pass
+    // withholds. 255 distinct callees on one line stay under the budget and keep that kind.
+    for noise in [0, 255] {
+        for finding in env_finding(noise)? {
+            assert_eq!(finding.class, ExposureClass::StaticUnknown, "{noise}");
+            assert_eq!(
+                limit(&finding),
+                Some("rust_framework_oracle_unresolved"),
+                "{noise}"
+            );
+        }
+    }
+    // At and past the budget both passes apply; the call-budget pass runs
+    // first and owns the finding, so the framework pass leaves it alone.
+    for noise in [256, 300] {
+        for finding in env_finding(noise)? {
+            assert_eq!(finding.class, ExposureClass::StaticUnknown, "{noise}");
+            assert_eq!(limit(&finding), Some("rust_call_fact_budget"), "{noise}");
+        }
+    }
+    Ok(())
+}
