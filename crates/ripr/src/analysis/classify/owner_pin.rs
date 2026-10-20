@@ -10636,17 +10636,25 @@ fn enclosing_heads(before: &str) -> Vec<&str> {
     heads
 }
 
-/// `text` without a trailing balanced `<..>` generic argument list.
+/// `text` without a trailing balanced `<..>` generic argument list. A `->`
+/// (`fn() -> u8`) and anything inside a `{..}` const expression (`{ N > 1 }`)
+/// is no angle bracket, so neither closes or opens the list (#8960).
 fn strip_generic_args(text: &str) -> &str {
     if !text.ends_with('>') {
         return text;
     }
+    let bytes = text.as_bytes();
     let mut depth = 0usize;
+    let mut braces = 0usize;
     for (at, character) in text.char_indices().rev() {
         match character {
+            '}' => braces += 1,
+            '{' => braces = braces.saturating_sub(1),
+            _ if braces > 0 => {}
+            '>' if at > 0 && bytes[at - 1] == b'-' => {}
             '>' => depth += 1,
             '<' => {
-                depth -= 1;
+                depth = depth.saturating_sub(1);
                 if depth == 0 {
                     return text[..at].trim_end();
                 }
@@ -10671,10 +10679,21 @@ fn peel_group_and_path(before: &str) -> &str {
         if let Some(rest) = head.strip_suffix('(').or_else(|| head.strip_suffix('*')) {
             head = rest.trim_end();
         } else if let Some(rest) = head.strip_suffix("::") {
-            let rest = strip_generic_args(rest.trim_end());
+            let rest = rest.trim_end();
+            let stripped = strip_generic_args(rest);
+            if stripped.len() != rest.len() {
+                // A generic list qualifies the path before it, not the
+                // keyword: `match <T>::name` keeps `match` (#8960).
+                head = stripped;
+                continue;
+            }
             let qualifier = rest.trim_end_matches(|c: char| c.is_ascii_alphanumeric() || c == '_');
+            // A raw-identifier segment (`r#m::name`) is consumed whole.
+            let raw = strip_raw_ident_prefix(qualifier);
             // `& mut ::name` has an empty qualifier: keep the `mut` keyword.
-            head = if rest.ends_with("mut") && rest.len() - qualifier.len() == "mut".len() {
+            head = if raw.len() != qualifier.len() {
+                raw
+            } else if rest.ends_with("mut") && rest.len() - qualifier.len() == "mut".len() {
                 rest
             } else {
                 qualifier.trim_end()
@@ -10761,20 +10780,37 @@ fn ref_mut_scrutinee(before: &str, rest: &str) -> bool {
         .strip_suffix("match")
         .is_some_and(|rest| !rest.as_bytes().last().is_some_and(|b| is_ident_byte(*b)))
     {
+        // The scrutinee group that holds the name may itself contain brace
+        // groups (`match (name, S { a: 1 }) { .. }`): a `{..}` before an
+        // unmatched closer is checked and skipped, and the first one after
+        // the closer is the arm list (#8960).
         let mut depth = 0usize;
-        for (at, character) in rest.char_indices() {
+        let mut closed = false;
+        let mut seen_group = false;
+        let mut at = 0usize;
+        while let Some(character) = rest[at..].chars().next() {
             match character {
                 '(' | '[' => depth += 1,
-                ')' | ']' => depth = depth.saturating_sub(1),
-                ';' if depth == 0 => return false,
+                ')' | ']' if depth == 0 => closed = true,
+                ')' | ']' => depth -= 1,
+                ';' if depth == 0 && (closed || seen_group) => return false,
                 '{' if depth == 0 => {
                     let group = &rest[at..];
                     let end = skip_balanced(group, '{', '}')
                         .map_or(group.len(), |after| group.len() - after.len());
-                    return has_ref_mut(&group[..end]);
+                    if closed {
+                        return has_ref_mut(&group[..end]);
+                    }
+                    if !seen_group && has_ref_mut(&group[..end]) {
+                        return true;
+                    }
+                    seen_group = true;
+                    at += end;
+                    continue;
                 }
                 _ => {}
             }
+            at += character.len_utf8();
         }
     }
     false

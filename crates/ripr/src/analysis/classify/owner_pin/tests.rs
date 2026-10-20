@@ -9245,6 +9245,46 @@ fn written_by_test_refuses_raw_deref_tuple_and_generic_path_aliases() {
     }
 }
 
+/// #8960: a brace-bearing element after the name inside a `match` scrutinee
+/// group, raw-identifier path segments and a `match <T>::NAME` head are all
+/// mutable aliases of the expected value; each read row is the nearby shape
+/// that must stay a read.
+#[test]
+fn written_by_test_refuses_scrutinee_brace_raw_segment_and_generic_head_aliases() {
+    for write in [
+        "match (EXPECTED, S { a: 1 }) { (ref mut r, _) => { *r = f(4); } }",
+        "match (EXPECTED, { 1 }) { (ref mut r, _) => {} }",
+        "match (EXPECTED, || {}) { (ref mut r, _) => {} }",
+        "match [EXPECTED, S { a: 1 }] { [ref mut r, _] => {} }",
+        "match [EXPECTED; 3] { [ref mut r, ..] => {} }",
+        "let p = addr_of_mut!(r#type::EXPECTED);",
+        "let r = &mut r#m::EXPECTED;",
+        "let r = &mut crate::r#m::EXPECTED;",
+        "let r = &mut r#mut::EXPECTED;",
+        "match <T>::EXPECTED { ref mut r => {} }",
+        "match m::<T>::EXPECTED { ref mut r => {} }",
+        "let r = &mut <fn() -> u8>::EXPECTED;",
+        "let r = &mut <T as Tr<{ N > 1 }>>::EXPECTED;",
+    ] {
+        assert!(super::written_by_test(write, "EXPECTED", false), "{write}");
+    }
+    for read in [
+        "match (EXPECTED, S { a: 1 }) { (r, _) => {} }",
+        "match (EXPECTED, { 1 }) { (r, _) => {} }",
+        "match [EXPECTED, S { a: 1 }] { [r, _] => {} }",
+        "match [EXPECTED; 3] { [r, ..] => {} }",
+        "match <T>::EXPECTED { r => {} }",
+        "match EXPECTED { _ => {} } if c { let ref mut x = y; }",
+        "let r = &r#m::EXPECTED;",
+        "let p = addr_of!(r#type::EXPECTED);",
+        "let r = &mut foo(r#m::EXPECTED);",
+        "let r = &<fn() -> u8>::EXPECTED;",
+        "let r = &<T as Tr<{ N > 1 }>>::EXPECTED;",
+    ] {
+        assert!(!super::written_by_test(read, "EXPECTED", false), "{read}");
+    }
+}
+
 /// #7847: the lexical write guard on its own, including operator edges the
 /// pipeline fixtures cannot reach.
 #[test]

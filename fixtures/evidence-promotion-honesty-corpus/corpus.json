@@ -10152,6 +10152,18 @@
         { "type": "must_not_report_clean" },
         { "type": "must_not_promote" }
       ]
+    },
+    {
+      "id": "rust_owner_pin_written_alias_not_a_pin",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_pin_written_alias_not_a_pin",
+      "vector": "owner_pin_expected_static_the_test_writes_through_a_ref_mut_or_addr_of_mut_alias",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" }
+      ]
     }
   ]
 }
