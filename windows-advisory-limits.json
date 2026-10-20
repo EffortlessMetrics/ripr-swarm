@@ -1,0 +1,53 @@
+{
+  "source": "99ff69b63e38a3e0627d859be898e74299f8bb69",
+  "run": 39367076780,
+  "job": 118446236835,
+  "wrapper": "success",
+  "meaning": "wrapper success is not a clean advisory pass",
+  "passed_subsets": [
+    {
+      "name": "lsp::gap_artifacts",
+      "passed": 84,
+      "filtered": 11596
+    },
+    {
+      "name": "cargo_input_identity::tests",
+      "passed": 7,
+      "filtered": 11673
+    },
+    {
+      "name": "unusable_cache_directory_is_reported_once_per_build",
+      "passed": 1,
+      "filtered": 541
+    }
+  ],
+  "failures": [
+    {
+      "name": "subset-clippy",
+      "native_exit": 101,
+      "cause": "E0425 run_sh absent on Windows at generated_review_workflow.rs:3804; helper cfg(unix) at3903",
+      "unchanged_blob": "9e4d6591f0b96390892accd7ca0a1e18a3b1fe2e",
+      "identical_at": [
+        "fe098012eeb27d10a825f3c0f8fd9f3dfc6fdddf",
+        "99ff69b63e38a3e0627d859be898e74299f8bb69",
+        "d98f95dbca76d93624d475e451f311d427fece4c"
+      ],
+      "existing_issue": 8840,
+      "existing_pr": 8845,
+      "owner": "retained repo-skills worker",
+      "execution_limit": "observed candidate Windows execution; no new exact-base Windows run claimed"
+    },
+    {
+      "name": "subset-selector-literal",
+      "native_exit": 1,
+      "cause": "printed command lost frozen root/diff/JSON scope",
+      "existing_issue": 8848,
+      "existing_pr": 8849,
+      "owner": "MatchArm/causal-attribution worker",
+      "existing_cause": "Windows console double-quote expectation mismatch in frozen consumer, independently investigated by existing owner",
+      "candidate_attribution": "graph-only change does not edit consumer/formatter; single-package no-path-dependency fixture. No duplicate repair; native stderr byte extraction remains unavailable"
+    }
+  ],
+  "qualification_effect": "required Linux Rust workflow remains active; no Windows full-pass claim. Existing upstream ownership preserved.",
+  "no_source_changes": true
+}

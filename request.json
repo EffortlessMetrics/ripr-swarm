@@ -1,0 +1,24 @@
+{
+  "source": "99ff69b63e38a3e0627d859be898e74299f8bb69",
+  "run": 39367076753,
+  "requested_at": "2026-10-20T03:58:22Z",
+  "ready_confirmed": true,
+  "label": "merge-ready",
+  "label_applied_once": true,
+  "prior_denial": "historical; one retry under materially new authorization succeeded",
+  "merge_subject": {
+    "commit": "7c656d3096e5658b80ccb765a831341df66d3253",
+    "parents": [
+      "d8edec61714b65774abf38ce17ba91202207de25",
+      "99ff69b63e38a3e0627d859be898e74299f8bb69"
+    ],
+    "tree": "c3c01de526445a5afe087bdc2fd24b6c0d1e9296"
+  },
+  "main_observed": "d98f95dbca76d93624d475e451f311d427fece4c",
+  "combined_preview_tree": "17e5c822933cee594ef6250fee80267cf723a33a",
+  "holds": [
+    "no merge or auto-merge",
+    "no release or deployment",
+    "no credential/settings/protection changes"
+  ]
+}

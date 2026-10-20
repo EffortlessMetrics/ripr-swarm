@@ -1,0 +1,404 @@
+{
+  "jobs": [
+    {
+      "id": 118447203268,
+      "name": "Admit PR Candidate",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 39367076753,
+      "logs_url": null,
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Run actions/checkout@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Exercise admission discriminators",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        },
+        {
+          "name": "Admit exact candidate",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4
+        },
+        {
+          "name": "Post Run actions/checkout@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9
+        }
+      ]
+    },
+    {
+      "id": 118447204272,
+      "name": "Route Ripr Rust Small",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 39367076753,
+      "logs_url": null,
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Select runner",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        }
+      ]
+    },
+    {
+      "id": 118447245692,
+      "name": "Detect Docs-Only Surface",
+      "status": "completed",
+      "conclusion": "success",
+      "run_id": 39367076753,
+      "logs_url": null,
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Run actions/checkout@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Check whether every changed file is docs/spec/markdown",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3
+        },
+        {
+          "name": "Post Run actions/checkout@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7
+        }
+      ]
+    },
+    {
+      "id": 118447253983,
+      "name": "Ripr Rust Small on GitHub Hosted / Rust gates",
+      "status": "in_progress",
+      "conclusion": null,
+      "run_id": 39367076753,
+      "logs_url": null,
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1
+        },
+        {
+          "name": "Run actions/checkout@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2
+        },
+        {
+          "name": "Acquire scratch lease",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 3
+        },
+        {
+          "name": "Reclaim terminal scratch",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 4
+        },
+        {
+          "name": "Prepare toolchain temp",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 5
+        },
+        {
+          "name": "Configure scratch environment",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 6
+        },
+        {
+          "name": "Prepare scratch",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 7
+        },
+        {
+          "name": "Run dtolnay/rust-toolchain@v1",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8
+        },
+        {
+          "name": "Formatting preflight",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9
+        },
+        {
+          "name": "Install CI tools",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10
+        },
+        {
+          "name": "Restore hosted Rust cache",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11
+        },
+        {
+          "name": "Start sccache server",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 12
+        },
+        {
+          "name": "Agent skill contracts",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 13
+        },
+        {
+          "name": "Prepare locked owner-return fixture dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 14
+        },
+        {
+          "name": "Repository policy preflight",
+          "status": "in_progress",
+          "conclusion": null,
+          "number": 15
+        },
+        {
+          "name": "Evidence promotion honesty",
+          "status": "pending",
+          "conclusion": null,
+          "number": 16
+        },
+        {
+          "name": "Dependency policy",
+          "status": "pending",
+          "conclusion": null,
+          "number": 17
+        },
+        {
+          "name": "Process policy",
+          "status": "pending",
+          "conclusion": null,
+          "number": 18
+        },
+        {
+          "name": "Network policy",
+          "status": "pending",
+          "conclusion": null,
+          "number": 19
+        },
+        {
+          "name": "Workspace and all-target check",
+          "status": "pending",
+          "conclusion": null,
+          "number": 20
+        },
+        {
+          "name": "All-features ripr target check",
+          "status": "pending",
+          "conclusion": null,
+          "number": 21
+        },
+        {
+          "name": "Strict workspace Clippy",
+          "status": "pending",
+          "conclusion": null,
+          "number": 22
+        },
+        {
+          "name": "Required Rust tests",
+          "status": "pending",
+          "conclusion": null,
+          "number": 23
+        },
+        {
+          "name": "Upload required Rust test results",
+          "status": "pending",
+          "conclusion": null,
+          "number": 24
+        },
+        {
+          "name": "Required Rust doctests",
+          "status": "pending",
+          "conclusion": null,
+          "number": 25
+        },
+        {
+          "name": "Golden output contracts",
+          "status": "pending",
+          "conclusion": null,
+          "number": 26
+        },
+        {
+          "name": "Retain wildcard calibration producer outputs",
+          "status": "pending",
+          "conclusion": null,
+          "number": 27
+        },
+        {
+          "name": "Fixture contracts",
+          "status": "pending",
+          "conclusion": null,
+          "number": 28
+        },
+        {
+          "name": "Verdict corpora",
+          "status": "pending",
+          "conclusion": null,
+          "number": 29
+        },
+        {
+          "name": "PR evidence",
+          "status": "pending",
+          "conclusion": null,
+          "number": 30
+        },
+        {
+          "name": "Proof route dry-run (advisory)",
+          "status": "pending",
+          "conclusion": null,
+          "number": 31
+        },
+        {
+          "name": "Advisory reports",
+          "status": "pending",
+          "conclusion": null,
+          "number": 32
+        },
+        {
+          "name": "Show sccache stats",
+          "status": "pending",
+          "conclusion": null,
+          "number": 33
+        },
+        {
+          "name": "Write gate summary",
+          "status": "pending",
+          "conclusion": null,
+          "number": 34
+        },
+        {
+          "name": "Remove RIPR analysis cache before artifact upload",
+          "status": "pending",
+          "conclusion": null,
+          "number": 35
+        },
+        {
+          "name": "Upload RIPR reports",
+          "status": "pending",
+          "conclusion": null,
+          "number": 36
+        },
+        {
+          "name": "Clean scratch",
+          "status": "pending",
+          "conclusion": null,
+          "number": 37
+        },
+        {
+          "name": "Release scratch lease",
+          "status": "pending",
+          "conclusion": null,
+          "number": 38
+        },
+        {
+          "name": "Post Restore hosted Rust cache",
+          "status": "pending",
+          "conclusion": null,
+          "number": 75
+        },
+        {
+          "name": "Post Run actions/checkout@v6",
+          "status": "pending",
+          "conclusion": null,
+          "number": 76
+        }
+      ]
+    },
+    {
+      "id": 118447254466,
+      "name": "Ripr Rust Small on CX53",
+      "status": "completed",
+      "conclusion": "skipped",
+      "run_id": 39367076753,
+      "logs_url": null,
+      "steps": null
+    },
+    {
+      "id": 118447254809,
+      "name": "Ripr Docs Gate",
+      "status": "completed",
+      "conclusion": "skipped",
+      "run_id": 39367076753,
+      "logs_url": null,
+      "steps": null
+    },
+    {
+      "id": 118447254875,
+      "name": "Ripr Rust Small on CX43",
+      "status": "completed",
+      "conclusion": "skipped",
+      "run_id": 39367076753,
+      "logs_url": null,
+      "steps": null
+    },
+    {
+      "id": 118447255790,
+      "name": "Ripr Rust Small on CPX42",
+      "status": "completed",
+      "conclusion": "skipped",
+      "run_id": 39367076753,
+      "logs_url": null,
+      "steps": null
+    }
+  ]
+}

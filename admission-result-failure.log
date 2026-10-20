@@ -1,0 +1,140 @@
+﻿2026-10-20T03:58:57.1659953Z Current runner version: '2.337.0'
+2026-10-20T03:58:57.1684931Z ##[group]Runner Image Provisioner
+2026-10-20T03:58:57.1685796Z Hosted Compute Agent
+2026-10-20T03:58:57.1686371Z Version: 20261015.610
+2026-10-20T03:58:57.1687010Z Commit: 267fdb4e8bbec4ab5ea31367f3a00d5c480c7656
+2026-10-20T03:58:57.1687779Z Build Date: 2026-10-14T17:06:54Z
+2026-10-20T03:58:57.1688433Z Worker ID: {39a1e651-54bf-4810-b67e-984b73340902}
+2026-10-20T03:58:57.1689118Z Region: centralus
+2026-10-20T03:58:57.1689642Z Cloud: Azure
+2026-10-20T03:58:57.1690177Z ##[endgroup]
+2026-10-20T03:58:57.1691452Z ##[group]Operating System
+2026-10-20T03:58:57.1692025Z Ubuntu
+2026-10-20T03:58:57.1692561Z 24.04.5
+2026-10-20T03:58:57.1693053Z LTS
+2026-10-20T03:58:57.1693775Z ##[endgroup]
+2026-10-20T03:58:57.1694384Z ##[group]Runner Image
+2026-10-20T03:58:57.1695092Z Image: ubuntu-24.04
+2026-10-20T03:58:57.1695868Z Version: 20261018.339.1
+2026-10-20T03:58:57.1697491Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261018.339/images/ubuntu/Ubuntu2404-Readme.md
+2026-10-20T03:58:57.1699680Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261018.339
+2026-10-20T03:58:57.1701002Z ##[endgroup]
+2026-10-20T03:58:57.1702658Z ##[group]GITHUB_TOKEN Permissions
+2026-10-20T03:58:57.1705764Z Actions: read
+2026-10-20T03:58:57.1706699Z Contents: read
+2026-10-20T03:58:57.1707498Z Metadata: read
+2026-10-20T03:58:57.1708360Z ##[endgroup]
+2026-10-20T03:58:57.1711313Z Secret source: Actions
+2026-10-20T03:58:57.1712642Z Cache mode: write
+2026-10-20T03:58:57.1714074Z Prepare workflow directory
+2026-10-20T03:58:57.2109962Z Prepare all required actions
+2026-10-20T03:58:57.2195065Z Complete job name: Ripr Rust Small Result
+2026-10-20T03:58:57.3155920Z ##[group]Run status=pass
+2026-10-20T03:58:57.3157106Z [36;1mstatus=pass[0m
+2026-10-20T03:58:57.3158197Z [36;1mmessage="selected implementation job succeeded"[0m
+2026-10-20T03:58:57.3160216Z [36;1mif [ "$EVENT_NAME" = "pull_request" ] && [ "${LABEL_NAME,,}" != "merge-ready" ]; then message="not a merge-ready request; named Merge-ready Nonrequest, never the required context"[0m
+2026-10-20T03:58:57.3162846Z [36;1melif [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$WORKFLOW_REF" != "refs/heads/main" ] && [ "$WORKFLOW_REF" != "refs/heads/master" ]; then[0m
+2026-10-20T03:58:57.3164634Z [36;1m  status=fail[0m
+2026-10-20T03:58:57.3165923Z [36;1m  message="branch/tag dispatch is diagnostic-only; PR qualification requires the merge-ready label"[0m
+2026-10-20T03:58:57.3167429Z [36;1melif [ "$ADMISSION_RESULT" != "success" ]; then[0m
+2026-10-20T03:58:57.3168440Z [36;1m  status=fail[0m
+2026-10-20T03:58:57.3169643Z [36;1m  message="candidate admission result was $ADMISSION_RESULT"[0m
+2026-10-20T03:58:57.3171229Z [36;1melif [ "$ADMISSION_STATUS" != "admitted" ] && [ "$ADMISSION_STATUS" != "not_applicable" ]; then[0m
+2026-10-20T03:58:57.3172550Z [36;1m  status=fail[0m
+2026-10-20T03:58:57.3173987Z [36;1m  message="candidate admission status was ${ADMISSION_STATUS:-missing}: ${ADMISSION_REASON:-unknown}"[0m
+2026-10-20T03:58:57.3175590Z [36;1melif [ "$DOCS_DETECT_RESULT" != "success" ]; then[0m
+2026-10-20T03:58:57.3176582Z [36;1m  status=fail[0m
+2026-10-20T03:58:57.3177616Z [36;1m  message="docs-surface detection result was $DOCS_DETECT_RESULT"[0m
+2026-10-20T03:58:57.3179021Z [36;1melif [ "$DOCS_ONLY" = "true" ] && [ "$EVENT_NAME" = "pull_request" ]; then[0m
+2026-10-20T03:58:57.3180329Z [36;1m  if [ "$DOCS_GATE_RESULT" = "success" ]; then[0m
+2026-10-20T03:58:57.3181634Z [36;1m    message="docs-only surface; heavy lanes skipped; docs-gate passed"[0m
+2026-10-20T03:58:57.3182788Z [36;1m  else[0m
+2026-10-20T03:58:57.3183692Z [36;1m    status=fail[0m
+2026-10-20T03:58:57.3184763Z [36;1m    message="docs-gate result was $DOCS_GATE_RESULT on a docs-only PR"[0m
+2026-10-20T03:58:57.3185856Z [36;1m  fi[0m
+2026-10-20T03:58:57.3186738Z [36;1melif [ "$ROUTE_RESULT" != "success" ]; then[0m
+2026-10-20T03:58:57.3187664Z [36;1m  status=fail[0m
+2026-10-20T03:58:57.3188638Z [36;1m  message="route job result was $ROUTE_RESULT"[0m
+2026-10-20T03:58:57.3189874Z [36;1melse[0m
+2026-10-20T03:58:57.3190638Z [36;1m  case "$TARGET" in[0m
+2026-10-20T03:58:57.3191454Z [36;1m    cx43)[0m
+2026-10-20T03:58:57.3192271Z [36;1m      if [ "$CX43_RESULT" = "success" ]; then[0m
+2026-10-20T03:58:57.3193419Z [36;1m        message="CX43 job succeeded"[0m
+2026-10-20T03:58:57.3194725Z [36;1m      elif [ "$CX43_SCRATCH_STATUS" = "tempfail" ] && [ "$GITHUB_RESULT" = "success" ]; then[0m
+2026-10-20T03:58:57.3196317Z [36;1m        message="CX43 disk-guard tempfailed; GitHub-hosted fallback succeeded"[0m
+2026-10-20T03:58:57.3197559Z [36;1m      else[0m
+2026-10-20T03:58:57.3198296Z [36;1m        status=fail[0m
+2026-10-20T03:58:57.3199240Z [36;1m        message="CX43 job result was $CX43_RESULT"[0m
+2026-10-20T03:58:57.3200223Z [36;1m      fi[0m
+2026-10-20T03:58:57.3200995Z [36;1m      ;;[0m
+2026-10-20T03:58:57.3201685Z [36;1m    cpx42)[0m
+2026-10-20T03:58:57.3202477Z [36;1m      if [ "$CPX42_RESULT" = "success" ]; then[0m
+2026-10-20T03:58:57.3203762Z [36;1m        message="CPX42 job succeeded"[0m
+2026-10-20T03:58:57.3205178Z [36;1m      elif [ "$CPX42_SCRATCH_STATUS" = "tempfail" ] && [ "$GITHUB_RESULT" = "success" ]; then[0m
+2026-10-20T03:58:57.3206854Z [36;1m        message="CPX42 disk-guard tempfailed; GitHub-hosted fallback succeeded"[0m
+2026-10-20T03:58:57.3208034Z [36;1m      else[0m
+2026-10-20T03:58:57.3208791Z [36;1m        status=fail[0m
+2026-10-20T03:58:57.3209835Z [36;1m        message="CPX42 job result was $CPX42_RESULT"[0m
+2026-10-20T03:58:57.3210780Z [36;1m      fi[0m
+2026-10-20T03:58:57.3211537Z [36;1m      ;;[0m
+2026-10-20T03:58:57.3212460Z [36;1m    cx53)[0m
+2026-10-20T03:58:57.3213500Z [36;1m      if [ "$CX53_RESULT" = "success" ]; then[0m
+2026-10-20T03:58:57.3214491Z [36;1m        message="CX53 job succeeded"[0m
+2026-10-20T03:58:57.3215750Z [36;1m      elif [ "$CX53_SCRATCH_STATUS" = "tempfail" ] && [ "$GITHUB_RESULT" = "success" ]; then[0m
+2026-10-20T03:58:57.3217404Z [36;1m        message="CX53 disk-guard tempfailed; GitHub-hosted fallback succeeded"[0m
+2026-10-20T03:58:57.3218566Z [36;1m      else[0m
+2026-10-20T03:58:57.3219324Z [36;1m        status=fail[0m
+2026-10-20T03:58:57.3220246Z [36;1m        message="CX53 job result was $CX53_RESULT"[0m
+2026-10-20T03:58:57.3221208Z [36;1m      fi[0m
+2026-10-20T03:58:57.3221969Z [36;1m      ;;[0m
+2026-10-20T03:58:57.3223400Z [36;1m    github) [ "$GITHUB_RESULT" = "success" ] || { status=fail; message="GitHub-hosted job result was $GITHUB_RESULT"; } ;;[0m
+2026-10-20T03:58:57.3225077Z [36;1m    *) status=fail; message="unknown routed target: $TARGET" ;;[0m
+2026-10-20T03:58:57.3226252Z [36;1m  esac[0m
+2026-10-20T03:58:57.3226916Z [36;1mfi[0m
+2026-10-20T03:58:57.3227842Z [36;1mecho "### Ripr Rust Small Result" >> "$GITHUB_STEP_SUMMARY"[0m
+2026-10-20T03:58:57.3228958Z [36;1mecho "" >> "$GITHUB_STEP_SUMMARY"[0m
+2026-10-20T03:58:57.3237633Z [36;1mfor row in "admission result:$ADMISSION_RESULT" "admission status:$ADMISSION_STATUS" "admission reason:$ADMISSION_REASON" "admission claim:$ADMISSION_CLAIM" "admission delta:$ADMISSION_ACCEPTANCE_DELTA" "competing PRs:$ADMISSION_COMPETING_PRS" "changed files:$ADMISSION_CHANGED_FILES" "changed lines:$ADMISSION_CHANGED_LINES" "target:$TARGET" "reason:$REASON" "docs_detect:$DOCS_DETECT_RESULT" "docs_only:$DOCS_ONLY" "docs_gate:$DOCS_GATE_RESULT" "status:$status" "message:$message" "route:$ROUTE_RESULT" "cx43:$CX43_RESULT" "cpx42:$CPX42_RESULT" "cx53:$CX53_RESULT" "github:$GITHUB_RESULT" "cx43 scratch:$CX43_SCRATCH_STATUS" "cpx42 scratch:$CPX42_SCRATCH_STATUS" "cx53 scratch:$CX53_SCRATCH_STATUS" "cx43 scratch message:$CX43_SCRATCH_MESSAGE" "cpx42 scratch message:$CPX42_SCRATCH_MESSAGE" "cx53 scratch message:$CX53_SCRATCH_MESSAGE" "runner query:$RUNNER_QUERY" "visible runners:$RUNNER_TOTAL" "cx43 online:$CX43_ONLINE" "cx43 idle ready:$CX43_IDLE_READY" "cpx42 online:$CPX42_ONLINE" "cpx42 idle ready:$CPX42_IDLE_READY" "cx53 online:$CX53_ONLINE" "cx53 idle ready:$CX53_IDLE_READY"; do[0m
+2026-10-20T03:58:57.3247396Z [36;1m  echo "- ${row%%:*}: \`${row#*:}\`" >> "$GITHUB_STEP_SUMMARY"[0m
+2026-10-20T03:58:57.3248553Z [36;1mdone[0m
+2026-10-20T03:58:57.3249310Z [36;1m[ "$status" = "pass" ][0m
+2026-10-20T03:58:57.3892167Z shell: /usr/bin/bash -e {0}
+2026-10-20T03:58:57.3893464Z env:
+2026-10-20T03:58:57.3894013Z   CARGO_TERM_COLOR: always
+2026-10-20T03:58:57.3894627Z   ADMISSION_RESULT: failure
+2026-10-20T03:58:57.3895256Z   ADMISSION_STATUS: refused
+2026-10-20T03:58:57.3895882Z   ADMISSION_REASON: claim_identity_missing
+2026-10-20T03:58:57.3896492Z   ADMISSION_CLAIM: 
+2026-10-20T03:58:57.3897114Z   ADMISSION_ACCEPTANCE_DELTA: 
+2026-10-20T03:58:57.3897719Z   ADMISSION_COMPETING_PRS: 
+2026-10-20T03:58:57.3898309Z   ADMISSION_CHANGED_FILES: 3
+2026-10-20T03:58:57.3898884Z   ADMISSION_CHANGED_LINES: 236
+2026-10-20T03:58:57.3899891Z   TARGET: github
+2026-10-20T03:58:57.3900426Z   REASON: runner_api_failed
+2026-10-20T03:58:57.3900998Z   ROUTE_RESULT: success
+2026-10-20T03:58:57.3901542Z   CX43_RESULT: skipped
+2026-10-20T03:58:57.3902076Z   CPX42_RESULT: skipped
+2026-10-20T03:58:57.3902597Z   CX53_RESULT: skipped
+2026-10-20T03:58:57.3903133Z   GITHUB_RESULT: skipped
+2026-10-20T03:58:57.3903804Z   CX43_SCRATCH_STATUS: 
+2026-10-20T03:58:57.3904347Z   CPX42_SCRATCH_STATUS: 
+2026-10-20T03:58:57.3904952Z   CX53_SCRATCH_STATUS: 
+2026-10-20T03:58:57.3905474Z   CX43_SCRATCH_MESSAGE: 
+2026-10-20T03:58:57.3906028Z   CPX42_SCRATCH_MESSAGE: 
+2026-10-20T03:58:57.3906583Z   CX53_SCRATCH_MESSAGE: 
+2026-10-20T03:58:57.3907099Z   RUNNER_QUERY: failed
+2026-10-20T03:58:57.3907661Z   RUNNER_TOTAL: not_available
+2026-10-20T03:58:57.3908231Z   CX43_ONLINE: not_available
+2026-10-20T03:58:57.3909341Z   CX43_IDLE_READY: not_available
+2026-10-20T03:58:57.3909995Z   CPX42_ONLINE: not_available
+2026-10-20T03:58:57.3910572Z   CPX42_IDLE_READY: not_available
+2026-10-20T03:58:57.3911218Z   CX53_ONLINE: not_available
+2026-10-20T03:58:57.3911777Z   CX53_IDLE_READY: not_available
+2026-10-20T03:58:57.3912358Z   EVENT_NAME: pull_request
+2026-10-20T03:58:57.3912947Z   LABEL_NAME: merge-ready
+2026-10-20T03:58:57.3913793Z   DOCS_DETECT_RESULT: success
+2026-10-20T03:58:57.3914374Z   DOCS_ONLY: false
+2026-10-20T03:58:57.3914889Z   DOCS_GATE_RESULT: skipped
+2026-10-20T03:58:57.3915442Z   WORKFLOW_REF: refs/pull/8931/merge
+2026-10-20T03:58:57.3916090Z ##[endgroup]
+2026-10-20T03:58:57.4124890Z ##[error]Process completed with exit code 1.
+2026-10-20T03:58:57.4340735Z Cleaning up orphan processes

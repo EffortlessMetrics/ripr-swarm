@@ -1,0 +1,1818 @@
+﻿2026-10-20T03:58:25.7358909Z Current runner version: '2.337.0'
+2026-10-20T03:58:25.7394748Z ##[group]Runner Image Provisioner
+2026-10-20T03:58:25.7396037Z Hosted Compute Agent
+2026-10-20T03:58:25.7397012Z Version: 20261002.596
+2026-10-20T03:58:25.7398097Z Commit: c3d12f3313a95f25162a1503be624f3b0617f8c0
+2026-10-20T03:58:25.7399432Z Build Date: 2026-10-02T22:28:27Z
+2026-10-20T03:58:25.7400698Z Worker ID: {85e82dcb-26ce-4858-b939-054148a0e267}
+2026-10-20T03:58:25.7402130Z Region: southcentralus
+2026-10-20T03:58:25.7403130Z Cloud: Azure
+2026-10-20T03:58:25.7404109Z ##[endgroup]
+2026-10-20T03:58:25.7406493Z ##[group]Operating System
+2026-10-20T03:58:25.7407650Z Microsoft Windows Server 2025
+2026-10-20T03:58:25.7408683Z 10.0.26100
+2026-10-20T03:58:25.7409534Z Datacenter
+2026-10-20T03:58:25.7410426Z ##[endgroup]
+2026-10-20T03:58:25.7411913Z ##[group]Runner Image
+2026-10-20T03:58:25.7413254Z Image: windows-2025-vs2026
+2026-10-20T03:58:25.7414442Z Version: 20261007.264.1
+2026-10-20T03:58:25.7417225Z Included Software: https://github.com/actions/runner-images/blob/win25-vs2026/20261007.264/images/windows/Windows2025-VS2026-Readme.md
+2026-10-20T03:58:25.7420782Z Image Release: https://github.com/actions/runner-images/releases/tag/win25-vs2026%2F20261007.264
+2026-10-20T03:58:25.7422891Z ##[endgroup]
+2026-10-20T03:58:25.7424987Z ##[group]GITHUB_TOKEN Permissions
+2026-10-20T03:58:25.7428299Z Contents: read
+2026-10-20T03:58:25.7429735Z Metadata: read
+2026-10-20T03:58:25.7430647Z ##[endgroup]
+2026-10-20T03:58:25.7433700Z Secret source: Actions
+2026-10-20T03:58:25.7435125Z Cache mode: write
+2026-10-20T03:58:25.7436269Z Prepare workflow directory
+2026-10-20T03:58:25.8091324Z Prepare all required actions
+2026-10-20T03:58:25.8141620Z Getting action download info
+2026-10-20T03:58:26.0550277Z Download action repository 'actions/checkout@v6' (SHA:d23441a48e516b6c34aea4fa41551a30e30af803)
+2026-10-20T03:58:26.2177382Z Download action repository 'dtolnay/rust-toolchain@1.95' (SHA:035fceb3c12fb0c6a9461b52775e16473133e591)
+2026-10-20T03:58:26.3915909Z Download action repository 'Swatinem/rust-cache@v2' (SHA:6323deb102c322ba6fcbdcafc7e3dddab59af2b6)
+2026-10-20T03:58:26.8454253Z Download action repository 'actions/upload-artifact@v7' (SHA:cf430e030ddbb5b0abf93d22962f4752f3646cd9)
+2026-10-20T03:58:27.5030334Z Complete job name: windows-advisory-subset
+2026-10-20T03:58:27.6866710Z ##[group]Run actions/checkout@v6
+2026-10-20T03:58:27.6868152Z with:
+2026-10-20T03:58:27.6869468Z   ref: 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T03:58:27.6870537Z   persist-credentials: false
+2026-10-20T03:58:27.6871490Z   repository: EffortlessMetrics/ripr-swarm
+2026-10-20T03:58:27.6879678Z   token: ***
+2026-10-20T03:58:27.6880433Z   ssh-strict: true
+2026-10-20T03:58:27.6881205Z   ssh-user: git
+2026-10-20T03:58:27.6881959Z   clean: true
+2026-10-20T03:58:27.6882754Z   sparse-checkout-cone-mode: true
+2026-10-20T03:58:27.6883680Z   fetch-depth: 1
+2026-10-20T03:58:27.6884444Z   fetch-tags: false
+2026-10-20T03:58:27.6885229Z   show-progress: true
+2026-10-20T03:58:27.6886050Z   lfs: false
+2026-10-20T03:58:27.6886775Z   submodules: false
+2026-10-20T03:58:27.6887559Z   set-safe-directory: true
+2026-10-20T03:58:27.6888445Z   allow-unsafe-pr-checkout: false
+2026-10-20T03:58:27.6890006Z env:
+2026-10-20T03:58:27.6890784Z   SELECTOR_CONSUMER_ENABLED: true
+2026-10-20T03:58:27.6891730Z ##[endgroup]
+2026-10-20T03:58:27.8468585Z Syncing repository: EffortlessMetrics/ripr-swarm
+2026-10-20T03:58:27.8471189Z ##[group]Getting Git version info
+2026-10-20T03:58:27.8472299Z Working directory is 'D:\a\ripr-swarm\ripr-swarm'
+2026-10-20T03:58:27.9442419Z [command]"C:\Program Files\Git\bin\git.exe" version
+2026-10-20T03:58:28.2701311Z git version 2.56.0.windows.2
+2026-10-20T03:58:28.2757132Z ##[endgroup]
+2026-10-20T03:58:28.2776896Z Temporarily overriding HOME='D:\a\_temp\763fdd00-3880-4692-b039-232d3448891e' before making global git config changes
+2026-10-20T03:58:28.2779107Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-20T03:58:28.2789155Z [command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\ripr-swarm\ripr-swarm
+2026-10-20T03:58:28.3496039Z Deleting the contents of 'D:\a\ripr-swarm\ripr-swarm'
+2026-10-20T03:58:28.3502768Z ##[group]Determining repository object format
+2026-10-20T03:58:28.3505723Z ##[endgroup]
+2026-10-20T03:58:28.3507006Z ##[group]Initializing the repository
+2026-10-20T03:58:28.3514324Z [command]"C:\Program Files\Git\bin\git.exe" init D:\a\ripr-swarm\ripr-swarm
+2026-10-20T03:58:28.4430376Z Initialized empty Git repository in D:/a/ripr-swarm/ripr-swarm/.git/
+2026-10-20T03:58:28.4480462Z [command]"C:\Program Files\Git\bin\git.exe" remote add origin https://github.com/EffortlessMetrics/ripr-swarm
+2026-10-20T03:58:28.5186543Z ##[endgroup]
+2026-10-20T03:58:28.5188427Z ##[group]Disabling automatic garbage collection
+2026-10-20T03:58:28.5194235Z [command]"C:\Program Files\Git\bin\git.exe" config --local gc.auto 0
+2026-10-20T03:58:28.5570182Z ##[endgroup]
+2026-10-20T03:58:28.5572215Z ##[group]Setting up auth
+2026-10-20T03:58:28.5573324Z Removing SSH command configuration
+2026-10-20T03:58:28.5588175Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+2026-10-20T03:58:28.5964996Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+2026-10-20T03:58:30.0597829Z Removing HTTP extra header
+2026-10-20T03:58:30.0609624Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-20T03:58:30.0987425Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+2026-10-20T03:58:30.6700763Z Removing includeIf entries pointing to credentials config files
+2026-10-20T03:58:30.6717303Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-20T03:58:30.7091080Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
+2026-10-20T03:58:31.2598577Z [command]"C:\Program Files\Git\bin\git.exe" config --file D:\a\_temp\git-credentials-caf5d456-7594-414c-bd2d-b26bcb3c042d.config http.https://github.com/.extraheader "AUTHORIZATION: basic ***"
+2026-10-20T03:58:31.2994765Z [command]"C:\Program Files\Git\bin\git.exe" config --local includeIf.gitdir:D:/a/ripr-swarm/ripr-swarm/.git.path D:\a\_temp\git-credentials-caf5d456-7594-414c-bd2d-b26bcb3c042d.config
+2026-10-20T03:58:31.3387356Z [command]"C:\Program Files\Git\bin\git.exe" config --local includeIf.gitdir:D:/a/ripr-swarm/ripr-swarm/.git/worktrees/*.path D:\a\_temp\git-credentials-caf5d456-7594-414c-bd2d-b26bcb3c042d.config
+2026-10-20T03:58:31.3825371Z [command]"C:\Program Files\Git\bin\git.exe" config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-caf5d456-7594-414c-bd2d-b26bcb3c042d.config
+2026-10-20T03:58:31.4202681Z [command]"C:\Program Files\Git\bin\git.exe" config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-caf5d456-7594-414c-bd2d-b26bcb3c042d.config
+2026-10-20T03:58:31.4593539Z ##[endgroup]
+2026-10-20T03:58:31.4594125Z ##[group]Fetching the repository
+2026-10-20T03:58:31.4617087Z [command]"C:\Program Files\Git\bin\git.exe" -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T03:58:35.1012297Z From https://github.com/EffortlessMetrics/ripr-swarm
+2026-10-20T03:58:35.1013251Z  * branch              99ff69b63e38a3e0627d859be898e74299f8bb69 -> FETCH_HEAD
+2026-10-20T03:58:35.1066596Z [command]"C:\Program Files\Git\bin\git.exe" rev-parse --verify --quiet 99ff69b63e38a3e0627d859be898e74299f8bb69^{object}
+2026-10-20T03:58:35.1473786Z 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T03:58:35.1510192Z ##[endgroup]
+2026-10-20T03:58:35.1510757Z ##[group]Determining the checkout info
+2026-10-20T03:58:35.1511400Z ##[endgroup]
+2026-10-20T03:58:35.1520262Z [command]"C:\Program Files\Git\bin\git.exe" sparse-checkout disable
+2026-10-20T03:58:35.2005677Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset-all extensions.worktreeConfig
+2026-10-20T03:58:35.2375558Z ##[group]Checking out the ref
+2026-10-20T03:58:35.2383515Z [command]"C:\Program Files\Git\bin\git.exe" checkout --progress --force 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T03:58:36.3459499Z Updating files:  23% (3113/13454)
+2026-10-20T03:58:36.3854375Z Updating files:  24% (3229/13454)
+2026-10-20T03:58:36.4232880Z Updating files:  25% (3364/13454)
+2026-10-20T03:58:36.4608200Z Updating files:  26% (3499/13454)
+2026-10-20T03:58:36.4963852Z Updating files:  27% (3633/13454)
+2026-10-20T03:58:36.5315135Z Updating files:  28% (3768/13454)
+2026-10-20T03:58:36.5671396Z Updating files:  29% (3902/13454)
+2026-10-20T03:58:36.6025624Z Updating files:  30% (4037/13454)
+2026-10-20T03:58:36.6362403Z Updating files:  31% (4171/13454)
+2026-10-20T03:58:36.6729376Z Updating files:  32% (4306/13454)
+2026-10-20T03:58:36.7099246Z Updating files:  33% (4440/13454)
+2026-10-20T03:58:36.7451562Z Updating files:  34% (4575/13454)
+2026-10-20T03:58:36.7975835Z Updating files:  35% (4709/13454)
+2026-10-20T03:58:36.8361152Z Updating files:  36% (4844/13454)
+2026-10-20T03:58:36.8748483Z Updating files:  37% (4978/13454)
+2026-10-20T03:58:36.9120291Z Updating files:  38% (5113/13454)
+2026-10-20T03:58:36.9823660Z Updating files:  39% (5248/13454)
+2026-10-20T03:58:37.0186686Z Updating files:  40% (5382/13454)
+2026-10-20T03:58:37.0540933Z Updating files:  41% (5517/13454)
+2026-10-20T03:58:37.0890014Z Updating files:  42% (5651/13454)
+2026-10-20T03:58:37.1236314Z Updating files:  43% (5786/13454)
+2026-10-20T03:58:37.1541593Z Updating files:  44% (5920/13454)
+2026-10-20T03:58:37.1888002Z Updating files:  45% (6055/13454)
+2026-10-20T03:58:37.2249838Z Updating files:  46% (6189/13454)
+2026-10-20T03:58:37.2600370Z Updating files:  47% (6324/13454)
+2026-10-20T03:58:37.2965947Z Updating files:  48% (6458/13454)
+2026-10-20T03:58:37.3230273Z Updating files:  49% (6593/13454)
+2026-10-20T03:58:37.3289203Z Updating files:  49% (6708/13454)
+2026-10-20T03:58:37.5237629Z Updating files:  50% (6727/13454)
+2026-10-20T03:58:37.5595333Z Updating files:  51% (6862/13454)
+2026-10-20T03:58:37.5955100Z Updating files:  52% (6997/13454)
+2026-10-20T03:58:37.6299396Z Updating files:  53% (7131/13454)
+2026-10-20T03:58:37.6647332Z Updating files:  54% (7266/13454)
+2026-10-20T03:58:37.6991989Z Updating files:  55% (7400/13454)
+2026-10-20T03:58:37.7344562Z Updating files:  56% (7535/13454)
+2026-10-20T03:58:37.7707186Z Updating files:  57% (7669/13454)
+2026-10-20T03:58:37.8003483Z Updating files:  58% (7804/13454)
+2026-10-20T03:58:37.8301748Z Updating files:  59% (7938/13454)
+2026-10-20T03:58:37.8590767Z Updating files:  60% (8073/13454)
+2026-10-20T03:58:37.8878625Z Updating files:  61% (8207/13454)
+2026-10-20T03:58:37.9196906Z Updating files:  62% (8342/13454)
+2026-10-20T03:58:37.9495542Z Updating files:  63% (8477/13454)
+2026-10-20T03:58:37.9796799Z Updating files:  64% (8611/13454)
+2026-10-20T03:58:38.0073666Z Updating files:  65% (8746/13454)
+2026-10-20T03:58:38.0332443Z Updating files:  66% (8880/13454)
+2026-10-20T03:58:38.0600043Z Updating files:  67% (9015/13454)
+2026-10-20T03:58:38.0896624Z Updating files:  68% (9149/13454)
+2026-10-20T03:58:38.1265386Z Updating files:  69% (9284/13454)
+2026-10-20T03:58:38.1623652Z Updating files:  70% (9418/13454)
+2026-10-20T03:58:38.1980687Z Updating files:  71% (9553/13454)
+2026-10-20T03:58:38.2343391Z Updating files:  72% (9687/13454)
+2026-10-20T03:58:38.2697314Z Updating files:  73% (9822/13454)
+2026-10-20T03:58:38.3358461Z Updating files:  74% (9956/13454)
+2026-10-20T03:58:38.3407024Z Updating files:  74% (10073/13454)
+2026-10-20T03:58:38.3762810Z Updating files:  75% (10091/13454)
+2026-10-20T03:58:38.4111856Z Updating files:  76% (10226/13454)
+2026-10-20T03:58:38.4459488Z Updating files:  77% (10360/13454)
+2026-10-20T03:58:38.4803633Z Updating files:  78% (10495/13454)
+2026-10-20T03:58:38.5167566Z Updating files:  79% (10629/13454)
+2026-10-20T03:58:38.5529768Z Updating files:  80% (10764/13454)
+2026-10-20T03:58:38.5872431Z Updating files:  81% (10898/13454)
+2026-10-20T03:58:38.6195803Z Updating files:  82% (11033/13454)
+2026-10-20T03:58:38.6500567Z Updating files:  83% (11167/13454)
+2026-10-20T03:58:38.6804125Z Updating files:  84% (11302/13454)
+2026-10-20T03:58:38.7078113Z Updating files:  85% (11436/13454)
+2026-10-20T03:58:38.8319280Z Updating files:  86% (11571/13454)
+2026-10-20T03:58:38.8590625Z Updating files:  87% (11705/13454)
+2026-10-20T03:58:38.8873204Z Updating files:  88% (11840/13454)
+2026-10-20T03:58:38.9208235Z Updating files:  89% (11975/13454)
+2026-10-20T03:58:38.9563597Z Updating files:  90% (12109/13454)
+2026-10-20T03:58:38.9914941Z Updating files:  91% (12244/13454)
+2026-10-20T03:58:39.0318164Z Updating files:  92% (12378/13454)
+2026-10-20T03:58:39.0687978Z Updating files:  93% (12513/13454)
+2026-10-20T03:58:39.1038617Z Updating files:  94% (12647/13454)
+2026-10-20T03:58:39.1480686Z Updating files:  95% (12782/13454)
+2026-10-20T03:58:39.1896583Z Updating files:  96% (12916/13454)
+2026-10-20T03:58:39.2385448Z Updating files:  97% (13051/13454)
+2026-10-20T03:58:39.2852611Z Updating files:  98% (13185/13454)
+2026-10-20T03:58:39.3419917Z Updating files:  99% (13320/13454)
+2026-10-20T03:58:39.3420419Z Updating files: 100% (13454/13454)
+2026-10-20T03:58:39.3420814Z Updating files: 100% (13454/13454), done.
+2026-10-20T03:58:39.3737592Z Note: switching to '99ff69b63e38a3e0627d859be898e74299f8bb69'.
+2026-10-20T03:58:39.3737885Z 
+2026-10-20T03:58:39.3738084Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-10-20T03:58:39.3738571Z changes and commit them, and you can discard any commits you make in this
+2026-10-20T03:58:39.3739029Z state without impacting any branches by switching back to a branch.
+2026-10-20T03:58:39.3739302Z 
+2026-10-20T03:58:39.3739903Z If you want to create a new branch to retain commits you create, you may
+2026-10-20T03:58:39.3740399Z do so (now or later) by using -c with the switch command. Example:
+2026-10-20T03:58:39.3740643Z 
+2026-10-20T03:58:39.3740762Z   git switch -c <new-branch-name>
+2026-10-20T03:58:39.3740946Z 
+2026-10-20T03:58:39.3741029Z Or undo this operation with:
+2026-10-20T03:58:39.3741182Z 
+2026-10-20T03:58:39.3741250Z   git switch -
+2026-10-20T03:58:39.3741365Z 
+2026-10-20T03:58:39.3741565Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-10-20T03:58:39.3741991Z 
+2026-10-20T03:58:39.3742771Z HEAD is now at 99ff69b6 docs(workspace): clarify connected traversal union boundary
+2026-10-20T03:58:39.3906448Z ##[endgroup]
+2026-10-20T03:58:39.4458932Z [command]"C:\Program Files\Git\bin\git.exe" log -1 --format=%H
+2026-10-20T03:58:39.4803465Z 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T03:58:39.4845982Z ##[group]Removing auth
+2026-10-20T03:58:39.4846391Z Removing SSH command configuration
+2026-10-20T03:58:39.4854270Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+2026-10-20T03:58:39.5232991Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+2026-10-20T03:58:40.1471868Z Removing HTTP extra header
+2026-10-20T03:58:40.1482740Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-20T03:58:40.1864598Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+2026-10-20T03:58:40.7313290Z Removing includeIf entries pointing to credentials config files
+2026-10-20T03:58:40.7326588Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-20T03:58:40.7666745Z includeif.gitdir:D:/a/ripr-swarm/ripr-swarm/.git.path
+2026-10-20T03:58:40.7668018Z includeif.gitdir:D:/a/ripr-swarm/ripr-swarm/.git/worktrees/*.path
+2026-10-20T03:58:40.7669458Z includeif.gitdir:/github/workspace/.git.path
+2026-10-20T03:58:40.7670183Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-10-20T03:58:40.7708622Z [command]"C:\Program Files\Git\bin\git.exe" config --local --get-all includeif.gitdir:D:/a/ripr-swarm/ripr-swarm/.git.path
+2026-10-20T03:58:40.8042779Z D:\a\_temp\git-credentials-caf5d456-7594-414c-bd2d-b26bcb3c042d.config
+2026-10-20T03:58:40.8085833Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset includeif.gitdir:D:/a/ripr-swarm/ripr-swarm/.git.path D:\a\_temp\git-credentials-caf5d456-7594-414c-bd2d-b26bcb3c042d.config
+2026-10-20T03:58:40.8456711Z [command]"C:\Program Files\Git\bin\git.exe" config --local --get-all includeif.gitdir:D:/a/ripr-swarm/ripr-swarm/.git/worktrees/*.path
+2026-10-20T03:58:40.8794724Z D:\a\_temp\git-credentials-caf5d456-7594-414c-bd2d-b26bcb3c042d.config
+2026-10-20T03:58:40.8837408Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset includeif.gitdir:D:/a/ripr-swarm/ripr-swarm/.git/worktrees/*.path D:\a\_temp\git-credentials-caf5d456-7594-414c-bd2d-b26bcb3c042d.config
+2026-10-20T03:58:40.9210171Z [command]"C:\Program Files\Git\bin\git.exe" config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-10-20T03:58:40.9541777Z /github/runner_temp/git-credentials-caf5d456-7594-414c-bd2d-b26bcb3c042d.config
+2026-10-20T03:58:40.9581403Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset includeif.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-caf5d456-7594-414c-bd2d-b26bcb3c042d.config
+2026-10-20T03:58:40.9962461Z [command]"C:\Program Files\Git\bin\git.exe" config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-10-20T03:58:41.0291867Z /github/runner_temp/git-credentials-caf5d456-7594-414c-bd2d-b26bcb3c042d.config
+2026-10-20T03:58:41.0330589Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-caf5d456-7594-414c-bd2d-b26bcb3c042d.config
+2026-10-20T03:58:41.0697809Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
+2026-10-20T03:58:41.6055342Z Removing credentials config 'D:\a\_temp\git-credentials-caf5d456-7594-414c-bd2d-b26bcb3c042d.config'
+2026-10-20T03:58:41.6066369Z ##[endgroup]
+2026-10-20T03:58:41.6569812Z ##[group]Run dtolnay/rust-toolchain@1.95
+2026-10-20T03:58:41.6570524Z with:
+2026-10-20T03:58:41.6570703Z env:
+2026-10-20T03:58:41.6570881Z   SELECTOR_CONSUMER_ENABLED: true
+2026-10-20T03:58:41.6571119Z ##[endgroup]
+2026-10-20T03:58:41.6636377Z ##[start-action display=Parse toolchain version;id=__dtolnay_rust-toolchain.parse]
+2026-10-20T03:58:41.6806172Z ##[group]Run if [[ -z $toolchain ]]; then
+2026-10-20T03:58:41.6806522Z [36;1mif [[ -z $toolchain ]]; then[0m
+2026-10-20T03:58:41.6807045Z [36;1m  # GitHub does not enforce `required: true` inputs itself. https://github.com/actions/runner/issues/1070[0m
+2026-10-20T03:58:41.6807629Z [36;1m  echo "'toolchain' is a required input" >&2[0m
+2026-10-20T03:58:41.6808423Z [36;1m  exit 1[0m
+2026-10-20T03:58:41.6808746Z [36;1melif [[ $toolchain =~ ^stable' '[0-9]+' '(year|month|week|day)s?' 'ago$ ]]; then[0m
+2026-10-20T03:58:41.6809146Z [36;1m  if [[ Windows == macOS ]]; then[0m
+2026-10-20T03:58:41.6809697Z [36;1m    echo "toolchain=1.$((($(date -v-$(sed 's/stable \([0-9]*\) \(.\).*/\1\2/' <<< $toolchain) +%s)/60/60/24-16569)/7/6))" >> $GITHUB_OUTPUT[0m
+2026-10-20T03:58:41.6810970Z [36;1m  else[0m
+2026-10-20T03:58:41.6811360Z [36;1m    echo "toolchain=1.$((($(date --date "${toolchain#stable }" +%s)/60/60/24-16569)/7/6))" >> $GITHUB_OUTPUT[0m
+2026-10-20T03:58:41.6811802Z [36;1m  fi[0m
+2026-10-20T03:58:41.6812079Z [36;1melif [[ $toolchain =~ ^stable' 'minus' '[0-9]+' 'releases?$ ]]; then[0m
+2026-10-20T03:58:41.6812613Z [36;1m  echo "toolchain=1.$((($(date +%s)/60/60/24-16569)/7/6-${toolchain//[^0-9]/}))" >> $GITHUB_OUTPUT[0m
+2026-10-20T03:58:41.6813078Z [36;1melif [[ $toolchain =~ ^1\.[0-9]+$ ]]; then[0m
+2026-10-20T03:58:41.6813595Z [36;1m  echo "toolchain=1.$((i=${toolchain#1.}, c=($(date +%s)/60/60/24-16569)/7/6, i+9*i*(10*i<=c)+90*i*(100*i<=c)))" >> $GITHUB_OUTPUT[0m
+2026-10-20T03:58:41.6814071Z [36;1melse[0m
+2026-10-20T03:58:41.6814245Z [36;1m  delimiter=EOF[0m
+2026-10-20T03:58:41.6814577Z [36;1m  while [[ $toolchain == *$delimiter* ]]; do delimiter+=_; done[0m
+2026-10-20T03:58:41.6815077Z [36;1m  printf 'toolchain<<%s\n%s\n%s\n' "$delimiter" "$toolchain" "$delimiter" >> $GITHUB_OUTPUT[0m
+2026-10-20T03:58:41.6815488Z [36;1mfi[0m
+2026-10-20T03:58:41.6834879Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+2026-10-20T03:58:41.6835416Z env:
+2026-10-20T03:58:41.6835684Z   SELECTOR_CONSUMER_ENABLED: true
+2026-10-20T03:58:41.6836006Z   toolchain: 1.95.0
+2026-10-20T03:58:41.6836292Z ##[endgroup]
+2026-10-20T03:58:41.8615237Z ##[end-action id=__dtolnay_rust-toolchain.parse;outcome=success;conclusion=success;duration_ms=197]
+2026-10-20T03:58:41.8620395Z ##[start-action display=Set $CARGO_HOME;id=__dtolnay_rust-toolchain.__run]
+2026-10-20T03:58:41.8762090Z ##[group]Run echo CARGO_HOME=${CARGO_HOME:-"$USERPROFILE\.cargo"} >> $GITHUB_ENV
+2026-10-20T03:58:41.8762602Z [36;1mecho CARGO_HOME=${CARGO_HOME:-"$USERPROFILE\.cargo"} >> $GITHUB_ENV[0m
+2026-10-20T03:58:41.8777637Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+2026-10-20T03:58:41.8778028Z env:
+2026-10-20T03:58:41.8778202Z   SELECTOR_CONSUMER_ENABLED: true
+2026-10-20T03:58:41.8778471Z ##[endgroup]
+2026-10-20T03:58:41.9163173Z ##[end-action id=__dtolnay_rust-toolchain.__run;outcome=success;conclusion=success;duration_ms=54]
+2026-10-20T03:58:41.9165324Z ##[start-action display=Install rustup if needed;id=__dtolnay_rust-toolchain.__run_2]
+2026-10-20T03:58:41.9173777Z ##[end-action id=__dtolnay_rust-toolchain.__run_2;outcome=skipped;conclusion=skipped;duration_ms=0]
+2026-10-20T03:58:41.9175890Z ##[start-action display=Install rustup if needed on windows;id=__dtolnay_rust-toolchain.__run_3]
+2026-10-20T03:58:41.9305632Z ##[group]Run if ! command -v rustup &>/dev/null; then
+2026-10-20T03:58:41.9305977Z [36;1mif ! command -v rustup &>/dev/null; then[0m
+2026-10-20T03:58:41.9308395Z [36;1m  curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail https://win.rustup.rs/x86_64 --output 'D:\a\_temp\rustup-init.exe'[0m
+2026-10-20T03:58:41.9309586Z [36;1m  'D:\a\_temp\rustup-init.exe' --default-toolchain none --no-modify-path -y[0m
+2026-10-20T03:58:41.9310017Z [36;1m  echo "$CARGO_HOME\bin" >> $GITHUB_PATH[0m
+2026-10-20T03:58:41.9310273Z [36;1mfi[0m
+2026-10-20T03:58:41.9324888Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+2026-10-20T03:58:41.9325268Z env:
+2026-10-20T03:58:41.9325446Z   SELECTOR_CONSUMER_ENABLED: true
+2026-10-20T03:58:41.9325719Z   CARGO_HOME: C:\Users\runneradmin\.cargo
+2026-10-20T03:58:41.9325963Z ##[endgroup]
+2026-10-20T03:58:41.9820815Z ##[end-action id=__dtolnay_rust-toolchain.__run_3;outcome=success;conclusion=success;duration_ms=64]
+2026-10-20T03:58:41.9833600Z ##[start-action display=rustup toolchain install 1.95.0;id=__dtolnay_rust-toolchain.__run_4]
+2026-10-20T03:58:41.9958686Z ##[group]Run set -f  # split targets and components on commas and whitespace, without glob expansion
+2026-10-20T03:58:41.9959489Z [36;1mset -f  # split targets and components on commas and whitespace, without glob expansion[0m
+2026-10-20T03:58:41.9959912Z [36;1mflags=()[0m
+2026-10-20T03:58:41.9960168Z [36;1mfor t in ${targets//,/ }; do flags+=(--target "$t"); done[0m
+2026-10-20T03:58:41.9960580Z [36;1mfor c in ${components//,/ }; do flags+=(--component "$c"); done[0m
+2026-10-20T03:58:41.9961092Z [36;1mif [[ $toolchain == nightly && -n $components ]]; then flags+=(--allow-downgrade); fi[0m
+2026-10-20T03:58:41.9961490Z [36;1mlog=$(mktemp)[0m
+2026-10-20T03:58:41.9961707Z [36;1mtrap 'rm -f "$log"' EXIT[0m
+2026-10-20T03:58:41.9961942Z [36;1mfor attempt in 1 2 3 4 5; do[0m
+2026-10-20T03:58:41.9963478Z [36;1m  if rustup toolchain install "$toolchain" "${flags[@]}" --profile minimal --no-self-update --force-non-host 2>&1 | tee "$log"; then[0m
+2026-10-20T03:58:41.9964203Z [36;1m    break[0m
+2026-10-20T03:58:41.9964426Z [36;1m  else[0m
+2026-10-20T03:58:41.9964648Z [36;1m    status=$?[0m
+2026-10-20T03:58:41.9964896Z [36;1m  fi[0m
+2026-10-20T03:58:41.9965240Z [36;1m  if [[ $attempt == 5 ]] || ! grep -Fq 'checksum failed for ' "$log" \[0m
+2026-10-20T03:58:41.9965915Z [36;1m      || ! grep -Fq 'this is likely due to an ongoing update of the official release server' "$log"; then[0m
+2026-10-20T03:58:41.9966472Z [36;1m    exit "$status"[0m
+2026-10-20T03:58:41.9966721Z [36;1m  fi[0m
+2026-10-20T03:58:41.9967350Z [36;1m  echo "Retrying rustup toolchain install in 30 seconds (retry $attempt of 4)" >&2[0m
+2026-10-20T03:58:41.9967845Z [36;1m  sleep 30[0m
+2026-10-20T03:58:41.9968065Z [36;1mdone[0m
+2026-10-20T03:58:41.9984672Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+2026-10-20T03:58:41.9985070Z env:
+2026-10-20T03:58:41.9985245Z   SELECTOR_CONSUMER_ENABLED: true
+2026-10-20T03:58:41.9985497Z   CARGO_HOME: C:\Users\runneradmin\.cargo
+2026-10-20T03:58:41.9985739Z   toolchain: 1.95.0
+2026-10-20T03:58:41.9985923Z   targets: 
+2026-10-20T03:58:41.9986088Z   components: 
+2026-10-20T03:58:41.9986270Z   RUSTUP_PERMIT_COPY_RENAME: 1
+2026-10-20T03:58:41.9986479Z ##[endgroup]
+2026-10-20T03:58:42.7086092Z info: syncing channel updates for 1.95.0-x86_64-pc-windows-msvc
+2026-10-20T03:58:43.2934252Z info: latest update on 2026-04-16 for version 1.95.0 (59807616e 2026-04-14)
+2026-10-20T03:58:43.3092089Z info: downloading 3 components
+2026-10-20T03:58:51.2005135Z 
+2026-10-20T03:58:51.2183091Z   1.95.0-x86_64-pc-windows-msvc installed - rustc 1.95.0 (59807616e 2026-04-14)
+2026-10-20T03:58:51.2183620Z 
+2026-10-20T03:58:51.2625791Z ##[end-action id=__dtolnay_rust-toolchain.__run_4;outcome=success;conclusion=success;duration_ms=9278]
+2026-10-20T03:58:51.2632307Z ##[start-action display=rustup default 1.95.0;id=__dtolnay_rust-toolchain.__run_5]
+2026-10-20T03:58:51.2797705Z ##[group]Run rustup default "$toolchain" --force-non-host
+2026-10-20T03:58:51.2798077Z [36;1mrustup default "$toolchain" --force-non-host[0m
+2026-10-20T03:58:51.2815185Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+2026-10-20T03:58:51.2815607Z env:
+2026-10-20T03:58:51.2815785Z   SELECTOR_CONSUMER_ENABLED: true
+2026-10-20T03:58:51.2816043Z   CARGO_HOME: C:\Users\runneradmin\.cargo
+2026-10-20T03:58:51.2816298Z   toolchain: 1.95.0
+2026-10-20T03:58:51.2816478Z ##[endgroup]
+2026-10-20T03:58:51.3700844Z info: using existing install for 1.95.0-x86_64-pc-windows-msvc
+2026-10-20T03:58:51.3785336Z info: default toolchain set to 1.95.0-x86_64-pc-windows-msvc
+2026-10-20T03:58:51.3785670Z 
+2026-10-20T03:58:51.3990286Z   1.95.0-x86_64-pc-windows-msvc unchanged - rustc 1.95.0 (59807616e 2026-04-14)
+2026-10-20T03:58:51.3990833Z 
+2026-10-20T03:58:51.3994979Z info: note that the toolchain '1.95.0-x86_64-pc-windows-msvc' is currently in use (overridden by 'D:\a\ripr-swarm\ripr-swarm\rust-toolchain.toml')
+2026-10-20T03:58:51.4083408Z ##[end-action id=__dtolnay_rust-toolchain.__run_5;outcome=success;conclusion=success;duration_ms=145]
+2026-10-20T03:58:51.4088035Z ##[start-action display=Create cachekey;id=__dtolnay_rust-toolchain.rustc-version]
+2026-10-20T03:58:51.4254348Z ##[group]Run DATE=$(rustc +"$toolchain" --version --verbose | sed -ne 's/^commit-date: \(20[0-9][0-9]\)-\([01][0-9]\)-\([0-3][0-9]\)$/\1\2\3/p')
+2026-10-20T03:58:51.4255194Z [36;1mDATE=$(rustc +"$toolchain" --version --verbose | sed -ne 's/^commit-date: \(20[0-9][0-9]\)-\([01][0-9]\)-\([0-3][0-9]\)$/\1\2\3/p')[0m
+2026-10-20T03:58:51.4255854Z [36;1mHASH=$(rustc +"$toolchain" --version --verbose | sed -ne 's/^commit-hash: //p')[0m
+2026-10-20T03:58:51.4256363Z [36;1mecho "cachekey=$(echo $DATE$HASH | head -c12)" >> $GITHUB_OUTPUT[0m
+2026-10-20T03:58:51.4271895Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+2026-10-20T03:58:51.4272281Z env:
+2026-10-20T03:58:51.4272450Z   SELECTOR_CONSUMER_ENABLED: true
+2026-10-20T03:58:51.4272699Z   CARGO_HOME: C:\Users\runneradmin\.cargo
+2026-10-20T03:58:51.4272943Z   toolchain: 1.95.0
+2026-10-20T03:58:51.4273135Z ##[endgroup]
+2026-10-20T03:58:52.2455876Z ##[end-action id=__dtolnay_rust-toolchain.rustc-version;outcome=success;conclusion=success;duration_ms=836]
+2026-10-20T03:58:52.2458297Z ##[start-action display=Disable incremental compilation;id=__dtolnay_rust-toolchain.__run_6]
+2026-10-20T03:58:52.2601224Z ##[group]Run if [ -z "${CARGO_INCREMENTAL+set}" ]; then
+2026-10-20T03:58:52.2601589Z [36;1mif [ -z "${CARGO_INCREMENTAL+set}" ]; then[0m
+2026-10-20T03:58:52.2601903Z [36;1m  echo CARGO_INCREMENTAL=0 >> $GITHUB_ENV[0m
+2026-10-20T03:58:52.2602158Z [36;1mfi[0m
+2026-10-20T03:58:52.2616538Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+2026-10-20T03:58:52.2616916Z env:
+2026-10-20T03:58:52.2617089Z   SELECTOR_CONSUMER_ENABLED: true
+2026-10-20T03:58:52.2617337Z   CARGO_HOME: C:\Users\runneradmin\.cargo
+2026-10-20T03:58:52.2617585Z ##[endgroup]
+2026-10-20T03:58:52.3006202Z ##[end-action id=__dtolnay_rust-toolchain.__run_6;outcome=success;conclusion=success;duration_ms=54]
+2026-10-20T03:58:52.3026967Z ##[start-action display=Enable colors in Cargo output;id=__dtolnay_rust-toolchain.__run_7]
+2026-10-20T03:58:52.3162398Z ##[group]Run if [ -z "${CARGO_TERM_COLOR+set}" ]; then
+2026-10-20T03:58:52.3162746Z [36;1mif [ -z "${CARGO_TERM_COLOR+set}" ]; then[0m
+2026-10-20T03:58:52.3163059Z [36;1m  echo CARGO_TERM_COLOR=always >> $GITHUB_ENV[0m
+2026-10-20T03:58:52.3163327Z [36;1mfi[0m
+2026-10-20T03:58:52.3177946Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+2026-10-20T03:58:52.3178334Z env:
+2026-10-20T03:58:52.3178513Z   SELECTOR_CONSUMER_ENABLED: true
+2026-10-20T03:58:52.3178769Z   CARGO_HOME: C:\Users\runneradmin\.cargo
+2026-10-20T03:58:52.3179024Z   CARGO_INCREMENTAL: 0
+2026-10-20T03:58:52.3179213Z ##[endgroup]
+2026-10-20T03:58:52.3556758Z ##[end-action id=__dtolnay_rust-toolchain.__run_7;outcome=success;conclusion=success;duration_ms=52]
+2026-10-20T03:58:52.3560659Z ##[start-action display=Enable Cargo sparse registry;id=__dtolnay_rust-toolchain.__run_8]
+2026-10-20T03:58:52.3697070Z ##[group]Run # implemented in 1.66, stabilized in 1.68, made default in 1.70
+2026-10-20T03:58:52.3697557Z [36;1m# implemented in 1.66, stabilized in 1.68, made default in 1.70[0m
+2026-10-20T03:58:52.3698197Z [36;1mif [ -z "${CARGO_REGISTRIES_CRATES_IO_PROTOCOL+set}" -o -f "D:\a\_temp"/.implicit_cargo_registries_crates_io_protocol ]; then[0m
+2026-10-20T03:58:52.3698954Z [36;1m  if rustc +"$toolchain" --version --verbose | grep -q '^release: 1\.6[89]\.'; then[0m
+2026-10-20T03:58:52.3699470Z [36;1m    touch "D:\a\_temp"/.implicit_cargo_registries_crates_io_protocol || true[0m
+2026-10-20T03:58:52.3699938Z [36;1m    echo CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse >> $GITHUB_ENV[0m
+2026-10-20T03:58:52.3700436Z [36;1m  elif rustc +"$toolchain" --version --verbose | grep -q '^release: 1\.6[67]\.'; then[0m
+2026-10-20T03:58:52.3700946Z [36;1m    touch "D:\a\_temp"/.implicit_cargo_registries_crates_io_protocol || true[0m
+2026-10-20T03:58:52.3701409Z [36;1m    echo CARGO_REGISTRIES_CRATES_IO_PROTOCOL=git >> $GITHUB_ENV[0m
+2026-10-20T03:58:52.3701909Z [36;1m  fi[0m
+2026-10-20T03:58:52.3702077Z [36;1mfi[0m
+2026-10-20T03:58:52.3716317Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+2026-10-20T03:58:52.3716717Z env:
+2026-10-20T03:58:52.3716894Z   SELECTOR_CONSUMER_ENABLED: true
+2026-10-20T03:58:52.3717155Z   CARGO_HOME: C:\Users\runneradmin\.cargo
+2026-10-20T03:58:52.3717407Z   CARGO_INCREMENTAL: 0
+2026-10-20T03:58:52.3717605Z   CARGO_TERM_COLOR: always
+2026-10-20T03:58:52.3717813Z   toolchain: 1.95.0
+2026-10-20T03:58:52.3717993Z ##[endgroup]
+2026-10-20T03:58:52.5774789Z ##[end-action id=__dtolnay_rust-toolchain.__run_8;outcome=success;conclusion=success;duration_ms=221]
+2026-10-20T03:58:52.5777994Z ##[start-action display=Work around spurious network errors in curl 8.0;id=__dtolnay_rust-toolchain.__run_9]
+2026-10-20T03:58:52.5912062Z ##[group]Run # https://rust-lang.zulipchat.com/#narrow/stream/246057-t-cargo/topic/timeout.20investigation
+2026-10-20T03:58:52.5912852Z [36;1m# https://rust-lang.zulipchat.com/#narrow/stream/246057-t-cargo/topic/timeout.20investigation[0m
+2026-10-20T03:58:52.5913473Z [36;1mif rustc +"$toolchain" --version --verbose | grep -q '^release: 1\.7[01]\.'; then[0m
+2026-10-20T03:58:52.5913928Z [36;1m  echo CARGO_HTTP_MULTIPLEXING=false >> $GITHUB_ENV[0m
+2026-10-20T03:58:52.5914216Z [36;1mfi[0m
+2026-10-20T03:58:52.5930061Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+2026-10-20T03:58:52.5930451Z env:
+2026-10-20T03:58:52.5930626Z   SELECTOR_CONSUMER_ENABLED: true
+2026-10-20T03:58:52.5930875Z   CARGO_HOME: C:\Users\runneradmin\.cargo
+2026-10-20T03:58:52.5931121Z   CARGO_INCREMENTAL: 0
+2026-10-20T03:58:52.5931315Z   CARGO_TERM_COLOR: always
+2026-10-20T03:58:52.5931512Z   toolchain: 1.95.0
+2026-10-20T03:58:52.5931734Z ##[endgroup]
+2026-10-20T03:58:52.6892365Z ##[end-action id=__dtolnay_rust-toolchain.__run_9;outcome=success;conclusion=success;duration_ms=111]
+2026-10-20T03:58:52.6896547Z ##[start-action display=rustc +1.95.0 --version --verbose;id=__dtolnay_rust-toolchain.__run_10]
+2026-10-20T03:58:52.7023457Z ##[group]Run rustc +"$toolchain" --version --verbose
+2026-10-20T03:58:52.7023805Z [36;1mrustc +"$toolchain" --version --verbose[0m
+2026-10-20T03:58:52.7038346Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+2026-10-20T03:58:52.7038733Z env:
+2026-10-20T03:58:52.7038911Z   SELECTOR_CONSUMER_ENABLED: true
+2026-10-20T03:58:52.7039166Z   CARGO_HOME: C:\Users\runneradmin\.cargo
+2026-10-20T03:58:52.7039414Z   CARGO_INCREMENTAL: 0
+2026-10-20T03:58:52.7039620Z   CARGO_TERM_COLOR: always
+2026-10-20T03:58:52.7039830Z   toolchain: 1.95.0
+2026-10-20T03:58:52.7040009Z ##[endgroup]
+2026-10-20T03:58:52.7937900Z rustc 1.95.0 (59807616e 2026-04-14)
+2026-10-20T03:58:52.7938616Z binary: rustc
+2026-10-20T03:58:52.7939027Z commit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860
+2026-10-20T03:58:52.7939819Z commit-date: 2026-04-14
+2026-10-20T03:58:52.7940211Z host: x86_64-pc-windows-msvc
+2026-10-20T03:58:52.7940572Z release: 1.95.0
+2026-10-20T03:58:52.7942066Z LLVM version: 22.1.2
+2026-10-20T03:58:52.8087942Z ##[end-action id=__dtolnay_rust-toolchain.__run_10;outcome=success;conclusion=success;duration_ms=119]
+2026-10-20T03:58:52.8275944Z ##[group]Run $storage_tests = @'
+2026-10-20T03:58:52.8276831Z [36;1m$storage_tests = @'[0m
+2026-10-20T03:58:52.8277262Z [36;1m"""Exercise the actual inline Actions consumer with synthetic files; never build RIPR."""[0m
+2026-10-20T03:58:52.8277704Z [36;1mimport ast[0m
+2026-10-20T03:58:52.8277901Z [36;1mimport errno[0m
+2026-10-20T03:58:52.8278097Z [36;1mimport hashlib[0m
+2026-10-20T03:58:52.8278292Z [36;1mimport json[0m
+2026-10-20T03:58:52.8278478Z [36;1mimport os[0m
+2026-10-20T03:58:52.8278679Z [36;1mfrom pathlib import Path[0m
+2026-10-20T03:58:52.8278912Z [36;1mimport re[0m
+2026-10-20T03:58:52.8279093Z [36;1mimport shutil[0m
+2026-10-20T03:58:52.8279280Z [36;1mimport sys[0m
+2026-10-20T03:58:52.8280222Z [36;1mimport tempfile[0m
+2026-10-20T03:58:52.8280425Z [36;1mimport unittest[0m
+2026-10-20T03:58:52.8280646Z [36;1mfrom unittest.mock import patch[0m
+2026-10-20T03:58:52.8280896Z [36;1m[0m
+2026-10-20T03:58:52.8281195Z [36;1mWORKFLOW = Path.cwd() / '.github/workflows/windows-advisory.yml'[0m
+2026-10-20T03:58:52.8281556Z [36;1m[0m
+2026-10-20T03:58:52.8281697Z [36;1m[0m
+2026-10-20T03:58:52.8281848Z [36;1mdef consumer():[0m
+2026-10-20T03:58:52.8282071Z [36;1m    text = WORKFLOW.read_text()[0m
+2026-10-20T03:58:52.8282396Z [36;1m    prefix, remainder = text.split("$consumer = @'\n", 1)[0m
+2026-10-20T03:58:52.8282746Z [36;1m    raw = remainder.split("          '@", 1)[0][0m
+2026-10-20T03:58:52.8283126Z [36;1m    tree = ast.parse('\n'.join(line[10:] for line in raw.splitlines()))[0m
+2026-10-20T03:58:52.8283544Z [36;1m    ast.increment_lineno(tree, prefix.count('\n') + 1)[0m
+2026-10-20T03:58:52.8283966Z [36;1m    names = {'require', 'digest', 'remove_staged', 'stage_single_allocation',[0m
+2026-10-20T03:58:52.8284512Z [36;1m             'finalize_evidence', 'record_failure', 'payload_allocation', 'remove_aliases',[0m
+2026-10-20T03:58:52.8285468Z [36;1m             'packet', 'fixture_file', 'recovery_command', 'printed_recovery'}[0m
+2026-10-20T03:58:52.8285983Z [36;1m    nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names][0m
+2026-10-20T03:58:52.8286549Z [36;1m    ns = dict(Path=Path, hashlib=hashlib, json=json, shutil=shutil, os=os, sys=sys, re=re)[0m
+2026-10-20T03:58:52.8287060Z [36;1m    exec(compile(ast.Module(nodes, []), str(WORKFLOW), 'exec'), ns)[0m
+2026-10-20T03:58:52.8287404Z [36;1m    return tree, ns[0m
+2026-10-20T03:58:52.8287604Z [36;1m[0m
+2026-10-20T03:58:52.8287759Z [36;1m[0m
+2026-10-20T03:58:52.8287955Z [36;1mclass EvidenceTests(unittest.TestCase):[0m
+2026-10-20T03:58:52.8288228Z [36;1m    def setUp(self):[0m
+2026-10-20T03:58:52.8288577Z [36;1m        self.temp = tempfile.TemporaryDirectory(prefix='selector-evidence-')[0m
+2026-10-20T03:58:52.8288997Z [36;1m        self.addCleanup(self.temp.cleanup)[0m
+2026-10-20T03:58:52.8289295Z [36;1m        self.root = Path(self.temp.name)[0m
+2026-10-20T03:58:52.8289601Z [36;1m        self.build = self.root / 'owned-build'[0m
+2026-10-20T03:58:52.8289884Z [36;1m        self.build.mkdir()[0m
+2026-10-20T03:58:52.8290158Z [36;1m        self.binary = self.build / 'ripr.exe'[0m
+2026-10-20T03:58:52.8290482Z [36;1m        self.binary.write_bytes(b'compiler payload')[0m
+2026-10-20T03:58:52.8290800Z [36;1m        self.stock = self.root / 'stock'[0m
+2026-10-20T03:58:52.8291061Z [36;1m        self.stock.mkdir()[0m
+2026-10-20T03:58:52.8291320Z [36;1m        self.staged = self.stock / 'ripr.exe'[0m
+2026-10-20T03:58:52.8291617Z [36;1m        self.out = self.root / 'evidence'[0m
+2026-10-20T03:58:52.8291881Z [36;1m        self.out.mkdir()[0m
+2026-10-20T03:58:52.8292172Z [36;1m        self.ownership = {'staged': False, 'target': True}[0m
+2026-10-20T03:58:52.8292511Z [36;1m        self.tree, self.ns = consumer()[0m
+2026-10-20T03:58:52.8292767Z [36;1m[0m
+2026-10-20T03:58:52.8292933Z [36;1m    def stage(self):[0m
+2026-10-20T03:58:52.8294639Z [36;1m        if 'stage_single_allocation' in self.ns:[0m
+2026-10-20T03:58:52.8295105Z [36;1m            with patch.object(shutil, 'which', return_value=None):[0m
+2026-10-20T03:58:52.8295635Z [36;1m                return self.ns['stage_single_allocation'](self.binary, self.staged, self.build,[0m
+2026-10-20T03:58:52.8296211Z [36;1m                                                           self.ns['digest'](self.binary), self.out, self.ownership)[0m
+2026-10-20T03:58:52.8296752Z [36;1m        # Pre-repair: execute the real admission and copy statements from Actions.[0m
+2026-10-20T03:58:52.8297256Z [36;1m        body = next(n for n in self.tree.body if isinstance(n, ast.Try)).body[0m
+2026-10-20T03:58:52.8297725Z [36;1m        start = next(i for i, n in enumerate(body) if isinstance(n, ast.Assign)[0m
+2026-10-20T03:58:52.8298349Z [36;1m                     and any(isinstance(t, ast.Name) and t.id == 'staged' for t in n.targets))[0m
+2026-10-20T03:58:52.8298883Z [36;1m        end = next(i for i in range(start, len(body)) if isinstance(body[i], ast.Assign)[0m
+2026-10-20T03:58:52.8299429Z [36;1m                   and any(isinstance(t, ast.Name) and t.id == 'resolved' for t in body[i].targets))[0m
+2026-10-20T03:58:52.8299965Z [36;1m        ns = dict(self.ns, binary=self.binary, stock_bin=self.stock, out=self.out)[0m
+2026-10-20T03:58:52.8300423Z [36;1m        with patch.object(shutil, 'which', return_value=None):[0m
+2026-10-20T03:58:52.8300946Z [36;1m            exec(compile(ast.Module(body[start:end], []), str(WORKFLOW), 'exec'), ns)[0m
+2026-10-20T03:58:52.8301438Z [36;1m        return {'charged_bytes': 2 * self.binary.stat().st_size}[0m
+2026-10-20T03:58:52.8301756Z [36;1m[0m
+2026-10-20T03:58:52.8301948Z [36;1m    def finalize(self, receipt, charge):[0m
+2026-10-20T03:58:52.8302254Z [36;1m        if 'finalize_evidence' in self.ns:[0m
+2026-10-20T03:58:52.8302646Z [36;1m            return self.ns['finalize_evidence'](receipt, self.out, None, charge)[0m
+2026-10-20T03:58:52.8303153Z [36;1m        nodes = next(n for n in self.tree.body if isinstance(n, ast.Try)).finalbody[0m
+2026-10-20T03:58:52.8303648Z [36;1m        start = next(i for i, n in enumerate(nodes) if isinstance(n, ast.Assign)[0m
+2026-10-20T03:58:52.8304097Z [36;1m                     and ast.unparse(n.targets[0]) == "receipt['python']")[0m
+2026-10-20T03:58:52.8304545Z [36;1m        ns = dict(self.ns, receipt=receipt, out=self.out, binary=self.binary)[0m
+2026-10-20T03:58:52.8305452Z [36;1m        exec(compile(ast.Module(nodes[start:-2], []), str(WORKFLOW), 'exec'), ns)[0m
+2026-10-20T03:58:52.8305863Z [36;1m        return receipt[0m
+2026-10-20T03:58:52.8306085Z [36;1m[0m
+2026-10-20T03:58:52.8306282Z [36;1m    def listing(self, file='./src/lib.rs'):[0m
+2026-10-20T03:58:52.8306720Z [36;1m        # Current report.rs/finding_location_text shape, not a native raw-stream claim.[0m
+2026-10-20T03:58:52.8307301Z [36;1m        return {'findings': [{'id': 'repo-probe:fixture:predicate:actual', 'language': 'rust',[0m
+2026-10-20T03:58:52.8307870Z [36;1m                'probe': {'id': 'repo-probe:fixture:predicate:actual', 'family': 'predicate',[0m
+2026-10-20T03:58:52.8308372Z [36;1m                          'line': 2, 'file': file, 'expression': 'amount >= threshold'}}]}[0m
+2026-10-20T03:58:52.8308714Z [36;1m[0m
+2026-10-20T03:58:52.8308931Z [36;1m    def packet(self, listing, expected_id=None):[0m
+2026-10-20T03:58:52.8309326Z [36;1m        return self.ns['packet'](json.dumps(listing).encode(), self.root,[0m
+2026-10-20T03:58:52.8309740Z [36;1m                                 self.root / 'src/lib.rs', expected_id)[0m
+2026-10-20T03:58:52.8310030Z [36;1m[0m
+2026-10-20T03:58:52.8310322Z [36;1m    def test_relative_listing_is_anchored_to_fixture_under_foreign_cwd(self):[0m
+2026-10-20T03:58:52.8310719Z [36;1m        previous = Path.cwd()[0m
+2026-10-20T03:58:52.8310948Z [36;1m        try:[0m
+2026-10-20T03:58:52.8311145Z [36;1m            os.chdir(self.stock)[0m
+2026-10-20T03:58:52.8312113Z [36;1m            self.assertEqual(self.packet(self.listing()), 'repo-probe:fixture:predicate:actual')[0m
+2026-10-20T03:58:52.8312588Z [36;1m        finally:[0m
+2026-10-20T03:58:52.8312807Z [36;1m            os.chdir(previous)[0m
+2026-10-20T03:58:52.8313035Z [36;1m[0m
+2026-10-20T03:58:52.8313322Z [36;1m    def test_listing_refuses_traversal_foreign_root_and_wrong_file(self):[0m
+2026-10-20T03:58:52.8313838Z [36;1m        for file in ('../src/lib.rs', 'src/../src/lib.rs', str(self.stock / 'src/lib.rs'),[0m
+2026-10-20T03:58:52.8314364Z [36;1m                     str(self.root.parent / ('foreign-' + self.root.name) / 'src/lib.rs'),[0m
+2026-10-20T03:58:52.8314840Z [36;1m                     './src/other.rs', '', 'C:src/lib.rs', r'..\src\lib.rs'):[0m
+2026-10-20T03:58:52.8315367Z [36;1m            with self.subTest(file=file), self.assertRaises(RuntimeError):[0m
+2026-10-20T03:58:52.8315755Z [36;1m                self.packet(self.listing(file))[0m
+2026-10-20T03:58:52.8316022Z [36;1m[0m
+2026-10-20T03:58:52.8316251Z [36;1m    def test_listing_refuses_resolved_link_escape(self):[0m
+2026-10-20T03:58:52.8316710Z [36;1m        # No Windows symlink privilege: model the filesystem's resolved link target.[0m
+2026-10-20T03:58:52.8317270Z [36;1m        with tempfile.TemporaryDirectory(prefix='foreign-fixture-') as foreign:[0m
+2026-10-20T03:58:52.8317699Z [36;1m            original = Path.resolve[0m
+2026-10-20T03:58:52.8317998Z [36;1m            selected = self.root / 'src/lib.rs'[0m
+2026-10-20T03:58:52.8318299Z [36;1m            def resolve(path, *args, **kwargs):[0m
+2026-10-20T03:58:52.8318751Z [36;1m                return Path(foreign) / 'lib.rs' if path == selected else original(path, *args, **kwargs)[0m
+2026-10-20T03:58:52.8319341Z [36;1m            with patch.object(Path, 'resolve', resolve), self.assertRaises(RuntimeError):[0m
+2026-10-20T03:58:52.8319774Z [36;1m                self.packet(self.listing())[0m
+2026-10-20T03:58:52.8320025Z [36;1m[0m
+2026-10-20T03:58:52.8320327Z [36;1m    def test_listing_preserves_all_predicate_and_identity_requirements(self):[0m
+2026-10-20T03:58:52.8320801Z [36;1m        for field, value in (('family', 'error_path'), ('line', 3),[0m
+2026-10-20T03:58:52.8321226Z [36;1m                             ('expression', 'amount > threshold'), ('id', 'wrong')):[0m
+2026-10-20T03:58:52.8321588Z [36;1m            listing = self.listing()[0m
+2026-10-20T03:58:52.8321899Z [36;1m            listing['findings'][0]['probe'][field] = value[0m
+2026-10-20T03:58:52.8322306Z [36;1m            with self.subTest(field=field), self.assertRaises(RuntimeError):[0m
+2026-10-20T03:58:52.8322682Z [36;1m                self.packet(listing)[0m
+2026-10-20T03:58:52.8322941Z [36;1m        listing = self.listing()[0m
+2026-10-20T03:58:52.8323240Z [36;1m        listing['findings'][0]['language'] = 'python'[0m
+2026-10-20T03:58:52.8323574Z [36;1m        with self.assertRaises(RuntimeError):[0m
+2026-10-20T03:58:52.8323855Z [36;1m            self.packet(listing)[0m
+2026-10-20T03:58:52.8324132Z [36;1m        with self.assertRaises(RuntimeError):[0m
+2026-10-20T03:58:52.8324439Z [36;1m            self.packet(self.listing(), 'wrong')[0m
+2026-10-20T03:58:52.8324721Z [36;1m        listing = self.listing()[0m
+2026-10-20T03:58:52.8324964Z [36;1m        listing['findings'] *= 2[0m
+2026-10-20T03:58:52.8325604Z [36;1m        with self.assertRaises(RuntimeError):[0m
+2026-10-20T03:58:52.8325891Z [36;1m            self.packet(listing)[0m
+2026-10-20T03:58:52.8326134Z [36;1m[0m
+2026-10-20T03:58:52.8326450Z [36;1m    def test_windows_recovery_matches_published_slashes_and_keeps_literal(self):[0m
+2026-10-20T03:58:52.8326993Z [36;1m        # Inert Windows-shaped sentinels: no real drive or directory is accessed.[0m
+2026-10-20T03:58:52.8327386Z [36;1m        drive = 'Q' + ':'[0m
+2026-10-20T03:58:52.8327695Z [36;1m        root = drive + r'\synthetic-selector-fixture literal'[0m
+2026-10-20T03:58:52.8328053Z [36;1m        diff = root + r'\fixture change.diff'[0m
+2026-10-20T03:58:52.8328871Z [36;1m        expected = f"ripr check --root '{drive}/synthetic-selector-fixture literal' --diff '{drive}/synthetic-selector-fixture literal/fixture change.diff' --json"[0m
+2026-10-20T03:58:52.8329727Z [36;1m        self.assertEqual(self.ns['recovery_command'](root, diff, windows=True), expected)[0m
+2026-10-20T03:58:52.8330225Z [36;1m        stderr = ('No finding. Retry `' + expected + '`.').encode()[0m
+2026-10-20T03:58:52.8330742Z [36;1m        self.assertEqual(self.ns['printed_recovery'](stderr, root, diff, windows=True), expected)[0m
+2026-10-20T03:58:52.8331167Z [36;1m[0m
+2026-10-20T03:58:52.8331410Z [36;1m    def test_recovery_refuses_changed_scope_or_literal(self):[0m
+2026-10-20T03:58:52.8331825Z [36;1m        command = self.ns['recovery_command'](self.root, self.out)[0m
+2026-10-20T03:58:52.8332342Z [36;1m        for wrong in (self.ns['recovery_command'](self.stock, self.out),[0m
+2026-10-20T03:58:52.8332779Z [36;1m                      self.ns['recovery_command'](self.root, self.binary),[0m
+2026-10-20T03:58:52.8333216Z [36;1m                      command.replace(' --json', ''), command + ' --no-cache'):[0m
+2026-10-20T03:58:52.8333692Z [36;1m            with self.subTest(command=wrong), self.assertRaises(RuntimeError):[0m
+2026-10-20T03:58:52.8334210Z [36;1m                self.ns['printed_recovery'](('`' + wrong + '`').encode(), self.root, self.out)[0m
+2026-10-20T03:58:52.8334646Z [36;1m        with self.assertRaises(RuntimeError):[0m
+2026-10-20T03:58:52.8335105Z [36;1m            self.ns['printed_recovery'](('`' + command + '` `' + command + '`').encode(), self.root, self.out)[0m
+2026-10-20T03:58:52.8335527Z [36;1m[0m
+2026-10-20T03:58:52.8335821Z [36;1m    def test_cache_target_is_owned_before_restore_and_all_subset_builds(self):[0m
+2026-10-20T03:58:52.8336222Z [36;1m        text = WORKFLOW.read_text()[0m
+2026-10-20T03:58:52.8336740Z [36;1m        section = text[text.index('\n      - name: Own stable same-volume Cargo target before cache and subset builds\n'):][0m
+2026-10-20T03:58:52.8337464Z [36;1m        self.assertLess(section.index('$target_setup'), section.index('uses: Swatinem/rust-cache@v2'))[0m
+2026-10-20T03:58:52.8338161Z [36;1m        self.assertLess(section.index('uses: Swatinem/rust-cache@v2'), section.index('cargo test -p ripr'))[0m
+2026-10-20T03:58:52.8338792Z [36;1m        self.assertIn('"CARGO_TARGET_DIR=$($owner.target)" >> $env:GITHUB_ENV', section)[0m
+2026-10-20T03:58:52.8339340Z [36;1m        self.assertIn('workspaces: ". -> target/selector-cargo-cache"', section)[0m
+2026-10-20T03:58:52.8339789Z [36;1m        self.assertIn('cache-targets: false', section)[0m
+2026-10-20T03:58:52.8340160Z [36;1m        expression = lambda value: '$' + '{{ ' + value + ' }}'[0m
+2026-10-20T03:58:52.8340655Z [36;1m        self.assertIn('cache-directories: ' + expression('env.CARGO_TARGET_DIR'), section)[0m
+2026-10-20T03:58:52.8341398Z [36;1m        self.assertIn('shared-key: ripr-windows-advisory-subset-1.95-' + expression('runner.os') + '-stock-volume-v1', section)[0m
+2026-10-20T03:58:52.8342115Z [36;1m        self.assertIn('save-if: ' + expression("github.ref == 'refs/heads/main'"), section)[0m
+2026-10-20T03:58:52.8342573Z [36;1m        self.assertIn('cache-bin: false', section)[0m
+2026-10-20T03:58:52.8342887Z [36;1m        source = ast.unparse(self.tree)[0m
+2026-10-20T03:58:52.8343270Z [36;1m        self.assertIn("target = Path(os.environ['CARGO_TARGET_DIR'])", source)[0m
+2026-10-20T03:58:52.8343694Z [36;1m        self.assertNotIn('selector-build-', source)[0m
+2026-10-20T03:58:52.8344025Z [36;1m        self.assertNotIn('rmtree(target)', source)[0m
+2026-10-20T03:58:52.8344444Z [36;1m        self.assertIn('alias.is_junction() and alias.resolve() == target', source)[0m
+2026-10-20T03:58:52.8344817Z [36;1m[0m
+2026-10-20T03:58:52.8345158Z [36;1m    def test_actions_rendered_storage_source_is_python_and_precedes_product_builds(self):[0m
+2026-10-20T03:58:52.8345928Z [36;1m        text = WORKFLOW.read_text()[0m
+2026-10-20T03:58:52.8346428Z [36;1m        raw = text.split("$storage_tests = @'\n", 1)[1].split("\n          '@\n", 1)[0][0m
+2026-10-20T03:58:52.8346897Z [36;1m        source = '\n'.join(line[10:] for line in raw.splitlines())[0m
+2026-10-20T03:58:52.8347352Z [36;1m        # Model Actions substitution before PowerShell/Python see this source.[0m
+2026-10-20T03:58:52.8347909Z [36;1m        # Preserve the drive/backslash/Users escape shape using an invented fixture account.[0m
+2026-10-20T03:58:52.8348546Z [36;1m        target = 'Q' + ':' + r'\Users\synthetic-selector-fixture\.cargo\bin\selector-subset-cache\target'[0m
+2026-10-20T03:58:52.8349084Z [36;1m        values = {'env.CARGO_TARGET_DIR': target,[0m
+2026-10-20T03:58:52.8349670Z [36;1m                  'runner.os': 'Windows', "github.ref == 'refs/heads/main'": 'false'}[0m
+2026-10-20T03:58:52.8363743Z [36;1m        rendered = re.sub(r'\$\{\{(.*?)\}\}', lambda m: values[m[1].strip()], source)[0m
+2026-10-20T03:58:52.8364274Z [36;1m        compile(rendered, 'actions-rendered-storage-tests', 'exec')[0m
+2026-10-20T03:58:52.8364814Z [36;1m        self.assertEqual(rendered, source, 'test source contains an Actions expression')[0m
+2026-10-20T03:58:52.8365812Z [36;1m        self.assertLess(text.index('\n      - name: Check selector storage boundaries without a product build\n'),[0m
+2026-10-20T03:58:52.8366583Z [36;1m                        text.index('\n      - name: Own stable same-volume Cargo target before cache and subset builds\n'))[0m
+2026-10-20T03:58:52.8367055Z [36;1m[0m
+2026-10-20T03:58:52.8367224Z [36;1m    def acquire(self):[0m
+2026-10-20T03:58:52.8367647Z [36;1m        text = WORKFLOW.read_text().split("$target_setup = @'\n", 1)[1].split("\n          '@", 1)[0][0m
+2026-10-20T03:58:52.8368192Z [36;1m        tree = ast.parse('\n'.join(line[10:] for line in text.splitlines()))[0m
+2026-10-20T03:58:52.8368741Z [36;1m        nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'own_target'][0m
+2026-10-20T03:58:52.8369199Z [36;1m        ns = dict(Path=Path, json=json)[0m
+2026-10-20T03:58:52.8369563Z [36;1m        exec(compile(ast.Module(nodes, []), str(WORKFLOW), 'exec'), ns)[0m
+2026-10-20T03:58:52.8369989Z [36;1m        return ns['own_target'](self.stock, self.root, 'a' * 40)[0m
+2026-10-20T03:58:52.8370300Z [36;1m[0m
+2026-10-20T03:58:52.8370663Z [36;1m    def test_stable_target_is_exclusively_owned_and_marker_outside_cached_graph(self):[0m
+2026-10-20T03:58:52.8371086Z [36;1m        owner = self.acquire()[0m
+2026-10-20T03:58:52.8371513Z [36;1m        self.assertEqual(Path(owner['target']), self.stock / 'selector-subset-cache/target')[0m
+2026-10-20T03:58:52.8372104Z [36;1m        self.assertEqual(Path(owner['alias']), self.root / 'target/selector-cargo-cache')[0m
+2026-10-20T03:58:52.8372733Z [36;1m        self.assertEqual(json.loads((Path(owner['target']).parent / 'owner.json').read_text()), owner)[0m
+2026-10-20T03:58:52.8373234Z [36;1m        with self.assertRaises(FileExistsError):[0m
+2026-10-20T03:58:52.8373528Z [36;1m            self.acquire()[0m
+2026-10-20T03:58:52.8373745Z [36;1m[0m
+2026-10-20T03:58:52.8374033Z [36;1m    def test_occupied_target_alias_is_preserved_before_acquisition(self):[0m
+2026-10-20T03:58:52.8374491Z [36;1m        occupied = self.root / 'target/selector-cargo-cache'[0m
+2026-10-20T03:58:52.8374840Z [36;1m        occupied.mkdir(parents=True)[0m
+2026-10-20T03:58:52.8375161Z [36;1m        (occupied / 'sentinel').write_bytes(b'keep')[0m
+2026-10-20T03:58:52.8375535Z [36;1m        with self.assertRaisesRegex(RuntimeError, 'occupied'):[0m
+2026-10-20T03:58:52.8375869Z [36;1m            self.acquire()[0m
+2026-10-20T03:58:52.8376213Z [36;1m        self.assertFalse((self.stock / 'selector-subset-cache').exists())[0m
+2026-10-20T03:58:52.8376686Z [36;1m        self.assertEqual((occupied / 'sentinel').read_bytes(), b'keep')[0m
+2026-10-20T03:58:52.8377020Z [36;1m[0m
+2026-10-20T03:58:52.8377921Z [36;1m    def test_dependencies_survive_selected_alias_cleanup(self):[0m
+2026-10-20T03:58:52.8378378Z [36;1m        dependency = self.build / 'libdependency.rlib'[0m
+2026-10-20T03:58:52.8378759Z [36;1m        dependency.write_bytes(b'cached dependency')[0m
+2026-10-20T03:58:52.8379058Z [36;1m        self.stage()[0m
+2026-10-20T03:58:52.8379388Z [36;1m        self.assertEqual(dependency.read_bytes(), b'cached dependency')[0m
+2026-10-20T03:58:52.8379742Z [36;1m[0m
+2026-10-20T03:58:52.8380066Z [36;1m    def test_cache_dependencies_and_unrelated_harness_survive_alias_cleanup(self):[0m
+2026-10-20T03:58:52.8380546Z [36;1m        dependency = self.build / 'deps/libdependency.rlib'[0m
+2026-10-20T03:58:52.8380890Z [36;1m        dependency.parent.mkdir()[0m
+2026-10-20T03:58:52.8381307Z [36;1m        dependency.write_bytes(b'cached dependency')[0m
+2026-10-20T03:58:52.8381660Z [36;1m        harness = self.build / 'deps/ripr-test.exe'[0m
+2026-10-20T03:58:52.8382013Z [36;1m        harness.write_bytes(b'unrelated test harness')[0m
+2026-10-20T03:58:52.8382367Z [36;1m        alias = self.build / 'deps/ripr-selected.exe'[0m
+2026-10-20T03:58:52.8382688Z [36;1m        os.link(self.binary, alias)[0m
+2026-10-20T03:58:52.8382948Z [36;1m        self.stage()[0m
+2026-10-20T03:58:52.8383192Z [36;1m        self.assertFalse(alias.exists())[0m
+2026-10-20T03:58:52.8383580Z [36;1m        self.assertEqual(dependency.read_bytes(), b'cached dependency')[0m
+2026-10-20T03:58:52.8384065Z [36;1m        self.assertEqual(harness.read_bytes(), b'unrelated test harness')[0m
+2026-10-20T03:58:52.8384595Z [36;1m        self.assertEqual(self.ns['remove_aliases'](self.ownership)['state'], 'REMOVED')[0m
+2026-10-20T03:58:52.8384992Z [36;1m[0m
+2026-10-20T03:58:52.8385279Z [36;1m    def test_alias_cleanup_retry_preserves_graph_and_first_failure(self):[0m
+2026-10-20T03:58:52.8386058Z [36;1m        alias = self.build / 'ripr-alias.exe'[0m
+2026-10-20T03:58:52.8386362Z [36;1m        os.link(self.binary, alias)[0m
+2026-10-20T03:58:52.8386779Z [36;1m        with patch.object(Path, 'unlink', side_effect=PermissionError('alias locked')):[0m
+2026-10-20T03:58:52.8387233Z [36;1m            with self.assertRaises(PermissionError):[0m
+2026-10-20T03:58:52.8387532Z [36;1m                self.stage()[0m
+2026-10-20T03:58:52.8387900Z [36;1m        receipt = {'state': 'FAIL', 'error_type': 'Producer', 'error': 'first reason'}[0m
+2026-10-20T03:58:52.8388399Z [36;1m        self.ns['record_failure'](receipt, 'ProducerCleanup', 'alias locked')[0m
+2026-10-20T03:58:52.8388920Z [36;1m        self.assertEqual(self.ns['remove_aliases'](self.ownership)['state'], 'REMOVED')[0m
+2026-10-20T03:58:52.8389352Z [36;1m        self.assertTrue(self.build.is_dir())[0m
+2026-10-20T03:58:52.8389722Z [36;1m        self.assertEqual(receipt['primary_error'], 'first reason')[0m
+2026-10-20T03:58:52.8390112Z [36;1m        self.ns['remove_staged'](self.staged, True)[0m
+2026-10-20T03:58:52.8390382Z [36;1m[0m
+2026-10-20T03:58:52.8390657Z [36;1m    def test_alias_identity_drift_refuses_unrelated_deletion(self):[0m
+2026-10-20T03:58:52.8391037Z [36;1m        alias = self.build / 'ripr-alias.exe'[0m
+2026-10-20T03:58:52.8391318Z [36;1m        os.link(self.binary, alias)[0m
+2026-10-20T03:58:52.8391722Z [36;1m        with patch.object(Path, 'unlink', side_effect=PermissionError('alias locked')):[0m
+2026-10-20T03:58:52.8392706Z [36;1m            with self.assertRaises(PermissionError):[0m
+2026-10-20T03:58:52.8393009Z [36;1m                self.stage()[0m
+2026-10-20T03:58:52.8393239Z [36;1m        alias.unlink()[0m
+2026-10-20T03:58:52.8393507Z [36;1m        alias.write_bytes(b'replacement occupant')[0m
+2026-10-20T03:58:52.8393921Z [36;1m        with self.assertRaisesRegex(RuntimeError, 'alias identity drift'):[0m
+2026-10-20T03:58:52.8394342Z [36;1m            self.ns['remove_aliases'](self.ownership)[0m
+2026-10-20T03:58:52.8394745Z [36;1m        self.assertEqual(alias.read_bytes(), b'replacement occupant')[0m
+2026-10-20T03:58:52.8395205Z [36;1m[0m
+2026-10-20T03:58:52.8395494Z [36;1m    def test_verified_run_arithmetic_and_old_admission_boundary(self):[0m
+2026-10-20T03:58:52.8395890Z [36;1m        self.assertEqual(2 * 67278336, 134556672)[0m
+2026-10-20T03:58:52.8396224Z [36;1m        self.assertEqual(134802028 - 128 * 1024**2, 584300)[0m
+2026-10-20T03:58:52.8396573Z [36;1m        self.assertGreater(2 * 67278336, 128 * 1024**2)[0m
+2026-10-20T03:58:52.8396845Z [36;1m[0m
+2026-10-20T03:58:52.8397126Z [36;1m    def test_large_single_allocation_reaches_staging_without_copy(self):[0m
+2026-10-20T03:58:52.8397522Z [36;1m        with self.binary.open('r+b') as f:[0m
+2026-10-20T03:58:52.8397792Z [36;1m            f.truncate(67278336)[0m
+2026-10-20T03:58:52.8398150Z [36;1m        alias = self.build / 'ripr-hash.exe'[0m
+2026-10-20T03:58:52.8398435Z [36;1m        os.link(self.binary, alias)[0m
+2026-10-20T03:58:52.8398710Z [36;1m        identity = self.binary.stat()[0m
+2026-10-20T03:58:52.8399145Z [36;1m        with patch.object(shutil, 'copyfile', side_effect=AssertionError('copy forbidden')):[0m
+2026-10-20T03:58:52.8399583Z [36;1m            result = self.stage()[0m
+2026-10-20T03:58:52.8399931Z [36;1m        self.assertEqual(self.staged.stat().st_ino, identity.st_ino)[0m
+2026-10-20T03:58:52.8400381Z [36;1m        self.assertEqual(self.staged.stat().st_dev, identity.st_dev)[0m
+2026-10-20T03:58:52.8400789Z [36;1m        self.assertEqual(result['charged_bytes'], 67278336)[0m
+2026-10-20T03:58:52.8401140Z [36;1m        self.assertFalse(self.binary.exists())[0m
+2026-10-20T03:58:52.8401453Z [36;1m        self.assertTrue(self.build.is_dir())[0m
+2026-10-20T03:58:52.8401787Z [36;1m        self.assertEqual(self.staged.stat().st_nlink, 1)[0m
+2026-10-20T03:58:52.8402206Z [36;1m        receipt = self.finalize({'state': 'PASS'}, result['charged_bytes'])[0m
+2026-10-20T03:58:52.8402619Z [36;1m        self.assertEqual(receipt['state'], 'PASS')[0m
+2026-10-20T03:58:52.8403014Z [36;1m        self.assertLess(receipt['final_charged_bytes'], 128 * 1024**2)[0m
+2026-10-20T03:58:52.8403345Z [36;1m[0m
+2026-10-20T03:58:52.8403577Z [36;1m    def test_occupied_destination_survives_refusal(self):[0m
+2026-10-20T03:58:52.8403954Z [36;1m        self.staged.write_bytes(b'pre-existing occupant')[0m
+2026-10-20T03:58:52.8404344Z [36;1m        with self.assertRaisesRegex(RuntimeError, 'occupant'):[0m
+2026-10-20T03:58:52.8404669Z [36;1m            self.stage()[0m
+2026-10-20T03:58:52.8405014Z [36;1m        self.assertEqual(self.staged.read_bytes(), b'pre-existing occupant')[0m
+2026-10-20T03:58:52.8405425Z [36;1m        self.assertTrue(self.binary.exists())[0m
+2026-10-20T03:58:52.8405690Z [36;1m[0m
+2026-10-20T03:58:52.8406271Z [36;1m    def test_partial_transfer_never_falls_back_to_copy(self):[0m
+2026-10-20T03:58:52.8406772Z [36;1m        with (patch.object(os, 'rename', side_effect=OSError(errno.EXDEV, 'cross-volume')),[0m
+2026-10-20T03:58:52.8407356Z [36;1m              patch.object(shutil, 'copyfile', side_effect=AssertionError('copy forbidden'))):[0m
+2026-10-20T03:58:52.8407802Z [36;1m            with self.assertRaises(OSError):[0m
+2026-10-20T03:58:52.8408069Z [36;1m                self.stage()[0m
+2026-10-20T03:58:52.8408338Z [36;1m        self.assertFalse(self.staged.exists())[0m
+2026-10-20T03:58:52.8408649Z [36;1m        self.assertTrue(self.binary.exists())[0m
+2026-10-20T03:58:52.8408913Z [36;1m[0m
+2026-10-20T03:58:52.8409176Z [36;1m    def test_real_cross_volume_device_is_refused_before_rename(self):[0m
+2026-10-20T03:58:52.8409529Z [36;1m        original = Path.stat[0m
+2026-10-20T03:58:52.8409794Z [36;1m        def topology(path, *args, **kwargs):[0m
+2026-10-20T03:58:52.8410094Z [36;1m            info = original(path, *args, **kwargs)[0m
+2026-10-20T03:58:52.8410388Z [36;1m            if path == self.stock:[0m
+2026-10-20T03:58:52.8410647Z [36;1m                values = list(info)[0m
+2026-10-20T03:58:52.8410913Z [36;1m                values[2] = info.st_dev + 1[0m
+2026-10-20T03:58:52.8411307Z [36;1m                return os.stat_result(values)[0m
+2026-10-20T03:58:52.8411577Z [36;1m            return info[0m
+2026-10-20T03:58:52.8411851Z [36;1m        with (patch.object(Path, 'stat', topology),[0m
+2026-10-20T03:58:52.8412281Z [36;1m              patch.object(os, 'rename', side_effect=AssertionError('must not rename'))):[0m
+2026-10-20T03:58:52.8412776Z [36;1m            with self.assertRaisesRegex(RuntimeError, 'cross-volume'):[0m
+2026-10-20T03:58:52.8413120Z [36;1m                self.stage()[0m
+2026-10-20T03:58:52.8413400Z [36;1m        self.assertFalse(self.ownership['staged'])[0m
+2026-10-20T03:58:52.8413720Z [36;1m        self.assertTrue(self.binary.exists())[0m
+2026-10-20T03:58:52.8414069Z [36;1m[0m
+2026-10-20T03:58:52.8414335Z [36;1m    def test_producer_digest_drift_is_refused_before_transfer(self):[0m
+2026-10-20T03:58:52.8414723Z [36;1m        before = self.ns['digest'](self.binary)[0m
+2026-10-20T03:58:52.8415069Z [36;1m        self.binary.write_bytes(b'changed producer bytes')[0m
+2026-10-20T03:58:52.8415474Z [36;1m        with self.assertRaisesRegex(RuntimeError, 'digest drift'):[0m
+2026-10-20T03:58:52.8415950Z [36;1m            self.ns['stage_single_allocation'](self.binary, self.staged, self.build,[0m
+2026-10-20T03:58:52.8416739Z [36;1m                                               before, self.out, self.ownership)[0m
+2026-10-20T03:58:52.8417099Z [36;1m        self.assertFalse(self.staged.exists())[0m
+2026-10-20T03:58:52.8417430Z [36;1m        self.assertFalse(self.ownership['staged'])[0m
+2026-10-20T03:58:52.8417704Z [36;1m[0m
+2026-10-20T03:58:52.8417950Z [36;1m    def test_post_rename_digest_drift_still_owns_cleanup(self):[0m
+2026-10-20T03:58:52.8418331Z [36;1m        expected = self.ns['digest'](self.binary)[0m
+2026-10-20T03:58:52.8418949Z [36;1m        with patch.dict(self.ns, digest=lambda p: expected if p == self.binary else 'wrong'):[0m
+2026-10-20T03:58:52.8419606Z [36;1m            with self.assertRaisesRegex(RuntimeError, 'drift'):[0m
+2026-10-20T03:58:52.8419933Z [36;1m                self.stage()[0m
+2026-10-20T03:58:52.8420210Z [36;1m        self.assertTrue(self.ownership['staged'])[0m
+2026-10-20T03:58:52.8420649Z [36;1m        self.assertEqual(self.ns['remove_staged'](self.staged, True)['state'], 'REMOVED')[0m
+2026-10-20T03:58:52.8421038Z [36;1m[0m
+2026-10-20T03:58:52.8421547Z [36;1m    def test_outside_mutable_alias_is_refused(self):[0m
+2026-10-20T03:58:52.8421905Z [36;1m        os.link(self.binary, self.root / 'outside.exe')[0m
+2026-10-20T03:58:52.8422396Z [36;1m        with self.assertRaisesRegex(RuntimeError, 'unowned executable alias'):[0m
+2026-10-20T03:58:52.8422787Z [36;1m            self.stage()[0m
+2026-10-20T03:58:52.8423052Z [36;1m        self.assertFalse(self.staged.exists())[0m
+2026-10-20T03:58:52.8423315Z [36;1m[0m
+2026-10-20T03:58:52.8423586Z [36;1m    def test_separate_cargo_executable_allocation_is_refused(self):[0m
+2026-10-20T03:58:52.8424051Z [36;1m        (self.build / 'ripr-hash.exe').write_bytes(self.binary.read_bytes())[0m
+2026-10-20T03:58:52.8424613Z [36;1m        with self.assertRaisesRegex(RuntimeError, 'separate producer executable allocation'):[0m
+2026-10-20T03:58:52.8425051Z [36;1m            self.stage()[0m
+2026-10-20T03:58:52.8425314Z [36;1m        self.assertFalse(self.staged.exists())[0m
+2026-10-20T03:58:52.8425571Z [36;1m[0m
+2026-10-20T03:58:52.8425833Z [36;1m    def test_producer_cleanup_failure_keeps_staged_ownership(self):[0m
+2026-10-20T03:58:52.8426257Z [36;1m        os.link(self.binary, self.build / 'ripr-alias.exe')[0m
+2026-10-20T03:58:52.8426740Z [36;1m        with patch.object(Path, 'unlink', side_effect=PermissionError('producer locked')):[0m
+2026-10-20T03:58:52.8427283Z [36;1m            with self.assertRaisesRegex(PermissionError, 'producer locked'):[0m
+2026-10-20T03:58:52.8427652Z [36;1m                self.stage()[0m
+2026-10-20T03:58:52.8428070Z [36;1m        self.assertTrue(self.ownership['staged'])[0m
+2026-10-20T03:58:52.8428414Z [36;1m        self.assertTrue(self.ownership['target'])[0m
+2026-10-20T03:58:52.8428730Z [36;1m        self.assertTrue(self.build.exists())[0m
+2026-10-20T03:58:52.8429163Z [36;1m        self.assertEqual(self.ns['remove_staged'](self.staged, True)['state'], 'REMOVED')[0m
+2026-10-20T03:58:52.8429555Z [36;1m[0m
+2026-10-20T03:58:52.8429810Z [36;1m    def test_admission_at_cap_is_refused_without_transfer(self):[0m
+2026-10-20T03:58:52.8430174Z [36;1m        with self.binary.open('r+b') as f:[0m
+2026-10-20T03:58:52.8430453Z [36;1m            f.truncate(128 * 1024**2)[0m
+2026-10-20T03:58:52.8430785Z [36;1m        with self.assertRaisesRegex(RuntimeError, 'budget'):[0m
+2026-10-20T03:58:52.8431681Z [36;1m            self.stage()[0m
+2026-10-20T03:58:52.8431957Z [36;1m        self.assertFalse(self.ownership['staged'])[0m
+2026-10-20T03:58:52.8432285Z [36;1m        self.assertTrue(self.binary.exists())[0m
+2026-10-20T03:58:52.8432547Z [36;1m[0m
+2026-10-20T03:58:52.8432820Z [36;1m    def test_final_serialized_charge_is_exact_and_has_boundary(self):[0m
+2026-10-20T03:58:52.8433173Z [36;1m        payload = 65536[0m
+2026-10-20T03:58:52.8433463Z [36;1m        receipt = self.finalize({'state': 'PASS'}, payload)[0m
+2026-10-20T03:58:52.8434011Z [36;1m        charge = payload + 16 + len(json.dumps(receipt, indent=2).encode()) + len(json.dumps(receipt).encode()) + 2[0m
+2026-10-20T03:58:52.8434584Z [36;1m        self.assertEqual(receipt['final_charged_bytes'], charge)[0m
+2026-10-20T03:58:52.8435051Z [36;1m        # A charge at the ceiling is allowed by finalization, one more byte refuses.[0m
+2026-10-20T03:58:52.8435439Z [36;1m        target = 128 * 1024**2[0m
+2026-10-20T03:58:52.8435679Z [36;1m        for _ in range(3):[0m
+2026-10-20T03:58:52.8435976Z [36;1m            receipt = self.finalize({'state': 'PASS'}, payload)[0m
+2026-10-20T03:58:52.8436374Z [36;1m            payload += target - receipt['final_charged_bytes'][0m
+2026-10-20T03:58:52.8436759Z [36;1m        receipt = self.finalize({'state': 'PASS'}, payload)[0m
+2026-10-20T03:58:52.8437163Z [36;1m        self.assertEqual(receipt['final_charged_bytes'], target)[0m
+2026-10-20T03:58:52.8437535Z [36;1m        self.assertEqual(receipt['state'], 'PASS')[0m
+2026-10-20T03:58:52.8438026Z [36;1m        self.assertEqual(self.finalize({'state': 'PASS'}, payload + 1)['error_type'], 'EvidenceBudget')[0m
+2026-10-20T03:58:52.8438467Z [36;1m[0m
+2026-10-20T03:58:52.8438722Z [36;1m    def test_cleanup_and_budget_failures_keep_first_reason(self):[0m
+2026-10-20T03:58:52.8439195Z [36;1m        receipt = {'state': 'FAIL', 'error_type': 'Producer', 'error': 'first reason'}[0m
+2026-10-20T03:58:52.8439672Z [36;1m        self.ns['record_failure'](receipt, 'StagingCleanup', 'locked')[0m
+2026-10-20T03:58:52.8440075Z [36;1m        receipt = self.finalize(receipt, 128 * 1024**2)[0m
+2026-10-20T03:58:52.8440613Z [36;1m        self.assertEqual((receipt['primary_error_type'], receipt['primary_error']), ('Producer', 'first reason'))[0m
+2026-10-20T03:58:52.8441192Z [36;1m        self.assertEqual(receipt['error_type'], 'EvidenceBudget')[0m
+2026-10-20T03:58:52.8441876Z [36;1m[0m
+2026-10-20T03:58:52.8442101Z [36;1m    def test_cleanup_removes_owned_partial_copy(self):[0m
+2026-10-20T03:58:52.8442434Z [36;1m        self.staged.write_bytes(b'partial')[0m
+2026-10-20T03:58:52.8442773Z [36;1m        result = self.ns['remove_staged'](self.staged, True)[0m
+2026-10-20T03:58:52.8443141Z [36;1m        self.assertEqual(result['state'], 'REMOVED')[0m
+2026-10-20T03:58:52.8443471Z [36;1m        self.assertFalse(self.staged.exists())[0m
+2026-10-20T03:58:52.8443735Z [36;1m[0m
+2026-10-20T03:58:52.8443943Z [36;1m    def test_cleanup_failure_is_not_removed(self):[0m
+2026-10-20T03:58:52.8444267Z [36;1m        self.staged.write_bytes(b'owned')[0m
+2026-10-20T03:58:52.8444688Z [36;1m        with patch.object(Path, 'unlink', side_effect=PermissionError('locked')):[0m
+2026-10-20T03:58:52.8445656Z [36;1m            with self.assertRaises(PermissionError):[0m
+2026-10-20T03:58:52.8446062Z [36;1m                self.ns['remove_staged'](self.staged, True)[0m
+2026-10-20T03:58:52.8446434Z [36;1m        self.assertTrue(self.staged.exists())[0m
+2026-10-20T03:58:52.8446705Z [36;1m[0m
+2026-10-20T03:58:52.8446945Z [36;1m    def test_final_budget_preserves_original_failure(self):[0m
+2026-10-20T03:58:52.8447295Z [36;1m        with self.binary.open('r+b') as f:[0m
+2026-10-20T03:58:52.8447566Z [36;1m            f.truncate(67278336)[0m
+2026-10-20T03:58:52.8448022Z [36;1m        receipt = self.finalize({'state': 'FAIL', 'error_type': 'Producer', 'error': 'original failure'},[0m
+2026-10-20T03:58:52.8448487Z [36;1m                                2 * 67278336)[0m
+2026-10-20T03:58:52.8448880Z [36;1m        self.assertEqual(receipt['state'], 'FAIL')[0m
+2026-10-20T03:58:52.8449276Z [36;1m        self.assertEqual(receipt['primary_error'], 'original failure')[0m
+2026-10-20T03:58:52.8449733Z [36;1m        self.assertEqual(receipt['primary_error_type'], 'Producer')[0m
+2026-10-20T03:58:52.8450165Z [36;1m        self.assertEqual(receipt['error_type'], 'EvidenceBudget')[0m
+2026-10-20T03:58:52.8450485Z [36;1m[0m
+2026-10-20T03:58:52.8450638Z [36;1m[0m
+2026-10-20T03:58:52.8450798Z [36;1mif __name__ == '__main__':[0m
+2026-10-20T03:58:52.8451036Z [36;1m    unittest.main(verbosity=2)[0m
+2026-10-20T03:58:52.8451268Z [36;1m'@[0m
+2026-10-20T03:58:52.8451454Z [36;1m$storage_tests | python -[0m
+2026-10-20T03:58:52.8451750Z [36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }[0m
+2026-10-20T03:58:52.9200630Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-10-20T03:58:52.9201049Z env:
+2026-10-20T03:58:52.9201277Z   SELECTOR_CONSUMER_ENABLED: true
+2026-10-20T03:58:52.9201599Z   CARGO_HOME: C:\Users\runneradmin\.cargo
+2026-10-20T03:58:52.9201914Z   CARGO_INCREMENTAL: 0
+2026-10-20T03:58:52.9202158Z   CARGO_TERM_COLOR: always
+2026-10-20T03:58:52.9202412Z ##[endgroup]
+2026-10-20T03:58:55.2180481Z test_actions_rendered_storage_source_is_python_and_precedes_product_builds (__main__.EvidenceTests.test_actions_rendered_storage_source_is_python_and_precedes_product_builds) ... ok
+2026-10-20T03:58:55.9220312Z test_admission_at_cap_is_refused_without_transfer (__main__.EvidenceTests.test_admission_at_cap_is_refused_without_transfer) ... ok
+2026-10-20T03:58:55.9431207Z test_alias_cleanup_retry_preserves_graph_and_first_failure (__main__.EvidenceTests.test_alias_cleanup_retry_preserves_graph_and_first_failure) ... ok
+2026-10-20T03:58:55.9631558Z test_alias_identity_drift_refuses_unrelated_deletion (__main__.EvidenceTests.test_alias_identity_drift_refuses_unrelated_deletion) ... ok
+2026-10-20T03:58:55.9845202Z test_cache_dependencies_and_unrelated_harness_survive_alias_cleanup (__main__.EvidenceTests.test_cache_dependencies_and_unrelated_harness_survive_alias_cleanup) ... ok
+2026-10-20T03:58:56.0097785Z test_cache_target_is_owned_before_restore_and_all_subset_builds (__main__.EvidenceTests.test_cache_target_is_owned_before_restore_and_all_subset_builds) ... ok
+2026-10-20T03:58:56.0267887Z test_cleanup_and_budget_failures_keep_first_reason (__main__.EvidenceTests.test_cleanup_and_budget_failures_keep_first_reason) ... ok
+2026-10-20T03:58:56.0443156Z test_cleanup_failure_is_not_removed (__main__.EvidenceTests.test_cleanup_failure_is_not_removed) ... ok
+2026-10-20T03:58:56.0619030Z test_cleanup_removes_owned_partial_copy (__main__.EvidenceTests.test_cleanup_removes_owned_partial_copy) ... ok
+2026-10-20T03:58:56.0868215Z test_dependencies_survive_selected_alias_cleanup (__main__.EvidenceTests.test_dependencies_survive_selected_alias_cleanup) ... ok
+2026-10-20T03:58:56.2491826Z test_final_budget_preserves_original_failure (__main__.EvidenceTests.test_final_budget_preserves_original_failure) ... ok
+2026-10-20T03:58:56.2687715Z test_final_serialized_charge_is_exact_and_has_boundary (__main__.EvidenceTests.test_final_serialized_charge_is_exact_and_has_boundary) ... ok
+2026-10-20T03:58:56.9576850Z test_large_single_allocation_reaches_staging_without_copy (__main__.EvidenceTests.test_large_single_allocation_reaches_staging_without_copy) ... ok
+2026-10-20T03:58:56.9830923Z test_listing_preserves_all_predicate_and_identity_requirements (__main__.EvidenceTests.test_listing_preserves_all_predicate_and_identity_requirements) ... ok
+2026-10-20T03:58:57.0008940Z test_listing_refuses_resolved_link_escape (__main__.EvidenceTests.test_listing_refuses_resolved_link_escape) ... ok
+2026-10-20T03:58:57.0237318Z test_listing_refuses_traversal_foreign_root_and_wrong_file (__main__.EvidenceTests.test_listing_refuses_traversal_foreign_root_and_wrong_file) ... ok
+2026-10-20T03:58:57.0412414Z test_occupied_destination_survives_refusal (__main__.EvidenceTests.test_occupied_destination_survives_refusal) ... ok
+2026-10-20T03:58:57.0605536Z test_occupied_target_alias_is_preserved_before_acquisition (__main__.EvidenceTests.test_occupied_target_alias_is_preserved_before_acquisition) ... ok
+2026-10-20T03:58:57.0782834Z test_outside_mutable_alias_is_refused (__main__.EvidenceTests.test_outside_mutable_alias_is_refused) ... ok
+2026-10-20T03:58:57.0964343Z test_partial_transfer_never_falls_back_to_copy (__main__.EvidenceTests.test_partial_transfer_never_falls_back_to_copy) ... ok
+2026-10-20T03:58:57.1149218Z test_post_rename_digest_drift_still_owns_cleanup (__main__.EvidenceTests.test_post_rename_digest_drift_still_owns_cleanup) ... ok
+2026-10-20T03:58:57.1342667Z test_producer_cleanup_failure_keeps_staged_ownership (__main__.EvidenceTests.test_producer_cleanup_failure_keeps_staged_ownership) ... ok
+2026-10-20T03:58:57.1608603Z test_producer_digest_drift_is_refused_before_transfer (__main__.EvidenceTests.test_producer_digest_drift_is_refused_before_transfer) ... ok
+2026-10-20T03:58:57.1795714Z test_real_cross_volume_device_is_refused_before_rename (__main__.EvidenceTests.test_real_cross_volume_device_is_refused_before_rename) ... ok
+2026-10-20T03:58:57.1971382Z test_recovery_refuses_changed_scope_or_literal (__main__.EvidenceTests.test_recovery_refuses_changed_scope_or_literal) ... ok
+2026-10-20T03:58:57.2151151Z test_relative_listing_is_anchored_to_fixture_under_foreign_cwd (__main__.EvidenceTests.test_relative_listing_is_anchored_to_fixture_under_foreign_cwd) ... ok
+2026-10-20T03:58:57.2334725Z test_separate_cargo_executable_allocation_is_refused (__main__.EvidenceTests.test_separate_cargo_executable_allocation_is_refused) ... ok
+2026-10-20T03:58:57.2540327Z test_stable_target_is_exclusively_owned_and_marker_outside_cached_graph (__main__.EvidenceTests.test_stable_target_is_exclusively_owned_and_marker_outside_cached_graph) ... ok
+2026-10-20T03:58:57.2706806Z test_verified_run_arithmetic_and_old_admission_boundary (__main__.EvidenceTests.test_verified_run_arithmetic_and_old_admission_boundary) ... ok
+2026-10-20T03:58:57.2875271Z test_windows_recovery_matches_published_slashes_and_keeps_literal (__main__.EvidenceTests.test_windows_recovery_matches_published_slashes_and_keeps_literal) ... ok
+2026-10-20T03:58:57.2879580Z 
+2026-10-20T03:58:57.2879971Z ----------------------------------------------------------------------
+2026-10-20T03:58:57.2880499Z Ran 30 tests in 2.150s
+2026-10-20T03:58:57.2880710Z 
+2026-10-20T03:58:57.2880807Z OK
+2026-10-20T03:58:57.4018673Z ##[group]Run $target_setup = @'
+2026-10-20T03:58:57.4019048Z [36;1m$target_setup = @'[0m
+2026-10-20T03:58:57.4019273Z [36;1mimport json[0m
+2026-10-20T03:58:57.4019471Z [36;1mimport os[0m
+2026-10-20T03:58:57.4019679Z [36;1mfrom pathlib import Path[0m
+2026-10-20T03:58:57.4019921Z [36;1mimport shutil[0m
+2026-10-20T03:58:57.4020113Z [36;1m[0m
+2026-10-20T03:58:57.4020315Z [36;1mdef own_target(stock_bin, root, head):[0m
+2026-10-20T03:58:57.4020645Z [36;1m    owned = stock_bin / "selector-subset-cache"[0m
+2026-10-20T03:58:57.4021007Z [36;1m    alias = root / "target" / "selector-cargo-cache"[0m
+2026-10-20T03:58:57.4021487Z [36;1m    if alias.exists() or alias.is_symlink() or getattr(alias, "is_junction", lambda: False)():[0m
+2026-10-20T03:58:57.4021975Z [36;1m        raise RuntimeError("occupied cache target alias")[0m
+2026-10-20T03:58:57.4022421Z [36;1m    owned.mkdir()  # Atomic, exclusive acquisition; occupied roots are terminal.[0m
+2026-10-20T03:58:57.4022846Z [36;1m    target = owned / "target"[0m
+2026-10-20T03:58:57.4023091Z [36;1m    target.mkdir()[0m
+2026-10-20T03:58:57.4023444Z [36;1m    owner = {"head": head, "root": str(root), "target": str(target), "alias": str(alias)}[0m
+2026-10-20T03:58:57.4023949Z [36;1m    (owned / "owner.json").write_text(json.dumps(owner), encoding="utf-8")[0m
+2026-10-20T03:58:57.4024590Z [36;1m    alias.parent.mkdir(exist_ok=True)[0m
+2026-10-20T03:58:57.4024863Z [36;1m    return owner[0m
+2026-10-20T03:58:57.4025267Z [36;1m[0m
+2026-10-20T03:58:57.4025440Z [36;1mroot = Path.cwd().resolve()[0m
+2026-10-20T03:58:57.4025686Z [36;1mcargo = shutil.which("cargo")[0m
+2026-10-20T03:58:57.4025923Z [36;1mif not cargo:[0m
+2026-10-20T03:58:57.4026172Z [36;1m    raise RuntimeError("stock Cargo unavailable")[0m
+2026-10-20T03:58:57.4026654Z [36;1mowner = own_target(Path(cargo).resolve().parent, root, os.environ["SELECTOR_EXPECTED_HEAD"])[0m
+2026-10-20T03:58:57.4027310Z [36;1mprint(json.dumps(owner))[0m
+2026-10-20T03:58:57.4027533Z [36;1m'@[0m
+2026-10-20T03:58:57.4027727Z [36;1m$owner = $target_setup | python -[0m
+2026-10-20T03:58:57.4028042Z [36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }[0m
+2026-10-20T03:58:57.4028349Z [36;1m$owner = $owner | ConvertFrom-Json[0m
+2026-10-20T03:58:57.4028832Z [36;1mNew-Item -ItemType Junction -Path $owner.alias -Target $owner.target -ErrorAction Stop | Out-Null[0m
+2026-10-20T03:58:57.4029365Z [36;1m"CARGO_TARGET_DIR=$($owner.target)" >> $env:GITHUB_ENV[0m
+2026-10-20T03:58:57.4029830Z [36;1m"SELECTOR_TARGET_OWNER=$($owner.target | Split-Path)/owner.json" >> $env:GITHUB_ENV[0m
+2026-10-20T03:58:57.4098539Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-10-20T03:58:57.4098881Z env:
+2026-10-20T03:58:57.4099067Z   SELECTOR_CONSUMER_ENABLED: true
+2026-10-20T03:58:57.4099321Z   CARGO_HOME: C:\Users\runneradmin\.cargo
+2026-10-20T03:58:57.4099581Z   CARGO_INCREMENTAL: 0
+2026-10-20T03:58:57.4099783Z   CARGO_TERM_COLOR: always
+2026-10-20T03:58:57.4100088Z   SELECTOR_EXPECTED_HEAD: 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T03:58:57.4100416Z ##[endgroup]
+2026-10-20T03:58:57.9128821Z ##[group]Run Swatinem/rust-cache@v2
+2026-10-20T03:58:57.9129150Z with:
+2026-10-20T03:58:57.9129468Z   shared-key: ripr-windows-advisory-subset-1.95-Windows-stock-volume-v1
+2026-10-20T03:58:57.9129898Z   workspaces: . -> target/selector-cargo-cache
+2026-10-20T03:58:57.9130178Z   cache-targets: false
+2026-10-20T03:58:57.9130534Z   cache-directories: C:\Users\runneradmin\.cargo\bin\selector-subset-cache\target
+2026-10-20T03:58:57.9130908Z   cache-bin: false
+2026-10-20T03:58:57.9131080Z   save-if: false
+2026-10-20T03:58:57.9131253Z   prefix-key: v0-rust
+2026-10-20T03:58:57.9131448Z   add-job-id-key: true
+2026-10-20T03:58:57.9131658Z   add-rust-environment-hash-key: true
+2026-10-20T03:58:57.9131903Z   cache-all-crates: false
+2026-10-20T03:58:57.9132113Z   cache-workspace-crates: false
+2026-10-20T03:58:57.9132334Z   cache-provider: github
+2026-10-20T03:58:57.9132528Z   lookup-only: false
+2026-10-20T03:58:57.9132707Z   cmd-format: {0}
+2026-10-20T03:58:57.9132874Z env:
+2026-10-20T03:58:57.9133066Z   SELECTOR_CONSUMER_ENABLED: true
+2026-10-20T03:58:57.9133676Z   CARGO_HOME: C:\Users\runneradmin\.cargo
+2026-10-20T03:58:57.9133928Z   CARGO_INCREMENTAL: 0
+2026-10-20T03:58:57.9134120Z   CARGO_TERM_COLOR: always
+2026-10-20T03:58:57.9134448Z   CARGO_TARGET_DIR: C:\Users\runneradmin\.cargo\bin\selector-subset-cache\target
+2026-10-20T03:58:57.9134980Z   SELECTOR_TARGET_OWNER: C:\Users\runneradmin\.cargo\bin\selector-subset-cache/owner.json
+2026-10-20T03:58:57.9135383Z ##[endgroup]
+2026-10-20T03:59:06.2537945Z ##[group]Cache Configuration
+2026-10-20T03:59:06.2538453Z Cache Provider:
+2026-10-20T03:59:06.2539894Z     github
+2026-10-20T03:59:06.2540238Z Workspaces:
+2026-10-20T03:59:06.2540568Z     D:\a\ripr-swarm\ripr-swarm
+2026-10-20T03:59:06.2540966Z Cache Paths:
+2026-10-20T03:59:06.2541311Z     C:\Users\runneradmin\.cargo\registry
+2026-10-20T03:59:06.2541758Z     C:\Users\runneradmin\.cargo\git
+2026-10-20T03:59:06.2542316Z     C:\Users\runneradmin\.cargo\bin\selector-subset-cache\target
+2026-10-20T03:59:06.2542892Z Restore Key:
+2026-10-20T03:59:06.2543654Z     v0-rust-ripr-windows-advisory-subset-1.95-Windows-stock-volume-v1-Windows_NT-x64-b9ea7edb
+2026-10-20T03:59:06.2544446Z Cache Key:
+2026-10-20T03:59:06.2545007Z     v0-rust-ripr-windows-advisory-subset-1.95-Windows-stock-volume-v1-Windows_NT-x64-b9ea7edb-ff195c23
+2026-10-20T03:59:06.2546039Z .. Prefix:
+2026-10-20T03:59:06.2546705Z   - v0-rust-ripr-windows-advisory-subset-1.95-Windows-stock-volume-v1-Windows_NT-x64
+2026-10-20T03:59:06.2547485Z .. Environment considered:
+2026-10-20T03:59:06.2547856Z   - Rust Versions:
+2026-10-20T03:59:06.2548368Z     - 1.95.0 x86_64-pc-windows-msvc 59807616e1fa2540724bfbac14d7976d7e4a3860
+2026-10-20T03:59:06.2549174Z     - 1.99.0 x86_64-pc-windows-msvc b940084d7eb6a299eb4bfeb8e34901bc051e7ac4
+2026-10-20T03:59:06.2550121Z   - CARGO_HOME
+2026-10-20T03:59:06.2550446Z   - CARGO_INCREMENTAL
+2026-10-20T03:59:06.2550792Z   - CARGO_TARGET_DIR
+2026-10-20T03:59:06.2551671Z   - CARGO_TERM_COLOR
+2026-10-20T03:59:06.2552273Z .. Lockfiles considered:
+2026-10-20T03:59:06.2552718Z   - D:\a\ripr-swarm\ripr-swarm\.cargo\config.toml
+2026-10-20T03:59:06.2554656Z   - D:\a\ripr-swarm\ripr-swarm\Cargo.lock
+2026-10-20T03:59:06.2555274Z   - D:\a\ripr-swarm\ripr-swarm\crates\ripr\Cargo.toml
+2026-10-20T03:59:06.2555913Z   - D:\a\ripr-swarm\ripr-swarm\editors\zed\rust-toolchain.toml
+2026-10-20T03:59:06.2556529Z   - D:\a\ripr-swarm\ripr-swarm\rust-toolchain.toml
+2026-10-20T03:59:06.2557128Z   - D:\a\ripr-swarm\ripr-swarm\tools\repo-policy\Cargo.toml
+2026-10-20T03:59:06.2557697Z   - D:\a\ripr-swarm\ripr-swarm\xtask\Cargo.toml
+2026-10-20T03:59:06.2558419Z ##[endgroup]
+2026-10-20T03:59:06.2558596Z 
+2026-10-20T03:59:06.2558715Z ... Restoring cache ...
+2026-10-20T03:59:06.5386192Z Cache hit for: v0-rust-ripr-windows-advisory-subset-1.95-Windows-stock-volume-v1-Windows_NT-x64-b9ea7edb-ff195c23
+2026-10-20T03:59:07.8021917Z Received 134217728 of 393917173 (34.1%), 115.6 MBs/sec
+2026-10-20T03:59:08.8038397Z Received 306184192 of 393917173 (77.7%), 138.6 MBs/sec
+2026-10-20T03:59:09.2499586Z Received 393917173 of 393917173 (100.0%), 147.0 MBs/sec
+2026-10-20T03:59:09.2502778Z Cache Size: ~376 MB (393917173 B)
+2026-10-20T03:59:09.2597846Z [command]"C:\Program Files\Git\usr\bin\tar.exe" -xf D:/a/_temp/e8ad7bc5-ef75-4d9c-a84e-1fbcc2c41767/cache.tzst -P -C D:/a/ripr-swarm/ripr-swarm --force-local --use-compress-program "zstd -d"
+2026-10-20T03:59:23.1206788Z Cache restored successfully
+2026-10-20T03:59:23.1434480Z Restored from cache key "v0-rust-ripr-windows-advisory-subset-1.95-Windows-stock-volume-v1-Windows_NT-x64-b9ea7edb-ff195c23" full match: true.
+2026-10-20T03:59:23.1723057Z ##[group]Run mkdir -p target; set +e; cargo test -p ripr --lib lsp::gap_artifacts 2>&1 | tee target/subset-gap-artifacts.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-gap-artifacts.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-gap-artifacts.log" >&2; exit 1; fi; exit 0
+2026-10-20T03:59:23.1725765Z [36;1mmkdir -p target; set +e; cargo test -p ripr --lib lsp::gap_artifacts 2>&1 | tee target/subset-gap-artifacts.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-gap-artifacts.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-gap-artifacts.log" >&2; exit 1; fi; exit 0[0m
+2026-10-20T03:59:23.1741895Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+2026-10-20T03:59:23.1742294Z env:
+2026-10-20T03:59:23.1742516Z   SELECTOR_CONSUMER_ENABLED: true
+2026-10-20T03:59:23.1742786Z   CARGO_HOME: C:\Users\runneradmin\.cargo
+2026-10-20T03:59:23.1743056Z   CARGO_INCREMENTAL: 0
+2026-10-20T03:59:23.1743259Z   CARGO_TERM_COLOR: always
+2026-10-20T03:59:23.1743620Z   CARGO_TARGET_DIR: C:\Users\runneradmin\.cargo\bin\selector-subset-cache\target
+2026-10-20T03:59:23.1744168Z   SELECTOR_TARGET_OWNER: C:\Users\runneradmin\.cargo\bin\selector-subset-cache/owner.json
+2026-10-20T03:59:23.1744584Z   CACHE_ON_FAILURE: false
+2026-10-20T03:59:23.1744796Z ##[endgroup]
+2026-10-20T03:59:30.0482727Z [1m[92m    Updating[0m crates.io index
+2026-10-20T03:59:43.1027164Z [1m[92m   Compiling[0m ripr v0.11.0 (D:\a\ripr-swarm\ripr-swarm\crates\ripr)
+2026-10-20T04:04:57.5130512Z [1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 5m 34s
+2026-10-20T04:04:57.5764824Z [1m[92m     Running[0m unittests src\lib.rs (C:\Users\runneradmin\.cargo\bin\selector-subset-cache\target\debug\deps\ripr-81c0c81923db4617.exe)
+2026-10-20T04:04:57.5944449Z 
+2026-10-20T04:04:57.5948321Z running 84 tests
+2026-10-20T04:04:57.6266360Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_actionable_packet_without_canonical_gap_id_even_with_seam_id ... ok
+2026-10-20T04:04:57.6268079Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_actionable_packet_without_identity ... ok
+2026-10-20T04:04:57.6269838Z test lsp::gap_artifacts::tests::actionable_gaps_report_allows_empty_no_action_queue ... ok
+2026-10-20T04:04:57.6271312Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_empty_queue_without_completed_summary ... ok
+2026-10-20T04:04:57.6273153Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_compound_verify_command ... ok
+2026-10-20T04:04:57.6275427Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_limited_run_artifacts ... ok
+2026-10-20T04:04:57.6277183Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_cross_language_target_unresolved_packet ... ok
+2026-10-20T04:04:57.6279154Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_limited_runtime_status_without_run_limitations ... ok
+2026-10-20T04:04:57.6281008Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_disabled_language_in_later_packet ... ok
+2026-10-20T04:04:57.6282629Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_malformed_raw_evidence_refs ... ok
+2026-10-20T04:04:57.6289581Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_missing_allowed_edit_surface ... ok
+2026-10-20T04:04:57.6295263Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_missing_must_not_change ... ok
+2026-10-20T04:04:57.6304536Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_missing_confidence_basis ... ok
+2026-10-20T04:04:57.6307466Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_missing_raw_evidence_refs ... ok
+2026-10-20T04:04:57.6314796Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_missing_receipt_command ... ok
+2026-10-20T04:04:57.6403676Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_missing_receipt_command_or_path ... ok
+2026-10-20T04:04:57.6408017Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_missing_related_context ... ok
+2026-10-20T04:04:57.6409926Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_missing_related_test_or_observer ... ok
+2026-10-20T04:04:57.6411266Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_missing_repair_guidance ... ok
+2026-10-20T04:04:57.6413487Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_missing_verify_command ... ok
+2026-10-20T04:04:57.6415503Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_missing_target_test_shape ... ok
+2026-10-20T04:04:57.6416931Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_missing_structured_repair_route ... ok
+2026-10-20T04:04:57.6418584Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_placeholder_guidance_fields ... ok
+2026-10-20T04:04:57.6420542Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_projection_excluded_actionable_packets ... ok
+2026-10-20T04:04:57.6421960Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_related_context_without_typed_target ... ok
+2026-10-20T04:04:57.6423327Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_public_projection_exclusion_reasons ... ok
+2026-10-20T04:04:57.6424696Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_unsafe_related_path ... ok
+2026-10-20T04:04:57.6567072Z test lsp::gap_artifacts::tests::actionable_gaps_report_rejects_unsafe_verify_command ... ok
+2026-10-20T04:04:57.6568604Z test lsp::gap_artifacts::tests::actionable_projection_rejects_broad_snapshot_verify_with_either_recognized_source ... ok
+2026-10-20T04:04:57.6570410Z test lsp::gap_artifacts::tests::actionable_gaps_report_validates_read_only_queue_inputs ... ok
+2026-10-20T04:04:57.6580822Z test lsp::gap_artifacts::tests::actionable_projection_rejects_unknown_missing_and_recommendation_provenance ... ok
+2026-10-20T04:04:57.6582392Z test lsp::gap_artifacts::tests::bind_portable_command_for_is_host_aware ... ok
+2026-10-20T04:04:57.6584652Z test lsp::gap_artifacts::tests::bind_portable_command_binds_only_the_top_level_root ... ok
+2026-10-20T04:04:57.6585923Z test lsp::gap_artifacts::tests::actionable_projection_rejects_token_equivalent_broad_snapshot_at_full_admission ... ok
+2026-10-20T04:04:57.6587377Z test lsp::gap_artifacts::tests::bind_portable_command_for_windows_preserves_quoted_comparison_and_redirect ... ok
+2026-10-20T04:04:57.6588891Z test lsp::gap_artifacts::tests::bind_portable_command_for_withholds_apostrophe_escape_on_both_hosts ... ok
+2026-10-20T04:04:57.6590231Z test lsp::gap_artifacts::tests::command_payload_accepts_python_test_verify_commands ... ok
+2026-10-20T04:04:57.6591563Z test lsp::gap_artifacts::tests::bind_portable_command_withholds_mixed_quote_root_spellings ... ok
+2026-10-20T04:04:57.6592828Z test lsp::gap_artifacts::tests::bind_portable_command_withholds_a_route_it_cannot_bind ... ok
+2026-10-20T04:04:57.6594223Z test lsp::gap_artifacts::tests::command_payload_is_safe_for_still_refuses_unquoted_substitution_on_both_hosts ... ok
+2026-10-20T04:04:57.6595744Z test lsp::gap_artifacts::tests::command_payload_accepts_typescript_local_runner_verify_commands ... ok
+2026-10-20T04:04:57.6597544Z test lsp::gap_artifacts::tests::command_payload_is_safe_for_windows_console_len_identity ... ok
+2026-10-20T04:04:57.6599271Z test lsp::gap_artifacts::tests::command_root_accepts_quoted_workspace_path ... ok
+2026-10-20T04:04:57.6600444Z test lsp::gap_artifacts::tests::command_payload_refuses_substitution_metacharacters ... ok
+2026-10-20T04:04:57.6601595Z test lsp::gap_artifacts::tests::command_specs_container_must_be_an_object ... ok
+2026-10-20T04:04:57.6602684Z test lsp::gap_artifacts::tests::command_tokens_for_windows_agrees_with_the_recovery_parser ... ok
+2026-10-20T04:04:57.6605110Z test lsp::gap_artifacts::tests::comparison_identity_does_not_relax_active_shell_or_ambiguous_quote_payloads ... ok
+2026-10-20T04:04:57.6606608Z test lsp::gap_artifacts::tests::editor_command_is_safe_accepts_only_the_binders_rendering ... ok
+2026-10-20T04:04:57.6608569Z test lsp::gap_artifacts::tests::evidence_record_validates_text_static_limits_without_parsing_action_semantics ... ok
+2026-10-20T04:04:57.6610562Z test lsp::gap_artifacts::tests::command_payload_accepts_the_producers_anchored_verify_redirect ... ok
+2026-10-20T04:04:57.6613731Z test lsp::gap_artifacts::tests::first_useful_action_validates_read_only_projection_inputs ... ok
+2026-10-20T04:04:57.6615172Z test lsp::gap_artifacts::tests::actionable_projection_related_source_preserves_exclusion_and_payload_guards ... ok
+2026-10-20T04:04:57.6616684Z test lsp::gap_artifacts::tests::first_useful_action_with_the_producers_verify_redirect_validates ... ok
+2026-10-20T04:04:57.6618616Z test lsp::gap_artifacts::tests::gap_artifact_state_helpers_classify_status_preview_and_static_limits ... ok
+2026-10-20T04:04:57.6720923Z test lsp::gap_artifacts::tests::gap_ledger_validation_checks_languages_for_every_record ... ok
+2026-10-20T04:04:57.6728002Z test lsp::gap_artifacts::tests::gap_ledger_summary_uses_all_records_for_actionability_and_preview_status ... ok
+2026-10-20T04:04:57.6729612Z test lsp::gap_artifacts::tests::gap_ledger_summary_reports_no_action_only_when_all_records_are_no_action ... ok
+2026-10-20T04:04:57.6731584Z test lsp::gap_artifacts::tests::javascript_preview_gap_ledger_is_enabled_by_typescript_adapter ... ok
+2026-10-20T04:04:57.6732923Z test lsp::gap_artifacts::tests::preview_gap_ledger_validates_only_when_language_is_enabled ... ok
+2026-10-20T04:04:57.6734441Z test lsp::gap_artifacts::tests::quoted_comparison_data_keeps_duplicate_redirects_and_other_metacharacters_refused ... ok
+2026-10-20T04:04:57.6761299Z test lsp::gap_artifacts::tests::rejection_kind_strings_cover_fail_closed_reasons ... ok
+2026-10-20T04:04:57.6762535Z test lsp::gap_artifacts::tests::shell_arg_token_for_undoes_simple_windows_console_quotes ... ok
+2026-10-20T04:04:57.6763968Z test lsp::gap_artifacts::tests::quoted_python_comparison_identity_preserves_payload_binding_and_one_redirect ... ok
+2026-10-20T04:04:57.6765387Z test lsp::gap_artifacts::tests::producer_command_specs_are_safe_for_action_projection ... ok
+2026-10-20T04:04:57.6875268Z test lsp::gap_artifacts::tests::quoted_spaced_comparison_identity_and_destination_preserve_one_redirect ... ok
+2026-10-20T04:04:57.6878898Z test lsp::gap_artifacts::tests::validation_accepts_python_transitive_reach_static_limit_kind ... ok
+2026-10-20T04:04:57.6886373Z test lsp::gap_artifacts::tests::typed_command_specs_are_validated_before_projection ... ok
+2026-10-20T04:04:57.6888501Z test lsp::gap_artifacts::tests::validation_accepts_rust_integration_public_api_static_limit_kind ... ok
+2026-10-20T04:04:57.6889840Z test lsp::gap_artifacts::tests::validation_accepts_rust_macro_wrapped_assertion_static_limit_kind ... ok
+2026-10-20T04:04:57.6891678Z test lsp::gap_artifacts::tests::validation_accepts_rust_macro_wrapped_test_call_static_limit_kind ... ok
+2026-10-20T04:04:57.7027004Z test lsp::gap_artifacts::tests::validation_accepts_rust_subprocess_binary_static_limit_kind ... ok
+2026-10-20T04:04:57.7028142Z test lsp::gap_artifacts::tests::source_subject_gates_ledger_and_actionable_gaps_validation ... ok
+2026-10-20T04:04:57.7030027Z test lsp::gap_artifacts::tests::validation_rejects_malformed_command_payloads ... ok
+2026-10-20T04:04:57.7031462Z test lsp::gap_artifacts::tests::validation_rejects_missing_identity ... ok
+2026-10-20T04:04:57.7032096Z test lsp::gap_artifacts::tests::validation_rejects_out_of_workspace_related_paths ... ok
+2026-10-20T04:04:57.7033641Z test lsp::gap_artifacts::tests::validation_rejects_stale_artifact ... ok
+2026-10-20T04:04:57.7034813Z test lsp::gap_artifacts::tests::validation_accepts_rust_value_propagation_static_limit_kind ... ok
+2026-10-20T04:04:57.7035947Z test lsp::gap_artifacts::tests::validation_rejects_unsupported_schema ... ok
+2026-10-20T04:04:57.7037152Z test lsp::gap_artifacts::tests::validation_rejects_wrong_root ... ok
+2026-10-20T04:04:57.7038174Z test lsp::gap_artifacts::tests::validation_rejects_unregistered_static_limit_kind ... ok
+2026-10-20T04:04:57.7039771Z test lsp::gap_artifacts::tests::validation_accepts_wrapper_error_binding_static_limit_kind ... ok
+2026-10-20T04:04:57.7041327Z test lsp::gap_artifacts::tests::workspace_gap_artifact_loader_reports_rejections_for_present_invalid_artifacts ... ok
+2026-10-20T04:04:57.7042678Z test lsp::gap_artifacts::tests::source_subject_covers_every_packet_related_test_shape ... ok
+2026-10-20T04:04:57.7186707Z test lsp::gap_artifacts::tests::workspace_gap_artifact_loader_validates_known_report_paths ... ok
+2026-10-20T04:04:57.7187446Z 
+2026-10-20T04:04:57.7187919Z test result: ok. 84 passed; 0 failed; 0 ignored; 0 measured; 11596 filtered out; finished in 0.11s
+2026-10-20T04:04:57.7188556Z 
+2026-10-20T04:04:57.8080577Z ##[group]Run mkdir -p target; set +e; cargo test -p ripr --lib analysis::workspace::cargo_input_identity::tests 2>&1 | tee target/subset-cargo-home.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-cargo-home.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-cargo-home.log" >&2; exit 1; fi; exit 0
+2026-10-20T04:04:57.8083894Z [36;1mmkdir -p target; set +e; cargo test -p ripr --lib analysis::workspace::cargo_input_identity::tests 2>&1 | tee target/subset-cargo-home.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-cargo-home.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-cargo-home.log" >&2; exit 1; fi; exit 0[0m
+2026-10-20T04:04:57.8100607Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+2026-10-20T04:04:57.8101152Z env:
+2026-10-20T04:04:57.8101410Z   SELECTOR_CONSUMER_ENABLED: true
+2026-10-20T04:04:57.8101748Z   CARGO_HOME: C:\Users\runneradmin\.cargo
+2026-10-20T04:04:57.8102413Z   CARGO_INCREMENTAL: 0
+2026-10-20T04:04:57.8102710Z   CARGO_TERM_COLOR: always
+2026-10-20T04:04:57.8103136Z   CARGO_TARGET_DIR: C:\Users\runneradmin\.cargo\bin\selector-subset-cache\target
+2026-10-20T04:04:57.8103851Z   SELECTOR_TARGET_OWNER: C:\Users\runneradmin\.cargo\bin\selector-subset-cache/owner.json
+2026-10-20T04:04:57.8104357Z   CACHE_ON_FAILURE: false
+2026-10-20T04:04:57.8104670Z ##[endgroup]
+2026-10-20T04:04:59.1613809Z [1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 1.11s
+2026-10-20T04:04:59.1771416Z [1m[92m     Running[0m unittests src\lib.rs (C:\Users\runneradmin\.cargo\bin\selector-subset-cache\target\debug\deps\ripr-81c0c81923db4617.exe)
+2026-10-20T04:04:59.1939321Z 
+2026-10-20T04:04:59.1946753Z running 7 tests
+2026-10-20T04:04:59.1959357Z test analysis::workspace::cargo_input_identity::tests::cargo_environment_names_preserve_platform_semantics_and_raw_values ... ok
+2026-10-20T04:04:59.2112628Z test analysis::workspace::cargo_input_identity::tests::cargo_home_parent_alias_preserves_directory_authority ... ok
+2026-10-20T04:04:59.2121865Z test analysis::workspace::cargo_input_identity::tests::cargo_input_identity_refuses_unreadable_and_oversized_configuration ... ok
+2026-10-20T04:04:59.2249265Z test analysis::workspace::cargo_input_identity::tests::cargo_home_windows_relative_absolute_and_verbatim_preserve_directory_authority ... ok
+2026-10-20T04:04:59.2250772Z test analysis::workspace::cargo_input_identity::tests::cargo_input_identity_covers_ancestor_home_legacy_and_absence ... ok
+2026-10-20T04:04:59.2251828Z test analysis::workspace::cargo_input_identity::tests::cargo_home_fallback_and_relative_paths_bind_configuration_or_refuse_discovery ... ok
+2026-10-20T04:04:59.2410075Z test analysis::workspace::cargo_input_identity::tests::unavailable_cargo_inputs_refuse_current_key_without_claiming_corpus_provenance ... ok
+2026-10-20T04:04:59.2410884Z 
+2026-10-20T04:04:59.2411334Z test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 11673 filtered out; finished in 0.05s
+2026-10-20T04:04:59.2411875Z 
+2026-10-20T04:04:59.2637264Z ##[group]Run mkdir -p target; set +e; cargo test -p ripr --test cli_smoke unusable_cache_directory_is_reported_once_per_build 2>&1 | tee target/subset-cache-warning.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-cache-warning.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-cache-warning.log" >&2; exit 1; fi; exit 0
+2026-10-20T04:04:59.2640378Z [36;1mmkdir -p target; set +e; cargo test -p ripr --test cli_smoke unusable_cache_directory_is_reported_once_per_build 2>&1 | tee target/subset-cache-warning.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-cache-warning.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-cache-warning.log" >&2; exit 1; fi; exit 0[0m
+2026-10-20T04:04:59.2657129Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+2026-10-20T04:04:59.2657652Z env:
+2026-10-20T04:04:59.2657920Z   SELECTOR_CONSUMER_ENABLED: true
+2026-10-20T04:04:59.2658274Z   CARGO_HOME: C:\Users\runneradmin\.cargo
+2026-10-20T04:04:59.2658648Z   CARGO_INCREMENTAL: 0
+2026-10-20T04:04:59.2658966Z   CARGO_TERM_COLOR: always
+2026-10-20T04:04:59.2659431Z   CARGO_TARGET_DIR: C:\Users\runneradmin\.cargo\bin\selector-subset-cache\target
+2026-10-20T04:04:59.2660059Z   SELECTOR_TARGET_OWNER: C:\Users\runneradmin\.cargo\bin\selector-subset-cache/owner.json
+2026-10-20T04:04:59.2660810Z   CACHE_ON_FAILURE: false
+2026-10-20T04:04:59.2661091Z ##[endgroup]
+2026-10-20T04:04:59.8912774Z [1m[92m   Compiling[0m ripr v0.11.0 (D:\a\ripr-swarm\ripr-swarm\crates\ripr)
+2026-10-20T04:07:35.9348157Z [1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 2m 36s
+2026-10-20T04:07:35.9505922Z [1m[92m     Running[0m tests\cli_smoke.rs (C:\Users\runneradmin\.cargo\bin\selector-subset-cache\target\debug\deps\cli_smoke-e1c2c451242dc822.exe)
+2026-10-20T04:07:35.9663736Z 
+2026-10-20T04:07:35.9664213Z running 1 test
+2026-10-20T04:07:36.0299491Z test unusable_cache_directory_is_reported_once_per_build ... ok
+2026-10-20T04:07:36.0300571Z 
+2026-10-20T04:07:36.0301244Z test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 541 filtered out; finished in 0.05s
+2026-10-20T04:07:36.0301965Z 
+2026-10-20T04:07:36.0530446Z ##[group]Run mkdir -p target; set +e; cargo clippy -p ripr --all-targets -- -D warnings 2>&1 | tee target/subset-clippy.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-clippy.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-clippy.log" >&2; exit 1; fi; exit 0
+2026-10-20T04:07:36.0533200Z [36;1mmkdir -p target; set +e; cargo clippy -p ripr --all-targets -- -D warnings 2>&1 | tee target/subset-clippy.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-clippy.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-clippy.log" >&2; exit 1; fi; exit 0[0m
+2026-10-20T04:07:36.0549298Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+2026-10-20T04:07:36.0549815Z env:
+2026-10-20T04:07:36.0550164Z   SELECTOR_CONSUMER_ENABLED: true
+2026-10-20T04:07:36.0550541Z   CARGO_HOME: C:\Users\runneradmin\.cargo
+2026-10-20T04:07:36.0550863Z   CARGO_INCREMENTAL: 0
+2026-10-20T04:07:36.0551144Z   CARGO_TERM_COLOR: always
+2026-10-20T04:07:36.0551559Z   CARGO_TARGET_DIR: C:\Users\runneradmin\.cargo\bin\selector-subset-cache\target
+2026-10-20T04:07:36.0552171Z   SELECTOR_TARGET_OWNER: C:\Users\runneradmin\.cargo\bin\selector-subset-cache/owner.json
+2026-10-20T04:07:36.0552625Z   CACHE_ON_FAILURE: false
+2026-10-20T04:07:36.0552901Z ##[endgroup]
+2026-10-20T04:07:40.3043501Z [1m[92m   Compiling[0m ripr v0.11.0 (D:\a\ripr-swarm\ripr-swarm\crates\ripr)
+2026-10-20T04:09:14.7714527Z [1m[91merror[E0425][0m[1m[97m: cannot find function `run_sh` in this scope[0m
+2026-10-20T04:09:14.7716027Z     [1m[96m--> [0mcrates\ripr\tests\generated_review_workflow.rs:3804:19
+2026-10-20T04:09:14.7717075Z      [1m[96m|[0m
+2026-10-20T04:09:14.7717925Z [1m[96m3804[0m [1m[96m|[0m         let run = run_sh(&script, &root)?;
+2026-10-20T04:09:14.7719269Z      [1m[96m|[0m                   [1m[91m^^^^^^[0m [1m[91mnot found in this scope[0m
+2026-10-20T04:09:14.7720295Z      [1m[96m|[0m
+2026-10-20T04:09:14.7721152Z [1m[92mnote[0m: found an item that was configured out
+2026-10-20T04:09:14.7722204Z     [1m[96m--> [0mcrates\ripr\tests\generated_review_workflow.rs:3904:4
+2026-10-20T04:09:14.7723327Z      [1m[96m|[0m
+2026-10-20T04:09:14.7724076Z [1m[96m3903[0m [1m[96m|[0m #[cfg(unix)]
+2026-10-20T04:09:14.7725112Z      [1m[96m|[0m       [1m[96m----[0m [1m[96mthe item is gated here[0m
+2026-10-20T04:09:14.7728399Z [1m[96m3904[0m [1m[96m|[0m fn run_sh(script: &str, cwd: &std::path::Path) -> Result<std::process::Output, Box<dyn Error>> {
+2026-10-20T04:09:14.7730294Z      [1m[96m|[0m    [1m[92m^^^^^^[0m
+2026-10-20T04:09:14.7731052Z 
+2026-10-20T04:09:15.0003036Z [1m[97mFor more information about this error, try `rustc --explain E0425`.[0m
+2026-10-20T04:09:15.0263106Z [1m[91merror[0m: could not compile `ripr` (test "generated_review_workflow") due to 1 previous error
+2026-10-20T04:09:15.0264556Z [1m[93mwarning[0m: build failed, waiting for other jobs to finish...
+2026-10-20T04:10:50.5202740Z ##[group]Run $consumer = @'
+2026-10-20T04:10:50.5204345Z [36;1m$consumer = @'[0m
+2026-10-20T04:10:50.5204646Z [36;1mimport ctypes as c[0m
+2026-10-20T04:10:50.5204976Z [36;1mfrom ctypes import wintypes as w[0m
+2026-10-20T04:10:50.5205420Z [36;1mimport hashlib, json, os, re, shutil, subprocess, sys, time[0m
+2026-10-20T04:10:50.5205905Z [36;1mfrom pathlib import Path[0m
+2026-10-20T04:10:50.5206204Z [36;1m[0m
+2026-10-20T04:10:50.5206454Z [36;1mroot = Path.cwd().resolve()[0m
+2026-10-20T04:10:50.5206809Z [36;1mout = root / "target" / "selector-literal"[0m
+2026-10-20T04:10:50.5207234Z [36;1mout.mkdir(parents=True, exist_ok=True)[0m
+2026-10-20T04:10:50.5207594Z [36;1mend = time.monotonic() + 720[0m
+2026-10-20T04:10:50.5208074Z [36;1mreceipt = {"schema_version": 1, "state": "INCOMPLETE", "cases": [], "controls": []}[0m
+2026-10-20T04:10:50.5208595Z [36;1mownership = {"staged": False, "target": False}[0m
+2026-10-20T04:10:50.5209080Z [36;1mpayload_charge, immutable_handle = 0, None[0m
+2026-10-20T04:10:50.5209484Z [36;1mk = c.WinDLL("kernel32", use_last_error=True)[0m
+2026-10-20T04:10:50.5209823Z [36;1m[0m
+2026-10-20T04:10:50.5210097Z [36;1mclass Security(c.Structure):[0m
+2026-10-20T04:10:50.5210549Z [36;1m    _fields_ = [("length", w.DWORD), ("descriptor", c.c_void_p), ("inherit", w.BOOL)][0m
+2026-10-20T04:10:50.5211016Z [36;1mclass Startup(c.Structure):[0m
+2026-10-20T04:10:50.5212143Z [36;1m    _fields_ = [(n, w.DWORD) for n in ("cb",)] + [(n, w.LPWSTR) for n in ("reserved", "desktop", "title")] + [(n, w.DWORD) for n in ("x", "y", "width", "height", "xchars", "ychars", "fill", "flags")] + [("show", w.WORD), ("reserved_count", w.WORD), ("reserved_bytes", c.c_void_p)] + [(n, w.HANDLE) for n in ("stdin", "stdout", "stderr")][0m
+2026-10-20T04:10:50.5213266Z [36;1mclass Process(c.Structure):[0m
+2026-10-20T04:10:50.5213752Z [36;1m    _fields_ = [("process", w.HANDLE), ("thread", w.HANDLE), ("pid", w.DWORD), ("tid", w.DWORD)][0m
+2026-10-20T04:10:50.5214298Z [36;1mclass Basic(c.Structure):[0m
+2026-10-20T04:10:50.5215381Z [36;1m    _fields_ = [("process_time", c.c_int64), ("job_time", c.c_int64), ("flags", w.DWORD), ("min_ws", c.c_size_t), ("max_ws", c.c_size_t), ("active_limit", w.DWORD), ("affinity", c.c_size_t), ("priority", w.DWORD), ("scheduling", w.DWORD)][0m
+2026-10-20T04:10:50.5216458Z [36;1mclass IO(c.Structure):[0m
+2026-10-20T04:10:50.5217039Z [36;1m    _fields_ = [(n, c.c_uint64) for n in ("read_ops", "write_ops", "other_ops", "read_bytes", "write_bytes", "other_bytes")][0m
+2026-10-20T04:10:50.5217618Z [36;1mclass Accounting(c.Structure):[0m
+2026-10-20T04:10:50.5218272Z [36;1m    _fields_ = [(n, c.c_int64) for n in ("user", "kernel", "period_user", "period_kernel")] + [(n, w.DWORD) for n in ("faults", "total", "active", "terminated")][0m
+2026-10-20T04:10:50.5218931Z [36;1mclass Limits(c.Structure):[0m
+2026-10-20T04:10:50.5219584Z [36;1m    _fields_ = [("basic", Basic), ("io", IO)] + [(n, c.c_size_t) for n in ("process_memory", "job_memory", "peak_process_memory", "peak_job_memory")][0m
+2026-10-20T04:10:50.5220199Z [36;1m[0m
+2026-10-20T04:10:50.5220461Z [36;1mdef api(name, args, result=w.BOOL):[0m
+2026-10-20T04:10:50.5220823Z [36;1m    fn = getattr(k, name)[0m
+2026-10-20T04:10:50.5221172Z [36;1m    fn.argtypes, fn.restype = args, result[0m
+2026-10-20T04:10:50.5221536Z [36;1m    return fn[0m
+2026-10-20T04:10:50.5221900Z [36;1mapi("CreateJobObjectW", [c.c_void_p, w.LPCWSTR], w.HANDLE)[0m
+2026-10-20T04:10:50.5222471Z [36;1mapi("SetInformationJobObject", [w.HANDLE, c.c_int, c.c_void_p, w.DWORD])[0m
+2026-10-20T04:10:50.5223106Z [36;1mapi("QueryInformationJobObject", [w.HANDLE, c.c_int, c.c_void_p, w.DWORD, c.c_void_p])[0m
+2026-10-20T04:10:50.5223798Z [36;1mapi("CreateFileW", [w.LPCWSTR, w.DWORD, w.DWORD, c.c_void_p, w.DWORD, w.DWORD, w.HANDLE], w.HANDLE)[0m
+2026-10-20T04:10:50.5226725Z [36;1mapi("CreateProcessW", [w.LPCWSTR, w.LPWSTR, c.c_void_p, c.c_void_p, w.BOOL, w.DWORD, c.c_void_p, w.LPCWSTR, c.c_void_p, c.c_void_p])[0m
+2026-10-20T04:10:50.5227756Z [36;1mapi("AssignProcessToJobObject", [w.HANDLE, w.HANDLE])[0m
+2026-10-20T04:10:50.5228212Z [36;1mapi("ResumeThread", [w.HANDLE], w.DWORD)[0m
+2026-10-20T04:10:50.5228650Z [36;1mapi("WaitForSingleObject", [w.HANDLE, w.DWORD], w.DWORD)[0m
+2026-10-20T04:10:50.5229158Z [36;1mapi("GetExitCodeProcess", [w.HANDLE, c.c_void_p])[0m
+2026-10-20T04:10:50.5229590Z [36;1mapi("TerminateJobObject", [w.HANDLE, w.UINT])[0m
+2026-10-20T04:10:50.5229996Z [36;1mapi("TerminateProcess", [w.HANDLE, w.UINT])[0m
+2026-10-20T04:10:50.5230382Z [36;1mapi("CloseHandle", [w.HANDLE])[0m
+2026-10-20T04:10:50.5230740Z [36;1m[0m
+2026-10-20T04:10:50.5230997Z [36;1mdef require(ok, message):[0m
+2026-10-20T04:10:50.5231312Z [36;1m    if not ok:[0m
+2026-10-20T04:10:50.5231616Z [36;1m        raise RuntimeError(message)[0m
+2026-10-20T04:10:50.5231981Z [36;1mdef digest(path):[0m
+2026-10-20T04:10:50.5232368Z [36;1m    return hashlib.sha256(Path(path).read_bytes()).hexdigest()[0m
+2026-10-20T04:10:50.5232775Z [36;1m[0m
+2026-10-20T04:10:50.5233019Z [36;1mdef remove_staged(path, owned):[0m
+2026-10-20T04:10:50.5233382Z [36;1m    if not owned:[0m
+2026-10-20T04:10:50.5233690Z [36;1m        return {"state": "NOT_CREATED"}[0m
+2026-10-20T04:10:50.5234029Z [36;1m    path = Path(path)[0m
+2026-10-20T04:10:50.5234418Z [36;1m    cleanup = {"path": str(path), "initially_absent": True}[0m
+2026-10-20T04:10:50.5234931Z [36;1m    if path.exists():[0m
+2026-10-20T04:10:50.5235428Z [36;1m        cleanup["sha256_before_removal"] = digest(path)[0m
+2026-10-20T04:10:50.5235970Z [36;1m        path.unlink()[0m
+2026-10-20T04:10:50.5236375Z [36;1m    require(not path.exists(), "owned staged executable remains")[0m
+2026-10-20T04:10:50.5236841Z [36;1m    cleanup["state"] = "REMOVED"[0m
+2026-10-20T04:10:50.5237341Z [36;1m    return cleanup[0m
+2026-10-20T04:10:50.5237795Z [36;1m[0m
+2026-10-20T04:10:50.5238250Z [36;1mdef record_failure(receipt, kind, message):[0m
+2026-10-20T04:10:50.5238897Z [36;1m    if receipt.get("error"):[0m
+2026-10-20T04:10:50.5239556Z [36;1m        receipt.setdefault("primary_error", receipt["error"])[0m
+2026-10-20T04:10:50.5240436Z [36;1m        receipt.setdefault("primary_error_type", receipt["error_type"])[0m
+2026-10-20T04:10:50.5240977Z [36;1m    receipt.update(state="FAIL", error_type=kind, error=message)[0m
+2026-10-20T04:10:50.5241408Z [36;1m[0m
+2026-10-20T04:10:50.5241682Z [36;1mdef payload_allocation(binary, target):[0m
+2026-10-20T04:10:50.5242294Z [36;1m    require(binary.is_relative_to(target) and not binary.is_symlink(), "compiler artifact escaped owned target")[0m
+2026-10-20T04:10:50.5242964Z [36;1m    info = binary.stat()[0m
+2026-10-20T04:10:50.5243464Z [36;1m    aliases = [p for p in target.rglob("*") if p.is_file() and p.samefile(binary)][0m
+2026-10-20T04:10:50.5244182Z [36;1m    require(len(aliases) == info.st_nlink and all(not p.is_symlink() for p in aliases), "unowned executable alias")[0m
+2026-10-20T04:10:50.5244761Z [36;1m    expected = digest(binary)[0m
+2026-10-20T04:10:50.5245302Z [36;1m    require(all(p.samefile(binary) or p.stat().st_size != info.st_size or digest(p) != expected[0m
+2026-10-20T04:10:50.5245971Z [36;1m                for p in target.rglob("ripr*.exe")), "separate producer executable allocation")[0m
+2026-10-20T04:10:50.5246609Z [36;1m    return {"charged_bytes": info.st_size, "device": info.st_dev, "file_id": info.st_ino,[0m
+2026-10-20T04:10:50.5247400Z [36;1m            "producer_aliases": [str(p) for p in aliases], "admitted_payload_allocations": 1, "transfer_payload_allocations": 1,[0m
+2026-10-20T04:10:50.5248299Z [36;1m            "accounting_scope": "selected artifact after producer exit through staging cleanup; compiler intermediates excluded"}[0m
+2026-10-20T04:10:50.5248916Z [36;1m[0m
+2026-10-20T04:10:50.5249181Z [36;1mdef remove_aliases(ownership):[0m
+2026-10-20T04:10:50.5249601Z [36;1m    allocation = ownership.get("allocation")[0m
+2026-10-20T04:10:50.5250734Z [36;1m    if allocation is None:[0m
+2026-10-20T04:10:50.5251123Z [36;1m        return {"state": "NOT_CREATED"}[0m
+2026-10-20T04:10:50.5251544Z [36;1m    for raw in allocation["producer_aliases"]:[0m
+2026-10-20T04:10:50.5251911Z [36;1m        path = Path(raw)[0m
+2026-10-20T04:10:50.5252218Z [36;1m        if path.exists():[0m
+2026-10-20T04:10:50.5252685Z [36;1m            require(not path.is_symlink() and (path.stat().st_dev, path.stat().st_ino) ==[0m
+2026-10-20T04:10:50.5253364Z [36;1m                    (allocation["device"], allocation["file_id"]), "producer alias identity drift")[0m
+2026-10-20T04:10:50.5253860Z [36;1m            path.unlink()[0m
+2026-10-20T04:10:50.5254386Z [36;1m    require(all(not Path(p).exists() for p in allocation["producer_aliases"]), "producer aliases remain")[0m
+2026-10-20T04:10:50.5254965Z [36;1m    return {"state": "REMOVED"}[0m
+2026-10-20T04:10:50.5255557Z [36;1m[0m
+2026-10-20T04:10:50.5256170Z [36;1mdef stage_single_allocation(binary, staged, target, expected_digest, out, ownership):[0m
+2026-10-20T04:10:50.5257004Z [36;1m    require(not staged.exists() and not staged.is_symlink() and shutil.which("ripr") is None, "unexpected existing stock ripr occupant")[0m
+2026-10-20T04:10:50.5257810Z [36;1m    allocation = payload_allocation(binary, target)[0m
+2026-10-20T04:10:50.5258454Z [36;1m    require(binary.stat().st_dev == staged.parent.stat().st_dev, "cross-volume staging refused")[0m
+2026-10-20T04:10:50.5259089Z [36;1m    require(digest(binary) == expected_digest, "producer digest drift")[0m
+2026-10-20T04:10:50.5259871Z [36;1m    require(allocation["charged_bytes"] + sum(p.stat().st_size for p in out.glob("*") if p.is_file()) < 128 * 1024**2, "staging/evidence budget exceeded")[0m
+2026-10-20T04:10:50.5260712Z [36;1m    # Windows rename refuses an occupied destination. EXDEV/any failure is terminal;[0m
+2026-10-20T04:10:50.5261293Z [36;1m    # never use shutil.move, which silently copies across volumes.[0m
+2026-10-20T04:10:50.5261745Z [36;1m    ownership["allocation"] = allocation[0m
+2026-10-20T04:10:50.5262124Z [36;1m    os.rename(binary, staged)[0m
+2026-10-20T04:10:50.5262445Z [36;1m    ownership["staged"] = True[0m
+2026-10-20T04:10:50.5263116Z [36;1m    require((staged.stat().st_dev, staged.stat().st_ino) == (allocation["device"], allocation["file_id"]), "rename changed allocation identity")[0m
+2026-10-20T04:10:50.5263897Z [36;1m    # Retire only verified selected aliases. Dependencies and unrelated test[0m
+2026-10-20T04:10:50.5264451Z [36;1m    # harnesses remain available to the cache post-action.[0m
+2026-10-20T04:10:50.5264849Z [36;1m    remove_aliases(ownership)[0m
+2026-10-20T04:10:50.5265395Z [36;1m    require(staged.stat().st_nlink == 1 and digest(staged) == expected_digest, "staged identity/digest drift")[0m
+2026-10-20T04:10:50.5265973Z [36;1m    return allocation[0m
+2026-10-20T04:10:50.5266248Z [36;1m[0m
+2026-10-20T04:10:50.5266572Z [36;1mdef finalize_evidence(receipt, out, fixture, payload_charge):[0m
+2026-10-20T04:10:50.5267004Z [36;1m    receipt["python"] = sys.version[0m
+2026-10-20T04:10:50.5267396Z [36;1m    receipt["total_deadline_seconds"] = 720[0m
+2026-10-20T04:10:50.5267910Z [36;1m    receipt["evidence_bytes"] = sum(p.stat().st_size for p in out.glob("*") if p.is_file())[0m
+2026-10-20T04:10:50.5268497Z [36;1m    receipt["charged_binary_and_staging_bytes"] = payload_charge[0m
+2026-10-20T04:10:50.5268993Z [36;1m    base_bytes = receipt["evidence_bytes"] + payload_charge + 16[0m
+2026-10-20T04:10:50.5269475Z [36;1m    if fixture is not None and fixture.exists():[0m
+2026-10-20T04:10:50.5269976Z [36;1m        base_bytes += sum(p.stat().st_size for p in fixture.rglob("*") if p.is_file())[0m
+2026-10-20T04:10:50.5270459Z [36;1m    receipt["final_charged_bytes"] = 0[0m
+2026-10-20T04:10:50.5270793Z [36;1m    while True:[0m
+2026-10-20T04:10:50.5271230Z [36;1m        # Charge both the pretty receipt and its compact copy in the wrapper log.[0m
+2026-10-20T04:10:50.5272159Z [36;1m        retained = base_bytes + len(json.dumps(receipt, indent=2).encode()) + len(json.dumps(receipt).encode()) + 2[0m
+2026-10-20T04:10:50.5272857Z [36;1m        if retained > 128 * 1024**2 and receipt.get("error_type") != "EvidenceBudget":[0m
+2026-10-20T04:10:50.5273541Z [36;1m            record_failure(receipt, "EvidenceBudget", "final evidence/staging budget exceeded")[0m
+2026-10-20T04:10:50.5274037Z [36;1m            continue[0m
+2026-10-20T04:10:50.5274376Z [36;1m        if receipt["final_charged_bytes"] == retained:[0m
+2026-10-20T04:10:50.5274746Z [36;1m            return receipt[0m
+2026-10-20T04:10:50.5275118Z [36;1m        receipt["final_charged_bytes"] = retained[0m
+2026-10-20T04:10:50.5275688Z [36;1m[0m
+2026-10-20T04:10:50.5276298Z [36;1mdef run(label, argv, cwd, seconds=30, memory=512 * 1024**2, output_cap=2 * 1024**2, active=2):[0m
+2026-10-20T04:10:50.5276946Z [36;1m    require(time.monotonic() < end, "consumer total deadline exceeded")[0m
+2026-10-20T04:10:50.5277467Z [36;1m    paths = [out / (label + ".stdout"), out / (label + ".stderr")][0m
+2026-10-20T04:10:50.5277903Z [36;1m    handles, job, proc = [], None, Process()[0m
+2026-10-20T04:10:50.5278285Z [36;1m    started, stop = time.monotonic(), None[0m
+2026-10-20T04:10:50.5278669Z [36;1m    limits = Limits()[0m
+2026-10-20T04:10:50.5279001Z [36;1m    limits.basic.flags = 0x2000 | 0x200 | 0x10[0m
+2026-10-20T04:10:50.5279360Z [36;1m    limits.basic.affinity = 3[0m
+2026-10-20T04:10:50.5279670Z [36;1m    if active:[0m
+2026-10-20T04:10:50.5279982Z [36;1m        limits.basic.flags |= 0x8[0m
+2026-10-20T04:10:50.5280343Z [36;1m        limits.basic.active_limit = active[0m
+2026-10-20T04:10:50.5280700Z [36;1m    limits.job_memory = memory[0m
+2026-10-20T04:10:50.5281006Z [36;1m    try:[0m
+2026-10-20T04:10:50.5281322Z [36;1m        job = k.CreateJobObjectW(None, None)[0m
+2026-10-20T04:10:50.5281698Z [36;1m        require(job, "CreateJobObject failed")[0m
+2026-10-20T04:10:50.5282277Z [36;1m        require(k.SetInformationJobObject(job, 9, c.byref(limits), c.sizeof(limits)), "Job limits failed")[0m
+2026-10-20T04:10:50.5282872Z [36;1m        sa = Security(c.sizeof(Security), None, True)[0m
+2026-10-20T04:10:50.5283475Z [36;1m        for path, access, disposition in [(Path("NUL"), 0x80000000, 3)] + [(p, 0x40000000, 2) for p in paths]:[0m
+2026-10-20T04:10:50.5284175Z [36;1m            handle = k.CreateFileW(str(path), access, 3, c.byref(sa), disposition, 0x80, None)[0m
+2026-10-20T04:10:50.5284803Z [36;1m            require(handle not in (None, c.c_void_p(-1).value), "Output handle failed")[0m
+2026-10-20T04:10:50.5285328Z [36;1m            handles.append(handle)[0m
+2026-10-20T04:10:50.5285663Z [36;1m        startup = Startup()[0m
+2026-10-20T04:10:50.5286044Z [36;1m        startup.cb, startup.flags = c.sizeof(Startup), 0x100[0m
+2026-10-20T04:10:50.5286513Z [36;1m        startup.stdin, startup.stdout, startup.stderr = handles[0m
+2026-10-20T04:10:50.5287376Z [36;1m        line = c.create_unicode_buffer(subprocess.list2cmdline([str(a) for a in argv]))[0m
+2026-10-20T04:10:50.5288080Z [36;1m        # Inherit the unchanged environment; assign while suspended before any child code runs.[0m
+2026-10-20T04:10:50.5288953Z [36;1m        require(k.CreateProcessW(str(argv[0]), line, None, None, True, 0x08000004, None, str(cwd), c.byref(startup), c.byref(proc)), "CreateProcess failed")[0m
+2026-10-20T04:10:50.5289834Z [36;1m        require(k.AssignProcessToJobObject(job, proc.process), "Job assignment failed")[0m
+2026-10-20T04:10:50.5290480Z [36;1m        require(k.ResumeThread(proc.thread) != 0xffffffff, "ResumeThread failed")[0m
+2026-10-20T04:10:50.5290975Z [36;1m        deadline = min(end, started + seconds)[0m
+2026-10-20T04:10:50.5291349Z [36;1m        while True:[0m
+2026-10-20T04:10:50.5291705Z [36;1m            waited = k.WaitForSingleObject(proc.process, 100)[0m
+2026-10-20T04:10:50.5292292Z [36;1m            require(waited != 0xffffffff, "Process wait failed")[0m
+2026-10-20T04:10:50.5292849Z [36;1m            if sum(p.stat().st_size for p in paths) > output_cap:[0m
+2026-10-20T04:10:50.5293863Z [36;1m                stop = "output_limit"[0m
+2026-10-20T04:10:50.5294252Z [36;1m            elif time.monotonic() >= deadline:[0m
+2026-10-20T04:10:50.5294613Z [36;1m                stop = "deadline"[0m
+2026-10-20T04:10:50.5294931Z [36;1m            if stop:[0m
+2026-10-20T04:10:50.5295379Z [36;1m                require(k.TerminateJobObject(job, 124), "Job termination failed")[0m
+2026-10-20T04:10:50.5296045Z [36;1m                require(k.WaitForSingleObject(proc.process, 5000) == 0, "Terminated process not reaped")[0m
+2026-10-20T04:10:50.5296573Z [36;1m                break[0m
+2026-10-20T04:10:50.5296890Z [36;1m            if waited == 0:[0m
+2026-10-20T04:10:50.5297189Z [36;1m                break[0m
+2026-10-20T04:10:50.5297472Z [36;1m        code = w.DWORD()[0m
+2026-10-20T04:10:50.5297990Z [36;1m        require(k.GetExitCodeProcess(proc.process, c.byref(code)), "Exit status unavailable")[0m
+2026-10-20T04:10:50.5298806Z [36;1m        require(k.QueryInformationJobObject(job, 9, c.byref(limits), c.sizeof(limits), None), "Job peak unavailable")[0m
+2026-10-20T04:10:50.5299557Z [36;1m        row = {"label": label, "argv": [str(a) for a in argv], "cwd": str(cwd), "exit": code.value,[0m
+2026-10-20T04:10:50.5300173Z [36;1m               "stop": stop, "elapsed_ms": round((time.monotonic() - started) * 1000, 2),[0m
+2026-10-20T04:10:50.5300849Z [36;1m               "affinity_mask": 3, "job_memory_limit": memory, "peak_job_memory": limits.peak_job_memory}[0m
+2026-10-20T04:10:50.5301386Z [36;1m        receipt["cases"].append(row)[0m
+2026-10-20T04:10:50.5301712Z [36;1m    finally:[0m
+2026-10-20T04:10:50.5301979Z [36;1m        cleanup_ok = True[0m
+2026-10-20T04:10:50.5302296Z [36;1m        try:[0m
+2026-10-20T04:10:50.5302555Z [36;1m            if proc.process:[0m
+2026-10-20T04:10:50.5302983Z [36;1m                # Owns a still-suspended process even if job assignment failed.[0m
+2026-10-20T04:10:50.5303482Z [36;1m                k.TerminateProcess(proc.process, 124)[0m
+2026-10-20T04:10:50.5303872Z [36;1m            if job:[0m
+2026-10-20T04:10:50.5304189Z [36;1m                k.TerminateJobObject(job, 124)[0m
+2026-10-20T04:10:50.5304549Z [36;1m            if proc.process:[0m
+2026-10-20T04:10:50.5304968Z [36;1m                cleanup_ok = k.WaitForSingleObject(proc.process, 5000) == 0[0m
+2026-10-20T04:10:50.5305419Z [36;1m            if job:[0m
+2026-10-20T04:10:50.5305722Z [36;1m                accounting = Accounting()[0m
+2026-10-20T04:10:50.5306089Z [36;1m                reap_end = time.monotonic() + 5[0m
+2026-10-20T04:10:50.5306427Z [36;1m                while True:[0m
+2026-10-20T04:10:50.5307102Z [36;1m                    require(k.QueryInformationJobObject(job, 1, c.byref(accounting), c.sizeof(accounting), None), "Job cleanup state unavailable")[0m
+2026-10-20T04:10:50.5307795Z [36;1m                    if accounting.active == 0:[0m
+2026-10-20T04:10:50.5308130Z [36;1m                        break[0m
+2026-10-20T04:10:50.5308496Z [36;1m                    if time.monotonic() >= reap_end:[0m
+2026-10-20T04:10:50.5308865Z [36;1m                        cleanup_ok = False[0m
+2026-10-20T04:10:50.5309195Z [36;1m                        break[0m
+2026-10-20T04:10:50.5309509Z [36;1m                    time.sleep(0.02)[0m
+2026-10-20T04:10:50.5309859Z [36;1m        finally:[0m
+2026-10-20T04:10:50.5310135Z [36;1m            if job:[0m
+2026-10-20T04:10:50.5310436Z [36;1m                k.CloseHandle(job)[0m
+2026-10-20T04:10:50.5310850Z [36;1m            for handle in handles + [proc.thread, proc.process]:[0m
+2026-10-20T04:10:50.5311290Z [36;1m                if handle:[0m
+2026-10-20T04:10:50.5311617Z [36;1m                    k.CloseHandle(handle)[0m
+2026-10-20T04:10:50.5312029Z [36;1m        require(cleanup_ok, "owned process tree was not reaped")[0m
+2026-10-20T04:10:50.5313330Z [36;1m    stdout, stderr = [p.read_bytes() for p in paths][0m
+2026-10-20T04:10:50.5314332Z [36;1m    row.update(stdout_sha256=hashlib.sha256(stdout).hexdigest(), stderr_sha256=hashlib.sha256(stderr).hexdigest())[0m
+2026-10-20T04:10:50.5315013Z [36;1m    require(not stop, label + ": bounded process stopped")[0m
+2026-10-20T04:10:50.5315441Z [36;1m    return code.value, stdout, stderr[0m
+2026-10-20T04:10:50.5315811Z [36;1m[0m
+2026-10-20T04:10:50.5316293Z [36;1mdef admit(actual_source, expected_source, actual_digest, expected_digest, actual_path, expected_path):[0m
+2026-10-20T04:10:50.5316959Z [36;1m    require(actual_source == expected_source, "stale source receipt")[0m
+2026-10-20T04:10:50.5317507Z [36;1m    require(actual_digest == expected_digest, "wrong executable digest")[0m
+2026-10-20T04:10:50.5318212Z [36;1m    require(Path(actual_path).resolve() == Path(expected_path).resolve(), "wrong stock executable resolution")[0m
+2026-10-20T04:10:50.5318758Z [36;1m[0m
+2026-10-20T04:10:50.5319017Z [36;1mdef fixture_file(file, fixture_root):[0m
+2026-10-20T04:10:50.5319491Z [36;1m    require(isinstance(file, str) and file, "listing file is empty")[0m
+2026-10-20T04:10:50.5320053Z [36;1m    require(".." not in re.split(r"[\\/]", file), "listing file traverses the fixture")[0m
+2026-10-20T04:10:50.5320527Z [36;1m    path = Path(file)[0m
+2026-10-20T04:10:50.5321023Z [36;1m    require(not re.match(r"^[A-Za-z]:", file) or path.is_absolute(), "listing file has an unbound drive")[0m
+2026-10-20T04:10:50.5321726Z [36;1m    require(not path.anchor or path.is_absolute(), "listing file has an unbound root")[0m
+2026-10-20T04:10:50.5322246Z [36;1m    root = Path(fixture_root).resolve()[0m
+2026-10-20T04:10:50.5322703Z [36;1m    resolved = (path if path.is_absolute() else root / path).resolve()[0m
+2026-10-20T04:10:50.5323332Z [36;1m    require(resolved.is_relative_to(root), "listing file is outside the frozen fixture")[0m
+2026-10-20T04:10:50.5323829Z [36;1m    return resolved[0m
+2026-10-20T04:10:50.5324104Z [36;1m[0m
+2026-10-20T04:10:50.5324433Z [36;1mdef packet(raw, fixture_root, selected_file, expected_id=None):[0m
+2026-10-20T04:10:50.5324882Z [36;1m    data = json.loads(raw)[0m
+2026-10-20T04:10:50.5325207Z [36;1m    findings = data.get("findings")[0m
+2026-10-20T04:10:50.5325689Z [36;1m    require(isinstance(findings, list) and findings, "listing has no findings")[0m
+2026-10-20T04:10:50.5326254Z [36;1m    selected_file = fixture_file(str(selected_file), fixture_root)[0m
+2026-10-20T04:10:50.5326935Z [36;1m    selected = [f for f in findings if f.get("language") == "rust" and f.get("probe", {}).get("family") == "predicate"[0m
+2026-10-20T04:10:50.5327515Z [36;1m                and f["probe"].get("line") == 2[0m
+2026-10-20T04:10:50.5327998Z [36;1m                and fixture_file(f["probe"].get("file", ""), fixture_root) == selected_file[0m
+2026-10-20T04:10:50.5328577Z [36;1m                and f["probe"].get("expression") == "amount >= threshold"][0m
+2026-10-20T04:10:50.5329148Z [36;1m    require(len(selected) == 1, "listing does not identify the frozen fixture predicate")[0m
+2026-10-20T04:10:50.5329633Z [36;1m    finding = selected[0][0m
+2026-10-20T04:10:50.5330153Z [36;1m    require(finding.get("id") and finding["probe"].get("id") == finding["id"], "listing identities disagree")[0m
+2026-10-20T04:10:50.5330726Z [36;1m    if expected_id is not None:[0m
+2026-10-20T04:10:50.5331195Z [36;1m        require(finding["id"] == expected_id, "listing selected another actual ID")[0m
+2026-10-20T04:10:50.5331657Z [36;1m    return finding["id"][0m
+2026-10-20T04:10:50.5331973Z [36;1m[0m
+2026-10-20T04:10:50.5332273Z [36;1mdef recovery_command(fixture, diff, windows=None):[0m
+2026-10-20T04:10:50.5332841Z [36;1m    # Frozen fixture paths contain spaces: shell_arg quotes them; Windows display uses slashes.[0m
+2026-10-20T04:10:50.5333592Z [36;1m    windows = os.name == "nt" if windows is None else windows[0m
+2026-10-20T04:10:50.5335050Z [36;1m    paths = [str(fixture), str(diff)][0m
+2026-10-20T04:10:50.5335399Z [36;1m    if windows:[0m
+2026-10-20T04:10:50.5335803Z [36;1m        paths = [p.removeprefix("\\\\?\\").replace("\\", "/") for p in paths][0m
+2026-10-20T04:10:50.5336618Z [36;1m    return f"ripr check --root '{paths[0]}' --diff '{paths[1]}' --json"[0m
+2026-10-20T04:10:50.5337122Z [36;1m[0m
+2026-10-20T04:10:50.5337560Z [36;1mdef printed_recovery(stderr, fixture, diff, windows=None):[0m
+2026-10-20T04:10:50.5338124Z [36;1m    matches = re.findall(chr(96) + r"(ripr check [^\x60]+)" + chr(96), stderr.decode())[0m
+2026-10-20T04:10:50.5338759Z [36;1m    require(len(matches) == 1, "one printed recovery command required")[0m
+2026-10-20T04:10:50.5339196Z [36;1m    command = matches[0][0m
+2026-10-20T04:10:50.5339764Z [36;1m    require(command == recovery_command(fixture, diff, windows), "printed command lost frozen root/diff/JSON scope")[0m
+2026-10-20T04:10:50.5340348Z [36;1m    return command[0m
+2026-10-20T04:10:50.5340656Z [36;1m[0m
+2026-10-20T04:10:50.5340899Z [36;1mdef rejected(name, operation):[0m
+2026-10-20T04:10:50.5341242Z [36;1m    before = len(receipt["cases"])[0m
+2026-10-20T04:10:50.5341558Z [36;1m    try:[0m
+2026-10-20T04:10:50.5341839Z [36;1m        operation()[0m
+2026-10-20T04:10:50.5342145Z [36;1m    except RuntimeError as error:[0m
+2026-10-20T04:10:50.5342626Z [36;1m        require(len(receipt["cases"]) == before, "negative admission launched a process")[0m
+2026-10-20T04:10:50.5343334Z [36;1m        receipt["controls"].append({"name": name, "rejected": True, "reason": str(error), "processes_launched": 0})[0m
+2026-10-20T04:10:50.5343897Z [36;1m    else:[0m
+2026-10-20T04:10:50.5344226Z [36;1m        raise RuntimeError(name + ": wrong input admitted")[0m
+2026-10-20T04:10:50.5344599Z [36;1m[0m
+2026-10-20T04:10:50.5344809Z [36;1mtry:[0m
+2026-10-20T04:10:50.5345143Z [36;1m    require(os.name == "nt", "native Windows required")[0m
+2026-10-20T04:10:50.5345659Z [36;1m    git, cargo, shell = [shutil.which(name) for name in ("git", "cargo", "pwsh")][0m
+2026-10-20T04:10:50.5346243Z [36;1m    require(all((git, cargo, shell)), "stock git/cargo/PowerShell unavailable")[0m
+2026-10-20T04:10:50.5346723Z [36;1m    def git_value(*args):[0m
+2026-10-20T04:10:50.5347204Z [36;1m        status, stdout, _ = run("git-" + args[0] + "-" + str(len(receipt["cases"])), [git, *args], root)[0m
+2026-10-20T04:10:50.5347762Z [36;1m        require(status == 0, "source identity unavailable")[0m
+2026-10-20T04:10:50.5348187Z [36;1m        return stdout.decode().strip()[0m
+2026-10-20T04:10:50.5348597Z [36;1m    actual_head = git_value("rev-parse", "HEAD")[0m
+2026-10-20T04:10:50.5349021Z [36;1m    source_tree = git_value("rev-parse", "HEAD^{tree}")[0m
+2026-10-20T04:10:50.5349467Z [36;1m    expected_head = os.environ["SELECTOR_EXPECTED_HEAD"][0m
+2026-10-20T04:10:50.5374884Z [36;1m    require(re.fullmatch("[0-9a-f]{40}", expected_head), "invalid expected head")[0m
+2026-10-20T04:10:50.5375654Z [36;1m    require(actual_head == expected_head, "checkout is not the immutable selected head")[0m
+2026-10-20T04:10:50.5376446Z [36;1m    require(not git_value("status", "--porcelain", "--untracked-files=no"), "tracked producer source is dirty")[0m
+2026-10-20T04:10:50.5377255Z [36;1m    receipt["source"] = {"head": actual_head, "tree": source_tree, "lock_sha256": digest(root / "Cargo.lock"),[0m
+2026-10-20T04:10:50.5377900Z [36;1m                         "workflow_checkout": os.environ["SELECTOR_EXPECTED_HEAD"]}[0m
+2026-10-20T04:10:50.5378443Z [36;1m    status, stdout, _ = run("cargo-version", [cargo, "-Vv"], root)[0m
+2026-10-20T04:10:50.5378904Z [36;1m    require(status == 0, "Cargo identity unavailable")[0m
+2026-10-20T04:10:50.5379311Z [36;1m    receipt["cargo"] = stdout.decode()[0m
+2026-10-20T04:10:50.5379746Z [36;1m    rustc = shutil.which("rustc")[0m
+2026-10-20T04:10:50.5380308Z [36;1m    require(rustc, "stock rustc unavailable")[0m
+2026-10-20T04:10:50.5381031Z [36;1m    status, stdout, _ = run("rustc-version", [rustc, "-Vv"], root)[0m
+2026-10-20T04:10:50.5381807Z [36;1m    require(status == 0 and stdout.startswith(b"rustc 1.95.0 ") and "host: x86_64-pc-windows-msvc" in stdout.decode(), "Windows toolchain mismatch")[0m
+2026-10-20T04:10:50.5382516Z [36;1m    receipt["rustc"] = stdout.decode()[0m
+2026-10-20T04:10:50.5382901Z [36;1m    stock_bin = Path(cargo).resolve().parent[0m
+2026-10-20T04:10:50.5383595Z [36;1m    require(str(stock_bin).lower() in [p.rstrip("\\/").lower() for p in os.environ["PATH"].split(os.pathsep)], "Cargo bin is not a stock PATH slot")[0m
+2026-10-20T04:10:50.5384309Z [36;1m    staged = stock_bin / "ripr.exe"[0m
+2026-10-20T04:10:50.5384965Z [36;1m    require(not staged.exists() and not staged.is_symlink() and shutil.which("ripr") is None, "unexpected existing stock ripr occupant")[0m
+2026-10-20T04:10:50.5385678Z [36;1m    owner_path = Path(os.environ["SELECTOR_TARGET_OWNER"])[0m
+2026-10-20T04:10:50.5386171Z [36;1m    owner = json.loads(owner_path.read_text(encoding="utf-8"))[0m
+2026-10-20T04:10:50.5386667Z [36;1m    target = Path(os.environ["CARGO_TARGET_DIR"])[0m
+2026-10-20T04:10:50.5387208Z [36;1m    require(target == stock_bin / "selector-subset-cache" / "target" and target.is_dir()[0m
+2026-10-20T04:10:50.5387928Z [36;1m            and not target.is_symlink() and not target.is_junction(), "unowned shared Cargo target")[0m
+2026-10-20T04:10:50.5388580Z [36;1m    require(owner_path == target.parent / "owner.json" and owner ==[0m
+2026-10-20T04:10:50.5389103Z [36;1m            {"head": actual_head, "root": str(root), "target": str(target),[0m
+2026-10-20T04:10:50.5389705Z [36;1m             "alias": str(root / "target" / "selector-cargo-cache")}, "shared target owner mismatch")[0m
+2026-10-20T04:10:50.5390248Z [36;1m    alias = Path(owner["alias"])[0m
+2026-10-20T04:10:50.5390758Z [36;1m    require(alias.is_junction() and alias.resolve() == target, "cache target mapping drift")[0m
+2026-10-20T04:10:50.5391269Z [36;1m    ownership["target"] = True[0m
+2026-10-20T04:10:50.5391868Z [36;1m    receipt["owned_producer_target"] = {"path": str(target), "state": "RETAINED_FOR_CACHE", "owner_sha256": digest(owner_path)}[0m
+2026-10-20T04:10:50.5392818Z [36;1m    status, stdout, _ = run("build", [cargo, "build", "-p", "ripr", "--bin", "ripr", "--locked", "-j", "2", "--target-dir", str(target), "--message-format=json"],[0m
+2026-10-20T04:10:50.5393615Z [36;1m                            root, seconds=600, memory=8 * 1024**3, output_cap=16 * 1024**2, active=0)[0m
+2026-10-20T04:10:50.5394488Z [36;1m    require(status == 0, "exact-head CLI build failed")[0m
+2026-10-20T04:10:50.5395207Z [36;1m    require(git_value("rev-parse", "HEAD") == actual_head and git_value("rev-parse", "HEAD^{tree}") == source_tree, "producer source moved")[0m
+2026-10-20T04:10:50.5396078Z [36;1m    require(not git_value("status", "--porcelain", "--untracked-files=no"), "producer changed tracked source")[0m
+2026-10-20T04:10:50.5396815Z [36;1m    artifacts = [json.loads(line) for line in stdout.splitlines() if line.startswith(b"{")][0m
+2026-10-20T04:10:50.5397603Z [36;1m    binaries = [a for a in artifacts if a.get("reason") == "compiler-artifact" and a.get("target", {}).get("name") == "ripr"[0m
+2026-10-20T04:10:50.5398292Z [36;1m                and a["target"].get("kind") == ["bin"] and a.get("executable")][0m
+2026-10-20T04:10:50.5398839Z [36;1m    require(len(binaries) == 1, "one real CLI compiler artifact required")[0m
+2026-10-20T04:10:50.5399327Z [36;1m    artifact = binaries[0][0m
+2026-10-20T04:10:50.5399935Z [36;1m    require(set(artifact["features"]) == {"default", "lang-rust", "lang-typescript", "lang-python"}, "default feature mismatch")[0m
+2026-10-20T04:10:50.5400813Z [36;1m    require(Path(artifact["manifest_path"]).resolve() == root / "crates" / "ripr" / "Cargo.toml", "wrong producer manifest")[0m
+2026-10-20T04:10:50.5401484Z [36;1m    binary = Path(artifact["executable"]).resolve()[0m
+2026-10-20T04:10:50.5402069Z [36;1m    binary_digest = digest(binary)[0m
+2026-10-20T04:10:50.5402619Z [36;1m    receipt["producer"] = {"artifact": artifact, "bytes": binary.stat().st_size, "sha256": binary_digest}[0m
+2026-10-20T04:10:50.5403303Z [36;1m    # Until real aliases are verified, retain the conservative two-payload charge.[0m
+2026-10-20T04:10:50.5403841Z [36;1m    payload_charge = 2 * binary.stat().st_size[0m
+2026-10-20T04:10:50.5404250Z [36;1m    allocation = payload_allocation(binary, target)[0m
+2026-10-20T04:10:50.5404641Z [36;1m    payload_charge = allocation["charged_bytes"][0m
+2026-10-20T04:10:50.5405261Z [36;1m    receipt["payload_allocation"] = stage_single_allocation(binary, staged, target, binary_digest, out, ownership)[0m
+2026-10-20T04:10:50.5406033Z [36;1m    immutable_handle = k.CreateFileW(str(staged), 0x80000000, 1, None, 3, 0x80, None)[0m
+2026-10-20T04:10:50.5406721Z [36;1m    require(immutable_handle not in (None, c.c_void_p(-1).value), "immutable executable handle failed")[0m
+2026-10-20T04:10:50.5407584Z [36;1m    require((staged.stat().st_dev, staged.stat().st_ino) == (allocation["device"], allocation["file_id"]), "locked allocation identity changed")[0m
+2026-10-20T04:10:50.5408460Z [36;1m    require(staged.stat().st_nlink == 1 and digest(staged) == binary_digest, "locked executable drift")[0m
+2026-10-20T04:10:50.5408980Z [36;1m    try:[0m
+2026-10-20T04:10:50.5409247Z [36;1m        with staged.open("r+b"):[0m
+2026-10-20T04:10:50.5409596Z [36;1m            pass[0m
+2026-10-20T04:10:50.5409888Z [36;1m    except PermissionError:[0m
+2026-10-20T04:10:50.5410380Z [36;1m        receipt["immutable_executable"] = {"write_open_refused": True, "share_mode": "read_only"}[0m
+2026-10-20T04:10:50.5410838Z [36;1m    else:[0m
+2026-10-20T04:10:50.5411214Z [36;1m        raise RuntimeError("immutable executable permits a writer")[0m
+2026-10-20T04:10:50.5411632Z [36;1m    resolved = shutil.which("ripr")[0m
+2026-10-20T04:10:50.5412023Z [36;1m    require(resolved, "staged candidate does not resolve")[0m
+2026-10-20T04:10:50.5412740Z [36;1m    rejected("wrong-digest-before-launch", lambda: admit(actual_head, expected_head, digest(resolved), "0" * 64, resolved, staged))[0m
+2026-10-20T04:10:50.5413753Z [36;1m    rejected("stale-source-receipt-before-launch", lambda: admit(actual_head, "0" * 40, digest(resolved), binary_digest, resolved, staged))[0m
+2026-10-20T04:10:50.5414925Z [36;1m    admit(actual_head, expected_head, digest(resolved), binary_digest, resolved, staged)[0m
+2026-10-20T04:10:50.5415618Z [36;1m    receipt["producer"].update(stock_resolution=resolved, staging_before_journey_admission=True)[0m
+2026-10-20T04:10:50.5416474Z [36;1m    fixture = Path(os.environ["RUNNER_TEMP"]) / ("selector literal " + os.environ["GITHUB_RUN_ID"] + "-" + os.environ["GITHUB_RUN_ATTEMPT"])[0m
+2026-10-20T04:10:50.5417167Z [36;1m    require(not fixture.exists(), "fixture collision")[0m
+2026-10-20T04:10:50.5417584Z [36;1m    (fixture / "src").mkdir(parents=True)[0m
+2026-10-20T04:10:50.5417942Z [36;1m    foreign = fixture / "foreign"[0m
+2026-10-20T04:10:50.5418281Z [36;1m    foreign.mkdir()[0m
+2026-10-20T04:10:50.5418807Z [36;1m    (fixture / "Cargo.toml").write_text('[package]\nname = "selector-literal"\nversion = "0.1.0"\nedition = "2021"\n')[0m
+2026-10-20T04:10:50.5419397Z [36;1m    source = fixture / "src" / "lib.rs"[0m
+2026-10-20T04:10:50.5420489Z [36;1m    source.write_text("pub fn price(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold { amount - 100 } else { amount }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn positive_price() { assert!(price(500, 300) > 0); }\n}\n")[0m
+2026-10-20T04:10:50.5421541Z [36;1m    diff = fixture / "fixture change.diff"[0m
+2026-10-20T04:10:50.5423222Z [36;1m    diff.write_text("diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn price(amount: i32, threshold: i32) -> i32 {\n-    if amount > threshold { amount - 100 } else { amount }\n+    if amount >= threshold { amount - 100 } else { amount }\n }\n")[0m
+2026-10-20T04:10:50.5424465Z [36;1m    frozen_env = dict(os.environ)[0m
+2026-10-20T04:10:50.5424999Z [36;1m    frozen = {str(p): digest(p) for p in (fixture / "Cargo.toml", source, diff, staged, owner_path)}[0m
+2026-10-20T04:10:50.5425532Z [36;1m    shell_digest = digest(shell)[0m
+2026-10-20T04:10:50.5426199Z [36;1m    status, shell_path, _ = run("shell-resolution", [shell, "-NoProfile", "-NonInteractive", "-Command", "(Get-Command ripr).Source"], foreign)[0m
+2026-10-20T04:10:50.5427186Z [36;1m    require(status == 0 and Path(shell_path.decode().strip()).resolve() == staged.resolve(), "actual PowerShell resolution mismatch")[0m
+2026-10-20T04:10:50.5428177Z [36;1m    status, shell_version, _ = run("shell-version", [shell, "-NoProfile", "-NonInteractive", "-Command", "$PSVersionTable.PSVersion.ToString()"], foreign)[0m
+2026-10-20T04:10:50.5429038Z [36;1m    require(status == 0 and shell_version.strip(), "shell version unavailable")[0m
+2026-10-20T04:10:50.5429814Z [36;1m    receipt["admission"] = {"safe_environment": {n: os.environ.get(n) for n in ("PATHEXT", "ComSpec", "LANG", "LC_ALL", "RUSTUP_TOOLCHAIN")},[0m
+2026-10-20T04:10:50.5430602Z [36;1m                            "PATH_sha256": hashlib.sha256(os.environ["PATH"].encode()).hexdigest(),[0m
+2026-10-20T04:10:50.5431202Z [36;1m                            "PYTHONPATH_present": "PYTHONPATH" in os.environ,[0m
+2026-10-20T04:10:50.5431854Z [36;1m                            "environment_scope": "full inherited environment compared in memory; safe whitelist retained",[0m
+2026-10-20T04:10:50.5432764Z [36;1m                            "shell_version": shell_version.decode().strip(), "cwd": str(foreign), "fixture_hashes": frozen, "shell": shell, "shell_sha256": shell_digest,[0m
+2026-10-20T04:10:50.5433889Z [36;1m                            "environment_changes": [], "PowerShell_resolved_ripr": shell_path.decode().strip(), "stale_control": "mutated source receipt; no historical binary built"}[0m
+2026-10-20T04:10:50.5435079Z [36;1m    def frozen_inputs():[0m
+2026-10-20T04:10:50.5435546Z [36;1m        require(dict(os.environ) == frozen_env, "environment changed after admission")[0m
+2026-10-20T04:10:50.5436210Z [36;1m        require(all(digest(p) == value for p, value in frozen.items()), "admitted input changed")[0m
+2026-10-20T04:10:50.5436962Z [36;1m        require(digest(shell) == shell_digest and shutil.which("ripr") == resolved, "shell/resolution changed")[0m
+2026-10-20T04:10:50.5437494Z [36;1m    def invoke(label, args):[0m
+2026-10-20T04:10:50.5437789Z [36;1m        frozen_inputs()[0m
+2026-10-20T04:10:50.5438162Z [36;1m        result = run(label, [resolved, *args], foreign)[0m
+2026-10-20T04:10:50.5438530Z [36;1m        frozen_inputs()[0m
+2026-10-20T04:10:50.5438809Z [36;1m        return result[0m
+2026-10-20T04:10:50.5439167Z [36;1m    status, stdout, _ = invoke("version", ["--version"])[0m
+2026-10-20T04:10:50.5439879Z [36;1m    require(status == 0 and stdout.decode().strip().endswith("(" + actual_head + ")"), "candidate version/source identity mismatch")[0m
+2026-10-20T04:10:50.5440577Z [36;1m    receipt["producer"]["version"] = stdout.decode().strip()[0m
+2026-10-20T04:10:50.5441099Z [36;1m    check_args = ["check", "--root", str(fixture), "--diff", str(diff), "--json"][0m
+2026-10-20T04:10:50.5441648Z [36;1m    status, stdout, _ = invoke("initial-list", check_args)[0m
+2026-10-20T04:10:50.5442083Z [36;1m    require(status == 0, "fixture listing failed")[0m
+2026-10-20T04:10:50.5442493Z [36;1m    actual_id = packet(stdout, fixture, source)[0m
+2026-10-20T04:10:50.5443243Z [36;1m    require(all(f.get("id") != "repo-probe:src_lib.rs:error_path:3bf8c64c" for f in json.loads(stdout)["findings"]), "opaque negative ID is present in fixture")[0m
+2026-10-20T04:10:50.5444173Z [36;1m    rejected("wrong-listing-identity", lambda: packet(stdout, fixture, source, "probe:wrong-control"))[0m
+2026-10-20T04:10:50.5445314Z [36;1m    for name, field, value in (("wrong-fixture-file-identity", "file", str(foreign / "src" / "lib.rs")),[0m
+2026-10-20T04:10:50.5446132Z [36;1m                               ("wrong-predicate-condition", "expression", "amount > threshold")):[0m
+2026-10-20T04:10:50.5446612Z [36;1m        wrong = json.loads(stdout)[0m
+2026-10-20T04:10:50.5446965Z [36;1m        for finding in wrong["findings"]:[0m
+2026-10-20T04:10:50.5447341Z [36;1m            if finding.get("id") == actual_id:[0m
+2026-10-20T04:10:50.5447723Z [36;1m                finding["probe"][field] = value[0m
+2026-10-20T04:10:50.5448236Z [36;1m        rejected(name, lambda: packet(json.dumps(wrong).encode(), fixture, source, actual_id))[0m
+2026-10-20T04:10:50.5448750Z [36;1m    commands = [][0m
+2026-10-20T04:10:50.5449171Z [36;1m    for sibling, selector in (("explain", "src/lib.rs:abc"), ("context", ":::")):[0m
+2026-10-20T04:10:50.5449899Z [36;1m        args = [sibling, "--root", str(fixture), "--diff", str(diff)] + (["--at"] if sibling == "context" else []) + [selector][0m
+2026-10-20T04:10:50.5450564Z [36;1m        status, stdout, stderr = invoke(sibling + "-malformed", args)[0m
+2026-10-20T04:10:50.5451259Z [36;1m        require(status == 2 and not stdout and b"file:line with a nonempty path" in stderr, "malformed miss contract changed")[0m
+2026-10-20T04:10:50.5452333Z [36;1m        command = printed_recovery(stderr, fixture, diff)[0m
+2026-10-20T04:10:50.5452851Z [36;1m        commands.append(command)[0m
+2026-10-20T04:10:50.5453349Z [36;1m        (out / (sibling + "-literal-command.txt")).write_text(command, encoding="utf-8")[0m
+2026-10-20T04:10:50.5453836Z [36;1m        frozen_inputs()[0m
+2026-10-20T04:10:50.5454456Z [36;1m        status, stdout, _ = run(sibling + "-literal-replay", [shell, "-NoProfile", "-NonInteractive", "-Command", command], foreign)[0m
+2026-10-20T04:10:50.5455039Z [36;1m        frozen_inputs()[0m
+2026-10-20T04:10:50.5455393Z [36;1m        require(status == 0, "literal PowerShell recovery failed")[0m
+2026-10-20T04:10:50.5456081Z [36;1m        require(packet(stdout, fixture, source, actual_id) == actual_id, "literal replay selected another fixture")[0m
+2026-10-20T04:10:50.5456728Z [36;1m        receipt["cases"][-1]["command_exactly_as_printed"] = command[0m
+2026-10-20T04:10:50.5457350Z [36;1m        status, stdout, _ = invoke(sibling + "-actual-id", [sibling, "--root", str(fixture), "--diff", str(diff)][0m
+2026-10-20T04:10:50.5458010Z [36;1m                                  + (["--at"] if sibling == "context" else []) + [actual_id])[0m
+2026-10-20T04:10:50.5458500Z [36;1m        require(status == 0, "actual listed ID retry failed")[0m
+2026-10-20T04:10:50.5458901Z [36;1m        if sibling == "context":[0m
+2026-10-20T04:10:50.5459250Z [36;1m            selected = json.loads(stdout)[0m
+2026-10-20T04:10:50.5459820Z [36;1m            require(selected.get("probe", {}).get("id") == actual_id, "context selected another listed ID")[0m
+2026-10-20T04:10:50.5460317Z [36;1m        else:[0m
+2026-10-20T04:10:50.5460735Z [36;1m            require(actual_id in stdout.decode(), "explain omitted actual selected ID")[0m
+2026-10-20T04:10:50.5461454Z [36;1m        status, stdout, stderr = invoke(sibling + "-opaque-negative", [sibling, "--root", str(fixture), "--diff", str(diff)][0m
+2026-10-20T04:10:50.5462262Z [36;1m                                        + (["--at"] if sibling == "context" else []) + ["repo-probe:src_lib.rs:error_path:3bf8c64c"])[0m
+2026-10-20T04:10:50.5463048Z [36;1m        require(status == 2 and not stdout and b"file:line with a nonempty path" not in stderr, "opaque ID miss got syntax guidance")[0m
+2026-10-20T04:10:50.5463823Z [36;1m    require(commands[0] == commands[1], "siblings advertised different recovery scope")[0m
+2026-10-20T04:10:50.5464487Z [36;1m    frozen_inputs()[0m
+2026-10-20T04:10:50.5465100Z [36;1m    status, stdout, _ = run("literal-repeat", [shell, "-NoProfile", "-NonInteractive", "-Command", commands[0]], foreign)[0m
+2026-10-20T04:10:50.5465860Z [36;1m    frozen_inputs()[0m
+2026-10-20T04:10:50.5466389Z [36;1m    require(status == 0 and packet(stdout, fixture, source, actual_id) == actual_id, "literal repeat changed selected fixture")[0m
+2026-10-20T04:10:50.5467226Z [36;1m    receipt.update(state="PASS", actual_listed_id=actual_id, literal_replays=3, siblings_retried=["explain", "context"])[0m
+2026-10-20T04:10:50.5467829Z [36;1mexcept Exception as error:[0m
+2026-10-20T04:10:50.5468255Z [36;1m    record_failure(receipt, type(error).__name__, str(error))[0m
+2026-10-20T04:10:50.5468624Z [36;1mfinally:[0m
+2026-10-20T04:10:50.5468869Z [36;1m    try:[0m
+2026-10-20T04:10:50.5469187Z [36;1m        receipt["producer_cleanup"] = remove_aliases(ownership)[0m
+2026-10-20T04:10:50.5469623Z [36;1m    except Exception as cleanup_error:[0m
+2026-10-20T04:10:50.5470094Z [36;1m        receipt["producer_cleanup"] = {"state": "FAILED", "error": str(cleanup_error)}[0m
+2026-10-20T04:10:50.5470622Z [36;1m        record_failure(receipt, "ProducerCleanup", str(cleanup_error))[0m
+2026-10-20T04:10:50.5471027Z [36;1m    try:[0m
+2026-10-20T04:10:50.5471381Z [36;1m        if immutable_handle not in (None, c.c_void_p(-1).value):[0m
+2026-10-20T04:10:50.5471931Z [36;1m            require(k.CloseHandle(immutable_handle), "immutable handle close failed")[0m
+2026-10-20T04:10:50.5472944Z [36;1m        receipt["staging_cleanup"] = remove_staged(globals().get("staged"), ownership["staged"])[0m
+2026-10-20T04:10:50.5473513Z [36;1m    except Exception as cleanup_error:[0m
+2026-10-20T04:10:50.5473984Z [36;1m        receipt["staging_cleanup"] = {"state": "FAILED", "error": str(cleanup_error)}[0m
+2026-10-20T04:10:50.5474549Z [36;1m        record_failure(receipt, "StagingCleanup", str(cleanup_error))[0m
+2026-10-20T04:10:50.5475101Z [36;1m    finalize_evidence(receipt, out, globals().get("fixture"), payload_charge)[0m
+2026-10-20T04:10:50.5475704Z [36;1m    (out / "receipt.json").write_bytes(json.dumps(receipt, indent=2).encode())[0m
+2026-10-20T04:10:50.5476185Z [36;1m    print(json.dumps(receipt), flush=True)[0m
+2026-10-20T04:10:50.5476553Z [36;1msys.exit(0 if receipt["state"] == "PASS" else 1)[0m
+2026-10-20T04:10:50.5476896Z [36;1m'@[0m
+2026-10-20T04:10:50.5477307Z [36;1m$consumer | python - 2>&1 | Tee-Object -FilePath target/subset-selector-literal.log[0m
+2026-10-20T04:10:50.5477739Z [36;1m$nativeExit = $LASTEXITCODE[0m
+2026-10-20T04:10:50.5478169Z [36;1mSet-Content -LiteralPath target/subset-selector-literal.status -Value $nativeExit[0m
+2026-10-20T04:10:50.5478769Z [36;1m# Preserve the advisory verdict; missing receipt/log/status remains a hard failure.[0m
+2026-10-20T04:10:50.5479186Z [36;1mexit 0[0m
+2026-10-20T04:10:50.5600141Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+2026-10-20T04:10:50.5600732Z env:
+2026-10-20T04:10:50.5601040Z   SELECTOR_CONSUMER_ENABLED: true
+2026-10-20T04:10:50.5601489Z   CARGO_HOME: C:\Users\runneradmin\.cargo
+2026-10-20T04:10:50.5601962Z   CARGO_INCREMENTAL: 0
+2026-10-20T04:10:50.5602323Z   CARGO_TERM_COLOR: always
+2026-10-20T04:10:50.5602932Z   CARGO_TARGET_DIR: C:\Users\runneradmin\.cargo\bin\selector-subset-cache\target
+2026-10-20T04:10:50.5603868Z   SELECTOR_TARGET_OWNER: C:\Users\runneradmin\.cargo\bin\selector-subset-cache/owner.json
+2026-10-20T04:10:50.5604608Z   CACHE_ON_FAILURE: false
+2026-10-20T04:10:50.5605112Z   SELECTOR_EXPECTED_HEAD: 99ff69b63e38a3e0627d859be898e74299f8bb69
+2026-10-20T04:10:50.5605673Z ##[endgroup]
+2026-10-20T04:14:13.2388796Z {"schema_version": 1, "state": "FAIL", "cases": [{"label": "git-rev-parse-0", "argv": ["C:\\Program Files\\Git\\bin\\git.EXE", "rev-parse", "HEAD"], "cwd": "D:\\a\\ripr-swarm\\ripr-swarm", "exit": 0, "stop": null, "elapsed_ms": 62.0, "affinity_mask": 3, "job_memory_limit": 536870912, "peak_job_memory": 5091328, "stdout_sha256": "a29e1c48a35664354f30882944b9d60cb6603d7008a18cbc542c87d872e19fb7", "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}, {"label": "git-rev-parse-1", "argv": ["C:\\Program Files\\Git\\bin\\git.EXE", "rev-parse", "HEAD^{tree}"], "cwd": "D:\\a\\ripr-swarm\\ripr-swarm", "exit": 0, "stop": null, "elapsed_ms": 47.0, "affinity_mask": 3, "job_memory_limit": 536870912, "peak_job_memory": 5849088, "stdout_sha256": "72336d98468fc9d4bf61803455d809cad84f4114c577779e10a3e4db6415bd48", "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}, {"label": "git-status-2", "argv": ["C:\\Program Files\\Git\\bin\\git.EXE", "status", "--porcelain", "--untracked-files=no"], "cwd": "D:\\a\\ripr-swarm\\ripr-swarm", "exit": 0, "stop": null, "elapsed_ms": 703.0, "affinity_mask": 3, "job_memory_limit": 536870912, "peak_job_memory": 35745792, "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}, {"label": "cargo-version", "argv": ["C:\\Users\\runneradmin\\.cargo\\bin\\cargo.EXE", "-Vv"], "cwd": "D:\\a\\ripr-swarm\\ripr-swarm", "exit": 0, "stop": null, "elapsed_ms": 109.0, "affinity_mask": 3, "job_memory_limit": 536870912, "peak_job_memory": 23674880, "stdout_sha256": "e2851285cd1bb512859166894b2fa639c18343cb985e8092ef212620ca63820c", "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}, {"label": "rustc-version", "argv": ["C:\\Users\\runneradmin\\.cargo\\bin\\rustc.EXE", "-Vv"], "cwd": "D:\\a\\ripr-swarm\\ripr-swarm", "exit": 0, "stop": null, "elapsed_ms": 813.0, "affinity_mask": 3, "job_memory_limit": 536870912, "peak_job_memory": 23420928, "stdout_sha256": "185aa337caf524a621d7b1ce7b21a4d6f92f3ea592d009e481fea0e00e0d0434", "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}, {"label": "build", "argv": ["C:\\Users\\runneradmin\\.cargo\\bin\\cargo.EXE", "build", "-p", "ripr", "--bin", "ripr", "--locked", "-j", "2", "--target-dir", "C:\\Users\\runneradmin\\.cargo\\bin\\selector-subset-cache\\target", "--message-format=json"], "cwd": "D:\\a\\ripr-swarm\\ripr-swarm", "exit": 0, "stop": null, "elapsed_ms": 187469.0, "affinity_mask": 3, "job_memory_limit": 8589934592, "peak_job_memory": 5271085056, "stdout_sha256": "1365eb7b7aecf03c1752e68a1a6e15a638ba8597e5cadca4942b788b2f300245", "stderr_sha256": "0a241232e5d6ef96df960dcfd7db6945cdf600aefbdd5a975fb45edf43dd0bdc"}, {"label": "git-rev-parse-6", "argv": ["C:\\Program Files\\Git\\bin\\git.EXE", "rev-parse", "HEAD"], "cwd": "D:\\a\\ripr-swarm\\ripr-swarm", "exit": 0, "stop": null, "elapsed_ms": 32.0, "affinity_mask": 3, "job_memory_limit": 536870912, "peak_job_memory": 5099520, "stdout_sha256": "a29e1c48a35664354f30882944b9d60cb6603d7008a18cbc542c87d872e19fb7", "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}, {"label": "git-rev-parse-7", "argv": ["C:\\Program Files\\Git\\bin\\git.EXE", "rev-parse", "HEAD^{tree}"], "cwd": "D:\\a\\ripr-swarm\\ripr-swarm", "exit": 0, "stop": null, "elapsed_ms": 31.0, "affinity_mask": 3, "job_memory_limit": 536870912, "peak_job_memory": 5840896, "stdout_sha256": "72336d98468fc9d4bf61803455d809cad84f4114c577779e10a3e4db6415bd48", "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}, {"label": "git-status-8", "argv": ["C:\\Program Files\\Git\\bin\\git.EXE", "status", "--porcelain", "--untracked-files=no"], "cwd": "D:\\a\\ripr-swarm\\ripr-swarm", "exit": 0, "stop": null, "elapsed_ms": 157.0, "affinity_mask": 3, "job_memory_limit": 536870912, "peak_job_memory": 31723520, "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}, {"label": "shell-resolution", "argv": ["C:\\Program Files\\PowerShell\\7\\pwsh.EXE", "-NoProfile", "-NonInteractive", "-Command", "(Get-Command ripr).Source"], "cwd": "D:\\a\\_temp\\selector literal 39367076780-1\\foreign", "exit": 0, "stop": null, "elapsed_ms": 610.0, "affinity_mask": 3, "job_memory_limit": 536870912, "peak_job_memory": 24788992, "stdout_sha256": "cac61203f8d2f59840991f451d4c237d4092d4a48814542b4d3564c99b52ac62", "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}, {"label": "shell-version", "argv": ["C:\\Program Files\\PowerShell\\7\\pwsh.EXE", "-NoProfile", "-NonInteractive", "-Command", "$PSVersionTable.PSVersion.ToString()"], "cwd": "D:\\a\\_temp\\selector literal 39367076780-1\\foreign", "exit": 0, "stop": null, "elapsed_ms": 500.0, "affinity_mask": 3, "job_memory_limit": 536870912, "peak_job_memory": 24276992, "stdout_sha256": "a83005914600536c41ec1d734bf13d783d5894206b4ca092f94e760e84390941", "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}, {"label": "version", "argv": ["C:\\Users\\runneradmin\\.cargo\\bin\\ripr.EXE", "--version"], "cwd": "D:\\a\\_temp\\selector literal 39367076780-1\\foreign", "exit": 0, "stop": null, "elapsed_ms": 31.0, "affinity_mask": 3, "job_memory_limit": 536870912, "peak_job_memory": 2805760, "stdout_sha256": "cf3a6a9de545aef826ea0151fc9be74ade6bad4134ec0bfe3475d80bab690db9", "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}, {"label": "initial-list", "argv": ["C:\\Users\\runneradmin\\.cargo\\bin\\ripr.EXE", "check", "--root", "D:\\a\\_temp\\selector literal 39367076780-1", "--diff", "D:\\a\\_temp\\selector literal 39367076780-1\\fixture change.diff", "--json"], "cwd": "D:\\a\\_temp\\selector literal 39367076780-1\\foreign", "exit": 0, "stop": null, "elapsed_ms": 63.0, "affinity_mask": 3, "job_memory_limit": 536870912, "peak_job_memory": 3809280, "stdout_sha256": "2a4e4961a39b4adad6eb537c5ce2b91a33618ca523d34cf7fa94062adbda7e8d", "stderr_sha256": "61ea98845a7d34c08665c6ca3fa37059cb06b32ac0af1630d0ccaf15f0ea703b"}, {"label": "explain-malformed", "argv": ["C:\\Users\\runneradmin\\.cargo\\bin\\ripr.EXE", "explain", "--root", "D:\\a\\_temp\\selector literal 39367076780-1", "--diff", "D:\\a\\_temp\\selector literal 39367076780-1\\fixture change.diff", "src/lib.rs:abc"], "cwd": "D:\\a\\_temp\\selector literal 39367076780-1\\foreign", "exit": 2, "stop": null, "elapsed_ms": 78.0, "affinity_mask": 3, "job_memory_limit": 536870912, "peak_job_memory": 5128192, "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "stderr_sha256": "85b73c08aa3e139737294a9b7bcf571426b74b0aa120f40353eb788b75901d74"}], "controls": [{"name": "wrong-digest-before-launch", "rejected": true, "reason": "wrong executable digest", "processes_launched": 0}, {"name": "stale-source-receipt-before-launch", "rejected": true, "reason": "stale source receipt", "processes_launched": 0}, {"name": "wrong-listing-identity", "rejected": true, "reason": "listing selected another actual ID", "processes_launched": 0}, {"name": "wrong-fixture-file-identity", "rejected": true, "reason": "listing does not identify the frozen fixture predicate", "processes_launched": 0}, {"name": "wrong-predicate-condition", "rejected": true, "reason": "listing does not identify the frozen fixture predicate", "processes_launched": 0}], "source": {"head": "99ff69b63e38a3e0627d859be898e74299f8bb69", "tree": "24ae3ec11f39ed2dbec175dbb019f168e4db850a", "lock_sha256": "08706615a21ea0f32a3a8ebfee7daf4bf447843145b5f13b5cc679ac3b4b3a2d", "workflow_checkout": "99ff69b63e38a3e0627d859be898e74299f8bb69"}, "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)\nrelease: 1.95.0\ncommit-hash: f2d3ce0bd7f24a49f8f72d9000448f8838c4e850\ncommit-date: 2026-03-21\nhost: x86_64-pc-windows-msvc\nlibgit2: 1.9.2 (sys:0.20.4 vendored)\nlibcurl: 8.15.0-DEV (sys:0.4.83+curl-8.15.0 vendored ssl:Schannel)\nos: Windows 10.0.26100 (Windows 11 ServerDatacenter) [64-bit]\n", "rustc": "rustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: x86_64-pc-windows-msvc\nrelease: 1.95.0\nLLVM version: 22.1.2\n", "owned_producer_target": {"path": "C:\\Users\\runneradmin\\.cargo\\bin\\selector-subset-cache\\target", "state": "RETAINED_FOR_CACHE", "owner_sha256": "14b53a9ae37aa837053d2050a006c39711627ad42eab0102219a55662736c23f"}, "producer": {"artifact": {"reason": "compiler-artifact", "package_id": "path+file:///D:/a/ripr-swarm/ripr-swarm/crates/ripr#0.11.0", "manifest_path": "D:\\a\\ripr-swarm\\ripr-swarm\\crates\\ripr\\Cargo.toml", "target": {"kind": ["bin"], "crate_types": ["bin"], "name": "ripr", "src_path": "D:\\a\\ripr-swarm\\ripr-swarm\\crates\\ripr\\src\\main.rs", "edition": "2024", "doc": true, "doctest": false, "test": true}, "profile": {"opt_level": "0", "debuginfo": "line-tables-only", "debug_assertions": true, "overflow_checks": true, "test": false}, "features": ["default", "lang-python", "lang-rust", "lang-typescript"], "filenames": ["C:\\Users\\runneradmin\\.cargo\\bin\\selector-subset-cache\\target\\debug\\ripr.exe", "C:\\Users\\runneradmin\\.cargo\\bin\\selector-subset-cache\\target\\debug\\ripr.pdb"], "executable": "C:\\Users\\runneradmin\\.cargo\\bin\\selector-subset-cache\\target\\debug\\ripr.exe", "fresh": false}, "bytes": 78427136, "sha256": "355a40c92e23f0418da04df611ba8c8244f1b5ff841a88592db6737bca1c10b3", "stock_resolution": "C:\\Users\\runneradmin\\.cargo\\bin\\ripr.EXE", "staging_before_journey_admission": true, "version": "ripr 0.11.0 (99ff69b63e38a3e0627d859be898e74299f8bb69)"}, "payload_allocation": {"charged_bytes": 78427136, "device": 17594508763472084922, "file_id": 562949954801349, "producer_aliases": ["C:\\Users\\runneradmin\\.cargo\\bin\\selector-subset-cache\\target\\debug\\ripr.exe", "C:\\Users\\runneradmin\\.cargo\\bin\\selector-subset-cache\\target\\debug\\deps\\ripr.exe"], "admitted_payload_allocations": 1, "transfer_payload_allocations": 1, "accounting_scope": "selected artifact after producer exit through staging cleanup; compiler intermediates excluded"}, "immutable_executable": {"write_open_refused": true, "share_mode": "read_only"}, "admission": {"safe_environment": {"PATHEXT": ".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC;.CPL", "ComSpec": "C:\\Windows\\system32\\cmd.exe", "LANG": null, "LC_ALL": null, "RUSTUP_TOOLCHAIN": null}, "PATH_sha256": "5619442a059242b4d415ab268c67d9b5610f58acef205c9756f0a71f93f4afc5", "PYTHONPATH_present": false, "environment_scope": "full inherited environment compared in memory; safe whitelist retained", "shell_version": "7.6.6", "cwd": "D:\\a\\_temp\\selector literal 39367076780-1\\foreign", "fixture_hashes": {"D:\\a\\_temp\\selector literal 39367076780-1\\Cargo.toml": "392d6556a9c964ac6bd7dffa6b51dbd15c815ac61154034c5502cbcfbe8c014d", "D:\\a\\_temp\\selector literal 39367076780-1\\src\\lib.rs": "1ab0d81cb348658247ce331d10fd621673f1bc06c72c1669dc3dc704017bf8a4", "D:\\a\\_temp\\selector literal 39367076780-1\\fixture change.diff": "be1bccae835bf912d02ef4976c3872f2701df2bec3a05d6b10ce71dfea42ec32", "C:\\Users\\runneradmin\\.cargo\\bin\\ripr.exe": "355a40c92e23f0418da04df611ba8c8244f1b5ff841a88592db6737bca1c10b3", "C:\\Users\\runneradmin\\.cargo\\bin\\selector-subset-cache\\owner.json": "14b53a9ae37aa837053d2050a006c39711627ad42eab0102219a55662736c23f"}, "shell": "C:\\Program Files\\PowerShell\\7\\pwsh.EXE", "shell_sha256": "bfb46af89433268872ddb43d1ca7a3f433452ee91ed356a9786940f90118e285", "environment_changes": [], "PowerShell_resolved_ripr": "C:\\Users\\runneradmin\\.cargo\\bin\\ripr.exe", "stale_control": "mutated source receipt; no historical binary built"}, "error_type": "RuntimeError", "error": "printed command lost frozen root/diff/JSON scope", "producer_cleanup": {"state": "REMOVED"}, "staging_cleanup": {"path": "C:\\Users\\runneradmin\\.cargo\\bin\\ripr.exe", "initially_absent": true, "sha256_before_removal": "355a40c92e23f0418da04df611ba8c8244f1b5ff841a88592db6737bca1c10b3", "state": "REMOVED"}, "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]", "total_deadline_seconds": 720, "evidence_bytes": 259585, "charged_binary_and_staging_bytes": 78427136, "final_charged_bytes": 78720108}
+2026-10-20T04:14:13.4188138Z ##[group]Run {
+2026-10-20T04:14:13.4188688Z [36;1m{[0m
+2026-10-20T04:14:13.4189160Z [36;1m  printf '## Windows advisory subset (#4938)\n\n'[0m
+2026-10-20T04:14:13.4190163Z [36;1m  printf 'Advisory only: not a required check and does not gate merges. Test/lint verdicts:\n\n'[0m
+2026-10-20T04:14:13.4191854Z [36;1m  for label in subset-gap-artifacts subset-cargo-home subset-cache-warning subset-clippy subset-selector-literal; do[0m
+2026-10-20T04:14:13.4193330Z [36;1m  if [ "$label" = subset-selector-literal ] && [ "$SELECTOR_CONSUMER_ENABLED" != true ]; then continue; fi[0m
+2026-10-20T04:14:13.4194323Z [36;1m    status_file="target/${label}.status"[0m
+2026-10-20T04:14:13.4194904Z [36;1m    if [ ! -f "$status_file" ]; then[0m
+2026-10-20T04:14:13.4195509Z [36;1m      echo "- ${label}: not_run (no status file)"[0m
+2026-10-20T04:14:13.4196151Z [36;1m    elif [ "$(cat "$status_file")" = "0" ]; then[0m
+2026-10-20T04:14:13.4197171Z [36;1m      echo "- ${label}: PASS"[0m
+2026-10-20T04:14:13.4197706Z [36;1m    else[0m
+2026-10-20T04:14:13.4198229Z [36;1m      echo "- ${label}: FAIL (exit $(cat "$status_file"))"[0m
+2026-10-20T04:14:13.4198832Z [36;1m    fi[0m
+2026-10-20T04:14:13.4199198Z [36;1m  done[0m
+2026-10-20T04:14:13.4199880Z [36;1m} | tee target/windows-subset-verdict.md | tee -a "$GITHUB_STEP_SUMMARY"[0m
+2026-10-20T04:14:13.4220382Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+2026-10-20T04:14:13.4221150Z env:
+2026-10-20T04:14:13.4221525Z   SELECTOR_CONSUMER_ENABLED: true
+2026-10-20T04:14:13.4222048Z   CARGO_HOME: C:\Users\runneradmin\.cargo
+2026-10-20T04:14:13.4222628Z   CARGO_INCREMENTAL: 0
+2026-10-20T04:14:13.4223025Z   CARGO_TERM_COLOR: always
+2026-10-20T04:14:13.4223671Z   CARGO_TARGET_DIR: C:\Users\runneradmin\.cargo\bin\selector-subset-cache\target
+2026-10-20T04:14:13.4224595Z   SELECTOR_TARGET_OWNER: C:\Users\runneradmin\.cargo\bin\selector-subset-cache/owner.json
+2026-10-20T04:14:13.4225104Z   CACHE_ON_FAILURE: false
+2026-10-20T04:14:13.4225383Z ##[endgroup]
+2026-10-20T04:14:13.5379456Z ## Windows advisory subset (#4938)
+2026-10-20T04:14:13.5379964Z 
+2026-10-20T04:14:13.5380596Z Advisory only: not a required check and does not gate merges. Test/lint verdicts:
+2026-10-20T04:14:13.5381469Z 
+2026-10-20T04:14:13.5381807Z - subset-gap-artifacts: PASS
+2026-10-20T04:14:13.5579287Z - subset-cargo-home: PASS
+2026-10-20T04:14:13.5778631Z - subset-cache-warning: PASS
+2026-10-20T04:14:13.6170643Z - subset-clippy: FAIL (exit 101)
+2026-10-20T04:14:13.6585647Z - subset-selector-literal: FAIL (exit 1)
+2026-10-20T04:14:13.6834702Z ##[group]Run for label in subset-gap-artifacts subset-cargo-home subset-cache-warning subset-clippy; do
+2026-10-20T04:14:13.6836078Z [36;1mfor label in subset-gap-artifacts subset-cargo-home subset-cache-warning subset-clippy; do[0m
+2026-10-20T04:14:13.6837337Z [36;1m  test -f "target/${label}.status" || exit 1[0m
+2026-10-20T04:14:13.6837888Z [36;1m  test -f "target/${label}.log" || exit 1[0m
+2026-10-20T04:14:13.6838353Z [36;1mdone[0m
+2026-10-20T04:14:13.6838930Z [36;1mfor label in subset-gap-artifacts subset-cargo-home subset-cache-warning; do[0m
+2026-10-20T04:14:13.6839735Z [36;1m  if [ "$(cat "target/${label}.status")" = "0" ]; then[0m
+2026-10-20T04:14:13.6840986Z [36;1m    executed="$(awk '/^test result:/{for (i = 1; i <= NF; i++) if ($i == "passed;" || $i == "failed;" || $i == "measured;") executed += $(i - 1)} END {print executed + 0}' "target/${label}.log")"[0m
+2026-10-20T04:14:13.6842167Z [36;1m    if [ "$executed" -eq 0 ]; then[0m
+2026-10-20T04:14:13.6843031Z [36;1m      echo "${label}: cargo exited 0 but no test executed; the name filter no longer matches any test" >&2[0m
+2026-10-20T04:14:13.6843835Z [36;1m      exit 1[0m
+2026-10-20T04:14:13.6844146Z [36;1m    fi[0m
+2026-10-20T04:14:13.6844430Z [36;1m  fi[0m
+2026-10-20T04:14:13.6844717Z [36;1mdone[0m
+2026-10-20T04:14:13.6859661Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+2026-10-20T04:14:13.6860068Z env:
+2026-10-20T04:14:13.6860255Z   SELECTOR_CONSUMER_ENABLED: true
+2026-10-20T04:14:13.6860521Z   CARGO_HOME: C:\Users\runneradmin\.cargo
+2026-10-20T04:14:13.6860791Z   CARGO_INCREMENTAL: 0
+2026-10-20T04:14:13.6861002Z   CARGO_TERM_COLOR: always
+2026-10-20T04:14:13.6861517Z   CARGO_TARGET_DIR: C:\Users\runneradmin\.cargo\bin\selector-subset-cache\target
+2026-10-20T04:14:13.6862072Z   SELECTOR_TARGET_OWNER: C:\Users\runneradmin\.cargo\bin\selector-subset-cache/owner.json
+2026-10-20T04:14:13.6862493Z   CACHE_ON_FAILURE: false
+2026-10-20T04:14:13.6862708Z ##[endgroup]
+2026-10-20T04:14:14.1989865Z ##[group]Run python - <<'PY'
+2026-10-20T04:14:14.1990262Z [36;1mpython - <<'PY'[0m
+2026-10-20T04:14:14.1990495Z [36;1mimport json[0m
+2026-10-20T04:14:14.1990717Z [36;1mfrom pathlib import Path[0m
+2026-10-20T04:14:14.1991396Z [36;1mpaths = [Path("target/subset-selector-literal.log"), Path("target/subset-selector-literal.status"), Path("target/selector-literal/receipt.json")][0m
+2026-10-20T04:14:14.1992168Z [36;1mif not all(p.is_file() and p.stat().st_size for p in paths):[0m
+2026-10-20T04:14:14.1992629Z [36;1m    raise SystemExit("selector consumer evidence missing or empty")[0m
+2026-10-20T04:14:14.1993095Z [36;1mstatus = int(paths[1].read_text(encoding="utf-8-sig").strip())[0m
+2026-10-20T04:14:14.1993562Z [36;1mreceipt = json.loads(paths[2].read_text(encoding="utf-8-sig"))[0m
+2026-10-20T04:14:14.1994047Z [36;1mlogged = json.loads(paths[0].read_text(encoding="utf-8-sig").splitlines()[-1])[0m
+2026-10-20T04:14:14.1994705Z [36;1mif logged != receipt or receipt.get("schema_version") != 1 or receipt.get("state") not in ("PASS", "FAIL"):[0m
+2026-10-20T04:14:14.1995321Z [36;1m    raise SystemExit("selector receipt/log malformed or inconsistent")[0m
+2026-10-20T04:14:14.1995834Z [36;1mif status != (0 if receipt["state"] == "PASS" else 1):[0m
+2026-10-20T04:14:14.1996576Z [36;1m    raise SystemExit("selector native status disagrees with retained receipt")[0m
+2026-10-20T04:14:14.1997159Z [36;1mcleanup = receipt.get("staging_cleanup", {}).get("state")[0m
+2026-10-20T04:14:14.1997610Z [36;1mproducer_cleanup = receipt.get("producer_cleanup", {}).get("state")[0m
+2026-10-20T04:14:14.1998254Z [36;1mif producer_cleanup not in ("NOT_CREATED", "REMOVED") or (receipt["state"] == "PASS" and producer_cleanup != "REMOVED"):[0m
+2026-10-20T04:14:14.1998955Z [36;1m    raise SystemExit("selector selected producer alias cleanup missing or failed")[0m
+2026-10-20T04:14:14.1999572Z [36;1mif cleanup not in ("NOT_CREATED", "REMOVED") or (receipt["state"] == "PASS" and cleanup != "REMOVED"):[0m
+2026-10-20T04:14:14.2000167Z [36;1m    raise SystemExit("selector staged executable cleanup missing or failed")[0m
+2026-10-20T04:14:14.2000577Z [36;1mif receipt["state"] == "FAIL":[0m
+2026-10-20T04:14:14.2000855Z [36;1m    if not receipt.get("error"):[0m
+2026-10-20T04:14:14.2001207Z [36;1m        raise SystemExit("selector FAIL has no retained failure")[0m
+2026-10-20T04:14:14.2001543Z [36;1melse:[0m
+2026-10-20T04:14:14.2001885Z [36;1m    if receipt.get("owned_producer_target", {}).get("state") != "RETAINED_FOR_CACHE":[0m
+2026-10-20T04:14:14.2002447Z [36;1m        raise SystemExit("selector PASS lacks retained shared dependency cache")[0m
+2026-10-20T04:14:14.2003245Z [36;1m    if receipt.get("payload_allocation", {}).get("admitted_payload_allocations") != 1 or not receipt.get("immutable_executable", {}).get("write_open_refused"):[0m
+2026-10-20T04:14:14.2004013Z [36;1m        raise SystemExit("selector PASS lacks single immutable allocation")[0m
+2026-10-20T04:14:14.2004480Z [36;1m    cases = {c["label"]: c for c in receipt.get("cases", [])}[0m
+2026-10-20T04:14:14.2004977Z [36;1m    literal = ("explain-literal-replay", "context-literal-replay", "literal-repeat")[0m
+2026-10-20T04:14:14.2005482Z [36;1m    retries = ("explain-actual-id", "context-actual-id")[0m
+2026-10-20T04:14:14.2006153Z [36;1m    if receipt.get("literal_replays") != 3 or receipt.get("siblings_retried") != ["explain", "context"] or not receipt.get("actual_listed_id"):[0m
+2026-10-20T04:14:14.2006868Z [36;1m        raise SystemExit("selector PASS lacks actual listing/retry subjects")[0m
+2026-10-20T04:14:14.2007474Z [36;1m    if not all(n in cases and cases[n].get("exit") == 0 and not cases[n].get("stop") for n in literal + retries):[0m
+2026-10-20T04:14:14.2008295Z [36;1m        raise SystemExit("selector PASS lacks successful native replay/retry")[0m
+2026-10-20T04:14:14.2009062Z [36;1m    controls = receipt.get("controls", [])[0m
+2026-10-20T04:14:14.2011825Z [36;1m    if {c.get("name") for c in controls} != {"wrong-digest-before-launch", "stale-source-receipt-before-launch", "wrong-listing-identity", "wrong-fixture-file-identity", "wrong-predicate-condition"} or len(controls) != 5 or not all(c.get("rejected") and c.get("processes_launched") == 0 for c in controls):[0m
+2026-10-20T04:14:14.2013220Z [36;1m        raise SystemExit("selector PASS lacks five rejected controls")[0m
+2026-10-20T04:14:14.2013726Z [36;1mprint("Selector consumer evidence retained: " + receipt["state"])[0m
+2026-10-20T04:14:14.2014095Z [36;1mPY[0m
+2026-10-20T04:14:14.2027194Z shell: C:\Program Files\Git\bin\bash.EXE --noprofile --norc -e -o pipefail {0}
+2026-10-20T04:14:14.2027600Z env:
+2026-10-20T04:14:14.2027791Z   SELECTOR_CONSUMER_ENABLED: true
+2026-10-20T04:14:14.2028059Z   CARGO_HOME: C:\Users\runneradmin\.cargo
+2026-10-20T04:14:14.2028328Z   CARGO_INCREMENTAL: 0
+2026-10-20T04:14:14.2028534Z   CARGO_TERM_COLOR: always
+2026-10-20T04:14:14.2029288Z   CARGO_TARGET_DIR: C:\Users\runneradmin\.cargo\bin\selector-subset-cache\target
+2026-10-20T04:14:14.2029866Z   SELECTOR_TARGET_OWNER: C:\Users\runneradmin\.cargo\bin\selector-subset-cache/owner.json
+2026-10-20T04:14:14.2030289Z   CACHE_ON_FAILURE: false
+2026-10-20T04:14:14.2030499Z ##[endgroup]
+2026-10-20T04:14:14.3126863Z Selector consumer evidence retained: FAIL
+2026-10-20T04:14:14.3440224Z ##[group]Run actions/upload-artifact@v7
+2026-10-20T04:14:14.3440892Z with:
+2026-10-20T04:14:14.3441131Z   name: ripr-windows-advisory-subset
+2026-10-20T04:14:14.3442861Z   path: target/subset-gap-artifacts.log
+target/subset-gap-artifacts.status
+target/subset-cargo-home.log
+target/subset-cargo-home.status
+target/subset-cache-warning.log
+target/subset-cache-warning.status
+target/subset-clippy.log
+target/subset-clippy.status
+target/windows-subset-verdict.md
+target/subset-selector-literal.log
+target/subset-selector-literal.status
+target/selector-literal/
+
+2026-10-20T04:14:14.3444455Z   if-no-files-found: ignore
+2026-10-20T04:14:14.3444687Z   compression-level: 6
+2026-10-20T04:14:14.3444893Z   overwrite: false
+2026-10-20T04:14:14.3445097Z   include-hidden-files: false
+2026-10-20T04:14:14.3445315Z   archive: true
+2026-10-20T04:14:14.3445489Z env:
+2026-10-20T04:14:14.3445662Z   SELECTOR_CONSUMER_ENABLED: true
+2026-10-20T04:14:14.3445952Z   CARGO_HOME: C:\Users\runneradmin\.cargo
+2026-10-20T04:14:14.3446209Z   CARGO_INCREMENTAL: 0
+2026-10-20T04:14:14.3446406Z   CARGO_TERM_COLOR: always
+2026-10-20T04:14:14.3446760Z   CARGO_TARGET_DIR: C:\Users\runneradmin\.cargo\bin\selector-subset-cache\target
+2026-10-20T04:14:14.3447323Z   SELECTOR_TARGET_OWNER: C:\Users\runneradmin\.cargo\bin\selector-subset-cache/owner.json
+2026-10-20T04:14:14.3447757Z   CACHE_ON_FAILURE: false
+2026-10-20T04:14:14.3447971Z ##[endgroup]
+2026-10-20T04:14:16.9684187Z Multiple search paths detected. Calculating the least common ancestor of all paths
+2026-10-20T04:14:16.9690680Z The least common ancestor is D:\a\ripr-swarm\ripr-swarm\target. This will be the root directory of the artifact
+2026-10-20T04:14:16.9691535Z With the provided path, there will be 40 files uploaded
+2026-10-20T04:14:16.9696823Z Artifact name is valid!
+2026-10-20T04:14:16.9697970Z Root directory input is valid!
+2026-10-20T04:14:17.3603942Z Uploading artifact: ripr-windows-advisory-subset.zip
+2026-10-20T04:14:17.3675812Z Beginning upload of artifact content to blob storage
+2026-10-20T04:14:17.7923493Z Uploaded bytes 36632
+2026-10-20T04:14:17.8317721Z Finished uploading artifact content to blob storage!
+2026-10-20T04:14:17.8319708Z SHA256 digest of uploaded artifact is eae89367fb47558770dcf70bd8409ac5532149012205cc54c598628612a94800
+2026-10-20T04:14:17.8320267Z Finalizing artifact upload
+2026-10-20T04:14:18.1756056Z Artifact ripr-windows-advisory-subset successfully finalized. Artifact ID 12240636384
+2026-10-20T04:14:18.1757391Z Artifact ripr-windows-advisory-subset has been successfully uploaded! Final size is 36632 bytes. Artifact ID is 12240636384
+2026-10-20T04:14:18.1764450Z Artifact download URL: https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39367076780/artifacts/12240636384
+2026-10-20T04:14:18.2346252Z Post job cleanup.
+2026-10-20T04:14:18.4917028Z Post job cleanup.
+2026-10-20T04:14:18.7407899Z [command]"C:\Program Files\Git\bin\git.exe" version
+2026-10-20T04:14:18.7922469Z git version 2.56.0.windows.2
+2026-10-20T04:14:18.7997063Z Temporarily overriding HOME='D:\a\_temp\73f7cce9-bf66-4d6b-a840-d5719e8cac50' before making global git config changes
+2026-10-20T04:14:18.7998340Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-20T04:14:18.8008120Z [command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\ripr-swarm\ripr-swarm
+2026-10-20T04:14:18.8536513Z Removing SSH command configuration
+2026-10-20T04:14:18.8547121Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+2026-10-20T04:14:18.8941119Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+2026-10-20T04:14:19.8439209Z Removing HTTP extra header
+2026-10-20T04:14:19.8449684Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-20T04:14:19.8829793Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+2026-10-20T04:14:20.4580520Z Removing includeIf entries pointing to credentials config files
+2026-10-20T04:14:20.4593251Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-20T04:14:20.4933973Z includeif.gitdir:D:/a/ripr-swarm/ripr-swarm/.git.path
+2026-10-20T04:14:20.4934771Z includeif.gitdir:D:/a/ripr-swarm/ripr-swarm/.git/worktrees/*.path
+2026-10-20T04:14:20.4974307Z [command]"C:\Program Files\Git\bin\git.exe" config --local --get-all includeif.gitdir:D:/a/ripr-swarm/ripr-swarm/.git.path
+2026-10-20T04:14:20.5305910Z D:\a\_temp\git-credentials-caf5d456-7594-414c-bd2d-b26bcb3c042d.config
+2026-10-20T04:14:20.5347756Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset includeif.gitdir:D:/a/ripr-swarm/ripr-swarm/.git.path D:\a\_temp\git-credentials-caf5d456-7594-414c-bd2d-b26bcb3c042d.config
+2026-10-20T04:14:20.5735066Z [command]"C:\Program Files\Git\bin\git.exe" config --local --get-all includeif.gitdir:D:/a/ripr-swarm/ripr-swarm/.git/worktrees/*.path
+2026-10-20T04:14:20.6080741Z D:\a\_temp\git-credentials-caf5d456-7594-414c-bd2d-b26bcb3c042d.config
+2026-10-20T04:14:20.6126344Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset includeif.gitdir:D:/a/ripr-swarm/ripr-swarm/.git/worktrees/*.path D:\a\_temp\git-credentials-caf5d456-7594-414c-bd2d-b26bcb3c042d.config
+2026-10-20T04:14:20.6510191Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
+2026-10-20T04:14:21.2085627Z Removing credentials config 'D:\a\_temp\git-credentials-caf5d456-7594-414c-bd2d-b26bcb3c042d.config'
+2026-10-20T04:14:21.2322191Z Cleaning up orphan processes
+2026-10-20T04:14:21.2734505Z Terminate orphan process: pid (8612) (vctip)

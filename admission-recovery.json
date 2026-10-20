@@ -1,0 +1,20 @@
+{
+  "source": "99ff69b63e38a3e0627d859be898e74299f8bb69",
+  "run_id": 39367076753,
+  "attempt1": {
+    "status": "failure",
+    "reason": "claim_identity_missing",
+    "rust_build_jobs": "all skipped",
+    "admission_job": 118446317877,
+    "result_job": 118446375446
+  },
+  "repair": "PR metadata only: native Governing issue or accepted claim and Acceptance delta fields",
+  "native_field_check": "old absent; new recognized; remote owns competition/head/size/hard-cut",
+  "retry": {
+    "accepted": true,
+    "at": "2026-10-20T04:01:47Z",
+    "tool": "github_rerun_failed_workflow_run_jobs",
+    "scope": "same run's failed-jobs retry; GitHub also reran lightweight route/docs prerequisites (new job IDs). Rust gate jobs were previously skipped; no relabel or independent-run restart"
+  },
+  "source_unchanged": true
+}

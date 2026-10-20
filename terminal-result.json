@@ -1,0 +1,396 @@
+{
+  "source": "99ff69b63e38a3e0627d859be898e74299f8bb69",
+  "source_tree": "24ae3ec11f39ed2dbec175dbb019f168e4db850a",
+  "status": "completed",
+  "conclusion": "success",
+  "run_id": 39367076753,
+  "attempt": 2,
+  "core_job": 118447253983,
+  "aggregate_job": 118456789415,
+  "actual_checkout": {
+    "commit": "7c656d3096e5658b80ccb765a831341df66d3253",
+    "parents": [
+      "d8edec61714b65774abf38ce17ba91202207de25",
+      "99ff69b63e38a3e0627d859be898e74299f8bb69"
+    ],
+    "tree": "c3c01de526445a5afe087bdc2fd24b6c0d1e9296",
+    "evidence": "actual Rust job checkout and git log in decoded terminal log; parents/tree independently fetched as Git object"
+  },
+  "runner": "GitHub Hosted Linux x86_64",
+  "toolchain": "Rust/Cargo1.95.0",
+  "nextest": {
+    "command": "cargo nextest run --workspace --profile ci",
+    "tests_across_binaries": 17615,
+    "binaries": 128,
+    "passed": 17615,
+    "failed": 0,
+    "skipped": 4,
+    "slow": 1,
+    "retries": 0,
+    "elapsed_seconds": 672.768,
+    "fresh_nonempty_junit_guard": "passed"
+  },
+  "doctests": {
+    "command": "cargo test --workspace --doc",
+    "passed": 2,
+    "ignored": 1,
+    "failed": 0
+  },
+  "required_steps": [
+    {
+      "name": "Set up job",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 1
+    },
+    {
+      "name": "Run actions/checkout@v6",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 2
+    },
+    {
+      "name": "Acquire scratch lease",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 3
+    },
+    {
+      "name": "Reclaim terminal scratch",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 4
+    },
+    {
+      "name": "Prepare toolchain temp",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 5
+    },
+    {
+      "name": "Configure scratch environment",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 6
+    },
+    {
+      "name": "Prepare scratch",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 7
+    },
+    {
+      "name": "Run dtolnay/rust-toolchain@v1",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 8
+    },
+    {
+      "name": "Formatting preflight",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 9
+    },
+    {
+      "name": "Install CI tools",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 10
+    },
+    {
+      "name": "Restore hosted Rust cache",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 11
+    },
+    {
+      "name": "Start sccache server",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 12
+    },
+    {
+      "name": "Agent skill contracts",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 13
+    },
+    {
+      "name": "Prepare locked owner-return fixture dependencies",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 14
+    },
+    {
+      "name": "Repository policy preflight",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 15
+    },
+    {
+      "name": "Evidence promotion honesty",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 16
+    },
+    {
+      "name": "Dependency policy",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 17
+    },
+    {
+      "name": "Process policy",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 18
+    },
+    {
+      "name": "Network policy",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 19
+    },
+    {
+      "name": "Workspace and all-target check",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 20
+    },
+    {
+      "name": "All-features ripr target check",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 21
+    },
+    {
+      "name": "Strict workspace Clippy",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 22
+    },
+    {
+      "name": "Required Rust tests",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 23
+    },
+    {
+      "name": "Upload required Rust test results",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 24
+    },
+    {
+      "name": "Required Rust doctests",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 25
+    },
+    {
+      "name": "Golden output contracts",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 26
+    },
+    {
+      "name": "Retain wildcard calibration producer outputs",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 27
+    },
+    {
+      "name": "Fixture contracts",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 28
+    },
+    {
+      "name": "Verdict corpora",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 29
+    },
+    {
+      "name": "PR evidence",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 30
+    },
+    {
+      "name": "Proof route dry-run (advisory)",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 31
+    },
+    {
+      "name": "Advisory reports",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 32
+    },
+    {
+      "name": "Show sccache stats",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 33
+    },
+    {
+      "name": "Write gate summary",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 34
+    },
+    {
+      "name": "Remove RIPR analysis cache before artifact upload",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 35
+    },
+    {
+      "name": "Upload RIPR reports",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 36
+    },
+    {
+      "name": "Clean scratch",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 37
+    },
+    {
+      "name": "Release scratch lease",
+      "status": "completed",
+      "conclusion": "skipped",
+      "number": 38
+    },
+    {
+      "name": "Post Restore hosted Rust cache",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 75
+    },
+    {
+      "name": "Post Run actions/checkout@v6",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 76
+    },
+    {
+      "name": "Complete job",
+      "status": "completed",
+      "conclusion": "success",
+      "number": 77
+    }
+  ],
+  "artifacts": [
+    {
+      "id": 12240752507,
+      "name": "ripr-rust-small-github-nextest-2",
+      "size_in_bytes": 568352,
+      "url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/artifacts/12240752507",
+      "archive_download_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/artifacts/12240752507/zip",
+      "expired": false,
+      "created_at": "2026-10-20T04:28:06Z",
+      "expires_at": "2026-10-25T04:28:05Z",
+      "updated_at": "2026-10-20T04:28:06Z",
+      "digest": "sha256:894a883b7bb1ea63865a3be3fb6903b6f86a86d79656493f51856d54bf6fa492",
+      "workflow_run": {
+        "id": 39367076753,
+        "repository_id": 1243918801,
+        "head_repository_id": 1243918801,
+        "head_branch": "codex/reverse-scope-union",
+        "head_sha": "99ff69b63e38a3e0627d859be898e74299f8bb69"
+      }
+    },
+    {
+      "id": 12240278561,
+      "name": "ripr-rust-small-github-wildcard-calibration-2",
+      "size_in_bytes": 59033,
+      "url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/artifacts/12240278561",
+      "archive_download_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/artifacts/12240278561/zip",
+      "expired": false,
+      "created_at": "2026-10-20T04:28:26Z",
+      "expires_at": "2026-10-25T04:28:25Z",
+      "updated_at": "2026-10-20T04:28:26Z",
+      "digest": "sha256:10686d38a0915f908ac2a5d5fe8338afcbea2b8e7ca4cb71929eaf99f5190dde",
+      "workflow_run": {
+        "id": 39367076753,
+        "repository_id": 1243918801,
+        "head_repository_id": 1243918801,
+        "head_branch": "codex/reverse-scope-union",
+        "head_sha": "99ff69b63e38a3e0627d859be898e74299f8bb69"
+      }
+    }
+  ],
+  "artifact_read_limit": "metadata/digests only; no ZIP byte verification or denied artifact-transfer route retry. Decoded job logs retained.",
+  "feature_lane": {
+    "harness_rows": 104,
+    "passed": 11311,
+    "failed": 0,
+    "ignored": 2,
+    "measured": 0,
+    "filtered": 0
+  },
+  "windows_advisory": {
+    "source": "99ff69b63e38a3e0627d859be898e74299f8bb69",
+    "run": 39367076780,
+    "job": 118446236835,
+    "wrapper": "success",
+    "meaning": "wrapper success is not a clean advisory pass",
+    "passed_subsets": [
+      {
+        "name": "lsp::gap_artifacts",
+        "passed": 84,
+        "filtered": 11596
+      },
+      {
+        "name": "cargo_input_identity::tests",
+        "passed": 7,
+        "filtered": 11673
+      },
+      {
+        "name": "unusable_cache_directory_is_reported_once_per_build",
+        "passed": 1,
+        "filtered": 541
+      }
+    ],
+    "failures": [
+      {
+        "name": "subset-clippy",
+        "native_exit": 101,
+        "cause": "E0425 run_sh absent on Windows at generated_review_workflow.rs:3804; helper cfg(unix) at3903",
+        "unchanged_blob": "9e4d6591f0b96390892accd7ca0a1e18a3b1fe2e",
+        "identical_at": [
+          "fe098012eeb27d10a825f3c0f8fd9f3dfc6fdddf",
+          "99ff69b63e38a3e0627d859be898e74299f8bb69",
+          "d98f95dbca76d93624d475e451f311d427fece4c"
+        ],
+        "existing_issue": 8840,
+        "existing_pr": 8845,
+        "owner": "retained repo-skills worker",
+        "execution_limit": "observed candidate Windows execution; no new exact-base Windows run claimed"
+      },
+      {
+        "name": "subset-selector-literal",
+        "native_exit": 1,
+        "cause": "printed command lost frozen root/diff/JSON scope",
+        "existing_issue": 8848,
+        "existing_pr": 8849,
+        "owner": "MatchArm/causal-attribution worker",
+        "existing_cause": "Windows console double-quote expectation mismatch in frozen consumer, independently investigated by existing owner",
+        "candidate_attribution": "graph-only change does not edit consumer/formatter; single-package no-path-dependency fixture. No duplicate repair; native stderr byte extraction remains unavailable"
+      }
+    ],
+    "qualification_effect": "required Linux Rust workflow remains active; no Windows full-pass claim. Existing upstream ownership preserved.",
+    "no_source_changes": true
+  },
+  "admission_repair": "attempt1 refused claim_identity_missing before any Rust build; metadata fields repaired and validated; accepted existing-run failed-jobs retry. No source edit/relabel/duplicate Rust work.",
+  "holds": [
+    "no merge or auto-merge",
+    "no release or deployment",
+    "no credential/settings/protection change"
+  ],
+  "qualification_boundary": "head99 on recorded merge7c. Current-main combined tree17e5c822933cee594ef6250fee80267cf723a33a was previewed only, not executed; no current-main integration or full Windows pass claimed."
+}

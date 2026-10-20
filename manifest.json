@@ -1,0 +1,144 @@
+{
+  "format": "reverse-scope-rust-qualification.v1",
+  "source": "99ff69b63e38a3e0627d859be898e74299f8bb69",
+  "run_id": 39367076753,
+  "prior_local_evidence": "4f3e69835cf3ac49f3f5b4e25a84f3a3973eb24d",
+  "prior_hosted_evidence": "de21bb46bbb821fca3fbd6a210636893727b04ff",
+  "payloads": [
+    {
+      "path": "README.md",
+      "bytes": 3948,
+      "sha256": "ad462b4fd33bf322367a4400a4902350067921044912a40e694786263932d527"
+    },
+    {
+      "path": "active-gate-log-availability.json",
+      "bytes": 282,
+      "sha256": "1857938da2dc2ba7d1d2c56ca98d288ba5a4edc01508a7473a488aa398c1d303"
+    },
+    {
+      "path": "admission-failure.log",
+      "bytes": 54314,
+      "sha256": "d7d6ae05b4adaf2f868858263e2bab67d4113bc59398169dd0596bbb9cd90546"
+    },
+    {
+      "path": "admission-field-validation.json",
+      "bytes": 487,
+      "sha256": "ed5edababecb0840f5e960d799fbacc62643bf3e239d0524ca9c2a27f4cf02c8"
+    },
+    {
+      "path": "admission-fixed-body.md",
+      "bytes": 9478,
+      "sha256": "b3dd3d4cdec3f29bb06c640887e50cc7dbc03a9f1d423f85c908cd9dcd580a16"
+    },
+    {
+      "path": "admission-old-body.md",
+      "bytes": 9296,
+      "sha256": "7c1595e2fe0caa51be88120626c3c5aee6f948560675900629de4025eea36996"
+    },
+    {
+      "path": "admission-recovery.json",
+      "bytes": 822,
+      "sha256": "eb9d0424721a4f323294d64176ad047c70bf14276f033fc70b0e561d918fb963"
+    },
+    {
+      "path": "admission-result-failure.log",
+      "bytes": 10759,
+      "sha256": "34bb8e58847909e1c3f17072e1e394771f27dbba7fe63c15038ec38c62553ca1"
+    },
+    {
+      "path": "attempt2-admission-jobs.json",
+      "bytes": 9998,
+      "sha256": "e0f4bc403224f9fb5e38ac5f6aa4e75336ef04acc48976330627717f26b8a1d5"
+    },
+    {
+      "path": "attempt2-admission.log",
+      "bytes": 54175,
+      "sha256": "6490e953876e9ddf8f1196c34ff1c80b54ea12ba2f436c2e53f840947ec97eb2"
+    },
+    {
+      "path": "final-inline-threads.json",
+      "bytes": 27,
+      "sha256": "3e8a08aebce453c022e75a478b159f99c0a339d175c62baff78fe85551e8213d"
+    },
+    {
+      "path": "final-review-inventory.json",
+      "bytes": 9906,
+      "sha256": "61076c484a6e5e7f60aeba3fb0e723aa521f8ceca53539fce42faf2d6d294041"
+    },
+    {
+      "path": "nextest-profile.toml",
+      "bytes": 704,
+      "sha256": "0d25d75967d86d7426cc96de297a65abca466b2aab29eb8f510f317e9fb12a46"
+    },
+    {
+      "path": "printed-command-artifacts.json",
+      "bytes": 2556,
+      "sha256": "e4b9f0438a2abe4e8bb6ed3019215b22cf553e95de93daa1a83bb15aebefe61f"
+    },
+    {
+      "path": "producer-input-blobs.txt",
+      "bytes": 123,
+      "sha256": "8e4070c4c7d81541accf51a284453cbd38eebe991cbe3883384989d496fa1fd5"
+    },
+    {
+      "path": "request.json",
+      "bytes": 818,
+      "sha256": "f5e0f122810ae4521e2c784c540729bfd0e9ac8283dd5291aa77900fcd423e27"
+    },
+    {
+      "path": "required-artifacts.json",
+      "bytes": 1732,
+      "sha256": "a6e1dae99eb8973127b0ac8706525cb9ce57f7d95d89d9d645e9bb27b696386b"
+    },
+    {
+      "path": "required-result.log",
+      "bytes": 10831,
+      "sha256": "691ae43203b23b875ef22caf5453ab8f68ff66b6ad1621b68c466c40b5450928"
+    },
+    {
+      "path": "required-rust.log",
+      "bytes": 3972455,
+      "sha256": "56864d423a600945a40c4f40b24b500a6b86f6904c542ed7e2cf5c68b110cf30"
+    },
+    {
+      "path": "resource-closeout.json",
+      "bytes": 2018,
+      "sha256": "ffc2c085b7b605d74ad72b6037842ac8be35b5ac5800b80c96a2323bb1c0823c"
+    },
+    {
+      "path": "rust-only-feature-summary.json",
+      "bytes": 110,
+      "sha256": "b8a45476ea4a17024236324f3ffe89e95c2b45eaa2d4758be57b12af0d2e8fa5"
+    },
+    {
+      "path": "rust-only-feature.log",
+      "bytes": 1713746,
+      "sha256": "4a2fc253f69db0a472767467269935f20bc1c86cd0704a07e32d1601fcb8b419"
+    },
+    {
+      "path": "terminal-result.json",
+      "bytes": 11297,
+      "sha256": "4de6cca57fc0a5f14ddd6508afab1f31e0f01887f22fa1301c56f24d5332b34a"
+    },
+    {
+      "path": "validation-cache-closeout.json",
+      "bytes": 311,
+      "sha256": "15b834976712fb8b858c23f88a9a3781028ca7c58e03fc5a07793d241e33fee1"
+    },
+    {
+      "path": "windows-advisory-limits.json",
+      "bytes": 1961,
+      "sha256": "99ac12ad3f4a1236451360ed5e3525f7aefe68ead4098ad96bd6982040bfc26d"
+    },
+    {
+      "path": "windows-advisory.log",
+      "bytes": 186388,
+      "sha256": "69e55d263bd3288b964a450c771060fc2d6c5c7f771feede8f632bb321173066"
+    },
+    {
+      "path": "windows-artifacts.json",
+      "bytes": 867,
+      "sha256": "e0b79b2dabe0940435e83c4e853a1eb8e98d2374893ad058341d1da495f5c8f4"
+    }
+  ]
+}

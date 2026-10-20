@@ -1,0 +1,11 @@
+{
+  "scope": "bytecode from this session native metadata validator",
+  "released": [
+    {
+      "path": "/workspace/ripr-reverse-scope/.github/actions/pr-candidate-admission/__pycache__/candidate_admission.cpython-312.pyc",
+      "bytes": 17259,
+      "mtime": 1792468878.9103863
+    }
+  ],
+  "retained": []
+}

@@ -1,0 +1,8 @@
+{
+  "job": 118447253983,
+  "state": "in_progress",
+  "observed_at": "2026-10-20T04:03:14Z",
+  "result": "NOT_FOUND BlobNotFound",
+  "meaning": "active job log not yet materialized; retry only after terminal job condition",
+  "actual_gate_checkout": "not yet directly established"
+}

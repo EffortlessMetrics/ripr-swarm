@@ -1,0 +1,16 @@
+{
+  "old_fields": {
+    "claim": "",
+    "delta": "",
+    "replacement": "",
+    "winner": ""
+  },
+  "fixed_fields": {
+    "claim": "#8930",
+    "delta": "Preserve reverse-scope results while limiting connected reverse-edge expansion to at most twice per edge across all changed roots.",
+    "replacement": "",
+    "winner": ""
+  },
+  "native_field_validation": "passed",
+  "limits": "field validation only; remote admission owns current-head, competitor, size and hard-cut decisions"
+}

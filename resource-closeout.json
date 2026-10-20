@@ -1,0 +1,82 @@
+{
+  "source": "99ff69b63e38a3e0627d859be898e74299f8bb69",
+  "ownership": {
+    "initial_free": 31857684480,
+    "reserve": 10737418240,
+    "peak_additional": 12884901888,
+    "worktree": "/workspace/ripr-reverse-scope",
+    "target": "/workspace/ripr-reverse-target",
+    "evidence": "/workspace/reverse-scope-evidence",
+    "owner": "reverse-scope-union",
+    "base": "fe098012eeb27d10a825f3c0f8fd9f3dfc6fdddf"
+  },
+  "target_readers": [],
+  "unreadable_processes": [
+    "1",
+    "2",
+    "201",
+    "252",
+    "517",
+    "772",
+    "8445",
+    "9699",
+    "10316",
+    "14174",
+    "14183",
+    "14624",
+    "14873",
+    "16848",
+    "47197",
+    "47497",
+    "47707",
+    "48301",
+    "48317",
+    "48648",
+    "49143",
+    "49145"
+  ],
+  "released": [],
+  "retained": [
+    {
+      "path": "/workspace/ripr-reverse-target",
+      "reason": "reader inactivity not fully established; no deletion attempted"
+    },
+    {
+      "path": "/workspace/ripr-reverse-scope",
+      "reason": "candidate writer/parent integration reader"
+    },
+    {
+      "path": "/workspace/reverse-scope-evidence/red-ripr-tests",
+      "reason": "original-code negative witness"
+    },
+    {
+      "path": "/workspace/reverse-scope-evidence/green-ripr-tests",
+      "reason": "exact final positive/guard witness"
+    },
+    {
+      "path": "/workspace/reverse-scope-evidence",
+      "reason": "original raw evidence/source recovery"
+    },
+    {
+      "path": "/workspace/reverse-scope-rust-evidence",
+      "reason": "hosted qualification evidence"
+    },
+    {
+      "path": "/workspace/reverse-scope-hosted-evidence",
+      "reason": "prior hosted limitations/denial evidence"
+    },
+    {
+      "path": "/workspace/reverse-scope-readback.git",
+      "reason": "independent remote custody verifier"
+    }
+  ],
+  "free_before": 25418248192,
+  "excluded": [
+    "/workspace/ripr-swarm",
+    "/workspace/ripr-swarm/target",
+    "/workspace/.cargo",
+    "/workspace/.rustup"
+  ],
+  "free_after": 25418248192,
+  "net_reclaimed_bytes": 0
+}
