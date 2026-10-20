@@ -135,6 +135,12 @@ pub(crate) fn extract_tests_and_conditional_credit_gap(
                 test.identity_helpers_in_file = helpers.clone();
             }
         }
+        let member_only = default_member_only_locals(&imports, &code);
+        if !member_only.is_empty() {
+            for test in &mut tests {
+                test.default_member_only_locals_in_file = member_only.clone();
+            }
+        }
         let factories = mock_factories(&ret.program.body, &code);
         if !factories.is_empty() {
             for test in &mut tests {
@@ -1297,6 +1303,60 @@ fn identity_helpers(statements: &[Statement<'_>], code: &str) -> Vec<String> {
         .collect()
 }
 
+/// `(local, member)` for each default import whose local is used, across the
+/// whole file, only as its own `import local` binding and as calls
+/// `local.member(` of one member. Any other use (assignment, `spyOn`,
+/// alias, argument) withholds the pair, wherever it sits in the file.
+fn default_member_only_locals(imports: &[TypeScriptImport], code: &str) -> Vec<(String, String)> {
+    if file_is_opaque(code) {
+        return Vec::new();
+    }
+    let ident = |ch: char| ch == '_' || ch == '$' || ch.is_alphanumeric();
+    let mut pairs = Vec::new();
+    for import in imports
+        .iter()
+        .filter(|import| !import.namespace && import.imported.as_deref() == Some("default"))
+    {
+        let mut member: Option<String> = None;
+        let mut clean = true;
+        for at in word_occurrences(code, &import.local) {
+            let before = code[..at].trim_end();
+            if before.ends_with("import") {
+                continue;
+            }
+            let rest = &code[at + import.local.len()..];
+            let after = ["?.", "!.", "."]
+                .iter()
+                .find_map(|dot| rest.strip_prefix(dot));
+            let name = after.map(|after| {
+                after
+                    .chars()
+                    .take_while(|ch| ident(*ch))
+                    .collect::<String>()
+            });
+            let called = after.zip(name.as_ref()).is_some_and(|(after, name)| {
+                !name.is_empty() && after[name.len()..].starts_with('(')
+            });
+            if before.ends_with('.') || !called {
+                clean = false;
+                break;
+            }
+            match (&member, name) {
+                (None, Some(name)) => member = Some(name),
+                (Some(seen), Some(name)) if *seen == name => {}
+                _ => {
+                    clean = false;
+                    break;
+                }
+            }
+        }
+        if let (true, Some(member)) = (clean, member) {
+            pairs.push((import.local.clone(), member));
+        }
+    }
+    pairs
+}
+
 /// Top-level mock factories (`function f() { return { ... }; }` or
 /// `const f = () => ({ ... });`) whose name the file uses only as a direct
 /// call `f(`, each with the source of its returned object literal. A file
@@ -2220,6 +2280,7 @@ pub(crate) fn test_from_statement(
         imports_in_file: Vec::new(),
         scope_bindings: Vec::new(),
         identity_helpers_in_file: Vec::new(),
+        default_member_only_locals_in_file: Vec::new(),
         mock_factories_in_file: Vec::new(),
         mock_spread_sources_in_file: Vec::new(),
         // Replaced by `collect_tests_from_statements`, which has the file's

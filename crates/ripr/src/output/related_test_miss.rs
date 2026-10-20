@@ -25,7 +25,7 @@ pub(crate) fn related_test_miss_reason(
             "asserts, but not on the changed value".to_string()
         }
         RelatedTestMiss::AssertionNotCredited => {
-            "assertion not credited: ripr could not establish that it runs as the standard macro"
+            "assertion not credited: ripr could not establish that this assertion counts here"
                 .to_string()
         }
         RelatedTestMiss::WeakAssertion => {
