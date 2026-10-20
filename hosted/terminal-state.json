@@ -1,0 +1,663 @@
+{
+  "observed_at": "2026-10-20T06:10:08Z",
+  "repository": "EffortlessMetrics/ripr-swarm",
+  "pr": 8961,
+  "head": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+  "draft": true,
+  "labels": [],
+  "auto_merge": null,
+  "merged": false,
+  "merge_ref": "4096858e294ceaa0716cd299901be468b49d2518",
+  "check_count": 37,
+  "checks": [
+    {
+      "id": 118482845607,
+      "name": "droid",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39378785017/job/118482845607",
+      "started_at": "2026-10-20T06:09:32Z",
+      "completed_at": "2026-10-20T06:09:31Z"
+    },
+    {
+      "id": 118481112450,
+      "name": "droid",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39378235540/job/118481112450",
+      "started_at": "2026-10-20T06:03:41Z",
+      "completed_at": "2026-10-20T06:03:41Z"
+    },
+    {
+      "id": 118480511937,
+      "name": "droid",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39378042853/job/118480511937",
+      "started_at": "2026-10-20T06:01:37Z",
+      "completed_at": "2026-10-20T06:01:36Z"
+    },
+    {
+      "id": 118480073371,
+      "name": "droid",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39377882879/job/118480073371",
+      "started_at": "2026-10-20T06:00:08Z",
+      "completed_at": "2026-10-20T06:00:01Z"
+    },
+    {
+      "id": 118475771357,
+      "name": "clean pip install and useful Python journey",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843257/job/118475771357",
+      "started_at": "2026-10-20T05:44:38Z",
+      "completed_at": "2026-10-20T05:44:53Z"
+    },
+    {
+      "id": 118475771356,
+      "name": "clean uv install and useful Python journey",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843257/job/118475771356",
+      "started_at": "2026-10-20T05:44:38Z",
+      "completed_at": "2026-10-20T05:44:52Z"
+    },
+    {
+      "id": 118475050837,
+      "name": "droid",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39376285049/job/118475050837",
+      "started_at": "2026-10-20T05:42:01Z",
+      "completed_at": "2026-10-20T05:42:01Z"
+    },
+    {
+      "id": 118474497972,
+      "name": "ub-review",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843168/job/118474497972",
+      "started_at": "2026-10-20T05:40:03Z",
+      "completed_at": "2026-10-20T06:06:10Z"
+    },
+    {
+      "id": 118474234139,
+      "name": "droid",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39376020201/job/118474234139",
+      "started_at": "2026-10-20T05:39:02Z",
+      "completed_at": "2026-10-20T05:39:01Z"
+    },
+    {
+      "id": 118473930006,
+      "name": "droid",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375923360/job/118473930006",
+      "started_at": "2026-10-20T05:37:54Z",
+      "completed_at": "2026-10-20T05:37:54Z"
+    },
+    {
+      "id": 118473927382,
+      "name": "droid",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375922709/job/118473927382",
+      "started_at": "2026-10-20T05:37:54Z",
+      "completed_at": "2026-10-20T05:37:54Z"
+    },
+    {
+      "id": 118473866092,
+      "name": "droid",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375902384/job/118473866092",
+      "started_at": "2026-10-20T05:37:41Z",
+      "completed_at": "2026-10-20T05:37:40Z"
+    },
+    {
+      "id": 118473862063,
+      "name": "droid",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375901272/job/118473862063",
+      "started_at": "2026-10-20T05:37:40Z",
+      "completed_at": "2026-10-20T05:37:39Z"
+    },
+    {
+      "id": 118473857353,
+      "name": "build and inspect Linux x64 wheel",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843257/job/118473857353",
+      "started_at": "2026-10-20T05:37:40Z",
+      "completed_at": "2026-10-20T05:44:32Z"
+    },
+    {
+      "id": 118473812003,
+      "name": "droid",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375873605/job/118473812003",
+      "started_at": "2026-10-20T05:37:29Z",
+      "completed_at": "2026-10-20T05:37:20Z"
+    },
+    {
+      "id": 118473790601,
+      "name": "droid",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375879025/job/118473790601",
+      "started_at": "2026-10-20T05:37:24Z",
+      "completed_at": "2026-10-20T05:37:24Z"
+    },
+    {
+      "id": 118473787384,
+      "name": "droid",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375878428/job/118473787384",
+      "started_at": "2026-10-20T05:37:24Z",
+      "completed_at": "2026-10-20T05:37:23Z"
+    },
+    {
+      "id": 118473783308,
+      "name": "Graphite / AI Reviews",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://app.graphite.com/github/pr/EffortlessMetrics/ripr-swarm/8961",
+      "started_at": "2026-10-20T05:37:14Z",
+      "completed_at": "2026-10-20T05:37:22Z"
+    },
+    {
+      "id": 118473771710,
+      "name": "droid",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375873452/job/118473771710",
+      "started_at": "2026-10-20T05:37:20Z",
+      "completed_at": "2026-10-20T05:37:20Z"
+    },
+    {
+      "id": 118473712560,
+      "name": "macos-advisory",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843192/job/118473712560",
+      "started_at": "2026-10-20T05:37:08Z",
+      "completed_at": "2026-10-20T05:36:59Z"
+    },
+    {
+      "id": 118473703407,
+      "name": "vscode",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843188/job/118473703407",
+      "started_at": "2026-10-20T05:37:06Z",
+      "completed_at": "2026-10-20T05:36:59Z"
+    },
+    {
+      "id": 118473673256,
+      "name": "Rust-only feature lane",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843188/job/118473673256",
+      "started_at": "2026-10-20T05:37:00Z",
+      "completed_at": "2026-10-20T05:36:59Z"
+    },
+    {
+      "id": 118473673165,
+      "name": "msrv",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843188/job/118473673165",
+      "started_at": "2026-10-20T05:37:00Z",
+      "completed_at": "2026-10-20T05:36:59Z"
+    },
+    {
+      "id": 118473672520,
+      "name": "pinned MCP evidence before and after (advisory)",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843257/job/118473672520",
+      "started_at": "2026-10-20T05:37:00Z",
+      "completed_at": "2026-10-20T05:36:59Z"
+    },
+    {
+      "id": 118473672316,
+      "name": "Perl and release proof",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843188/job/118473672316",
+      "started_at": "2026-10-20T05:37:00Z",
+      "completed_at": "2026-10-20T05:36:59Z"
+    },
+    {
+      "id": 118473672307,
+      "name": "paste-${{ matrix.os }}",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843159/job/118473672307",
+      "started_at": "2026-10-20T05:37:00Z",
+      "completed_at": "2026-10-20T05:36:59Z"
+    },
+    {
+      "id": 118473672101,
+      "name": "rust-tests-junit",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843279/job/118473672101",
+      "started_at": "2026-10-20T05:37:00Z",
+      "completed_at": "2026-10-20T05:36:59Z"
+    },
+    {
+      "id": 118473672097,
+      "name": "windows-advisory-subset",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843190/job/118473672097",
+      "started_at": "2026-10-20T05:37:00Z",
+      "completed_at": "2026-10-20T05:36:59Z"
+    },
+    {
+      "id": 118473672078,
+      "name": "rust-coverage",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843197/job/118473672078",
+      "started_at": "2026-10-20T05:37:00Z",
+      "completed_at": "2026-10-20T05:36:59Z"
+    },
+    {
+      "id": 118473672036,
+      "name": "dependency-review",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843177/job/118473672036",
+      "started_at": "2026-10-20T05:37:00Z",
+      "completed_at": "2026-10-20T05:36:59Z"
+    },
+    {
+      "id": 118473671989,
+      "name": "future-clippy",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843252/job/118473671989",
+      "started_at": "2026-10-20T05:37:00Z",
+      "completed_at": "2026-10-20T05:36:59Z"
+    },
+    {
+      "id": 118473671558,
+      "name": "cargo-deny",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843177/job/118473671558",
+      "started_at": "2026-10-20T05:36:59Z",
+      "completed_at": "2026-10-20T05:36:59Z"
+    },
+    {
+      "id": 118473671420,
+      "name": "windows-advisory",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843190/job/118473671420",
+      "started_at": "2026-10-20T05:36:59Z",
+      "completed_at": "2026-10-20T05:36:59Z"
+    },
+    {
+      "id": 118473671037,
+      "name": "workflow policy and wheel applicability",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843257/job/118473671037",
+      "started_at": "2026-10-20T05:37:02Z",
+      "completed_at": "2026-10-20T05:37:39Z"
+    },
+    {
+      "id": 118473670819,
+      "name": "spec-maintenance-digest",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843249/job/118473670819",
+      "started_at": "2026-10-20T05:37:01Z",
+      "completed_at": "2026-10-20T05:39:42Z"
+    },
+    {
+      "id": 118473670616,
+      "name": "source-of-truth",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843249/job/118473670616",
+      "started_at": "2026-10-20T05:37:01Z",
+      "completed_at": "2026-10-20T05:39:37Z"
+    },
+    {
+      "id": 118473659556,
+      "name": "GitGuardian Security Checks",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://dashboard.gitguardian.com",
+      "started_at": "2026-10-20T05:36:57Z",
+      "completed_at": "2026-10-20T05:36:58Z"
+    }
+  ],
+  "workflow_count": 25,
+  "workflows": [
+    {
+      "id": 39378785017,
+      "name": "Droid Tag",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "pull_request_review",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39378785017",
+      "created_at": "2026-10-20T06:09:31Z",
+      "updated_at": "2026-10-20T06:09:32Z"
+    },
+    {
+      "id": 39378235540,
+      "name": "Droid Tag",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "pull_request",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39378235540",
+      "created_at": "2026-10-20T06:03:40Z",
+      "updated_at": "2026-10-20T06:03:47Z"
+    },
+    {
+      "id": 39378042853,
+      "name": "Droid Tag",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "pull_request",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39378042853",
+      "created_at": "2026-10-20T06:01:36Z",
+      "updated_at": "2026-10-20T06:01:37Z"
+    },
+    {
+      "id": 39377882879,
+      "name": "Droid Tag",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "pull_request_review",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39377882879",
+      "created_at": "2026-10-20T06:00:00Z",
+      "updated_at": "2026-10-20T06:00:01Z"
+    },
+    {
+      "id": 39376285049,
+      "name": "Droid Tag",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "pull_request",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39376285049",
+      "created_at": "2026-10-20T05:42:00Z",
+      "updated_at": "2026-10-20T05:42:01Z"
+    },
+    {
+      "id": 39376020201,
+      "name": "Droid Tag",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "pull_request",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39376020201",
+      "created_at": "2026-10-20T05:39:01Z",
+      "updated_at": "2026-10-20T05:39:02Z"
+    },
+    {
+      "id": 39375923360,
+      "name": "Droid Tag",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "pull_request_review_comment",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375923360",
+      "created_at": "2026-10-20T05:37:54Z",
+      "updated_at": "2026-10-20T05:38:02Z"
+    },
+    {
+      "id": 39375922709,
+      "name": "Droid Tag",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "pull_request_review",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375922709",
+      "created_at": "2026-10-20T05:37:53Z",
+      "updated_at": "2026-10-20T05:37:54Z"
+    },
+    {
+      "id": 39375902384,
+      "name": "Droid Tag",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "pull_request_review_comment",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375902384",
+      "created_at": "2026-10-20T05:37:40Z",
+      "updated_at": "2026-10-20T05:37:50Z"
+    },
+    {
+      "id": 39375901272,
+      "name": "Droid Tag",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "pull_request_review",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375901272",
+      "created_at": "2026-10-20T05:37:39Z",
+      "updated_at": "2026-10-20T05:37:40Z"
+    },
+    {
+      "id": 39375878428,
+      "name": "Droid Tag",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "pull_request_review",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375878428",
+      "created_at": "2026-10-20T05:37:23Z",
+      "updated_at": "2026-10-20T05:37:24Z"
+    },
+    {
+      "id": 39375879025,
+      "name": "Droid Tag",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "pull_request_review_comment",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375879025",
+      "created_at": "2026-10-20T05:37:23Z",
+      "updated_at": "2026-10-20T05:37:24Z"
+    },
+    {
+      "id": 39375873605,
+      "name": "Droid Tag",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "pull_request_review_comment",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375873605",
+      "created_at": "2026-10-20T05:37:20Z",
+      "updated_at": "2026-10-20T05:37:20Z"
+    },
+    {
+      "id": 39375873452,
+      "name": "Droid Tag",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "pull_request_review",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375873452",
+      "created_at": "2026-10-20T05:37:19Z",
+      "updated_at": "2026-10-20T05:37:26Z"
+    },
+    {
+      "id": 39375843249,
+      "name": "Source of Truth",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "success",
+      "event": "pull_request",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843249",
+      "created_at": "2026-10-20T05:36:59Z",
+      "updated_at": "2026-10-20T05:39:43Z"
+    },
+    {
+      "id": 39375843257,
+      "name": "Qualify ripr-rs Python Wheel (read-only)",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "success",
+      "event": "pull_request",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843257",
+      "created_at": "2026-10-20T05:36:59Z",
+      "updated_at": "2026-10-20T05:44:53Z"
+    },
+    {
+      "id": 39375843177,
+      "name": "Security",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "pull_request",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843177",
+      "created_at": "2026-10-20T05:36:59Z",
+      "updated_at": "2026-10-20T05:37:06Z"
+    },
+    {
+      "id": 39375843279,
+      "name": "Test Analytics",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "pull_request",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843279",
+      "created_at": "2026-10-20T05:36:59Z",
+      "updated_at": "2026-10-20T05:37:00Z"
+    },
+    {
+      "id": 39375843190,
+      "name": "Windows Advisory",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "pull_request",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843190",
+      "created_at": "2026-10-20T05:36:59Z",
+      "updated_at": "2026-10-20T05:37:00Z"
+    },
+    {
+      "id": 39375843159,
+      "name": "Printed Command Paste",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "pull_request",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843159",
+      "created_at": "2026-10-20T05:36:59Z",
+      "updated_at": "2026-10-20T05:37:00Z"
+    },
+    {
+      "id": 39375843192,
+      "name": "macOS Advisory",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "pull_request",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843192",
+      "created_at": "2026-10-20T05:36:59Z",
+      "updated_at": "2026-10-20T05:37:00Z"
+    },
+    {
+      "id": 39375843252,
+      "name": "Future Clippy (advisory)",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "pull_request",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843252",
+      "created_at": "2026-10-20T05:36:59Z",
+      "updated_at": "2026-10-20T05:37:00Z"
+    },
+    {
+      "id": 39375843188,
+      "name": "CI",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "pull_request",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843188",
+      "created_at": "2026-10-20T05:36:59Z",
+      "updated_at": "2026-10-20T05:37:00Z"
+    },
+    {
+      "id": 39375843197,
+      "name": "Coverage",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "pull_request",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843197",
+      "created_at": "2026-10-20T05:36:59Z",
+      "updated_at": "2026-10-20T05:37:07Z"
+    },
+    {
+      "id": 39375843168,
+      "name": "ub-review",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "completed",
+      "conclusion": "success",
+      "event": "pull_request",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39375843168",
+      "created_at": "2026-10-20T05:36:59Z",
+      "updated_at": "2026-10-20T06:06:10Z"
+    }
+  ],
+  "required_rust_context_present": false
+}

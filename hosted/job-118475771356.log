@@ -1,0 +1,373 @@
+﻿2026-10-20T05:44:39.7695368Z Current runner version: '2.337.0'
+2026-10-20T05:44:39.7722000Z ##[group]Runner Image Provisioner
+2026-10-20T05:44:39.7722949Z Hosted Compute Agent
+2026-10-20T05:44:39.7723722Z Version: 20261012.601
+2026-10-20T05:44:39.7724424Z Commit: f3dc54e1fb89da6852db922499a0233137369e1d
+2026-10-20T05:44:39.7725189Z Build Date: 2026-10-12T17:48:21Z
+2026-10-20T05:44:39.7726044Z Worker ID: {8a88cff3-f6c0-49cc-bb1e-2d3f78fa6e01}
+2026-10-20T05:44:39.7726795Z Region: westus
+2026-10-20T05:44:39.7727437Z Cloud: Azure
+2026-10-20T05:44:39.7728019Z ##[endgroup]
+2026-10-20T05:44:39.7729846Z ##[group]Operating System
+2026-10-20T05:44:39.7730625Z Ubuntu
+2026-10-20T05:44:39.7731172Z 22.04.5
+2026-10-20T05:44:39.7731704Z LTS
+2026-10-20T05:44:39.7732316Z ##[endgroup]
+2026-10-20T05:44:39.7732927Z ##[group]Runner Image
+2026-10-20T05:44:39.7733659Z Image: ubuntu-22.04
+2026-10-20T05:44:39.7734272Z Version: 20261012.322.1
+2026-10-20T05:44:39.7735665Z Included Software: https://github.com/actions/runner-images/blob/ubuntu22/20261012.322/images/ubuntu/Ubuntu2204-Readme.md
+2026-10-20T05:44:39.7737316Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu22%2F20261012.322
+2026-10-20T05:44:39.7738431Z ##[endgroup]
+2026-10-20T05:44:39.7739783Z ##[group]GITHUB_TOKEN Permissions
+2026-10-20T05:44:39.7741852Z Contents: read
+2026-10-20T05:44:39.7742524Z Metadata: read
+2026-10-20T05:44:39.7743095Z ##[endgroup]
+2026-10-20T05:44:39.7745481Z Secret source: Actions
+2026-10-20T05:44:39.7746517Z Cache mode: write
+2026-10-20T05:44:39.7747371Z Prepare workflow directory
+2026-10-20T05:44:39.8346830Z Prepare all required actions
+2026-10-20T05:44:39.8394539Z Getting action download info
+2026-10-20T05:44:40.1789962Z Download action repository 'actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333' (SHA:9000827ccba6bdab643e8b6fd33ac0654aef8333)
+2026-10-20T05:44:40.6665694Z Complete job name: clean uv install and useful Python journey
+2026-10-20T05:44:40.7374325Z ##[group]Run actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+2026-10-20T05:44:40.7375544Z with:
+2026-10-20T05:44:40.7376238Z   name: ripr-rs-python-wheel-1a525eaaba07bb416a83a4f4d76c833a20cb5256
+2026-10-20T05:44:40.7376977Z   path: evidence
+2026-10-20T05:44:40.7377453Z   merge-multiple: false
+2026-10-20T05:44:40.7377979Z   repository: EffortlessMetrics/ripr-swarm
+2026-10-20T05:44:40.7378554Z   run-id: 39375843257
+2026-10-20T05:44:40.7379329Z   skip-decompress: false
+2026-10-20T05:44:40.7379837Z   digest-mismatch: error
+2026-10-20T05:44:40.7380587Z env:
+2026-10-20T05:44:40.7381116Z   CANDIDATE_SHA: 1a525eaaba07bb416a83a4f4d76c833a20cb5256
+2026-10-20T05:44:40.7381785Z   RUST_TARGET: x86_64-unknown-linux-gnu
+2026-10-20T05:44:40.7382344Z   MATURIN_VERSION: 1.14.1
+2026-10-20T05:44:40.7382822Z   TWINE_VERSION: 7.0.0
+2026-10-20T05:44:40.7383300Z   UV_VERSION: 0.12.19
+2026-10-20T05:44:40.7383757Z   PIP_VERSION: 26.2.1
+2026-10-20T05:44:40.7384261Z   PACKAGING_VERSION: 26.3
+2026-10-20T05:44:40.7384775Z   RIPR_NATIVE_VERSION: 0.11.0
+2026-10-20T05:44:40.7385299Z   RIPR_PYTHON_VERSION: 0.11.0
+2026-10-20T05:44:40.7386160Z   EXPECTED_PAYLOAD_SHA256: dd9cb77a66d27a3b77fb99966d697dbc69a593d003137fb5da9e29301a92c6ea
+2026-10-20T05:44:40.7387293Z   EXPECTED_WHEEL_SHA256: 9927b21665c1d04336cdfa22035e7cd7aca13e12f3a31ca50ba3920f2d65c8c4
+2026-10-20T05:44:40.7388138Z ##[endgroup]
+2026-10-20T05:44:40.9015436Z Downloading single artifact
+2026-10-20T05:44:41.1860302Z Preparing to download the following artifacts:
+2026-10-20T05:44:41.1871192Z - ripr-rs-python-wheel-1a525eaaba07bb416a83a4f4d76c833a20cb5256 (ID: 12242994765, Size: 53302985, Expected Digest: sha256:2d686787de94fe576f35d9f15bd6085453c57d6f2c0be5ddbb76bca239f29d91)
+2026-10-20T05:44:41.7103183Z Redirecting to blob download url: https://productionresultssa14.blob.core.windows.net/actions-results/c5051628-5548-8194-861b-e9ad3e5fa956/workflow-job-run-f6a31e93-14c7-519e-9ae2-fea93fe4d3a7/artifacts/3c9f6f5b0529b7a95b2f8eeb3990597a9fa649909199f5c2044caf002f38b0f2.zip
+2026-10-20T05:44:41.7105920Z Starting download of artifact to: /home/runner/work/ripr-swarm/ripr-swarm/evidence
+2026-10-20T05:44:42.0321093Z (node:1987) [DEP0005] DeprecationWarning: Buffer() is deprecated due to security and usability issues. Please use the Buffer.alloc(), Buffer.allocUnsafe(), or Buffer.from() methods instead.
+2026-10-20T05:44:42.0322246Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-10-20T05:44:44.6142862Z SHA256 digest of downloaded artifact is 2d686787de94fe576f35d9f15bd6085453c57d6f2c0be5ddbb76bca239f29d91
+2026-10-20T05:44:44.6144198Z Artifact download completed successfully.
+2026-10-20T05:44:44.6144883Z Total of 1 artifact(s) downloaded
+2026-10-20T05:44:44.6151173Z Download artifact has finished successfully
+2026-10-20T05:44:44.6354271Z ##[group]Run set -euo pipefail
+2026-10-20T05:44:44.6354837Z set -euo pipefail
+2026-10-20T05:44:44.6355159Z base_path="/usr/bin:/bin"
+2026-10-20T05:44:44.6355677Z wheel="$(find evidence/wheelhouse -maxdepth 1 -type f -name '*.whl' -print -quit)"
+2026-10-20T05:44:44.6356217Z test -n "${wheel}"
+2026-10-20T05:44:44.6356670Z test "$(sha256sum "${wheel}" | awk '{print $1}')" = "${EXPECTED_WHEEL_SHA256}"
+2026-10-20T05:44:44.6357215Z if env -i HOME="${HOME}" PATH="${base_path}" bash -c \
+2026-10-20T05:44:44.6357798Z   'command -v cargo >/dev/null || command -v rustc >/dev/null || command -v ripr >/dev/null'; then
+2026-10-20T05:44:44.6358434Z   echo "::error::clean consumer inherited Cargo, rustc, or ripr" >&2
+2026-10-20T05:44:44.6359213Z   exit 1
+2026-10-20T05:44:44.6359488Z fi
+2026-10-20T05:44:44.6359728Z 
+2026-10-20T05:44:44.6360056Z planted="${RUNNER_TEMP}/planted-${CLIENT}"
+2026-10-20T05:44:44.6360503Z planted_marker="${RUNNER_TEMP}/planted-${CLIENT}-executed"
+2026-10-20T05:44:44.6360927Z mkdir -p "${planted}"
+2026-10-20T05:44:44.6361249Z cat > "${planted}/ripr" <<SH
+2026-10-20T05:44:44.6361567Z #!/usr/bin/env bash
+2026-10-20T05:44:44.6361963Z printf 'planted PATH ripr was executed\n' > "${planted_marker}"
+2026-10-20T05:44:44.6362381Z exit 97
+2026-10-20T05:44:44.6362643Z SH
+2026-10-20T05:44:44.6362922Z chmod +x "${planted}/ripr"
+2026-10-20T05:44:44.6363221Z 
+2026-10-20T05:44:44.6363472Z if [ "${CLIENT}" = pip ]; then
+2026-10-20T05:44:44.6363819Z   venv="${RUNNER_TEMP}/pip-consumer"
+2026-10-20T05:44:44.6364168Z   python3 -m venv "${venv}"
+2026-10-20T05:44:44.6364505Z   "${venv}/bin/python" -m pip install \
+2026-10-20T05:44:44.6364873Z     --disable-pip-version-check \
+2026-10-20T05:44:44.6365220Z     --no-index \
+2026-10-20T05:44:44.6365521Z     --find-links evidence/tooling \
+2026-10-20T05:44:44.6365939Z     "pip==${PIP_VERSION}"
+2026-10-20T05:44:44.6366267Z   "${venv}/bin/python" -m pip install \
+2026-10-20T05:44:44.6366635Z     --disable-pip-version-check \
+2026-10-20T05:44:44.6366963Z     --no-index \
+2026-10-20T05:44:44.6367265Z     --find-links evidence/wheelhouse \
+2026-10-20T05:44:44.6367628Z     "ripr-rs==${RIPR_PYTHON_VERSION}"
+2026-10-20T05:44:44.6367969Z   executable="${venv}/bin/ripr"
+2026-10-20T05:44:44.6368347Z   consumer_path="${venv}/bin:${planted}:${base_path}"
+2026-10-20T05:44:44.6368747Z   consumer_python="${venv}/bin/python"
+2026-10-20T05:44:44.6369244Z else
+2026-10-20T05:44:44.6369538Z   bootstrap="${RUNNER_TEMP}/uv-bootstrap"
+2026-10-20T05:44:44.6369910Z   tool_dir="${RUNNER_TEMP}/uv-tools"
+2026-10-20T05:44:44.6370262Z   tool_bin="${RUNNER_TEMP}/uv-bin"
+2026-10-20T05:44:44.6370615Z   cache_dir="${RUNNER_TEMP}/uv-cache"
+2026-10-20T05:44:44.6370964Z   python3 -m venv "${bootstrap}"
+2026-10-20T05:44:44.6371338Z   "${bootstrap}/bin/python" -m pip install \
+2026-10-20T05:44:44.6371717Z     --disable-pip-version-check \
+2026-10-20T05:44:44.6372327Z     --no-index \
+2026-10-20T05:44:44.6372629Z     --find-links evidence/tooling \
+2026-10-20T05:44:44.6372971Z     "pip==${PIP_VERSION}" \
+2026-10-20T05:44:44.6373281Z     "uv==${UV_VERSION}"
+2026-10-20T05:44:44.6373657Z   uv_version="$("${bootstrap}/bin/python" -m uv --version)"
+2026-10-20T05:44:44.6374088Z   [[ "${uv_version}" == "uv ${UV_VERSION}"* ]]
+2026-10-20T05:44:44.6374438Z   mkdir -p "${tool_bin}"
+2026-10-20T05:44:44.6374734Z   UV_OFFLINE=1 \
+2026-10-20T05:44:44.6375021Z   UV_TOOL_DIR="${tool_dir}" \
+2026-10-20T05:44:44.6375511Z   UV_TOOL_BIN_DIR="${tool_bin}" \
+2026-10-20T05:44:44.6375859Z   UV_CACHE_DIR="${cache_dir}" \
+2026-10-20T05:44:44.6376251Z     "${bootstrap}/bin/python" -m uv tool install "${wheel}"
+2026-10-20T05:44:44.6376667Z   executable="${tool_bin}/ripr"
+2026-10-20T05:44:44.6377096Z   consumer_path="${tool_bin}:${planted}:${bootstrap}/bin:${base_path}"
+2026-10-20T05:44:44.6377580Z   consumer_python="${bootstrap}/bin/python"
+2026-10-20T05:44:44.6377927Z   {
+2026-10-20T05:44:44.6378192Z     echo "UV_TOOL_DIR=${tool_dir}"
+2026-10-20T05:44:44.6378538Z     echo "UV_TOOL_BIN_DIR=${tool_bin}"
+2026-10-20T05:44:44.6379029Z     echo "UV_CACHE_DIR=${cache_dir}"
+2026-10-20T05:44:44.6379362Z   } >> "${GITHUB_ENV}"
+2026-10-20T05:44:44.6379648Z fi
+2026-10-20T05:44:44.6379879Z 
+2026-10-20T05:44:44.6380268Z resolved="$(env -i HOME="${HOME}" PATH="${consumer_path}" bash -c 'command -v ripr')"
+2026-10-20T05:44:44.6380770Z test "${resolved}" = "${executable}"
+2026-10-20T05:44:44.6381250Z test "$(sha256sum "${resolved}" | awk '{print $1}')" = "${EXPECTED_PAYLOAD_SHA256}"
+2026-10-20T05:44:44.6381814Z test "$(env -i HOME="${HOME}" PATH="${consumer_path}" ripr --version)" = \
+2026-10-20T05:44:44.6382308Z   "ripr ${RIPR_NATIVE_VERSION} (${CANDIDATE_SHA,,})"
+2026-10-20T05:44:44.6382691Z test ! -e "${planted_marker}"
+2026-10-20T05:44:44.6382999Z {
+2026-10-20T05:44:44.6383248Z   echo "CLIENT=${CLIENT}"
+2026-10-20T05:44:44.6383591Z   echo "CONSUMER_EXECUTABLE=${executable}"
+2026-10-20T05:44:44.6383970Z   echo "CONSUMER_PATH=${consumer_path}"
+2026-10-20T05:44:44.6384354Z   echo "CONSUMER_PYTHON=${consumer_python}"
+2026-10-20T05:44:44.6384716Z   echo "PLANTED_DIR=${planted}"
+2026-10-20T05:44:44.6385075Z   echo "PLANTED_MARKER=${planted_marker}"
+2026-10-20T05:44:44.6385435Z   echo "WHEEL_PATH=${wheel}"
+2026-10-20T05:44:44.6385742Z } >> "${GITHUB_ENV}"
+2026-10-20T05:44:44.6775728Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T05:44:44.6776189Z env:
+2026-10-20T05:44:44.6776520Z   CANDIDATE_SHA: 1a525eaaba07bb416a83a4f4d76c833a20cb5256
+2026-10-20T05:44:44.6776947Z   RUST_TARGET: x86_64-unknown-linux-gnu
+2026-10-20T05:44:44.6777281Z   MATURIN_VERSION: 1.14.1
+2026-10-20T05:44:44.6777561Z   TWINE_VERSION: 7.0.0
+2026-10-20T05:44:44.6777834Z   UV_VERSION: 0.12.19
+2026-10-20T05:44:44.6778095Z   PIP_VERSION: 26.2.1
+2026-10-20T05:44:44.6778359Z   PACKAGING_VERSION: 26.3
+2026-10-20T05:44:44.6778642Z   RIPR_NATIVE_VERSION: 0.11.0
+2026-10-20T05:44:44.6779339Z   RIPR_PYTHON_VERSION: 0.11.0
+2026-10-20T05:44:44.6779825Z   EXPECTED_PAYLOAD_SHA256: dd9cb77a66d27a3b77fb99966d697dbc69a593d003137fb5da9e29301a92c6ea
+2026-10-20T05:44:44.6780506Z   EXPECTED_WHEEL_SHA256: 9927b21665c1d04336cdfa22035e7cd7aca13e12f3a31ca50ba3920f2d65c8c4
+2026-10-20T05:44:44.6781018Z   CLIENT: uv
+2026-10-20T05:44:44.6781261Z ##[endgroup]
+2026-10-20T05:44:48.0216386Z Looking in links: evidence/tooling
+2026-10-20T05:44:48.0341877Z Processing ./evidence/tooling/pip-26.2.1-py3-none-any.whl
+2026-10-20T05:44:48.0437365Z Processing ./evidence/tooling/uv-0.12.19-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+2026-10-20T05:44:48.0745410Z Installing collected packages: uv, pip
+2026-10-20T05:44:48.3676576Z   Attempting uninstall: pip
+2026-10-20T05:44:48.3684058Z     Found existing installation: pip 22.0.2
+2026-10-20T05:44:48.6630587Z     Uninstalling pip-22.0.2:
+2026-10-20T05:44:48.6702425Z       Successfully uninstalled pip-22.0.2
+2026-10-20T05:44:49.3424871Z Successfully installed pip-26.2.1 uv-0.12.19
+2026-10-20T05:44:49.5169890Z Resolved 1 package in 1ms
+2026-10-20T05:44:49.6344525Z Prepared 1 package in 116ms
+2026-10-20T05:44:49.6356412Z Installed 1 package in 1ms
+2026-10-20T05:44:49.6358057Z  + ripr-rs==0.11.0 (from file:///home/runner/work/ripr-swarm/ripr-swarm/evidence/wheelhouse/ripr_rs-0.11.0-py3-none-linux_x86_64.whl)
+2026-10-20T05:44:49.6360540Z Installed 1 executable: ripr
+2026-10-20T05:44:49.6364773Z warning: `/home/runner/work/_temp/uv-bin` is not on your PATH. To use installed tools, run `$env:PATH = "/home/runner/work/_temp/uv-bin;$env:PATH"` or `uv tool update-shell`.
+2026-10-20T05:44:49.8009827Z ##[group]Run set -euo pipefail
+2026-10-20T05:44:49.8010294Z set -euo pipefail
+2026-10-20T05:44:49.8010617Z project="${RUNNER_TEMP}/${CLIENT} consumer ü"
+2026-10-20T05:44:49.8010980Z fixture="${project}/fixtures/python/basic"
+2026-10-20T05:44:49.8011363Z check_json="${RUNNER_TEMP}/${CLIENT}-python-check.json"
+2026-10-20T05:44:49.8011823Z disabled_json="${RUNNER_TEMP}/${CLIENT}-python-disabled.json"
+2026-10-20T05:44:49.8012284Z explain_text="${RUNNER_TEMP}/${CLIENT}-python-explain.txt"
+2026-10-20T05:44:49.8012748Z project_marker="${RUNNER_TEMP}/${CLIENT}-project-python-executed"
+2026-10-20T05:44:49.8013154Z mkdir -p "${project}"
+2026-10-20T05:44:49.8013517Z tar -xzf evidence/python-basic-fixture.tar.gz -C "${project}"
+2026-10-20T05:44:49.8013913Z mkdir -p "${fixture}/.venv/bin"
+2026-10-20T05:44:49.8014223Z cat > "${fixture}/.venv/bin/python" <<SH
+2026-10-20T05:44:49.8014572Z #!/usr/bin/env bash
+2026-10-20T05:44:49.8014930Z printf 'project virtualenv was executed\n' > "${project_marker}"
+2026-10-20T05:44:49.8015331Z exit 98
+2026-10-20T05:44:49.8015564Z SH
+2026-10-20T05:44:49.8015789Z chmod +x "${fixture}/.venv/bin/python"
+2026-10-20T05:44:49.8016067Z 
+2026-10-20T05:44:49.8016247Z env -i \
+2026-10-20T05:44:49.8016453Z   HOME="${HOME}" \
+2026-10-20T05:44:49.8016702Z   PATH="${CONSUMER_PATH}" \
+2026-10-20T05:44:49.8017035Z   HTTP_PROXY="http://127.0.0.1:9" \
+2026-10-20T05:44:49.8017363Z   HTTPS_PROXY="http://127.0.0.1:9" \
+2026-10-20T05:44:49.8017668Z   NO_PROXY="" \
+2026-10-20T05:44:49.8017901Z   ripr check \
+2026-10-20T05:44:49.8018135Z     --root "${fixture}" \
+2026-10-20T05:44:49.8018416Z     --diff "${fixture}/diff.patch" \
+2026-10-20T05:44:49.8018696Z     --mode fast \
+2026-10-20T05:44:49.8019204Z     --json > "${check_json}"
+2026-10-20T05:44:49.8019470Z jq -e '
+2026-10-20T05:44:49.8019695Z   .summary.changed_rust_files == 0
+2026-10-20T05:44:49.8095585Z   and .summary.probes > 0
+2026-10-20T05:44:49.8096141Z   and .summary.findings > 0
+2026-10-20T05:44:49.8096651Z   and (.findings | length) > 0
+2026-10-20T05:44:49.8097305Z   and any(.summary.changed_files_by_language[]?;
+2026-10-20T05:44:49.8098013Z     .language == "python" and .files == 1)
+2026-10-20T05:44:49.8098711Z   and any(.preview_languages[]?;
+2026-10-20T05:44:49.8099462Z     .language == "python"
+2026-10-20T05:44:49.8099912Z     and .enabled == true
+2026-10-20T05:44:49.8100305Z     and .analyzed == true
+2026-10-20T05:44:49.8100792Z     and .category == "preview_language_advisory")
+2026-10-20T05:44:49.8101369Z   and .findings[0].language == "python"
+2026-10-20T05:44:49.8101950Z   and .findings[0].language_status == "preview"
+2026-10-20T05:44:49.8102875Z ' "${check_json}" >/dev/null
+2026-10-20T05:44:49.8103459Z finding_id="$(jq -er '.findings[0].id' "${check_json}")"
+2026-10-20T05:44:49.8104049Z env -i \
+2026-10-20T05:44:49.8104430Z   HOME="${HOME}" \
+2026-10-20T05:44:49.8104886Z   PATH="${CONSUMER_PATH}" \
+2026-10-20T05:44:49.8105360Z   PROJECT="${fixture}" \
+2026-10-20T05:44:49.8105820Z   FINDING_ID="${finding_id}" \
+2026-10-20T05:44:49.8106373Z   EXPLAIN_TEXT="${explain_text}" \
+2026-10-20T05:44:49.8106899Z   bash --noprofile --norc -c '
+2026-10-20T05:44:49.8107376Z     cd "${PROJECT}"
+2026-10-20T05:44:49.8107801Z     ripr explain \
+2026-10-20T05:44:49.8108214Z       --root . \
+2026-10-20T05:44:49.8108631Z       --diff diff.patch \
+2026-10-20T05:44:49.8109362Z       --mode fast \
+2026-10-20T05:44:49.8110135Z       "${FINDING_ID}" > "${EXPLAIN_TEXT}"
+2026-10-20T05:44:49.8110658Z   '
+2026-10-20T05:44:49.8111017Z test -s "${explain_text}"
+2026-10-20T05:44:49.8111540Z grep -F "${finding_id}" "${explain_text}"
+2026-10-20T05:44:49.8112093Z test ! -e "${project_marker}"
+2026-10-20T05:44:49.8112571Z test ! -e "${PLANTED_MARKER}"
+2026-10-20T05:44:49.8113057Z 
+2026-10-20T05:44:49.8113444Z cat > "${fixture}/ripr.toml" <<'EOF'
+2026-10-20T05:44:49.8113960Z [languages]
+2026-10-20T05:44:49.8114369Z enabled = ["rust"]
+2026-10-20T05:44:49.8114782Z EOF
+2026-10-20T05:44:49.8115247Z env -i HOME="${HOME}" PATH="${CONSUMER_PATH}" \
+2026-10-20T05:44:49.8115821Z   ripr check \
+2026-10-20T05:44:49.8116244Z     --root "${fixture}" \
+2026-10-20T05:44:49.8116740Z     --diff "${fixture}/diff.patch" \
+2026-10-20T05:44:49.8117246Z     --mode fast \
+2026-10-20T05:44:49.8117702Z     --json > "${disabled_json}"
+2026-10-20T05:44:49.8118202Z jq -e '
+2026-10-20T05:44:49.8118625Z   .summary.probes == 0
+2026-10-20T05:44:49.8119373Z   and .summary.findings == 0
+2026-10-20T05:44:49.8119936Z   and .analysis_outcome.analysis_complete == false
+2026-10-20T05:44:49.8120540Z   and any(.analysis_outcome.outcome.limitations[]?;
+2026-10-20T05:44:49.8120912Z     .kind == "language_adapter_unavailable")
+2026-10-20T05:44:49.8121257Z   and any(.preview_languages[]?;
+2026-10-20T05:44:49.8121564Z     .language == "python"
+2026-10-20T05:44:49.8121830Z     and .enabled == false
+2026-10-20T05:44:49.8122087Z     and .analyzed == false
+2026-10-20T05:44:49.8122442Z     and (.why | contains("empty result is not Rust-grade clean")))
+2026-10-20T05:44:49.8122822Z ' "${disabled_json}" >/dev/null
+2026-10-20T05:44:49.8123167Z echo "PROJECT_FIXTURE=${fixture}" >> "${GITHUB_ENV}"
+2026-10-20T05:44:49.8197518Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T05:44:49.8197889Z env:
+2026-10-20T05:44:49.8198183Z   CANDIDATE_SHA: 1a525eaaba07bb416a83a4f4d76c833a20cb5256
+2026-10-20T05:44:49.8198536Z   RUST_TARGET: x86_64-unknown-linux-gnu
+2026-10-20T05:44:49.8199071Z   MATURIN_VERSION: 1.14.1
+2026-10-20T05:44:49.8199321Z   TWINE_VERSION: 7.0.0
+2026-10-20T05:44:49.8199543Z   UV_VERSION: 0.12.19
+2026-10-20T05:44:49.8199760Z   PIP_VERSION: 26.2.1
+2026-10-20T05:44:49.8199980Z   PACKAGING_VERSION: 26.3
+2026-10-20T05:44:49.8200213Z   RIPR_NATIVE_VERSION: 0.11.0
+2026-10-20T05:44:49.8200453Z   RIPR_PYTHON_VERSION: 0.11.0
+2026-10-20T05:44:49.8200866Z   EXPECTED_PAYLOAD_SHA256: dd9cb77a66d27a3b77fb99966d697dbc69a593d003137fb5da9e29301a92c6ea
+2026-10-20T05:44:49.8201498Z   EXPECTED_WHEEL_SHA256: 9927b21665c1d04336cdfa22035e7cd7aca13e12f3a31ca50ba3920f2d65c8c4
+2026-10-20T05:44:49.8201976Z   UV_TOOL_DIR: /home/runner/work/_temp/uv-tools
+2026-10-20T05:44:49.8202305Z   UV_TOOL_BIN_DIR: /home/runner/work/_temp/uv-bin
+2026-10-20T05:44:49.8202859Z   UV_CACHE_DIR: /home/runner/work/_temp/uv-cache
+2026-10-20T05:44:49.8203142Z   CLIENT: uv
+2026-10-20T05:44:49.8203404Z   CONSUMER_EXECUTABLE: /home/runner/work/_temp/uv-bin/ripr
+2026-10-20T05:44:49.8204045Z   CONSUMER_PATH: /home/runner/work/_temp/uv-bin:/home/runner/work/_temp/planted-uv:/home/runner/work/_temp/uv-bootstrap/bin:/usr/bin:/bin
+2026-10-20T05:44:49.8204743Z   CONSUMER_PYTHON: /home/runner/work/_temp/uv-bootstrap/bin/python
+2026-10-20T05:44:49.8205137Z   PLANTED_DIR: /home/runner/work/_temp/planted-uv
+2026-10-20T05:44:49.8205512Z   PLANTED_MARKER: /home/runner/work/_temp/planted-uv-executed
+2026-10-20T05:44:49.8205960Z   WHEEL_PATH: evidence/wheelhouse/ripr_rs-0.11.0-py3-none-linux_x86_64.whl
+2026-10-20T05:44:49.8206345Z ##[endgroup]
+2026-10-20T05:44:49.8412003Z ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).
+2026-10-20T05:44:49.8413296Z ripr progress: loading_input [diff]
+2026-10-20T05:44:49.8414105Z ripr progress: analyzing [diff]
+2026-10-20T05:44:49.8432229Z ripr progress: building_output [diff]
+2026-10-20T05:44:49.8439493Z ripr progress: completed [diff]
+2026-10-20T05:44:49.8895908Z ripr progress: loading_input [diff]
+2026-10-20T05:44:49.8896490Z ripr progress: analyzing [diff]
+2026-10-20T05:44:49.8911391Z ripr progress: building_output [diff]
+2026-10-20T05:44:49.8915842Z ripr progress: completed [diff]
+2026-10-20T05:44:49.8939848Z   id: probe:src_pricing.py:python_preview:b6c16437
+2026-10-20T05:44:49.9037157Z Next: ripr context --root '/home/runner/work/_temp/uv consumer ü/fixtures/python/basic' --diff '/home/runner/work/_temp/uv consumer ü/fixtures/python/basic/diff.patch' --mode fast --at probe:src_pricing.py:python_preview:b6c16437
+2026-10-20T05:44:49.9038637Z ripr: mode fast is currently identical to mode draft; there is no behavioral difference. Use draft or deep (--mode on the command line, or [analysis] mode in ripr.toml).
+2026-10-20T05:44:49.9039751Z ripr progress: loading_input [diff]
+2026-10-20T05:44:49.9040039Z ripr progress: analyzing [diff]
+2026-10-20T05:44:49.9040312Z ripr progress: building_output [diff]
+2026-10-20T05:44:49.9041261Z ripr: --diff produced zero findings because changed files were not analyzed: python changed 1 file(s), but the preview adapter was not enabled or available. This empty result is not a clean pass; see the analysis outcome for the recovery.
+2026-10-20T05:44:49.9042176Z ripr progress: completed [diff]
+2026-10-20T05:44:49.9326414Z ##[group]Run set -euo pipefail
+2026-10-20T05:44:49.9326777Z set -euo pipefail
+2026-10-20T05:44:49.9327038Z if [ "${CLIENT}" = pip ]; then
+2026-10-20T05:44:49.9327355Z   "${CONSUMER_PYTHON}" -m pip install \
+2026-10-20T05:44:49.9327680Z     --disable-pip-version-check \
+2026-10-20T05:44:49.9327972Z     --force-reinstall \
+2026-10-20T05:44:49.9328225Z     --no-index \
+2026-10-20T05:44:49.9328489Z     --find-links evidence/wheelhouse \
+2026-10-20T05:44:49.9329189Z     "ripr-rs==${RIPR_PYTHON_VERSION}"
+2026-10-20T05:44:49.9329592Z   test "$(sha256sum "${CONSUMER_EXECUTABLE}" | awk '{print $1}')" = \
+2026-10-20T05:44:49.9329986Z     "${EXPECTED_PAYLOAD_SHA256}"
+2026-10-20T05:44:49.9330319Z   "${CONSUMER_PYTHON}" -m pip uninstall -y ripr-rs
+2026-10-20T05:44:49.9330739Z   if "${CONSUMER_PYTHON}" -m pip show ripr-rs >/dev/null 2>&1; then
+2026-10-20T05:44:49.9331254Z     echo "::error::ripr-rs remained installed after uninstall" >&2
+2026-10-20T05:44:49.9331611Z     exit 1
+2026-10-20T05:44:49.9331816Z   fi
+2026-10-20T05:44:49.9332010Z else
+2026-10-20T05:44:49.9332210Z   UV_OFFLINE=1 \
+2026-10-20T05:44:49.9332453Z   UV_TOOL_DIR="${UV_TOOL_DIR}" \
+2026-10-20T05:44:49.9332748Z   UV_TOOL_BIN_DIR="${UV_TOOL_BIN_DIR}" \
+2026-10-20T05:44:49.9333050Z   UV_CACHE_DIR="${UV_CACHE_DIR}" \
+2026-10-20T05:44:49.9333625Z     "${CONSUMER_PYTHON}" -m uv tool install --force "${WHEEL_PATH}"
+2026-10-20T05:44:49.9334085Z   test "$(sha256sum "${CONSUMER_EXECUTABLE}" | awk '{print $1}')" = \
+2026-10-20T05:44:49.9334471Z     "${EXPECTED_PAYLOAD_SHA256}"
+2026-10-20T05:44:49.9334744Z   UV_OFFLINE=1 \
+2026-10-20T05:44:49.9334978Z   UV_TOOL_DIR="${UV_TOOL_DIR}" \
+2026-10-20T05:44:49.9335263Z   UV_TOOL_BIN_DIR="${UV_TOOL_BIN_DIR}" \
+2026-10-20T05:44:49.9335572Z   UV_CACHE_DIR="${UV_CACHE_DIR}" \
+2026-10-20T05:44:49.9335910Z     "${CONSUMER_PYTHON}" -m uv tool uninstall ripr-rs
+2026-10-20T05:44:49.9336217Z fi
+2026-10-20T05:44:49.9336434Z test ! -e "${CONSUMER_EXECUTABLE}"
+2026-10-20T05:44:49.9336853Z test "$(env -i HOME="${HOME}" PATH="${CONSUMER_PATH}" bash -c 'command -v ripr')" = \
+2026-10-20T05:44:49.9337289Z   "${PLANTED_DIR}/ripr"
+2026-10-20T05:44:49.9337586Z test -f "${PROJECT_FIXTURE}/src/pricing.py"
+2026-10-20T05:44:49.9337899Z test ! -e "${PLANTED_MARKER}"
+2026-10-20T05:44:49.9410667Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T05:44:49.9411012Z env:
+2026-10-20T05:44:49.9411268Z   CANDIDATE_SHA: 1a525eaaba07bb416a83a4f4d76c833a20cb5256
+2026-10-20T05:44:49.9411608Z   RUST_TARGET: x86_64-unknown-linux-gnu
+2026-10-20T05:44:49.9411878Z   MATURIN_VERSION: 1.14.1
+2026-10-20T05:44:49.9412099Z   TWINE_VERSION: 7.0.0
+2026-10-20T05:44:49.9412321Z   UV_VERSION: 0.12.19
+2026-10-20T05:44:49.9412536Z   PIP_VERSION: 26.2.1
+2026-10-20T05:44:49.9412748Z   PACKAGING_VERSION: 26.3
+2026-10-20T05:44:49.9412976Z   RIPR_NATIVE_VERSION: 0.11.0
+2026-10-20T05:44:49.9413220Z   RIPR_PYTHON_VERSION: 0.11.0
+2026-10-20T05:44:49.9413635Z   EXPECTED_PAYLOAD_SHA256: dd9cb77a66d27a3b77fb99966d697dbc69a593d003137fb5da9e29301a92c6ea
+2026-10-20T05:44:49.9414255Z   EXPECTED_WHEEL_SHA256: 9927b21665c1d04336cdfa22035e7cd7aca13e12f3a31ca50ba3920f2d65c8c4
+2026-10-20T05:44:49.9414729Z   UV_TOOL_DIR: /home/runner/work/_temp/uv-tools
+2026-10-20T05:44:49.9415071Z   UV_TOOL_BIN_DIR: /home/runner/work/_temp/uv-bin
+2026-10-20T05:44:49.9415389Z   UV_CACHE_DIR: /home/runner/work/_temp/uv-cache
+2026-10-20T05:44:49.9415671Z   CLIENT: uv
+2026-10-20T05:44:49.9415934Z   CONSUMER_EXECUTABLE: /home/runner/work/_temp/uv-bin/ripr
+2026-10-20T05:44:49.9416808Z   CONSUMER_PATH: /home/runner/work/_temp/uv-bin:/home/runner/work/_temp/planted-uv:/home/runner/work/_temp/uv-bootstrap/bin:/usr/bin:/bin
+2026-10-20T05:44:49.9417494Z   CONSUMER_PYTHON: /home/runner/work/_temp/uv-bootstrap/bin/python
+2026-10-20T05:44:49.9417886Z   PLANTED_DIR: /home/runner/work/_temp/planted-uv
+2026-10-20T05:44:49.9418264Z   PLANTED_MARKER: /home/runner/work/_temp/planted-uv-executed
+2026-10-20T05:44:49.9418713Z   WHEEL_PATH: evidence/wheelhouse/ripr_rs-0.11.0-py3-none-linux_x86_64.whl
+2026-10-20T05:44:49.9419374Z   PROJECT_FIXTURE: /home/runner/work/_temp/uv consumer ü/fixtures/python/basic
+2026-10-20T05:44:49.9419767Z ##[endgroup]
+2026-10-20T05:44:49.9827968Z Resolved 1 package in 1ms
+2026-10-20T05:44:49.9862483Z Installed 1 package in 1ms
+2026-10-20T05:44:49.9863351Z  + ripr-rs==0.11.0 (from file:///home/runner/work/ripr-swarm/ripr-swarm/evidence/wheelhouse/ripr_rs-0.11.0-py3-none-linux_x86_64.whl)
+2026-10-20T05:44:49.9864705Z Installed 1 executable: ripr
+2026-10-20T05:44:49.9868498Z warning: `/home/runner/work/_temp/uv-bin` is not on your PATH. To use installed tools, run `$env:PATH = "/home/runner/work/_temp/uv-bin;$env:PATH"` or `uv tool update-shell`.
+2026-10-20T05:44:50.1779402Z Uninstalled 1 executable: ripr
+2026-10-20T05:44:50.1904084Z Cleaning up orphan processes

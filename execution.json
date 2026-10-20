@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-20T05:59:16.162170+00:00",
+  "observed_at": "2026-10-20T06:11:12.931515+00:00",
   "repository": "https://github.com/EffortlessMetrics/ripr-swarm.git",
   "branch": "fix/brief-diff-input-status",
   "head": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
@@ -77,7 +77,61 @@
       "log": "precommit.log"
     }
   },
-  "hosted_qualification": "not yet requested; inspect actual checkout after request",
+  "hosted_qualification": {
+    "requested": false,
+    "pr_draft_readback": true,
+    "qualification_label_readback": [],
+    "ready_transition": "denied; explicit authorization pending, no retry or alternative route",
+    "current_automatic_wheel": {
+      "run": 39375843257,
+      "build_job": 118473857353,
+      "actual_checkout": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "conclusion": "success",
+      "pip_job": 118475771357,
+      "uv_job": 118475771356
+    },
+    "current_automatic_source_checks": {
+      "run": 39375843249,
+      "actual_checkout": "4096858e294ceaa0716cd299901be468b49d2518",
+      "parents": [
+        "cec602041daf5fe102a0ff0460feb4fbf2bffdcc",
+        "1a525eaaba07bb416a83a4f4d76c833a20cb5256"
+      ],
+      "tree": "c421235ae8db69cd4fa6c01e9f3a61191a8f96b5",
+      "conclusion": "success"
+    },
+    "ub_review": {
+      "run": 39375843168,
+      "job": 118474497972,
+      "status": "completed",
+      "conclusion": "success",
+      "actual_checkout": "4096858e294ceaa0716cd299901be468b49d2518",
+      "receipt_disposition": "INCOMPLETE: ripr sensor exit2; cargo-test timed out after900s; unsupported/invalid-budget intents; red/green deferred with no receipt. One focused-head pass is reported but not promoted to current-head qualification.",
+      "reporter_tests": {
+        "passed": 23,
+        "failed": 0
+      },
+      "full_packet_inspection": "not established: native download returned a reusable file reference; environment proxy refused subsequent materialization with403. No retry or proxy bypass. Original artifact12244705424 remains receiver-readable until2026-10-27."
+    },
+    "old_ub_review": {
+      "run": 39373900250,
+      "source": "b1998c3907f0470138fd67df0feaec5af5d61d68",
+      "conclusion": "cancelled",
+      "not_a_pass": true
+    },
+    "terminal_current_head_snapshot": {
+      "checks": 37,
+      "nonterminal_checks": 0,
+      "failed_checks": 0,
+      "workflows": 25,
+      "conclusions": {
+        "success": 3,
+        "skipped": 22
+      },
+      "required_rust_context_present": false,
+      "observation": "2026-10-20T06:10:08Z"
+    }
+  },
   "retained_executables": {
     "target/debug/ripr": {
       "bytes": 127224704,
@@ -104,5 +158,44 @@
       "sha256": "9b7a30de657c7432596684012a2cbaa5de839c2a591005359116add62c6a2c32",
       "bytes": 126977832
     }
-  ]
+  ],
+  "review": {
+    "prequalification_review": 5581289927,
+    "terminal_review": 5581359889,
+    "terminal_review_readback": "exact head and exact body matched",
+    "disposition": "REVIEW_INCOMPLETE",
+    "blocking_scoped_source_findings": [],
+    "inline_threads": {
+      "resolved": 2,
+      "unresolved": 0
+    },
+    "provider_base_cap_question": "refuted by committed two-file base fixture at brief_diff_status.rs:97-125; all4 tests passed; no unnecessary test expansion",
+    "other_selector_cross_product": "not executed or claimed; both selector paths use shared checked helper and base fixtures exercise both metadata-limitation and parser-Err refusals"
+  },
+  "resources": {
+    "source_worktree": {
+      "path": "/workspace/brief-status",
+      "state": "retained with reason",
+      "consumer": "open PR #8961; parent qualification/integration disposition; source clean and pushed"
+    },
+    "cargo_target": {
+      "path": "/workspace/brief-status/target",
+      "bytes": 3307753472,
+      "state": "retained with reason",
+      "consumer": "open-claim current qualified CLI/test/golden witnesses and reusable state for pending qualification/integration disposition; no active local compiler/driver claimed after native commands terminal"
+    },
+    "evidence": {
+      "path": "/workspace/scratch/brief-status-continuation",
+      "state": "retained with reason",
+      "consumer": "immutable evidence branch/current receiver readback"
+    },
+    "golden_restore_staging": {
+      "path": "/workspace/scratch/brief-status-continuation-golden-readback",
+      "state": "released",
+      "evidence": "all1521 files restored and compared before staging removal"
+    },
+    "free_bytes": 28434857984,
+    "reserve_bytes": 8589934592,
+    "cumulative_growth_admission_bytes": 12884901888
+  }
 }

@@ -1,13 +1,22 @@
 {
   "source": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
   "original_base": "1e9468f4b0d133f0a50b64134318763d8cf48beb",
-  "recorded_at": "2026-10-20T06:00:33.908651+00:00",
-  "stage": "local qualification complete; hosted request pending",
+  "observed_github_merge": {
+    "commit": "4096858e294ceaa0716cd299901be468b49d2518",
+    "parents": [
+      "cec602041daf5fe102a0ff0460feb4fbf2bffdcc",
+      "1a525eaaba07bb416a83a4f4d76c833a20cb5256"
+    ],
+    "tree": "c421235ae8db69cd4fa6c01e9f3a61191a8f96b5"
+  },
+  "recorded_at": "2026-10-20T06:11:12.990556+00:00",
+  "stage": "local proof complete; automatic workflows terminal; required hosted activation blocked pending authorization",
+  "previous_evidence_commit": "6513c7c067a494fb4df361b4337eec47ddb80419",
   "files": [
     {
       "path": "README.md",
-      "bytes": 1608,
-      "sha256": "0ac9b4a7ae325c4ab177678bac596afc0fa904c9c011c7e579f4ac3374e40940"
+      "bytes": 2280,
+      "sha256": "1e2498e452c161d5653720282c70001152c7a2b3330b5fde256691919df307c5"
     },
     {
       "path": "automatic-progress-before-qualification.json",
@@ -26,8 +35,8 @@
     },
     {
       "path": "execution.json",
-      "bytes": 4400,
-      "sha256": "93f948dd813be322b89087661cdcb7fde057481d486ac16b64096f2ae9b7744b"
+      "bytes": 8248,
+      "sha256": "ea212bc88a4a328ab762a4a074563653b22c5a0d49f0d96348de943d5999328c"
     },
     {
       "path": "golden-actuals.tar.gz",
@@ -43,6 +52,46 @@
       "path": "green-tests.log",
       "bytes": 702,
       "sha256": "e76cf01088176f8ea75189888fc75e93b50a22460015af38479f83b77d8b1fbc"
+    },
+    {
+      "path": "hosted/job-118473670616.log",
+      "bytes": 145758,
+      "sha256": "5258063bba2491322d5c8776dfce8a7964012f3d2fa8b3e59ad037cb7bbdf3cd"
+    },
+    {
+      "path": "hosted/job-118473670819.log",
+      "bytes": 147858,
+      "sha256": "7f7ee9eaa85fc8dc36aad76ae7a0106d544c75d14df3e7bc2e4493f3e895d022"
+    },
+    {
+      "path": "hosted/job-118473857353.log",
+      "bytes": 135589,
+      "sha256": "ea3869725fcceee6bdc6f7abfb8795541d914e0d5e0b0c6780b777297a54d61a"
+    },
+    {
+      "path": "hosted/job-118474497972.log",
+      "bytes": 235602,
+      "sha256": "c74c40502866850fd5930bf2754334e4f28bb323d0afdd2a889c3fe6675fe669"
+    },
+    {
+      "path": "hosted/job-118475771356.log",
+      "bytes": 26124,
+      "sha256": "af5ee7d87ab8af0ee950c17f3e18bdb33638fbeae8928d502eb0da448dabcfbd"
+    },
+    {
+      "path": "hosted/job-118475771357.log",
+      "bytes": 25384,
+      "sha256": "f22977c76fbbe12c1035f983f0f7367832ba4181c574bb6db308927ae49d7f4a"
+    },
+    {
+      "path": "hosted/terminal-state.json",
+      "bytes": 24771,
+      "sha256": "366794bca78493859ba9797af6d885df943f9857e683506371b231ef900c00f7"
+    },
+    {
+      "path": "hosted/ub-artifact-metadata.json",
+      "bytes": 857,
+      "sha256": "4444ba35ce69345499ae80d14e6ea228b907112ba48de96a49bb11467cea1260"
     },
     {
       "path": "inherited-health-gap-log-excerpts.txt",
@@ -355,6 +404,11 @@
       "sha256": "fdf6b73f45d29fcb2ecb177e0b862b96808ac062e1597b12afaff615d9a74da4"
     },
     {
+      "path": "review-threads-final.json",
+      "bytes": 15276,
+      "sha256": "5730b7be8729d6de087dc817e3a4accf6368f126860df6703e8ca86362555c94"
+    },
+    {
       "path": "runtime.txt",
       "bytes": 312,
       "sha256": "4690200f6a001bf2af01d6acd6ce9bde6d8904aa685ab4d271948f64c2075dbf"
@@ -363,6 +417,11 @@
       "path": "source-review.md",
       "bytes": 1365,
       "sha256": "5333e9874e5f30bedc89d214e94aaa832fba8df4a57cdb40d9c9a07d356b1ce6"
+    },
+    {
+      "path": "terminal-review.md",
+      "bytes": 3779,
+      "sha256": "119ec389beb779d7114726a9a971a1d0c9584012bf5912e3d36517f54f910f7e"
     }
   ]
 }
