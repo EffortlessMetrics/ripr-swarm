@@ -1,10 +1,10 @@
 {
-  "case_id": "spec0231-oracle-uncalled-closure",
-  "subject_id": "authored-spec0231-35",
+  "case_id": "spec0231r8-oracle-dead-if-false-branch",
+  "subject_id": "authored-spec0231-34",
   "origin": "authored",
   "anchor": "src/lib.rs:2",
   "behavior_family": "scalar_return_value",
-  "test_shape": "uncalled_closure_assertion",
+  "test_shape": "dead_branch_assertion",
   "hard_case": true,
   "truth": "not_discriminated",
   "ideal_verdict": "gap",

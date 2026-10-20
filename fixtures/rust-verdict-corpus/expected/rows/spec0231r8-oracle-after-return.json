@@ -1,5 +1,5 @@
 {
-  "case_id": "spec0231-oracle-after-return",
+  "case_id": "spec0231r8-oracle-after-return",
   "subject_id": "authored-spec0231-36",
   "origin": "authored",
   "anchor": "src/lib.rs:2",

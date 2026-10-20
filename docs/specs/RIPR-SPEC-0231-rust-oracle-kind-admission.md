@@ -1015,9 +1015,9 @@ rejected alternative. Any can be reversed later without touching the rest.
   `error_path_oracle_execution_uncalled`, `owner_return_pin_unknown_singleton`
   and `match_arm_tuple_derived_return_before_assertion` keep their
   "not credited" readings unchanged. Corpus:
-  `spec0231-oracle-dead-if-false-branch`, `spec0231-oracle-uncalled-closure`,
-  `spec0231-oracle-after-return` (examples 34 to 36, the deferred strong
-  `assert_eq!` forms) and `spec0231-oracle-after-panic` (example 37) are
+  `spec0231r8-oracle-dead-if-false-branch`, `spec0231r8-oracle-uncalled-closure`,
+  `spec0231r8-oracle-after-return` (examples 34 to 36, the deferred strong
+  `assert_eq!` forms) and `spec0231r8-oracle-after-panic` (example 37) are
   `not_discriminated` by runtime mutants and read their gap. With the
   reach filter disabled each still read a gap (other execution admissions
   already refused the assertion), so these cases guard the verdict and the
