@@ -35,7 +35,7 @@ Evidence
   - propagation unknown: Static limit `opaque_custom_assertion_helper` prevents a safe Python propagation claim
   - observation yes: Strongest extracted Python oracle kind: `unknown` (rank 1)
   - discriminator unknown: Static limit `opaque_custom_assertion_helper` prevents a safe Python discriminator claim
-  - related test tests/test_labels.py:7 test_labels uses unknown unknown oracle: self.assertListEqual(labels(abort()), [1, 2])
+  - related test tests/test_labels.py:7 test_labels uses an unclassified oracle, not graded against this probe: self.assertListEqual(labels(abort()), [1, 2])
 
 Weakness
   - Static limit `opaque_custom_assertion_helper`: a related Python test uses a custom assertion helper such as `assert_*(...)`; the preview adapter cannot inspect the helper body or determine whether it already observes the changed discriminator

@@ -176,14 +176,16 @@ fn evidence_path<T>(
             ));
             continue;
         }
-        let oracle_kind = display_label(test.oracle_kind.as_str());
         let mut line = format!(
-            "related test {}:{} {} uses {} {} oracle",
+            "related test {}:{} {} uses {}",
             display_path(&test.file),
             test.line,
             test.name,
-            test.oracle_strength.as_str(),
-            oracle_kind
+            crate::output::related_test_miss::oracle_projection(
+                &test.oracle_strength,
+                &test.oracle_kind,
+                test.oracle.is_some()
+            )
         );
         if let Some(oracle) = &test.oracle {
             line.push_str(&format!(": {oracle}"));
@@ -231,14 +233,27 @@ fn evidence_path<T>(
     }
 
     let observed_values_total = finding.activation.observed_values.len();
-    for value in finding
+    let shown_values = finding
         .activation
         .observed_values
         .iter()
         .take(MAX_OBSERVED_VALUES_SHOWN)
-    {
+        .collect::<Vec<_>>();
+    // #8389: a bare `at line N` is only ambiguous when the shown window mixes
+    // facts from more than one test file; then each line names its file.
+    let name_files = shown_values
+        .iter()
+        .filter_map(|value| value.file.as_deref())
+        .collect::<std::collections::BTreeSet<_>>()
+        .len()
+        > 1;
+    for value in shown_values {
         lines.push(project(
-            crate::output::observed_values::source_value_evidence_line(value),
+            if name_files {
+                crate::output::observed_values::source_value_evidence_line_with_file(value)
+            } else {
+                crate::output::observed_values::source_value_evidence_line(value)
+            },
             EvidenceSource::Value(value),
         ));
     }
@@ -265,7 +280,7 @@ fn evidence_path<T>(
             }
         };
         lines.push(project(format!(
-            "source values (showing {MAX_OBSERVED_VALUES_SHOWN} of {observed_values_total}; {json_window})"
+            "source values (showing {MAX_OBSERVED_VALUES_SHOWN} of {observed_values_total} read from related tests; {json_window})"
         ), EvidenceSource::Window));
     }
 
@@ -312,8 +327,4 @@ fn is_duplicate_discriminator_missing(missing: &str, discriminator_values: &[&st
         return false;
     };
     discriminator_values.contains(&value)
-}
-
-fn display_label(value: &str) -> String {
-    value.replace('_', " ")
 }

@@ -97,7 +97,7 @@ pub(crate) struct CallIdentityMemos {
     /// RIPR-SPEC-0035: every workspace `const`/`static` by name with its
     /// file and masked initializer, built once per index on first use by
     /// the owner-return pin's self-computed expected-value check.
-    constants: std::sync::OnceLock<BTreeMap<String, Vec<(std::path::PathBuf, String)>>>,
+    constants: std::sync::OnceLock<ConstantTable>,
 }
 
 impl Clone for CallIdentityMemos {
@@ -197,11 +197,15 @@ impl CallIdentityMemos {
     /// The memoized workspace constant table, built by `build` on first use.
     pub(crate) fn workspace_constants(
         &self,
-        build: impl FnOnce() -> BTreeMap<String, Vec<(std::path::PathBuf, String)>>,
-    ) -> &BTreeMap<String, Vec<(std::path::PathBuf, String)>> {
+        build: impl FnOnce() -> ConstantTable,
+    ) -> &ConstantTable {
         self.constants.get_or_init(build)
     }
 }
+
+/// Workspace `const`/`static` items by name: file, masked initializer, and
+/// the declared `T` of `: T` when the item states one (#8112).
+pub(crate) type ConstantTable = BTreeMap<String, Vec<(std::path::PathBuf, String, Option<String>)>>;
 
 /// The memoized (or freshly scanned) whole-index answers for `package`.
 fn call_identity_shape(

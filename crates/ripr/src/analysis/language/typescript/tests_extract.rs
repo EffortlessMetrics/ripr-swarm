@@ -135,10 +135,22 @@ pub(crate) fn extract_tests_and_conditional_credit_gap(
                 test.identity_helpers_in_file = helpers.clone();
             }
         }
+        let member_only = default_member_only_locals(&imports, &code);
+        if !member_only.is_empty() {
+            for test in &mut tests {
+                test.default_member_only_locals_in_file = member_only.clone();
+            }
+        }
         let factories = mock_factories(&ret.program.body, &code);
         if !factories.is_empty() {
             for test in &mut tests {
                 test.mock_factories_in_file = factories.clone();
+            }
+        }
+        let spread_sources = mock_spread_sources(&ret.program.body, &code);
+        if !spread_sources.is_empty() {
+            for test in &mut tests {
+                test.mock_spread_sources_in_file = spread_sources.clone();
             }
         }
         // Same silence conditions as `detect_conditional_assertion_credit`:
@@ -1291,6 +1303,60 @@ fn identity_helpers(statements: &[Statement<'_>], code: &str) -> Vec<String> {
         .collect()
 }
 
+/// `(local, member)` for each default import whose local is used, across the
+/// whole file, only as its own `import local` binding and as calls
+/// `local.member(` of one member. Any other use (assignment, `spyOn`,
+/// alias, argument) withholds the pair, wherever it sits in the file.
+fn default_member_only_locals(imports: &[TypeScriptImport], code: &str) -> Vec<(String, String)> {
+    if file_is_opaque(code) {
+        return Vec::new();
+    }
+    let ident = |ch: char| ch == '_' || ch == '$' || ch.is_alphanumeric();
+    let mut pairs = Vec::new();
+    for import in imports
+        .iter()
+        .filter(|import| !import.namespace && import.imported.as_deref() == Some("default"))
+    {
+        let mut member: Option<String> = None;
+        let mut clean = true;
+        for at in word_occurrences(code, &import.local) {
+            let before = code[..at].trim_end();
+            if before.ends_with("import") {
+                continue;
+            }
+            let rest = &code[at + import.local.len()..];
+            let after = ["?.", "!.", "."]
+                .iter()
+                .find_map(|dot| rest.strip_prefix(dot));
+            let name = after.map(|after| {
+                after
+                    .chars()
+                    .take_while(|ch| ident(*ch))
+                    .collect::<String>()
+            });
+            let called = after.zip(name.as_ref()).is_some_and(|(after, name)| {
+                !name.is_empty() && after[name.len()..].starts_with('(')
+            });
+            if before.ends_with('.') || !called {
+                clean = false;
+                break;
+            }
+            match (&member, name) {
+                (None, Some(name)) => member = Some(name),
+                (Some(seen), Some(name)) if *seen == name => {}
+                _ => {
+                    clean = false;
+                    break;
+                }
+            }
+        }
+        if let (true, Some(member)) = (clean, member) {
+            pairs.push((import.local.clone(), member));
+        }
+    }
+    pairs
+}
+
 /// Top-level mock factories (`function f() { return { ... }; }` or
 /// `const f = () => ({ ... });`) whose name the file uses only as a direct
 /// call `f(`, each with the source of its returned object literal. A file
@@ -1309,6 +1375,94 @@ fn mock_factories(statements: &[Statement<'_>], code: &str) -> Vec<(String, Stri
         })
         .map(|(name, _, literal)| (name, literal))
         .collect()
+}
+
+/// Top-level `const name = { ... };` object literals the file mentions only
+/// in the declaration and after a `...` spread, each with its literal
+/// source. A plain `const` object nobody else names cannot change before a
+/// spread copies it (RIPR-SPEC-0247 rule 1, amended 2026-10-18).
+fn mock_spread_sources(statements: &[Statement<'_>], code: &str) -> Vec<(String, String)> {
+    // The masker shrinks multi-byte characters inside strings and comments,
+    // so each is first widened to one `_` per byte (a word character, which
+    // the masker blanks inside literals and which cannot start or end a
+    // spread elsewhere); offsets into `code` then index `masked`. Should the
+    // lengths still disagree, nothing is recorded.
+    let widened: String = code
+        .chars()
+        .flat_map(|c| std::iter::repeat_n(if c.is_ascii() { c } else { '_' }, c.len_utf8()))
+        .collect();
+    let masked = ts_mask_literals_and_comments(&widened);
+    if file_is_opaque(code) || masked.len() != code.len() {
+        return Vec::new();
+    }
+    statements
+        .iter()
+        .filter_map(|stmt| {
+            let Statement::VariableDeclaration(declaration) = stmt else {
+                return None;
+            };
+            if declaration.declare
+                || declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const
+                || declaration.declarations.len() != 1
+            {
+                return None;
+            }
+            let declarator = declaration.declarations.first()?;
+            let BindingPattern::BindingIdentifier(id) = &declarator.id else {
+                return None;
+            };
+            let object = object_expression(declarator.init.as_ref()?)?;
+            let literal = code
+                .get(object.span.start as usize..object.span.end as usize)?
+                .to_string();
+            Some((id.name.to_string(), id.span.start as usize, literal))
+        })
+        .filter(|(name, declared_at, _)| {
+            word_occurrences(code, name).all(|at| {
+                at == *declared_at
+                    || (masked
+                        .get(at + name.len()..)
+                        .is_some_and(|after| after.trim_start().starts_with([',', '}']))
+                        && masked.get(..at).is_some_and(|before| {
+                            before.trim_end().strip_suffix("...").is_some_and(|before| {
+                                !before.ends_with('.') && inside_expression_literal(before)
+                            })
+                        }))
+            })
+        })
+        .map(|(name, _, literal)| (name, literal))
+        .collect()
+}
+
+/// `true` when the `...` that ends `before` sits in an object literal that
+/// is the right side of an `=` (`const db = { m: jest.fn(), ...name }`), not
+/// a rest binding in a destructuring pattern or parameter list
+/// (`const { a, ...name } = cfg()`), which would shadow the name.
+fn inside_expression_literal(before: &str) -> bool {
+    let mut depth = 0usize;
+    for (at, c) in before.char_indices().rev() {
+        match c {
+            '}' | ')' | ']' => depth += 1,
+            '(' | '[' => {
+                if depth == 0 {
+                    return false;
+                }
+                depth -= 1;
+            }
+            '{' => {
+                if depth > 0 {
+                    depth -= 1;
+                    continue;
+                }
+                let head = before[..at].trim_end();
+                return head
+                    .strip_suffix('=')
+                    .is_some_and(|rest| !rest.ends_with(['=', '!', '<', '>']));
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// The name, name offset and returned literal source of one top-level
@@ -2126,7 +2280,9 @@ pub(crate) fn test_from_statement(
         imports_in_file: Vec::new(),
         scope_bindings: Vec::new(),
         identity_helpers_in_file: Vec::new(),
+        default_member_only_locals_in_file: Vec::new(),
         mock_factories_in_file: Vec::new(),
+        mock_spread_sources_in_file: Vec::new(),
         // Replaced by `collect_tests_from_statements`, which has the file's
         // admission context; fail-closed until then.
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,

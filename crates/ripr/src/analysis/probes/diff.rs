@@ -113,6 +113,16 @@ pub(crate) fn probes_for_file_with_relations(
             skip_removed[removed_index] = true;
         }
     }
+    // A line that is byte-identical on both sides of one replacement run
+    // (unchanged or moved inside a rewritten block) is not an edit (#8389).
+    for (new_side_line, old_line) in changed.identical_replacement_lines() {
+        if let (Some(&added_index), Some(&removed_index)) =
+            (added_at.get(&new_side_line), removed_at.get(&old_line))
+        {
+            skip_added[added_index] = true;
+            skip_removed[removed_index] = true;
+        }
+    }
     for (new_side_lines, removed) in changed.uneven_replacement_blocks() {
         let added_indexes = new_side_lines
             .iter()
@@ -755,13 +765,14 @@ fn join_tokens(lines: &[&str]) -> String {
     out
 }
 
-/// 1-based lines of `source` that hold string or comment text, read from the
+/// 1-based lines of `source` that hold string or comment text, or sit inside a
+/// token-observing macro (see [`token_macro_lines`]), read from the
 /// whole file so a continuation line inside a multi-line literal counts (the
 /// per-line quote check cannot see it). A line whose only masked spans are
 /// character literals (`'x'`) holds code, which the mask also erases.
 fn prose_lines(source: &str) -> std::collections::BTreeSet<usize> {
     let masked = mask_comments_and_strings(source);
-    source
+    let mut lines = source
         .lines()
         .zip(masked.lines())
         .enumerate()
@@ -769,7 +780,9 @@ fn prose_lines(source: &str) -> std::collections::BTreeSet<usize> {
             original != masked && !only_char_literals(original, masked)
         })
         .map(|(at, _)| at + 1)
-        .collect()
+        .collect::<std::collections::BTreeSet<_>>();
+    lines.extend(token_macro_lines(source));
+    lines
 }
 
 /// Whether every span the mask erased from `original` is shaped like a
@@ -799,10 +812,138 @@ fn only_char_literals(original: &str, masked: &str) -> bool {
     true
 }
 
-/// Whether `line` holds a macro that reads its argument as source text, so a
-/// respelled path inside it changes the produced string.
+/// Macros that render an argument as source text (`stringify!`, the failure
+/// message of `assert!` and `assert_matches!`, `dbg!`), so a respelled path
+/// inside one changes the produced string. `assert_eq!` and `assert_ne!` print
+/// operand values, not source text, and are not listed.
+const TOKEN_MACROS: [&str; 6] = [
+    "stringify",
+    "dbg",
+    "assert",
+    "debug_assert",
+    "assert_matches",
+    "debug_assert_matches",
+];
+
+/// Rust's `Pattern_White_Space`: the whitespace the lexer skips between a
+/// macro name, its `!` and its delimiter (ASCII plus U+0085, U+200E/F, U+2028/9).
+fn is_rust_whitespace(ch: char) -> bool {
+    matches!(
+        ch,
+        '\t' | '\n'
+            | '\u{b}'
+            | '\u{c}'
+            | '\r'
+            | ' '
+            | '\u{85}'
+            | '\u{200e}'
+            | '\u{200f}'
+            | '\u{2028}'
+            | '\u{2029}'
+    )
+}
+
+/// Byte offset of the first non-whitespace char of `text` at or after `from`.
+fn skip_rust_whitespace(text: &str, from: usize) -> usize {
+    let rest = &text[from..];
+    from + rest.len() - rest.trim_start_matches(is_rust_whitespace).len()
+}
+
+/// Whether `ch` can continue a Rust identifier. Every non-ASCII char except
+/// Rust whitespace counts, so combining marks and other identifier
+/// continuations never split a name.
+fn continues_identifier(ch: char) -> bool {
+    !is_rust_whitespace(ch) && (ch.is_alphanumeric() || ch == '_' || !ch.is_ascii())
+}
+
+/// Each token-observing macro invocation in `masked` text as the byte offset
+/// of its name and of the first byte after its `!`. Trivia (whitespace, and
+/// comments the mask turned into spaces) may sit before the bang, as Rust
+/// allows. A name inside a longer identifier, or a `!=` comparison, is not an
+/// invocation.
+fn token_macro_bangs(masked: &str) -> Vec<(usize, usize)> {
+    let bytes = masked.as_bytes();
+    let mut found = Vec::new();
+    for name in TOKEN_MACROS {
+        for (at, _) in masked.match_indices(name) {
+            let before_ok = masked[..at]
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !continues_identifier(ch));
+            let after = at + name.len();
+            let after_ok = masked[after..]
+                .chars()
+                .next()
+                .is_none_or(|ch| !continues_identifier(ch));
+            if !before_ok || !after_ok {
+                continue;
+            }
+            let cursor = skip_rust_whitespace(masked, after);
+            if bytes.get(cursor) == Some(&b'!') && bytes.get(cursor + 1) != Some(&b'=') {
+                found.push((at, cursor + 1));
+            }
+        }
+    }
+    found
+}
+
+/// Whether `line` holds a token-observing macro invocation. A single-line
+/// check for callers without the whole file; [`token_macro_lines`] also
+/// covers the continuation lines of a multi-line invocation.
 fn observes_tokens(line: &str) -> bool {
-    line.contains("stringify!")
+    !token_macro_bangs(&mask_comments_and_strings(line)).is_empty()
+}
+
+/// 1-based lines of `source` inside a token-observing macro invocation, from
+/// the macro name through its closing delimiter, read from the masked file so
+/// a name inside a string or comment does not count. An invocation that never
+/// closes runs to the end of the file, which keeps its probes.
+fn token_macro_lines(source: &str) -> std::collections::BTreeSet<usize> {
+    let masked = mask_comments_and_strings(source);
+    let bytes = masked.as_bytes();
+    let newlines = bytes
+        .iter()
+        .enumerate()
+        .filter(|(_, byte)| **byte == b'\n')
+        .map(|(at, _)| at)
+        .collect::<Vec<_>>();
+    let line_of = |at: usize| newlines.partition_point(|&newline| newline < at) + 1;
+    let mut lines = std::collections::BTreeSet::new();
+    let mut bangs = token_macro_bangs(&masked);
+    bangs.sort_unstable();
+    let mut covered_to = 0usize;
+    for (at, after_bang) in bangs {
+        if at < covered_to {
+            continue;
+        }
+        let cursor = skip_rust_whitespace(&masked, after_bang);
+        if !matches!(bytes.get(cursor), Some(b'(' | b'[' | b'{')) {
+            continue;
+        }
+        let mut depth = 0usize;
+        let mut end = bytes.len();
+        for (offset, byte) in bytes[cursor..].iter().enumerate() {
+            match byte {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        end = cursor + offset;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        lines.extend(line_of(at)..=line_of(end));
+        if end == bytes.len() {
+            // Unclosed: it already runs to the end of the file, so every later
+            // invocation is covered and rescanning would be quadratic.
+            break;
+        }
+        covered_to = end;
+    }
+    lines
 }
 
 fn neutral_spelling(line: &str) -> String {
@@ -2053,6 +2194,148 @@ mod tests {
         assert!(!probes.is_empty(), "the changed pair keeps its probe");
     }
 
+    fn replacement(removed: &[(usize, &str)], added: &[(usize, &str)]) -> ChangedFile {
+        let start = added.first().map_or(1, |(line, _)| *line);
+        let line = |(line, text): &(usize, &str), new_side_line: usize| ChangedLine {
+            line: *line,
+            new_side_line,
+            text: (*text).to_string(),
+        };
+        ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: added.iter().map(|l| line(l, l.0)).collect(),
+            removed_lines: removed.iter().map(|l| line(l, start)).collect(),
+        }
+    }
+
+    /// #8389 (syn 96801f7): a line identical on both sides of an uneven
+    /// replacement block is unchanged, so it seeds no probe, while the real
+    /// edit beside it still does.
+    #[test]
+    fn an_identical_line_inside_a_replacement_block_seeds_no_probe() {
+        let same = "end: span.end.prev_span(),";
+        let changed = replacement(
+            &[(10, "start: old_start.offset(1),"), (11, same)],
+            &[
+                (20, same),
+                (21, "start: new_start.offset(1),"),
+                (22, "extra: span.len(),"),
+            ],
+        );
+        let probes = probes_for_file(Path::new("workspace"), &changed, &RustIndex::default());
+        assert!(
+            probes.iter().all(|probe| probe.expression != same),
+            "the unchanged line must not seed a probe: {probes:?}"
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.expression == "start: new_start.offset(1),"),
+            "the real edit keeps its probe: {probes:?}"
+        );
+    }
+
+    /// Fail-closed: a repeated identical line pairs by guess, so it keeps
+    /// its probes; a line edited by one character is still a change.
+    #[test]
+    fn identical_line_suppression_is_fail_closed() {
+        let same = "end: span.end.prev_span(),";
+        let twice = replacement(
+            &[(10, same), (11, same)],
+            &[(20, same), (21, same), (22, "extra: span.len(),")],
+        );
+        assert!(twice.identical_replacement_lines().is_empty());
+        let probes = probes_for_file(Path::new("workspace"), &twice, &RustIndex::default());
+        assert!(
+            probes.iter().any(|probe| probe.expression == same),
+            "{probes:?}"
+        );
+        let edited = replacement(
+            &[(10, "end: span.start.prev_span(),"), (11, "let z = 1;")],
+            &[(20, same), (21, "let y = 2;"), (22, "let w = 3;")],
+        );
+        assert!(edited.identical_replacement_lines().is_empty());
+        let probes = probes_for_file(Path::new("workspace"), &edited, &RustIndex::default());
+        assert!(
+            probes.iter().any(|probe| probe.expression == same),
+            "{probes:?}"
+        );
+    }
+
+    /// Review of #8913: pairing must not hide a reorder, an argument swap, or a
+    /// line hoisted across a block boundary; each is an edit.
+    #[test]
+    fn identical_line_pairing_never_hides_reorders_or_block_moves() {
+        let reordered = replacement(
+            &[(10, "validate(x);"), (11, "commit(x);")],
+            &[(20, "commit(x);"), (21, "validate(x);")],
+        );
+        assert!(reordered.identical_replacement_lines().is_empty());
+        let swapped_args = replacement(
+            &[(10, "f("), (11, "a,"), (12, "b,"), (13, ")")],
+            &[(20, "f("), (21, "b,"), (22, "a,"), (23, ")")],
+        );
+        assert!(swapped_args.identical_replacement_lines().is_empty());
+        let hoisted = replacement(
+            &[(10, "if a {"), (11, "x"), (12, "}")],
+            &[(20, "if a {"), (21, "}"), (22, "x")],
+        );
+        assert!(hoisted.identical_replacement_lines().is_empty());
+        let closed_early = replacement(&[(10, "x")], &[(20, "}"), (21, "x")]);
+        assert!(closed_early.identical_replacement_lines().is_empty());
+        let in_order = replacement(
+            &[(10, "let a = 1;"), (11, "end: span.end.prev_span(),")],
+            &[(20, "let b = 2;"), (21, "end: span.end.prev_span(),")],
+        );
+        assert_eq!(in_order.identical_replacement_lines().len(), 1);
+        let moved_continuation = replacement(
+            &[
+                (10, "let a = load();"),
+                (11, "let b = load2()"),
+                (12, ".unwrap_or_default();"),
+            ],
+            &[
+                (20, "let a = load()"),
+                (21, ".unwrap_or_default();"),
+                (22, "let b = load2();"),
+            ],
+        );
+        assert!(moved_continuation.identical_replacement_lines().is_empty());
+        let crossed_edit = replacement(
+            &[(10, "report_state();"), (11, "update_state(2);")],
+            &[(20, "update_state(1);"), (21, "report_state();")],
+        );
+        assert!(crossed_edit.identical_replacement_lines().is_empty());
+        let commented_out = replacement(
+            &[(10, "deploy();")],
+            &[(20, "/*"), (21, "deploy();"), (22, "*/")],
+        );
+        assert!(commented_out.identical_replacement_lines().is_empty());
+        let revived = replacement(
+            &[(10, "/*"), (11, "deploy();"), (12, "*/")],
+            &[(20, "deploy();")],
+        );
+        assert!(revived.identical_replacement_lines().is_empty());
+        let trailing_space = replacement(&[(10, "Usage: foo ")], &[(20, "Usage: foo")]);
+        assert!(trailing_space.identical_replacement_lines().is_empty());
+        let arm_order = replacement(
+            &[(10, "first(),"), (11, "second(),")],
+            &[(20, "second(),"), (21, "third(),")],
+        );
+        assert!(arm_order.identical_replacement_lines().is_empty());
+        let non_ascii = replacement(
+            &[(10, "é: x,"), (11, "a();")],
+            &[(20, "b();"), (21, "é: x,")],
+        );
+        let _ = non_ascii.identical_replacement_lines();
+        let reindented_string_line = replacement(&[(10, "payload")], &[(20, "    payload")]);
+        assert!(
+            reindented_string_line
+                .identical_replacement_lines()
+                .is_empty()
+        );
+    }
+
     /// Probes for `source` (the new file) with the given added
     /// `(new_side_line, text)` and removed `(old_line, new_side_line, text)`.
     fn block_probes(
@@ -2238,6 +2521,104 @@ mod tests {
             &["let v = (x, i32::MAX); a .. b"],
             &["let v = (x, core::i32::MAX); a .", ". b"],
         ));
+    }
+
+    /// `assert!` and `dbg!` render their argument as source text too, and a
+    /// continuation line of a multi-line invocation holds neither the macro
+    /// name nor a quote.
+    #[test]
+    fn a_respelling_inside_a_token_macro_is_not_neutral() {
+        for line in [
+            "assert!(x == core::i32::MAX);",
+            "dbg!(core::i32::MAX);",
+            "debug_assert!(x == core::i32::MAX);",
+        ] {
+            assert!(observes_tokens(line), "{line}");
+        }
+        assert!(!observes_tokens("assert_eq!(x, core::i32::MAX);"));
+        assert!(!observes_tokens("let my_assert = core::i32::MAX;"));
+        assert!(!observes_tokens("let a = x.assert_ok(core::i32::MAX);"));
+        let source = "fn f() {\n    let a = 1;\n    let s = stringify!(\n        i32::MAX\n    );\n    let b = 2;\n}\n";
+        let lines = token_macro_lines(source);
+        assert_eq!(
+            lines,
+            std::collections::BTreeSet::from([3, 4, 5]),
+            "{lines:?}"
+        );
+        let multi = "fn f() {\n    assert!(\n        x == core::i32::MAX\n    );\n    dbg!(\n        core::i32::MAX,\n    );\n    assert_matches!(\n        y,\n        Some(core::i32::MAX)\n    );\n}\n";
+        let lines = token_macro_lines(multi);
+        assert_eq!(
+            lines,
+            std::collections::BTreeSet::from([2, 3, 4, 5, 6, 7, 8, 9, 10, 11]),
+            "{lines:?}"
+        );
+        let inside = block_probes(
+            source,
+            &[(4, "        i32::MAX")],
+            &[(4, 4, "        core::i32::MAX")],
+        );
+        let outside = block_probes(
+            "let a = i32::MAX;\n",
+            &[(1, "let a = i32::MAX;")],
+            &[(1, 1, "let a = core::i32::MAX;")],
+        );
+        assert!(outside.is_empty(), "{outside:?}");
+        assert!(!inside.is_empty(), "macro argument text keeps its probe");
+        let in_assert = block_probes(
+            multi,
+            &[(3, "        x == i32::MAX")],
+            &[(3, 3, "        x == core::i32::MAX")],
+        );
+        assert!(
+            !in_assert.is_empty(),
+            "assert! argument text keeps its probe"
+        );
+        assert!(token_macro_lines("fn f() {\n    éassert!(\n        x\n    );\n}\n").is_empty());
+    }
+
+    #[test]
+    fn trivia_before_the_bang_still_reads_as_a_token_macro() {
+        for source in [
+            "fn f() {\n    let s = stringify !(\n        i32::MAX\n    );\n}\n",
+            "fn f() {\n    let s = stringify\n        !(\n        i32::MAX\n    );\n}\n",
+            "fn f() {\n    let s = stringify /* c */ !(\n        i32::MAX\n    );\n}\n",
+        ] {
+            let lines = token_macro_lines(source);
+            assert!(
+                lines.contains(&3) || lines.contains(&4),
+                "{source}: {lines:?}"
+            );
+        }
+        assert!(observes_tokens("dbg !(core::i32::MAX);"));
+        assert!(observes_tokens("assert /* c */ !(x);"));
+        assert!(!observes_tokens("let ok = dbg != 1;"));
+        let spaced = "fn f() {\n    let s = stringify !(\n        i32::MAX\n    );\n}\n";
+        let probes = block_probes(
+            spaced,
+            &[(3, "        i32::MAX")],
+            &[(3, 3, "        core::i32::MAX")],
+        );
+        assert!(
+            !probes.is_empty(),
+            "continuation-only change keeps its probe"
+        );
+        let unclosed = "assert!(x == 1;\n".repeat(2000);
+        assert!(token_macro_lines(&unclosed).len() >= 2000);
+        for (prefix, gap, after_bang) in
+            [("\u{85}", "", ""), ("", "\u{85}", ""), ("", "", "\u{85}")]
+        {
+            let source = format!(
+                "fn f() {{\n    let s = {prefix}stringify{gap}!{after_bang}(\n        i32::MAX\n    );\n}}\n"
+            );
+            let probes = block_probes(
+                &source,
+                &[(3, "        i32::MAX")],
+                &[(3, 3, "        core::i32::MAX")],
+            );
+            assert!(!probes.is_empty(), "{source:?}");
+        }
+        let combining = "fn f() {\n    e\u{301}assert!(\n        x\n    );\n}\n";
+        assert!(token_macro_lines(combining).is_empty());
     }
 
     #[test]
