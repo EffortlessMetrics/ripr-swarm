@@ -38,4 +38,18 @@ mod tests {
             assert_eq!(weight(4), EXPECTED);
         }
     }
+
+    // The name nested two groups deep with a braced sibling after the inner
+    // group: the first unmatched closer closes the inner group only.
+    #[test]
+    fn nested_braced_tuple_element_ref_mut_alias_is_not_independent() {
+        unsafe {
+            match ((EXPECTED, 0u8), S { _a: 1 }) {
+                ((ref mut r, _), _) => {
+                    *r = weight(4);
+                }
+            }
+            assert_eq!(weight(4), EXPECTED);
+        }
+    }
 }

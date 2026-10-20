@@ -16,14 +16,14 @@ Start here:
   Canonical gap: gap:rust:src/lib.rs:weight:return_value:return_value:x*3
   Changed behavior: x * 3
   Missing discriminator: No strong discriminator was detected
-  Related test (1 of 2 matched rows): src/lib.rs:31 braced_tuple_element_ref_mut_alias_is_not_independent (ripr could not confirm that this assertion observes the changed behavior)
+  Related test (1 of 3 matched rows): src/lib.rs:31 braced_tuple_element_ref_mut_alias_is_not_independent (ripr could not confirm that this assertion observes the changed behavior)
   Next step: The related test `tuple_ref_mut_alias_is_not_independent` already asserts an exact
     value; the gap is not the assertion shape. Add a test input where the changed branch behaves
     differently and keep the exact assertion
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
-    - reach yes: Related tests appear to reach weight: braced_tuple_element_ref_mut_alias_is_not_independent, tuple_ref_mut_alias_is_not_independent
+    - reach yes: Related tests appear to reach weight: braced_tuple_element_ref_mut_alias_is_not_independent, nested_braced_tuple_element_ref_mut_alias_is_not_independent,…
     - infection yes: Reachable tests can plausibly activate this changed behavior
-    - 10 more detail line(s) in --format human-full
+    - 13 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/owner_pin_written_alias_not_a_pin/input --diff <cwd>/fixtures/owner_pin_written_alias_not_a_pin/diff.patch --mode fast probe:src_lib.rs:return_value:c70c15c1

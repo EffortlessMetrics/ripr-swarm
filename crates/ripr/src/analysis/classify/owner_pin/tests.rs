@@ -9257,6 +9257,13 @@ fn written_by_test_refuses_scrutinee_brace_raw_segment_and_generic_head_aliases(
         "match (EXPECTED, || {}) { (ref mut r, _) => {} }",
         "match [EXPECTED, S { a: 1 }] { [ref mut r, _] => {} }",
         "match [EXPECTED; 3] { [ref mut r, ..] => {} }",
+        // The name nested two or more groups deep: the first unmatched closer
+        // closes an inner group, so a sibling `{..}` is no arm list (#8960).
+        "match ((EXPECTED, 1), S { a: 1 }) { ((ref mut r, _), _) => { *r = f(4); } }",
+        "match [[EXPECTED], S { a: 1 }] { [[ref mut r], _] => {} }",
+        "match [[EXPECTED], { 1 }] { [[ref mut r], _] => {} }",
+        "match [[EXPECTED], || {}] { [[ref mut r], _] => {} }",
+        "match ((EXPECTED), { 1 }) { ((ref mut r), _) => {} }",
         "let p = addr_of_mut!(r#type::EXPECTED);",
         "let r = &mut r#m::EXPECTED;",
         "let r = &mut crate::r#m::EXPECTED;",
@@ -9273,6 +9280,8 @@ fn written_by_test_refuses_scrutinee_brace_raw_segment_and_generic_head_aliases(
         "match (EXPECTED, { 1 }) { (r, _) => {} }",
         "match [EXPECTED, S { a: 1 }] { [r, _] => {} }",
         "match [EXPECTED; 3] { [r, ..] => {} }",
+        "match ((EXPECTED, 1), S { a: 1 }) { ((r, _), _) => {} }",
+        "match [[EXPECTED], { 1 }] { [[r], _] => {} } if c { let ref mut x = y; }",
         "match <T>::EXPECTED { r => {} }",
         "match EXPECTED { _ => {} } if c { let ref mut x = y; }",
         "let r = &r#m::EXPECTED;",

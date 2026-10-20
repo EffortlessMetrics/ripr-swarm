@@ -10492,9 +10492,15 @@ fn written_by_test(masked: &str, name: &str, plain: bool) -> bool {
         // `let (a, ref mut b) = (x, name)`): test the text before each
         // enclosing opener as well (#8944).
         let rest = &masked[offset + name.len()..];
-        if enclosing_heads(before).into_iter().any(|head| {
-            mut_borrow_before(head) || addr_of_mut_before(head) || ref_mut_scrutinee(head, rest)
-        }) {
+        if enclosing_heads(before)
+            .into_iter()
+            .enumerate()
+            .any(|(open, head)| {
+                mut_borrow_before(head)
+                    || addr_of_mut_before(head)
+                    || ref_mut_scrutinee(head, rest, open)
+            })
+        {
             return true;
         }
         // A `let` (or `let mut`) declaration is the binding the let scan reads.
@@ -10748,7 +10754,7 @@ fn addr_of_mut_before(before: &str) -> bool {
 /// contains `ref mut`, or the head of a `match` whose arms do. `rest` is the
 /// text after the name. The binding is a mutable reference into the place,
 /// so a later `*r = ..` writes it; the scan cannot follow `r`, so it refuses.
-fn ref_mut_scrutinee(before: &str, rest: &str) -> bool {
+fn ref_mut_scrutinee(before: &str, rest: &str, open: usize) -> bool {
     let head = peel_group_and_path(before);
     if let Some(pattern_end) = head.strip_suffix('=') {
         // `==`, `<=`, `+=` and the like compare or assign; only a bare `=`
@@ -10780,31 +10786,43 @@ fn ref_mut_scrutinee(before: &str, rest: &str) -> bool {
         .strip_suffix("match")
         .is_some_and(|rest| !rest.as_bytes().last().is_some_and(|b| is_ident_byte(*b)))
     {
-        // The scrutinee group that holds the name may itself contain brace
-        // groups (`match (name, S { a: 1 }) { .. }`): a `{..}` before an
-        // unmatched closer is checked and skipped, and the first one after
-        // the closer is the arm list (#8960).
-        let mut depth = 0usize;
+        // `open` brackets are still open between the `match` keyword and the
+        // name (`match ((name, 1), S { a: 1 }) { .. }` has two). The scrutinee
+        // ends only when the depth returns to zero, so a sibling `{..}` inside
+        // an outer group is never taken for the arm list (#8960). A nested
+        // brace group holding `ref mut` refuses (conservative); at depth zero
+        // after the scrutinee closed, the first `{..}` is the arm list.
+        let mut depth = open;
         let mut closed = false;
         let mut seen_group = false;
         let mut at = 0usize;
         while let Some(character) = rest[at..].chars().next() {
             match character {
                 '(' | '[' => depth += 1,
-                ')' | ']' if depth == 0 => closed = true,
-                ')' | ']' => depth -= 1,
+                ')' | ']' | '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        closed = true;
+                    }
+                }
                 ';' if depth == 0 && (closed || seen_group) => return false,
-                '{' if depth == 0 => {
+                '{' => {
                     let group = &rest[at..];
                     let end = skip_balanced(group, '{', '}')
                         .map_or(group.len(), |after| group.len() - after.len());
-                    if closed {
-                        return has_ref_mut(&group[..end]);
+                    let has = has_ref_mut(&group[..end]);
+                    if depth > 0 {
+                        if has {
+                            return true;
+                        }
+                    } else if closed {
+                        return has;
+                    } else {
+                        if !seen_group && has {
+                            return true;
+                        }
+                        seen_group = true;
                     }
-                    if !seen_group && has_ref_mut(&group[..end]) {
-                        return true;
-                    }
-                    seen_group = true;
                     at += end;
                     continue;
                 }
