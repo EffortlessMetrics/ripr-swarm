@@ -174,10 +174,7 @@ pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
             .filter(|path| path.is_file())
             .collect();
         candidates.sort();
-        for path in candidates
-            .iter()
-            .take(PYTHON_FRAMEWORK_SCAN_DIR_ENTRY_CAP)
-        {
+        for path in candidates.iter().take(PYTHON_FRAMEWORK_SCAN_DIR_ENTRY_CAP) {
             // Bounded evidence read: the import line is at the top of the
             // file, so a small prefix suffices. Read at most that prefix so a
             // large test file cannot exhaust memory when config markers keep
