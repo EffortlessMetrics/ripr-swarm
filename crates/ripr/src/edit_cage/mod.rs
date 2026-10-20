@@ -1934,6 +1934,19 @@ pub(crate) fn evaluate_edit_cage(policy: &EditCagePolicy, delta: &AttemptDelta) 
     }
 }
 
+/// True when an `OutsideInlineTestRegion` refusal reports that the attempt's
+/// newly written test does not parse: the region-observation detail embedded
+/// the `unparseable` label (#8991). The refusal renderer leads with the plain
+/// fix-the-syntax-error statement on this case only; every other refusal
+/// keeps its existing narration. The label vocabulary is owned by
+/// `inline_test_region`'s `reason_label`; the `` `mod <name>`: <label> ``
+/// detail spelling is owned by `evaluate_edit_cage` above, so a module name
+/// (a Rust identifier) can never smuggle the marker in.
+pub(crate) fn refusal_is_unparseable_new_test(violation: &EditCageViolation) -> bool {
+    violation.kind == EditCageViolationKind::OutsideInlineTestRegion
+        && violation.reason.contains("`: unparseable)")
+}
+
 fn validate_delta(delta: &AttemptDelta) -> Vec<EditCageViolation> {
     delta
         .changes

@@ -16947,3 +16947,24 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0289"
+name = "Edit-cage parse-error refusal leads with the plain fix-the-syntax-error hint"
+spec = "docs/specs/RIPR-SPEC-0289-edit-cage-parse-error-hint.md"
+tests = [
+  "crates/ripr/src/cli/commands/agent.rs::tests::unparseable_new_test_refusal_leads_with_the_plain_hint",
+  "crates/ripr/src/cli/commands/agent.rs::tests::other_inline_region_refusals_do_not_lead_with_the_parse_hint",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/cli/commands/agent.rs",
+  "crates/ripr/src/edit_cage/mod.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0289-edit-cage-parse-error-hint.md",
+  "docs/REPAIR_ATTEMPT.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
