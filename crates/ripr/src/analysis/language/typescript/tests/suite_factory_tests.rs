@@ -410,3 +410,49 @@ fn an_expanded_test_points_its_evidence_at_the_call() -> Result<(), String> {
     assert_eq!(assertion.1.line, 5);
     Ok(())
 }
+
+#[test]
+fn a_finding_points_its_oracle_evidence_at_the_factory_call() -> Result<(), String> {
+    let source = file(&format!("{FACTORY}{CALL}"));
+    let call_line = source
+        .lines()
+        .position(|line| line == CALL.trim_end())
+        .map(|index| index + 1)
+        .ok_or_else(|| "call line".to_string())?;
+    let root = ts_unique_tempdir("evidence-ref")?;
+    ts_write_file(&root.join("src/sum.ts"), OWNER)?;
+    ts_write_file(&root.join("tests/sum.test.ts"), &source)?;
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed_with_lines("src/sum.ts", &[CHANGED_LINE])],
+    )?;
+    let _ = std::fs::remove_dir_all(&root);
+    let expected = format!("typescript_oracle_evidence_ref: tests/sum.test.ts:{call_line}");
+    assert!(
+        result
+            .findings
+            .iter()
+            .any(|finding| finding.evidence.iter().any(|line| line == &expected)),
+        "{:?}",
+        result
+            .findings
+            .iter()
+            .map(|finding| &finding.evidence)
+            .collect::<Vec<_>>()
+    );
+    Ok(())
+}
+
+#[test]
+fn a_call_the_expansion_refuses_keeps_the_factory_disclosed() -> Result<(), String> {
+    // One call expands and one does not (a computed argument): the factory is
+    // not fully expanded, so its own registration stays the disclosed shape.
+    let factory = "function runSuite(name: string, impl: (values: number[]) => number) {\n  describe(name, () => {\n    it(`adds ${1}`, () => {\n      expect(impl([2, 3, 4])).toBe(9);\n    });\n  });\n}\n";
+    let source = file(&format!(
+        "{factory}runSuite('sum', sumAll);\nrunSuite('other', (v) => sumAll(v));\n"
+    ));
+    let got = pipeline("partial-refused-call", &source, &[])?;
+    assert!(got.gap.is_some(), "a refused call must keep the disclosure");
+    Ok(())
+}

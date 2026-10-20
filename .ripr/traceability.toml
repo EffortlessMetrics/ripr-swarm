@@ -16159,6 +16159,8 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::an_expanded_factory_is_not_disclosed_as_partial_extraction",
   "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_registration_the_expansion_drops_is_still_disclosed_at_its_call",
   "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::an_expanded_test_points_its_evidence_at_the_call",
+  "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_finding_points_its_oracle_evidence_at_the_factory_call",
+  "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_call_the_expansion_refuses_keeps_the_factory_disclosed",
 ]
 fixtures = [
   "fixtures/typescript-verdict-corpus",
