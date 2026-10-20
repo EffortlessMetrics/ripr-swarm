@@ -27,6 +27,14 @@ const CARGO_LOCK_WAIT_MARKER: &str = "waiting for file lock";
 /// many times, so time spent queued behind another process's build does not
 /// consume the enumeration budget. The bound keeps the gate fail-closed.
 const LOCK_WAIT_RETRIES: usize = 6;
+/// Total wall-clock ceiling for one lock-wait retry sequence (#8939). The
+/// attempt bound alone allows 7 spawns of the 30-minute build timeout (about
+/// 3.5h). The sum of the lock-wait attempts' recorded durations is checked
+/// after each attempt, so the sequence may overshoot by at most one spawn
+/// timeout. 90 minutes lets three build-length lock waits clear and no more.
+const LOCK_WAIT_CEILING: Duration = Duration::from_mins(90);
+/// First word of the history line recording that the ceiling stopped retrying.
+const LOCK_WAIT_CEILING_NOTE_PREFIX: &str = "xtask: lock-wait ceiling";
 const INSTRUMENT_FAILURE_PHRASE: &str = "instrument timeout, not an unresolved pointer";
 
 /// True when `error` is a `check-file-policy` instrument failure (timeout or
@@ -55,25 +63,36 @@ fn lock_wait_note(stderr: &str) -> Option<&str> {
 }
 
 /// Run `capture`, retrying while the only observed cause of a timeout is a
-/// cargo lock wait. Any other timeout, or exhausted lock-wait retries, is
-/// returned as a timed-out output and stays a failure.
+/// cargo lock wait. Any other timeout, exhausted lock-wait retries, or an
+/// exhausted [`LOCK_WAIT_CEILING`] (summed from the recorded attempt
+/// durations, so no clock is read) is returned as a timed-out output and stays
+/// a failure.
 fn capture_past_lock_wait(
     spawn: &CoveredBySpawn,
     capture: &mut impl FnMut(&CoveredBySpawn) -> Result<TimedOutput, String>,
 ) -> Result<TimedOutput, String> {
     let mut attempts = 0;
+    let mut waited = Duration::ZERO;
     loop {
         let mut output = capture(spawn)?;
-        if output.timed_out
-            && lock_wait_note(&output.stderr).is_some()
-            && attempts < LOCK_WAIT_RETRIES
-        {
+        let lock_wait = output.timed_out && lock_wait_note(&output.stderr).is_some();
+        if lock_wait {
+            waited = waited.saturating_add(output.duration);
+        }
+        let ceiling_exhausted = lock_wait && waited >= LOCK_WAIT_CEILING;
+        if lock_wait && !ceiling_exhausted && attempts < LOCK_WAIT_RETRIES {
             attempts += 1;
             continue;
         }
+        // History lines are kept ahead of cargo's own output so the last-line
+        // lock check above is unaffected.
+        if ceiling_exhausted {
+            output.stderr = format!(
+                "{LOCK_WAIT_CEILING_NOTE_PREFIX} of {LOCK_WAIT_CEILING:?} exhausted after {waited:?} blocked on a cargo lock\n{}",
+                output.stderr
+            );
+        }
         if attempts > 0 {
-            // Retry history, kept ahead of cargo's own output so the
-            // last-line lock check above is unaffected.
             output.stderr = format!(
                 "xtask: retried {attempts} time(s) while blocked on a cargo lock (final attempt took {:?})\n{}",
                 output.duration, output.stderr
@@ -531,10 +550,19 @@ fn enumeration_result(output: TimedOutput, timeout: Duration) -> (bool, String, 
         .unwrap_or_else(|| "not available".to_string());
     let timeout_note = if output.timed_out {
         match lock_wait_note(&output.stderr) {
-            Some(line) => format!(
-                "{COVERED_BY_LOCK_WAIT_PREFIX} timed out after {timeout:?} blocked on a cargo lock held by another process ({}); ",
-                line.trim()
-            ),
+            Some(line) => {
+                let ceiling = output
+                    .stderr
+                    .lines()
+                    .take(2)
+                    .find(|history| history.starts_with(LOCK_WAIT_CEILING_NOTE_PREFIX))
+                    .map(|history| format!("{history}; "))
+                    .unwrap_or_default();
+                format!(
+                    "{COVERED_BY_LOCK_WAIT_PREFIX} timed out after {timeout:?} blocked on a cargo lock held by another process ({}); {ceiling}",
+                    line.trim()
+                )
+            }
             None => format!("{COVERED_BY_INSTRUMENT_PREFIX} timed out after {timeout:?}; "),
         }
     } else {
@@ -629,6 +657,8 @@ mod tests {
     use super::COVERED_BY_LOCK_WAIT_PREFIX;
     use super::CoveredBySpawn;
     use super::INSTRUMENT_FAILURE_PHRASE;
+    use super::LOCK_WAIT_CEILING;
+    use super::LOCK_WAIT_CEILING_NOTE_PREFIX;
     use super::LOCK_WAIT_RETRIES;
     use super::TEST_COVERED_BY_BUILD_TIMEOUT;
     use super::TEST_COVERED_BY_LIST_TIMEOUT;
@@ -1832,6 +1862,78 @@ mod tests {
         }
         if is_covered_by_instrument_failure("policy.toml:9 selects zero tests") {
             return Err("unresolved pointer read as instrument failure".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_covered_by_lock_wait_ceiling_stops_retrying_and_names_the_ceiling() -> Result<(), String>
+    {
+        let attempt = LOCK_WAIT_CEILING / 3 + Duration::from_secs(1);
+        // Lock waits whose recorded durations sum past the ceiling stop early,
+        // well before the attempt bound.
+        let mut calls = 0;
+        let output = capture_past_lock_wait(&lock_spawn(), &mut |_| {
+            calls += 1;
+            let mut output = lock_wait_output(true);
+            output.duration = attempt;
+            Ok(output)
+        })?;
+        if calls != 3 || calls > LOCK_WAIT_RETRIES {
+            return Err(format!("ceiling did not stop the retries: {calls}"));
+        }
+        let (success, _, stderr) = enumeration_result(output, TEST_COVERED_BY_LIST_TIMEOUT);
+        let ceiling = format!("{LOCK_WAIT_CEILING:?}");
+        if success
+            || !stderr.starts_with(COVERED_BY_LOCK_WAIT_PREFIX)
+            || !stderr.contains(&format!("{LOCK_WAIT_CEILING_NOTE_PREFIX} of {ceiling}"))
+        {
+            return Err(format!("ceiling stop did not name the ceiling: {stderr}"));
+        }
+        // Still an instrument failure through the validator, never a pass.
+        let commands = [common(4, "cargo test -p xtask slow_filter")];
+        let error = match validate_test_covered_by_with(
+            "policy.toml",
+            &commands,
+            FilePolicyHost::Unix,
+            |_| Ok((false, String::new(), stderr.clone())),
+        ) {
+            Ok(_) => return Err("ceiling stop unexpectedly passed".to_string()),
+            Err(error) => error,
+        };
+        if !is_covered_by_instrument_failure(&error) {
+            return Err(format!("ceiling stop not an instrument failure: {error}"));
+        }
+        // A sequence below the ceiling is still retried to completion.
+        let mut calls = 0;
+        let output = capture_past_lock_wait(&lock_spawn(), &mut |_| {
+            calls += 1;
+            Ok(if calls <= 2 {
+                let mut output = lock_wait_output(true);
+                output.duration = LOCK_WAIT_CEILING / 4;
+                output
+            } else {
+                timed_output(Some(status(0)), "case: test\n", "", false)
+            })
+        })?;
+        if output.timed_out || calls != 3 || output.stderr.contains(LOCK_WAIT_CEILING_NOTE_PREFIX) {
+            return Err(format!("sub-ceiling wait was cut short: {calls}"));
+        }
+        // Negative experiment: a long real (non-lock) timeout is not a lock
+        // wait, is not retried, and is not labeled as the ceiling.
+        let mut calls = 0;
+        let output = capture_past_lock_wait(&lock_spawn(), &mut |_| {
+            calls += 1;
+            let mut output = timed_output(None, "", "Compiling x\n", true);
+            output.duration = LOCK_WAIT_CEILING * 2;
+            Ok(output)
+        })?;
+        let (_, _, stderr) = enumeration_result(output, TEST_COVERED_BY_LIST_TIMEOUT);
+        if calls != 1
+            || !stderr.starts_with(COVERED_BY_INSTRUMENT_PREFIX)
+            || stderr.contains(LOCK_WAIT_CEILING_NOTE_PREFIX)
+        {
+            return Err(format!("real timeout changed behavior: {calls}: {stderr}"));
         }
         Ok(())
     }
