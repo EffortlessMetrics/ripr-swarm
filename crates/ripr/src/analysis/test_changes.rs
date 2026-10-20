@@ -83,7 +83,7 @@ pub(crate) fn diff_test_changes(
         let source = crate::git::run_git_output_with_deadline_and_limit(
             root,
             &["show", "--no-textconv", &object],
-            Duration::from_secs(60),
+            Duration::from_mins(1),
             output_limit,
         )
         .ok()
@@ -115,7 +115,7 @@ fn blob_size(root: &Path, object: &str) -> Option<u64> {
     let kind = crate::git::run_git_output_with_deadline_and_limit(
         root,
         &["cat-file", "-t", object],
-        Duration::from_secs(60),
+        Duration::from_mins(1),
         128,
     )
     .ok()?;
@@ -125,7 +125,7 @@ fn blob_size(root: &Path, object: &str) -> Option<u64> {
     let size = crate::git::run_git_output_with_deadline_and_limit(
         root,
         &["cat-file", "-s", object],
-        Duration::from_secs(60),
+        Duration::from_mins(1),
         128,
     )
     .ok()?;
