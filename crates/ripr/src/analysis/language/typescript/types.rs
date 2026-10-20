@@ -47,6 +47,13 @@ pub(crate) struct TypeScriptOwner {
     /// export. Constructor matching uses it to credit
     /// `new <default-import local>(...)` (#4104-B, review #4138).
     pub(crate) class_default_export: bool,
+    /// `true` when the module's `export default { name }` (or `{ name: name
+    /// }`) object holds this top-level function under its own name, so a
+    /// default import `utils` calls it as `utils.name(...)`. Set only for a
+    /// literal made of plain same-name entries (no spread, computed key,
+    /// method, getter or duplicate), which keeps the member from being
+    /// replaced inside the object. RIPR-SPEC-0243 rule 5.
+    pub(crate) default_object_member: bool,
     /// Exported names of the owner's module whose code reaches this
     /// top-level function through a bounded same-module call graph (an
     /// exported wrapper, or a value a same-module factory built). Empty for
@@ -130,6 +137,12 @@ pub(crate) struct TypeScriptTest {
     /// `f(`. Populated once per file by `extract_tests`; empty when anything
     /// could rebind or replace the name.
     pub(crate) identity_helpers_in_file: Vec<String>,
+    /// `(local, member)` pairs for default imports of the containing test
+    /// file whose local appears nowhere in the whole file (setup hooks and
+    /// file-level code included) except as its own import binding and as
+    /// calls `local.member(`, all of one member (RIPR-SPEC-0243 rule 5).
+    /// Populated once per file by `extract_tests`.
+    pub(crate) default_member_only_locals_in_file: Vec<(String, String)>,
     /// Test-local mock factories of the containing test file
     /// (RIPR-SPEC-0247 rule 1, amended 2026-10-15): top-level
     /// `function f() { return { ... }; }` or `const f = () => ({ ... });`
@@ -139,6 +152,14 @@ pub(crate) struct TypeScriptTest {
     /// test-body `const p = f();` is read as that literal. Empty when
     /// anything could rebind or replace the name.
     pub(crate) mock_factories_in_file: Vec<(String, String)>,
+    /// Test-file spread sources (RIPR-SPEC-0247 rule 1, amended 2026-10-18):
+    /// top-level `const defaults = { key: value, ... };` declarations whose
+    /// name appears nowhere else in the file except after a `...` spread,
+    /// each paired with the source of its object literal. Nothing can write
+    /// the object before a spread copies it, so `{ m: jest.fn(), ...defaults }`
+    /// keeps its mock when the literal has no `m` key. Empty when anything
+    /// could rebind or replace the name.
+    pub(crate) mock_spread_sources_in_file: Vec<(String, String)>,
     /// Whether the test's assertion state is established: a recognized
     /// assertion, an established absence of anything assertion-like, or
     /// something assertion-like RIPR cannot resolve (#5524). An empty

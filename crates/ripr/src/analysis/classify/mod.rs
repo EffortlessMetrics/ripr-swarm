@@ -10,6 +10,7 @@ mod diff_touched;
 mod effect_carrier;
 mod element_field_pin;
 mod flow;
+mod framework_oracle;
 mod gap_admission;
 mod helper_transfer;
 mod infection;
@@ -56,9 +57,10 @@ pub(in crate::analysis) use diff_touched::DiffTouchedTests;
 pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
 pub(in crate::analysis) use element_field_pin::observes_returned_element_field;
 pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_witness};
+pub(in crate::analysis) use framework_oracle::withhold_framework_oracle_gap;
 pub(in crate::analysis) use gap_admission::{
-    REFUSALS_ARE_ANALYZER_LIMITS, withhold_log_capture_gap, withhold_should_panic_gap,
-    withhold_unsupported_gap,
+    CALL_BUDGET_SATURATED, REFUSALS_ARE_ANALYZER_LIMITS, withhold_call_budget_gap,
+    withhold_log_capture_gap, withhold_should_panic_gap, withhold_unsupported_gap,
 };
 pub(in crate::analysis) use helper_transfer::{FieldProjectionReceipt, field_projection_receipt};
 pub(in crate::analysis) use helper_transfer::{

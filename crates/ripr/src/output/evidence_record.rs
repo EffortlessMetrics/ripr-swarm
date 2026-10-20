@@ -1986,6 +1986,7 @@ mod tests {
                 observe: stage(StageState::Yes, "assertion observes output"),
                 discriminate: stage(StageState::Weak, "broad assertion misses boundary"),
                 observed_values: vec![ValueFact {
+                    file: None,
                     line: 12,
                     text: "discounted_total(50, 100)".to_string(),
                     value: "50".to_string(),

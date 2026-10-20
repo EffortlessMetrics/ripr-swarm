@@ -41,6 +41,11 @@ repair-eligible seam — repair starts the before phase for that exact
 subject. A cross-namespace ID the current seams no longer map refuses with
 the recovery route instead of guessing a seam.
 
+Run from a workspace member, a `file:line` item is bound to that member and
+is refused (fail closed) when a workspace-root file with the same path suffix
+exists, even if the root has no finding there; use `--root .` or a seam or
+gap ID instead.
+
 A successful start prints the before-phase summary and the compact repair
 card for the seam. If the card cannot render after the start published,
 repair refuses with exit 3 and empty stdout, naming the retained attempt
@@ -366,6 +371,7 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
     // instead of implying no attempt exists.
     let card_stdout = super::agent_card::agent_card_stdout(AgentCardOptions {
         root: options.root.clone(),
+        root_explicit: true,
         seam_id: seam_id.clone(),
         json: false,
     })
@@ -395,6 +401,7 @@ fn resume_awaiting_attempt(
     let follow_up = crate::agent::human_after_phase_follow_up(&existing.next_command);
     let card_stdout = super::agent_card::agent_card_stdout(AgentCardOptions {
         root: root.to_path_buf(),
+        root_explicit: true,
         seam_id: seam_id.to_string(),
         json: false,
     })
@@ -420,6 +427,7 @@ fn resume_awaiting_attempt(
 fn facade_before_options(root: &std::path::Path, seam_id: &str) -> AgentRepairOptions {
     AgentRepairOptions {
         root: root.to_path_buf(),
+        root_explicit: true,
         seam_id: Some(seam_id.to_string()),
         attempt_id: None,
         phase: AgentRepairPhase::Before,
@@ -455,6 +463,7 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
         ContinueSelection::Proceed { attempt_id } => super::agent::run_agent_repair_with_identity(
             AgentRepairOptions {
                 root: options.root,
+                root_explicit: true,
                 seam_id: None,
                 attempt_id: Some(attempt_id.as_str().to_string()),
                 phase: AgentRepairPhase::After,
@@ -647,6 +656,8 @@ fn run_facade_status(mut options: StatusFacadeOptions) -> Result<(), CommandErro
     super::agent::run_agent_status(AgentStatusOptions {
         out_dir: None,
         root: options.root,
+        // Already resolved above; the agent dispatch must not resolve again.
+        root_explicit: true,
         json: options.json,
         store: None,
         attempt_id: options.attempt_id,
@@ -1093,6 +1104,7 @@ mod tests {
             .map_err(|error| format!("rewrite lib.rs failed: {error}"))?;
         match crate::cli::commands::agent_card::agent_card_stdout(AgentCardOptions {
             root: root.clone(),
+            root_explicit: true,
             seam_id: FIXTURE_SEAM.to_string(),
             json: false,
         }) {

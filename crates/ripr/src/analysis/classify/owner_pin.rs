@@ -49,7 +49,7 @@ pub(super) mod short_circuit;
 pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
 
 use super::super::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSummary};
-use super::call_identity::{CallTarget, OwnerCallIdentity};
+use super::call_identity::{CallTarget, ConstantTable, OwnerCallIdentity};
 use super::reveal::{
     UsePath, assertion_comparison_operands, contains_as_whole_word,
     file_imports_foreign_callee_name, file_imports_own_item, file_use_statements,
@@ -1237,6 +1237,20 @@ impl OwnerPinSyntax {
                     })
             })
             .collect::<Vec<_>>();
+        if !generated_verdicts.is_empty() {
+            // #6749: a generated test's module is not in the file's text, so
+            // its expansion cannot show a rebound `test`; the file answers.
+            if by_file
+                .get(&test.file)
+                .is_some_and(OwnerPinAssertions::file_binds_test)
+            {
+                return Some(AssertionRefusal::Syntax(
+                    AssertionContextRefusal::TestAttribute(
+                        "#[test] (the file may rebind `test`)".to_string(),
+                    ),
+                ));
+            }
+        }
         if generated_verdicts.iter().any(|verdict| verdict.is_none()) {
             return None;
         }
@@ -5478,7 +5492,8 @@ fn macro_invocations(masked: &str) -> Vec<(&str, usize)> {
 
 /// Keywords a `!` negation can follow; never macro names.
 const NEGATING_KEYWORDS: &[&str] = &[
-    "if", "while", "return", "match", "in", "else", "break", "let", "mut", "move", "as",
+    "if", "while", "return", "match", "in", "else", "break", "let", "mut", "move", "as", "yield",
+    "ref", "unsafe", "async",
 ];
 
 /// #6578: whether the part of the changed tail that differs from its old
@@ -9797,7 +9812,7 @@ pub(in crate::analysis) fn expected_operand_value(
     while is_plain_identifier(&current) && current != owner.name && seen.insert(current.clone()) {
         let next = match receiver_let_bindings(test, &current) {
             Some(bindings) => match bindings.as_slice() {
-                [binding] => immutable_let_value(test, binding),
+                [binding] => immutable_let_value(index, test, binding),
                 [] => single_constant_value(index, &current, &in_scope),
                 _ => None,
             },
@@ -9816,7 +9831,7 @@ pub(in crate::analysis) fn expected_operand_value(
 /// name), unless the `let` is `mut`, so a later assignment or `push` may
 /// change it, or carries an attribute (`#[cfg(..)] let`) that may compile
 /// it away (#7066 review), as [`let_bound_owner_call`] refuses.
-fn immutable_let_value(test: &TestSummary, binding: &str) -> Option<String> {
+fn immutable_let_value(index: &RustIndex, test: &TestSummary, binding: &str) -> Option<String> {
     let masked = mask_comments_and_strings(&test.body);
     let binding_at = (binding.as_ptr() as usize).checked_sub(test.body.as_ptr() as usize)?;
     let let_at = *whole_word_offsets(masked.get(..binding_at)?, "let").last()?;
@@ -9829,7 +9844,11 @@ fn immutable_let_value(test: &TestSummary, binding: &str) -> Option<String> {
     let value = assigned_value(&binding)?;
     // #8112: an immutable binding of an interior-mutable value
     // (`let e = Cell::new(f(2)); e.set(6);`) can change after its initializer.
-    if has_interior_mutability(value) {
+    let source = index
+        .files()
+        .get(&test.file)
+        .map(|facts| facts.source.to_string());
+    if may_mutate_through_shared(declared_type(&binding), value, source.as_deref()) {
         return None;
     }
     Some(value.to_string())
@@ -9864,6 +9883,117 @@ fn has_interior_mutability(initializer: &str) -> bool {
     ]
     .iter()
     .any(|word| contains_as_whole_word(initializer, word))
+}
+
+/// #8112: whether a binding or `static` whose declared type is `declared`
+/// (`None` when unannotated or unreadable) and whose initializer is
+/// `initializer` can change through a shared reference. The declared type
+/// decides when it names a known interior-mutable type (refuse) or is a
+/// plain scalar (`u32`, `&'static str`, `[u8; 4]`; keep, whatever the
+/// initializer block mentions). Any other type (a user type, an alias, an
+/// unannotated binding) falls back to the initializer text. Limit: a user
+/// type that merely holds an atomic (`Counter`) is not recognized from its
+/// name; only a known interior-mutable type name in the type or the
+/// initializer text refuses it.
+fn may_mutate_through_shared(
+    declared: Option<&str>,
+    initializer: &str,
+    source: Option<&str>,
+) -> bool {
+    match declared {
+        Some(declared) if has_interior_mutability(declared) => true,
+        Some(declared)
+            if is_plain_scalar_type(declared)
+                && source.is_some_and(|source| !scalar_names_rebound(declared, source)) =>
+        {
+            false
+        }
+        _ => has_interior_mutability(initializer),
+    }
+}
+
+/// Whether every word of the type text is a primitive scalar, `str`,
+/// `'static` or an array length digit run: `u32`, `&'static str`, `[u8; 4]`.
+fn is_plain_scalar_type(declared: &str) -> bool {
+    const SCALARS: [&str; 17] = [
+        "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
+        "f32", "f64", "bool", "char", "str",
+    ];
+    let mut words = declared
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|word| !word.is_empty())
+        .peekable();
+    words.peek().is_some()
+        && words.all(|word| {
+            SCALARS.contains(&word) || word == "static" || word.chars().all(|c| c.is_ascii_digit())
+        })
+}
+
+/// Whether the file may rebind a primitive name `declared` uses, so the
+/// name no longer proves a scalar: an item keyword before it (`type u32 =
+/// ..;`, `struct u32;`), or any mention of it inside a `use` or `extern
+/// crate` statement (`use x::u32;`, `use m::{Counter, u32};`, `use x as
+/// u32;`) unless it continues a path (`use std::u32::MAX;`) or is a
+/// generic argument. A glob import (`use m::*;`) may bring any name in, so
+/// it rebinds every name. A plain cast `n as u32` or `std::u32::MAX` does
+/// not. Limits: `include!`, `#[path]` and macro-generated types are not
+/// scanned.
+fn scalar_names_rebound(declared: &str, source: &str) -> bool {
+    let masked = mask_comments_and_strings(source);
+    let is_word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let imports = |statement: &str| {
+        !whole_word_offsets(statement, "use").is_empty()
+            || !whole_word_offsets(statement, "extern").is_empty()
+    };
+    if whole_word_offsets(&masked, "use")
+        .into_iter()
+        .any(|offset| {
+            masked[offset..]
+                .split(';')
+                .next()
+                .is_some_and(|statement| statement.contains('*'))
+        })
+    {
+        return true;
+    }
+    declared
+        .split(|c: char| !is_word(c))
+        .filter(|word| !word.is_empty() && !word.chars().all(|c| c.is_ascii_digit()))
+        .any(|word| {
+            whole_word_offsets(&masked, word).into_iter().any(|offset| {
+                let before = masked[..offset].trim_end();
+                let after = masked[offset + word.len()..].trim_start();
+                let statement = before.rsplit(';').next().unwrap_or(before);
+                if imports(statement) {
+                    return !after.starts_with("::") && !before.ends_with('<');
+                }
+                if before.ends_with("::") {
+                    return !after.starts_with("::");
+                }
+                ["type", "struct", "enum", "trait", "union", "mod"]
+                    .iter()
+                    .any(|keyword| {
+                        before.ends_with(keyword)
+                            && before[..before.len() - keyword.len()]
+                                .chars()
+                                .next_back()
+                                .is_none_or(|c| !is_word(c))
+                    })
+            })
+        })
+}
+
+/// The `T` of `[: T] = value` text, when annotated.
+fn declared_type(text: &str) -> Option<&str> {
+    let trimmed = text.trim_start();
+    let after = trimmed
+        .strip_prefix(':')
+        .filter(|after| !after.starts_with(':'))?;
+    let end = assigned_value_offset(after)?;
+    let declared = after.get(..end.saturating_sub(1))?;
+    // A type holding `=` or a block (`Foo<{ A == B }>`, `[u8; { N }]`) makes
+    // the split ambiguous: treat the declared type as unknown.
+    (!declared.contains(['=', '{'])).then_some(declared)
 }
 
 /// #8112: whether `file` declares `static mut name`, whose value the test
@@ -9920,15 +10050,25 @@ fn single_constant_value(
     let mut matches = constants
         .get(name)?
         .iter()
-        .filter(|(file, _)| in_scope(file));
-    let (file, initializer) = matches.next()?;
+        .filter(|(file, _, _)| in_scope(file));
+    let (file, initializer, declared) = matches.next()?;
     if matches.next().is_some() || declares_static_mut(index, file, name) {
         return None;
     }
-    // #8112: a non-`mut` `static` of interior-mutable type
+    // #8112: a non-`mut` `static` of interior-mutable declared type
     // (`static C: AtomicUsize = ..; C.store(6)`) can change after its
     // initializer. A `const` is rebuilt at each use, so it stays readable.
-    if has_interior_mutability(initializer) && declares_static(index, file, name) {
+    if declares_static(index, file, name)
+        && may_mutate_through_shared(
+            declared.as_deref(),
+            initializer,
+            index
+                .files()
+                .get(file)
+                .map(|facts| facts.source.to_string())
+                .as_deref(),
+        )
+    {
         return None;
     }
     let initializer_text = initializer.trim_start();
@@ -9942,6 +10082,11 @@ fn single_constant_value(
 /// The text after the assignment `=` of `[: T] = value`: the first `=`
 /// outside angle brackets that is not part of `==`, `=>`, `<=`, `>=` or `!=`.
 fn assigned_value(text: &str) -> Option<&str> {
+    text.get(assigned_value_offset(text)?..)
+}
+
+/// The offset just after the assignment `=` that [`assigned_value`] finds.
+fn assigned_value_offset(text: &str) -> Option<usize> {
     let bytes = text.as_bytes();
     let mut depth = 0usize;
     for (position, byte) in bytes.iter().enumerate() {
@@ -9957,7 +10102,7 @@ fn assigned_value(text: &str) -> Option<&str> {
                     Some(b'=' | b'!' | b'<' | b'>')
                 ) =>
             {
-                return text.get(position + 1..);
+                return Some(position + 1);
             }
             _ => {}
         }
@@ -10062,7 +10207,8 @@ fn expected_constant_reaches_owner(
             let Some(initializers) = constants.get(&word) else {
                 continue;
             };
-            for (file, initializer) in initializers.iter().filter(|(file, _)| in_scope(file)) {
+            for (file, initializer, _) in initializers.iter().filter(|(file, _, _)| in_scope(file))
+            {
                 if initializer_calls_owner(initializer, name, call)
                     || owner_aliases(index, file, name)
                         .iter()
@@ -10141,46 +10287,53 @@ fn initializer_calls_owner(initializer: &str, name: &str, call: &PinCall) -> boo
 /// masked initializer: one parse per file per index. Items a macro call
 /// declares (`thread_local!`, `lazy_static!`) and items of a file that does
 /// not parse cleanly are read from their text.
-fn workspace_constant_table(index: &RustIndex) -> BTreeMap<String, Vec<(PathBuf, String)>> {
-    let mut table: BTreeMap<String, Vec<(PathBuf, String)>> = BTreeMap::new();
+fn workspace_constant_table(index: &RustIndex) -> ConstantTable {
+    let mut table = ConstantTable::new();
     for (path, facts) in index.files().iter() {
         let source = &facts.source;
         if !source.contains("const") && !source.contains("static") {
             continue;
         }
-        let mut add = |name: &str, initializer: String| {
+        let mut add = |name: &str, initializer: String, declared: Option<String>| {
             let name = name.strip_prefix("r#").unwrap_or(name);
             table
                 .entry(name.to_string())
                 .or_default()
-                .push((path.clone(), initializer));
+                .push((path.clone(), initializer, declared));
         };
         let Some(parsed) = parse_clean_source_file(source) else {
             for (name, initializer) in text_declared_constants(&mask_comments_and_strings(source)) {
-                add(&name, initializer);
+                let declared = declared_type(&initializer).map(str::to_string);
+                add(&name, initializer, declared);
             }
             continue;
         };
         for node in parsed.tree().syntax().descendants() {
             let item = if let Some(item) = ast::Const::cast(node.clone()) {
-                item.name().zip(item.body())
+                item.name()
+                    .zip(item.body())
+                    .map(|(name, body)| (name, body, item.ty()))
             } else if let Some(item) = ast::Static::cast(node.clone()) {
-                item.name().zip(item.body())
+                item.name()
+                    .zip(item.body())
+                    .map(|(name, body)| (name, body, item.ty()))
             } else {
                 if let Some(macro_call) = ast::MacroCall::cast(node)
                     && let Some(tokens) = macro_call.token_tree()
                 {
                     let text = mask_comments_and_strings(&tokens.syntax().to_string());
                     for (name, initializer) in text_declared_constants(&text) {
-                        add(&name, initializer);
+                        let declared = declared_type(&initializer).map(str::to_string);
+                        add(&name, initializer, declared);
                     }
                 }
                 None
             };
-            if let Some((item_name, body)) = item {
+            if let Some((item_name, body, ty)) = item {
                 add(
                     item_name.text(),
                     mask_comments_and_strings(&body.syntax().to_string()),
+                    ty.map(|ty| mask_comments_and_strings(&ty.syntax().to_string())),
                 );
             }
         }
@@ -10265,10 +10418,16 @@ fn expected_binding_calls_owner(test: &TestSummary, expected: &str, name: &str) 
             // test may write through it (`EXPECTED.store(f(4))`): neither
             // is a `let` the scan reads, so the owner may feed the operand
             // (#7847).
-            if bound_by_macro(&masked_body, word) || written_by_test(&masked_body, word) {
+            let bindings = receiver_let_bindings(test, word);
+            // A later `let` may shadow an earlier static or item of the same
+            // name, so a plain `let` counts only when it is the name's first
+            // use, at the test body's top level (#8795).
+            let plain = bindings.as_deref().is_some_and(plain_let_values)
+                && first_use_is_top_level_let(&masked_body, word);
+            if bound_by_macro(&masked_body, word) || written_by_test(&masked_body, word, plain) {
                 return true;
             }
-            let Some(bindings) = receiver_let_bindings(test, word) else {
+            let Some(bindings) = bindings else {
                 if binds_outside_let(&masked_body, word) || let_patterns_bind(&masked_body, word) {
                     return true;
                 }
@@ -10293,21 +10452,29 @@ fn expected_binding_calls_owner(test: &TestSummary, expected: &str, name: &str) 
 /// `name.sort()`, `name.0.push(..)`, any `*_mut`, `*_assign`, `fetch_*` or
 /// `set_*` method). Lexical and conservative, so a static the test stores
 /// the owner's value in is no independent expected value.
-fn written_by_test(masked: &str, name: &str) -> bool {
+///
+/// `plain` (#8795): every binding of `name` is a `let` of a plain value
+/// (`plain_let_values`), which holds no interior mutability and no callee can
+/// write through a shared borrow of it, so `&name` passed to a call is a
+/// read. Method names stay mutators regardless (a test-local type may define
+/// any `replace`/`take`). A static, a const or any other binding, and any
+/// constructor call (it may be test-local), is never plain.
+fn written_by_test(masked: &str, name: &str, plain: bool) -> bool {
     whole_word_offsets(masked, name).into_iter().any(|offset| {
         let before = masked[..offset].trim_end();
-        if before.ends_with("&mut") {
+        // `let e: Config = ..`, `let e: crate::Config`, `let e: &Config` and
+        // `let e: (Config, u8)` annotate a type: the `=` after it assigns the
+        // binding, not the type name. Only a `let` pattern's annotation
+        // qualifies; a struct-literal field value (`S { f: EXPECTED.swap(..) }`)
+        // is an expression and stays scanned (#8795).
+        if in_let_annotation(before) {
+            return false;
+        }
+        if mut_borrow_before(before) {
             return true;
         }
         // A `let` (or `let mut`) declaration is the binding the let scan reads.
         if before.ends_with("let") || before.ends_with("mut") {
-            return false;
-        }
-        // `let e: Config = ..` annotates a type: the `=` after it assigns the
-        // binding, not the type name. Only a `let` pattern's annotation
-        // qualifies; a struct-literal field value (`S { f: EXPECTED.swap(..) }`)
-        // is an expression and stays scanned.
-        if before.ends_with(':') && !before.ends_with("::") && in_let_annotation(before) {
             return false;
         }
         // `write!(name, ..)` / `writeln!(name, ..)` write into their first
@@ -10315,9 +10482,9 @@ fn written_by_test(masked: &str, name: &str) -> bool {
         // seeing them.
         before.ends_with("write!(")
             || before.ends_with("writeln!(")
-            || borrowed_into_path_call(before)
+            || (!plain && borrowed_into_path_call(before))
             || place_is_written(&masked[offset + name.len()..])
-            || destructured_into(&masked[offset + name.len()..])
+            || (destructured_into(&masked[offset + name.len()..]) && !index_operand(before))
     })
 }
 
@@ -10389,13 +10556,237 @@ fn borrowed_into_path_call(before: &str) -> bool {
         .contains(&last)
 }
 
-/// Whether the text before a `:` sits inside a `let` pattern's annotation:
-/// the nearest preceding `let` has no `=`, `;`, `{` or `}` after it.
+/// Whether the first whole-word use of `name` in the masked test body is a
+/// `let [mut] name` directly in the body block (brace depth one). Any earlier
+/// use, or a binding in an inner block, may name a different item.
+fn first_use_is_top_level_let(masked: &str, name: &str) -> bool {
+    let Some(first) = whole_word_offsets(masked, name).into_iter().next() else {
+        return false;
+    };
+    let before = masked[..first].trim_end();
+    if before.matches('{').count() != before.matches('}').count() + 1 {
+        return false;
+    }
+    let before = before
+        .strip_suffix("mut")
+        .filter(|rest| rest.ends_with(char::is_whitespace))
+        .map_or(before, str::trim_end);
+    before.strip_suffix("let").is_some_and(|rest| {
+        !rest
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+    })
+}
+
+/// Whether `before` ends in a mutable borrow operator: `&mut`, `& mut` or
+/// `&raw mut` (with any whitespace between the tokens).
+fn mut_borrow_before(before: &str) -> bool {
+    let Some(head) = before.strip_suffix("mut") else {
+        return false;
+    };
+    let head = head.trim_end();
+    head.ends_with('&')
+        || head
+            .strip_suffix("raw")
+            .is_some_and(|rest| rest.trim_end().ends_with('&'))
+}
+
+/// Whether the text before a name sits inside a `let` pattern's type
+/// annotation (#8795): the nearest preceding `let` has no `=`, `;`, `{` or
+/// `}` after it, and a single `:` (not a `::` path separator) separates the
+/// pattern from the name. A pattern with no annotation colon
+/// (`let (a, name) = ..`) binds the name and is not an annotation; a struct
+/// pattern's field colon sits inside `{}` and is excluded.
 fn in_let_annotation(before: &str) -> bool {
     whole_word_offsets(before, "let")
         .into_iter()
         .next_back()
-        .is_some_and(|at| !before[at + "let".len()..].contains(['=', ';', '{', '}']))
+        .is_some_and(|at| {
+            let tail = &before[at + "let".len()..];
+            !tail.contains(['=', ';', '{', '}']) && has_single_colon(tail)
+        })
+}
+
+fn has_single_colon(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes.iter().enumerate().any(|(at, byte)| {
+        *byte == b':'
+            && bytes.get(at + 1) != Some(&b':')
+            && (at == 0 || bytes.get(at - 1) != Some(&b':'))
+    })
+}
+
+/// Whether the name sits inside the `[..]` of an index expression
+/// (`v[name] = ..`): the nearest unclosed group before it is a `[` that
+/// directly follows an identifier or a closing bracket. The name is then an
+/// index read, not the place an enclosing assignment writes (#8795). An
+/// array pattern (`[name, ..] = p`) follows `;`, `=` or nothing, so it is not.
+fn index_operand(before: &str) -> bool {
+    let mut depth = 0usize;
+    for (at, character) in before.char_indices().rev() {
+        match character {
+            ')' | ']' | '}' => depth += 1,
+            '(' | '[' | '{' => {
+                if depth > 0 {
+                    depth -= 1;
+                    continue;
+                }
+                if character != '[' {
+                    return false;
+                }
+                let head = before[..at].trim_end();
+                // A keyword before `[` (`match [e, o] = p`, `return [e, o] = p`)
+                // starts an array pattern or value, not an index.
+                let word_start = head
+                    .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .map_or(0, |at| at + 1);
+                // A label (`break 'a [e, o] = p`, `continue 'a [..]`) is not an
+                // indexed place either.
+                if head[..word_start].ends_with('\'')
+                    || NEGATING_KEYWORDS.contains(&&head[word_start..])
+                {
+                    return false;
+                }
+                return head.chars().next_back().is_some_and(|prev| {
+                    prev.is_ascii_alphanumeric() || matches!(prev, '_' | ')' | ']')
+                });
+            }
+            ';' if depth == 0 => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Whether every `let` binding of a name (the text after the name, as
+/// `receiver_let_bindings` returns it) initializes it with a plain value: a
+/// literal, or a tuple or array (`[plain; N]` included) of plain values.
+/// Such a value is a primitive aggregate with no interior mutability and no
+/// `Deref`, so a shared borrow of it cannot be written by a callee (#8795).
+/// Named struct literals and constructor calls are never plain. No binding at all (a static, a const) is
+/// not plain.
+fn plain_let_values(bindings: &[&str]) -> bool {
+    !bindings.is_empty()
+        && bindings.iter().all(|binding| {
+            let statement = binding.trim_end().trim_end_matches(';');
+            let init = statement
+                .match_indices('=')
+                .map(|(position, _)| position)
+                .find(|position| {
+                    !matches!(statement.as_bytes().get(position + 1), Some(b'=' | b'>'))
+                        && !matches!(
+                            statement.as_bytes().get(position.wrapping_sub(1)),
+                            Some(b'=' | b'!' | b'<' | b'>')
+                        )
+                })
+                .map(|position| &statement[position + 1..]);
+            init.is_some_and(is_plain_value)
+        })
+}
+
+fn is_plain_value(expression: &str) -> bool {
+    let expression = expression.trim();
+    let unsigned = expression
+        .strip_prefix('-')
+        .map_or(expression, str::trim_start);
+    if unsigned.starts_with(|c: char| c.is_ascii_digit()) {
+        return is_numeric_literal(unsigned);
+    }
+    if unsigned.len() != expression.len() {
+        return false;
+    }
+    if matches!(expression, "true" | "false") || is_string_literal(expression) {
+        return true;
+    }
+    if expression.len() >= 3 && expression.starts_with('\'') && expression.ends_with('\'') {
+        return !expression[1..expression.len() - 1].contains('\'');
+    }
+    if let Some((element, length)) =
+        group_inner(expression, '[', ']').and_then(|inner| inner.split_once(';'))
+    {
+        let length = length.trim();
+        return is_plain_value(element)
+            && !length.is_empty()
+            && length.chars().all(|c| c.is_ascii_digit() || c == '_');
+    }
+    if let Some(inner) =
+        group_inner(expression, '(', ')').or_else(|| group_inner(expression, '[', ']'))
+    {
+        return split_top_level(inner)
+            .iter()
+            .all(|part| part.trim().is_empty() || is_plain_value(part));
+    }
+    // Anything else, including a named struct literal (it may `Deref` to an
+    // interior-mutable type) or a constructor call, is not plain.
+    false
+}
+
+/// A numeric literal: digits and `_`, at most one `.` that is followed by a
+/// digit (so `1..n` and `1.method()` are not literals), then an optional
+/// exponent or alphanumeric suffix (`1_000u32`, `0xff`, `1.5e3f64`).
+fn is_numeric_literal(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut dots = 0;
+    for (at, byte) in bytes.iter().enumerate() {
+        match byte {
+            b'.' => {
+                dots += 1;
+                if dots > 1 || !bytes.get(at + 1).is_some_and(u8::is_ascii_digit) {
+                    return false;
+                }
+            }
+            b'-' | b'+' => {
+                if !matches!(bytes.get(at.wrapping_sub(1)), Some(b'e' | b'E'))
+                    || !bytes.get(at + 1).is_some_and(u8::is_ascii_digit)
+                {
+                    return false;
+                }
+            }
+            byte if byte.is_ascii_alphanumeric() || *byte == b'_' => {}
+            _ => return false,
+        }
+    }
+    true
+}
+
+fn is_string_literal(text: &str) -> bool {
+    let text = text.strip_prefix('b').unwrap_or(text);
+    text.len() >= 2
+        && text.starts_with('"')
+        && text.ends_with('"')
+        && !text[1..text.len() - 1].contains(['"', '\\'])
+}
+
+/// The text inside `open..close` when `text` is exactly that one group.
+fn group_inner(text: &str, open: char, close: char) -> Option<&str> {
+    let rest = text.strip_prefix(open)?;
+    let after = skip_balanced(text, open, close)?;
+    if after.trim().is_empty() {
+        rest.rfind(close).map(|end| &rest[..end])
+    } else {
+        None
+    }
+}
+
+/// `text` split at commas outside any bracket pair.
+fn split_top_level(text: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    for (at, character) in text.char_indices() {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&text[start..at]);
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&text[start..]);
+    parts
 }
 
 /// Whether the place expression that continues `rest` (a chain of `.field`,
@@ -10456,9 +10847,11 @@ fn destructured_into(rest: &str) -> bool {
                     continue;
                 }
                 // The enclosing group closed: what follows decides.
+                // What follows may be a place chain (`(name)[0] = ..`,
+                // `m![name][i] = ..`): read it like any place expression.
                 let mut tail = rest[at..].trim_start_matches([')', ']', '}']);
                 tail = tail.trim_start();
-                return assignment_operator_at(tail);
+                return place_is_written(tail);
             }
             ';' if depth == 0 => return false,
             _ => {}
