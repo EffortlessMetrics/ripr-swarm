@@ -19,11 +19,11 @@ use crate::analysis::seam_classification::ClassifiedSeam;
 use crate::analysis::seams::{RepoSeam, SeamGripClass, SeamId};
 use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence};
 use crate::domain::{MissingDiscriminatorFact, StageEvidence, ValueContext, ValueFact};
-use std::path::PathBuf;
 use serde::de::Error as _;
 use serde::ser::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Serialize)]
@@ -565,8 +565,7 @@ pub(super) mod tests {
         assert!(stored[2].get("file").is_none(), "{stored:#}");
         let decoded: Body = serde_json::from_value(encoded).map_err(|err| err.to_string())?;
         assert_eq!(
-            decoded.seams[0].evidence.observed_values,
-            seams[0].evidence.observed_values,
+            decoded.seams[0].evidence.observed_values, seams[0].evidence.observed_values,
             "a cached fact must equal the fresh fact, file included"
         );
         // Public serde shape stays file-free: JSON consumers are unchanged.

@@ -1411,8 +1411,7 @@ mod tests {
             })
             .collect();
         let key = empty_key();
-        let envelope =
-            CacheEnvelope::new_with_fallback(key, vec![fresh.clone()], None, Vec::new());
+        let envelope = CacheEnvelope::new_with_fallback(key, vec![fresh.clone()], None, Vec::new());
         let bytes = codec::encode(&envelope)?;
         let warm = codec::decode(&bytes)?;
         assert_eq!(
