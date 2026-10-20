@@ -984,8 +984,9 @@ fn integration_target_name(root: &Path, manifest: &Path, stub: &RustTestStub) ->
 pub(crate) enum TargetLookup {
     /// The file is the target with this name.
     Name(String),
-    /// Manifest evidence positively shows the file is not a registered target
-    /// under any runnable name.
+    /// Manifest evidence shows the file is not registered under a name ripr
+    /// can establish (discovery disabled, outside `tests/`, or a shadowed
+    /// name). Ambiguous layouts are `Unresolved`, not this.
     NotRegistered,
     /// The manifest, edition or an entry could not be resolved, or the target
     /// is registered but not runnable by a bare command.
@@ -1045,12 +1046,9 @@ fn lookup_inner(root: &Path, manifest: &Path, stub: &RustTestStub) -> Option<Tar
                 .as_str()
                 .and_then(|path| normalize_components(Path::new(path)))
                 .is_some_and(|path| path == relative),
-            // Cargo drops a name-only entry when both layouts exist.
             None => entry_name(entry).is_some_and(|name| {
-                let both = sibling_file_exists(&name) && dir_main_exists(&name);
-                !both
-                    && (relative == format!("tests/{name}.rs")
-                        || relative == format!("tests/{name}/main.rs"))
+                relative == format!("tests/{name}.rs")
+                    || relative == format!("tests/{name}/main.rs")
             }),
         }
     };
@@ -1068,6 +1066,13 @@ fn lookup_inner(root: &Path, manifest: &Path, stub: &RustTestStub) -> Option<Tar
             .is_none_or(Vec::is_empty)
     };
     if let Some(entry) = explicit.iter().find(|entry| entry_matches(entry)) {
+        // Cargo drops a name-only entry when both layouts exist.
+        if entry.get("path").is_none()
+            && entry_name(entry)
+                .is_some_and(|name| sibling_file_exists(&name) && dir_main_exists(&name))
+        {
+            return Some(Unresolved);
+        }
         return Some(
             match entry_name(entry)
                 .filter(|name| !name.trim().is_empty())
@@ -1093,9 +1098,13 @@ fn lookup_inner(root: &Path, manifest: &Path, stub: &RustTestStub) -> Option<Tar
     };
     let inferred = match tail.split('/').collect::<Vec<_>>()[..] {
         [name] if name.ends_with(".rs") => name.trim_end_matches(".rs"),
-        [dir, "main.rs"] if !sibling_file_exists(dir) => dir,
+        [dir, "main.rs"] => dir,
         _ => return Some(NotRegistered),
     };
+    // Both tests/<n>.rs and tests/<n>/main.rs: cargo reports a duplicate target.
+    if sibling_file_exists(inferred) && dir_main_exists(inferred) {
+        return Some(Unresolved);
+    }
     // An explicit entry with the inferred name but another path replaces the
     // auto-discovered target, so this file is not reachable under that name.
     if inferred.is_empty()
@@ -1582,16 +1591,18 @@ mod tests {
                 integration_target_name(&root, Path::new("Cargo.toml"), &root_stub),
                 some("discount")
             );
-            // tests/<n>.rs wins over tests/<n>/main.rs when both exist
+            // both tests/<n>.rs and tests/<n>/main.rs: cargo reports a duplicate
             std::fs::create_dir_all(root.join("pkg/tests/grp"))
+                .map_err(|error| error.to_string())?;
+            std::fs::write(root.join("pkg/tests/grp/main.rs"), "")
                 .map_err(|error| error.to_string())?;
             std::fs::write(root.join("pkg/tests/grp.rs"), "").map_err(|error| error.to_string())?;
             assert_eq!(got("", "pkg/tests/grp/main.rs")?, None);
-            assert_eq!(got("", "pkg/tests/grp.rs")?, some("grp"));
+            assert_eq!(got("", "pkg/tests/grp.rs")?, None);
             // in-package `..` resolves lexically; an escaping one matches nothing
             let dotdot = "[[test]]\nname = \"pricing\"\npath = \"tests/../tests/discount.rs\"\n";
             assert_eq!(got(dotdot, "pkg/tests/discount.rs")?, some("pricing"));
-            let escape = "[[test]]\nname = \"discount\"\npath = \"../pkg/tests/discount.rs\"\n";
+            let escape = "[[test]]\nname = \"discount\"\npath = \"../x/../tests/discount.rs\"\n";
             assert_eq!(got(escape, "pkg/tests/discount.rs")?, None);
             // a name-only entry is ambiguous when both layouts exist
             std::fs::create_dir_all(root.join("pkg/tests/amb"))
@@ -1612,6 +1623,17 @@ mod tests {
                 integration_target_lookup(&root, Path::new("pkg/Cargo.toml"), &stub(file))
             };
             assert_eq!(lookup("pkg/tests/discount.rs"), TargetLookup::NotRegistered);
+            // registered but not runnable by a bare command: unresolved
+            for tail in ["harness = false\n", "required-features = [\"extra\"]\n"] {
+                std::fs::write(
+                    root.join("pkg/Cargo.toml"),
+                    format!(
+                        "[package]\nname = \"pkg\"\n[[test]]\nname = \"pricing\"\npath = \"tests/discount.rs\"\n{tail}"
+                    ),
+                )
+                .map_err(|error| error.to_string())?;
+                assert_eq!(lookup("pkg/tests/discount.rs"), TargetLookup::Unresolved);
+            }
             std::fs::write(
                 root.join("pkg/Cargo.toml"),
                 "[package]\nname = \"pkg\"\nedition = \"future\"\n[[test]]\nname = \"o\"\npath = \"tests/o.rs\"\n",
