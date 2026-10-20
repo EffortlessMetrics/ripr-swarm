@@ -365,6 +365,8 @@ actionability or rendered output.
 | `crates/ripr/src/analysis/language/perl/mod.rs` | Perl v1 `observation_unconfirmed` rows |
 | `crates/ripr/src/analysis/language/{python,typescript}/admission.rs` | fail-closed assertion admission state per extracted test |
 | `crates/ripr/src/output/related_test_miss.rs` | the one prose and label owner |
+| `crates/ripr/src/domain/diagnostic_witness.rs` | selected typed fix-site test shared with diagnostic prose |
+| `crates/ripr/src/output/agent_seam_packets.rs` | targeted brief oracle prose |
 | `crates/ripr/src/analysis/language/python/assertion_selection.rs` | family-relevant assertion selection per related test |
 | `crates/ripr/src/analysis/language/python/{classify,related_tests,boundary,no_behavior,static_limits}.rs`, `python/repo/evidence.rs` | consumers of the one selection; non-delegatable alignment reasons |
 | `crates/ripr/src/output/gap_decision_ledger.rs` | never delegates `no_family_relevant_assertion` or `other_behavior_assertion_passed_over` |
