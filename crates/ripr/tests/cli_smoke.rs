@@ -8380,11 +8380,20 @@ fn agent_repair_still_refuses_writes_outside_build_output_and_test_surface()
             stderr.contains(&format!("ripr:   {offending} (")),
             "the failure must name the refused path:\n{stderr}"
         );
+        // #8766: the attempt's boundary test grips the seam, so the same
+        // build's repair gate refuses a new start. The undo guidance stays and
+        // the `--phase before` recipe is not printed.
         assert!(
-            stderr.contains(&format!(
-                "--seam-id {BOUNDARY_GAP_SEAM_ID} --phase before` while the gap still exists"
-            )),
-            "the failure must name the recovery route:\n{stderr}"
+            stderr.contains("undo the refused changes"),
+            "the failure must keep the undo recovery:\n{stderr}"
+        );
+        assert!(
+            !stderr.contains("--phase before"),
+            "a start the gate refuses must not be printed:\n{stderr}"
+        );
+        assert!(
+            stderr.contains("a new attempt is not offered"),
+            "the failure must say a new attempt is not offered:\n{stderr}"
         );
         std::fs::remove_dir_all(root)?;
     }

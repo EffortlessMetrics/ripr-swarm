@@ -463,6 +463,9 @@ impl RepairStartRefusal {
 pub(crate) struct RepairStartGate {
     root: std::path::PathBuf,
     state: std::cell::OnceCell<GateState>,
+    /// Unit-test builds only: seam ids admitted regardless of the inventory.
+    #[cfg(test)]
+    admitted: Vec<String>,
 }
 
 enum GateState {
@@ -487,6 +490,8 @@ impl RepairStartGate {
         Self {
             root: root.to_path_buf(),
             state: std::cell::OnceCell::new(),
+            #[cfg(test)]
+            admitted: Vec::new(),
         }
     }
 
@@ -521,8 +526,25 @@ impl RepairStartGate {
         gate
     }
 
+    /// Like [`Self::preloaded`], but the named seam ids are admitted, so a
+    /// test can mix admitted and refused seams.
+    #[cfg(test)]
+    pub(crate) fn preloaded_admitting(
+        root: &Path,
+        classified: Vec<crate::analysis::ClassifiedSeam>,
+        admitted: &[&str],
+    ) -> Self {
+        let mut gate = Self::preloaded(root, classified);
+        gate.admitted = admitted.iter().map(|id| id.to_string()).collect();
+        gate
+    }
+
     /// `None` when the gate admits a start for `seam_id`.
     pub(crate) fn check(&self, seam_id: &str) -> Option<RepairStartRefusal> {
+        #[cfg(test)]
+        if self.admitted.iter().any(|id| id == seam_id) {
+            return None;
+        }
         let state = self.state.get_or_init(|| load_gate_state(&self.root));
         check_state(&self.root, state, seam_id)
     }
@@ -579,17 +601,22 @@ fn check_state(root: &Path, state: &GateState, seam_id: &str) -> Option<RepairSt
         #[cfg(test)]
         GateState::Open => return None,
     };
+    // The explicit-subject resolver refuses every start from a truncated
+    // inventory, so no seam in one can be verified as startable.
+    if truncated {
+        return Some(RepairStartRefusal::unverified(
+            "the seam inventory was truncated by the seam limit, and a start from a truncated inventory is refused"
+                .to_string(),
+        ));
+    }
     let Some(entry) = classified
         .iter()
         .find(|entry| entry.seam.id().as_str() == seam_id)
     else {
-        return Some(RepairStartRefusal::unverified(if truncated {
-            "the seam inventory was truncated by the seam limit and does not reach this seam"
-                .to_string()
-        } else {
+        return Some(RepairStartRefusal::unverified(
             "the current inventory no longer names this seam (seam ids change when the code shifts)"
-                .to_string()
-        }));
+                .to_string(),
+        ));
     };
     repair_start_refusal_for_entry(root, entry, AgentBriefPolicy::from_config(config))
 }
@@ -1342,6 +1369,20 @@ pub(crate) mod tests {
         };
         assert!(
             unverified(&truncated, "seam-1")?
+                .reason
+                .contains("truncated")
+        );
+        // A seam the truncated inventory does name is still unverified: the
+        // explicit-subject resolver refuses every start from such an inventory.
+        let in_truncated = gate_entry(SeamGripClass::WeaklyGripped, vec![weak_related_test()]);
+        let in_truncated_id = in_truncated.seam.id().as_str().to_string();
+        let truncated_known = GateState::Loaded {
+            config: Box::default(),
+            classified: vec![in_truncated],
+            truncated: true,
+        };
+        assert!(
+            unverified(&truncated_known, &in_truncated_id)?
                 .reason
                 .contains("truncated")
         );

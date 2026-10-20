@@ -1032,7 +1032,8 @@ fn canonical_next_action_for_inventory(
             terminal: false,
             awaits_edit: true,
             restart_recommended: false,
-            restart_route: new_repair_attempt_command(root_display, &attempt.seam_id, store.flag),
+            // Not recommended, so no before-phase start is handed over.
+            restart_route: String::new(),
             receipt_ref: Some(attempt.manifest.clone()),
         })
         .collect::<Vec<_>>();
@@ -1219,37 +1220,6 @@ fn select_next_command(
     let mut open_seams = open.into_iter();
     match (open_seams.next(), open_seams.next()) {
         (Some((seam_id, ended)), None) if !choose_seam => {
-            let restart = if ended
-                .iter()
-                .any(|attempt| attempt.disposition == "gap_open")
-            {
-                "the gap is still open, so start a new attempt and strengthen the focused test before its after phase"
-            } else if ended
-                .iter()
-                .any(|attempt| attempt.diverged_recovery.is_some())
-            {
-                "restore the prepared head as described to continue that attempt, or start a new attempt while the gap still exists"
-            } else {
-                "start a new attempt"
-            };
-            // A terminal attempt can carry the recorded after-phase refusal
-            // the inventory projection persisted (#7378); the default path
-            // must project it into the restart reason too, or a fresh
-            // session restarts blind to the cause the refusal names — the
-            // `--attempt` path already does through `restart_attempt_command`.
-            let refusal_note = ended
-                .iter()
-                .filter_map(|attempt| {
-                    attempt.last_after_refusal.as_ref().map(|refusal| {
-                        format!(
-                            "attempt `{}`'s recorded refusal explains why it ended: {}",
-                            attempt.attempt_id,
-                            refusal.reason.trim_end_matches('.')
-                        )
-                    })
-                })
-                .collect::<Vec<_>>()
-                .join("; ");
             // #8766: never print a start the same build refuses.
             // Only the restart is withheld: a diverged-head attempt keeps its
             // reset-and-rerun-after recovery route.
@@ -1272,38 +1242,22 @@ fn select_next_command(
                     })
                 });
             }
-            return Some(AgentStatusCommand {
-                step: "repair_attempt_before".to_string(),
-                artifact: store.locator.to_string(),
-                reason: format!(
-                    "no repair attempt for seam `{seam_id}` can continue at the current HEAD ({}); {restart}{}",
-                    ended
-                        .iter()
-                        .map(|attempt| format!(
-                            "`{}` is {}",
-                            attempt.attempt_id,
-                            attempt_condition(attempt)
-                        ))
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    if refusal_note.is_empty() {
-                        String::new()
-                    } else {
-                        format!(". {refusal_note}")
-                    }
-                ),
-                command: new_repair_attempt_command(root_display, seam_id, store.flag),
-            });
+            return Some(open_seam_restart_command(
+                root_display,
+                seam_id,
+                &ended,
+                &store,
+            ));
         }
-        (Some((first, _)), second) => {
+        (Some(first), second) => {
             let mut all_seams = vec![first];
-            all_seams.extend(second.map(|(seam_id, _)| seam_id));
-            all_seams.extend(open_seams.map(|(seam_id, _)| seam_id));
+            all_seams.extend(second);
+            all_seams.extend(open_seams);
             // #8766: a seam the repair gate refuses is named by its own
             // warning instead of listed with a start command.
             let mut seams = Vec::new();
             let open_total = all_seams.len();
-            for seam_id in all_seams {
+            for (seam_id, ended) in all_seams {
                 match gate.check(seam_id) {
                     Some(refusal) => warnings.push(repair_start_withheld_warning(
                         root_display,
@@ -1311,8 +1265,19 @@ fn select_next_command(
                         &refusal,
                         store.locator,
                     )),
-                    None => seams.push(seam_id),
+                    None => seams.push((seam_id, ended)),
                 }
+            }
+            // With the refused seams named by their own warnings, exactly one
+            // startable seam is no longer a choice: select it like the
+            // single-open-seam case.
+            if let [(seam_id, ended)] = seams.as_slice() {
+                return Some(open_seam_restart_command(
+                    root_display,
+                    seam_id,
+                    ended,
+                    &store,
+                ));
             }
             if seams.is_empty() {
                 return None;
@@ -1325,7 +1290,7 @@ fn select_next_command(
                     seams.len(),
                     seams
                         .iter()
-                        .map(|seam_id| format!("`{}`", new_repair_attempt_command(root_display, seam_id, store.flag)))
+                        .map(|(seam_id, _)| format!("`{}`", new_repair_attempt_command(root_display, seam_id, store.flag)))
                         .collect::<Vec<_>>()
                         .join("; ")
                 ),
@@ -1865,6 +1830,70 @@ fn legacy_next_command(
         });
     }
     Some(first.clone())
+}
+
+/// The restart command for a seam whose attempts all ended without a usable
+/// result: why none can continue, and the new-attempt start (#8766: only
+/// offered for a seam the repair gate admits).
+fn open_seam_restart_command(
+    root_display: &str,
+    seam_id: &str,
+    ended: &[&AgentStatusRepairAttempt],
+    store: &StoreFollowUp<'_>,
+) -> AgentStatusCommand {
+    let restart = if ended
+        .iter()
+        .any(|attempt| attempt.disposition == "gap_open")
+    {
+        "the gap is still open, so start a new attempt and strengthen the focused test before its after phase"
+    } else if ended
+        .iter()
+        .any(|attempt| attempt.diverged_recovery.is_some())
+    {
+        "restore the prepared head as described to continue that attempt, or start a new attempt while the gap still exists"
+    } else {
+        "start a new attempt"
+    };
+    // A terminal attempt can carry the recorded after-phase refusal
+    // the inventory projection persisted (#7378); the default path
+    // must project it into the restart reason too, or a fresh
+    // session restarts blind to the cause the refusal names — the
+    // `--attempt` path already does through `restart_attempt_command`.
+    let refusal_note = ended
+        .iter()
+        .filter_map(|attempt| {
+            attempt.last_after_refusal.as_ref().map(|refusal| {
+                format!(
+                    "attempt `{}`'s recorded refusal explains why it ended: {}",
+                    attempt.attempt_id,
+                    refusal.reason.trim_end_matches('.')
+                )
+            })
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    AgentStatusCommand {
+        step: "repair_attempt_before".to_string(),
+        artifact: store.locator.to_string(),
+        reason: format!(
+            "no repair attempt for seam `{seam_id}` can continue at the current HEAD ({}); {restart}{}",
+            ended
+                .iter()
+                .map(|attempt| format!(
+                    "`{}` is {}",
+                    attempt.attempt_id,
+                    attempt_condition(attempt)
+                ))
+                .collect::<Vec<_>>()
+                .join(", "),
+            if refusal_note.is_empty() {
+                String::new()
+            } else {
+                format!(". {refusal_note}")
+            }
+        ),
+        command: new_repair_attempt_command(root_display, seam_id, store.flag),
+    }
 }
 
 fn attempt_condition(attempt: &AgentStatusRepairAttempt) -> String {
@@ -2680,8 +2709,14 @@ fn canonical_next_action_for_attempt(
 ) -> Result<CanonicalNextActionV1, String> {
     let id = manifest.repair_attempt_id.as_str();
     let seam = manifest.seam_id.as_str();
-    let restart_route = new_repair_attempt_command(root_display, seam, store_flag);
     let restart_recommended = restart_recommended_for(status_class, view) && !restart_withheld;
+    // The before-phase start is handed to the selector only when it is
+    // recommended, so a withheld start cannot reach the canonical decision.
+    let restart_route = if restart_recommended {
+        new_repair_attempt_command(root_display, seam, store_flag)
+    } else {
+        String::new()
+    };
     // The subject root is the caller's bound root (#3999), never the
     // manifest's recorded spelling: the before phase may have stored a
     // working-directory-relative value ("." in fixtures), while the
@@ -5017,6 +5052,54 @@ mod tests {
                 && cleaned.contains(cut),
             "{cleaned}"
         );
+    }
+
+    /// #8766: with several open seams, the refused one is named by its own
+    /// warning and the single remaining startable seam is selected with the
+    /// normal restart command instead of leaving status with no next step.
+    #[test]
+    fn agent_status_selects_the_one_admitted_seam_among_refused_ones() -> Result<(), String> {
+        use crate::analysis::seams::SeamGripClass;
+        let root = unique_agent_status_test_dir("mixed-open-seams");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let refused = crate::app::task_first::tests::gate_entry(
+            SeamGripClass::WeaklyGripped,
+            vec![crate::app::task_first::tests::weak_related_test()],
+        );
+        let refused_id = refused.seam.id().as_str().to_string();
+        let gate = RepairStartGate::preloaded_admitting(&root, vec![refused], &["seam-ok"]);
+        let attempts = vec![
+            synthetic_attempt("a", &refused_id, "ended", Some("restart a")),
+            synthetic_attempt("b", "seam-ok", "ended", Some("restart b")),
+        ];
+        let mut warnings = Vec::new();
+        let next = select_next_command(
+            ".",
+            None,
+            Some(&attempts),
+            &[],
+            &mut warnings,
+            StoreFollowUp {
+                locator: REPAIR_ATTEMPT_DIRECTORY,
+                flag: "",
+            },
+            &gate,
+        )
+        .ok_or("the one admitted seam must be selected")?;
+        assert_eq!(next.step, "repair_attempt_before");
+        assert_eq!(
+            next.command,
+            "ripr agent repair --root . --seam-id seam-ok --phase before"
+        );
+        let kinds = warnings.iter().map(|w| w.kind.as_str()).collect::<Vec<_>>();
+        assert_eq!(kinds, ["repair_start_withheld"], "{warnings:?}");
+        assert!(
+            warnings[0].message.contains(&refused_id),
+            "{}",
+            warnings[0].message
+        );
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
     }
 
     #[test]

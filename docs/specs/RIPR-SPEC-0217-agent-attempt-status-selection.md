@@ -144,9 +144,13 @@ receipt strength, and currentness as separate facts:
   the named related test by hand. `ripr continue` applies the same gate to
   its start-fresh tails. When the gate cannot decide (unreadable config, an
   inventory that cannot be built, a seam no longer in the inventory because
-  seam ids move with the code, or a seam beyond a truncated inventory) no
-  start is printed: the same warning kind or claim-boundary line says the
-  seam could not be verified and names `ripr check` to re-read the seams.
+  seam ids move with the code, or any seam while the inventory is truncated,
+  because a start from a truncated inventory is refused) the gate fails
+  closed: the start is withheld, never printed, and the same warning kind or
+  claim-boundary line says the seam could not be verified and names `ripr
+  check` to re-read the seams. When several seams are open and the gate
+  refuses all but one, that one is selected with the normal restart command
+  and the others keep their own withheld warnings.
 
 Text that already embeds a new-attempt recipe is also kept free of it while
 the gate refuses the seam: a recorded after-phase refusal reason and a
