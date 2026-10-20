@@ -16824,7 +16824,7 @@ tests = [
   "crates/ripr/tests/mcp_stdio.rs::encoded_resource_ids_fail_closed_when_raw_and_decoded_both_exist",
   "crates/ripr/src/mcp/server_tests.rs::resource_id_document_resolves_raw_decoded_and_ambiguous_spellings",
   "crates/ripr/src/mcp/gaps.rs::tests::percent_decoding_resource_id_segments",
-  "crates/ripr/tests/agentic_bench_mcp.rs::inventory_page_limit_echoes_the_effective_cap",
+  "crates/ripr/tests/support/mcp_attempt_inventory.rs::inventory_page_limit_echoes_the_effective_cap",
   "crates/ripr/src/mcp/protocol.rs::tests::tool_descriptions_state_positive_contracts_and_bounds",
 ]
 metrics = [
