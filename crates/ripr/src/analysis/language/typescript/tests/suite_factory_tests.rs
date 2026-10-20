@@ -456,3 +456,41 @@ fn a_call_the_expansion_refuses_keeps_the_factory_disclosed() -> Result<(), Stri
     assert!(got.gap.is_some(), "a refused call must keep the disclosure");
     Ok(())
 }
+
+#[test]
+fn a_test_the_expansion_leaves_unchanged_is_not_disclosed_as_dropped() -> Result<(), String> {
+    // Only the suite title is a parameter, so the appended copy of the test is
+    // textually the factory's own registration. The span recovery must match
+    // the copy, not the covered declaration it equals.
+    let factory = "function runSuite(name: string) {\n  describe(name, () => {\n    test('adds', () => {\n      expect(sumAll([2, 3, 4])).toBe(9);\n    });\n  });\n}\n";
+    let source = file(&format!("{factory}runSuite('sum');\nrunSuite('again');\n"));
+    let got = pipeline("partial-identical-body", &source, &[])?;
+    assert_eq!(got.tests.len(), 2);
+    assert!(got.gap.is_none(), "{:?}", got.gap);
+    Ok(())
+}
+
+#[test]
+fn a_conditional_credit_disclosure_names_a_line_of_the_file() -> Result<(), String> {
+    let factory = "function runSuite(name: string, impl: (values: number[]) => number) {\n  describe(name, () => {\n    test('adds', () => {\n      if (ok) {\n        expect(impl([2, 3, 4])).toBe(9);\n      }\n    });\n  });\n}\n";
+    let source = file(&format!("{factory}{CALL}"));
+    let (tests, gap, _) = extract_tests_with_expansion(Path::new("tests/sum.test.ts"), &source);
+    assert_eq!(tests.len(), 1);
+    let gap = gap.ok_or_else(|| "the conditional credit must be disclosed".to_string())?;
+    let call_line = source
+        .lines()
+        .position(|line| line == CALL.trim_end())
+        .map(|index| index + 1)
+        .ok_or_else(|| "call line".to_string())?;
+    // The walk meets the factory's own `if (ok)` first, a real line of the
+    // file; either way the line must exist.
+    assert!(
+        gap.sample_line >= 1 && gap.sample_line <= source.lines().count(),
+        "{gap:?}"
+    );
+    assert!(
+        gap.sample_line == 7 || gap.sample_line == call_line,
+        "{gap:?}"
+    );
+    Ok(())
+}

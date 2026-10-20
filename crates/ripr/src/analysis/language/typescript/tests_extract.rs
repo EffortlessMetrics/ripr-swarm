@@ -212,7 +212,7 @@ fn extract_tests_expanding_suite_factories(file: &Path, source: &str, expand: bo
     };
     // Rerun on the source with the factory calls expanded; a test found in
     // an appended expansion reports its call's line.
-    let (mut tests, gap, _) =
+    let (mut tests, mut gap, _) =
         extract_tests_expanding_suite_factories(file, &expansion.source, false);
     // A substitution that lands inside a string can leave the expanded source
     // unparsable, which would drop every test the file yielded before
@@ -231,6 +231,10 @@ fn extract_tests_expanding_suite_factories(file: &Path, source: &str, expand: bo
         for assertion in &mut test.assertions {
             assertion.line = reported_start + assertion.line.saturating_sub(expanded_start);
         }
+    }
+    // The disclosure was found on an appended line the file does not have.
+    if let Some(gap) = &mut gap {
+        gap.sample_line = expansion.reported_line(gap.sample_line);
     }
     (tests, gap, Some(expansion))
 }
@@ -3126,7 +3130,8 @@ pub(crate) fn detect_partial_test_extraction_expanded(
     let call_lines = expansion.map(|expansion| expansion.call_lines.clone());
     // Span starts are pure string search. Compute them before the worker:
     // the parse closure is `'static` and cannot borrow `extracted`.
-    let extracted_starts = extracted_span_starts(source, extracted);
+    let extracted_starts =
+        extracted_span_starts(source, extracted, covered.as_deref().unwrap_or_default());
     let Ok(gap) = parse_on_worker(file, source, move |file, source, allocator| {
         let ret = Parser::new(allocator, source, source_type_for(file)).parse();
         if !ret.errors.is_empty() {
@@ -3167,15 +3172,31 @@ pub(crate) fn detect_partial_test_extraction_expanded(
 /// threading span state through the public extractor signature. Extraction
 /// visits registrations in source order, so a forward watermark disambiguates
 /// identical bodies on the same line.
-fn extracted_span_starts(source: &str, extracted: &[TypeScriptTest]) -> Vec<usize> {
+fn extracted_span_starts(
+    source: &str,
+    extracted: &[TypeScriptTest],
+    covered: &[std::ops::Range<usize>],
+) -> Vec<usize> {
     let mut watermark = 0usize;
     let mut starts = Vec::new();
     for test in extracted {
-        if let Some(pos) = source
-            .get(watermark..)
-            .and_then(|rest| rest.find(test.body_text.as_str()))
-        {
+        // A covered factory's own registration is never what a test was
+        // extracted from, but an expanded copy can read identically to it
+        // (only the suite title is a parameter): search past it.
+        let found = loop {
+            let Some(pos) = source
+                .get(watermark..)
+                .and_then(|rest| rest.find(test.body_text.as_str()))
+            else {
+                break None;
+            };
             let start = watermark + pos;
+            match covered.iter().find(|range| range.contains(&start)) {
+                Some(range) => watermark = range.end,
+                None => break Some(start),
+            }
+        };
+        if let Some(start) = found {
             starts.push(start);
             // The next extracted test starts strictly after this one.
             watermark = start + 1;
