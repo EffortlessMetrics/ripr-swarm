@@ -554,6 +554,8 @@ cases.
   `ingestion_*` (ingestion),
   `perl_packet_contract_migration_corpus_pins_real_producer_dispositions`
   (rule 1 unrecognized kinds, real-producer owner ids),
+  `perl_isnt_is_a_smoke_oracle_not_an_exact_one` (rule 17: `isnt` spellings,
+  the `weak_broad` grading, and `is` / `isnt_zero` controls),
   `relation_gate_rejects_file_proximity_only` (edits `relation_kind`
   without re-blessing; rule 14).
 - Existing: RIPR-SPEC-0108 byte-pinned reports under

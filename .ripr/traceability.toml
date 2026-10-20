@@ -14359,7 +14359,6 @@ tests = [
   "crates/ripr/src/analysis/language/perl/tests.rs::perl_packet_array_order_and_metadata_do_not_move_reasons",
   "crates/ripr/src/output/related_test_miss.rs::tests::perl_packet::perl_packet_backed_rows_agree_across_report_surfaces",
   "crates/ripr/src/analysis/language/perl/tests.rs::perl_related_test_miss_is_the_only_field_the_rule_writes",
-  "crates/ripr/src/analysis/language/perl/tests.rs::perl_isnt_is_a_smoke_oracle_not_an_exact_one",
   "crates/ripr/src/output/related_test_miss.rs::tests::perl_packet::perl_packet_backed_miss_changes_no_projected_decision",
   "crates/ripr/src/output/human.rs::tests::perl_packet_backed_digest_reason_follows_the_named_row",
   "crates/ripr/src/lsp/tests.rs::perl_packet_backed_rows_agree_in_hover_related_information_and_data",
@@ -16221,6 +16220,7 @@ tests = [
   "crates/ripr/src/output/perl_composition_tests.rs::perl_composition_test_name_whitespace_is_identity",
   "crates/ripr/src/output/perl_composition_tests.rs::perl_composition_real_sparse_packet_stays_advisory",
   "crates/ripr/src/analysis/language/perl/tests.rs::h2_aligned_sink_on_another_tests_oracle_does_not_promote",
+  "crates/ripr/src/analysis/language/perl/tests.rs::perl_isnt_is_a_smoke_oracle_not_an_exact_one",
 ]
 fixtures = [
   "fixtures/perl_cpan_alpha/recommendation-controls",
