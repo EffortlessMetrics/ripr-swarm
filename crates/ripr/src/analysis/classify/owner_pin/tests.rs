@@ -8934,6 +8934,12 @@ fn an_expected_value_a_macro_or_a_static_rebinds_from_the_owner_is_not_a_pin() {
             "struct String(Cell<u32>);\nimpl String {\n    fn new() -> Self {\n        Self(Cell::new(0))\n    }\n}\n\n",
             "let expected = String::new();\n        Cell::set(&expected.0, crate::weight(4));\n        assert_eq!(crate::weight(4), expected.0.get());",
         ),
+        // #8929: an inner-block `static` redeclaring the name after a plain
+        // top-level `let` makes the later `&EXPECTED` a static borrow.
+        (
+            "",
+            "let EXPECTED = 0;\n        {\n            static EXPECTED: AtomicU32 = AtomicU32::new(0);\n            same(crate::weight(4), &EXPECTED);\n            assert_eq!(crate::weight(4), EXPECTED.load(Ordering::SeqCst));\n        }",
+        ),
         // #8795 negative controls: a non-plain value still refuses a shared
         // borrow, the one-argument `replace` and the argument-free `take`
         // still write, and a pattern is not an annotation.
@@ -9056,6 +9062,103 @@ fn an_expected_value_a_macro_or_a_static_rebinds_from_the_owner_is_not_a_pin() {
     ] {
         let lib = unit_tests(prelude, body);
         assert_eq!(path_admitted(&lib, "x * 3", None).len(), 1, "{body}");
+    }
+}
+
+/// #8929: the `&mut` family spelled through grouping parentheses or a path,
+/// `ref mut` bindings on a place, the `addr_of_mut!` macro and a `?` / `.await`
+/// tail after a call group. Every write row is a mutable alias or write of the
+/// expected value the scan must refuse; every read row is the sibling shape
+/// that must stay a read so the fix does not become a blanket refusal.
+#[test]
+fn written_by_test_refuses_grouped_pathed_ref_mut_and_addr_of_mut_writes() {
+    for write in [
+        // `&mut (name)` / `&mut (name).f`.
+        "let r = &mut (EXPECTED); *r = f(4);",
+        "let r = &mut (EXPECTED).f; *r = f(4);",
+        "let r = & mut ( EXPECTED );",
+        "let r = &raw mut (EXPECTED);",
+        // `ref mut` on a scrutinee place.
+        "let ref mut r = EXPECTED; *r = f(4);",
+        "let ref mut r: u32 = EXPECTED; *r = f(4);",
+        "let (ref mut a, b) = EXPECTED;",
+        "match EXPECTED { ref mut r => { *r = f(4); } }",
+        "match EXPECTED.f { ref mut r => { *r = f(4); } }",
+        "if let Some(ref mut x) = EXPECTED { *x = f(4); }",
+        "while let Some(ref mut x) = EXPECTED.f {}",
+        // `ref mut` on a path-qualified or grouped scrutinee.
+        "let ref mut r = crate::EXPECTED; *r = f(4);",
+        "let ref mut r = self::EXPECTED;",
+        "let ref mut r = m::n::EXPECTED;",
+        "let ref mut r = (crate::EXPECTED);",
+        "let ref mut r = ((EXPECTED));",
+        "if let Some(ref mut x) = crate::EXPECTED {}",
+        "if let Some(ref mut x) = self::EXPECTED {}",
+        "if let Some(ref mut x) = m::n::EXPECTED {}",
+        "while let Some(ref mut x) = crate::EXPECTED.f {}",
+        "while let Some(ref mut x) = m::n::EXPECTED {}",
+        "match crate::EXPECTED { ref mut r => {} }",
+        "match self::EXPECTED { ref mut r => {} }",
+        "match m::n::EXPECTED { ref mut r => {} }",
+        "match (crate::EXPECTED) { ref mut r => {} }",
+        "match (EXPECTED) { ref mut r => {} }",
+        // `addr_of_mut!` and its path-qualified spellings.
+        "let p = addr_of_mut!(EXPECTED); *p = f(4);",
+        "let p = ptr::addr_of_mut!(EXPECTED);",
+        "let p = std::ptr::addr_of_mut!( EXPECTED );",
+        "let p = addr_of_mut! (EXPECTED);",
+        "let p = addr_of_mut!((EXPECTED).f);",
+        "let p = addr_of_mut!(crate::EXPECTED); *p = f(4);",
+        "let p = std::ptr::addr_of_mut!(m::EXPECTED);",
+        "let p = addr_of_mut!( (EXPECTED) );",
+        "let p = addr_of_mut!(self::EXPECTED);",
+        // A path-qualified name behind `&mut`.
+        "let r = &mut crate::EXPECTED; *r = f(4);",
+        "let r = &mut self::EXPECTED;",
+        "let r = &mut m::n::EXPECTED;",
+        "let r = & mut ::EXPECTED;",
+        "let r = &mut (crate::EXPECTED);",
+        // A `?` / `.await` tail followed by a place write still refuses.
+        "foo(EXPECTED)?.x = 1;",
+        "foo(EXPECTED)?[0] = 1;",
+        "(foo(EXPECTED)?).x = 1;",
+        "foo(EXPECTED).await?.x = 1;",
+        "*foo(EXPECTED)? = 1;",
+    ] {
+        assert!(super::written_by_test(write, "EXPECTED", false), "{write}");
+    }
+    for read in [
+        "let r = &(EXPECTED);",
+        "let r = &mut foo(EXPECTED);",
+        "let r = &mut foo::bar(EXPECTED);",
+        "let r = x & (EXPECTED);",
+        "let r = &crate::EXPECTED;",
+        "let r = crate::EXPECTED;",
+        "let r = self::EXPECTED;",
+        "match crate::EXPECTED { _ => {} }",
+        "match m::n::EXPECTED { r => {} }",
+        "if let Some(x) = crate::EXPECTED {}",
+        "while let Some(x) = m::n::EXPECTED {}",
+        "let r = EXPECTED;",
+        "let mut r = EXPECTED;",
+        "let ref r = EXPECTED;",
+        "let ref mut r = other; let v = EXPECTED;",
+        "match EXPECTED { x => {} }",
+        "match EXPECTED { Some(ref x) => {} }",
+        "match other { ref mut r => {} } let v = EXPECTED;",
+        "if let Some(x) = EXPECTED {}",
+        "let p = addr_of!(EXPECTED);",
+        "let p = ptr::addr_of!(EXPECTED);",
+        "let p = my_addr_of_mut!(EXPECTED);",
+        // A `?` / `.await` after a call group only reads the argument.
+        "foo(EXPECTED)?;",
+        "let x = foo(EXPECTED)?;",
+        "assert_eq!(f(4), parse(EXPECTED)?);",
+        "foo(EXPECTED).await?;",
+        "let x = foo(EXPECTED).await;",
+        "bar(foo(EXPECTED)?);",
+    ] {
+        assert!(!super::written_by_test(read, "EXPECTED", false), "{read}");
     }
 }
 
