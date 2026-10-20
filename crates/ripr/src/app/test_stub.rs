@@ -971,15 +971,41 @@ pub(crate) fn package_manifest_for(root: &Path, stub: &RustTestStub) -> Option<P
 /// `autotests = false` without an explicit entry, an explicit entry that
 /// shadows the inferred name, or `required-features` that a bare
 /// `cargo test --test` would not enable.
-pub(crate) fn integration_target_name(
+#[cfg(test)]
+fn integration_target_name(root: &Path, manifest: &Path, stub: &RustTestStub) -> Option<String> {
+    match integration_target_lookup(root, manifest, stub) {
+        TargetLookup::Name(name) => Some(name),
+        TargetLookup::NotRegistered | TargetLookup::Unresolved => None,
+    }
+}
+
+/// Outcome of resolving an integration file's cargo test target.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TargetLookup {
+    /// The file is the target with this name.
+    Name(String),
+    /// Manifest evidence positively shows the file is not a registered target
+    /// under any runnable name.
+    NotRegistered,
+    /// The manifest, edition or an entry could not be resolved, or the target
+    /// is registered but not runnable by a bare command.
+    Unresolved,
+}
+
+pub(crate) fn integration_target_lookup(
     root: &Path,
     manifest: &Path,
     stub: &RustTestStub,
-) -> Option<String> {
+) -> TargetLookup {
+    lookup_inner(root, manifest, stub).unwrap_or(TargetLookup::Unresolved)
+}
+
+fn lookup_inner(root: &Path, manifest: &Path, stub: &RustTestStub) -> Option<TargetLookup> {
+    use TargetLookup::{Name, NotRegistered, Unresolved};
     let (TestStubPlacement::NewIntegrationFile { file }
     | TestStubPlacement::ExistingIntegrationFile { file }) = &stub.placement
     else {
-        return None;
+        return Some(Unresolved);
     };
     let text = std::fs::read_to_string(root.join(manifest)).ok()?;
     let parsed = text.parse::<toml::Table>().ok()?;
@@ -1004,6 +1030,13 @@ pub(crate) fn integration_target_name(
             .join(format!("{name}.rs"))
             .is_file()
     };
+    let dir_main_exists = |name: &str| {
+        root.join(package_dir)
+            .join("tests")
+            .join(name)
+            .join("main.rs")
+            .is_file()
+    };
     // A present `path` is the only candidate (an unusable one matches
     // nothing); the name-based default applies only when `path` is absent.
     let entry_matches = |entry: &toml::Table| -> bool {
@@ -1012,9 +1045,12 @@ pub(crate) fn integration_target_name(
                 .as_str()
                 .and_then(|path| normalize_components(Path::new(path)))
                 .is_some_and(|path| path == relative),
+            // Cargo drops a name-only entry when both layouts exist.
             None => entry_name(entry).is_some_and(|name| {
-                relative == format!("tests/{name}.rs")
-                    || (relative == format!("tests/{name}/main.rs") && !sibling_file_exists(&name))
+                let both = sibling_file_exists(&name) && dir_main_exists(&name);
+                !both
+                    && (relative == format!("tests/{name}.rs")
+                        || relative == format!("tests/{name}/main.rs"))
             }),
         }
     };
@@ -1032,9 +1068,15 @@ pub(crate) fn integration_target_name(
             .is_none_or(Vec::is_empty)
     };
     if let Some(entry) = explicit.iter().find(|entry| entry_matches(entry)) {
-        return entry_name(entry)
-            .filter(|name| !name.trim().is_empty())
-            .filter(|_| enabled(entry) && runnable(entry));
+        return Some(
+            match entry_name(entry)
+                .filter(|name| !name.trim().is_empty())
+                .filter(|_| enabled(entry) && runnable(entry))
+            {
+                Some(name) => Name(name),
+                None => Unresolved,
+            },
+        );
     }
     // Cargo's default for `autotests`: on for edition 2018+, but in edition
     // 2015 any explicit `[[test]]` turns legacy auto-discovery off unless
@@ -1044,16 +1086,15 @@ pub(crate) fn integration_target_name(
         Some(value) => value.as_bool()?,
     };
     if !autotests {
-        return None;
+        return Some(NotRegistered);
     }
-    let inferred = match relative
-        .strip_prefix("tests/")?
-        .split('/')
-        .collect::<Vec<_>>()[..]
-    {
-        [name] => name.strip_suffix(".rs")?,
+    let Some(tail) = relative.strip_prefix("tests/") else {
+        return Some(NotRegistered);
+    };
+    let inferred = match tail.split('/').collect::<Vec<_>>()[..] {
+        [name] if name.ends_with(".rs") => name.trim_end_matches(".rs"),
         [dir, "main.rs"] if !sibling_file_exists(dir) => dir,
-        _ => return None,
+        _ => return Some(NotRegistered),
     };
     // An explicit entry with the inferred name but another path replaces the
     // auto-discovered target, so this file is not reachable under that name.
@@ -1062,9 +1103,9 @@ pub(crate) fn integration_target_name(
             .iter()
             .any(|entry| entry_name(entry).as_deref() == Some(inferred))
     {
-        return None;
+        return Some(NotRegistered);
     }
-    Some(inferred.to_string())
+    Some(Name(inferred.to_string()))
 }
 
 /// The package's effective edition year: its own `edition`, or the workspace
@@ -1093,14 +1134,18 @@ fn package_edition(root: &Path, manifest: &Path, package: &toml::Table) -> Optio
     }
 }
 
-/// `/`-joined normal components of a relative path; `None` for `..`, roots
-/// or prefixes, which no manifest-relative target path can legitimately use.
+/// `/`-joined components of a relative path with `.` and in-package `..`
+/// resolved lexically; `None` for a `..` that escapes, roots or prefixes.
 fn normalize_components(path: &Path) -> Option<String> {
-    let mut parts = Vec::new();
+    let mut parts: Vec<String> = Vec::new();
     for component in path.components() {
         match component {
             std::path::Component::Normal(part) => parts.push(part.to_str()?.to_string()),
             std::path::Component::CurDir => {}
+            // Lexical `..` stays inside the package or the path is unusable.
+            std::path::Component::ParentDir => {
+                parts.pop()?;
+            }
             _ => return None,
         }
     }
@@ -1543,6 +1588,36 @@ mod tests {
             std::fs::write(root.join("pkg/tests/grp.rs"), "").map_err(|error| error.to_string())?;
             assert_eq!(got("", "pkg/tests/grp/main.rs")?, None);
             assert_eq!(got("", "pkg/tests/grp.rs")?, some("grp"));
+            // in-package `..` resolves lexically; an escaping one matches nothing
+            let dotdot = "[[test]]\nname = \"pricing\"\npath = \"tests/../tests/discount.rs\"\n";
+            assert_eq!(got(dotdot, "pkg/tests/discount.rs")?, some("pricing"));
+            let escape = "[[test]]\nname = \"discount\"\npath = \"../pkg/tests/discount.rs\"\n";
+            assert_eq!(got(escape, "pkg/tests/discount.rs")?, None);
+            // a name-only entry is ambiguous when both layouts exist
+            std::fs::create_dir_all(root.join("pkg/tests/amb"))
+                .map_err(|error| error.to_string())?;
+            std::fs::write(root.join("pkg/tests/amb.rs"), "").map_err(|error| error.to_string())?;
+            std::fs::write(root.join("pkg/tests/amb/main.rs"), "")
+                .map_err(|error| error.to_string())?;
+            let amb = "[[test]]\nname = \"amb\"\n";
+            assert_eq!(got(amb, "pkg/tests/amb.rs")?, None);
+            assert_eq!(got(amb, "pkg/tests/amb/main.rs")?, None);
+            // positive vs unresolved lookups
+            std::fs::write(
+                root.join("pkg/Cargo.toml"),
+                "[package]\nname = \"pkg\"\nautotests = false\n",
+            )
+            .map_err(|error| error.to_string())?;
+            let lookup = |file: &str| {
+                integration_target_lookup(&root, Path::new("pkg/Cargo.toml"), &stub(file))
+            };
+            assert_eq!(lookup("pkg/tests/discount.rs"), TargetLookup::NotRegistered);
+            std::fs::write(
+                root.join("pkg/Cargo.toml"),
+                "[package]\nname = \"pkg\"\nedition = \"future\"\n[[test]]\nname = \"o\"\npath = \"tests/o.rs\"\n",
+            )
+            .map_err(|error| error.to_string())?;
+            assert_eq!(lookup("pkg/tests/discount.rs"), TargetLookup::Unresolved);
             Ok::<(), String>(())
         })();
         let _ = std::fs::remove_dir_all(&root);
