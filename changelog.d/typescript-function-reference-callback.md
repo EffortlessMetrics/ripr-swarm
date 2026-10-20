@@ -5,4 +5,4 @@
   `no_static_path`. The reference resolves only for a parameterless,
   non-generator declaration mentioned nowhere else except as a titled
   `test` / `it` callback; a call, reassignment, same-named binding, export,
-  second declaration or `.each` / `.skip` form still refuses (#8924).
+  second declaration or `.each` / `.skip` form still refuses (#8938).
