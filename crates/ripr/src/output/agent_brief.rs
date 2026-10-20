@@ -1,7 +1,8 @@
 use crate::agent::loop_commands::{
     WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_SEAM_PACKETS_ARTIFACT,
     WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, agent_seam_packets_command, agent_verify_command,
-    anchored_redirect_target, bound_root, check_repo_exposure_command, display_path, shell_arg,
+    anchored_redirect_target, bound_root, check_repo_exposure_command, display_path,
+    root_path_display, shell_arg,
 };
 use crate::analysis::canonical_gap::canonical_gap_identities;
 use crate::app::Mode;
@@ -30,7 +31,11 @@ pub(crate) fn render_agent_brief_json(
     if let Some(warning) = causal_projection_warning {
         warnings.push(warning);
     }
-    let command_root = bound_root(&display_path(root));
+    // `root_path_display` before `bound_root`, like the CLI recovery route:
+    // `display_path` would turn a literal backslash in a Unix path into a
+    // separator, so the pasted command would target a different directory
+    // (#4287, #8995).
+    let command_root = bound_root(&root_path_display(root));
     let mut value = json!({
         "schema_version": AGENT_BRIEF_SCHEMA_VERSION,
         "tool": "ripr",
@@ -181,7 +186,10 @@ fn top_seam_json(
 }
 
 fn verification_json(root: &Path, mode: &Mode, recommended_name: &str) -> Value {
-    let root = bound_root(&display_path(root));
+    // Same root rule as `render_agent_brief_json` (#8995): the root keeps its
+    // literal characters before `bound_root`, so a pasted snapshot or verify
+    // command names this checkout.
+    let root = bound_root(&root_path_display(root));
     json!({
         "before_snapshot_command": prepare_workflow_command(
             &root,
@@ -472,6 +480,41 @@ mod tests {
             .ok_or("concrete target must keep a suggested command")?;
         if command != "cargo test parse_port_exact_error_variant" {
             return Err(format!("unexpected suggested command: {command}"));
+        }
+        Ok(())
+    }
+
+    /// #8995: a Unix checkout whose path contains a literal backslash still
+    /// names the user's checkout in every pasted brief command; `display_path`
+    /// would have rewritten the backslash into a separator and the pasted
+    /// command would target a different directory. On Windows `\` is a
+    /// separator and the rendered root keeps stable `/` separators, exactly
+    /// as before.
+    #[test]
+    fn agent_brief_verification_preserves_a_literal_backslash_unix_root() -> Result<(), String> {
+        let value = verification_json(Path::new("/tmp/team\\repo"), &Mode::Draft, "not_applicable");
+        let before = value["before_snapshot_command"]
+            .as_str()
+            .ok_or("before_snapshot_command is a string")?;
+        let verify = value["verify_command"]
+            .as_str()
+            .ok_or("verify_command is a string")?;
+        if cfg!(unix) {
+            for command in [before, verify] {
+                if !command.contains("--root '/tmp/team\\repo'") {
+                    return Err(format!(
+                        "command must keep the literal backslash: {command}"
+                    ));
+                }
+            }
+        } else {
+            for command in [before, verify] {
+                if !command.contains("tmp/team/repo") {
+                    return Err(format!(
+                        "command must render stable separators on Windows: {command}"
+                    ));
+                }
+            }
         }
         Ok(())
     }

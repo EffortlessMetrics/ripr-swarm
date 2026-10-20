@@ -16974,3 +16974,23 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0291"
+name = "Agent brief start-command root display contract"
+spec = "docs/specs/RIPR-SPEC-0291-agent-brief-root-display.md"
+tests = [
+  "crates/ripr/src/output/agent_brief.rs::tests::agent_brief_verification_preserves_a_literal_backslash_unix_root",
+  "crates/ripr/src/output/agent_brief.rs::tests::agent_brief_json_renders_ranked_seam_summary",
+  "crates/ripr/src/output/agent_brief.rs::tests::agent_brief_json_renders_loaded_config_and_empty_file_scope",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/output/agent_brief.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0291-agent-brief-root-display.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
