@@ -10383,6 +10383,21 @@ fn text_declared_constants(text: &str) -> Vec<(String, String)> {
     found
 }
 
+/// Whether a `static`, `const` or `use` item in the body names `word`
+/// (#8929): an inner-block `static EXPECTED: AtomicU32 = ..` redeclares the
+/// name after a plain top-level `let`, so the later `&EXPECTED` borrows the
+/// static, which a callee may write. The item's header up to its `=` or `;`
+/// is scanned for the word.
+fn item_names_word(masked: &str, word: &str) -> bool {
+    ["static", "const", "use"].iter().any(|keyword| {
+        whole_word_offsets(masked, keyword).into_iter().any(|at| {
+            let rest = &masked[at + keyword.len()..];
+            let end = rest.find([';', '=']).unwrap_or(rest.len());
+            contains_as_whole_word(&rest[..end], word)
+        })
+    })
+}
+
 /// #6974 review: whether the test body names the owner anywhere but the
 /// assertion under review. When it does not, no binding in the test can
 /// hold an owner call, so table-driven expected values (`#[case] want`,
@@ -10423,7 +10438,8 @@ fn expected_binding_calls_owner(test: &TestSummary, expected: &str, name: &str) 
             // name, so a plain `let` counts only when it is the name's first
             // use, at the test body's top level (#8795).
             let plain = bindings.as_deref().is_some_and(plain_let_values)
-                && first_use_is_top_level_let(&masked_body, word);
+                && first_use_is_top_level_let(&masked_body, word)
+                && !item_names_word(&masked_body, word);
             if bound_by_macro(&masked_body, word) || written_by_test(&masked_body, word, plain) {
                 return true;
             }
@@ -10470,7 +10486,13 @@ fn written_by_test(masked: &str, name: &str, plain: bool) -> bool {
         if in_let_annotation(before) {
             return false;
         }
-        if mut_borrow_before(before) {
+        if mut_borrow_before(before) || addr_of_mut_before(before) {
+            return true;
+        }
+        // `let ref mut r = name;`, `if let Some(ref mut x) = name {}` and
+        // `match name { ref mut r => .. }` bind a mutable reference into the
+        // place, so a later `*r = ..` writes it (#8929).
+        if ref_mut_scrutinee(before, &masked[offset + name.len()..]) {
             return true;
         }
         // A `let` (or `let mut`) declaration is the binding the let scan reads.
@@ -10579,10 +10601,38 @@ fn first_use_is_top_level_let(masked: &str, name: &str) -> bool {
     })
 }
 
+/// `before` without the grouping and path qualifiers that sit between a
+/// borrow operator and the name it borrows: `(` (`&mut (name)`,
+/// `&mut (name).f`) and `crate::` / `self::` / `m::` path segments
+/// (`&mut crate::name`), in any combination (#8929). A call opener
+/// (`&mut foo(name)`) leaves the callee ident, so it is not a borrow of the
+/// name.
+fn peel_group_and_path(before: &str) -> &str {
+    let mut head = before.trim_end();
+    loop {
+        if let Some(rest) = head.strip_suffix('(') {
+            head = rest.trim_end();
+        } else if let Some(rest) = head.strip_suffix("::") {
+            let rest = rest.trim_end();
+            let qualifier = rest.trim_end_matches(|c: char| c.is_ascii_alphanumeric() || c == '_');
+            // `& mut ::name` has an empty qualifier: keep the `mut` keyword.
+            head = if rest.ends_with("mut") && rest.len() - qualifier.len() == "mut".len() {
+                rest
+            } else {
+                qualifier.trim_end()
+            };
+        } else {
+            return head;
+        }
+    }
+}
+
 /// Whether `before` ends in a mutable borrow operator: `&mut`, `& mut` or
-/// `&raw mut` (with any whitespace between the tokens).
+/// `&raw mut` (with any whitespace between the tokens), optionally followed
+/// by grouping parentheses or a path qualifier (`&mut (name)`,
+/// `&mut crate::name`).
 fn mut_borrow_before(before: &str) -> bool {
-    let Some(head) = before.strip_suffix("mut") else {
+    let Some(head) = peel_group_and_path(before).strip_suffix("mut") else {
         return false;
     };
     let head = head.trim_end();
@@ -10590,6 +10640,79 @@ fn mut_borrow_before(before: &str) -> bool {
         || head
             .strip_suffix("raw")
             .is_some_and(|rest| rest.trim_end().ends_with('&'))
+}
+
+/// Whether `before` ends in the opener of an `addr_of_mut!` call
+/// (`addr_of_mut!(name`, `ptr::addr_of_mut!(name`,
+/// `std::ptr::addr_of_mut!((name`): the macro form of `&raw mut`, and the
+/// idiomatic spelling of a mutable static borrow in edition 2024 (#8929).
+/// Shared `addr_of!` and a longer macro name (`my_addr_of_mut!`) do not match.
+fn addr_of_mut_before(before: &str) -> bool {
+    let head = before
+        .trim_end()
+        .trim_end_matches(['(', '[', '{'])
+        .trim_end();
+    let Some(head) = head.strip_suffix('!') else {
+        return false;
+    };
+    head.trim_end()
+        .strip_suffix("addr_of_mut")
+        .is_some_and(|rest| {
+            !rest
+                .as_bytes()
+                .last()
+                .is_some_and(|byte| is_ident_byte(*byte))
+        })
+}
+
+/// Whether the name is the scrutinee of a pattern that binds `ref mut`
+/// (#8929): the right side of a `let` / `if let` / `while let` whose pattern
+/// contains `ref mut`, or the head of a `match` whose arms do. `rest` is the
+/// text after the name. The binding is a mutable reference into the place,
+/// so a later `*r = ..` writes it; the scan cannot follow `r`, so it refuses.
+fn ref_mut_scrutinee(before: &str, rest: &str) -> bool {
+    let head = before.trim_end().trim_end_matches('(').trim_end();
+    if let Some(pattern_end) = head.strip_suffix('=') {
+        // `==`, `<=`, `+=` and the like compare or assign; only a bare `=`
+        // after a `let` pattern binds.
+        if pattern_end.ends_with(['=', '!', '<', '>', '+', '-', '*', '/', '%', '|', '&', '^']) {
+            return false;
+        }
+        return whole_word_offsets(pattern_end, "let")
+            .into_iter()
+            .next_back()
+            .is_some_and(|at| has_ref_mut(&pattern_end[at + "let".len()..]));
+    }
+    if head
+        .strip_suffix("match")
+        .is_some_and(|rest| !rest.as_bytes().last().is_some_and(|b| is_ident_byte(*b)))
+    {
+        let mut depth = 0usize;
+        for (at, character) in rest.char_indices() {
+            match character {
+                '(' | '[' => depth += 1,
+                ')' | ']' => depth = depth.saturating_sub(1),
+                ';' if depth == 0 => return false,
+                '{' if depth == 0 => {
+                    let group = &rest[at..];
+                    let end = skip_balanced(group, '{', '}')
+                        .map_or(group.len(), |after| group.len() - after.len());
+                    return has_ref_mut(&group[..end]);
+                }
+                _ => {}
+            }
+        }
+    }
+    false
+}
+
+/// Whether `text` contains the `ref mut` binding-mode tokens.
+fn has_ref_mut(text: &str) -> bool {
+    whole_word_offsets(text, "ref").into_iter().any(|at| {
+        let tail = text[at + "ref".len()..].trim_start();
+        tail.strip_prefix("mut")
+            .is_some_and(|after| !after.as_bytes().first().is_some_and(|b| is_ident_byte(*b)))
+    })
 }
 
 /// Whether the text before a name sits inside a `let` pattern's type
@@ -10849,9 +10972,27 @@ fn destructured_into(rest: &str) -> bool {
                 // The enclosing group closed: what follows decides.
                 // What follows may be a place chain (`(name)[0] = ..`,
                 // `m![name][i] = ..`): read it like any place expression.
-                let mut tail = rest[at..].trim_start_matches([')', ']', '}']);
-                tail = tail.trim_start();
-                return place_is_written(tail);
+                // A bare `?` or `.await` after the group is transparent
+                // (`foo(name)?;`, `foo(name).await?`): the value is read, and
+                // only a `.`, `[` or assignment after it writes (#8929).
+                let mut tail = &rest[at..];
+                loop {
+                    let trimmed = tail.trim_start_matches([')', ']', '}']).trim_start();
+                    let trimmed = trimmed.strip_prefix('?').unwrap_or(trimmed);
+                    let trimmed = match trimmed.trim_start().strip_prefix(".await") {
+                        Some(after)
+                            if !after.as_bytes().first().is_some_and(|b| is_ident_byte(*b)) =>
+                        {
+                            after
+                        }
+                        _ => trimmed,
+                    };
+                    if trimmed.len() == tail.len() {
+                        break;
+                    }
+                    tail = trimmed;
+                }
+                return place_is_written(tail.trim_start());
             }
             ';' if depth == 0 => return false,
             _ => {}
