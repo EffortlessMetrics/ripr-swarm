@@ -1323,6 +1323,22 @@ Evidence
 }
 
 #[test]
+fn evidence_promotion_human_oracle_line_accepts_unclassified_ungraded_wording() {
+    let line = "- related test tests/a.rs:3 t uses an unclassified oracle, not graded against this probe: assert_eq!(f(), 1)";
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        line, "unknown", "unknown"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "exact_value",
+        "unknown"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line, "unknown", "strong"
+    ));
+}
+
+#[test]
 fn evidence_promotion_semantic_assertions_accept_human_oracle_projection() {
     let assertions = vec![super::EvidencePromotionSemanticAssertion::ExpectedOracle {
         kind: "exact_value".to_string(),
