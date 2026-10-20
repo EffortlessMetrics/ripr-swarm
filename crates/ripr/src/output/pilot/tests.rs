@@ -2024,11 +2024,11 @@ fn pilot_repair_line_follows_the_canonical_pilot_decision() -> Result<(), String
 /// would target a different directory. On Windows `\` is a separator and the
 /// rendered root keeps stable `/` separators, exactly as before.
 #[test]
-fn pilot_repair_start_preserves_a_literal_backslash_unix_root() {
+fn pilot_repair_start_preserves_a_literal_backslash_unix_root() -> Result<(), String> {
     let entry = route_ready_entry(&["tests/pricing.rs"]);
     let root = Path::new("/tmp/team\\repo");
     let route = commands::repair_start_command(root, &entry)
-        .unwrap_or_else(|| panic!("eligible seam must offer a repair start"));
+        .ok_or_else(|| "eligible seam must offer a repair start".to_string())?;
     if cfg!(unix) {
         assert!(
             route.contains("--root '/tmp/team\\repo'"),
@@ -2040,6 +2040,7 @@ fn pilot_repair_start_preserves_a_literal_backslash_unix_root() {
             "route must render stable separators on Windows: {route}"
         );
     }
+    Ok(())
 }
 
 fn discovered_files(
