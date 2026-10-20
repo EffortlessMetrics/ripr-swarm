@@ -1,0 +1,112 @@
+{
+  "observed_at": "2026-10-20T21:22:21Z",
+  "candidate": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+  "tree": "a95152443df8c08ef30e8ad0fe2b5fc863233cdf",
+  "reviewed_merge": {
+    "commit": "fd2947af890f156aa63abb1c58028ec5345e6a5d",
+    "parents": [
+      "fc3589098d5b9c9340861f65bbb2ecbf80d95c2f",
+      "1a525eaaba07bb416a83a4f4d76c833a20cb5256"
+    ],
+    "tree": "8f8bd0d33b1d6e8b5e433ac8f6499732d8b12c1e"
+  },
+  "ready": true,
+  "labels": [
+    "merge-ready"
+  ],
+  "auto_merge": null,
+  "request_run": 39499639623,
+  "attempt": 1,
+  "runs": [
+    {
+      "id": 39499639373,
+      "name": "Test Analytics",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "pull_request",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39499639373"
+    },
+    {
+      "id": 39499639378,
+      "name": "Future Clippy (advisory)",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "pull_request",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39499639378"
+    },
+    {
+      "id": 39499639662,
+      "name": "Coverage",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "pull_request",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39499639662"
+    },
+    {
+      "id": 39499639319,
+      "name": "macOS Advisory",
+      "status": "completed",
+      "conclusion": "skipped",
+      "event": "pull_request",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39499639319"
+    },
+    {
+      "id": 39499639753,
+      "name": "Printed Command Paste",
+      "status": "in_progress",
+      "conclusion": null,
+      "event": "pull_request",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39499639753"
+    },
+    {
+      "id": 39499640051,
+      "name": "CI",
+      "status": "in_progress",
+      "conclusion": null,
+      "event": "pull_request",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39499640051"
+    },
+    {
+      "id": 39499639295,
+      "name": "Windows Advisory",
+      "status": "in_progress",
+      "conclusion": null,
+      "event": "pull_request",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39499639295"
+    },
+    {
+      "id": 39499639623,
+      "name": "Merge-ready request 1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "status": "in_progress",
+      "conclusion": null,
+      "event": "pull_request",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39499639623"
+    },
+    {
+      "id": 39499639331,
+      "name": "Security",
+      "status": "completed",
+      "conclusion": "success",
+      "event": "pull_request",
+      "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+      "url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39499639331"
+    }
+  ],
+  "carried_exact_head_evidence": "278cbf64c2364dafb6563c42e3e8b5c86de76a20",
+  "carried_execution_time": "2026-10-20 ~06:00 UTC; no fresh rerun claimed",
+  "holds": [
+    "merge",
+    "auto-merge",
+    "release",
+    "deployment"
+  ],
+  "diagnostic_restriction": "Previously denied artifact/payload materialization not retried."
+}

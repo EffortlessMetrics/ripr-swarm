@@ -1,0 +1,106 @@
+{
+  "recorded_at": "2026-10-20T22:31:02.128315+00:00",
+  "source": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+  "actual_checkout": "fd2947af890f156aa63abb1c58028ec5345e6a5d",
+  "run": 39499639623,
+  "attempt": 1,
+  "conclusion": "success",
+  "late_review_disposition": "REPAIR_REQUIRED; historical qualification does not bless later repair",
+  "files": [
+    {
+      "path": "README.md",
+      "bytes": 1601,
+      "sha256": "aaa26e95c6d746b8f1eefa9cccf661ca58f670bb384d8b01058d475c041cc3ef"
+    },
+    {
+      "path": "admission.log",
+      "bytes": 49512,
+      "sha256": "ee941035a9bafe314acf95ff430e914977a4c54a1a94c52604bb66e604e3c144"
+    },
+    {
+      "path": "job-118893555667.log",
+      "bytes": 174844,
+      "sha256": "0f90fac4b737f43ae9baf0b0681031194dda510bd6ed3c34b0e583586b32d120"
+    },
+    {
+      "path": "job-118893557064.log",
+      "bytes": 42583,
+      "sha256": "32180293da0605f274eaa88c3a377801934ac9b12210805d39377e56988c0b39"
+    },
+    {
+      "path": "job-118893557414.log",
+      "bytes": 72053,
+      "sha256": "8fbd311e89e945aafc5a67b9a8a5c87533cd1cb6043243968308b1b45f69544f"
+    },
+    {
+      "path": "job-118893557609.log",
+      "bytes": 70001,
+      "sha256": "426dbc9323e4802eb1d4267e3a91ce6eb2b370d4ebb9070758cad0ad2eed37c7"
+    },
+    {
+      "path": "job-118893559591.log",
+      "bytes": 1718102,
+      "sha256": "ed9fae7e0691861fb432a3a34b5353fee91ebe5c13a4a53a9fc9ff405a22c2b8"
+    },
+    {
+      "path": "job-118893843758.log",
+      "bytes": 3124506,
+      "sha256": "5ad13ca2a7b572344b87aa8ab45da4e73e7ab4f7bb4efe8ac048ffc6f589e3e8"
+    },
+    {
+      "path": "qualification-receipt.json",
+      "bytes": 2140,
+      "sha256": "0e334083effde7d509396dd631495d31e9f440c61c5a16a5e7d6c21399bb5ea6"
+    },
+    {
+      "path": "request.json",
+      "bytes": 3716,
+      "sha256": "ee650c05e998380681cc1073bbdda459e2df2eaa64b7d7d9c4339743ba9aa457"
+    },
+    {
+      "path": "review-conversations.json",
+      "bytes": 45289,
+      "sha256": "f4869ebba1fd6e8a514e06f0eda626784cb608189f2ad905e63117fcccd96663"
+    },
+    {
+      "path": "rust-only-receipt.json",
+      "bytes": 1388,
+      "sha256": "43926f7550d298b2cce0f3c786d73954aeb4baf3f36f502ff1aeaff185b784d2"
+    },
+    {
+      "path": "surface-detection.log",
+      "bytes": 105438,
+      "sha256": "29cfc98da9000a3a11f4b0141bc9079856769b7c9052afcc15bfa05f4816ac8a"
+    },
+    {
+      "path": "terminal-artifacts.json",
+      "bytes": 1862,
+      "sha256": "f0086619ca13d62ecbbd921363c975a2fb732f03e8c3037712812dc5df84da90"
+    },
+    {
+      "path": "terminal-paste.json",
+      "bytes": 15431,
+      "sha256": "ecbc2bccc3c26a49c70a41f71da36d560625c6863252608236c9e6e69f0dcba6"
+    },
+    {
+      "path": "terminal-run.json",
+      "bytes": 43215,
+      "sha256": "27b3e074d82474f81780c22a7f8dc2bb959ec98e4babe267ce62e0ad9e41ed30"
+    },
+    {
+      "path": "terminal-rust-only.json",
+      "bytes": 15394,
+      "sha256": "5511c9b6f54a586ea824df6f5774f02ac14872f975a7bf24845531f29f38cb26"
+    },
+    {
+      "path": "terminal-windows.json",
+      "bytes": 15422,
+      "sha256": "9920ac929612ee1cd787e932aa37c7ce9c45e06319a083e2ab52e24e8f345f5a"
+    },
+    {
+      "path": "windows-disposition.json",
+      "bytes": 3727,
+      "sha256": "f6581d7adbe678f7ab9dd3aff0f896ea2a5ee73ad1733198fc7885ea213d7c9a"
+    }
+  ]
+}

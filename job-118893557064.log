@@ -1,0 +1,536 @@
+﻿2026-10-20T21:21:12.3056130Z Current runner version: '2.338.0'
+2026-10-20T21:21:12.3102930Z ##[group]Runner Image Provisioner
+2026-10-20T21:21:12.3104850Z Hosted Compute Agent
+2026-10-20T21:21:12.3105840Z Version: 20261012.601
+2026-10-20T21:21:12.3106910Z Commit: f3dc54e1fb89da6852db922499a0233137369e1d
+2026-10-20T21:21:12.3139570Z Build Date: 2026-10-12T17:48:21Z
+2026-10-20T21:21:12.3141130Z Worker ID: {60efb379-4e77-4305-8501-581f47d1496b}
+2026-10-20T21:21:12.3142330Z Region: westus
+2026-10-20T21:21:12.3143230Z Cloud: MacCloud
+2026-10-20T21:21:12.3144290Z ##[endgroup]
+2026-10-20T21:21:12.3147900Z ##[group]Operating System
+2026-10-20T21:21:12.3148950Z macOS
+2026-10-20T21:21:12.3149810Z 26.6.2
+2026-10-20T21:21:12.3150600Z 25G83
+2026-10-20T21:21:12.3151420Z ##[endgroup]
+2026-10-20T21:21:12.3152320Z ##[group]Runner Image
+2026-10-20T21:21:12.3153280Z Image: macos-26-arm64
+2026-10-20T21:21:12.3154250Z Version: 20261013.0424.1
+2026-10-20T21:21:12.3156520Z Included Software: https://github.com/actions/runner-images/blob/macos-26-arm64/20261013.0424/images/macos/macos-26-arm64-Readme.md
+2026-10-20T21:21:12.3159350Z Image Release: https://github.com/actions/runner-images/releases/tag/macos-26-arm64%2F20261013.0424
+2026-10-20T21:21:12.3161110Z ##[endgroup]
+2026-10-20T21:21:12.3163040Z ##[group]GITHUB_TOKEN Permissions
+2026-10-20T21:21:12.3169880Z Contents: read
+2026-10-20T21:21:12.3170860Z Metadata: read
+2026-10-20T21:21:12.3171780Z ##[endgroup]
+2026-10-20T21:21:12.3176360Z Secret source: Actions
+2026-10-20T21:21:12.3178920Z Cache mode: write
+2026-10-20T21:21:12.3180210Z Prepare workflow directory
+2026-10-20T21:21:12.3578540Z Prepare all required actions
+2026-10-20T21:21:12.3641840Z Getting action download info
+2026-10-20T21:21:12.7922790Z Download action repository 'actions/checkout@v6' (SHA:d23441a48e516b6c34aea4fa41551a30e30af803)
+2026-10-20T21:21:13.1089110Z Download action repository 'dtolnay/rust-toolchain@1.95' (SHA:035fceb3c12fb0c6a9461b52775e16473133e591)
+2026-10-20T21:21:13.4130800Z Download action repository 'Swatinem/rust-cache@v2' (SHA:d1527c8f67ef9af357290475d4af4b0fab8f12e0)
+2026-10-20T21:21:13.8479480Z Download action repository 'actions/upload-artifact@v7' (SHA:cf430e030ddbb5b0abf93d22962f4752f3646cd9)
+2026-10-20T21:21:14.4233520Z Complete job name: paste-macos-latest
+2026-10-20T21:21:14.5014930Z ##[group]Run actions/checkout@v6
+2026-10-20T21:21:14.5015610Z with:
+2026-10-20T21:21:14.5016080Z   repository: EffortlessMetrics/ripr-swarm
+2026-10-20T21:21:14.5019640Z   token: ***
+2026-10-20T21:21:14.5020010Z   ssh-strict: true
+2026-10-20T21:21:14.5020440Z   ssh-user: git
+2026-10-20T21:21:14.5020800Z   persist-credentials: true
+2026-10-20T21:21:14.5021180Z   clean: true
+2026-10-20T21:21:14.5021570Z   sparse-checkout-cone-mode: true
+2026-10-20T21:21:14.5022080Z   fetch-depth: 1
+2026-10-20T21:21:14.5022450Z   fetch-tags: false
+2026-10-20T21:21:14.5022800Z   show-progress: true
+2026-10-20T21:21:14.5023700Z   lfs: false
+2026-10-20T21:21:14.5024070Z   submodules: false
+2026-10-20T21:21:14.5024450Z   set-safe-directory: true
+2026-10-20T21:21:14.5025020Z   allow-unsafe-pr-checkout: false
+2026-10-20T21:21:14.5025740Z ##[endgroup]
+2026-10-20T21:21:14.9939600Z Syncing repository: EffortlessMetrics/ripr-swarm
+2026-10-20T21:21:14.9941850Z ##[group]Getting Git version info
+2026-10-20T21:21:14.9942950Z Working directory is '/Users/runner/work/ripr-swarm/ripr-swarm'
+2026-10-20T21:21:14.9944390Z [command]/opt/homebrew/bin/git version
+2026-10-20T21:21:15.0243220Z git version 2.56.0
+2026-10-20T21:21:15.0269000Z ##[endgroup]
+2026-10-20T21:21:15.0282880Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/0cb91a31-9d70-48dd-b787-03187fbb3680/.gitconfig'
+2026-10-20T21:21:15.0288680Z Temporarily overriding HOME='/Users/runner/work/_temp/0cb91a31-9d70-48dd-b787-03187fbb3680' before making global git config changes
+2026-10-20T21:21:15.0294290Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-20T21:21:15.0299400Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/ripr-swarm/ripr-swarm
+2026-10-20T21:21:15.0489880Z Deleting the contents of '/Users/runner/work/ripr-swarm/ripr-swarm'
+2026-10-20T21:21:15.0502380Z ##[group]Determining repository object format
+2026-10-20T21:21:15.0505830Z ##[endgroup]
+2026-10-20T21:21:15.0507210Z ##[group]Initializing the repository
+2026-10-20T21:21:15.0514370Z [command]/opt/homebrew/bin/git init /Users/runner/work/ripr-swarm/ripr-swarm
+2026-10-20T21:21:15.0888510Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-10-20T21:21:15.0892980Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-10-20T21:21:15.0895260Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-10-20T21:21:15.0897080Z hint: call:
+2026-10-20T21:21:15.0897780Z hint:
+2026-10-20T21:21:15.0898610Z hint: 	git config --global init.defaultBranch <name>
+2026-10-20T21:21:15.0899980Z hint:
+2026-10-20T21:21:15.0900970Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-10-20T21:21:15.0902790Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-10-20T21:21:15.0904180Z hint:
+2026-10-20T21:21:15.0904910Z hint: 	git branch -m <name>
+2026-10-20T21:21:15.0905680Z hint:
+2026-10-20T21:21:15.0906840Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-10-20T21:21:15.0908790Z Initialized empty Git repository in /Users/runner/work/ripr-swarm/ripr-swarm/.git/
+2026-10-20T21:21:15.0919060Z [command]/opt/homebrew/bin/git remote add origin https://github.com/EffortlessMetrics/ripr-swarm
+2026-10-20T21:21:15.1034420Z ##[endgroup]
+2026-10-20T21:21:15.1036030Z ##[group]Disabling automatic garbage collection
+2026-10-20T21:21:15.1037560Z [command]/opt/homebrew/bin/git config --local gc.auto 0
+2026-10-20T21:21:15.1119720Z ##[endgroup]
+2026-10-20T21:21:15.1121220Z ##[group]Setting up auth
+2026-10-20T21:21:15.1122250Z Removing SSH command configuration
+2026-10-20T21:21:15.1129310Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-20T21:21:15.1263470Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-20T21:21:15.3272970Z Removing HTTP extra header
+2026-10-20T21:21:15.3276940Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-20T21:21:15.3379630Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-20T21:21:15.4597500Z Removing includeIf entries pointing to credentials config files
+2026-10-20T21:21:15.4599720Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-20T21:21:15.4688110Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-20T21:21:15.5804950Z [command]/opt/homebrew/bin/git config --file /Users/runner/work/_temp/git-credentials-a70a536b-ac68-4acf-81ec-146f87fcd5f9.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-10-20T21:21:15.5906690Z [command]/opt/homebrew/bin/git config --local includeIf.gitdir:/Users/runner/work/ripr-swarm/ripr-swarm/.git.path /Users/runner/work/_temp/git-credentials-a70a536b-ac68-4acf-81ec-146f87fcd5f9.config
+2026-10-20T21:21:15.5996640Z [command]/opt/homebrew/bin/git config --local includeIf.gitdir:/Users/runner/work/ripr-swarm/ripr-swarm/.git/worktrees/*.path /Users/runner/work/_temp/git-credentials-a70a536b-ac68-4acf-81ec-146f87fcd5f9.config
+2026-10-20T21:21:15.6083660Z [command]/opt/homebrew/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-a70a536b-ac68-4acf-81ec-146f87fcd5f9.config
+2026-10-20T21:21:15.6166050Z [command]/opt/homebrew/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-a70a536b-ac68-4acf-81ec-146f87fcd5f9.config
+2026-10-20T21:21:15.6240550Z ##[endgroup]
+2026-10-20T21:21:15.6241760Z ##[group]Fetching the repository
+2026-10-20T21:21:15.6257050Z [command]/opt/homebrew/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +fd2947af890f156aa63abb1c58028ec5345e6a5d:refs/remotes/pull/8961/merge
+2026-10-20T21:21:19.9089290Z From https://github.com/EffortlessMetrics/ripr-swarm
+2026-10-20T21:21:19.9091560Z  * [new ref]           fd2947af890f156aa63abb1c58028ec5345e6a5d -> pull/8961/merge
+2026-10-20T21:21:19.9105640Z ##[endgroup]
+2026-10-20T21:21:19.9106260Z ##[group]Determining the checkout info
+2026-10-20T21:21:19.9106930Z ##[endgroup]
+2026-10-20T21:21:19.9112320Z [command]/opt/homebrew/bin/git sparse-checkout disable
+2026-10-20T21:21:19.9221250Z [command]/opt/homebrew/bin/git config --local --unset-all extensions.worktreeConfig
+2026-10-20T21:21:19.9322390Z ##[group]Checking out the ref
+2026-10-20T21:21:19.9324790Z [command]/opt/homebrew/bin/git checkout --progress --force refs/remotes/pull/8961/merge
+2026-10-20T21:21:21.0493880Z Updating files:  36% (4957/13576)
+2026-10-20T21:21:21.0690490Z Updating files:  37% (5024/13576)
+2026-10-20T21:21:21.0895800Z Updating files:  38% (5159/13576)
+2026-10-20T21:21:21.1125170Z Updating files:  39% (5295/13576)
+2026-10-20T21:21:21.1351500Z Updating files:  40% (5431/13576)
+2026-10-20T21:21:21.1573620Z Updating files:  41% (5567/13576)
+2026-10-20T21:21:21.1864780Z Updating files:  42% (5702/13576)
+2026-10-20T21:21:21.2127000Z Updating files:  43% (5838/13576)
+2026-10-20T21:21:21.2306560Z Updating files:  44% (5974/13576)
+2026-10-20T21:21:21.2514780Z Updating files:  45% (6110/13576)
+2026-10-20T21:21:21.2725450Z Updating files:  46% (6245/13576)
+2026-10-20T21:21:21.3005320Z Updating files:  47% (6381/13576)
+2026-10-20T21:21:21.3207440Z Updating files:  48% (6517/13576)
+2026-10-20T21:21:21.3375150Z Updating files:  49% (6653/13576)
+2026-10-20T21:21:21.3684090Z Updating files:  50% (6788/13576)
+2026-10-20T21:21:21.4215630Z Updating files:  51% (6924/13576)
+2026-10-20T21:21:21.4434210Z Updating files:  52% (7060/13576)
+2026-10-20T21:21:21.4765820Z Updating files:  53% (7196/13576)
+2026-10-20T21:21:21.5288280Z Updating files:  54% (7332/13576)
+2026-10-20T21:21:21.5585160Z Updating files:  55% (7467/13576)
+2026-10-20T21:21:21.5832400Z Updating files:  56% (7603/13576)
+2026-10-20T21:21:21.6186440Z Updating files:  57% (7739/13576)
+2026-10-20T21:21:21.6447320Z Updating files:  58% (7875/13576)
+2026-10-20T21:21:21.6629310Z Updating files:  59% (8010/13576)
+2026-10-20T21:21:21.6830990Z Updating files:  60% (8146/13576)
+2026-10-20T21:21:21.7037330Z Updating files:  61% (8282/13576)
+2026-10-20T21:21:21.7244250Z Updating files:  62% (8418/13576)
+2026-10-20T21:21:21.7426230Z Updating files:  63% (8553/13576)
+2026-10-20T21:21:21.7577940Z Updating files:  64% (8689/13576)
+2026-10-20T21:21:21.7728820Z Updating files:  65% (8825/13576)
+2026-10-20T21:21:21.7981140Z Updating files:  66% (8961/13576)
+2026-10-20T21:21:21.8111730Z Updating files:  67% (9096/13576)
+2026-10-20T21:21:21.8293340Z Updating files:  68% (9232/13576)
+2026-10-20T21:21:21.8516960Z Updating files:  69% (9368/13576)
+2026-10-20T21:21:21.8829010Z Updating files:  70% (9504/13576)
+2026-10-20T21:21:21.9095840Z Updating files:  71% (9639/13576)
+2026-10-20T21:21:21.9421410Z Updating files:  72% (9775/13576)
+2026-10-20T21:21:21.9660130Z Updating files:  73% (9911/13576)
+2026-10-20T21:21:21.9669660Z Updating files:  73% (10041/13576)
+2026-10-20T21:21:21.9864250Z Updating files:  74% (10047/13576)
+2026-10-20T21:21:22.0072410Z Updating files:  75% (10182/13576)
+2026-10-20T21:21:22.0265590Z Updating files:  76% (10318/13576)
+2026-10-20T21:21:22.0521180Z Updating files:  77% (10454/13576)
+2026-10-20T21:21:22.0847650Z Updating files:  78% (10590/13576)
+2026-10-20T21:21:22.1068750Z Updating files:  79% (10726/13576)
+2026-10-20T21:21:22.1341950Z Updating files:  80% (10861/13576)
+2026-10-20T21:21:22.1591150Z Updating files:  81% (10997/13576)
+2026-10-20T21:21:22.1760150Z Updating files:  82% (11133/13576)
+2026-10-20T21:21:22.1990830Z Updating files:  83% (11269/13576)
+2026-10-20T21:21:22.2304480Z Updating files:  84% (11404/13576)
+2026-10-20T21:21:22.2747360Z Updating files:  85% (11540/13576)
+2026-10-20T21:21:22.2963840Z Updating files:  86% (11676/13576)
+2026-10-20T21:21:22.3162490Z Updating files:  87% (11812/13576)
+2026-10-20T21:21:22.3408830Z Updating files:  88% (11947/13576)
+2026-10-20T21:21:22.3682460Z Updating files:  89% (12083/13576)
+2026-10-20T21:21:22.3912380Z Updating files:  90% (12219/13576)
+2026-10-20T21:21:22.4150640Z Updating files:  91% (12355/13576)
+2026-10-20T21:21:22.4416620Z Updating files:  92% (12490/13576)
+2026-10-20T21:21:22.4599810Z Updating files:  93% (12626/13576)
+2026-10-20T21:21:22.4831560Z Updating files:  94% (12762/13576)
+2026-10-20T21:21:22.5264770Z Updating files:  95% (12898/13576)
+2026-10-20T21:21:22.5586570Z Updating files:  96% (13033/13576)
+2026-10-20T21:21:22.5861720Z Updating files:  97% (13169/13576)
+2026-10-20T21:21:22.6442910Z Updating files:  98% (13305/13576)
+2026-10-20T21:21:22.6815930Z Updating files:  99% (13441/13576)
+2026-10-20T21:21:22.6817540Z Updating files: 100% (13576/13576)
+2026-10-20T21:21:22.6817940Z Updating files: 100% (13576/13576), done.
+2026-10-20T21:21:22.7026260Z HEAD is now at fd2947af Merge 1a525eaaba07bb416a83a4f4d76c833a20cb5256 into fc3589098d5b9c9340861f65bbb2ecbf80d95c2f
+2026-10-20T21:21:22.7064940Z ##[endgroup]
+2026-10-20T21:21:22.7225580Z [command]/opt/homebrew/bin/git log -1 --format=%H
+2026-10-20T21:21:22.7320110Z fd2947af890f156aa63abb1c58028ec5345e6a5d
+2026-10-20T21:21:22.7785990Z ##[group]Run dtolnay/rust-toolchain@1.95
+2026-10-20T21:21:22.7786210Z with:
+2026-10-20T21:21:22.7786340Z ##[endgroup]
+2026-10-20T21:21:22.7858360Z ##[start-action display=Parse toolchain version;id=__dtolnay_rust-toolchain.parse]
+2026-10-20T21:21:22.7939820Z ##[group]Run if [[ -z $toolchain ]]; then
+2026-10-20T21:21:22.7940190Z if [[ -z $toolchain ]]; then
+2026-10-20T21:21:22.7940660Z   # GitHub does not enforce `required: true` inputs itself. https://github.com/actions/runner/issues/1070
+2026-10-20T21:21:22.7941170Z   echo "'toolchain' is a required input" >&2
+2026-10-20T21:21:22.7941420Z   exit 1
+2026-10-20T21:21:22.7941680Z elif [[ $toolchain =~ ^stable' '[0-9]+' '(year|month|week|day)s?' 'ago$ ]]; then
+2026-10-20T21:21:22.7942020Z   if [[ macOS == macOS ]]; then
+2026-10-20T21:21:22.7942490Z     echo "toolchain=1.$((($(date -v-$(sed 's/stable \([0-9]*\) \(.\).*/\1\2/' <<< $toolchain) +%s)/60/60/24-16569)/7/6))" >> $GITHUB_OUTPUT
+2026-10-20T21:21:22.7942910Z   else
+2026-10-20T21:21:22.7943220Z     echo "toolchain=1.$((($(date --date "${toolchain#stable }" +%s)/60/60/24-16569)/7/6))" >> $GITHUB_OUTPUT
+2026-10-20T21:21:22.7943580Z   fi
+2026-10-20T21:21:22.7943810Z elif [[ $toolchain =~ ^stable' 'minus' '[0-9]+' 'releases?$ ]]; then
+2026-10-20T21:21:22.7944280Z   echo "toolchain=1.$((($(date +%s)/60/60/24-16569)/7/6-${toolchain//[^0-9]/}))" >> $GITHUB_OUTPUT
+2026-10-20T21:21:22.7944710Z elif [[ $toolchain =~ ^1\.[0-9]+$ ]]; then
+2026-10-20T21:21:22.7945140Z   echo "toolchain=1.$((i=${toolchain#1.}, c=($(date +%s)/60/60/24-16569)/7/6, i+9*i*(10*i<=c)+90*i*(100*i<=c)))" >> $GITHUB_OUTPUT
+2026-10-20T21:21:22.7946020Z else
+2026-10-20T21:21:22.7946170Z   delimiter=EOF
+2026-10-20T21:21:22.7946400Z   while [[ $toolchain == *$delimiter* ]]; do delimiter+=_; done
+2026-10-20T21:21:22.7946820Z   printf 'toolchain<<%s\n%s\n%s\n' "$delimiter" "$toolchain" "$delimiter" >> $GITHUB_OUTPUT
+2026-10-20T21:21:22.7947210Z fi
+2026-10-20T21:21:22.8011690Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T21:21:22.8012010Z env:
+2026-10-20T21:21:22.8012160Z   toolchain: 1.95.0
+2026-10-20T21:21:22.8012310Z ##[endgroup]
+2026-10-20T21:21:22.8531720Z ##[end-action id=__dtolnay_rust-toolchain.parse;outcome=success;conclusion=success;duration_ms=66]
+2026-10-20T21:21:22.8535660Z ##[start-action display=Set $CARGO_HOME;id=__dtolnay_rust-toolchain.__run]
+2026-10-20T21:21:22.8573590Z ##[group]Run echo CARGO_HOME=${CARGO_HOME:-"$HOME/.cargo"} >> $GITHUB_ENV
+2026-10-20T21:21:22.8574040Z echo CARGO_HOME=${CARGO_HOME:-"$HOME/.cargo"} >> $GITHUB_ENV
+2026-10-20T21:21:22.8616050Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T21:21:22.8616370Z ##[endgroup]
+2026-10-20T21:21:22.8973550Z ##[end-action id=__dtolnay_rust-toolchain.__run;outcome=success;conclusion=success;duration_ms=43]
+2026-10-20T21:21:22.8976260Z ##[start-action display=Install rustup if needed;id=__dtolnay_rust-toolchain.__run_2]
+2026-10-20T21:21:22.9019160Z ##[group]Run if ! command -v rustup &>/dev/null; then
+2026-10-20T21:21:22.9019510Z if ! command -v rustup &>/dev/null; then
+2026-10-20T21:21:22.9020170Z   curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail https://sh.rustup.rs | sh -s -- --default-toolchain none -y
+2026-10-20T21:21:22.9020810Z   echo "$CARGO_HOME/bin" >> $GITHUB_PATH
+2026-10-20T21:21:22.9021080Z fi
+2026-10-20T21:21:22.9055320Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T21:21:22.9055560Z env:
+2026-10-20T21:21:22.9055740Z   CARGO_HOME: /Users/runner/.cargo
+2026-10-20T21:21:22.9055930Z ##[endgroup]
+2026-10-20T21:21:22.9392150Z ##[end-action id=__dtolnay_rust-toolchain.__run_2;outcome=success;conclusion=success;duration_ms=41]
+2026-10-20T21:21:22.9398320Z ##[start-action display=Install rustup if needed on windows;id=__dtolnay_rust-toolchain.__run_3]
+2026-10-20T21:21:22.9412810Z ##[end-action id=__dtolnay_rust-toolchain.__run_3;outcome=skipped;conclusion=skipped;duration_ms=0]
+2026-10-20T21:21:22.9430510Z ##[start-action display=rustup toolchain install 1.95.0;id=__dtolnay_rust-toolchain.__run_4]
+2026-10-20T21:21:22.9475460Z ##[group]Run set -f  # split targets and components on commas and whitespace, without glob expansion
+2026-10-20T21:21:22.9476220Z set -f  # split targets and components on commas and whitespace, without glob expansion
+2026-10-20T21:21:22.9476720Z flags=()
+2026-10-20T21:21:22.9476990Z for t in ${targets//,/ }; do flags+=(--target "$t"); done
+2026-10-20T21:21:22.9477810Z for c in ${components//,/ }; do flags+=(--component "$c"); done
+2026-10-20T21:21:22.9478300Z if [[ $toolchain == nightly && -n $components ]]; then flags+=(--allow-downgrade); fi
+2026-10-20T21:21:22.9478740Z log=$(mktemp)
+2026-10-20T21:21:22.9478930Z trap 'rm -f "$log"' EXIT
+2026-10-20T21:21:22.9479170Z for attempt in 1 2 3 4 5; do
+2026-10-20T21:21:22.9479790Z   if rustup toolchain install "$toolchain" "${flags[@]}" --profile minimal --no-self-update --force-non-host 2>&1 | tee "$log"; then
+2026-10-20T21:21:22.9480320Z     break
+2026-10-20T21:21:22.9480530Z   else
+2026-10-20T21:21:22.9480810Z     status=$?
+2026-10-20T21:21:22.9481030Z   fi
+2026-10-20T21:21:22.9481370Z   if [[ $attempt == 5 ]] || ! grep -Fq 'checksum failed for ' "$log" \
+2026-10-20T21:21:22.9481890Z       || ! grep -Fq 'this is likely due to an ongoing update of the official release server' "$log"; then
+2026-10-20T21:21:22.9482360Z     exit "$status"
+2026-10-20T21:21:22.9482530Z   fi
+2026-10-20T21:21:22.9482980Z   echo "Retrying rustup toolchain install in 30 seconds (retry $attempt of 4)" >&2
+2026-10-20T21:21:22.9483360Z   sleep 30
+2026-10-20T21:21:22.9483540Z done
+2026-10-20T21:21:22.9522820Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T21:21:22.9523270Z env:
+2026-10-20T21:21:22.9523580Z   CARGO_HOME: /Users/runner/.cargo
+2026-10-20T21:21:22.9523770Z   toolchain: 1.95.0
+2026-10-20T21:21:22.9523950Z   targets: 
+2026-10-20T21:21:22.9524100Z   components: 
+2026-10-20T21:21:22.9524800Z   RUSTUP_PERMIT_COPY_RENAME: 1
+2026-10-20T21:21:22.9525000Z ##[endgroup]
+2026-10-20T21:21:23.0572720Z info: syncing channel updates for 1.95.0-aarch64-apple-darwin
+2026-10-20T21:21:23.2403020Z info: latest update on 2026-04-16 for version 1.95.0 (59807616e 2026-04-14)
+2026-10-20T21:21:23.2425380Z info: downloading 3 components
+2026-10-20T21:21:30.7900710Z 
+2026-10-20T21:21:30.9904990Z   1.95.0-aarch64-apple-darwin installed - rustc 1.95.0 (59807616e 2026-04-14)
+2026-10-20T21:21:30.9930200Z 
+2026-10-20T21:21:30.9931290Z info: self-update is disabled for this build of rustup
+2026-10-20T21:21:30.9933000Z info: any updates to rustup will need to be fetched with your system package manager
+2026-10-20T21:21:31.0345880Z ##[end-action id=__dtolnay_rust-toolchain.__run_4;outcome=success;conclusion=success;duration_ms=8091]
+2026-10-20T21:21:31.0356680Z ##[start-action display=rustup default 1.95.0;id=__dtolnay_rust-toolchain.__run_5]
+2026-10-20T21:21:31.0383090Z ##[group]Run rustup default "$toolchain" --force-non-host
+2026-10-20T21:21:31.0383590Z rustup default "$toolchain" --force-non-host
+2026-10-20T21:21:31.0444030Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T21:21:31.0444410Z env:
+2026-10-20T21:21:31.0444610Z   CARGO_HOME: /Users/runner/.cargo
+2026-10-20T21:21:31.0444870Z   toolchain: 1.95.0
+2026-10-20T21:21:31.0445070Z ##[endgroup]
+2026-10-20T21:21:31.1369280Z info: using existing install for 1.95.0-aarch64-apple-darwin
+2026-10-20T21:21:31.1400450Z info: default toolchain set to 1.95.0-aarch64-apple-darwin
+2026-10-20T21:21:31.1400710Z 
+2026-10-20T21:21:31.1655770Z   1.95.0-aarch64-apple-darwin unchanged - rustc 1.95.0 (59807616e 2026-04-14)
+2026-10-20T21:21:31.1658660Z info: note that the toolchain '1.95.0-aarch64-apple-darwin' is currently in use (overridden by '/Users/runner/work/ripr-swarm/ripr-swarm/rust-toolchain.toml')
+2026-10-20T21:21:31.1659250Z 
+2026-10-20T21:21:31.1676020Z ##[end-action id=__dtolnay_rust-toolchain.__run_5;outcome=success;conclusion=success;duration_ms=131]
+2026-10-20T21:21:31.1680000Z ##[start-action display=Create cachekey;id=__dtolnay_rust-toolchain.rustc-version]
+2026-10-20T21:21:31.1700900Z ##[group]Run DATE=$(rustc +"$toolchain" --version --verbose | sed -ne 's/^commit-date: \(20[0-9][0-9]\)-\([01][0-9]\)-\([0-3][0-9]\)$/\1\2\3/p')
+2026-10-20T21:21:31.1701690Z DATE=$(rustc +"$toolchain" --version --verbose | sed -ne 's/^commit-date: \(20[0-9][0-9]\)-\([01][0-9]\)-\([0-3][0-9]\)$/\1\2\3/p')
+2026-10-20T21:21:31.1702400Z HASH=$(rustc +"$toolchain" --version --verbose | sed -ne 's/^commit-hash: //p')
+2026-10-20T21:21:31.1702920Z echo "cachekey=$(echo $DATE$HASH | head -c12)" >> $GITHUB_OUTPUT
+2026-10-20T21:21:31.1739100Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T21:21:31.1739370Z env:
+2026-10-20T21:21:31.1739550Z   CARGO_HOME: /Users/runner/.cargo
+2026-10-20T21:21:31.1739760Z   toolchain: 1.95.0
+2026-10-20T21:21:31.1739950Z ##[endgroup]
+2026-10-20T21:21:31.3058570Z ##[end-action id=__dtolnay_rust-toolchain.rustc-version;outcome=success;conclusion=success;duration_ms=137]
+2026-10-20T21:21:31.3064680Z ##[start-action display=Disable incremental compilation;id=__dtolnay_rust-toolchain.__run_6]
+2026-10-20T21:21:31.3123920Z ##[group]Run if [ -z "${CARGO_INCREMENTAL+set}" ]; then
+2026-10-20T21:21:31.3124760Z if [ -z "${CARGO_INCREMENTAL+set}" ]; then
+2026-10-20T21:21:31.3125450Z   echo CARGO_INCREMENTAL=0 >> $GITHUB_ENV
+2026-10-20T21:21:31.3126070Z fi
+2026-10-20T21:21:31.3219740Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T21:21:31.3220030Z env:
+2026-10-20T21:21:31.3220260Z   CARGO_HOME: /Users/runner/.cargo
+2026-10-20T21:21:31.3220460Z ##[endgroup]
+2026-10-20T21:21:31.3667720Z ##[end-action id=__dtolnay_rust-toolchain.__run_6;outcome=success;conclusion=success;duration_ms=60]
+2026-10-20T21:21:31.3670390Z ##[start-action display=Enable colors in Cargo output;id=__dtolnay_rust-toolchain.__run_7]
+2026-10-20T21:21:31.3711840Z ##[group]Run if [ -z "${CARGO_TERM_COLOR+set}" ]; then
+2026-10-20T21:21:31.3719100Z if [ -z "${CARGO_TERM_COLOR+set}" ]; then
+2026-10-20T21:21:31.3719390Z   echo CARGO_TERM_COLOR=always >> $GITHUB_ENV
+2026-10-20T21:21:31.3719630Z fi
+2026-10-20T21:21:31.3758220Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T21:21:31.3758540Z env:
+2026-10-20T21:21:31.3758710Z   CARGO_HOME: /Users/runner/.cargo
+2026-10-20T21:21:31.3759380Z   CARGO_INCREMENTAL: 0
+2026-10-20T21:21:31.3759680Z ##[endgroup]
+2026-10-20T21:21:31.4222590Z ##[end-action id=__dtolnay_rust-toolchain.__run_7;outcome=success;conclusion=success;duration_ms=55]
+2026-10-20T21:21:31.4227030Z ##[start-action display=Enable Cargo sparse registry;id=__dtolnay_rust-toolchain.__run_8]
+2026-10-20T21:21:31.4275610Z ##[group]Run # implemented in 1.66, stabilized in 1.68, made default in 1.70
+2026-10-20T21:21:31.4276120Z # implemented in 1.66, stabilized in 1.68, made default in 1.70
+2026-10-20T21:21:31.4276980Z if [ -z "${CARGO_REGISTRIES_CRATES_IO_PROTOCOL+set}" -o -f "/Users/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol ]; then
+2026-10-20T21:21:31.4278530Z   if rustc +"$toolchain" --version --verbose | grep -q '^release: 1\.6[89]\.'; then
+2026-10-20T21:21:31.4279390Z     touch "/Users/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol || true
+2026-10-20T21:21:31.4282480Z     echo CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse >> $GITHUB_ENV
+2026-10-20T21:21:31.4283630Z   elif rustc +"$toolchain" --version --verbose | grep -q '^release: 1\.6[67]\.'; then
+2026-10-20T21:21:31.4285910Z     touch "/Users/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol || true
+2026-10-20T21:21:31.4287130Z     echo CARGO_REGISTRIES_CRATES_IO_PROTOCOL=git >> $GITHUB_ENV
+2026-10-20T21:21:31.4287840Z   fi
+2026-10-20T21:21:31.4288210Z fi
+2026-10-20T21:21:31.4371360Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T21:21:31.4372070Z env:
+2026-10-20T21:21:31.4372520Z   CARGO_HOME: /Users/runner/.cargo
+2026-10-20T21:21:31.4373080Z   CARGO_INCREMENTAL: 0
+2026-10-20T21:21:31.4373550Z   CARGO_TERM_COLOR: always
+2026-10-20T21:21:31.4374010Z   toolchain: 1.95.0
+2026-10-20T21:21:31.4374480Z ##[endgroup]
+2026-10-20T21:21:31.5656080Z ##[end-action id=__dtolnay_rust-toolchain.__run_8;outcome=success;conclusion=success;duration_ms=142]
+2026-10-20T21:21:31.5659540Z ##[start-action display=Work around spurious network errors in curl 8.0;id=__dtolnay_rust-toolchain.__run_9]
+2026-10-20T21:21:31.5795900Z ##[group]Run # https://rust-lang.zulipchat.com/#narrow/stream/246057-t-cargo/topic/timeout.20investigation
+2026-10-20T21:21:31.5797610Z # https://rust-lang.zulipchat.com/#narrow/stream/246057-t-cargo/topic/timeout.20investigation
+2026-10-20T21:21:31.5798960Z if rustc +"$toolchain" --version --verbose | grep -q '^release: 1\.7[01]\.'; then
+2026-10-20T21:21:31.5800020Z   echo CARGO_HTTP_MULTIPLEXING=false >> $GITHUB_ENV
+2026-10-20T21:21:31.5800750Z fi
+2026-10-20T21:21:31.5860720Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T21:21:31.5860990Z env:
+2026-10-20T21:21:31.5861160Z   CARGO_HOME: /Users/runner/.cargo
+2026-10-20T21:21:31.5861360Z   CARGO_INCREMENTAL: 0
+2026-10-20T21:21:31.5861520Z   CARGO_TERM_COLOR: always
+2026-10-20T21:21:31.5861700Z   toolchain: 1.95.0
+2026-10-20T21:21:31.5861860Z ##[endgroup]
+2026-10-20T21:21:31.6692570Z ##[end-action id=__dtolnay_rust-toolchain.__run_9;outcome=success;conclusion=success;duration_ms=103]
+2026-10-20T21:21:31.6696630Z ##[start-action display=rustc +1.95.0 --version --verbose;id=__dtolnay_rust-toolchain.__run_10]
+2026-10-20T21:21:31.6726090Z ##[group]Run rustc +"$toolchain" --version --verbose
+2026-10-20T21:21:31.6726420Z rustc +"$toolchain" --version --verbose
+2026-10-20T21:21:31.6759610Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T21:21:31.6759930Z env:
+2026-10-20T21:21:31.6760120Z   CARGO_HOME: /Users/runner/.cargo
+2026-10-20T21:21:31.6760630Z   CARGO_INCREMENTAL: 0
+2026-10-20T21:21:31.6760790Z   CARGO_TERM_COLOR: always
+2026-10-20T21:21:31.6760970Z   toolchain: 1.95.0
+2026-10-20T21:21:31.6761130Z ##[endgroup]
+2026-10-20T21:21:31.7399370Z rustc 1.95.0 (59807616e 2026-04-14)
+2026-10-20T21:21:31.7400180Z binary: rustc
+2026-10-20T21:21:31.7400720Z commit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860
+2026-10-20T21:21:31.7401580Z commit-date: 2026-04-14
+2026-10-20T21:21:31.7402080Z host: aarch64-apple-darwin
+2026-10-20T21:21:31.7402600Z release: 1.95.0
+2026-10-20T21:21:31.7404700Z LLVM version: 22.1.2
+2026-10-20T21:21:31.7427900Z ##[end-action id=__dtolnay_rust-toolchain.__run_10;outcome=success;conclusion=success;duration_ms=72]
+2026-10-20T21:21:31.7667730Z ##[group]Run Swatinem/rust-cache@v2
+2026-10-20T21:21:31.7667960Z with:
+2026-10-20T21:21:31.7668140Z   shared-key: ripr-printed-command-paste-1.95-macOS
+2026-10-20T21:21:31.7668380Z   save-if: false
+2026-10-20T21:21:31.7668530Z   prefix-key: v0-rust
+2026-10-20T21:21:31.7668750Z   add-job-id-key: true
+2026-10-20T21:21:31.7668920Z   add-rust-environment-hash-key: true
+2026-10-20T21:21:31.7669120Z   cache-targets: true
+2026-10-20T21:21:31.7669280Z   cache-all-crates: false
+2026-10-20T21:21:31.7669450Z   cache-workspace-crates: false
+2026-10-20T21:21:31.7669640Z   cache-provider: github
+2026-10-20T21:21:31.7669800Z   cache-bin: true
+2026-10-20T21:21:31.7669940Z   lookup-only: false
+2026-10-20T21:21:31.7670090Z   cmd-format: {0}
+2026-10-20T21:21:31.7670230Z env:
+2026-10-20T21:21:31.7670360Z   CARGO_HOME: /Users/runner/.cargo
+2026-10-20T21:21:31.7670610Z   CARGO_INCREMENTAL: 0
+2026-10-20T21:21:31.7670820Z   CARGO_TERM_COLOR: always
+2026-10-20T21:21:31.7671040Z ##[endgroup]
+2026-10-20T21:21:35.1789630Z ##[group]Cache Configuration
+2026-10-20T21:21:35.1793160Z Cache Provider:
+2026-10-20T21:21:35.1796530Z     github
+2026-10-20T21:21:35.1796830Z Workspaces:
+2026-10-20T21:21:35.1797100Z     /Users/runner/work/ripr-swarm/ripr-swarm
+2026-10-20T21:21:35.1797550Z Cache Paths:
+2026-10-20T21:21:35.1797800Z     /Users/runner/.cargo/bin
+2026-10-20T21:21:35.1798150Z     /Users/runner/.cargo/.crates.toml
+2026-10-20T21:21:35.1798480Z     /Users/runner/.cargo/.crates2.json
+2026-10-20T21:21:35.1798810Z     /Users/runner/.cargo/registry
+2026-10-20T21:21:35.1799170Z     /Users/runner/.cargo/git
+2026-10-20T21:21:35.1799570Z     /Users/runner/work/ripr-swarm/ripr-swarm/target
+2026-10-20T21:21:35.1799900Z Restore Key:
+2026-10-20T21:21:35.1800330Z     v0-rust-ripr-printed-command-paste-1.95-macOS-Darwin-arm64-deb5f114
+2026-10-20T21:21:35.1800810Z Cache Key:
+2026-10-20T21:21:35.1801270Z     v0-rust-ripr-printed-command-paste-1.95-macOS-Darwin-arm64-deb5f114-ff195c23
+2026-10-20T21:21:35.1801820Z .. Prefix:
+2026-10-20T21:21:35.1802200Z   - v0-rust-ripr-printed-command-paste-1.95-macOS-Darwin-arm64
+2026-10-20T21:21:35.1802610Z .. Environment considered:
+2026-10-20T21:21:35.1802870Z   - Rust Versions:
+2026-10-20T21:21:35.1803340Z     - 1.95.0 aarch64-apple-darwin 59807616e1fa2540724bfbac14d7976d7e4a3860
+2026-10-20T21:21:35.1803860Z     - 1.99.0 aarch64-apple-darwin b940084d7eb6a299eb4bfeb8e34901bc051e7ac4
+2026-10-20T21:21:35.1804320Z   - CARGO_HOME
+2026-10-20T21:21:35.1804580Z   - CARGO_INCREMENTAL
+2026-10-20T21:21:35.1804840Z   - CARGO_TERM_COLOR
+2026-10-20T21:21:35.1805130Z .. Lockfiles considered:
+2026-10-20T21:21:35.1805540Z   - /Users/runner/work/ripr-swarm/ripr-swarm/.cargo/config.toml
+2026-10-20T21:21:35.1806040Z   - /Users/runner/work/ripr-swarm/ripr-swarm/Cargo.lock
+2026-10-20T21:21:35.1806470Z   - /Users/runner/work/ripr-swarm/ripr-swarm/crates/ripr/Cargo.toml
+2026-10-20T21:21:35.1807140Z   - /Users/runner/work/ripr-swarm/ripr-swarm/editors/zed/rust-toolchain.toml
+2026-10-20T21:21:35.1807760Z   - /Users/runner/work/ripr-swarm/ripr-swarm/rust-toolchain.toml
+2026-10-20T21:21:35.1808150Z   - /Users/runner/work/ripr-swarm/ripr-swarm/tools/repo-policy/Cargo.toml
+2026-10-20T21:21:35.1808530Z   - /Users/runner/work/ripr-swarm/ripr-swarm/xtask/Cargo.toml
+2026-10-20T21:21:35.1809150Z ##[endgroup]
+2026-10-20T21:21:35.1809930Z 
+2026-10-20T21:21:35.1831150Z ... Restoring cache ...
+2026-10-20T21:21:35.4954000Z Cache hit for: v0-rust-ripr-printed-command-paste-1.95-macOS-Darwin-arm64-deb5f114-ff195c23
+2026-10-20T21:21:36.7828330Z Received 0 of 245242076 (0.0%), 0.0 MBs/sec
+2026-10-20T21:21:37.7894480Z Received 62914560 of 245242076 (25.7%), 29.9 MBs/sec
+2026-10-20T21:21:38.7946680Z Received 130023424 of 245242076 (53.0%), 41.2 MBs/sec
+2026-10-20T21:21:39.7902000Z Received 134217728 of 245242076 (54.7%), 31.9 MBs/sec
+2026-10-20T21:21:40.7911160Z Received 218103808 of 245242076 (88.9%), 41.5 MBs/sec
+2026-10-20T21:21:41.2583640Z Received 245242076 of 245242076 (100.0%), 42.7 MBs/sec
+2026-10-20T21:21:41.2586190Z Cache Size: ~234 MB (245242076 B)
+2026-10-20T21:21:41.2733090Z [command]/opt/homebrew/bin/gtar -xf /Users/runner/work/_temp/4f8409c8-6dbc-4b93-8f74-51817db351de/cache.tzst -P -C /Users/runner/work/ripr-swarm/ripr-swarm --delay-directory-restore --use-compress-program unzstd
+2026-10-20T21:21:44.3135120Z Cache restored successfully
+2026-10-20T21:21:44.3205820Z Restored from cache key "v0-rust-ripr-printed-command-paste-1.95-macOS-Darwin-arm64-deb5f114-ff195c23" full match: true.
+2026-10-20T21:21:44.4063500Z ##[group]Run bash --version | head -n 1
+2026-10-20T21:21:44.4063990Z bash --version | head -n 1
+2026-10-20T21:21:44.4112570Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T21:21:44.4112890Z env:
+2026-10-20T21:21:44.4113130Z   CARGO_HOME: /Users/runner/.cargo
+2026-10-20T21:21:44.4113410Z   CARGO_INCREMENTAL: 0
+2026-10-20T21:21:44.4113650Z   CARGO_TERM_COLOR: always
+2026-10-20T21:21:44.4113830Z   CACHE_ON_FAILURE: false
+2026-10-20T21:21:44.4114110Z ##[endgroup]
+2026-10-20T21:21:44.5548540Z GNU bash, version 3.2.57(1)-release (arm64-apple-darwin25)
+2026-10-20T21:21:44.5605450Z ##[group]Run cargo test -p ripr --test printed_command_paste -- --nocapture
+2026-10-20T21:21:44.5606000Z cargo test -p ripr --test printed_command_paste -- --nocapture
+2026-10-20T21:21:44.5641330Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T21:21:44.5641670Z env:
+2026-10-20T21:21:44.5641830Z   CARGO_HOME: /Users/runner/.cargo
+2026-10-20T21:21:44.5642100Z   CARGO_INCREMENTAL: 0
+2026-10-20T21:21:44.5642340Z   CARGO_TERM_COLOR: always
+2026-10-20T21:21:44.5642550Z   CACHE_ON_FAILURE: false
+2026-10-20T21:21:44.5642760Z   RIPR_PASTE_REQUIRE: bash,sh,zsh,pwsh
+2026-10-20T21:21:44.5643070Z   RIPR_PASTE_REPORT: /Users/runner/work/_temp/printed-commands.jsonl
+2026-10-20T21:21:44.5643360Z ##[endgroup]
+2026-10-20T21:21:45.3561350Z     Updating crates.io index
+2026-10-20T21:21:48.5091390Z    Compiling ripr v0.11.0 (/Users/runner/work/ripr-swarm/ripr-swarm/crates/ripr)
+2026-10-20T21:24:50.3188950Z     Finished `test` profile [unoptimized + debuginfo] target(s) in 3m 05s
+2026-10-20T21:24:50.3873880Z      Running tests/printed_command_paste.rs (target/debug/deps/printed_command_paste-8ae088b7bf668aeb)
+2026-10-20T21:24:50.3951920Z 
+2026-10-20T21:24:50.3981040Z running 7 tests
+2026-10-20T21:24:50.3982750Z test extract_text_empty_rest_guard_does_not_consume_the_next_bash_command ... ok
+2026-10-20T21:24:50.3985140Z test extract_text_does_not_pair_powershell_text_inside_a_bash_code_span ... ok
+2026-10-20T21:24:50.3986040Z test extract_text_marks_unavailable_powershell_disclosure_and_does_not_paste_it ... ok
+2026-10-20T21:24:50.3987730Z test extract_text_pairs_empty_rest_powershell_label_with_the_next_line ... ok
+2026-10-20T21:24:50.4035390Z test fixture_git::tests::resolves_the_subcommand_past_global_options ... ok
+2026-10-20T21:24:50.4036650Z test fixture_git::tests::zero_deadline_reports_timeouts_without_retrying_state ... ok
+2026-10-20T21:25:05.3239110Z pasted 119 distinct printed commands into ["bash", "sh", "zsh", "pwsh"]
+2026-10-20T21:25:05.3691970Z test printed_commands_paste_unchanged_in_every_shell_from_a_foreign_directory ... ok
+2026-10-20T21:25:05.3694490Z 
+2026-10-20T21:25:05.3699740Z test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.97s
+2026-10-20T21:25:05.3701460Z 
+2026-10-20T21:25:05.4388700Z ##[group]Run actions/upload-artifact@v7
+2026-10-20T21:25:05.4388970Z with:
+2026-10-20T21:25:05.4389140Z   name: printed-commands-macos-latest
+2026-10-20T21:25:05.4389400Z   path: /Users/runner/work/_temp/printed-commands.jsonl
+2026-10-20T21:25:05.4389660Z   if-no-files-found: ignore
+2026-10-20T21:25:05.4389850Z   compression-level: 6
+2026-10-20T21:25:05.4390010Z   overwrite: false
+2026-10-20T21:25:05.4390190Z   include-hidden-files: false
+2026-10-20T21:25:05.4390360Z   archive: true
+2026-10-20T21:25:05.4390500Z env:
+2026-10-20T21:25:05.4390640Z   CARGO_HOME: /Users/runner/.cargo
+2026-10-20T21:25:05.4390830Z   CARGO_INCREMENTAL: 0
+2026-10-20T21:25:05.4391000Z   CARGO_TERM_COLOR: always
+2026-10-20T21:25:05.4391170Z   CACHE_ON_FAILURE: false
+2026-10-20T21:25:05.4391350Z ##[endgroup]
+2026-10-20T21:25:05.8847350Z With the provided path, there will be 1 file uploaded
+2026-10-20T21:25:05.8850560Z Artifact name is valid!
+2026-10-20T21:25:05.8851420Z Root directory input is valid!
+2026-10-20T21:25:06.3182540Z Uploading artifact: printed-commands-macos-latest.zip
+2026-10-20T21:25:06.3183270Z Beginning upload of artifact content to blob storage
+2026-10-20T21:25:06.6702870Z Uploaded bytes 2865
+2026-10-20T21:25:06.7443080Z Finished uploading artifact content to blob storage!
+2026-10-20T21:25:06.7443660Z SHA256 digest of uploaded artifact is 5cac4579512e1334bc9bc23ec7b2816258b866c9e0b06ba07b6027d2a2f1faf7
+2026-10-20T21:25:06.7444100Z Finalizing artifact upload
+2026-10-20T21:25:07.2287300Z Artifact printed-commands-macos-latest successfully finalized. Artifact ID 12299806137
+2026-10-20T21:25:07.2288840Z Artifact printed-commands-macos-latest has been successfully uploaded! Final size is 2865 bytes. Artifact ID is 12299806137
+2026-10-20T21:25:07.2289940Z Artifact download URL: https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39499639753/artifacts/12299806137
+2026-10-20T21:25:07.2405030Z Post job cleanup.
+2026-10-20T21:25:07.4319930Z Post job cleanup.
+2026-10-20T21:25:07.5487210Z [command]/opt/homebrew/bin/git version
+2026-10-20T21:25:07.5719040Z git version 2.56.0
+2026-10-20T21:25:07.5930180Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/e636e1ef-e0fb-4e5d-8843-be4e0f46ef1e/.gitconfig'
+2026-10-20T21:25:07.5970710Z Temporarily overriding HOME='/Users/runner/work/_temp/e636e1ef-e0fb-4e5d-8843-be4e0f46ef1e' before making global git config changes
+2026-10-20T21:25:07.6007050Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-20T21:25:07.6053520Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/ripr-swarm/ripr-swarm
+2026-10-20T21:25:07.6059470Z Removing SSH command configuration
+2026-10-20T21:25:07.6060830Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-20T21:25:07.6064050Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-20T21:25:07.7315940Z Removing HTTP extra header
+2026-10-20T21:25:07.7316550Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-20T21:25:07.7409740Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-20T21:25:07.8791240Z Removing includeIf entries pointing to credentials config files
+2026-10-20T21:25:07.8893400Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-20T21:25:07.8993080Z includeif.gitdir:/Users/runner/work/ripr-swarm/ripr-swarm/.git.path
+2026-10-20T21:25:07.9094140Z includeif.gitdir:/Users/runner/work/ripr-swarm/ripr-swarm/.git/worktrees/*.path
+2026-10-20T21:25:07.9105390Z includeif.gitdir:/github/workspace/.git.path
+2026-10-20T21:25:07.9111150Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-10-20T21:25:07.9186430Z [command]/opt/homebrew/bin/git config --local --get-all includeif.gitdir:/Users/runner/work/ripr-swarm/ripr-swarm/.git.path
+2026-10-20T21:25:07.9187200Z /Users/runner/work/_temp/git-credentials-a70a536b-ac68-4acf-81ec-146f87fcd5f9.config
+2026-10-20T21:25:07.9188870Z [command]/opt/homebrew/bin/git config --local --unset includeif.gitdir:/Users/runner/work/ripr-swarm/ripr-swarm/.git.path /Users/runner/work/_temp/git-credentials-a70a536b-ac68-4acf-81ec-146f87fcd5f9.config
+2026-10-20T21:25:07.9190790Z [command]/opt/homebrew/bin/git config --local --get-all includeif.gitdir:/Users/runner/work/ripr-swarm/ripr-swarm/.git/worktrees/*.path
+2026-10-20T21:25:07.9191540Z /Users/runner/work/_temp/git-credentials-a70a536b-ac68-4acf-81ec-146f87fcd5f9.config
+2026-10-20T21:25:07.9192810Z [command]/opt/homebrew/bin/git config --local --unset includeif.gitdir:/Users/runner/work/ripr-swarm/ripr-swarm/.git/worktrees/*.path /Users/runner/work/_temp/git-credentials-a70a536b-ac68-4acf-81ec-146f87fcd5f9.config
+2026-10-20T21:25:07.9194590Z [command]/opt/homebrew/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-10-20T21:25:07.9196520Z /github/runner_temp/git-credentials-a70a536b-ac68-4acf-81ec-146f87fcd5f9.config
+2026-10-20T21:25:07.9197750Z [command]/opt/homebrew/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-a70a536b-ac68-4acf-81ec-146f87fcd5f9.config
+2026-10-20T21:25:07.9268240Z [command]/opt/homebrew/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-10-20T21:25:07.9326910Z /github/runner_temp/git-credentials-a70a536b-ac68-4acf-81ec-146f87fcd5f9.config
+2026-10-20T21:25:07.9334680Z [command]/opt/homebrew/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-a70a536b-ac68-4acf-81ec-146f87fcd5f9.config
+2026-10-20T21:25:07.9405060Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-20T21:25:08.0392800Z Removing credentials config '/Users/runner/work/_temp/git-credentials-a70a536b-ac68-4acf-81ec-146f87fcd5f9.config'
+2026-10-20T21:25:08.0605450Z Cleaning up orphan processes

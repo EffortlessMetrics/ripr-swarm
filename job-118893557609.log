@@ -1,0 +1,1001 @@
+﻿2026-10-20T21:21:11.1877923Z Current runner version: '2.338.0'
+2026-10-20T21:21:11.1899234Z ##[group]Runner Image Provisioner
+2026-10-20T21:21:11.1900161Z Hosted Compute Agent
+2026-10-20T21:21:11.1900661Z Version: 20261015.610
+2026-10-20T21:21:11.1901177Z Commit: 267fdb4e8bbec4ab5ea31367f3a00d5c480c7656
+2026-10-20T21:21:11.1901840Z Build Date: 2026-10-14T17:06:54Z
+2026-10-20T21:21:11.1902413Z Worker ID: {157305b9-bdaf-419c-a9c1-3149129d5965}
+2026-10-20T21:21:11.1903116Z Region: westus3
+2026-10-20T21:21:11.1903589Z Cloud: Azure
+2026-10-20T21:21:11.1904028Z ##[endgroup]
+2026-10-20T21:21:11.1905214Z ##[group]Operating System
+2026-10-20T21:21:11.1905728Z Ubuntu
+2026-10-20T21:21:11.1906208Z 24.04.5
+2026-10-20T21:21:11.1906701Z LTS
+2026-10-20T21:21:11.1907140Z ##[endgroup]
+2026-10-20T21:21:11.1907867Z ##[group]Runner Image
+2026-10-20T21:21:11.1908418Z Image: ubuntu-24.04
+2026-10-20T21:21:11.1908951Z Version: 20261018.339.1
+2026-10-20T21:21:11.1910003Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261018.339/images/ubuntu/Ubuntu2404-Readme.md
+2026-10-20T21:21:11.1911338Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261018.339
+2026-10-20T21:21:11.1912177Z ##[endgroup]
+2026-10-20T21:21:11.1913139Z ##[group]GITHUB_TOKEN Permissions
+2026-10-20T21:21:11.1914917Z Contents: read
+2026-10-20T21:21:11.1915466Z Metadata: read
+2026-10-20T21:21:11.1915962Z ##[endgroup]
+2026-10-20T21:21:11.1917928Z Secret source: Actions
+2026-10-20T21:21:11.1918820Z Cache mode: write
+2026-10-20T21:21:11.1919439Z Prepare workflow directory
+2026-10-20T21:21:11.2190997Z Prepare all required actions
+2026-10-20T21:21:11.2229940Z Getting action download info
+2026-10-20T21:21:11.5293368Z Download action repository 'actions/checkout@v6' (SHA:d23441a48e516b6c34aea4fa41551a30e30af803)
+2026-10-20T21:21:11.7323029Z Download action repository 'dtolnay/rust-toolchain@1.95' (SHA:035fceb3c12fb0c6a9461b52775e16473133e591)
+2026-10-20T21:21:11.9944343Z Download action repository 'Swatinem/rust-cache@v2' (SHA:d1527c8f67ef9af357290475d4af4b0fab8f12e0)
+2026-10-20T21:21:12.6607896Z Download action repository 'actions/upload-artifact@v7' (SHA:cf430e030ddbb5b0abf93d22962f4752f3646cd9)
+2026-10-20T21:21:12.9443550Z Complete job name: paste-ubuntu-latest
+2026-10-20T21:21:13.0319343Z ##[group]Run actions/checkout@v6
+2026-10-20T21:21:13.0320384Z with:
+2026-10-20T21:21:13.0321070Z   repository: EffortlessMetrics/ripr-swarm
+2026-10-20T21:21:13.0328001Z   token: ***
+2026-10-20T21:21:13.0328641Z   ssh-strict: true
+2026-10-20T21:21:13.0329296Z   ssh-user: git
+2026-10-20T21:21:13.0329970Z   persist-credentials: true
+2026-10-20T21:21:13.0330696Z   clean: true
+2026-10-20T21:21:13.0331362Z   sparse-checkout-cone-mode: true
+2026-10-20T21:21:13.0332135Z   fetch-depth: 1
+2026-10-20T21:21:13.0332787Z   fetch-tags: false
+2026-10-20T21:21:13.0333457Z   show-progress: true
+2026-10-20T21:21:13.0334133Z   lfs: false
+2026-10-20T21:21:13.0334762Z   submodules: false
+2026-10-20T21:21:13.0335439Z   set-safe-directory: true
+2026-10-20T21:21:13.0336199Z   allow-unsafe-pr-checkout: false
+2026-10-20T21:21:13.0337187Z ##[endgroup]
+2026-10-20T21:21:13.1191104Z Syncing repository: EffortlessMetrics/ripr-swarm
+2026-10-20T21:21:13.1194068Z ##[group]Getting Git version info
+2026-10-20T21:21:13.1195611Z Working directory is '/home/runner/work/ripr-swarm/ripr-swarm'
+2026-10-20T21:21:13.1197659Z [command]/usr/bin/git version
+2026-10-20T21:21:13.1253671Z git version 2.55.0
+2026-10-20T21:21:13.1270650Z ##[endgroup]
+2026-10-20T21:21:13.1282338Z Temporarily overriding HOME='/home/runner/work/_temp/56c234bc-36cf-457a-b7a0-e5a1f1029ccd' before making global git config changes
+2026-10-20T21:21:13.1284874Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-20T21:21:13.1287247Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/ripr-swarm/ripr-swarm
+2026-10-20T21:21:13.1402771Z Deleting the contents of '/home/runner/work/ripr-swarm/ripr-swarm'
+2026-10-20T21:21:13.1406972Z ##[group]Determining repository object format
+2026-10-20T21:21:13.1408899Z ##[endgroup]
+2026-10-20T21:21:13.1409977Z ##[group]Initializing the repository
+2026-10-20T21:21:13.1412482Z [command]/usr/bin/git init /home/runner/work/ripr-swarm/ripr-swarm
+2026-10-20T21:21:13.1515093Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-10-20T21:21:13.1517500Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-10-20T21:21:13.1519677Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-10-20T21:21:13.1520812Z hint: call:
+2026-10-20T21:21:13.1521433Z hint:
+2026-10-20T21:21:13.1522219Z hint: 	git config --global init.defaultBranch <name>
+2026-10-20T21:21:13.1523314Z hint:
+2026-10-20T21:21:13.1524184Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-10-20T21:21:13.1525582Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-10-20T21:21:13.1526929Z hint:
+2026-10-20T21:21:13.1527853Z hint: 	git branch -m <name>
+2026-10-20T21:21:13.1528599Z hint:
+2026-10-20T21:21:13.1529523Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-10-20T21:21:13.1531071Z Initialized empty Git repository in /home/runner/work/ripr-swarm/ripr-swarm/.git/
+2026-10-20T21:21:13.1533955Z [command]/usr/bin/git remote add origin https://github.com/EffortlessMetrics/ripr-swarm
+2026-10-20T21:21:13.1712013Z ##[endgroup]
+2026-10-20T21:21:13.1713648Z ##[group]Disabling automatic garbage collection
+2026-10-20T21:21:13.1715207Z [command]/usr/bin/git config --local gc.auto 0
+2026-10-20T21:21:13.1808816Z ##[endgroup]
+2026-10-20T21:21:13.1809890Z ##[group]Setting up auth
+2026-10-20T21:21:13.1810697Z Removing SSH command configuration
+2026-10-20T21:21:13.1814628Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-20T21:21:13.1845138Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-20T21:21:13.2264727Z Removing HTTP extra header
+2026-10-20T21:21:13.2270934Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-20T21:21:13.2303038Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-20T21:21:13.2532440Z Removing includeIf entries pointing to credentials config files
+2026-10-20T21:21:13.2540027Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-20T21:21:13.2575502Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-20T21:21:13.2816786Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-e1fbad80-e78d-444f-b113-d15a06e0d27e.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-10-20T21:21:13.2902568Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/ripr-swarm/ripr-swarm/.git.path /home/runner/work/_temp/git-credentials-e1fbad80-e78d-444f-b113-d15a06e0d27e.config
+2026-10-20T21:21:13.3010467Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/ripr-swarm/ripr-swarm/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-e1fbad80-e78d-444f-b113-d15a06e0d27e.config
+2026-10-20T21:21:13.3522772Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-e1fbad80-e78d-444f-b113-d15a06e0d27e.config
+2026-10-20T21:21:13.4128632Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-e1fbad80-e78d-444f-b113-d15a06e0d27e.config
+2026-10-20T21:21:13.5322220Z ##[endgroup]
+2026-10-20T21:21:13.5324172Z ##[group]Fetching the repository
+2026-10-20T21:21:13.5331227Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +fd2947af890f156aa63abb1c58028ec5345e6a5d:refs/remotes/pull/8961/merge
+2026-10-20T21:21:16.9134612Z From https://github.com/EffortlessMetrics/ripr-swarm
+2026-10-20T21:21:16.9136156Z  * [new ref]           fd2947af890f156aa63abb1c58028ec5345e6a5d -> pull/8961/merge
+2026-10-20T21:21:16.9148477Z ##[endgroup]
+2026-10-20T21:21:16.9149052Z ##[group]Determining the checkout info
+2026-10-20T21:21:16.9149515Z ##[endgroup]
+2026-10-20T21:21:16.9149889Z [command]/usr/bin/git sparse-checkout disable
+2026-10-20T21:21:16.9260992Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-10-20T21:21:16.9347318Z ##[group]Checking out the ref
+2026-10-20T21:21:16.9350224Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/8961/merge
+2026-10-20T21:21:17.7505715Z Note: switching to 'refs/remotes/pull/8961/merge'.
+2026-10-20T21:21:17.7506094Z 
+2026-10-20T21:21:17.7506346Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-10-20T21:21:17.7507059Z changes and commit them, and you can discard any commits you make in this
+2026-10-20T21:21:17.7507753Z state without impacting any branches by switching back to a branch.
+2026-10-20T21:21:17.7508155Z 
+2026-10-20T21:21:17.7508436Z If you want to create a new branch to retain commits you create, you may
+2026-10-20T21:21:17.7509013Z do so (now or later) by using -c with the switch command. Example:
+2026-10-20T21:21:17.7509232Z 
+2026-10-20T21:21:17.7509353Z   git switch -c <new-branch-name>
+2026-10-20T21:21:17.7509533Z 
+2026-10-20T21:21:17.7509649Z Or undo this operation with:
+2026-10-20T21:21:17.7509806Z 
+2026-10-20T21:21:17.7509896Z   git switch -
+2026-10-20T21:21:17.7510046Z 
+2026-10-20T21:21:17.7531697Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-10-20T21:21:17.7532515Z 
+2026-10-20T21:21:17.7533189Z HEAD is now at fd2947af Merge 1a525eaaba07bb416a83a4f4d76c833a20cb5256 into fc3589098d5b9c9340861f65bbb2ecbf80d95c2f
+2026-10-20T21:21:17.7535815Z ##[endgroup]
+2026-10-20T21:21:17.7578421Z [command]/usr/bin/git log -1 --format=%H
+2026-10-20T21:21:17.7600054Z fd2947af890f156aa63abb1c58028ec5345e6a5d
+2026-10-20T21:21:17.7935089Z ##[group]Run dtolnay/rust-toolchain@1.95
+2026-10-20T21:21:17.7935357Z with:
+2026-10-20T21:21:17.7935522Z ##[endgroup]
+2026-10-20T21:21:17.7994015Z ##[start-action display=Parse toolchain version;id=__dtolnay_rust-toolchain.parse]
+2026-10-20T21:21:17.8050980Z ##[group]Run if [[ -z $toolchain ]]; then
+2026-10-20T21:21:17.8051305Z if [[ -z $toolchain ]]; then
+2026-10-20T21:21:17.8051749Z   # GitHub does not enforce `required: true` inputs itself. https://github.com/actions/runner/issues/1070
+2026-10-20T21:21:17.8052247Z   echo "'toolchain' is a required input" >&2
+2026-10-20T21:21:17.8052505Z   exit 1
+2026-10-20T21:21:17.8052779Z elif [[ $toolchain =~ ^stable' '[0-9]+' '(year|month|week|day)s?' 'ago$ ]]; then
+2026-10-20T21:21:17.8053107Z   if [[ Linux == macOS ]]; then
+2026-10-20T21:21:17.8053582Z     echo "toolchain=1.$((($(date -v-$(sed 's/stable \([0-9]*\) \(.\).*/\1\2/' <<< $toolchain) +%s)/60/60/24-16569)/7/6))" >> $GITHUB_OUTPUT
+2026-10-20T21:21:17.8053987Z   else
+2026-10-20T21:21:17.8054316Z     echo "toolchain=1.$((($(date --date "${toolchain#stable }" +%s)/60/60/24-16569)/7/6))" >> $GITHUB_OUTPUT
+2026-10-20T21:21:17.8054672Z   fi
+2026-10-20T21:21:17.8054917Z elif [[ $toolchain =~ ^stable' 'minus' '[0-9]+' 'releases?$ ]]; then
+2026-10-20T21:21:17.8055331Z   echo "toolchain=1.$((($(date +%s)/60/60/24-16569)/7/6-${toolchain//[^0-9]/}))" >> $GITHUB_OUTPUT
+2026-10-20T21:21:17.8055693Z elif [[ $toolchain =~ ^1\.[0-9]+$ ]]; then
+2026-10-20T21:21:17.8056097Z   echo "toolchain=1.$((i=${toolchain#1.}, c=($(date +%s)/60/60/24-16569)/7/6, i+9*i*(10*i<=c)+90*i*(100*i<=c)))" >> $GITHUB_OUTPUT
+2026-10-20T21:21:17.8056476Z else
+2026-10-20T21:21:17.8056646Z   delimiter=EOF
+2026-10-20T21:21:17.8057076Z   while [[ $toolchain == *$delimiter* ]]; do delimiter+=_; done
+2026-10-20T21:21:17.8057657Z   printf 'toolchain<<%s\n%s\n%s\n' "$delimiter" "$toolchain" "$delimiter" >> $GITHUB_OUTPUT
+2026-10-20T21:21:17.8057987Z fi
+2026-10-20T21:21:17.8681857Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T21:21:17.8682192Z env:
+2026-10-20T21:21:17.8682370Z   toolchain: 1.95.0
+2026-10-20T21:21:17.8682545Z ##[endgroup]
+2026-10-20T21:21:17.8799096Z ##[end-action id=__dtolnay_rust-toolchain.parse;outcome=success;conclusion=success;duration_ms=80]
+2026-10-20T21:21:17.8802830Z ##[start-action display=Set $CARGO_HOME;id=__dtolnay_rust-toolchain.__run]
+2026-10-20T21:21:17.9102617Z ##[group]Run echo CARGO_HOME=${CARGO_HOME:-"$HOME/.cargo"} >> $GITHUB_ENV
+2026-10-20T21:21:17.9103023Z echo CARGO_HOME=${CARGO_HOME:-"$HOME/.cargo"} >> $GITHUB_ENV
+2026-10-20T21:21:17.9150256Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T21:21:17.9150573Z ##[endgroup]
+2026-10-20T21:21:17.9223690Z ##[end-action id=__dtolnay_rust-toolchain.__run;outcome=success;conclusion=success;duration_ms=42]
+2026-10-20T21:21:17.9225841Z ##[start-action display=Install rustup if needed;id=__dtolnay_rust-toolchain.__run_2]
+2026-10-20T21:21:17.9257118Z ##[group]Run if ! command -v rustup &>/dev/null; then
+2026-10-20T21:21:17.9257626Z if ! command -v rustup &>/dev/null; then
+2026-10-20T21:21:17.9258236Z   curl --proto '=https' --tlsv1.2 --retry 10 --retry-connrefused --location --silent --show-error --fail https://sh.rustup.rs | sh -s -- --default-toolchain none -y
+2026-10-20T21:21:17.9258803Z   echo "$CARGO_HOME/bin" >> $GITHUB_PATH
+2026-10-20T21:21:17.9259034Z fi
+2026-10-20T21:21:17.9303817Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T21:21:17.9304102Z env:
+2026-10-20T21:21:17.9304273Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T21:21:17.9304482Z ##[endgroup]
+2026-10-20T21:21:17.9372587Z ##[end-action id=__dtolnay_rust-toolchain.__run_2;outcome=success;conclusion=success;duration_ms=14]
+2026-10-20T21:21:17.9398738Z ##[start-action display=Install rustup if needed on windows;id=__dtolnay_rust-toolchain.__run_3]
+2026-10-20T21:21:17.9404696Z ##[end-action id=__dtolnay_rust-toolchain.__run_3;outcome=skipped;conclusion=skipped;duration_ms=0]
+2026-10-20T21:21:17.9416564Z ##[start-action display=rustup toolchain install 1.95.0;id=__dtolnay_rust-toolchain.__run_4]
+2026-10-20T21:21:17.9441198Z ##[group]Run set -f  # split targets and components on commas and whitespace, without glob expansion
+2026-10-20T21:21:17.9441731Z set -f  # split targets and components on commas and whitespace, without glob expansion
+2026-10-20T21:21:17.9442105Z flags=()
+2026-10-20T21:21:17.9442383Z for t in ${targets//,/ }; do flags+=(--target "$t"); done
+2026-10-20T21:21:17.9442705Z for c in ${components//,/ }; do flags+=(--component "$c"); done
+2026-10-20T21:21:17.9443112Z if [[ $toolchain == nightly && -n $components ]]; then flags+=(--allow-downgrade); fi
+2026-10-20T21:21:17.9443443Z log=$(mktemp)
+2026-10-20T21:21:17.9443651Z trap 'rm -f "$log"' EXIT
+2026-10-20T21:21:17.9443868Z for attempt in 1 2 3 4 5; do
+2026-10-20T21:21:17.9444313Z   if rustup toolchain install "$toolchain" "${flags[@]}" --profile minimal --no-self-update --force-non-host 2>&1 | tee "$log"; then
+2026-10-20T21:21:17.9444744Z     break
+2026-10-20T21:21:17.9444924Z   else
+2026-10-20T21:21:17.9445100Z     status=$?
+2026-10-20T21:21:17.9445277Z   fi
+2026-10-20T21:21:17.9445519Z   if [[ $attempt == 5 ]] || ! grep -Fq 'checksum failed for ' "$log" \
+2026-10-20T21:21:17.9445953Z       || ! grep -Fq 'this is likely due to an ongoing update of the official release server' "$log"; then
+2026-10-20T21:21:17.9446308Z     exit "$status"
+2026-10-20T21:21:17.9446504Z   fi
+2026-10-20T21:21:17.9446936Z   echo "Retrying rustup toolchain install in 30 seconds (retry $attempt of 4)" >&2
+2026-10-20T21:21:17.9447277Z   sleep 30
+2026-10-20T21:21:17.9447693Z done
+2026-10-20T21:21:17.9493887Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T21:21:17.9494184Z env:
+2026-10-20T21:21:17.9494361Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T21:21:17.9494574Z   toolchain: 1.95.0
+2026-10-20T21:21:17.9494747Z   targets: 
+2026-10-20T21:21:17.9494904Z   components: 
+2026-10-20T21:21:17.9495080Z   RUSTUP_PERMIT_COPY_RENAME: 1
+2026-10-20T21:21:17.9495276Z ##[endgroup]
+2026-10-20T21:21:17.9959227Z info: syncing channel updates for 1.95.0-x86_64-unknown-linux-gnu
+2026-10-20T21:21:18.1835690Z info: latest update on 2026-04-16 for version 1.95.0 (59807616e 2026-04-14)
+2026-10-20T21:21:18.1836763Z info: downloading 3 components
+2026-10-20T21:21:26.1321910Z 
+2026-10-20T21:21:26.1388359Z   1.95.0-x86_64-unknown-linux-gnu installed - rustc 1.95.0 (59807616e 2026-04-14)
+2026-10-20T21:21:26.1388847Z 
+2026-10-20T21:21:26.1500627Z ##[end-action id=__dtolnay_rust-toolchain.__run_4;outcome=success;conclusion=success;duration_ms=8208]
+2026-10-20T21:21:26.1506582Z ##[start-action display=rustup default 1.95.0;id=__dtolnay_rust-toolchain.__run_5]
+2026-10-20T21:21:26.1525303Z ##[group]Run rustup default "$toolchain" --force-non-host
+2026-10-20T21:21:26.1525625Z rustup default "$toolchain" --force-non-host
+2026-10-20T21:21:26.1569645Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T21:21:26.1569915Z env:
+2026-10-20T21:21:26.1570087Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T21:21:26.1570295Z   toolchain: 1.95.0
+2026-10-20T21:21:26.1570472Z ##[endgroup]
+2026-10-20T21:21:26.1666548Z info: using existing install for 1.95.0-x86_64-unknown-linux-gnu
+2026-10-20T21:21:26.1672050Z info: default toolchain set to 1.95.0-x86_64-unknown-linux-gnu
+2026-10-20T21:21:26.1672270Z 
+2026-10-20T21:21:26.1735517Z   1.95.0-x86_64-unknown-linux-gnu unchanged - rustc 1.95.0 (59807616e 2026-04-14)
+2026-10-20T21:21:26.1735844Z 
+2026-10-20T21:21:26.1738441Z info: note that the toolchain '1.95.0-x86_64-unknown-linux-gnu' is currently in use (overridden by '/home/runner/work/ripr-swarm/ripr-swarm/rust-toolchain.toml')
+2026-10-20T21:21:26.1750861Z ##[end-action id=__dtolnay_rust-toolchain.__run_5;outcome=success;conclusion=success;duration_ms=24]
+2026-10-20T21:21:26.1754052Z ##[start-action display=Create cachekey;id=__dtolnay_rust-toolchain.rustc-version]
+2026-10-20T21:21:26.1771093Z ##[group]Run DATE=$(rustc +"$toolchain" --version --verbose | sed -ne 's/^commit-date: \(20[0-9][0-9]\)-\([01][0-9]\)-\([0-3][0-9]\)$/\1\2\3/p')
+2026-10-20T21:21:26.1771797Z DATE=$(rustc +"$toolchain" --version --verbose | sed -ne 's/^commit-date: \(20[0-9][0-9]\)-\([01][0-9]\)-\([0-3][0-9]\)$/\1\2\3/p')
+2026-10-20T21:21:26.1772327Z HASH=$(rustc +"$toolchain" --version --verbose | sed -ne 's/^commit-hash: //p')
+2026-10-20T21:21:26.1772715Z echo "cachekey=$(echo $DATE$HASH | head -c12)" >> $GITHUB_OUTPUT
+2026-10-20T21:21:26.1814228Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T21:21:26.1814514Z env:
+2026-10-20T21:21:26.1814687Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T21:21:26.1814896Z   toolchain: 1.95.0
+2026-10-20T21:21:26.1815067Z ##[endgroup]
+2026-10-20T21:21:26.2101949Z ##[end-action id=__dtolnay_rust-toolchain.rustc-version;outcome=success;conclusion=success;duration_ms=34]
+2026-10-20T21:21:26.2104156Z ##[start-action display=Disable incremental compilation;id=__dtolnay_rust-toolchain.__run_6]
+2026-10-20T21:21:26.2123352Z ##[group]Run if [ -z "${CARGO_INCREMENTAL+set}" ]; then
+2026-10-20T21:21:26.2123659Z if [ -z "${CARGO_INCREMENTAL+set}" ]; then
+2026-10-20T21:21:26.2123955Z   echo CARGO_INCREMENTAL=0 >> $GITHUB_ENV
+2026-10-20T21:21:26.2124204Z fi
+2026-10-20T21:21:26.2166954Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T21:21:26.2167237Z env:
+2026-10-20T21:21:26.2167744Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T21:21:26.2167963Z ##[endgroup]
+2026-10-20T21:21:26.2227023Z ##[end-action id=__dtolnay_rust-toolchain.__run_6;outcome=success;conclusion=success;duration_ms=12]
+2026-10-20T21:21:26.2229077Z ##[start-action display=Enable colors in Cargo output;id=__dtolnay_rust-toolchain.__run_7]
+2026-10-20T21:21:26.2245191Z ##[group]Run if [ -z "${CARGO_TERM_COLOR+set}" ]; then
+2026-10-20T21:21:26.2245488Z if [ -z "${CARGO_TERM_COLOR+set}" ]; then
+2026-10-20T21:21:26.2245749Z   echo CARGO_TERM_COLOR=always >> $GITHUB_ENV
+2026-10-20T21:21:26.2245987Z fi
+2026-10-20T21:21:26.2282847Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T21:21:26.2283132Z env:
+2026-10-20T21:21:26.2283305Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T21:21:26.2283518Z   CARGO_INCREMENTAL: 0
+2026-10-20T21:21:26.2283697Z ##[endgroup]
+2026-10-20T21:21:26.2341086Z ##[end-action id=__dtolnay_rust-toolchain.__run_7;outcome=success;conclusion=success;duration_ms=11]
+2026-10-20T21:21:26.2343592Z ##[start-action display=Enable Cargo sparse registry;id=__dtolnay_rust-toolchain.__run_8]
+2026-10-20T21:21:26.2361017Z ##[group]Run # implemented in 1.66, stabilized in 1.68, made default in 1.70
+2026-10-20T21:21:26.2361422Z # implemented in 1.66, stabilized in 1.68, made default in 1.70
+2026-10-20T21:21:26.2361983Z if [ -z "${CARGO_REGISTRIES_CRATES_IO_PROTOCOL+set}" -o -f "/home/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol ]; then
+2026-10-20T21:21:26.2362550Z   if rustc +"$toolchain" --version --verbose | grep -q '^release: 1\.6[89]\.'; then
+2026-10-20T21:21:26.2362995Z     touch "/home/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol || true
+2026-10-20T21:21:26.2363402Z     echo CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse >> $GITHUB_ENV
+2026-10-20T21:21:26.2363796Z   elif rustc +"$toolchain" --version --verbose | grep -q '^release: 1\.6[67]\.'; then
+2026-10-20T21:21:26.2364235Z     touch "/home/runner/work/_temp"/.implicit_cargo_registries_crates_io_protocol || true
+2026-10-20T21:21:26.2364777Z     echo CARGO_REGISTRIES_CRATES_IO_PROTOCOL=git >> $GITHUB_ENV
+2026-10-20T21:21:26.2365056Z   fi
+2026-10-20T21:21:26.2365218Z fi
+2026-10-20T21:21:26.2401637Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T21:21:26.2401915Z env:
+2026-10-20T21:21:26.2402089Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T21:21:26.2402305Z   CARGO_INCREMENTAL: 0
+2026-10-20T21:21:26.2402496Z   CARGO_TERM_COLOR: always
+2026-10-20T21:21:26.2402685Z   toolchain: 1.95.0
+2026-10-20T21:21:26.2402851Z ##[endgroup]
+2026-10-20T21:21:26.2668120Z ##[end-action id=__dtolnay_rust-toolchain.__run_8;outcome=success;conclusion=success;duration_ms=32]
+2026-10-20T21:21:26.2671493Z ##[start-action display=Work around spurious network errors in curl 8.0;id=__dtolnay_rust-toolchain.__run_9]
+2026-10-20T21:21:26.2689467Z ##[group]Run # https://rust-lang.zulipchat.com/#narrow/stream/246057-t-cargo/topic/timeout.20investigation
+2026-10-20T21:21:26.2690099Z # https://rust-lang.zulipchat.com/#narrow/stream/246057-t-cargo/topic/timeout.20investigation
+2026-10-20T21:21:26.2690579Z if rustc +"$toolchain" --version --verbose | grep -q '^release: 1\.7[01]\.'; then
+2026-10-20T21:21:26.2690953Z   echo CARGO_HTTP_MULTIPLEXING=false >> $GITHUB_ENV
+2026-10-20T21:21:26.2691203Z fi
+2026-10-20T21:21:26.2733992Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T21:21:26.2734263Z env:
+2026-10-20T21:21:26.2734434Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T21:21:26.2734640Z   CARGO_INCREMENTAL: 0
+2026-10-20T21:21:26.2734822Z   CARGO_TERM_COLOR: always
+2026-10-20T21:21:26.2735001Z   toolchain: 1.95.0
+2026-10-20T21:21:26.2735168Z ##[endgroup]
+2026-10-20T21:21:26.2895231Z ##[end-action id=__dtolnay_rust-toolchain.__run_9;outcome=success;conclusion=success;duration_ms=22]
+2026-10-20T21:21:26.2899165Z ##[start-action display=rustc +1.95.0 --version --verbose;id=__dtolnay_rust-toolchain.__run_10]
+2026-10-20T21:21:26.2918116Z ##[group]Run rustc +"$toolchain" --version --verbose
+2026-10-20T21:21:26.2918513Z rustc +"$toolchain" --version --verbose
+2026-10-20T21:21:26.2957958Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T21:21:26.2958414Z env:
+2026-10-20T21:21:26.2958701Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T21:21:26.2959125Z   CARGO_INCREMENTAL: 0
+2026-10-20T21:21:26.2959475Z   CARGO_TERM_COLOR: always
+2026-10-20T21:21:26.2959773Z   toolchain: 1.95.0
+2026-10-20T21:21:26.2960097Z ##[endgroup]
+2026-10-20T21:21:26.3123272Z rustc 1.95.0 (59807616e 2026-04-14)
+2026-10-20T21:21:26.3123627Z binary: rustc
+2026-10-20T21:21:26.3123936Z commit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860
+2026-10-20T21:21:26.3124309Z commit-date: 2026-04-14
+2026-10-20T21:21:26.3124590Z host: x86_64-unknown-linux-gnu
+2026-10-20T21:21:26.3124847Z release: 1.95.0
+2026-10-20T21:21:26.3125116Z LLVM version: 22.1.2
+2026-10-20T21:21:26.3137694Z ##[end-action id=__dtolnay_rust-toolchain.__run_10;outcome=success;conclusion=success;duration_ms=23]
+2026-10-20T21:21:26.3230764Z ##[group]Run Swatinem/rust-cache@v2
+2026-10-20T21:21:26.3230986Z with:
+2026-10-20T21:21:26.3231198Z   shared-key: ripr-printed-command-paste-1.95-Linux
+2026-10-20T21:21:26.3231457Z   save-if: false
+2026-10-20T21:21:26.3231643Z   prefix-key: v0-rust
+2026-10-20T21:21:26.3231822Z   add-job-id-key: true
+2026-10-20T21:21:26.3232017Z   add-rust-environment-hash-key: true
+2026-10-20T21:21:26.3232231Z   cache-targets: true
+2026-10-20T21:21:26.3232408Z   cache-all-crates: false
+2026-10-20T21:21:26.3232613Z   cache-workspace-crates: false
+2026-10-20T21:21:26.3232821Z   cache-provider: github
+2026-10-20T21:21:26.3233001Z   cache-bin: true
+2026-10-20T21:21:26.3233167Z   lookup-only: false
+2026-10-20T21:21:26.3233338Z   cmd-format: {0}
+2026-10-20T21:21:26.3233494Z env:
+2026-10-20T21:21:26.3233663Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T21:21:26.3233868Z   CARGO_INCREMENTAL: 0
+2026-10-20T21:21:26.3234066Z   CARGO_TERM_COLOR: always
+2026-10-20T21:21:26.3234255Z ##[endgroup]
+2026-10-20T21:21:28.4967559Z ##[group]Cache Configuration
+2026-10-20T21:21:28.4968021Z Cache Provider:
+2026-10-20T21:21:28.4968264Z     github
+2026-10-20T21:21:28.4968509Z Workspaces:
+2026-10-20T21:21:28.4968771Z     /home/runner/work/ripr-swarm/ripr-swarm
+2026-10-20T21:21:28.4969121Z Cache Paths:
+2026-10-20T21:21:28.4969379Z     /home/runner/.cargo/bin
+2026-10-20T21:21:28.4969704Z     /home/runner/.cargo/.crates.toml
+2026-10-20T21:21:28.4970048Z     /home/runner/.cargo/.crates2.json
+2026-10-20T21:21:28.4970391Z     /home/runner/.cargo/registry
+2026-10-20T21:21:28.4970701Z     /home/runner/.cargo/git
+2026-10-20T21:21:28.4971026Z     /home/runner/work/ripr-swarm/ripr-swarm/target
+2026-10-20T21:21:28.4971384Z Restore Key:
+2026-10-20T21:21:28.4971788Z     v0-rust-ripr-printed-command-paste-1.95-Linux-Linux-x64-e88ea626
+2026-10-20T21:21:28.4972296Z Cache Key:
+2026-10-20T21:21:28.4972737Z     v0-rust-ripr-printed-command-paste-1.95-Linux-Linux-x64-e88ea626-ff195c23
+2026-10-20T21:21:28.4973282Z .. Prefix:
+2026-10-20T21:21:28.4973654Z   - v0-rust-ripr-printed-command-paste-1.95-Linux-Linux-x64
+2026-10-20T21:21:28.4974096Z .. Environment considered:
+2026-10-20T21:21:28.4974390Z   - Rust Versions:
+2026-10-20T21:21:28.4974784Z     - 1.95.0 x86_64-unknown-linux-gnu 59807616e1fa2540724bfbac14d7976d7e4a3860
+2026-10-20T21:21:28.4975369Z     - 1.99.1 x86_64-unknown-linux-gnu 58cf8f9c35b355199727627d07ae34a4e2846d67
+2026-10-20T21:21:28.4975828Z   - CARGO_HOME
+2026-10-20T21:21:28.4976079Z   - CARGO_INCREMENTAL
+2026-10-20T21:21:28.4976351Z   - CARGO_TERM_COLOR
+2026-10-20T21:21:28.4976611Z .. Lockfiles considered:
+2026-10-20T21:21:28.4976984Z   - /home/runner/work/ripr-swarm/ripr-swarm/.cargo/config.toml
+2026-10-20T21:21:28.4977581Z   - /home/runner/work/ripr-swarm/ripr-swarm/Cargo.lock
+2026-10-20T21:21:28.4978049Z   - /home/runner/work/ripr-swarm/ripr-swarm/crates/ripr/Cargo.toml
+2026-10-20T21:21:28.4978631Z   - /home/runner/work/ripr-swarm/ripr-swarm/editors/zed/rust-toolchain.toml
+2026-10-20T21:21:28.4979602Z   - /home/runner/work/ripr-swarm/ripr-swarm/rust-toolchain.toml
+2026-10-20T21:21:28.4980155Z   - /home/runner/work/ripr-swarm/ripr-swarm/tools/repo-policy/Cargo.toml
+2026-10-20T21:21:28.4980690Z   - /home/runner/work/ripr-swarm/ripr-swarm/xtask/Cargo.toml
+2026-10-20T21:21:28.4981312Z ##[endgroup]
+2026-10-20T21:21:28.4981448Z 
+2026-10-20T21:21:28.4981565Z ... Restoring cache ...
+2026-10-20T21:21:28.6944685Z No cache found.
+2026-10-20T21:21:28.7066583Z ##[group]Run sudo apt-get install -y zsh
+2026-10-20T21:21:28.7066861Z sudo apt-get install -y zsh
+2026-10-20T21:21:28.7112672Z shell: /usr/bin/bash -e {0}
+2026-10-20T21:21:28.7112888Z env:
+2026-10-20T21:21:28.7113059Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T21:21:28.7113272Z   CARGO_INCREMENTAL: 0
+2026-10-20T21:21:28.7113458Z   CARGO_TERM_COLOR: always
+2026-10-20T21:21:28.7113647Z   CACHE_ON_FAILURE: false
+2026-10-20T21:21:28.7113829Z ##[endgroup]
+2026-10-20T21:21:30.5082600Z Reading package lists...
+2026-10-20T21:21:30.7524267Z Building dependency tree...
+2026-10-20T21:21:30.7796094Z Reading state information...
+2026-10-20T21:21:30.9221686Z The following additional packages will be installed:
+2026-10-20T21:21:30.9222177Z   zsh-common
+2026-10-20T21:21:30.9225397Z Suggested packages:
+2026-10-20T21:21:30.9225634Z   zsh-doc
+2026-10-20T21:21:30.9430060Z The following NEW packages will be installed:
+2026-10-20T21:21:30.9430457Z   zsh zsh-common
+2026-10-20T21:21:30.9688279Z 0 upgraded, 2 newly installed, 0 to remove and 1 not upgraded.
+2026-10-20T21:21:30.9688607Z Need to get 4985 kB of archives.
+2026-10-20T21:21:30.9688885Z After this operation, 19.1 MB of additional disk space will be used.
+2026-10-20T21:21:30.9689208Z Get:1 file:/etc/apt/apt-mirrors.txt Mirrorlist [144 B]
+2026-10-20T21:21:31.0572558Z Get:2 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 zsh-common all 5.9-6ubuntu2 [4173 kB]
+2026-10-20T21:21:31.2065314Z Get:3 http://azure.archive.ubuntu.com/ubuntu noble/main amd64 zsh amd64 5.9-6ubuntu2 [812 kB]
+2026-10-20T21:21:31.4625536Z Fetched 4985 kB in 0s (18.5 MB/s)
+2026-10-20T21:21:31.5023119Z Selecting previously unselected package zsh-common.
+2026-10-20T21:21:31.5258055Z (Reading database ... 
+2026-10-20T21:21:31.5258468Z (Reading database ... 5%
+2026-10-20T21:21:31.5259022Z (Reading database ... 10%
+2026-10-20T21:21:31.5259339Z (Reading database ... 15%
+2026-10-20T21:21:31.5259619Z (Reading database ... 20%
+2026-10-20T21:21:31.5259929Z (Reading database ... 25%
+2026-10-20T21:21:31.5260112Z (Reading database ... 30%
+2026-10-20T21:21:31.5260289Z (Reading database ... 35%
+2026-10-20T21:21:31.5260574Z (Reading database ... 40%
+2026-10-20T21:21:31.5260949Z (Reading database ... 45%
+2026-10-20T21:21:31.5261303Z (Reading database ... 50%
+2026-10-20T21:21:31.5439301Z (Reading database ... 55%
+2026-10-20T21:21:31.6528970Z (Reading database ... 60%
+2026-10-20T21:21:31.8633020Z (Reading database ... 65%
+2026-10-20T21:21:31.9361699Z (Reading database ... 70%
+2026-10-20T21:21:32.0409171Z (Reading database ... 75%
+2026-10-20T21:21:32.1586350Z (Reading database ... 80%
+2026-10-20T21:21:32.2927204Z (Reading database ... 85%
+2026-10-20T21:21:32.3889950Z (Reading database ... 90%
+2026-10-20T21:21:32.5054070Z (Reading database ... 95%
+2026-10-20T21:21:32.5054362Z (Reading database ... 100%
+2026-10-20T21:21:32.5054648Z (Reading database ... 214410 files and directories currently installed.)
+2026-10-20T21:21:32.5099679Z Preparing to unpack .../zsh-common_5.9-6ubuntu2_all.deb ...
+2026-10-20T21:21:32.5177156Z Unpacking zsh-common (5.9-6ubuntu2) ...
+2026-10-20T21:21:32.8332445Z Selecting previously unselected package zsh.
+2026-10-20T21:21:32.8461339Z Preparing to unpack .../zsh_5.9-6ubuntu2_amd64.deb ...
+2026-10-20T21:21:32.8521705Z Unpacking zsh (5.9-6ubuntu2) ...
+2026-10-20T21:21:32.9066234Z Setting up zsh-common (5.9-6ubuntu2) ...
+2026-10-20T21:21:32.9211429Z Setting up zsh (5.9-6ubuntu2) ...
+2026-10-20T21:21:32.9292761Z Processing triggers for debianutils (5.17build1) ...
+2026-10-20T21:21:33.0635540Z Processing triggers for man-db (2.12.0-4build2) ...
+2026-10-20T21:21:33.0654129Z Not building database; man-db/auto-update is not 'true'.
+2026-10-20T21:21:33.7714804Z 
+2026-10-20T21:21:33.7715541Z Running kernel seems to be up-to-date.
+2026-10-20T21:21:33.7715841Z 
+2026-10-20T21:21:33.7715960Z No services need to be restarted.
+2026-10-20T21:21:33.7716177Z 
+2026-10-20T21:21:33.7716300Z No containers need to be restarted.
+2026-10-20T21:21:33.7716503Z 
+2026-10-20T21:21:33.7717036Z No user sessions are running outdated binaries.
+2026-10-20T21:21:33.7717290Z 
+2026-10-20T21:21:33.7717672Z No VM guests are running outdated hypervisor (qemu) binaries on this host.
+2026-10-20T21:21:34.7566117Z ##[group]Run bash --version | head -n 1
+2026-10-20T21:21:34.7566433Z bash --version | head -n 1
+2026-10-20T21:21:34.7610633Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T21:21:34.7610908Z env:
+2026-10-20T21:21:34.7611074Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T21:21:34.7611299Z   CARGO_INCREMENTAL: 0
+2026-10-20T21:21:34.7611477Z   CARGO_TERM_COLOR: always
+2026-10-20T21:21:34.7611661Z   CACHE_ON_FAILURE: false
+2026-10-20T21:21:34.7611839Z ##[endgroup]
+2026-10-20T21:21:34.7676800Z GNU bash, version 5.2.21(1)-release (x86_64-pc-linux-gnu)
+2026-10-20T21:21:34.7704638Z ##[group]Run cargo test -p ripr --test printed_command_paste -- --nocapture
+2026-10-20T21:21:34.7705044Z cargo test -p ripr --test printed_command_paste -- --nocapture
+2026-10-20T21:21:34.7742792Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T21:21:34.7743073Z env:
+2026-10-20T21:21:34.7743243Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T21:21:34.7743461Z   CARGO_INCREMENTAL: 0
+2026-10-20T21:21:34.7743644Z   CARGO_TERM_COLOR: always
+2026-10-20T21:21:34.7743835Z   CACHE_ON_FAILURE: false
+2026-10-20T21:21:34.7744039Z   RIPR_PASTE_REQUIRE: bash,sh,zsh,pwsh
+2026-10-20T21:21:34.7744335Z   RIPR_PASTE_REPORT: /home/runner/work/_temp/printed-commands.jsonl
+2026-10-20T21:21:34.7744632Z ##[endgroup]
+2026-10-20T21:21:34.8270715Z     Updating crates.io index
+2026-10-20T21:21:35.5661962Z  Downloading crates ...
+2026-10-20T21:21:35.6247684Z   Downloaded autocfg v1.5.1
+2026-10-20T21:21:35.6385011Z   Downloaded anyhow v1.0.104
+2026-10-20T21:21:35.6424475Z   Downloaded block-buffer v0.10.4
+2026-10-20T21:21:35.6437847Z   Downloaded allocator-api2 v0.2.21
+2026-10-20T21:21:35.6463357Z   Downloaded borrow-or-share v0.2.4
+2026-10-20T21:21:35.6476298Z   Downloaded phf_generator v0.11.3
+2026-10-20T21:21:35.6497878Z   Downloaded heck v0.5.0
+2026-10-20T21:21:35.6516403Z   Downloaded phf v0.13.1
+2026-10-20T21:21:35.6530239Z   Downloaded futures-sink v0.3.34
+2026-10-20T21:21:35.6548752Z   Downloaded fs2 v0.4.3
+2026-10-20T21:21:35.6562330Z   Downloaded oxc_str v0.130.0
+2026-10-20T21:21:35.6580610Z   Downloaded getopts v0.2.24
+2026-10-20T21:21:35.6602836Z   Downloaded phf_codegen v0.11.3
+2026-10-20T21:21:35.6616938Z   Downloaded memoffset v0.9.1
+2026-10-20T21:21:35.6632216Z   Downloaded cfg-if v1.0.5
+2026-10-20T21:21:35.6648436Z   Downloaded rand_chacha v0.3.1
+2026-10-20T21:21:35.6665477Z   Downloaded parking_lot_core v0.9.12
+2026-10-20T21:21:35.6701903Z   Downloaded unic-char-range v0.9.0
+2026-10-20T21:21:35.6720892Z   Downloaded unic-emoji-char v0.9.0
+2026-10-20T21:21:35.6736804Z   Downloaded unic-common v0.9.0
+2026-10-20T21:21:35.6744764Z   Downloaded pastey v0.2.3
+2026-10-20T21:21:35.6756730Z   Downloaded oxc_estree v0.130.0
+2026-10-20T21:21:35.6770755Z   Downloaded owo-colors v4.4.0
+2026-10-20T21:21:35.6813863Z   Downloaded wait-timeout v0.2.1
+2026-10-20T21:21:35.6849341Z   Downloaded toml v1.1.8+spec-1.1.0
+2026-10-20T21:21:35.6905507Z   Downloaded zerofrom-derive v0.1.8
+2026-10-20T21:21:35.6929367Z   Downloaded zerovec-derive v0.11.6
+2026-10-20T21:21:35.6955757Z   Downloaded zerofrom v0.1.8
+2026-10-20T21:21:35.6968688Z   Downloaded itertools v0.15.0
+2026-10-20T21:21:35.7050872Z   Downloaded unic-ucd-version v0.9.0
+2026-10-20T21:21:35.7063877Z   Downloaded zmij v1.0.23
+2026-10-20T21:21:35.7082575Z   Downloaded toml_writer v1.1.3+spec-1.1.0
+2026-10-20T21:21:35.7095109Z   Downloaded chrono v0.4.45
+2026-10-20T21:21:35.7161214Z   Downloaded triomphe v0.1.16
+2026-10-20T21:21:35.7182944Z   Downloaded unicode-width v0.2.2
+2026-10-20T21:21:35.7232065Z   Downloaded ryu v1.0.23
+2026-10-20T21:21:35.7266963Z   Downloaded rustpython-ast v0.4.0
+2026-10-20T21:21:35.7289423Z   Downloaded textwrap v0.16.4
+2026-10-20T21:21:35.7310555Z   Downloaded rand v0.9.5
+2026-10-20T21:21:35.7349117Z   Downloaded tower-lsp-server v0.23.0
+2026-10-20T21:21:35.7384685Z   Downloaded typenum v1.20.1
+2026-10-20T21:21:35.7429132Z   Downloaded tower v0.5.3
+2026-10-20T21:21:35.7528444Z   Downloaded tokio-util v0.7.20
+2026-10-20T21:21:35.7594839Z   Downloaded serde_json v1.0.151
+2026-10-20T21:21:35.7652065Z   Downloaded winnow v1.0.4
+2026-10-20T21:21:35.7728028Z   Downloaded ra_ap_parser v0.0.349
+2026-10-20T21:21:35.8289067Z   Downloaded rustpython-parser v0.4.0
+2026-10-20T21:21:35.8383034Z   Downloaded proptest v1.11.0
+2026-10-20T21:21:35.8463153Z   Downloaded winnow v0.7.15
+2026-10-20T21:21:35.8535820Z   Downloaded ra_ap_syntax v0.0.349
+2026-10-20T21:21:35.8587629Z   Downloaded rayon v1.12.0
+2026-10-20T21:21:35.8660172Z   Downloaded syn v2.0.119
+2026-10-20T21:21:35.8745661Z   Downloaded syn v3.0.6
+2026-10-20T21:21:35.8827733Z   Downloaded libc v0.2.190
+2026-10-20T21:21:35.9171397Z   Downloaded serde v1.0.229
+2026-10-20T21:21:35.9198979Z   Downloaded regex-syntax v0.8.11
+2026-10-20T21:21:35.9252820Z   Downloaded nix v0.31.3
+2026-10-20T21:21:35.9343595Z   Downloaded unicode_names2 v1.3.0
+2026-10-20T21:21:35.9395262Z   Downloaded rustix v1.1.5
+2026-10-20T21:21:35.9605981Z   Downloaded tracing v0.1.44
+2026-10-20T21:21:35.9716859Z   Downloaded schemars v1.2.1
+2026-10-20T21:21:35.9841285Z   Downloaded rand v0.8.8
+2026-10-20T21:21:35.9867576Z   Downloaded proc-macro2 v1.0.107
+2026-10-20T21:21:35.9890622Z   Downloaded tracing-core v0.1.36
+2026-10-20T21:21:35.9911344Z   Downloaded tinystr v0.8.4
+2026-10-20T21:21:35.9927314Z   Downloaded tempfile v3.27.0
+2026-10-20T21:21:35.9948492Z   Downloaded signal-hook v0.3.18
+2026-10-20T21:21:35.9972123Z   Downloaded rmcp v3.5.1
+2026-10-20T21:21:36.0112166Z   Downloaded serde_derive v1.0.229
+2026-10-20T21:21:36.0135764Z   Downloaded rayon-core v1.13.0
+2026-10-20T21:21:36.0164084Z   Downloaded ra_ap_stdx v0.0.349
+2026-10-20T21:21:36.0177114Z   Downloaded tracing-attributes v0.1.31
+2026-10-20T21:21:36.0198347Z   Downloaded toml_parser v1.1.5+spec-1.1.0
+2026-10-20T21:21:36.0216797Z   Downloaded toml_datetime v1.1.2+spec-1.1.0
+2026-10-20T21:21:36.0227038Z   Downloaded tokio-stream v0.1.19
+2026-10-20T21:21:36.0270825Z   Downloaded smol_str v0.3.6
+2026-10-20T21:21:36.0283915Z   Downloaded smawk v0.3.3
+2026-10-20T21:21:36.0298014Z   Downloaded smallvec v1.16.1
+2026-10-20T21:21:36.0309270Z   Downloaded signal-hook-registry v1.4.8
+2026-10-20T21:21:36.0319419Z   Downloaded thiserror v2.0.20
+2026-10-20T21:21:36.0366702Z   Downloaded static_assertions v1.1.0
+2026-10-20T21:21:36.0378597Z   Downloaded sha2 v0.10.9
+2026-10-20T21:21:36.0398232Z   Downloaded serde_derive_internals v0.29.1
+2026-10-20T21:21:36.0410298Z   Downloaded linux-raw-sys v0.12.1
+2026-10-20T21:21:36.0894188Z   Downloaded schemars_derive v1.2.1
+2026-10-20T21:21:36.0910845Z   Downloaded tokio v1.53.2
+2026-10-20T21:21:36.1241092Z   Downloaded rusty-fork v0.3.1
+2026-10-20T21:21:36.1263494Z   Downloaded rustversion v1.0.23
+2026-10-20T21:21:36.1285442Z   Downloaded rand_chacha v0.9.0
+2026-10-20T21:21:36.1295339Z   Downloaded quote v1.0.47
+2026-10-20T21:21:36.1315995Z   Downloaded phf_macros v0.13.1
+2026-10-20T21:21:36.1325352Z   Downloaded oxc_ast v0.130.0
+2026-10-20T21:21:36.1373939Z   Downloaded tokio-macros v2.7.2
+2026-10-20T21:21:36.1383181Z   Downloaded tiny-keccak v2.0.2
+2026-10-20T21:21:36.1401856Z   Downloaded thiserror-impl v2.0.20
+2026-10-20T21:21:36.1413435Z   Downloaded synstructure v0.14.0
+2026-10-20T21:21:36.1422030Z   Downloaded slab v0.4.12
+2026-10-20T21:21:36.1432519Z   Downloaded rand_xorshift v0.4.0
+2026-10-20T21:21:36.1441654Z   Downloaded oxc_parser v0.130.0
+2026-10-20T21:21:36.1484360Z   Downloaded futures-util v0.3.34
+2026-10-20T21:21:36.1579781Z   Downloaded hashbrown v0.14.5
+2026-10-20T21:21:36.1616870Z   Downloaded yoke v0.8.3
+2026-10-20T21:21:36.1631782Z   Downloaded unicode-segmentation v1.13.3
+2026-10-20T21:21:36.1655005Z   Downloaded ref-cast-impl v1.0.27
+2026-10-20T21:21:36.1661921Z   Downloaded icu_segmenter_data v2.3.0
+2026-10-20T21:21:36.1985462Z   Downloaded rand_core v0.9.5
+2026-10-20T21:21:36.1996353Z   Downloaded rand_core v0.6.4
+2026-10-20T21:21:36.2006909Z   Downloaded ppv-lite86 v0.2.21
+2026-10-20T21:21:36.2017269Z   Downloaded oxc_allocator v0.130.0
+2026-10-20T21:21:36.2051802Z   Downloaded num-bigint v0.4.8
+2026-10-20T21:21:36.2086864Z   Downloaded itertools v0.11.0
+2026-10-20T21:21:36.2134898Z   Downloaded hashbrown v0.17.1
+2026-10-20T21:21:36.2174661Z   Downloaded writeable v0.6.4
+2026-10-20T21:21:36.2190858Z   Downloaded unicode-properties v0.1.4
+2026-10-20T21:21:36.2205982Z   Downloaded unicode-id-start v1.5.0
+2026-10-20T21:21:36.2230603Z   Downloaded tower-layer v0.3.3
+2026-10-20T21:21:36.2238545Z   Downloaded sync_wrapper v1.0.2
+2026-10-20T21:21:36.2245489Z   Downloaded stable_deref_trait v1.2.1
+2026-10-20T21:21:36.2252926Z   Downloaded serial_test_derive v4.0.1
+2026-10-20T21:21:36.2260376Z   Downloaded serial_test v4.0.1
+2026-10-20T21:21:36.2271562Z   Downloaded phf_shared v0.11.3
+2026-10-20T21:21:36.2291662Z   Downloaded phf_generator v0.13.1
+2026-10-20T21:21:36.2301212Z   Downloaded mio v1.2.3
+2026-10-20T21:21:36.2346300Z   Downloaded memchr v2.8.3
+2026-10-20T21:21:36.2386749Z   Downloaded indexmap v2.14.2
+2026-10-20T21:21:36.2419464Z   Downloaded crossbeam-channel v0.5.17
+2026-10-20T21:21:36.2450850Z   Downloaded compact_str v0.9.1
+2026-10-20T21:21:36.2477105Z   Downloaded yoke-derive v0.8.4
+2026-10-20T21:21:36.2486540Z   Downloaded uuid v1.26.0
+2026-10-20T21:21:36.2509654Z   Downloaded unicode-ident v1.0.24
+2026-10-20T21:21:36.2530752Z   Downloaded tower-service v0.3.3
+2026-10-20T21:21:36.2537122Z   Downloaded text-size v1.1.1
+2026-10-20T21:21:36.2550191Z   Downloaded siphasher v1.0.3
+2026-10-20T21:21:36.2560836Z   Downloaded serde_spanned v1.1.2
+2026-10-20T21:21:36.2569889Z   Downloaded seq-macro v0.3.6
+2026-10-20T21:21:36.2583739Z   Downloaded scopeguard v1.2.0
+2026-10-20T21:21:36.2593419Z   Downloaded rustc-literal-escaper v0.0.7
+2026-10-20T21:21:36.2604289Z   Downloaded rustc-hash v2.1.3
+2026-10-20T21:21:36.2614411Z   Downloaded ref-cast v1.0.27
+2026-10-20T21:21:36.2635937Z   Downloaded zerovec v0.11.8
+2026-10-20T21:21:36.2679620Z   Downloaded icu_segmenter v2.3.0
+2026-10-20T21:21:36.3123334Z   Downloaded ra_ap_edition v0.0.349
+2026-10-20T21:21:36.3128677Z   Downloaded ra-ap-rustc_lexer v0.166.0
+2026-10-20T21:21:36.3134408Z   Downloaded pin-project-lite v0.2.17
+2026-10-20T21:21:36.3176499Z   Downloaded oxc-miette v2.7.1
+2026-10-20T21:21:36.3208510Z   Downloaded ls-types v0.0.6
+2026-10-20T21:21:36.3238861Z   Downloaded icu_locale_core v2.3.0
+2026-10-20T21:21:36.3289060Z   Downloaded zerotrie v0.2.5
+2026-10-20T21:21:36.3317928Z   Downloaded zerocopy v0.8.57
+2026-10-20T21:21:36.3473794Z   Downloaded icu_collections v2.3.0
+2026-10-20T21:21:36.3519283Z   Downloaded bytes v1.12.1
+2026-10-20T21:21:36.3544968Z   Downloaded borsh v1.8.1
+2026-10-20T21:21:36.3596921Z   Downloaded serde_core v1.0.229
+2026-10-20T21:21:36.3617103Z   Downloaded rowan v0.17.0
+2026-10-20T21:21:36.3633321Z   Downloaded phf_shared v0.13.1
+2026-10-20T21:21:36.3640157Z   Downloaded oxc_regular_expression v0.130.0
+2026-10-20T21:21:36.3669559Z   Downloaded oxc_ecmascript v0.130.0
+2026-10-20T21:21:36.3694948Z   Downloaded oxc_data_structures v0.130.0
+2026-10-20T21:21:36.3710302Z   Downloaded num-traits v0.2.19
+2026-10-20T21:21:36.3729148Z   Downloaded log v0.4.34
+2026-10-20T21:21:36.3747152Z   Downloaded icu_provider v2.3.1
+2026-10-20T21:21:36.3766271Z   Downloaded iana-time-zone v0.1.65
+2026-10-20T21:21:36.3786810Z   Downloaded httparse v1.10.1
+2026-10-20T21:21:36.3805214Z   Downloaded getrandom v0.4.3
+2026-10-20T21:21:36.3832120Z   Downloaded getrandom v0.3.4
+2026-10-20T21:21:36.3856462Z   Downloaded futures v0.3.34
+2026-10-20T21:21:36.3892718Z   Downloaded fluent-uri v0.4.1
+2026-10-20T21:21:36.3915199Z   Downloaded dragonbox_ecma v0.1.12
+2026-10-20T21:21:36.3932640Z   Downloaded digest v0.10.7
+2026-10-20T21:21:36.3945516Z   Downloaded crossbeam-utils v0.8.23
+2026-10-20T21:21:36.3965417Z   Downloaded crossbeam-epoch v0.9.21
+2026-10-20T21:21:36.3983196Z   Downloaded version_check v0.9.5
+2026-10-20T21:21:36.3992205Z   Downloaded utf8_iter v1.0.4
+2026-10-20T21:21:36.3999503Z   Downloaded unicode_names2_generator v1.3.0
+2026-10-20T21:21:36.4006651Z   Downloaded unic-ucd-ident v0.9.0
+2026-10-20T21:21:36.4018544Z   Downloaded rustpython-parser-vendored v0.4.0
+2026-10-20T21:21:36.4029692Z   Downloaded rustpython-parser-core v0.4.0
+2026-10-20T21:21:36.4035291Z   Downloaded rustc-hash v1.1.0
+2026-10-20T21:21:36.4041711Z   Downloaded quick-error v1.2.3
+2026-10-20T21:21:36.4050657Z   Downloaded potential_utf v0.1.6
+2026-10-20T21:21:36.4058354Z   Downloaded parking_lot v0.12.5
+2026-10-20T21:21:36.4076163Z   Downloaded once_cell v1.21.4
+2026-10-20T21:21:36.4094192Z   Downloaded num-integer v0.1.47
+2026-10-20T21:21:36.4105717Z   Downloaded litemap v0.8.3
+2026-10-20T21:21:36.4122347Z   Downloaded getrandom v0.2.17
+2026-10-20T21:21:36.4143355Z   Downloaded futures-channel v0.3.34
+2026-10-20T21:21:36.4156876Z   Downloaded fastrand v2.5.0
+2026-10-20T21:21:36.4167500Z   Downloaded either v1.18.0
+2026-10-20T21:21:36.4178067Z   Downloaded crossbeam-deque v0.8.8
+2026-10-20T21:21:36.4188958Z   Downloaded cfg_aliases v0.2.2
+2026-10-20T21:21:36.4195676Z   Downloaded unic-char-property v0.9.0
+2026-10-20T21:21:36.4204539Z   Downloaded unarray v0.1.4
+2026-10-20T21:21:36.4213397Z   Downloaded percent-encoding v2.3.2
+2026-10-20T21:21:36.4219451Z   Downloaded oxc_syntax v0.130.0
+2026-10-20T21:21:36.4235672Z   Downloaded oxc_span v0.130.0
+2026-10-20T21:21:36.4246771Z   Downloaded oxc_index v4.1.0
+2026-10-20T21:21:36.4255535Z   Downloaded oxc_ast_macros v0.130.0
+2026-10-20T21:21:36.4263398Z   Downloaded oxc-miette-derive v2.7.1
+2026-10-20T21:21:36.4274098Z   Downloaded lock_api v0.4.14
+2026-10-20T21:21:36.4283450Z   Downloaded icu_locale_fallback v2.3.0
+2026-10-20T21:21:36.4291558Z   Downloaded displaydoc v0.2.7
+2026-10-20T21:21:36.4305857Z   Downloaded dashmap v6.2.1
+2026-10-20T21:21:36.4323515Z   Downloaded cpufeatures v0.2.17
+2026-10-20T21:21:36.4333359Z   Downloaded oxc_diagnostics v0.130.0
+2026-10-20T21:21:36.4340633Z   Downloaded nonmax v0.5.5
+2026-10-20T21:21:36.4348799Z   Downloaded itoa v1.0.18
+2026-10-20T21:21:36.4358965Z   Downloaded icu_locale_fallback_data v2.3.0
+2026-10-20T21:21:36.4366462Z   Downloaded futures-macro v0.3.34
+2026-10-20T21:21:36.4374362Z   Downloaded futures-executor v0.3.34
+2026-10-20T21:21:36.4384280Z   Downloaded cow-utils v0.1.3
+2026-10-20T21:21:36.4392303Z   Downloaded phf v0.11.3
+2026-10-20T21:21:36.4401274Z   Downloaded is-macro v0.3.8
+2026-10-20T21:21:36.4409726Z   Downloaded lalrpop-util v0.20.2
+2026-10-20T21:21:36.4416423Z   Downloaded jod-thread v1.0.0
+2026-10-20T21:21:36.4422480Z   Downloaded home v0.5.12
+2026-10-20T21:21:36.4429637Z   Downloaded drop_bomb v0.1.5
+2026-10-20T21:21:36.4435459Z   Downloaded castaway v0.2.4
+2026-10-20T21:21:36.4445382Z   Downloaded bit-vec v0.8.0
+2026-10-20T21:21:36.4456791Z   Downloaded generic-array v0.14.7
+2026-10-20T21:21:36.4466726Z   Downloaded futures-core v0.3.34
+2026-10-20T21:21:36.4476462Z   Downloaded fnv v1.0.7
+2026-10-20T21:21:36.4482747Z   Downloaded crunchy v0.2.4
+2026-10-20T21:21:36.4488615Z   Downloaded futures-task v0.3.34
+2026-10-20T21:21:36.4496693Z   Downloaded futures-io v0.3.34
+2026-10-20T21:21:36.4502990Z   Downloaded errno v0.3.14
+2026-10-20T21:21:36.4514621Z   Downloaded equivalent v1.0.2
+2026-10-20T21:21:36.4521705Z   Downloaded dyn-clone v1.0.20
+2026-10-20T21:21:36.4533420Z   Downloaded crypto-common v0.1.7
+2026-10-20T21:21:36.4539948Z   Downloaded countme v3.0.1
+2026-10-20T21:21:36.4549392Z   Downloaded bitflags v2.13.2
+2026-10-20T21:21:36.4581350Z   Downloaded bit-set v0.8.0
+2026-10-20T21:21:36.5908278Z    Compiling proc-macro2 v1.0.107
+2026-10-20T21:21:36.5908934Z    Compiling unicode-ident v1.0.24
+2026-10-20T21:21:36.5910081Z    Compiling quote v1.0.47
+2026-10-20T21:21:36.5910493Z    Compiling cfg-if v1.0.5
+2026-10-20T21:21:36.6173002Z    Compiling libc v0.2.190
+2026-10-20T21:21:36.6457651Z    Compiling siphasher v1.0.3
+2026-10-20T21:21:36.7260259Z    Compiling stable_deref_trait v1.2.1
+2026-10-20T21:21:36.7456080Z    Compiling autocfg v1.5.1
+2026-10-20T21:21:36.8208899Z    Compiling serde_core v1.0.229
+2026-10-20T21:21:36.9708811Z    Compiling memchr v2.8.3
+2026-10-20T21:21:37.0298691Z    Compiling zerocopy v0.8.57
+2026-10-20T21:21:37.3804502Z    Compiling syn v3.0.6
+2026-10-20T21:21:37.4228793Z    Compiling syn v2.0.119
+2026-10-20T21:21:38.2708756Z    Compiling once_cell v1.21.4
+2026-10-20T21:21:38.3938982Z    Compiling smallvec v1.16.1
+2026-10-20T21:21:40.1399099Z    Compiling unicode-width v0.2.2
+2026-10-20T21:21:40.3204811Z    Compiling synstructure v0.14.0
+2026-10-20T21:21:40.7708605Z    Compiling writeable v0.6.4
+2026-10-20T21:21:41.2969089Z    Compiling pin-project-lite v0.2.17
+2026-10-20T21:21:41.4558767Z    Compiling itoa v1.0.18
+2026-10-20T21:21:41.4939155Z    Compiling zerofrom-derive v0.1.8
+2026-10-20T21:21:41.5578807Z    Compiling yoke-derive v0.8.4
+2026-10-20T21:21:41.7303042Z    Compiling zerovec-derive v0.11.6
+2026-10-20T21:21:42.2429836Z    Compiling displaydoc v0.2.7
+2026-10-20T21:21:42.3928979Z    Compiling icu_locale_fallback_data v2.3.0
+2026-10-20T21:21:42.4459969Z    Compiling zerofrom v0.1.8
+2026-10-20T21:21:42.4766613Z    Compiling litemap v0.8.3
+2026-10-20T21:21:42.5210115Z    Compiling yoke v0.8.3
+2026-10-20T21:21:42.5708970Z    Compiling getrandom v0.2.17
+2026-10-20T21:21:42.6325645Z    Compiling num-traits v0.2.19
+2026-10-20T21:21:42.6509000Z    Compiling zerovec v0.11.8
+2026-10-20T21:21:42.6899272Z    Compiling bitflags v2.13.2
+2026-10-20T21:21:42.7209582Z    Compiling icu_segmenter_data v2.3.0
+2026-10-20T21:21:42.7669711Z    Compiling zerotrie v0.2.5
+2026-10-20T21:21:42.8059413Z    Compiling serde v1.0.229
+2026-10-20T21:21:42.9060227Z    Compiling rand_core v0.6.4
+2026-10-20T21:21:43.0148020Z    Compiling ppv-lite86 v0.2.21
+2026-10-20T21:21:43.0488829Z    Compiling serde_derive v1.0.229
+2026-10-20T21:21:43.3249000Z    Compiling phf_shared v0.13.1
+2026-10-20T21:21:43.3338858Z    Compiling allocator-api2 v0.2.21
+2026-10-20T21:21:43.4949326Z    Compiling tinystr v0.8.4
+2026-10-20T21:21:43.5008661Z    Compiling potential_utf v0.1.6
+2026-10-20T21:21:43.5845455Z    Compiling rustversion v1.0.23
+2026-10-20T21:21:43.6159215Z    Compiling icu_locale_core v2.3.0
+2026-10-20T21:21:43.6289525Z    Compiling utf8_iter v1.0.4
+2026-10-20T21:21:43.7038945Z    Compiling thiserror v2.0.20
+2026-10-20T21:21:43.7709158Z    Compiling crossbeam-utils v0.8.23
+2026-10-20T21:21:43.9288823Z    Compiling icu_collections v2.3.0
+2026-10-20T21:21:43.9459196Z    Compiling hashbrown v0.17.1
+2026-10-20T21:21:44.3278759Z    Compiling rand_chacha v0.3.1
+2026-10-20T21:21:44.5331725Z    Compiling icu_provider v2.3.1
+2026-10-20T21:21:44.9619263Z    Compiling icu_locale_fallback v2.3.0
+2026-10-20T21:21:45.1308911Z    Compiling thiserror-impl v2.0.20
+2026-10-20T21:21:45.1829156Z    Compiling static_assertions v1.1.0
+2026-10-20T21:21:45.1928818Z    Compiling futures-core v0.3.34
+2026-10-20T21:21:45.2148857Z    Compiling icu_segmenter v2.3.0
+2026-10-20T21:21:45.2599426Z    Compiling rand v0.8.8
+2026-10-20T21:21:46.0239597Z    Compiling phf_shared v0.11.3
+2026-10-20T21:21:46.1249267Z    Compiling rustc-hash v2.1.3
+2026-10-20T21:21:46.1358879Z    Compiling futures-sink v0.3.34
+2026-10-20T21:21:46.1712992Z    Compiling smawk v0.3.3
+2026-10-20T21:21:46.1838993Z    Compiling phf_generator v0.11.3
+2026-10-20T21:21:46.2119221Z    Compiling castaway v0.2.4
+2026-10-20T21:21:46.2155716Z    Compiling oxc-miette-derive v2.7.1
+2026-10-20T21:21:46.2343910Z    Compiling textwrap v0.16.4
+2026-10-20T21:21:46.2533222Z    Compiling unicode-segmentation v1.13.3
+2026-10-20T21:21:46.3044386Z    Compiling ryu v1.0.23
+2026-10-20T21:21:46.4128854Z    Compiling fastrand v2.5.0
+2026-10-20T21:21:46.4958858Z    Compiling owo-colors v4.4.0
+2026-10-20T21:21:46.5893548Z    Compiling oxc_data_structures v0.130.0
+2026-10-20T21:21:46.6029424Z    Compiling phf_generator v0.13.1
+2026-10-20T21:21:46.6989531Z    Compiling oxc_allocator v0.130.0
+2026-10-20T21:21:46.7058180Z    Compiling compact_str v0.9.1
+2026-10-20T21:21:47.0641826Z    Compiling phf_codegen v0.11.3
+2026-10-20T21:21:47.1118078Z    Compiling futures-channel v0.3.34
+2026-10-20T21:21:47.1279439Z    Compiling phf v0.13.1
+2026-10-20T21:21:47.1934511Z    Compiling oxc-miette v2.7.1
+2026-10-20T21:21:47.2049171Z    Compiling futures-macro v0.3.34
+2026-10-20T21:21:47.2178618Z    Compiling errno v0.3.14
+2026-10-20T21:21:47.2649249Z    Compiling oxc_estree v0.130.0
+2026-10-20T21:21:47.2929283Z    Compiling slab v0.4.12
+2026-10-20T21:21:47.2959849Z    Compiling futures-task v0.3.34
+2026-10-20T21:21:47.3837796Z    Compiling ref-cast v1.0.27
+2026-10-20T21:21:47.3958881Z    Compiling version_check v0.9.5
+2026-10-20T21:21:47.5893087Z    Compiling getrandom v0.4.3
+2026-10-20T21:21:47.6086507Z    Compiling zmij v1.0.23
+2026-10-20T21:21:47.7058904Z    Compiling percent-encoding v2.3.2
+2026-10-20T21:21:47.7543493Z    Compiling futures-io v0.3.34
+2026-10-20T21:21:47.8068874Z    Compiling generic-array v0.14.7
+2026-10-20T21:21:47.8339038Z    Compiling futures-util v0.3.34
+2026-10-20T21:21:47.8514344Z    Compiling oxc_str v0.130.0
+2026-10-20T21:21:47.8973426Z    Compiling signal-hook-registry v1.4.8
+2026-10-20T21:21:47.9559203Z    Compiling oxc_ast_macros v0.130.0
+2026-10-20T21:21:48.0873035Z    Compiling phf_macros v0.13.1
+2026-10-20T21:21:48.2619376Z    Compiling ref-cast-impl v1.0.27
+2026-10-20T21:21:48.2789392Z    Compiling tracing-attributes v0.1.31
+2026-10-20T21:21:48.5689122Z    Compiling tracing-core v0.1.36
+2026-10-20T21:21:48.6257297Z    Compiling cow-utils v0.1.3
+2026-10-20T21:21:48.7618963Z    Compiling either v1.18.0
+2026-10-20T21:21:48.9138865Z    Compiling parking_lot_core v0.9.12
+2026-10-20T21:21:49.0229270Z    Compiling crunchy v0.2.4
+2026-10-20T21:21:49.0508896Z    Compiling dragonbox_ecma v0.1.12
+2026-10-20T21:21:49.1519201Z    Compiling log v0.4.34
+2026-10-20T21:21:49.1836238Z    Compiling serde_json v1.0.151
+2026-10-20T21:21:49.2348855Z    Compiling tracing v0.1.44
+2026-10-20T21:21:49.3339118Z    Compiling oxc_span v0.130.0
+2026-10-20T21:21:49.5057538Z    Compiling num-integer v0.1.47
+2026-10-20T21:21:49.5369522Z    Compiling tokio-macros v2.7.2
+2026-10-20T21:21:49.6419167Z    Compiling getopts v0.2.24
+2026-10-20T21:21:49.7629420Z    Compiling mio v1.2.3
+2026-10-20T21:21:49.9049043Z    Compiling getrandom v0.3.4
+2026-10-20T21:21:50.0019818Z    Compiling unicode-id-start v1.5.0
+2026-10-20T21:21:50.0648791Z    Compiling nonmax v0.5.5
+2026-10-20T21:21:50.0888668Z    Compiling anyhow v1.0.104
+2026-10-20T21:21:50.1577263Z    Compiling scopeguard v1.2.0
+2026-10-20T21:21:50.2019033Z    Compiling typenum v1.20.1
+2026-10-20T21:21:50.2548952Z    Compiling bytes v1.12.1
+2026-10-20T21:21:50.2550025Z    Compiling tiny-keccak v2.0.2
+2026-10-20T21:21:50.2701454Z    Compiling crossbeam-epoch v0.9.21
+2026-10-20T21:21:50.3999638Z    Compiling oxc_index v4.1.0
+2026-10-20T21:21:50.4057100Z    Compiling lock_api v0.4.14
+2026-10-20T21:21:50.5638804Z    Compiling futures-executor v0.3.34
+2026-10-20T21:21:50.7009472Z    Compiling tokio v1.53.2
+2026-10-20T21:21:50.7378720Z    Compiling unicode_names2_generator v1.3.0
+2026-10-20T21:21:50.7768805Z    Compiling num-bigint v0.4.8
+2026-10-20T21:21:51.5889175Z    Compiling oxc_diagnostics v0.130.0
+2026-10-20T21:21:51.8719173Z    Compiling memoffset v0.9.1
+2026-10-20T21:21:51.9628709Z    Compiling heck v0.5.0
+2026-10-20T21:21:52.0832474Z    Compiling hashbrown v0.14.5
+2026-10-20T21:21:52.0938968Z    Compiling unic-common v0.9.0
+2026-10-20T21:21:52.1375015Z    Compiling crossbeam-deque v0.8.8
+2026-10-20T21:21:52.2517107Z    Compiling unic-char-range v0.9.0
+2026-10-20T21:21:52.2659472Z    Compiling unic-ucd-version v0.9.0
+2026-10-20T21:21:52.3014904Z    Compiling unic-char-property v0.9.0
+2026-10-20T21:21:52.3128557Z    Compiling is-macro v0.3.8
+2026-10-20T21:21:52.3891242Z    Compiling oxc_regular_expression v0.130.0
+2026-10-20T21:21:52.6528891Z    Compiling oxc_syntax v0.130.0
+2026-10-20T21:21:52.8338988Z    Compiling unicode_names2 v1.3.0
+2026-10-20T21:21:53.3149153Z    Compiling serde_derive_internals v0.29.1
+2026-10-20T21:21:53.5378969Z    Compiling rustpython-parser-vendored v0.4.0
+2026-10-20T21:21:53.7268895Z    Compiling httparse v1.10.1
+2026-10-20T21:21:53.7318313Z    Compiling rustc-hash v1.1.0
+2026-10-20T21:21:53.7759044Z    Compiling unicode-properties v0.1.4
+2026-10-20T21:21:53.8548770Z    Compiling rustix v1.1.5
+2026-10-20T21:21:53.8942881Z    Compiling borrow-or-share v0.2.4
+2026-10-20T21:21:53.9360158Z    Compiling rayon-core v1.13.0
+2026-10-20T21:21:54.0279043Z    Compiling schemars_derive v1.2.1
+2026-10-20T21:21:54.0389212Z    Compiling fluent-uri v0.4.1
+2026-10-20T21:21:54.1042869Z    Compiling ra-ap-rustc_lexer v0.166.0
+2026-10-20T21:21:54.5768888Z    Compiling phf v0.11.3
+2026-10-20T21:21:54.6438881Z    Compiling rustpython-parser-core v0.4.0
+2026-10-20T21:21:54.6659138Z    Compiling tokio-util v0.7.20
+2026-10-20T21:21:54.8721636Z    Compiling rustpython-parser v0.4.0
+2026-10-20T21:21:54.8839206Z    Compiling oxc_ast v0.130.0
+2026-10-20T21:21:55.0818737Z    Compiling rand_core v0.9.5
+2026-10-20T21:21:55.2103325Z    Compiling block-buffer v0.10.4
+2026-10-20T21:21:55.2289027Z    Compiling crypto-common v0.1.7
+2026-10-20T21:21:55.2738175Z    Compiling futures v0.3.34
+2026-10-20T21:21:55.2811267Z    Compiling itertools v0.15.0
+2026-10-20T21:21:55.3038824Z    Compiling crossbeam-channel v0.5.17
+2026-10-20T21:21:55.6349160Z    Compiling chrono v0.4.45
+2026-10-20T21:21:56.4778733Z    Compiling linux-raw-sys v0.12.1
+2026-10-20T21:21:56.5309255Z    Compiling jod-thread v1.0.0
+2026-10-20T21:21:56.5848810Z    Compiling dyn-clone v1.0.20
+2026-10-20T21:21:56.6488760Z    Compiling sync_wrapper v1.0.2
+2026-10-20T21:21:56.6823381Z    Compiling winnow v0.7.15
+2026-10-20T21:21:56.7409203Z    Compiling text-size v1.1.1
+2026-10-20T21:21:56.8169119Z    Compiling countme v3.0.1
+2026-10-20T21:21:56.9228921Z    Compiling rmcp v3.5.1
+2026-10-20T21:21:57.0498595Z    Compiling signal-hook v0.3.18
+2026-10-20T21:21:57.2108913Z    Compiling winnow v1.0.4
+2026-10-20T21:21:57.2828633Z    Compiling tower-service v0.3.3
+2026-10-20T21:21:57.3259071Z    Compiling tower-layer v0.3.3
+2026-10-20T21:21:57.4538902Z    Compiling rustc-literal-escaper v0.0.7
+2026-10-20T21:21:57.5198909Z    Compiling equivalent v1.0.2
+2026-10-20T21:21:57.5345430Z    Compiling ra_ap_edition v0.0.349
+2026-10-20T21:21:57.5519149Z    Compiling drop_bomb v0.1.5
+2026-10-20T21:21:57.5950464Z    Compiling indexmap v2.14.2
+2026-10-20T21:21:57.6066864Z    Compiling toml_parser v1.1.5+spec-1.1.0
+2026-10-20T21:21:57.9949432Z    Compiling ra_ap_parser v0.0.349
+2026-10-20T21:21:58.1506198Z    Compiling tower v0.5.3
+2026-10-20T21:21:58.4319214Z    Compiling rowan v0.17.0
+2026-10-20T21:22:00.6898803Z    Compiling oxc_ecmascript v0.130.0
+2026-10-20T21:22:00.7868876Z    Compiling schemars v1.2.1
+2026-10-20T21:22:01.4418865Z    Compiling ra_ap_stdx v0.0.349
+2026-10-20T21:22:01.6969004Z    Compiling digest v0.10.7
+2026-10-20T21:22:01.8578842Z    Compiling rustpython-ast v0.4.0
+2026-10-20T21:22:01.9658866Z    Compiling ls-types v0.0.6
+2026-10-20T21:22:02.3282180Z    Compiling tokio-stream v0.1.19
+2026-10-20T21:22:02.3949304Z    Compiling dashmap v6.2.1
+2026-10-20T21:22:02.6669235Z    Compiling unic-ucd-ident v0.9.0
+2026-10-20T21:22:02.7199014Z    Compiling unic-emoji-char v0.9.0
+2026-10-20T21:22:02.7758647Z    Compiling uuid v1.26.0
+2026-10-20T21:22:02.8225379Z    Compiling itertools v0.11.0
+2026-10-20T21:22:03.0538819Z    Compiling serde_spanned v1.1.2
+2026-10-20T21:22:03.1308923Z    Compiling toml_datetime v1.1.2+spec-1.1.0
+2026-10-20T21:22:03.3369845Z    Compiling ripr v0.11.0 (/home/runner/work/ripr-swarm/ripr-swarm/crates/ripr)
+2026-10-20T21:22:03.4824536Z    Compiling lalrpop-util v0.20.2
+2026-10-20T21:22:03.5824024Z    Compiling pastey v0.2.3
+2026-10-20T21:22:03.6349425Z    Compiling seq-macro v0.3.6
+2026-10-20T21:22:03.8283979Z    Compiling cfg_aliases v0.2.2
+2026-10-20T21:22:03.8591671Z    Compiling smol_str v0.3.6
+2026-10-20T21:22:03.9005968Z    Compiling cpufeatures v0.2.17
+2026-10-20T21:22:03.9369035Z    Compiling toml_writer v1.1.3+spec-1.1.0
+2026-10-20T21:22:04.0301775Z    Compiling triomphe v0.1.16
+2026-10-20T21:22:04.0779085Z    Compiling toml v1.1.8+spec-1.1.0
+2026-10-20T21:22:04.1058779Z    Compiling tempfile v3.27.0
+2026-10-20T21:22:04.2259254Z    Compiling ra_ap_syntax v0.0.349
+2026-10-20T21:22:04.4268798Z    Compiling sha2 v0.10.9
+2026-10-20T21:22:04.7198889Z    Compiling oxc_parser v0.130.0
+2026-10-20T21:22:09.8038843Z    Compiling nix v0.31.3
+2026-10-20T21:22:10.3709264Z    Compiling tower-lsp-server v0.23.0
+2026-10-20T21:22:12.1329194Z    Compiling rayon v1.12.0
+2026-10-20T21:22:14.2938668Z    Compiling wait-timeout v0.2.1
+2026-10-20T21:22:14.4698722Z    Compiling fs2 v0.4.3
+2026-10-20T21:22:14.5518915Z    Compiling bit-vec v0.8.0
+2026-10-20T21:22:14.6878763Z    Compiling quick-error v1.2.3
+2026-10-20T21:22:14.7279812Z    Compiling fnv v1.0.7
+2026-10-20T21:22:14.7678759Z    Compiling home v0.5.12
+2026-10-20T21:22:14.9214551Z    Compiling rusty-fork v0.3.1
+2026-10-20T21:22:15.1628787Z    Compiling bit-set v0.8.0
+2026-10-20T21:22:15.2508829Z    Compiling rand_chacha v0.9.0
+2026-10-20T21:22:15.4497709Z    Compiling rand v0.9.5
+2026-10-20T21:22:15.8658787Z    Compiling rand_xorshift v0.4.0
+2026-10-20T21:22:15.9328754Z    Compiling parking_lot v0.12.5
+2026-10-20T21:22:16.2219061Z    Compiling serial_test_derive v4.0.1
+2026-10-20T21:22:16.6336451Z    Compiling regex-syntax v0.8.11
+2026-10-20T21:22:16.9278779Z    Compiling unarray v0.1.4
+2026-10-20T21:22:16.9768790Z    Compiling serial_test v4.0.1
+2026-10-20T21:22:18.5619093Z    Compiling proptest v1.11.0
+2026-10-20T21:23:26.7134337Z     Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 51s
+2026-10-20T21:23:26.7714217Z      Running tests/printed_command_paste.rs (target/debug/deps/printed_command_paste-bf771fb795105ab4)
+2026-10-20T21:23:26.7743948Z 
+2026-10-20T21:23:26.7744557Z running 7 tests
+2026-10-20T21:23:26.7748187Z test extract_text_does_not_pair_powershell_text_inside_a_bash_code_span ... ok
+2026-10-20T21:23:26.7748986Z test extract_text_empty_rest_guard_does_not_consume_the_next_bash_command ... ok
+2026-10-20T21:23:26.7749646Z test extract_text_marks_unavailable_powershell_disclosure_and_does_not_paste_it ... ok
+2026-10-20T21:23:26.7754825Z test extract_text_pairs_empty_rest_powershell_label_with_the_next_line ... ok
+2026-10-20T21:23:26.7760308Z test fixture_git::tests::zero_deadline_reports_timeouts_without_retrying_state ... ok
+2026-10-20T21:23:26.7760762Z test fixture_git::tests::resolves_the_subcommand_past_global_options ... ok
+2026-10-20T21:23:29.9069332Z pasted 119 distinct printed commands into ["bash", "sh", "zsh", "pwsh"]
+2026-10-20T21:23:29.9185260Z test printed_commands_paste_unchanged_in_every_shell_from_a_foreign_directory ... ok
+2026-10-20T21:23:29.9185541Z 
+2026-10-20T21:23:29.9185746Z test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.14s
+2026-10-20T21:23:29.9186042Z 
+2026-10-20T21:23:29.9332425Z ##[group]Run actions/upload-artifact@v7
+2026-10-20T21:23:29.9332662Z with:
+2026-10-20T21:23:29.9332846Z   name: printed-commands-ubuntu-latest
+2026-10-20T21:23:29.9333112Z   path: /home/runner/work/_temp/printed-commands.jsonl
+2026-10-20T21:23:29.9333369Z   if-no-files-found: ignore
+2026-10-20T21:23:29.9333562Z   compression-level: 6
+2026-10-20T21:23:29.9333739Z   overwrite: false
+2026-10-20T21:23:29.9333913Z   include-hidden-files: false
+2026-10-20T21:23:29.9334113Z   archive: true
+2026-10-20T21:23:29.9334272Z env:
+2026-10-20T21:23:29.9334430Z   CARGO_HOME: /home/runner/.cargo
+2026-10-20T21:23:29.9334632Z   CARGO_INCREMENTAL: 0
+2026-10-20T21:23:29.9334807Z   CARGO_TERM_COLOR: always
+2026-10-20T21:23:29.9334993Z   CACHE_ON_FAILURE: false
+2026-10-20T21:23:29.9335175Z ##[endgroup]
+2026-10-20T21:23:30.0549145Z With the provided path, there will be 1 file uploaded
+2026-10-20T21:23:30.0552994Z Artifact name is valid!
+2026-10-20T21:23:30.0553505Z Root directory input is valid!
+2026-10-20T21:23:30.3708458Z Uploading artifact: printed-commands-ubuntu-latest.zip
+2026-10-20T21:23:30.3736622Z Beginning upload of artifact content to blob storage
+2026-10-20T21:23:30.6191102Z Uploaded bytes 2867
+2026-10-20T21:23:30.6800964Z Finished uploading artifact content to blob storage!
+2026-10-20T21:23:30.6801733Z SHA256 digest of uploaded artifact is df4a8716fa0eac599b27b75d82962793ba7cb41bb06472e5db642d9245037792
+2026-10-20T21:23:30.6802237Z Finalizing artifact upload
+2026-10-20T21:23:31.1039300Z Artifact printed-commands-ubuntu-latest successfully finalized. Artifact ID 12298448971
+2026-10-20T21:23:31.1040217Z Artifact printed-commands-ubuntu-latest has been successfully uploaded! Final size is 2867 bytes. Artifact ID is 12298448971
+2026-10-20T21:23:31.1042806Z Artifact download URL: https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39499639753/artifacts/12298448971
+2026-10-20T21:23:31.1206899Z Post job cleanup.
+2026-10-20T21:23:31.2378461Z Post job cleanup.
+2026-10-20T21:23:31.3096387Z [command]/usr/bin/git version
+2026-10-20T21:23:31.3130663Z git version 2.55.0
+2026-10-20T21:23:31.3163480Z Temporarily overriding HOME='/home/runner/work/_temp/e4cea9b1-9b7d-45b9-b7f1-a52a412b5bdc' before making global git config changes
+2026-10-20T21:23:31.3164656Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-20T21:23:31.3168435Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/ripr-swarm/ripr-swarm
+2026-10-20T21:23:31.3208692Z Removing SSH command configuration
+2026-10-20T21:23:31.3215264Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-20T21:23:31.3249397Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-20T21:23:31.3496683Z Removing HTTP extra header
+2026-10-20T21:23:31.3501466Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-20T21:23:31.3532112Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-20T21:23:31.3752339Z Removing includeIf entries pointing to credentials config files
+2026-10-20T21:23:31.3758935Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-20T21:23:31.3785970Z includeif.gitdir:/home/runner/work/ripr-swarm/ripr-swarm/.git.path
+2026-10-20T21:23:31.3786583Z includeif.gitdir:/home/runner/work/ripr-swarm/ripr-swarm/.git/worktrees/*.path
+2026-10-20T21:23:31.3787038Z includeif.gitdir:/github/workspace/.git.path
+2026-10-20T21:23:31.3787540Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-10-20T21:23:31.3794861Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/ripr-swarm/ripr-swarm/.git.path
+2026-10-20T21:23:31.3814801Z /home/runner/work/_temp/git-credentials-e1fbad80-e78d-444f-b113-d15a06e0d27e.config
+2026-10-20T21:23:31.3822963Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/ripr-swarm/ripr-swarm/.git.path /home/runner/work/_temp/git-credentials-e1fbad80-e78d-444f-b113-d15a06e0d27e.config
+2026-10-20T21:23:31.3856256Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/ripr-swarm/ripr-swarm/.git/worktrees/*.path
+2026-10-20T21:23:31.3876633Z /home/runner/work/_temp/git-credentials-e1fbad80-e78d-444f-b113-d15a06e0d27e.config
+2026-10-20T21:23:31.3885025Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/ripr-swarm/ripr-swarm/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-e1fbad80-e78d-444f-b113-d15a06e0d27e.config
+2026-10-20T21:23:31.3914058Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-10-20T21:23:31.3932979Z /github/runner_temp/git-credentials-e1fbad80-e78d-444f-b113-d15a06e0d27e.config
+2026-10-20T21:23:31.3940838Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-e1fbad80-e78d-444f-b113-d15a06e0d27e.config
+2026-10-20T21:23:31.3969996Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-10-20T21:23:31.3991111Z /github/runner_temp/git-credentials-e1fbad80-e78d-444f-b113-d15a06e0d27e.config
+2026-10-20T21:23:31.3996305Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-e1fbad80-e78d-444f-b113-d15a06e0d27e.config
+2026-10-20T21:23:31.4025130Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-20T21:23:31.4243244Z Removing credentials config '/home/runner/work/_temp/git-credentials-e1fbad80-e78d-444f-b113-d15a06e0d27e.config'
+2026-10-20T21:23:31.4378691Z Cleaning up orphan processes

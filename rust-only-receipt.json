@@ -1,0 +1,30 @@
+{
+  "observed_at": "2026-10-20T21:34:23Z",
+  "run_id": 39499640051,
+  "job_id": 118893559591,
+  "conclusion": "success",
+  "candidate_head": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+  "actual_checkout": "fd2947af890f156aa63abb1c58028ec5345e6a5d",
+  "checkout_parents": [
+    "fc3589098d5b9c9340861f65bbb2ecbf80d95c2f",
+    "1a525eaaba07bb416a83a4f4d76c833a20cb5256"
+  ],
+  "checkout_tree": "8f8bd0d33b1d6e8b5e433ac8f6499732d8b12c1e",
+  "runtime": "GitHub-hosted Linux x86_64; rustc 1.95.0 (59807616e 2026-04-14)",
+  "command": "cargo test -p ripr --locked --no-default-features --features lang-rust --no-fail-fast",
+  "focused_tests_passed": [
+    "brief_diff_status::brief_base_uses_the_same_parser_refusal_before_inventory",
+    "brief_diff_status::brief_empty_and_ordinary_patches_keep_successful_selection",
+    "brief_diff_status::brief_parser_errors_keep_diff_input_identity_and_budget_guards",
+    "brief_diff_status::brief_parser_refusals_cannot_become_empty_or_fallback_successes"
+  ],
+  "task_first_target": {
+    "passed": 65,
+    "failed": 0,
+    "ignored": 0,
+    "filtered": 0
+  },
+  "claim_limit": "Fresh combined-tree Rust-only proof; not a fresh exact-head rerun, full-feature runtime or Windows brief matrix.",
+  "log": "job-118893559591.log",
+  "log_encoding_note": "Decoded provider log with ANSI color escapes removed; manifest hashes bind retained file bytes."
+}

@@ -1,0 +1,62 @@
+{
+  "observed_at": "2026-10-20T22:19:18.218477+00:00",
+  "candidate": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+  "candidate_tree": "a95152443df8c08ef30e8ad0fe2b5fc863233cdf",
+  "checkout": {
+    "commit": "fd2947af890f156aa63abb1c58028ec5345e6a5d",
+    "parents": [
+      "fc3589098d5b9c9340861f65bbb2ecbf80d95c2f",
+      "1a525eaaba07bb416a83a4f4d76c833a20cb5256"
+    ],
+    "tree": "8f8bd0d33b1d6e8b5e433ac8f6499732d8b12c1e"
+  },
+  "run": 39499639623,
+  "attempt": 1,
+  "job": 118893843758,
+  "result_job": 118908771980,
+  "conclusion": "success",
+  "nextest": {
+    "command": "cargo nextest run --workspace --profile ci",
+    "passed": 17761,
+    "skipped": 4,
+    "seconds": 679.985,
+    "brief_diff_status_functions": 4
+  },
+  "doctests": {
+    "passed": 2,
+    "ignored": 1
+  },
+  "other_passed": [
+    "policy scans",
+    "workspace/all-feature target checks",
+    "strict workspace Clippy",
+    "goldens",
+    "fixtures",
+    "four verdict corpora",
+    "PR evidence"
+  ],
+  "runtime": "GitHub-hosted Linux x86_64, Rust/Cargo 1.95.0",
+  "limits": [
+    "All-feature runtime not established; all-feature checks compile only.",
+    "Windows advisory wrapper succeeds with two separate payload failures; see windows-disposition.json and existing owners #8845/#8849.",
+    "Late source findings withdraw readiness on this same candidate; this qualification is historical evidence, not proof of a later repair commit.",
+    "Retained logs are decoded tool text, with ANSI removed; hashes bind retained text, not original HTTP bytes.",
+    "No denied diagnostic payload or artifact download was retried."
+  ],
+  "artifacts": [
+    {
+      "id": 12303185858,
+      "name": "ripr-rust-small-github-nextest-1",
+      "bytes": 571343,
+      "digest": "sha256:1360848e6c1479b7b7991c6ef4651f80efca82076eb6652609f0ca046346ce2a",
+      "expires_at": "2026-10-25T21:46:44Z"
+    },
+    {
+      "id": 12302731211,
+      "name": "ripr-rust-small-github-wildcard-calibration-1",
+      "bytes": 59033,
+      "digest": "sha256:ac3f858d9bb492bfb569b1d2b75e1eb12bca67959141cd5883a828f0c1a8df49",
+      "expires_at": "2026-10-25T21:47:05Z"
+    }
+  ]
+}

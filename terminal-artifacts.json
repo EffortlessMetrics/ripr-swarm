@@ -1,0 +1,45 @@
+{
+  "total_count": 2,
+  "artifacts": [
+    {
+      "id": 12303185858,
+      "node_id": "MDg6QXJ0aWZhY3QxMjMwMzE4NTg1OA==",
+      "name": "ripr-rust-small-github-nextest-1",
+      "size_in_bytes": 571343,
+      "url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/artifacts/12303185858",
+      "archive_download_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/artifacts/12303185858/zip",
+      "expired": false,
+      "digest": "sha256:1360848e6c1479b7b7991c6ef4651f80efca82076eb6652609f0ca046346ce2a",
+      "created_at": "2026-10-20T21:46:45Z",
+      "updated_at": "2026-10-20T21:46:45Z",
+      "expires_at": "2026-10-25T21:46:44Z",
+      "workflow_run": {
+        "id": 39499639623,
+        "repository_id": 1243918801,
+        "head_repository_id": 1243918801,
+        "head_branch": "fix/brief-diff-input-status",
+        "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256"
+      }
+    },
+    {
+      "id": 12302731211,
+      "node_id": "MDg6QXJ0aWZhY3QxMjMwMjczMTIxMQ==",
+      "name": "ripr-rust-small-github-wildcard-calibration-1",
+      "size_in_bytes": 59033,
+      "url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/artifacts/12302731211",
+      "archive_download_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/artifacts/12302731211/zip",
+      "expired": false,
+      "digest": "sha256:ac3f858d9bb492bfb569b1d2b75e1eb12bca67959141cd5883a828f0c1a8df49",
+      "created_at": "2026-10-20T21:47:05Z",
+      "updated_at": "2026-10-20T21:47:05Z",
+      "expires_at": "2026-10-25T21:47:05Z",
+      "workflow_run": {
+        "id": 39499639623,
+        "repository_id": 1243918801,
+        "head_repository_id": 1243918801,
+        "head_branch": "fix/brief-diff-input-status",
+        "head_sha": "1a525eaaba07bb416a83a4f4d76c833a20cb5256"
+      }
+    }
+  ]
+}
