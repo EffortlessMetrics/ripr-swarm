@@ -142,6 +142,9 @@ fn effect_assertions_require_execution_but_keep_reachable_oracles() -> Result<()
                     );
                     assert!(
                         render_check(&report, &OutputFormat::Human)?
+                            .split_whitespace()
+                            .collect::<Vec<_>>()
+                            .join(" ")
                             .contains("check the changed effect")
                     );
                     assert!(
