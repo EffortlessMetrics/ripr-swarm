@@ -9003,8 +9003,6 @@ fn an_expected_value_a_macro_or_a_static_rebinds_from_the_owner_is_not_a_pin() {
     }
 }
 
-/// #7847: the lexical write guard on its own, including operator edges the
-/// pipeline fixtures cannot reach.
 /// #8929: the `&mut` family spelled through grouping parentheses or a path,
 /// `ref mut` bindings on a place, the `addr_of_mut!` macro and a `?` / `.await`
 /// tail after a call group. Every write row is a mutable alias or write of the
@@ -9032,6 +9030,10 @@ fn written_by_test_refuses_grouped_pathed_ref_mut_and_addr_of_mut_writes() {
         "let p = std::ptr::addr_of_mut!( EXPECTED );",
         "let p = addr_of_mut! (EXPECTED);",
         "let p = addr_of_mut!((EXPECTED).f);",
+        "let p = addr_of_mut!(crate::EXPECTED); *p = f(4);",
+        "let p = std::ptr::addr_of_mut!(m::EXPECTED);",
+        "let p = addr_of_mut!( (EXPECTED) );",
+        "let p = addr_of_mut!(self::EXPECTED);",
         // A path-qualified name behind `&mut`.
         "let r = &mut crate::EXPECTED; *r = f(4);",
         "let r = &mut self::EXPECTED;",
@@ -9077,6 +9079,8 @@ fn written_by_test_refuses_grouped_pathed_ref_mut_and_addr_of_mut_writes() {
     }
 }
 
+/// #7847: the lexical write guard on its own, including operator edges the
+/// pipeline fixtures cannot reach.
 #[test]
 fn written_by_test_reads_operators_and_let_boundaries() {
     for read in [

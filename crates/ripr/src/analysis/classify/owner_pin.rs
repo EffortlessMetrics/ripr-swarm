@@ -10648,8 +10648,9 @@ fn mut_borrow_before(before: &str) -> bool {
 /// idiomatic spelling of a mutable static borrow in edition 2024 (#8929).
 /// Shared `addr_of!` and a longer macro name (`my_addr_of_mut!`) do not match.
 fn addr_of_mut_before(before: &str) -> bool {
-    let head = before
-        .trim_end()
+    // Peel path qualifiers and nested or spaced groups first
+    // (`addr_of_mut!(crate::name`, `addr_of_mut!( (name`).
+    let head = peel_group_and_path(before)
         .trim_end_matches(['(', '[', '{'])
         .trim_end();
     let Some(head) = head.strip_suffix('!') else {
