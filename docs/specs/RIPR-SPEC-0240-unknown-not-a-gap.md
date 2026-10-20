@@ -271,10 +271,14 @@ non-ignored related test matches one of these shapes:
   of `lib-mockall-grace-boundary-times`), keeps the gap.
 - **expect-test**: a `direct_owner_call` test comparing a non-empty
   `expect![[..]]` literal with `.assert_debug_eq(..)`, where the asserted
-  operand is a call to the owner or a local bound by `let [mut] x = ..owner(..)`.
+  operand is a call to the owner or a local whose live binding where the
+  assertion runs was made by `let [mut] x = ..owner(..)`. A later `let`
+  (even on the same line, in a closure or callback body the assertion sits in,
+  or behind an attribute), an assignment or `&mut x` borrow, a binding closed
+  with its block, and a binding made only after the assertion do not reach it.
 - **insta**: a `direct_owner_call` test with a snapshot macro that has no
   inline `@` literal, whose snapshotted value (after an optional literal name)
-  derives from the owner as above, and no `add_redaction`, `with_settings` or `Settings`,
+  derives from the owner as above (a live binding at the assertion), and no `add_redaction`, `with_settings` or `Settings`,
   on a changed `field:` initializer that no redaction selector (a literal
   keyed by `=>`, such as `".id"` or `"[].id"`) names. Any other changed line
   keeps the gap (the `snapshot_oracle` fixture's changed predicate), and so
@@ -283,7 +287,10 @@ non-ignored related test matches one of these shapes:
 Any one matching related test withholds the finding: a weaker sibling test
 reads as evidence ripr gathered, not as the oracle that decides, and the
 matching test is the strongest oracle ripr cannot evaluate. The shapes read
-the test text. A macro that does not qualify is skipped, so a later one that
+the test text, as code only: a write, binding or assertion that appears only
+in a comment, a nested comment or a string (raw strings included) is not
+there, while a real literal name or expectation is read from the original at
+the same offsets. A macro that does not qualify is skipped, so a later one that
 does still counts. Two limits are accepted: the mocked-method match reads the
 method name, not the receiver, and only related tests (the first eight per
 finding) are judged; either can withhold a gap, which only costs an advisory.

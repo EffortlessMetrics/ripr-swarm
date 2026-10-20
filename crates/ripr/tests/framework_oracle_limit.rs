@@ -683,3 +683,46 @@ fn a_commented_environment_write_activates_nothing() -> Result<(), String> {
         "commented owner read",
     )
 }
+
+#[test]
+fn a_shadow_inside_a_callback_reaches_an_assertion_inside_it() -> Result<(), String> {
+    // The assertion sits in the callback block that rebinds the local.
+    let assertion = format!("{EXPECT_ASSERT}\n        }});");
+    for setup in [
+        "let tokens = tokenize(\"7\");\n        apply(|| {\n            let tokens = vec![1u32];",
+        "let tokens = tokenize(\"7\");\n        let f = || {\n            let tokens = vec![1u32];",
+        "let tokens = tokenize(\"7\");\n        std::thread::spawn(move || {\n            let tokens = vec![1u32];",
+        "let tokens = tokenize(\"7\");\n        apply(|| {\n            if ready() {\n                let tokens = vec![1u32];",
+        // A closure body that rewrites a `mut` owner binding.
+        "let mut tokens = tokenize(\"7\");\n        run(|| {\n            tokens = vec![1u32];\n        });",
+        // Attribute-prefixed shadow, and a borrow that can rewrite the value.
+        "let tokens = tokenize(\"7\");\n        #[allow(unused_variables)]\n        let tokens = vec![1u32];",
+        "let mut tokens = tokenize(\"7\");\n        std::mem::replace(&mut tokens, vec![1u32]);",
+    ] {
+        let assertion = if setup.contains("run(|| {")
+            || setup.contains("#[allow")
+            || setup.contains("mem::replace")
+        {
+            EXPECT_ASSERT.to_string()
+        } else if setup.contains("if ready()") {
+            format!("{EXPECT_ASSERT}\n            }}\n        }});")
+        } else {
+            assertion.clone()
+        };
+        all_keep_gap(setup, &assertion)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_closed_callback_shadow_leaves_the_owner_binding() -> Result<(), String> {
+    // Controls: the same callback text, closed before the assertion.
+    for setup in [
+        "let tokens = tokenize(\"7\");\n        apply(|| {\n            let tokens = vec![1u32];\n        });",
+        "let tokens = tokenize(\"7\");\n        let f = || {\n            let tokens = vec![1u32];\n        };",
+        "let tokens = tokenize(\"7\");\n        apply(|| {\n            let other = vec![1u32];\n        });",
+    ] {
+        all_withheld(setup, EXPECT_ASSERT)?;
+    }
+    Ok(())
+}

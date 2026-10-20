@@ -421,8 +421,13 @@ fn insta_leaves_field_unredacted(test: &TestFact, changed_text: &str, owner: &st
             // The snapshotted value follows an optional literal name; the
             // masked text hides a literal, so the original shows it.
             let parts = split_arguments(arguments);
-            let literal_first =
-                |(start, _): (usize, usize)| raw[from + start..to].trim_start().starts_with('"');
+            let literal_first = |(start, _): (usize, usize)| {
+                let first = raw[from + start..to].trim_start();
+                first.starts_with('"')
+                    || first
+                        .strip_prefix('r')
+                        .is_some_and(|rest| rest.trim_start_matches('#').starts_with('"'))
+            };
             let (start, end) = match parts.as_slice() {
                 [first, second, ..] if literal_first(*first) => *second,
                 [first, ..] => *first,
@@ -640,6 +645,11 @@ mod tests {
             "let out = row(1); { let out = vec![1];",
             "let out = row(1); { let out = vec![1]; } let out = 5;",
             "let out = vec![1];",
+            "let out = row(1);\napply(|| {\n    let out = vec![1];",
+            "let out = row(1);\nlet f = || {\n    if c {\n        let out = vec![1];",
+            "let out = row(1);\n#[allow(unused)]\nlet out = vec![1];",
+            "let mut out = row(1); std::mem::replace(&mut out, vec![1]);",
+            "let mut out = row(1);\nrun(|| { out = vec![1]; });",
         ] {
             assert!(!derives(replaced, "out"), "{replaced}");
         }
@@ -650,6 +660,8 @@ mod tests {
             "let out = vec![1]; let out = row(1);",
             "let out = vec![1];\nlet out = row(1);",
             "let out = Wrap { items: vec![row(1)] };",
+            "let out = row(1);\napply(|| {\n    let out = vec![1];\n});",
+            "let out = row(1);\nlet f = || {\n    let other = vec![1];\n};",
         ] {
             assert!(derives(kept, "out"), "{kept}");
         }

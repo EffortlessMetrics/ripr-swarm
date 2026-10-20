@@ -124,10 +124,50 @@ pub(crate) fn local_is_owner_result_before(
     walk_bindings(code, name, owner_name, reach, true)
 }
 
+/// The statement in progress. `skeleton` elides what sits inside braces
+/// (`{}`), so a binder inside a closure body is not read as a binder of the
+/// enclosing statement; `full` keeps everything, for the initializer and the
+/// pattern of a `let`.
+#[derive(Default)]
+struct Pending {
+    skeleton: String,
+    full: String,
+}
+
+impl Pending {
+    fn push(&mut self, ch: char) {
+        self.skeleton.push(ch);
+        self.full.push(ch);
+    }
+
+    fn is_blank(&self) -> bool {
+        self.skeleton.trim().is_empty()
+    }
+
+    fn starts_with_let(&self) -> bool {
+        self.skeleton.trim_start().starts_with("let ")
+    }
+}
+
+/// One open `{`: the enclosing statement it interrupts.
+struct OpenBrace {
+    /// The enclosing statement when this brace is part of it (a closure or
+    /// `async` body, a struct literal or block in a `let` initializer) with
+    /// its brace depth and parenthesis nesting; `None` for a plain block,
+    /// which ends its header statement.
+    resumes: Option<(Pending, usize, usize)>,
+    /// The enclosing brace level's text so far.
+    outer_text: String,
+}
+
 /// Walk `code` statement by statement, keeping the bindings of `name` in
-/// scope, innermost last, each with the brace depth it was introduced at. A
-/// block's closing brace drops its inner bindings so a shadow in a finished
-/// block never masks the outer value.
+/// scope, innermost last, each with the brace depth it was introduced at.
+/// Every `{` opens a scope, wherever it sits (a block, a closure or `async`
+/// body inside a call, a block in a `let` initializer): its statements are
+/// judged at their own `;`, and its closing brace drops the bindings made
+/// inside it so a shadow in a finished block never masks the outer value.
+/// Only parentheses and brackets (an argument list, an array repeat `[x; n]`)
+/// keep a `;` from ending a statement.
 fn walk_bindings(
     code: &str,
     name: &str,
@@ -138,68 +178,100 @@ fn walk_bindings(
     let mut scope: Vec<(usize, bool)> = Vec::new();
     let mut depth = 0usize;
     let mut statement_depth = 0usize;
-    // Open parentheses, brackets and braces inside one statement (an argument
-    // list, a struct literal initializer): they do not end the statement.
-    let mut inner = 0usize;
-    let mut statement = String::new();
-    let judge = |statement: &mut String, statement_depth: usize, scope: &mut Vec<(usize, bool)>| {
-        match statement_binding_verdict(statement, name, owner_name, reach) {
-            Some(BindingVerdict::Scoped(owner_bound)) => {
-                scope.retain(|(bound_at, _)| *bound_at < statement_depth);
-                scope.push((statement_depth, owner_bound));
-            }
-            // A reassignment or a pattern binder we do not scope-track may
-            // leave any enclosing binding changed after its block ends.
-            Some(BindingVerdict::Withdrawn) => {
-                for (_, owner_bound) in scope.iter_mut() {
-                    *owner_bound = false;
+    // Open parentheses and brackets of the statement in progress.
+    let mut nest = 0usize;
+    let mut statement = Pending::default();
+    let mut text = String::new();
+    let mut open: Vec<OpenBrace> = Vec::new();
+    let judge =
+        |statement: &mut Pending, statement_depth: usize, scope: &mut Vec<(usize, bool)>| {
+            match statement_binding_verdict(
+                &statement.skeleton,
+                &statement.full,
+                name,
+                owner_name,
+                reach,
+            ) {
+                Some(BindingVerdict::Scoped(owner_bound)) => {
+                    scope.retain(|(bound_at, _)| *bound_at < statement_depth);
+                    scope.push((statement_depth, owner_bound));
                 }
-                scope.push((statement_depth, false));
+                // A reassignment or a pattern binder we do not scope-track may
+                // leave any enclosing binding changed after its block ends.
+                Some(BindingVerdict::Withdrawn) => {
+                    for (_, owner_bound) in scope.iter_mut() {
+                        *owner_bound = false;
+                    }
+                    scope.push((statement_depth, false));
+                }
+                None => {}
             }
-            None => {}
-        }
-        statement.clear();
-    };
+            *statement = Pending::default();
+        };
     for ch in code.chars() {
-        if statement.trim().is_empty() {
+        if statement.is_blank() {
             statement_depth = depth;
         }
         match ch {
+            '{' => {
+                let part_of_statement = nest > 0 || statement.starts_with_let();
+                let resumes = if part_of_statement {
+                    // Keep what precedes the brace; the statement resumes at
+                    // the matching `}`.
+                    Some((std::mem::take(&mut statement), statement_depth, nest))
+                } else {
+                    statement.push(ch);
+                    judge(&mut statement, statement_depth, &mut scope);
+                    None
+                };
+                open.push(OpenBrace {
+                    resumes,
+                    outer_text: std::mem::take(&mut text),
+                });
+                nest = 0;
+                depth += 1;
+                continue;
+            }
+            '}' => {
+                // The unterminated tail of the block is a statement too.
+                judge(&mut statement, statement_depth, &mut scope);
+                depth = depth.saturating_sub(1);
+                scope.retain(|(bound_at, _)| *bound_at <= depth);
+                let inner = std::mem::take(&mut text);
+                match open.pop() {
+                    Some(brace) => {
+                        text = format!("{}{{{}}}", brace.outer_text, inner);
+                        if let Some((mut before, before_depth, before_nest)) = brace.resumes {
+                            before.skeleton.push_str("{}");
+                            before.full.push_str(&format!("{{{inner}}}"));
+                            statement = before;
+                            statement_depth = before_depth;
+                            nest = before_nest;
+                        } else {
+                            nest = 0;
+                        }
+                    }
+                    None => nest = 0,
+                }
+                continue;
+            }
             '(' | '[' => {
-                inner += 1;
+                nest += 1;
                 statement.push(ch);
             }
             ')' | ']' => {
-                inner = inner.saturating_sub(1);
+                nest = nest.saturating_sub(1);
                 statement.push(ch);
-            }
-            '{' => {
-                statement.push(ch);
-                if inner > 0 || statement.trim_start().starts_with("let ") {
-                    inner += 1;
-                } else {
-                    judge(&mut statement, statement_depth, &mut scope);
-                    depth += 1;
-                }
-            }
-            '}' => {
-                if inner > 0 {
-                    inner -= 1;
-                    statement.push(ch);
-                } else {
-                    judge(&mut statement, statement_depth, &mut scope);
-                    depth = depth.saturating_sub(1);
-                    scope.retain(|(bound_at, _)| *bound_at <= depth);
-                }
             }
             ';' => {
                 statement.push(ch);
-                if inner == 0 {
+                if nest == 0 {
                     judge(&mut statement, statement_depth, &mut scope);
                 }
             }
             _ => statement.push(ch),
         }
+        text.push(ch);
     }
     if judge_open_statement {
         judge(&mut statement, statement_depth, &mut scope);
@@ -329,19 +401,23 @@ enum BindingVerdict {
 /// or a pattern binder (`if let`, `while let`, `for`, match arm, closure
 /// parameter), `None` when the statement does not bind `name`.
 fn statement_binding_verdict(
-    statement: &str,
+    skeleton: &str,
+    full: &str,
     name: &str,
     owner_name: &str,
     reach: BindingReach,
 ) -> Option<BindingVerdict> {
-    let trimmed = statement.trim();
-    if let Some(rest) = trimmed.strip_prefix("let ") {
+    let trimmed = without_attributes(skeleton.trim());
+    if let Some(rest) = without_attributes(full.trim()).strip_prefix("let ") {
         let (pattern, initializer) = match rest.split_once('=') {
             Some((pattern, initializer)) => (pattern.trim(), Some(initializer)),
             None => (rest.trim_end_matches(';').trim(), None),
         };
         if !contains_word(pattern, name) {
-            return binds_by_pattern(rest, name).then_some(BindingVerdict::Withdrawn);
+            // Binders are read outside braces: a closure parameter, not a
+            // pattern in the closure's body.
+            let outside = trimmed.strip_prefix("let ").unwrap_or(rest);
+            return binds_by_pattern(outside, name).then_some(BindingVerdict::Withdrawn);
         }
         let bound = pattern
             .split_once(':')
@@ -365,7 +441,7 @@ fn statement_binding_verdict(
                 }),
         ));
     }
-    if binds_by_pattern(trimmed, name) {
+    if binds_by_pattern(trimmed, name) || borrows_mutably(trimmed, name) {
         return Some(BindingVerdict::Withdrawn);
     }
     match assignment_target(trimmed) {
@@ -472,6 +548,37 @@ fn is_comparison_angle(bytes: &[u8], at: usize) -> bool {
     }
 }
 
+/// `statement` without leading outer attributes (`#[allow(unused)] let x = ..`).
+fn without_attributes(statement: &str) -> &str {
+    let mut rest = statement;
+    while let Some(attribute) = rest.strip_prefix("#[") {
+        let mut depth = 1usize;
+        let Some(end) = attribute.char_indices().find_map(|(at, ch)| {
+            match ch {
+                '[' => depth += 1,
+                ']' => depth -= 1,
+                _ => {}
+            }
+            (depth == 0).then_some(at)
+        }) else {
+            return rest;
+        };
+        rest = attribute[end + 1..].trim_start();
+    }
+    rest
+}
+
+/// `&mut name` in `statement`: the value may be swapped or rewritten through
+/// the borrow (`mem::swap(&mut name, ..)`, `fill(&mut name)`).
+fn borrows_mutably(statement: &str, name: &str) -> bool {
+    statement.match_indices("&mut").any(|(at, _)| {
+        let rest = statement[at + "&mut".len()..].trim_start();
+        rest.strip_prefix(name).is_some_and(|after| {
+            !after.starts_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_')
+        })
+    })
+}
+
 /// Whether `text` calls `name` (`name(` as a whole identifier).
 pub(crate) fn text_calls(text: &str, name: &str) -> bool {
     !name.is_empty()
@@ -514,6 +621,7 @@ mod tests {
             assert!(
                 statement_binding_verdict(
                     read,
+                    read,
                     "count",
                     "make_count",
                     super::BindingReach::DirectOwnerCall
@@ -538,6 +646,7 @@ mod tests {
         assert!(matches!(
             statement_binding_verdict(
                 "count = 5;",
+                "count = 5;",
                 "count",
                 "make_count",
                 super::BindingReach::DirectOwnerCall
@@ -555,6 +664,7 @@ mod tests {
             "let f = |count| count + 1;",
         ] {
             let verdict = statement_binding_verdict(
+                binder,
                 binder,
                 "count",
                 "make_count",
@@ -630,5 +740,94 @@ mod tests {
             blanked.contains("a;") && blanked.contains("b;"),
             "{blanked}"
         );
+    }
+
+    fn test_with(body: &str) -> crate::analysis::facts::TestSummary {
+        crate::analysis::facts::TestSummary {
+            name: "t".into(),
+            file: std::path::PathBuf::from("t.rs"),
+            start_line: 1,
+            end_line: 1 + body.lines().count(),
+            body: body.into(),
+            calls: Vec::new(),
+            assertions: Vec::new(),
+            literals: Vec::new(),
+            attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+        }
+    }
+
+    /// The strict snapshot grader on `setup` followed by a snapshot of `x` on
+    /// its own last line.
+    fn strict(setup: &str) -> bool {
+        let body = format!("{setup}\ninsta::assert_snapshot!(x);");
+        let test = test_with(&body);
+        let line = test.start_line + body.lines().count() - 1;
+        super::name_is_direct_owner_result("x", "own", line, &test)
+    }
+
+    #[test]
+    fn a_shadow_in_a_callback_or_closure_body_is_judged_where_the_assertion_sits() {
+        // The assertion is inside the block that rebinds the local.
+        for shadowed in [
+            "let x = own(2);\napply(|| {\n    let x = 2usize;",
+            "let x = own(2);\nlet f = || {\n    let x = 2usize;",
+            "let x = own(2);\nstd::thread::spawn(move || {\n    let x = 2usize;",
+            "let x = own(2);\nlet fut = async {\n    let x = 2usize;",
+            "let x = own(2);\nfoo({\n    let x = 2usize;",
+            "let x = own(2);\nlet s = S { a: {\n    let x = 2usize;",
+            "let x = own(2);\napply(|| {\n    if c {\n        let x = 2usize;",
+            "let x = own(2);\napply(|| { let x = 2usize;",
+            // An attribute does not hide the shadowing `let`.
+            "let x = own(2);\n#[allow(unused_variables)]\nlet x = 2usize;",
+            // A closure body or a borrow that rewrites the binding.
+            "let mut x = own(2);\napply(|| { x = 2usize; });",
+        ] {
+            assert!(!strict(shadowed), "{shadowed}");
+        }
+        // Controls: the callback is closed before the snapshot, or binds
+        // something else, so the owner binding is still the live `x`.
+        for live in [
+            "let x = own(2);\napply(|| {\n    let x = 2usize;\n});",
+            "let x = own(2);\nlet f = || {\n    let x = 2usize;\n};",
+            "let x = own(2);\napply(|| {\n    let y = 2usize;\n});",
+            "let x = own(2);\napply(|| {\n    if c {\n        let x = 2usize;\n    }\n});",
+            "let x = own(2);",
+        ] {
+            assert!(strict(live), "{live}");
+        }
+    }
+
+    #[test]
+    fn a_mutable_borrow_or_attribute_prefixed_shadow_withdraws_the_binding() {
+        assert!(matches!(
+            statement_binding_verdict(
+                "std::mem::swap(&mut count, &mut other);",
+                "std::mem::swap(&mut count, &mut other);",
+                "count",
+                "make_count",
+                super::BindingReach::OwnerCallInInitializer
+            ),
+            Some(super::BindingVerdict::Withdrawn)
+        ));
+        for text in [
+            "#[allow(unused)] let count = 1;",
+            "#[allow(unused)]\n#[cfg(test)] let count = 1;",
+        ] {
+            assert!(
+                matches!(
+                    statement_binding_verdict(
+                        text,
+                        text,
+                        "count",
+                        "make_count",
+                        super::BindingReach::DirectOwnerCall
+                    ),
+                    Some(super::BindingVerdict::Scoped(false))
+                ),
+                "{text}"
+            );
+        }
     }
 }
