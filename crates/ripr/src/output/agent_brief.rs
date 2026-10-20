@@ -385,6 +385,67 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
+    fn literal_backslash_brief() -> Result<Value, String> {
+        let seams = vec![classified()];
+        let working_set = AgentBriefResolvedWorkingSet::diff(
+            "change.diff",
+            vec![AgentBriefLine::new("src/pricing.rs", 88)],
+        );
+        let config = RiprConfig::default();
+        let selection = select_agent_brief_seams(
+            &seams,
+            &working_set,
+            3,
+            AgentBriefPolicy::from_config(&config),
+        );
+        let rendered = render_agent_brief_json(
+            Path::new("/tmp/team\\repo"),
+            &Mode::Draft,
+            &config,
+            &working_set,
+            &selection,
+        )?;
+        let value: Value = serde_json::from_str(&rendered).map_err(|err| err.to_string())?;
+        assert_eq!(value["limits"]["returned"], 1);
+        Ok(value)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn agent_brief_next_commands_preserve_literal_backslash_unix_root() -> Result<(), String> {
+        let value = literal_backslash_brief()?;
+        assert_eq!(
+            value["next"]["inspect_packet"],
+            r"mkdir -p '/tmp/team\repo/target/ripr/workflow' && ripr check --root '/tmp/team\repo' --mode draft --format agent-seam-packets-json > '/tmp/team\repo/target/ripr/workflow/agent-seam-packets.json'"
+        );
+        assert_eq!(
+            value["next"]["verify_after_edit"],
+            r"ripr agent verify --root '/tmp/team\repo' --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn agent_brief_seam_verification_preserves_literal_backslash_unix_root() -> Result<(), String> {
+        let value = literal_backslash_brief()?;
+        let verification = &value["top_seams"][0]["verification"];
+        assert_eq!(
+            verification["before_snapshot_command"],
+            r"mkdir -p '/tmp/team\repo/target/ripr/workflow' && ripr check --root '/tmp/team\repo' --mode draft --format repo-exposure-json > '/tmp/team\repo/target/ripr/workflow/before.repo-exposure.json'"
+        );
+        assert_eq!(
+            verification["after_snapshot_command"],
+            r"mkdir -p '/tmp/team\repo/target/ripr/workflow' && ripr check --root '/tmp/team\repo' --mode draft --format repo-exposure-json > '/tmp/team\repo/target/ripr/workflow/after.repo-exposure.json'"
+        );
+        assert_eq!(
+            verification["verify_command"],
+            r"ripr agent verify --root '/tmp/team\repo' --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
+        );
+        Ok(())
+    }
+
     #[test]
     fn agent_brief_json_renders_loaded_config_and_empty_file_scope() -> Result<(), String> {
         let root = temp_root("loaded-config")?;
