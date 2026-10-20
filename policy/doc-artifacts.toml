@@ -1706,3 +1706,11 @@ path = "docs/specs/RIPR-SPEC-0287-agent-stub-repair-journey-pointer.md"
 status = "proposed"
 owner = "agent-loop"
 standalone_reason = "States the agent stub repair-journey pointer (#8727): the rust_test_stub document (schema 0.3, additive on 0.2) may carry a next_repair block naming the ripr agent repair --seam-id start command and the repair packet's admitted allowed_edit_surface, with a placement_divergence naming both files when the stub's owner-shape-driven placement differs from the packet's recommended-test surface, so the divergence is stated at generation time instead of refusing later at the before phase's dirty-premise gate; the block uses the same fail-closed eligibility flip as the pilot's offered repair start and is omitted entirely when the route cannot be established, so no route is invented."
+
+[[artifact]]
+id = "RIPR-SPEC-0285"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0285-python-framework-scan-bounded-deterministic-string-aware.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issues #8706, #8707 and #8751 record the Python framework scan contract: per scanned directory only sorted regular .py test files count toward the 64-candidate cap so non-test entries and test-named directories cannot starve the scan or make it depend on filesystem order; each candidate is read for at most a 4096-byte prefix with a cut final line dropped; and evidence is matched only against code lines (scanning stops at an unquoted #, skips single-line string contents, and only the matching delimiter closes a triple-quoted string) so docstring examples, commented delimiters, and string-literal delimiters neither credit nor hide a real import pytest / import unittest."
