@@ -164,3 +164,36 @@ Warning: this stub lands in src/clamp.rs, but the repair packet admits only test
 
 A `--at --kind` file-parse ready document carries schema `0.3` with no
 `next_repair` key, and its human output stops after the `Run it:` line.
+
+## Non-Goals
+
+- No new exposure class, severity, oracle vocabulary, or stage state; the
+  block reports the seam's existing repair-route facts.
+- The stub does not re-derive or weaken the repair packet's readiness
+  gates: the block is omitted entirely when `repair_packet_eligibility`
+  or the repair-edit-target flip does not hold.
+- No repair execution authority moves into the stub path; the block only
+  names the documented start command and the admitted edit surface.
+
+## Implementation Mapping
+
+- `crates/ripr/src/app/test_stub.rs` owns `StubNextRepair` and
+  `StubPlacementDivergence`; `next_repair_for` projects the block from the
+  same classified entry that produced the stub, reusing
+  `analysis::repair_route::repair_packet_eligibility`,
+  `recommended_test_is_repair_edit_target`, and
+  `output::agent_seam_packets::recommended_test_for` (the same derivation
+  the packet writes into `allowed_edit_surface`), so the offered surface
+  is the file the before-phase cage actually admits.
+- `crates/ripr/src/cli/commands/agent_stub.rs` renders the conditional
+  `next_repair` JSON block in the ready `rust_test_stub` document (schema
+  `0.3`, additive) and the `Next repair:` / divergence warning lines on
+  the human surface; `RUST_TEST_STUB_SCHEMA_VERSION` feeds both paths.
+- `crates/ripr/src/cli/help/agent.rs` documents the block and the
+  omission rule beside the existing strongly_gripped guidance;
+  `docs/OUTPUT_SCHEMA.md` and `docs/AGENT_WORKFLOWS.md` carry the
+  wire shape and journey wording.
+
+## Metrics
+
+- `unit_test_pass_rate` on the registered tests.
