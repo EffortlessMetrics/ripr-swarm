@@ -4618,6 +4618,16 @@ fn weight_refusal_under(
     others: &[(&str, &str)],
     root: Option<&Path>,
 ) -> Option<AssertionRefusal> {
+    weight_refusal_nth(tests, others, root, 0)
+}
+
+/// `weight_refusal_under` for the test's `nth` assertion.
+fn weight_refusal_nth(
+    tests: &str,
+    others: &[(&str, &str)],
+    root: Option<&Path>,
+    nth: usize,
+) -> Option<AssertionRefusal> {
     let mut files = vec![(LIB, WEIGHT_LIB), (TESTS, tests)];
     files.extend_from_slice(others);
     let mut index = index(&files);
@@ -4631,10 +4641,10 @@ fn weight_refusal_under(
     assert!(test.is_some(), "the fixture test must be indexed");
     let test = test?;
     assert!(
-        !test.assertions.is_empty(),
+        test.assertions.len() > nth,
         "the test's assertions must parse"
     );
-    OwnerPinSyntax::default().refusal(test, &test.assertions[0], &index)
+    OwnerPinSyntax::default().refusal(test, &test.assertions[nth], &index)
 }
 
 #[test]
@@ -7496,6 +7506,58 @@ fn an_outcome_settling_attribute_is_the_refusal_wherever_it_sits() {
         assert!(
             refusal.is_some_and(|refusal| !refusal.is_analyzer_limit()),
             "{tests}"
+        );
+    }
+}
+
+#[test]
+fn a_feature_gated_test_is_refused_for_its_attribute_not_a_macro_rebinding() {
+    // #8388, rand 94c9078 `uniform_other.rs` `test_char_bad_deser`: a test
+    // carrying `#[cfg(feature = "serde")]` is "assertion not credited" because
+    // the feature may be off in the build under analysis, so the test may not
+    // run at all. No macro is rebound anywhere; the plain `assert!` and
+    // `assert_eq!` spellings are credited without the gate.
+    let body = "fn char_bad_deser() {\n    let result = weight(4);\n    assert!(result > 0);\n    assert_eq!(result, 12);\n}\n";
+    let prelude = "use demo::weight;\n";
+    let gated = format!("{prelude}#[test]\n#[cfg(feature = \"serde\")]\n{body}");
+    let gate = "#[cfg(feature = \"serde\")]".to_string();
+    let refusal = weight_refusal(&gated, &[]);
+    assert_eq!(
+        refusal,
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::TestAttribute(gate.clone())
+        ))
+    );
+    // The exact-value `assert_eq!` oracle (the second assertion) is refused
+    // for the same attribute, not only the first assertion.
+    assert_eq!(weight_refusal_nth(&gated, &[], None, 1), refusal);
+    // The gate is unknown availability, not a settled outcome: an analyzer
+    // limit that withholds a gap, and the clause names the attribute.
+    let clause = refusal.as_ref().map(AssertionRefusal::describe);
+    assert!(
+        refusal.is_some_and(|refusal| refusal.is_analyzer_limit())
+            && clause.as_deref().is_some_and(|clause| {
+                clause.contains(&gate) && clause.contains("may change whether or how it runs")
+            }),
+        "{clause:?}"
+    );
+    // The same test without the gate is credited, so the attribute alone is
+    // the cause.
+    let plain = format!("{prelude}#[test]\n{body}");
+    assert_eq!(weight_refusal(&plain, &[]), None);
+    assert_eq!(weight_refusal_nth(&plain, &[], None, 1), None);
+    // Fail closed: a glob of a foreign crate still refuses the ungated test,
+    // for the `assert_eq!` oracle as well as the first assertion.
+    let foreign = format!("use rayon::prelude::*;\n{plain}");
+    for nth in 0..2 {
+        assert!(
+            matches!(
+                weight_refusal_nth(&foreign, &[], None, nth),
+                Some(AssertionRefusal::Syntax(
+                    AssertionContextRefusal::MacroBinding(_)
+                ))
+            ),
+            "assertion {nth}"
         );
     }
 }
