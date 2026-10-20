@@ -1383,6 +1383,12 @@ fn evidence_promotion_human_oracle_line_accepts_absent_oracle_wording() {
     assert!(!super::evidence_promotion_human_oracle_line_matches(
         line, "unknown", "weak"
     ));
+    // An absent oracle carries no kind, so a concrete expected kind cannot match it.
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "exact_value",
+        "none"
+    ));
 }
 
 #[test]

@@ -3054,7 +3054,7 @@ pub(crate) fn evidence_promotion_human_oracle_line_matches(
                 .strip_prefix("no oracle")
                 .is_some_and(|rest| rest.is_empty() || rest.starts_with([';', ':', ',']));
             return if expected_strength == "none" {
-                absent
+                expected_kind == "unknown" && absent
             } else if expected_strength == "unknown" {
                 phrase.starts_with(ungraded.as_str())
             } else {
