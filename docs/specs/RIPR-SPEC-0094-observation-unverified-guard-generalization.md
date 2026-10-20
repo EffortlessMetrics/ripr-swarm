@@ -179,15 +179,21 @@ test:          assert!(result);              // plain assert, no mock, no token
 After fix:     weakly_exposed / observation_unverified
 ```
 
-### SideEffect / CallDeletion confirmed (Part C, must stay exposed)
+### SideEffect confirmed (Part C, must stay exposed)
 
 ```
-probe family:  call_deletion (effect)
+probe family:  side_effect
 expression:    notifier.send(order_id)
 test:          assert_eq!(*notifier.sent.borrow(), vec!["order-42".to_string()]);
 After fix:     exposed   (strong persisted-state observer; token_match on
                           `notifier`; effect observer kind-matches the seam)
 ```
+
+In `observation_verified_side_effect`, this call is the function's tail-return
+expression, so its aligned diff produces SideEffect and ReturnValue probes,
+not CallDeletion. The payload assertion observes the effect; it does not assert
+the returned boolean. Genuine standalone-call deletion has its separate
+semicolon-terminated control in `observation_verified_call_deletion` (#8954).
 
 A bare Medium mock observer (`mock.verify();`, no token) clears
 `observation_unverified` via Part C but remains `weakly_exposed` because Medium
