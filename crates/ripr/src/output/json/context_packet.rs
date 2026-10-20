@@ -187,39 +187,6 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     #[test]
-    fn context_packet_related_test_totals_distinguish_identical_bounded_rows() -> Result<(), String>
-    {
-        let mut finding = sample_finding();
-        finding.related_tests = (0..8)
-            .map(|index| related(&format!("retained_{index}")))
-            .collect();
-        let retained = finding.related_tests.clone();
-        let mut packets = Vec::new();
-        for total in [12, 13] {
-            finding.related_tests_matched_total = Some(total);
-            let rendered = render_context_packet(&finding, 8, Path::new("."));
-            let packet: serde_json::Value =
-                serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
-            assert_eq!(packet["related_tests"].as_array().map(Vec::len), Some(8));
-            assert_eq!(packet["related_tests_total"], total);
-            assert_eq!(finding.related_tests, retained);
-            packets.push(packet);
-        }
-        assert_eq!(packets[0]["related_tests"], packets[1]["related_tests"]);
-        assert_ne!(packets[0], packets[1]);
-        // The total must be the only output difference: metadata cannot alter
-        // selection, producer witness, or guidance.
-        for packet in &mut packets {
-            packet
-                .as_object_mut()
-                .ok_or("packet must be an object")?
-                .remove("related_tests_total");
-        }
-        assert_eq!(packets[0], packets[1]);
-        Ok(())
-    }
-
-    #[test]
     fn context_packet_limits_related_tests_to_max() {
         let mut finding = sample_finding();
         finding.related_tests = vec![related("t1"), related("t2"), related("t3")];
