@@ -112,7 +112,7 @@ pub(crate) struct TypeScriptTest {
     pub(crate) file: PathBuf,
     pub(crate) line: usize,
     pub(crate) body_text: String,
-    /// Reach-only source with proven-unused local function values masked.
+    /// Reach-only source with unreferenced local function values masked.
     /// The original body remains available for snippets and oracle evidence.
     pub(crate) reach_body_text: Option<String>,
     pub(crate) assertions: Vec<TypeScriptAssertion>,
