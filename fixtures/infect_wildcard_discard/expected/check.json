@@ -3,10 +3,10 @@
   "tool": "ripr",
   "mode": "fast",
   "root": "fixtures/infect_wildcard_discard/input",
-  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":1,"static_unknown":1,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":1,"changed_files_by_language":[{"language":"rust","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
-    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:3f1eb8b4435915f92a40d4dc038060a005506aa3fab051f15b190b21d20d63a8","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":3,"candidate_line_count":2,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:3f1eb8b4435915f92a40d4dc038060a005506aa3fab051f15b190b21d20d63a8","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":3,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
   },
   "findings": [
     {
@@ -98,98 +98,6 @@
       "oracle_strength": "unknown",
       "recommended_next_step": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
       "suggested_next_action": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
-      "language": "rust",
-      "source_currentness": "candidate_current"
-    },
-    {
-      "id": "probe:src_lib.rs:return_value:d0b06139",
-      "canonical_gap_id": "gap:rust:src/lib.rs:process:return_value:return_value:amount",
-      "canonical_gap_group_size": 1,
-      "canonical_gap": {
-        "id": "gap:rust:src/lib.rs:process:return_value:return_value:amount",
-        "language": "rust",
-        "file": "src/lib.rs",
-        "owner": "process",
-        "behavior_kind": "return_value",
-        "probe_kind": "return_value",
-        "normalized_discriminator": "amount"
-
-      },
-      "classification": "propagation_unknown",
-      "severity": "note",
-      "confidence": 0.66,
-      "probe": {
-        "id": "probe:src_lib.rs:return_value:d0b06139",
-        "family": "return_value",
-        "delta": "value",
-        "file": "./src/lib.rs",
-        "line": 3,
-        "expression": "amount"
-       },
-      "ripr": {
-        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach process: process_returns_amount_unchanged"},
-        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
-        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation is not statically obvious from syntax-first analysis"},
-        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
-        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
-       },
-      "evidence_path": ["reach yes: Related tests appear to reach process: process_returns_amount_unchanged", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (propagation_unknown); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches unknown sink (line 3)", "related test tests/process_tests.rs:4 process_returns_amount_unchanged uses strong exact value oracle: assert_eq!(process(42), 42);", "source assertion argument value 42 at line 5", "source function argument value amount = 42 at line 5"],
-      "flow_sinks": [
-        {"kind":"unknown","text":"unknown sink","line":3}
-      ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Propagation is not statically obvious from syntax-first analysis", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach process: process_returns_amount_unchanged", "Strong oracle found: exact value or pattern assertion"],
-      "missing": ["No clear propagation path from changed behavior to an observable sink"],
-      "assertion_texts": {
-        "5": "assert_eq!(process(42), 42);"
-      },
-      "activation": {
-        "observed_values": [
-          {
-            "line": 5,
-            "value": "42",
-            "context": "assertion_argument"
-          },
-          {
-            "line": 5,
-            "value": "amount = 42",
-            "context": "function_argument"
-          }
-        ],
-        "missing_discriminators": [
-        ]
-      },
-      "observed_values": [
-        {
-          "line": 5,
-          "value": "42",
-          "context": "assertion_argument"
-        },
-        {
-          "line": 5,
-          "value": "amount = 42",
-          "context": "function_argument"
-        }
-      ],
-      "missing_discriminators": [
-      ],
-      "related_tests_total": 1,
-      "related_tests": [
-        {
-          "name": "process_returns_amount_unchanged",
-          "file": "tests/process_tests.rs",
-          "line": 4,
-          "oracle_strength": "strong",
-          "oracle_kind": "exact_value",
-          "oracle": "assert_eq!(process(42), 42);",
-          "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
-        }
-      ],
-      "stop_reasons": ["propagation_evidence_unknown"],
-      "oracle_kind": "exact_value",
-      "oracle_strength": "strong",
-      "recommended_next_step": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
-      "suggested_next_action": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }
