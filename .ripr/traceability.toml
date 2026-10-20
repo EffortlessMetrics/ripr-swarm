@@ -16832,6 +16832,7 @@ tests = [
   "crates/ripr/src/mcp/gaps.rs::tests::percent_decoding_resource_id_segments",
   "crates/ripr/tests/support/mcp_attempt_inventory.rs::inventory_page_limit_echoes_the_effective_cap",
   "crates/ripr/src/mcp/protocol.rs::tests::tool_descriptions_state_positive_contracts_and_bounds",
+  "crates/ripr/tests/mcp_stdio.rs::unavailable_workspace_evidence_names_restart_before_any_refresh",
 ]
 metrics = [
   "mcp_resource_id_ambiguity_fail_closed",
