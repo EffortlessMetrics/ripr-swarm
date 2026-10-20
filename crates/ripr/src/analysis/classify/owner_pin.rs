@@ -10281,7 +10281,11 @@ fn expected_binding_calls_owner(test: &TestSummary, expected: &str, name: &str) 
             // is a `let` the scan reads, so the owner may feed the operand
             // (#7847).
             let bindings = receiver_let_bindings(test, word);
-            let plain = bindings.as_deref().is_some_and(plain_let_values);
+            // A later `let` may shadow an earlier static or item of the same
+            // name, so a plain `let` counts only when it is the name's first
+            // use, at the test body's top level (#8795).
+            let plain = bindings.as_deref().is_some_and(plain_let_values)
+                && first_use_is_top_level_let(&masked_body, word);
             if bound_by_macro(&masked_body, word) || written_by_test(&masked_body, word, plain) {
                 return true;
             }
@@ -10412,6 +10416,29 @@ fn borrowed_into_path_call(before: &str) -> bool {
             "is_empty",
         ]
         .contains(&last)
+}
+
+/// Whether the first whole-word use of `name` in the masked test body is a
+/// `let [mut] name` directly in the body block (brace depth one). Any earlier
+/// use, or a binding in an inner block, may name a different item.
+fn first_use_is_top_level_let(masked: &str, name: &str) -> bool {
+    let Some(first) = whole_word_offsets(masked, name).into_iter().next() else {
+        return false;
+    };
+    let before = masked[..first].trim_end();
+    if before.matches('{').count() != before.matches('}').count() + 1 {
+        return false;
+    }
+    let before = before
+        .strip_suffix("mut")
+        .filter(|rest| rest.ends_with(char::is_whitespace))
+        .map_or(before, str::trim_end);
+    before.strip_suffix("let").is_some_and(|rest| {
+        !rest
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+    })
 }
 
 /// Whether `before` ends in a mutable borrow operator: `&mut`, `& mut` or

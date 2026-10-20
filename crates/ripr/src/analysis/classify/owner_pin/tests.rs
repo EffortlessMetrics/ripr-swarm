@@ -8746,6 +8746,12 @@ fn an_expected_value_a_macro_or_a_static_rebinds_from_the_owner_is_not_a_pin() {
             "",
             "let mut expected = 0;\n        let mut o = 0;\n        'a: loop {\n            break 'a [expected, o] = [crate::weight(4), 0];\n        }\n        assert_eq!(crate::weight(4), expected);",
         ),
+        // #8795 review: a later `let` shadows the static the earlier
+        // shared borrow writes; the assertion before it still names the static.
+        (
+            "static EXPECTED: AtomicU32 = AtomicU32::new(0);\nfn same(_: u32, _: &AtomicU32) {}\n\n",
+            "same(crate::weight(4), &EXPECTED);\n        assert_eq!(crate::weight(4), EXPECTED.load(Ordering::SeqCst));\n        let EXPECTED = 0;",
+        ),
         // #8795 review: a keyword before `[` starts an array pattern, not an index.
         (
             "",
@@ -9053,6 +9059,21 @@ fn written_by_test_reads_operators_and_let_boundaries() {
         assert!(!super::plain_let_values(&[init]), "{init}");
     }
     assert!(!super::plain_let_values(&[]));
+    // Only a first-use top-level `let` makes a name plain.
+    for (body, plain) in [
+        ("{ let e = 1; f(&e); }", true),
+        ("{ let mut e = 1; f(&e); }", true),
+        ("{ f(&e); let e = 1; }", false),
+        ("{ { let e = 1; } f(&e); }", false),
+        ("{ if c { let e = 1; } }", false),
+        ("{ f(); }", false),
+    ] {
+        assert_eq!(
+            super::first_use_is_top_level_let(body, "e"),
+            plain,
+            "{body}"
+        );
+    }
     assert!(!super::plain_let_values(&[" = 1;", " = f();"]));
 }
 
