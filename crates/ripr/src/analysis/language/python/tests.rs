@@ -7126,6 +7126,20 @@ fn boundary_call_row_keeps_an_ordinary_assert_line_whole() -> Result<(), String>
         "an ordinary line is shown whole: {:?}",
         finding.activation.observed_values
     );
+    // #8389: the boundary value facts name the test file they were read from.
+    let files = finding
+        .activation
+        .observed_values
+        .iter()
+        .map(|fact| fact.file.clone())
+        .collect::<Vec<_>>();
+    assert!(
+        !files.is_empty()
+            && files
+                .iter()
+                .all(|file| file.as_deref() == Some(Path::new("tests/test_mod.py"))),
+        "{files:?}"
+    );
     Ok(())
 }
 

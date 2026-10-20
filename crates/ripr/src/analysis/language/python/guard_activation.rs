@@ -98,7 +98,7 @@ pub(super) fn python_guarded_arm_gap(
                 .iter()
                 .filter(|(_, binding)| !binding.from_default)
                 .map(|(parameter, binding)| ValueFact {
-                    file: None,
+                    file: Some(row.file.clone()),
                     line: row.line,
                     text: row.text.clone(),
                     value: format!("{parameter} = {}", binding.value),
@@ -687,6 +687,7 @@ mod tests {
     fn test_row(bindings: &[(&str, &str)]) -> CallRow {
         use super::super::boundary::Binding;
         CallRow {
+            file: std::path::PathBuf::from("tests/test_subject.py"),
             line: 1,
             text: "quote(..)".to_string(),
             bindings: bindings
