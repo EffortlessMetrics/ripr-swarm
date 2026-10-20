@@ -621,6 +621,20 @@ fn review_comments_with_admission(
     let owner_files = changed_lines
         .iter()
         .map(|line| line.file.clone())
+        // Test-edit disclosure also reads removed-only Rust paths. Admit
+        // those inputs without adding them to current placement/selection.
+        .chain(
+            analysis::parse_unified_diff(&diff_text)
+                .into_iter()
+                .filter_map(|file| {
+                    (file
+                        .path
+                        .extension()
+                        .is_some_and(|extension| extension == "rs")
+                        && (!file.added_lines.is_empty() || !file.removed_lines.is_empty()))
+                    .then_some(file.path)
+                }),
+        )
         .collect::<Vec<_>>();
     let corpus_payload = analysis::cancellation::with_token(&cancellation, || {
         analysis::analyzable_corpus_payload_size(&input.root, &config, &owner_files)
@@ -645,6 +659,9 @@ fn review_comments_with_admission(
             error,
         ));
     }
+    let changed_tests = analysis::cancellation::with_token(&cancellation, || {
+        analysis::diff_test_changes(&input.root, &options.head, &diff_text, &config)
+    });
     let (changed_owners, enclosing_owners) = attribute_owners(&input.root, &changed_lines);
     enforce_review_comments_deadline(
         &mut receipt,
@@ -657,6 +674,7 @@ fn review_comments_with_admission(
     receipt.phase("language_facts", "canonical_analysis");
     receipt.write_atomic(&receipt_path)?;
     let working_set = AgentBriefResolvedWorkingSet::base(options.base.clone(), changed_lines)
+        .with_changed_tests(changed_tests)
         .with_changed_owners(changed_owners)
         .with_enclosing_owners(enclosing_owners);
     let changed_owner_names = working_set
@@ -1393,6 +1411,7 @@ mod tests {
                 PathBuf::from("README.md"),
             ],
             changed_lines: Vec::new(),
+            changed_tests: Default::default(),
             changed_owners: Vec::new(),
             enclosing_owners: Vec::new(),
             base: Some("HEAD~1".to_string()),

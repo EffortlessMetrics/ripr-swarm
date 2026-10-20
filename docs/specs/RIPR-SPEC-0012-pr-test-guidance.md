@@ -374,7 +374,14 @@ The JSON report uses schema version `0.1`:
 - `summary.suppressed` - candidate recommendations hidden by configured
   severity, suppression, caps, or missing guidance.
 - `summary.unchanged_tests` - `true` when the pull request did not change a
-  nearby test for the selected recommendations.
+  nearby test for the selected recommendations. Diff-backed disclosure includes
+  removals in test-shaped files and edits inside Rust test/helper function spans,
+  including inline tests. Added lines use head-source spans; removed lines use
+  reconstructed old-source spans and old coordinates. These disclosure paths
+  never become current-line placement targets or evidence of discrimination.
+  Unavailable source or unresolved test-role attribution withholds `true` and
+  emits a warning; it does not alter the causal analysis status or hide an open
+  recommendation.
 - `comments[].id` - stable report-local ID.
 - `comments[].dedupe_key` - stable key based on seam ID, path, and seam line.
 - `comments[].placement` - GitHub-compatible changed-line placement.
@@ -535,6 +542,13 @@ PR test guidance must not:
   default.
 
 ## Test Mapping
+
+`review_test_changes::review_comments_discloses_removed_and_inline_test_edits`
+uses eight real Git fixtures to pin separate/inline assertion deletion and
+replacement, shifted old coordinates, production-only controls, and unchanged
+recommendation classification/placement. The renderer test
+`unresolved_test_edits_do_not_claim_unchanged_or_hide_recommendations` pins the
+conservative unavailable-attribution warning without hiding the card.
 
 Initial implementation should add tests for:
 

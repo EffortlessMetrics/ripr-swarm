@@ -72,6 +72,9 @@ pub(crate) struct AgentBriefResolvedWorkingSet {
     pub(crate) source: AgentBriefWorkingSetSource,
     pub(crate) files: Vec<PathBuf>,
     pub(crate) changed_lines: Vec<AgentBriefLine>,
+    /// Disclosure only: removed test lines must never enter placement or
+    /// recommendation matching as if they were current source locations.
+    pub(crate) changed_tests: crate::analysis::DiffTestChanges,
     pub(crate) changed_owners: Vec<AgentBriefChangedOwner>,
     /// Every owner function whose span contains a changed line, including
     /// outer owners of a nested function. `changed_owners` keeps only the
@@ -90,6 +93,7 @@ impl AgentBriefResolvedWorkingSet {
             source: AgentBriefWorkingSetSource::Diff,
             files,
             changed_lines,
+            changed_tests: Default::default(),
             changed_owners: Vec::new(),
             enclosing_owners: Vec::new(),
             base: None,
@@ -104,6 +108,7 @@ impl AgentBriefResolvedWorkingSet {
             source: AgentBriefWorkingSetSource::Base,
             files,
             changed_lines,
+            changed_tests: Default::default(),
             changed_owners: Vec::new(),
             enclosing_owners: Vec::new(),
             base: Some(base.into()),
@@ -117,6 +122,7 @@ impl AgentBriefResolvedWorkingSet {
             source: AgentBriefWorkingSetSource::Files,
             files,
             changed_lines: Vec::new(),
+            changed_tests: Default::default(),
             changed_owners: Vec::new(),
             enclosing_owners: Vec::new(),
             base: None,
@@ -130,6 +136,7 @@ impl AgentBriefResolvedWorkingSet {
             source: AgentBriefWorkingSetSource::SeamId,
             files: Vec::new(),
             changed_lines: Vec::new(),
+            changed_tests: Default::default(),
             changed_owners: Vec::new(),
             enclosing_owners: Vec::new(),
             base: None,
@@ -140,6 +147,11 @@ impl AgentBriefResolvedWorkingSet {
 
     pub(crate) fn with_changed_owners(mut self, owners: Vec<AgentBriefChangedOwner>) -> Self {
         self.changed_owners = owners;
+        self
+    }
+
+    pub(crate) fn with_changed_tests(mut self, changes: crate::analysis::DiffTestChanges) -> Self {
+        self.changed_tests = changes;
         self
     }
 

@@ -109,6 +109,9 @@ pub(crate) fn render_review_comments_json_with_scope(
     } else {
         selection.warnings.clone()
     };
+    if working_set.changed_tests.unresolved {
+        warnings.push("Test-edit attribution is unresolved for part of the diff; unchanged tests are not established.".to_string());
+    }
     if suppressed_repo_fallback {
         warnings.push(
             "repo-actionable fallback seams were suppressed because PR guidance requires a changed working-set match"
@@ -203,7 +206,7 @@ pub(crate) fn render_review_comments_json_with_scope(
             "comments": comments.len(),
             "summary_only": summary_only.len(),
             "suppressed": suppressed.len(),
-            "unchanged_tests": changed_test_paths.is_empty(),
+            "unchanged_tests": changed_test_paths.is_empty() && !working_set.changed_tests.unresolved,
         },
         "comments": comments,
         "summary_only": summary_only,
@@ -1247,20 +1250,19 @@ fn changed_test_paths(working_set: &AgentBriefResolvedWorkingSet) -> Vec<String>
     let mut paths = working_set
         .changed_lines
         .iter()
-        .filter(|line| is_test_like_path(&line.file))
+        .filter(|line| crate::analysis::test_like_path(&line.file))
         .map(|line| normalize_path_text(&line.file))
+        .chain(
+            working_set
+                .changed_tests
+                .files
+                .iter()
+                .map(|path| normalize_path_text(path)),
+        )
         .collect::<Vec<_>>();
     paths.sort();
     paths.dedup();
     paths
-}
-
-fn is_test_like_path(path: &Path) -> bool {
-    let text = normalize_path_text(path);
-    text.starts_with("tests/")
-        || text.contains("/tests/")
-        || text.ends_with("_test.rs")
-        || text.ends_with("_tests.rs")
 }
 
 fn normalize_path_text(path: &Path) -> String {
@@ -2814,6 +2816,30 @@ mod tests {
         }
         assert_eq!(objects[0]["message"], "bounded by latency budget");
         assert_eq!(objects[1]["message"], "another note");
+    }
+
+    #[test]
+    fn unresolved_test_edits_do_not_claim_unchanged_or_hide_recommendations() -> Result<(), String>
+    {
+        let working_set = AgentBriefResolvedWorkingSet::base(
+            "main",
+            vec![AgentBriefLine::new("src/pricing.rs", 88)],
+        )
+        .with_changed_tests(crate::analysis::DiffTestChanges {
+            files: Vec::new(),
+            unresolved: true,
+        });
+        let report = render_value(&working_set, &[classified(88)])?;
+        assert_eq!(report["summary"]["unchanged_tests"], false);
+        assert_eq!(report["summary"]["comments"], 1);
+        assert_eq!(report["summary"]["suppressed"], 0);
+        let warnings = report["warnings"].as_array().ok_or("missing warnings")?;
+        assert!(warnings.iter().any(|warning| {
+            warning["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("Test-edit attribution is unresolved"))
+        }));
+        Ok(())
     }
 
     #[test]
