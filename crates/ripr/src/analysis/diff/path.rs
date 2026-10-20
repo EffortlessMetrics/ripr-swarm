@@ -803,7 +803,7 @@ mod tests {
         // (owner P1, PR #8901: `build/cache*` must probe the literal path).
         // Host-independent: `*?[]` are filename characters on every host.
         assert_eq!(
-            literal_artifact_root_pathspec(&Path::new("build/cache*[x]?")),
+            literal_artifact_root_pathspec(Path::new("build/cache*[x]?")),
             "build/cache\\*\\[x\\]\\?"
         );
     }
