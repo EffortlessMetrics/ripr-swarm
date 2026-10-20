@@ -19575,8 +19575,12 @@ fn calibrate_headed_snapshot_names_the_assumed_subject() -> Result<(), String> {
     let json =
         std::fs::read_to_string(&out_path).map_err(|e| format!("read calibration json: {e}"))?;
     assert!(
-        !json.contains("does not carry a head SHA") && !json.contains(head),
-        "JSON report schema is unchanged; provenance stays on stderr:\n{json}"
+        !json.contains("does not carry a head SHA"),
+        "the caveat sentence stays stderr-only:\n{json}"
+    );
+    assert!(
+        json.contains(head),
+        "the JSON report now carries in-band provenance naming the snapshot head (#8753):\n{json}"
     );
     assert!(
         json.contains(r#""join_method": "file_line""#),
