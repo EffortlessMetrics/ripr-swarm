@@ -129,6 +129,12 @@ fn effect_assertions_require_execution_but_keep_reachable_oracles() -> Result<()
                 assert_eq!(related.len(), 1);
                 assert_eq!(related[0]["file"], "src/lib.rs");
                 if !exposed {
+                    assert_eq!(related[0]["oracle"], "");
+                    assert_eq!(related[0]["oracle_strength"], "none");
+                }
+                // #8924 may discard a never-run medium oracle at extraction.
+                // Strong assertions deliberately survive for this refusal.
+                if !exposed && strength == "strong" {
                     assert!(
                         finding["recommended_next_step"]
                             .as_str()
@@ -138,8 +144,6 @@ fn effect_assertions_require_execution_but_keep_reachable_oracles() -> Result<()
                         render_check(&report, &OutputFormat::Human)?
                             .contains("check the changed effect")
                     );
-                    assert_eq!(related[0]["oracle"], "");
-                    assert_eq!(related[0]["oracle_strength"], "none");
                     assert!(
                         finding["ripr"]["observe"]["summary"].as_str().is_some_and(
                             |text| text.contains("rust_assertion_context_unestablished")
