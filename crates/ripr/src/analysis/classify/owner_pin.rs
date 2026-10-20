@@ -10477,7 +10477,8 @@ fn expected_binding_calls_owner(test: &TestSummary, expected: &str, name: &str) 
 /// constructor call (it may be test-local), is never plain.
 fn written_by_test(masked: &str, name: &str, plain: bool) -> bool {
     whole_word_offsets(masked, name).into_iter().any(|offset| {
-        let before = masked[..offset].trim_end();
+        // A raw identifier (`r#NAME`) is the same name: look past its `r#`.
+        let before = strip_raw_ident_prefix(masked[..offset].trim_end());
         // `let e: Config = ..`, `let e: crate::Config`, `let e: &Config` and
         // `let e: (Config, u8)` annotate a type: the `=` after it assigns the
         // binding, not the type name. Only a `let` pattern's annotation
@@ -10486,13 +10487,14 @@ fn written_by_test(masked: &str, name: &str, plain: bool) -> bool {
         if in_let_annotation(before) {
             return false;
         }
-        if mut_borrow_before(before) || addr_of_mut_before(before) {
-            return true;
-        }
-        // `let ref mut r = name;`, `if let Some(ref mut x) = name {}` and
-        // `match name { ref mut r => .. }` bind a mutable reference into the
-        // place, so a later `*r = ..` writes it (#8929).
-        if ref_mut_scrutinee(before, &masked[offset + name.len()..]) {
+        // A mutable borrow, `addr_of_mut!` or `ref mut` scrutinee may wrap the
+        // name in groups, tuples, arrays or blocks (`&mut (x, name)`,
+        // `let (a, ref mut b) = (x, name)`): test the text before each
+        // enclosing opener as well (#8944).
+        let rest = &masked[offset + name.len()..];
+        if enclosing_heads(before).into_iter().any(|head| {
+            mut_borrow_before(head) || addr_of_mut_before(head) || ref_mut_scrutinee(head, rest)
+        }) {
             return true;
         }
         // A `let` (or `let mut`) declaration is the binding the let scan reads.
@@ -10601,19 +10603,75 @@ fn first_use_is_top_level_let(masked: &str, name: &str) -> bool {
     })
 }
 
+/// `before` without a trailing raw-identifier marker (`r#`), which sits
+/// between a borrow operator or path and the name it makes raw.
+fn strip_raw_ident_prefix(before: &str) -> &str {
+    match before.strip_suffix("r#") {
+        Some(rest) if !rest.as_bytes().last().is_some_and(|b| is_ident_byte(*b)) => rest.trim_end(),
+        _ => before,
+    }
+}
+
+/// `before` itself and, for every bracket (`(`, `[`, `{`) that is still open
+/// at its end, the text before that opener. A borrow or `ref mut` scrutinee
+/// applies to the whole enclosing group, so `(x, name)` and `{name}` are
+/// examined as the head that precedes them (#8944). A call or index opener
+/// simply yields a head ending in the callee, which no check accepts.
+fn enclosing_heads(before: &str) -> Vec<&str> {
+    let mut heads = vec![before];
+    let mut depth = 0usize;
+    for (at, character) in before.char_indices().rev() {
+        match character {
+            ')' | ']' | '}' => depth += 1,
+            '(' | '[' | '{' => {
+                if depth == 0 {
+                    heads.push(before[..at].trim_end());
+                } else {
+                    depth -= 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    heads
+}
+
+/// `text` without a trailing balanced `<..>` generic argument list.
+fn strip_generic_args(text: &str) -> &str {
+    if !text.ends_with('>') {
+        return text;
+    }
+    let mut depth = 0usize;
+    for (at, character) in text.char_indices().rev() {
+        match character {
+            '>' => depth += 1,
+            '<' => {
+                depth -= 1;
+                if depth == 0 {
+                    return text[..at].trim_end();
+                }
+            }
+            _ => {}
+        }
+    }
+    text
+}
+
 /// `before` without the grouping and path qualifiers that sit between a
 /// borrow operator and the name it borrows: `(` (`&mut (name)`,
 /// `&mut (name).f`) and `crate::` / `self::` / `m::` path segments
-/// (`&mut crate::name`), in any combination (#8929). A call opener
+/// (`&mut crate::name`), generic/turbofish segments (`&mut <T>::name`,
+/// `&mut m::<T>::name`) and dereferences (`&mut *name`), in any combination
+/// (#8929, #8944). A call opener
 /// (`&mut foo(name)`) leaves the callee ident, so it is not a borrow of the
 /// name.
 fn peel_group_and_path(before: &str) -> &str {
     let mut head = before.trim_end();
     loop {
-        if let Some(rest) = head.strip_suffix('(') {
+        if let Some(rest) = head.strip_suffix('(').or_else(|| head.strip_suffix('*')) {
             head = rest.trim_end();
         } else if let Some(rest) = head.strip_suffix("::") {
-            let rest = rest.trim_end();
+            let rest = strip_generic_args(rest.trim_end());
             let qualifier = rest.trim_end_matches(|c: char| c.is_ascii_alphanumeric() || c == '_');
             // `& mut ::name` has an empty qualifier: keep the `mut` keyword.
             head = if rest.ends_with("mut") && rest.len() - qualifier.len() == "mut".len() {
@@ -10676,13 +10734,28 @@ fn ref_mut_scrutinee(before: &str, rest: &str) -> bool {
     if let Some(pattern_end) = head.strip_suffix('=') {
         // `==`, `<=`, `+=` and the like compare or assign; only a bare `=`
         // after a `let` pattern binds.
-        if pattern_end.ends_with(['=', '!', '<', '>', '+', '-', '*', '/', '%', '|', '&', '^']) {
-            return false;
-        }
-        return whole_word_offsets(pattern_end, "let")
+        let Some(at) = whole_word_offsets(pattern_end, "let")
             .into_iter()
             .next_back()
-            .is_some_and(|at| has_ref_mut(&pattern_end[at + "let".len()..]));
+        else {
+            return false;
+        };
+        let pattern = &pattern_end[at + "let".len()..];
+        // The pattern ends at a top-level `;`: a `ref mut` in an earlier
+        // statement does not bind this scrutinee (#8944).
+        if has_top_level_semicolon(pattern) {
+            return false;
+        }
+        // `let ref mut r: Vec<u8>= name` closes a type annotation with the
+        // `>` before `=`, so that `>` is no `>=` comparison.
+        let annotation_close =
+            pattern_end.ends_with('>') && has_ref_mut(pattern) && has_single_colon(pattern);
+        if pattern_end.ends_with(['=', '!', '<', '+', '-', '*', '/', '%', '|', '&', '^'])
+            || (pattern_end.ends_with('>') && !annotation_close)
+        {
+            return false;
+        }
+        return has_ref_mut(pattern);
     }
     if head
         .strip_suffix("match")
@@ -10702,6 +10775,20 @@ fn ref_mut_scrutinee(before: &str, rest: &str) -> bool {
                 }
                 _ => {}
             }
+        }
+    }
+    false
+}
+
+/// Whether `text` has a `;` outside every bracket pair.
+fn has_top_level_semicolon(text: &str) -> bool {
+    let mut depth = 0usize;
+    for character in text.chars() {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ';' if depth == 0 => return true,
+            _ => {}
         }
     }
     false

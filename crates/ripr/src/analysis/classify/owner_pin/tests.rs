@@ -9162,6 +9162,89 @@ fn written_by_test_refuses_grouped_pathed_ref_mut_and_addr_of_mut_writes() {
     }
 }
 
+/// #8944: fail-open residuals of #8943. Raw identifiers, a `>` before `=`,
+/// a deref-then-borrow, `ref mut` scrutinees in a tuple or block, and borrow
+/// operands that are groups, tuples, blocks or qualified/turbofish paths are
+/// all mutable aliases of the expected value. Each read row is the nearby
+/// shape that must stay a read.
+#[test]
+fn written_by_test_refuses_raw_deref_tuple_and_generic_path_aliases() {
+    for write in [
+        // The `>` closing a type annotation sits directly before `=`.
+        "let ref mut r: Vec<u8>= EXPECTED; *r = f(4);",
+        "let ref mut r: Option<Vec<u8>>= EXPECTED;",
+        // Raw identifiers.
+        "let r = &mut r#EXPECTED; *r = f(4);",
+        "let p = addr_of_mut!(r#EXPECTED); *p = f(4);",
+        "let ref mut r = r#EXPECTED; *r = f(4);",
+        "let r = &mut m::r#EXPECTED;",
+        // Deref then borrow.
+        "let r = &mut *EXPECTED; *r = f(4);",
+        "let r = &mut *(EXPECTED);",
+        "let r = &mut (*EXPECTED);",
+        "let r = &mut **EXPECTED;",
+        "let p = addr_of_mut!(*EXPECTED); *p = f(4);",
+        "let ref mut r = *EXPECTED; *r = f(4);",
+        // `ref mut` away from the first position of the scrutinee.
+        "let (a, ref mut b) = (x, EXPECTED); *b = f(4);",
+        "match (x, EXPECTED) { (_, ref mut r) => { *r = f(4); } }",
+        "if let (_, Some(ref mut r)) = (x, EXPECTED) {}",
+        "let ref mut r = {EXPECTED}; *r = f(4);",
+        "let [a, ref mut b] = [x, EXPECTED];",
+        // Borrow operands that wrap the name.
+        "let r = &mut {EXPECTED};",
+        "let r = &mut (x, EXPECTED); r.1 = f(4);",
+        "let r = &mut [x, EXPECTED];",
+        "let r = &mut <T>::EXPECTED; *r = f(4);",
+        "let r = &mut <T as Tr>::EXPECTED;",
+        "let r = &mut m::<T>::EXPECTED;",
+        "let r = &mut m::n::<T>::EXPECTED;",
+        "let p = addr_of_mut!(<T>::EXPECTED);",
+        "let p = addr_of_mut!(m::<T>::EXPECTED);",
+        "let ref mut r = <T>::EXPECTED;",
+        "let ref mut r = m::<T>::EXPECTED;",
+        // A `ref mut` range-pattern binding keeps its `=` inside the pattern.
+        "if let ref mut a @ 0..=9 = EXPECTED {}",
+        // A pattern that keeps its own bracketed `;` or follows an earlier
+        // statement still binds the scrutinee.
+        "let S { ref mut a } = EXPECTED;",
+        "let ref mut r: [u8; 3] = EXPECTED;",
+        "let other = 1; let ref mut r = EXPECTED;",
+    ] {
+        assert!(super::written_by_test(write, "EXPECTED", false), "{write}");
+    }
+    for read in [
+        "let r: Vec<u8>= EXPECTED;",
+        "let r: Vec<u8> = EXPECTED;",
+        "let r = r#EXPECTED;",
+        "let r = &r#EXPECTED;",
+        "let p = addr_of!(r#EXPECTED);",
+        "let r = &*EXPECTED;",
+        "let r = x * EXPECTED;",
+        "let r = &mut x * EXPECTED;",
+        "let p = addr_of!(*EXPECTED);",
+        "let (a, b) = (x, EXPECTED);",
+        "let (ref mut a, b) = (EXPECTED_OTHER, y); let v = EXPECTED;",
+        "match (x, EXPECTED) { (_, r) => {} }",
+        "let ref mut r = other; let v = (x, EXPECTED);",
+        "let ref mut r = other; v = EXPECTED;",
+        "let r = {EXPECTED};",
+        "let r = &{EXPECTED};",
+        "let r = &(x, EXPECTED);",
+        "let r = &mut foo(x, EXPECTED);",
+        "let r = &mut foo(<T>::EXPECTED);",
+        "let r = &<T>::EXPECTED;",
+        "let r = m::<T>::EXPECTED;",
+        "let p = addr_of!(m::<T>::EXPECTED);",
+        "let r = x > ::EXPECTED;",
+        "foo(&mut x, EXPECTED);",
+        "foo(&mut x, (EXPECTED, 1));",
+        "if x >= EXPECTED {}",
+    ] {
+        assert!(!super::written_by_test(read, "EXPECTED", false), "{read}");
+    }
+}
+
 /// #7847: the lexical write guard on its own, including operator edges the
 /// pipeline fixtures cannot reach.
 #[test]
