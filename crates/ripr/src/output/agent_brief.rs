@@ -1,7 +1,8 @@
 use crate::agent::loop_commands::{
     WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_SEAM_PACKETS_ARTIFACT,
     WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, agent_seam_packets_command, agent_verify_command,
-    anchored_redirect_target, bound_root, check_repo_exposure_command, display_path, shell_arg,
+    anchored_redirect_target, bound_root, check_repo_exposure_command, display_path,
+    root_path_display, shell_arg,
 };
 use crate::analysis::canonical_gap::canonical_gap_identities;
 use crate::app::Mode;
@@ -30,7 +31,7 @@ pub(crate) fn render_agent_brief_json(
     if let Some(warning) = causal_projection_warning {
         warnings.push(warning);
     }
-    let command_root = bound_root(&display_path(root));
+    let command_root = bound_root(&root_path_display(root));
     let mut value = json!({
         "schema_version": AGENT_BRIEF_SCHEMA_VERSION,
         "tool": "ripr",
@@ -181,7 +182,7 @@ fn top_seam_json(
 }
 
 fn verification_json(root: &Path, mode: &Mode, recommended_name: &str) -> Value {
-    let root = bound_root(&display_path(root));
+    let root = bound_root(&root_path_display(root));
     json!({
         "before_snapshot_command": prepare_workflow_command(
             &root,

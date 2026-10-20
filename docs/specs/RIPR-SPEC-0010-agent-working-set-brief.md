@@ -97,6 +97,17 @@ The command should:
 The brief should use already-computed repo seam evidence and agent seam packet
 fields. It should not classify seams itself.
 
+### Selected root in generated commands
+
+Both the brief's `next.*` commands and each selected seam's
+`verification.*` commands bind the selected repository root once. On Unix,
+a literal backslash in that root is a filename character: `/tmp/team\repo`
+must remain that spelling in `--root`, workflow-directory preparation, and
+snapshot or packet redirects, rather than naming the sibling `/tmp/team/repo`.
+Use the shared native root rendering before binding; Windows retains its
+existing stable separator rendering. Workflow artifact filenames and ordinary
+root output remain unchanged (#8995).
+
 ### Ranking
 
 The first implementation should use a deterministic ranking policy:
@@ -563,6 +574,8 @@ Planned tests:
 - `agent_brief_includes_config_fingerprint_without_source_text`
 - `agent_brief_reuses_agent_packet_assertion_shape`
 - `agent_brief_includes_verification_commands`
+- `agent_brief_next_commands_preserve_literal_backslash_unix_root`
+- `agent_brief_seam_verification_preserves_literal_backslash_unix_root`
 - `agent_brief_json_shape_is_stable`
 - `agent_receipt_selects_one_verify_seam`
 - `agent_receipt_rejects_verify_json_outside_root`

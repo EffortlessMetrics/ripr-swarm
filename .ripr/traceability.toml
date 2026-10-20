@@ -1533,6 +1533,8 @@ tests = [
   "crates/ripr/src/cli/commands.rs::tests::agent_brief_diff_lines_are_normalized_to_requested_root",
   "crates/ripr/src/cli/commands.rs::tests::agent_brief_owner_lines_are_resolved_from_changed_lines",
   "crates/ripr/src/output/agent_brief.rs::tests::agent_brief_json_renders_ranked_seam_summary",
+  "crates/ripr/src/output/agent_brief.rs::tests::agent_brief_next_commands_preserve_literal_backslash_unix_root",
+  "crates/ripr/src/output/agent_brief.rs::tests::agent_brief_seam_verification_preserves_literal_backslash_unix_root",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::packet_v2_normalizes_windows_related_test_paths",
   "crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_json_selects_changed_seam",
   "crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_unchanged_class_satisfied_discriminator_names_gate",
