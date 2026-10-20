@@ -505,6 +505,7 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
                 report.attempt.attempt_id,
                 start_fresh_clause(
                     &options.root,
+                    &root,
                     report.attempt.seam_id.as_deref(),
                     &format!("start fresh: `ripr repair --root {root}`")
                 )
@@ -532,6 +533,7 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
                 report.attempt.attempt_id,
                 start_fresh_clause(
                     &options.root,
+                    &root,
                     report.attempt.seam_id.as_deref(),
                     &format!("start fresh when appropriate: `ripr repair --root {root}`")
                 )
@@ -580,9 +582,16 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
 /// The "start fresh" tail of a `continue` refusal for a known seam (#8766):
 /// the recorded start command only when the shared repair gate admits the
 /// seam, otherwise the by-hand remaining work.
-fn start_fresh_clause(root: &std::path::Path, seam_id: Option<&str>, start: &str) -> String {
+fn start_fresh_clause(
+    root: &std::path::Path,
+    root_arg: &str,
+    seam_id: Option<&str>,
+    start: &str,
+) -> String {
+    // An attempt that names no seam cannot be checked against the gate, so
+    // the start is whatever the auto selector would actually do.
     let Some(seam_id) = seam_id else {
-        return start.to_string();
+        return start_with_repair_clause(root, root_arg);
     };
     match crate::app::task_first::repair_start_refusal(root, seam_id) {
         Some(refusal) => crate::app::task_first::repair_start_withheld_note(

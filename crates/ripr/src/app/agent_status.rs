@@ -642,9 +642,23 @@ fn status_repair_attempt(
     // restart; it is carried only while the shared repair gate admits the
     // seam, so `repair_attempts[].command` never prints a start the same
     // build refuses (the withheld note rides the warnings / claim boundary).
-    let withheld = command.as_deref() == Some(restart_command.as_str())
-        && gate.check(&manifest.seam_id).is_some();
+    let command_is_restart = command.as_deref() == Some(restart_command.as_str());
+    // The recorded refusal text and the diverged-head recovery also embed a
+    // restart recipe (`... --phase before`); they are consulted only when one
+    // is present, so the gate loads at most once and only when needed.
+    let carries_start_recipe = diverged_recovery.is_some()
+        || manifest
+            .last_after_refusal
+            .as_ref()
+            .is_some_and(|refusal| refusal.reason.contains("--phase before"));
+    let seam_refused =
+        (command_is_restart || carries_start_recipe) && gate.check(&manifest.seam_id).is_some();
+    let withheld = command_is_restart && seam_refused;
     let command = if withheld { None } else { command };
+    if seam_refused && let Some(recovery) = diverged_recovery.as_mut() {
+        // Keep the reset route; the new-attempt route is withheld.
+        recovery.restart = String::new();
+    }
     AgentStatusRepairAttempt {
         attempt_id: manifest.repair_attempt_id.as_str().to_string(),
         seam_id: manifest.seam_id.clone(),
@@ -661,11 +675,74 @@ fn status_repair_attempt(
         receipt,
         last_after_refusal: manifest.last_after_refusal.as_ref().map(|refusal| {
             AgentStatusAfterRefusal {
-                reason: refusal.reason.clone(),
+                reason: if seam_refused {
+                    without_start_recipe(&refusal.reason)
+                } else {
+                    refusal.reason.clone()
+                },
                 recorded_unix_ms: refusal.recorded_unix_ms,
             }
         }),
         diverged_recovery,
+    }
+}
+
+/// A recorded refusal's recovery text with the new-attempt recipe removed
+/// (#8766). Refusal reasons end their `to recover:` / `otherwise,` lines with
+/// a recipe that runs `ripr agent repair ... --phase before`; when the repair
+/// gate does not admit a new start that recipe is cut at its first clause
+/// and replaced by a statement that no new attempt is offered, so the undo
+/// and inspect guidance before it is kept.
+fn without_start_recipe(reason: &str) -> String {
+    const WITHHELD: &str =
+        "a new attempt is not offered: the repair gate does not admit a new start";
+    reason
+        .split('\n')
+        .map(|line| {
+            let Some(at) = line.find("--phase before") else {
+                return line.to_string();
+            };
+            let head = &line[..at];
+            let cut = [
+                "start a fresh attempt",
+                "otherwise, prepare a new attempt",
+                "set your test edit aside",
+                "run `ripr agent repair",
+            ]
+            .iter()
+            .filter_map(|marker| head.find(marker))
+            .min()
+            .unwrap_or(head.len());
+            let kept = line[..cut].trim_end_matches([' ', ',', ':']);
+            format!("{kept} ({WITHHELD})")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The recovery route for an attempt whose prepared head moved, offered when
+/// the new-attempt route is withheld (#8766): restore the prepared head, then
+/// rerun the attempt's after phase. The reason carries the cause, the reset
+/// recipe and why no new attempt is offered.
+fn diverged_recovery_command(
+    root_display: &str,
+    store_flag: &str,
+    attempt_id: &str,
+    artifact: &str,
+    recovery: &DivergedHeadRecovery,
+) -> AgentStatusCommand {
+    AgentStatusCommand {
+        step: "repair_attempt_after".to_string(),
+        artifact: artifact.to_string(),
+        reason: format!(
+            "repair attempt `{attempt_id}` is awaiting an edit, but its after phase would refuse: {} {} A new attempt is not offered (see the repair_start_withheld note)",
+            recovery.cause, recovery.reset
+        ),
+        command: format!(
+            "ripr agent repair --root {}{store_flag} --attempt {} --phase after",
+            shell_arg(root_display),
+            shell_arg(attempt_id)
+        ),
     }
 }
 
@@ -1098,6 +1175,8 @@ fn select_next_command(
                 .collect::<Vec<_>>()
                 .join("; ");
             // #8766: never print a start the same build refuses.
+            // Only the restart is withheld: a diverged-head attempt keeps its
+            // reset-and-rerun-after recovery route.
             if let Some(refusal) = gate.check(seam_id) {
                 warnings.push(repair_start_withheld_warning(
                     root_display,
@@ -1105,7 +1184,17 @@ fn select_next_command(
                     &refusal,
                     store.locator,
                 ));
-                return None;
+                return ended.iter().find_map(|attempt| {
+                    attempt.diverged_recovery.as_ref().map(|recovery| {
+                        diverged_recovery_command(
+                            root_display,
+                            store.flag,
+                            &attempt.attempt_id,
+                            &attempt.manifest,
+                            recovery,
+                        )
+                    })
+                });
             }
             return Some(AgentStatusCommand {
                 step: "repair_attempt_before".to_string(),
@@ -1137,6 +1226,7 @@ fn select_next_command(
             // #8766: a seam the repair gate refuses is named by its own
             // warning instead of listed with a start command.
             let mut seams = Vec::new();
+            let open_total = all_seams.len();
             for seam_id in all_seams {
                 match gate.check(seam_id) {
                     Some(refusal) => warnings.push(repair_start_withheld_warning(
@@ -1155,7 +1245,7 @@ fn select_next_command(
                 kind: "multiple_open_repair_seams".to_string(),
                 artifact: store.locator.to_string(),
                 message: format!(
-                    "repair attempts for {} seams ended without a receipt; status does not choose between them. Start a new attempt for the seam you mean: {}",
+                    "repair attempts for {open_total} seams ended without a receipt; status does not choose between them. Start a new attempt for the seam you mean ({} of them can be started): {}",
                     seams.len(),
                     seams
                         .iter()
@@ -1582,11 +1672,10 @@ fn legacy_next_command(
         if let Some(PilotRepairStart { command, seam_id }) = pilot_repair_command(root) {
             // #8766: the recorded pilot start was decided when pilot ran; it
             // is repeated only while the repair gate still admits its seam.
-            let seam_id = seam_id.unwrap_or_default();
-            if let Some(refusal) = gate.check(&seam_id) {
+            if let Some(refusal) = gate.check_optional(seam_id.as_deref()) {
                 warnings.push(repair_start_withheld_warning(
                     root_display,
-                    &seam_id,
+                    seam_id.as_deref().unwrap_or_default(),
                     &refusal,
                     PILOT_SUMMARY_ARTIFACT,
                 ));
@@ -2223,7 +2312,17 @@ pub(crate) fn selected_attempt_status_reading(
     };
     let withheld = restart_withheld.is_some();
     let next_action = if withheld {
-        None
+        // Only the restart is withheld; a diverged-head attempt keeps its
+        // reset-and-rerun-after recovery route.
+        view.diverged_recovery.as_ref().map(|recovery| {
+            diverged_recovery_command(
+                &command_root,
+                store_flag,
+                manifest.repair_attempt_id.as_str(),
+                &manifest_label,
+                recovery,
+            )
+        })
     } else {
         attempt_next_action(
             manifest,
@@ -2745,7 +2844,7 @@ pub(crate) fn render_agent_attempt_status_json(
         serde_json::json!({
             "cause": recovery.cause,
             "reset": recovery.reset,
-            "restart": recovery.restart,
+            "restart": (!recovery.restart.is_empty()).then_some(recovery.restart.as_str()),
         })
     });
     let value = serde_json::json!({
@@ -4743,6 +4842,37 @@ mod tests {
         );
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())
+    }
+
+    /// #8766: the recorded-refusal sanitizer cuts the `--phase before` recipe
+    /// but keeps the undo guidance before it, on both recorded line shapes and
+    /// on the diverged-head restart line.
+    #[test]
+    fn without_start_recipe_cuts_the_recipe_and_keeps_the_guidance() {
+        let edit_cage = "refused paths: stray.txt\nto recover: undo the refused changes, check for a git-invisible line-ending flip (`core.autocrlf` can rewrite CRLF), set your test edit aside (for example `git stash`), run `ripr agent repair --root '/r' --seam-id abc --phase before` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints.";
+        let cleaned = without_start_recipe(edit_cage);
+        assert!(
+            !cleaned.contains("--phase before")
+                && cleaned.contains("refused paths: stray.txt")
+                && cleaned.contains("undo the refused changes")
+                && cleaned.contains("`core.autocrlf` can rewrite CRLF")
+                && cleaned.contains("a new attempt is not offered"),
+            "{cleaned}"
+        );
+
+        let fresh = "to recover: start a fresh attempt from a clean state: set your test edit aside, run `ripr agent repair --root '/r' --seam-id abc --phase before` from the clean state, restore your test edit, then run the new --attempt command it prints.";
+        let cleaned = without_start_recipe(fresh);
+        assert!(
+            !cleaned.contains("--phase before") && cleaned.contains("a new attempt is not offered"),
+            "{cleaned}"
+        );
+
+        let recovery = diverged_head_recovery(".", "attempt-1", "seam-1", "aaaa", "bbbb", "");
+        let cleaned = without_start_recipe(&recovery.restart);
+        assert!(!cleaned.contains("--phase before"), "{cleaned}");
+
+        // Text with no recipe is untouched.
+        assert_eq!(without_start_recipe("plain refusal."), "plain refusal.");
     }
 
     #[test]

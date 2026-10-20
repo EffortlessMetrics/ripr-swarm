@@ -174,9 +174,9 @@ fn repair_refusal_reason(
 pub(crate) enum RefusalKind {
     /// The seam's existing tests already grip it on current static evidence.
     AlreadyGripped,
-    /// The route is not ready for an automated start; the remaining work is
-    /// strengthening the related test by hand.
-    ByHand,
+    /// The repair route is not ready for an automated start; the remaining
+    /// work is strengthening the related test by hand.
+    RouteNotReady,
     /// Any other refusal (policy omission, cross-language limits, a class
     /// that is not a headline target, no editable test target, ...): the
     /// reason is stated as is, with no claim about what to do by hand.
@@ -200,10 +200,10 @@ fn repair_refusal(
             {
                 (
                     RefusalKind::AlreadyGripped,
-                    format!("{label}: its existing tests already grip it (exposed), so there is no gap to repair"),
+                    format!("{label}: its existing tests already grip it (exposed) on current static evidence, so no static gap remains to repair"),
                 )
             } else if reason == RepairPacketIneligibility::RouteNotReady {
-                (RefusalKind::ByHand, label.to_string())
+                (RefusalKind::RouteNotReady, label.to_string())
             } else {
                 (RefusalKind::Other, label.to_string())
             }
@@ -473,6 +473,7 @@ enum GateState {
     },
     Unavailable(String),
     /// Unit-test builds only: admits every start.
+    #[cfg(test)]
     Open,
 }
 
@@ -481,18 +482,37 @@ impl RepairStartGate {
         &self.root
     }
 
-    pub(crate) fn new(root: &Path) -> Self {
+    /// The real gate: the inventory loads lazily on the first check.
+    pub(crate) fn real(root: &Path) -> Self {
         Self {
             root: root.to_path_buf(),
             state: std::cell::OnceCell::new(),
         }
     }
 
+    /// The gate every production caller uses.
+    #[cfg(not(test))]
+    pub(crate) fn new(root: &Path) -> Self {
+        Self::real(root)
+    }
+
+    /// Unit-test builds: the lib's own unit tests exercise status with
+    /// fabricated seam ids in empty directories, so `new` is an explicitly
+    /// open gate there and those tests keep asserting recorded commands.
+    /// Tests that need a real verdict use [`Self::real`] or
+    /// [`Self::preloaded`]; the facade integration tests run the real binary.
+    #[cfg(test)]
+    pub(crate) fn new(root: &Path) -> Self {
+        let gate = Self::real(root);
+        let _ = gate.state.set(GateState::Open);
+        gate
+    }
+
     /// A gate over a fixed classified inventory, for unit tests that need a
-    /// real verdict instead of the open test-build gate.
+    /// real verdict.
     #[cfg(test)]
     pub(crate) fn preloaded(root: &Path, classified: Vec<crate::analysis::ClassifiedSeam>) -> Self {
-        let gate = Self::new(root);
+        let gate = Self::real(root);
         let _ = gate.state.set(GateState::Loaded {
             config: Box::default(),
             classified,
@@ -503,20 +523,25 @@ impl RepairStartGate {
 
     /// `None` when the gate admits a start for `seam_id`.
     pub(crate) fn check(&self, seam_id: &str) -> Option<RepairStartRefusal> {
-        let state = self.state.get_or_init(|| initial_gate_state(&self.root));
+        let state = self.state.get_or_init(|| load_gate_state(&self.root));
         check_state(&self.root, state, seam_id)
     }
-}
 
-/// The lib's own unit tests exercise status with fabricated seam ids in
-/// empty directories; they run with an open gate so they keep asserting the
-/// recorded commands. The gate itself is exercised by the `check_state`
-/// tests below and the facade integration tests, which run the real binary.
-fn initial_gate_state(root: &Path) -> GateState {
-    if cfg!(test) {
-        GateState::Open
-    } else {
-        load_gate_state(root)
+    /// Like [`Self::check`] for a recorded start that names no seam id: it
+    /// cannot be verified, so it is withheld without naming a seam.
+    pub(crate) fn check_optional(&self, seam_id: Option<&str>) -> Option<RepairStartRefusal> {
+        match seam_id {
+            Some(seam_id) => self.check(seam_id),
+            None => {
+                #[cfg(test)]
+                if matches!(self.state.get(), Some(GateState::Open)) {
+                    return None;
+                }
+                Some(RepairStartRefusal::unverified(
+                    "the recorded start names no seam".to_string(),
+                ))
+            }
+        }
     }
 }
 
@@ -551,6 +576,7 @@ fn check_state(root: &Path, state: &GateState, seam_id: &str) -> Option<RepairSt
             truncated,
         } => (config, classified, *truncated),
         GateState::Unavailable(why) => return Some(RepairStartRefusal::unverified(why.clone())),
+        #[cfg(test)]
         GateState::Open => return None,
     };
     let Some(entry) = classified
@@ -633,18 +659,24 @@ pub(crate) fn repair_start_withheld_note(
     refusal: &RepairStartRefusal,
 ) -> String {
     let recheck = format!("rerun `ripr check --root {}`", shell_arg(root_display));
+    // A recorded start that names no seam is withheld without naming one.
+    let subject = if seam_id.is_empty() {
+        "the recorded start".to_string()
+    } else {
+        format!("seam `{seam_id}`")
+    };
     match refusal.kind {
         RefusalKind::Unverified => format!(
-            "no new repair attempt is offered for seam `{seam_id}`: could not verify that the repair gate admits it ({}); {recheck} to re-read the current seams",
+            "no new repair attempt is offered for {subject}: could not verify that the repair gate admits it ({}); {recheck} to re-read the current seams",
             refusal.reason
         ),
-        // A static reading of current evidence, not a runtime result; no
-        // by-hand strengthening is implied because there is no gap left.
+        // A static reading of current evidence, not a runtime result, and
+        // not a receipt: no completion is claimed for any attempt.
         RefusalKind::AlreadyGripped => format!(
-            "no new repair attempt is offered for seam `{seam_id}`: {}. This is a static reading of the current evidence, not a runtime-verified result; {recheck} to re-read the seam",
+            "no new repair attempt is offered for {subject}: {}. This is a static reading of the current evidence, not a runtime-verified result, and no completion is claimed for any attempt; {recheck} to re-read the seam",
             refusal.reason
         ),
-        RefusalKind::ByHand => {
+        RefusalKind::RouteNotReady => {
             let work = match &refusal.related_test {
                 Some(test) => {
                     format!("strengthening the oracle of the related test {test} by hand")
@@ -652,12 +684,12 @@ pub(crate) fn repair_start_withheld_note(
                 None => "adding or strengthening a test for that seam by hand".to_string(),
             };
             format!(
-                "no new repair attempt is offered for seam `{seam_id}`: {} (the repair eligibility gate behind `ripr repair` and the before phase refuses it). The remaining work is {work}; then {recheck} to re-read the seam",
+                "no new repair attempt is offered for {subject}: {} (the repair eligibility gate behind `ripr repair` and the before phase refuses it). The remaining work is {work}; then {recheck} to re-read the seam",
                 refusal.reason
             )
         }
         RefusalKind::Other => format!(
-            "no new repair attempt is offered for seam `{seam_id}`: {} (the repair eligibility gate behind `ripr repair` and the before phase refuses it); {recheck} to re-read the seam",
+            "no new repair attempt is offered for {subject}: {} (the repair eligibility gate behind `ripr repair` and the before phase refuses it); {recheck} to re-read the seam",
             refusal.reason
         ),
     }
@@ -1329,8 +1361,28 @@ pub(crate) mod tests {
         // A seam the inventory does name gets the gate's own verdict, not
         // the unverified one.
         let refused = check_state(root, &loaded, &known).ok_or("known seam must be refused")?;
-        assert_eq!(refused.kind, RefusalKind::ByHand);
+        assert_eq!(refused.kind, RefusalKind::RouteNotReady);
         assert_eq!(refused.reason, "repair route not ready");
+        Ok(())
+    }
+
+    /// A real (non-test-open) gate over a root with no usable workspace never
+    /// admits a seam it cannot find.
+    #[test]
+    fn the_real_gate_does_not_admit_a_seam_it_cannot_find() -> Result<(), String> {
+        let gate = RepairStartGate::real(Path::new("/nonexistent-ripr-gate-root"));
+        let refusal = gate
+            .check("seam-1")
+            .ok_or("an unfindable seam must not be admitted")?;
+        assert_eq!(refusal.kind, RefusalKind::Unverified);
+        let unnamed = gate
+            .check_optional(None)
+            .ok_or("a start naming no seam must not be admitted")?;
+        let note = repair_start_withheld_note("/repo", "", &unnamed);
+        assert!(
+            note.contains("the recorded start") && !note.contains("seam ``"),
+            "{note}"
+        );
         Ok(())
     }
 

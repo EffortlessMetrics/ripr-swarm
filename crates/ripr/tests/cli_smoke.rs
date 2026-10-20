@@ -25121,6 +25121,27 @@ fn agent_status_restarts_a_failed_attempt_and_completes_a_finished_one()
         report["repair_attempts"][0]["state"], "failed",
         "{report:#}"
     );
+    // #8766: with the exact boundary assertion in the tree the seam already
+    // reads as exposed, the repair gate refuses a new start, and status
+    // withholds the restart instead of printing one the build refuses.
+    let (withheld_step, _) = repair_route_next(&report);
+    assert_eq!(withheld_step, "", "{report:#}");
+    assert!(
+        report["warnings"]
+            .as_array()
+            .is_some_and(|warnings| warnings
+                .iter()
+                .any(|warning| warning["kind"] == "repair_start_withheld")),
+        "{report:#}"
+    );
+    assert!(
+        report["repair_attempts"][0]["command"].is_null(),
+        "{report:#}"
+    );
+    // With the focused test reverted the gap is open again, the gate admits
+    // the seam, and the failed attempt restarts.
+    std::fs::write(root.join("tests/pricing.rs"), REPAIR_ROUTE_WEAK_TEST)?;
+    let report = repair_route_status(&root)?;
     let (step, command) = repair_route_next(&report);
     assert_eq!(step, "repair_attempt_before", "{report:#}");
     assert_installed_command(&command)?;
@@ -26091,8 +26112,19 @@ fn agent_status_reports_the_after_phase_recovery_for_rewritten_history()
         "{report:#}"
     );
     assert_eq!(attempt["head_current"], false, "{report:#}");
-    let (step, _) = repair_route_next(&report);
-    assert_eq!(step, "repair_attempt_before", "{report:#}");
+    // #8766: the amended history already carries the exact boundary
+    // assertion, so the repair gate refuses a new attempt. Only the restart
+    // is withheld; the reset-and-rerun-after recovery stays.
+    let (step, command) = repair_route_next(&report);
+    assert_eq!(step, "repair_attempt_after", "{report:#}");
+    assert!(
+        command.contains("--phase after") && !command.contains("--phase before"),
+        "{command}"
+    );
+    assert!(
+        repair_route_warning_kinds(&report).contains(&"repair_start_withheld".to_string()),
+        "{report:#}"
+    );
     let reason = report["next_command"]["reason"]
         .as_str()
         .unwrap_or_default()
