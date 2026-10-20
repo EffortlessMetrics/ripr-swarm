@@ -104,21 +104,17 @@ fn resolve_agent_command_root(command: &mut AgentCommand) -> Result<(), String> 
         // resolve the root is a post-argv failure, so it still writes the
         // #7331 refusal envelope (keyed to the root as typed) before stderr.
         AgentCommand::Brief(options) => {
-            let typed_root = options.root.clone();
             let base = match &options.working_set {
                 AgentBriefWorkingSet::Base(base) => Some(base.clone()),
                 _ => None,
             };
-            let prefix = resolve_implicit_command_root(&mut options.root, options.root_explicit)
-                .map_err(|error| {
-                    refuse_agent_root_resolution(
-                        output::agent_brief::AGENT_BRIEF_SCHEMA_VERSION,
-                        &typed_root,
-                        base.as_deref(),
-                        options.json,
-                        error,
-                    )
-                })?;
+            let prefix = resolve_json_command_root(
+                &mut options.root,
+                options.root_explicit,
+                output::agent_brief::AGENT_BRIEF_SCHEMA_VERSION,
+                base.as_deref(),
+                options.json,
+            )?;
             // `--diff` and `--files` are root-relative inputs of the brief:
             // an existing member-relative file binds to the invocation
             // directory; a missing one is passed through so the brief's own
@@ -136,17 +132,12 @@ fn resolve_agent_command_root(command: &mut AgentCommand) -> Result<(), String> 
             }
         }
         AgentCommand::Packet(options) => {
-            let typed_root = options.root.clone();
-            resolve_implicit_command_root(&mut options.root, options.root_explicit).map_err(
-                |error| {
-                    refuse_agent_root_resolution(
-                        app::AGENT_SEAM_PACKET_SCHEMA_VERSION,
-                        &typed_root,
-                        None,
-                        options.json,
-                        error,
-                    )
-                },
+            resolve_json_command_root(
+                &mut options.root,
+                options.root_explicit,
+                app::AGENT_SEAM_PACKET_SCHEMA_VERSION,
+                None,
+                options.json,
             )?;
             // `--gap-ledger` is read as typed from the invocation directory,
             // the same file the operator named, so it needs no rebinding.
@@ -200,26 +191,30 @@ fn bind_existing_member_file(prefix: Option<&str>, root: &Path, path: &mut PathB
     }
 }
 
-/// The #7331 refusal envelope for a root-resolution failure of a `--json`
-/// run, keyed to the root as typed; prose runs return the bare error.
-fn refuse_agent_root_resolution(
+/// Resolve the implicit root for a command whose `--json` mode answers a
+/// root-resolution failure with the #7331 refusal envelope (root-unusable
+/// family), keyed to the root as typed; prose runs return the bare error.
+fn resolve_json_command_root(
+    root: &mut PathBuf,
+    root_explicit: bool,
     schema_version: &'static str,
-    typed_root: &Path,
     base: Option<&str>,
     json: bool,
-    error: String,
-) -> String {
-    if !json {
-        return error;
-    }
-    refuse_json_envelope(
-        schema_version,
-        "repo",
-        None,
-        typed_root,
-        base,
-        CoreError::from(error),
-    )
+) -> Result<Option<String>, String> {
+    let typed_root = root.clone();
+    resolve_implicit_command_root(root, root_explicit).map_err(|error| {
+        if !json {
+            return error;
+        }
+        refuse_json_envelope(
+            schema_version,
+            "repo",
+            None,
+            &typed_root,
+            base,
+            CoreError::repository_root_unusable(error),
+        )
+    })
 }
 
 pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {

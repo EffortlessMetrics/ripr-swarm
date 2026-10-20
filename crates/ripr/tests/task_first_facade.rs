@@ -4579,6 +4579,93 @@ fn member_directory_agent_artifact_root_failure_keeps_the_json_refusal_envelope(
                 .contains("cannot verify implicit Git root"),
             "{args:?}: {document}"
         );
+        // brief, packet and context refuse with the root-unusable family;
+        // verify-execute answers in its own typed disposition shape.
+        if args[0] != "agent" || args[1] != "verify-execute" {
+            assert!(
+                document.to_string().contains("repository_root_unusable"),
+                "{args:?} must refuse with the root-unusable family: {document}"
+            );
+        }
     }
+    Ok(())
+}
+
+/// #8902: `context` shares the `explain` selector binding: a member-relative
+/// `file:line` is refused when a workspace-root file with the same path suffix
+/// exists, and with `--diff` a selector naming no file is anchored to the
+/// invocation directory instead of suffix-matching another member.
+#[cfg(unix)]
+#[test]
+fn member_context_selector_shadowed_by_a_root_package_file_is_refused() -> Result<(), String> {
+    let fixture = Fixture::dir("member-context-root-shadow")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let member = outer.join("pkg");
+    for dir in [&outer, &member] {
+        std::fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(dir.join("tests")).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(
+        outer.join("Cargo.toml"),
+        format!("{FIXTURE_CARGO_TOML}\n[workspace]\nmembers = [\"pkg\"]\n"),
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(outer.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    std::fs::write(outer.join("tests/pricing.rs"), FIXTURE_WEAK_TEST).map_err(|e| e.to_string())?;
+    std::fs::write(
+        member.join("Cargo.toml"),
+        "[package]\nname = \"member_pkg\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(member.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    init_repo(&outer)?;
+    run_git(&outer, &["add", "."])?;
+    git_commit(&outer, "root and member share src/lib.rs")?;
+    weaken_boundary_predicate(&member)?;
+    weaken_boundary_predicate(&outer)?;
+
+    let refused = run_ripr(&member, &["context", "--worktree", "--at", "src/lib.rs:2"])?;
+    assert_ne!(refused.status.code(), Some(0), "{}", stderr_text(&refused));
+    assert!(
+        stderr_text(&refused).contains("also matches the workspace-root file"),
+        "{}",
+        stderr_text(&refused)
+    );
+    assert!(
+        !stdout_text(&refused).contains("src/lib.rs:2"),
+        "must not emit a packet for either file:\n{}",
+        stdout_text(&refused)
+    );
+    // Control: `--root .` analyzes the member alone and is not refused.
+    let pinned = run_ripr(
+        &member,
+        &[
+            "context",
+            "--worktree",
+            "--at",
+            "src/lib.rs:2",
+            "--root",
+            ".",
+        ],
+    )?;
+    assert_exit(&pinned, 0, "`--root .` context of the member's own finding");
+
+    // Replay anchoring: a selector naming no working-tree file is anchored to
+    // the invocation directory, so the miss names `pkg/gone.rs:2`.
+    std::fs::write(
+        member.join("change.diff"),
+        "diff --git a/pkg/src/lib.rs b/pkg/src/lib.rs\n--- a/pkg/src/lib.rs\n+++ b/pkg/src/lib.rs\n@@ -2,1 +2,1 @@\n-    if amount >= discount_threshold {\n+    if amount > discount_threshold {\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let replay = run_ripr(
+        &member,
+        &["context", "--diff", "change.diff", "--at", "gone.rs:2"],
+    )?;
+    assert_ne!(replay.status.code(), Some(0));
+    assert!(
+        stderr_text(&replay).contains("pkg/gone.rs:2"),
+        "the replay selector must be anchored to the invocation directory:\n{}",
+        stderr_text(&replay)
+    );
     Ok(())
 }
