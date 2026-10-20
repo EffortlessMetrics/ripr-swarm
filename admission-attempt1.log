@@ -1,0 +1,656 @@
+﻿2026-10-20T22:48:55.4565705Z Current runner version: '2.338.0'
+2026-10-20T22:48:55.4592588Z ##[group]Runner Image Provisioner
+2026-10-20T22:48:55.4593549Z Hosted Compute Agent
+2026-10-20T22:48:55.4594210Z Version: 20261015.610
+2026-10-20T22:48:55.4595027Z Commit: 267fdb4e8bbec4ab5ea31367f3a00d5c480c7656
+2026-10-20T22:48:55.4595782Z Build Date: 2026-10-14T17:06:54Z
+2026-10-20T22:48:55.4596508Z Worker ID: {9c878423-78be-4c08-8f4a-b81d058da3f5}
+2026-10-20T22:48:55.4597256Z Region: westus
+2026-10-20T22:48:55.4598082Z Cloud: Azure
+2026-10-20T22:48:55.4598713Z ##[endgroup]
+2026-10-20T22:48:55.4600252Z ##[group]Operating System
+2026-10-20T22:48:55.4600906Z Ubuntu
+2026-10-20T22:48:55.4601540Z 24.04.5
+2026-10-20T22:48:55.4602102Z LTS
+2026-10-20T22:48:55.4602713Z ##[endgroup]
+2026-10-20T22:48:55.4603287Z ##[group]Runner Image
+2026-10-20T22:48:55.4603894Z Image: ubuntu-24.04
+2026-10-20T22:48:55.4604553Z Version: 20261018.339.1
+2026-10-20T22:48:55.4605934Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261018.339/images/ubuntu/Ubuntu2404-Readme.md
+2026-10-20T22:48:55.4607886Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261018.339
+2026-10-20T22:48:55.4608881Z ##[endgroup]
+2026-10-20T22:48:55.4610224Z ##[group]GITHUB_TOKEN Permissions
+2026-10-20T22:48:55.4612222Z Contents: read
+2026-10-20T22:48:55.4612978Z Metadata: read
+2026-10-20T22:48:55.4613579Z PullRequests: read
+2026-10-20T22:48:55.4614196Z ##[endgroup]
+2026-10-20T22:48:55.4616437Z Secret source: Actions
+2026-10-20T22:48:55.4617783Z Cache mode: write
+2026-10-20T22:48:55.4618686Z Prepare workflow directory
+2026-10-20T22:48:55.5040120Z Prepare all required actions
+2026-10-20T22:48:55.5091755Z Getting action download info
+2026-10-20T22:48:55.8458788Z Download action repository 'actions/checkout@v6' (SHA:d23441a48e516b6c34aea4fa41551a30e30af803)
+2026-10-20T22:48:56.0530637Z Complete job name: Admit PR Candidate
+2026-10-20T22:48:56.1373604Z ##[group]Run actions/checkout@v6
+2026-10-20T22:48:56.1374502Z with:
+2026-10-20T22:48:56.1375004Z   repository: EffortlessMetrics/ripr-swarm
+2026-10-20T22:48:56.1379092Z   token: ***
+2026-10-20T22:48:56.1379562Z   ssh-strict: true
+2026-10-20T22:48:56.1380033Z   ssh-user: git
+2026-10-20T22:48:56.1380500Z   persist-credentials: true
+2026-10-20T22:48:56.1380997Z   clean: true
+2026-10-20T22:48:56.1381463Z   sparse-checkout-cone-mode: true
+2026-10-20T22:48:56.1381996Z   fetch-depth: 1
+2026-10-20T22:48:56.1382441Z   fetch-tags: false
+2026-10-20T22:48:56.1382899Z   show-progress: true
+2026-10-20T22:48:56.1383361Z   lfs: false
+2026-10-20T22:48:56.1383789Z   submodules: false
+2026-10-20T22:48:56.1384255Z   set-safe-directory: true
+2026-10-20T22:48:56.1384789Z   allow-unsafe-pr-checkout: false
+2026-10-20T22:48:56.1385593Z env:
+2026-10-20T22:48:56.1386031Z   CARGO_TERM_COLOR: always
+2026-10-20T22:48:56.1386519Z ##[endgroup]
+2026-10-20T22:48:56.2477982Z Syncing repository: EffortlessMetrics/ripr-swarm
+2026-10-20T22:48:56.2481479Z ##[group]Getting Git version info
+2026-10-20T22:48:56.2482362Z Working directory is '/home/runner/work/ripr-swarm/ripr-swarm'
+2026-10-20T22:48:56.2483469Z [command]/usr/bin/git version
+2026-10-20T22:48:56.2576272Z git version 2.55.0
+2026-10-20T22:48:56.2601149Z ##[endgroup]
+2026-10-20T22:48:56.2617927Z Temporarily overriding HOME='/home/runner/work/_temp/e46a9050-3138-42d5-9e39-67ced681c69c' before making global git config changes
+2026-10-20T22:48:56.2620354Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-20T22:48:56.2624679Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/ripr-swarm/ripr-swarm
+2026-10-20T22:48:56.2682535Z Deleting the contents of '/home/runner/work/ripr-swarm/ripr-swarm'
+2026-10-20T22:48:56.2686654Z ##[group]Determining repository object format
+2026-10-20T22:48:56.2689751Z ##[endgroup]
+2026-10-20T22:48:56.2690554Z ##[group]Initializing the repository
+2026-10-20T22:48:56.2696067Z [command]/usr/bin/git init /home/runner/work/ripr-swarm/ripr-swarm
+2026-10-20T22:48:56.2838813Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-10-20T22:48:56.2841446Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-10-20T22:48:56.2843399Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-10-20T22:48:56.2844582Z hint: call:
+2026-10-20T22:48:56.2845726Z hint:
+2026-10-20T22:48:56.2846883Z hint: 	git config --global init.defaultBranch <name>
+2026-10-20T22:48:56.2848418Z hint:
+2026-10-20T22:48:56.2849585Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-10-20T22:48:56.2851849Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-10-20T22:48:56.2853464Z hint:
+2026-10-20T22:48:56.2854243Z hint: 	git branch -m <name>
+2026-10-20T22:48:56.2855153Z hint:
+2026-10-20T22:48:56.2856094Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-10-20T22:48:56.2857126Z Initialized empty Git repository in /home/runner/work/ripr-swarm/ripr-swarm/.git/
+2026-10-20T22:48:56.2859480Z [command]/usr/bin/git remote add origin https://github.com/EffortlessMetrics/ripr-swarm
+2026-10-20T22:48:56.2915187Z ##[endgroup]
+2026-10-20T22:48:56.2916454Z ##[group]Disabling automatic garbage collection
+2026-10-20T22:48:56.2919078Z [command]/usr/bin/git config --local gc.auto 0
+2026-10-20T22:48:56.2953942Z ##[endgroup]
+2026-10-20T22:48:56.2955133Z ##[group]Setting up auth
+2026-10-20T22:48:56.2956001Z Removing SSH command configuration
+2026-10-20T22:48:56.2961598Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-20T22:48:56.2997723Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-20T22:48:56.3373730Z Removing HTTP extra header
+2026-10-20T22:48:56.3380612Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-20T22:48:56.3417263Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-20T22:48:56.3648584Z Removing includeIf entries pointing to credentials config files
+2026-10-20T22:48:56.3653907Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-20T22:48:56.3689492Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-20T22:48:56.3932060Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-e465db08-ec5a-4ed4-9e42-ba440f3633f6.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-10-20T22:48:56.3973513Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/ripr-swarm/ripr-swarm/.git.path /home/runner/work/_temp/git-credentials-e465db08-ec5a-4ed4-9e42-ba440f3633f6.config
+2026-10-20T22:48:56.4008061Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/ripr-swarm/ripr-swarm/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-e465db08-ec5a-4ed4-9e42-ba440f3633f6.config
+2026-10-20T22:48:56.4053444Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-e465db08-ec5a-4ed4-9e42-ba440f3633f6.config
+2026-10-20T22:48:56.4085303Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-e465db08-ec5a-4ed4-9e42-ba440f3633f6.config
+2026-10-20T22:48:56.4113612Z ##[endgroup]
+2026-10-20T22:48:56.4114383Z ##[group]Fetching the repository
+2026-10-20T22:48:56.4122302Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +7ae2509ba2d4d9173e5d21e8bd3ad306a0be9a53:refs/remotes/pull/8961/merge
+2026-10-20T22:48:59.6869078Z From https://github.com/EffortlessMetrics/ripr-swarm
+2026-10-20T22:48:59.6872974Z  * [new ref]           7ae2509ba2d4d9173e5d21e8bd3ad306a0be9a53 -> pull/8961/merge
+2026-10-20T22:48:59.6880283Z ##[endgroup]
+2026-10-20T22:48:59.6882760Z ##[group]Determining the checkout info
+2026-10-20T22:48:59.6884869Z ##[endgroup]
+2026-10-20T22:48:59.6886066Z [command]/usr/bin/git sparse-checkout disable
+2026-10-20T22:48:59.6944240Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-10-20T22:48:59.6977932Z ##[group]Checking out the ref
+2026-10-20T22:48:59.6981465Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/8961/merge
+2026-10-20T22:49:00.6540096Z Note: switching to 'refs/remotes/pull/8961/merge'.
+2026-10-20T22:49:00.6540905Z 
+2026-10-20T22:49:00.6541468Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-10-20T22:49:00.6542335Z changes and commit them, and you can discard any commits you make in this
+2026-10-20T22:49:00.6543244Z state without impacting any branches by switching back to a branch.
+2026-10-20T22:49:00.6543721Z 
+2026-10-20T22:49:00.6544093Z If you want to create a new branch to retain commits you create, you may
+2026-10-20T22:49:00.6544778Z do so (now or later) by using -c with the switch command. Example:
+2026-10-20T22:49:00.6545124Z 
+2026-10-20T22:49:00.6545282Z   git switch -c <new-branch-name>
+2026-10-20T22:49:00.6545521Z 
+2026-10-20T22:49:00.6545712Z Or undo this operation with:
+2026-10-20T22:49:00.6545963Z 
+2026-10-20T22:49:00.6546096Z   git switch -
+2026-10-20T22:49:00.6546306Z 
+2026-10-20T22:49:00.6546611Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-10-20T22:49:00.6547032Z 
+2026-10-20T22:49:00.6547884Z HEAD is now at 7ae2509b Merge fc7e17a409cf81b99c2447a409b55ec699752d06 into a816499ecf9544fe49f3c3ca4d4964584ab02f70
+2026-10-20T22:49:00.6568839Z ##[endgroup]
+2026-10-20T22:49:00.6615402Z [command]/usr/bin/git log -1 --format=%H
+2026-10-20T22:49:00.6642597Z 7ae2509ba2d4d9173e5d21e8bd3ad306a0be9a53
+2026-10-20T22:49:00.7089375Z Prepare all required actions
+2026-10-20T22:49:00.7431471Z ##[group]Run ./.github/actions/pr-candidate-admission
+2026-10-20T22:49:00.7431947Z with:
+2026-10-20T22:49:00.7432216Z   mode: self-test
+2026-10-20T22:49:00.7432486Z   max-changed-files: 160
+2026-10-20T22:49:00.7432773Z   max-changed-lines: 3000
+2026-10-20T22:49:00.7433052Z   docs-only: false
+2026-10-20T22:49:00.7433320Z env:
+2026-10-20T22:49:00.7433560Z   CARGO_TERM_COLOR: always
+2026-10-20T22:49:00.7433837Z ##[endgroup]
+2026-10-20T22:49:00.7499193Z ##[start-action display=Evaluate candidate and hard-cut admission;id=__self.admit]
+2026-10-20T22:49:00.7550167Z ##[group]Run set -euo pipefail
+2026-10-20T22:49:00.7551498Z set -euo pipefail
+2026-10-20T22:49:00.7551855Z action_root="${GITHUB_ACTION_PATH}"
+2026-10-20T22:49:00.7552304Z packet_path="policy/release-hard-cut-admission.json"
+2026-10-20T22:49:00.7552774Z local_packet="${GITHUB_WORKSPACE}/${packet_path}"
+2026-10-20T22:49:00.7553221Z tmp="$(mktemp -d)"
+2026-10-20T22:49:00.7553525Z trap 'rm -rf "$tmp"' EXIT
+2026-10-20T22:49:00.7553859Z current="$tmp/current.json"
+2026-10-20T22:49:00.7554182Z open_prs="$tmp/open-prs.json"
+2026-10-20T22:49:00.7554508Z pr_files="$tmp/pr-files.json"
+2026-10-20T22:49:00.7554850Z base_commit="$tmp/base-commit.json"
+2026-10-20T22:49:00.7555214Z cut_commit="$tmp/cut-commit.json"
+2026-10-20T22:49:00.7555557Z packet="$tmp/cut-packet.json"
+2026-10-20T22:49:00.7555910Z packet_meta="$tmp/cut-packet-meta.json"
+2026-10-20T22:49:00.7556268Z result="$tmp/result.json"
+2026-10-20T22:49:00.7556595Z cut_result="$tmp/cut-result.json"
+2026-10-20T22:49:00.7556920Z rc_candidate=0
+2026-10-20T22:49:00.7557187Z rc_cut=0
+2026-10-20T22:49:00.7557843Z candidate_allowed="admitted,refused,self_test_pass,not_applicable"
+2026-10-20T22:49:00.7558298Z 
+2026-10-20T22:49:00.7558643Z python3 "$action_root/candidate_admission.py" --self-test
+2026-10-20T22:49:00.7559364Z python3 "$action_root/release_cut_admission.py" --self-test
+2026-10-20T22:49:00.7559757Z 
+2026-10-20T22:49:00.7560010Z validate_candidate_result() {
+2026-10-20T22:49:00.7560357Z   local file="$1" rc="$2" allowed="$3"
+2026-10-20T22:49:00.7560726Z   if ! jq -e --arg allowed "$allowed" '
+2026-10-20T22:49:00.7561072Z     type == "object"
+2026-10-20T22:49:00.7561390Z     and (.status | type == "string")
+2026-10-20T22:49:00.7561776Z     and (.reason | type == "string" and length > 0)
+2026-10-20T22:49:00.7562162Z     and (.claim | type == "string")
+2026-10-20T22:49:00.7562541Z     and (.acceptance_delta | type == "string")
+2026-10-20T22:49:00.7562931Z     and (.competing_prs | type == "array")
+2026-10-20T22:49:00.7563304Z     and (.changed_files | type == "number")
+2026-10-20T22:49:00.7563693Z     and (.changed_lines | type == "number")
+2026-10-20T22:49:00.7564083Z     and (.max_changed_files | type == "number")
+2026-10-20T22:49:00.7564473Z     and (.max_changed_lines | type == "number")
+2026-10-20T22:49:00.7564937Z     and (.status as $status | ($allowed | split(",") | index($status)) != null)
+2026-10-20T22:49:00.7565392Z   ' "$file" >/dev/null; then
+2026-10-20T22:49:00.7565790Z     echo "::error::candidate admission produced no valid result"
+2026-10-20T22:49:00.7566187Z     exit 1
+2026-10-20T22:49:00.7566511Z   fi
+2026-10-20T22:49:00.7566761Z   local status
+2026-10-20T22:49:00.7567056Z   status="$(jq -r '.status' "$file")"
+2026-10-20T22:49:00.7567535Z   case "$status:$rc" in
+2026-10-20T22:49:00.7567937Z     admitted:0|refused:1|self_test_pass:0|not_applicable:0) ;;
+2026-10-20T22:49:00.7568333Z     *)
+2026-10-20T22:49:00.7568897Z       echo "::error::candidate admission status/exit mismatch ($status/$rc)"
+2026-10-20T22:49:00.7569367Z       exit 1
+2026-10-20T22:49:00.7569617Z       ;;
+2026-10-20T22:49:00.7569870Z   esac
+2026-10-20T22:49:00.7570324Z }
+2026-10-20T22:49:00.7570611Z 
+2026-10-20T22:49:00.7570859Z validate_cut_result() {
+2026-10-20T22:49:00.7571163Z   local file="$1" rc="$2"
+2026-10-20T22:49:00.7571473Z   if ! jq -e '
+2026-10-20T22:49:00.7571748Z     type == "object"
+2026-10-20T22:49:00.7572098Z     and (.status == "admitted" or .status == "refused")
+2026-10-20T22:49:00.7572527Z     and (.reason | type == "string" and length > 0)
+2026-10-20T22:49:00.7572895Z   ' "$file" >/dev/null; then
+2026-10-20T22:49:00.7573283Z     echo "::error::hard-cut admission produced no valid result"
+2026-10-20T22:49:00.7573680Z     exit 1
+2026-10-20T22:49:00.7573930Z   fi
+2026-10-20T22:49:00.7574186Z   local status
+2026-10-20T22:49:00.7574487Z   status="$(jq -r '.status' "$file")"
+2026-10-20T22:49:00.7574833Z   case "$status:$rc" in
+2026-10-20T22:49:00.7575136Z     admitted:0|refused:1) ;;
+2026-10-20T22:49:00.7575431Z     *)
+2026-10-20T22:49:00.7575796Z       echo "::error::hard-cut admission status/exit mismatch ($status/$rc)"
+2026-10-20T22:49:00.7576225Z       exit 1
+2026-10-20T22:49:00.7576476Z       ;;
+2026-10-20T22:49:00.7576712Z   esac
+2026-10-20T22:49:00.7576952Z }
+2026-10-20T22:49:00.7577177Z 
+2026-10-20T22:49:00.7577812Z if [ "${ADMISSION_MODE:-admit}" != "admit" ]; then
+2026-10-20T22:49:00.7578839Z   printf '%s\n' '{"status":"self_test_pass","reason":"candidate_and_cut_controls_passed","claim":"","acceptance_delta":"","competing_prs":[],"changed_files":0,"changed_lines":0,"max_changed_files":160,"max_changed_lines":3000}' > "$result"
+2026-10-20T22:49:00.7579944Z   printf '%s\n' '{"status":"admitted","reason":"cut_self_test_pass"}' > "$cut_result"
+2026-10-20T22:49:00.7580628Z elif [ -z "${ADMISSION_PR_NUMBER:-}" ]; then
+2026-10-20T22:49:00.7581574Z   printf '%s\n' '{"status":"not_applicable","reason":"non_pull_request_invocation","claim":"","acceptance_delta":"","competing_prs":[],"changed_files":0,"changed_lines":0,"max_changed_files":160,"max_changed_lines":3000}' > "$result"
+2026-10-20T22:49:00.7582672Z   printf '%s\n' '{"status":"admitted","reason":"cut_non_pull_request_invocation"}' > "$cut_result"
+2026-10-20T22:49:00.7583157Z else
+2026-10-20T22:49:00.7583624Z   [ -n "${GH_TOKEN:-}" ] || { echo '::error::candidate admission requires a read-only GitHub token'; exit 1; }
+2026-10-20T22:49:00.7584425Z   [ -n "${ADMISSION_REPOSITORY:-}" ] || { echo '::error::candidate admission requires owner/name repository identity'; exit 1; }
+2026-10-20T22:49:00.7585175Z   gh api "repos/${ADMISSION_REPOSITORY}/pulls/${ADMISSION_PR_NUMBER}" > "$current"
+2026-10-20T22:49:00.7585894Z   gh api --paginate "repos/${ADMISSION_REPOSITORY}/pulls?state=open&per_page=100" | jq -s 'add' > "$open_prs"
+2026-10-20T22:49:00.7586767Z   gh api --paginate "repos/${ADMISSION_REPOSITORY}/pulls/${ADMISSION_PR_NUMBER}/files?per_page=100" | jq -s 'add' > "$pr_files"
+2026-10-20T22:49:00.7587551Z 
+2026-10-20T22:49:00.7587868Z   base_ref="$(jq -r '.base.ref // empty' "$current")"
+2026-10-20T22:49:00.7588454Z   [ -n "$base_ref" ] || { echo '::error::candidate admission received no base ref'; exit 1; }
+2026-10-20T22:49:00.7589165Z   base_sha="$(gh api "repos/${ADMISSION_REPOSITORY}/git/ref/heads/${base_ref}" --jq '.object.sha // empty')"
+2026-10-20T22:49:00.7589965Z   [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::candidate admission could not resolve exact live base SHA'; exit 1; }
+2026-10-20T22:49:00.7590846Z   gh api "repos/${ADMISSION_REPOSITORY}/git/commits/${base_sha}" > "$base_commit"
+2026-10-20T22:49:00.7591318Z 
+2026-10-20T22:49:00.7591680Z   # The enforcement packet comes from the exact live base commit, never
+2026-10-20T22:49:00.7592231Z   # the candidate checkout. The local inactive template is used only
+2026-10-20T22:49:00.7592774Z   # while the machinery PR is introduced on a base that has no packet.
+2026-10-20T22:49:00.7593238Z   packet_err="$RUNNER_TEMP/packet-err.$$"
+2026-10-20T22:49:00.7593880Z   if gh api "repos/${ADMISSION_REPOSITORY}/contents/${packet_path}?ref=${base_sha}" > "$packet_meta" 2>"$packet_err"; then
+2026-10-20T22:49:00.7594604Z     jq -r '.content' "$packet_meta" | tr -d '\n' | base64 --decode > "$packet"
+2026-10-20T22:49:00.7595065Z     packet_from_base=1
+2026-10-20T22:49:00.7595407Z   elif grep -q 'HTTP 404' "$packet_err"; then
+2026-10-20T22:49:00.7595776Z     cp "$local_packet" "$packet"
+2026-10-20T22:49:00.7596107Z     packet_from_base=0
+2026-10-20T22:49:00.7596401Z   else
+2026-10-20T22:49:00.7596852Z     echo '::error::hard-cut packet read from the live base failed for a reason other than absence'
+2026-10-20T22:49:00.7597481Z     exit 1
+2026-10-20T22:49:00.7597739Z   fi
+2026-10-20T22:49:00.7598172Z   cut_sha="$(jq -r 'if .state == "active" then .observed_main.sha // "" else "" end' "$packet")"
+2026-10-20T22:49:00.7598654Z   cut_args=()
+2026-10-20T22:49:00.7598926Z   if [ -n "$cut_sha" ]; then
+2026-10-20T22:49:00.7599449Z     [[ "$cut_sha" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::hard-cut packet has an invalid product-cut SHA'; exit 1; }
+2026-10-20T22:49:00.7600114Z     gh api "repos/${ADMISSION_REPOSITORY}/git/commits/${cut_sha}" > "$cut_commit"
+2026-10-20T22:49:00.7600603Z     cut_args=(--cut-commit "$cut_commit")
+2026-10-20T22:49:00.7600932Z   fi
+2026-10-20T22:49:00.7601164Z 
+2026-10-20T22:49:00.7601396Z   docs_flag=()
+2026-10-20T22:49:00.7601913Z   [ "${ADMISSION_DOCS_ONLY:-false}" = "true" ] && docs_flag=(--docs-only)
+2026-10-20T22:49:00.7602370Z   candidate_allowed="admitted,refused"
+2026-10-20T22:49:00.7602699Z   set +e
+2026-10-20T22:49:00.7603010Z   python3 "$action_root/candidate_admission.py" \
+2026-10-20T22:49:00.7603386Z     --current "$current" \
+2026-10-20T22:49:00.7603699Z     --open-prs "$open_prs" \
+2026-10-20T22:49:00.7604074Z     --expected-head "${ADMISSION_EXPECTED_HEAD:-}" \
+2026-10-20T22:49:00.7604525Z     --max-changed-files "${ADMISSION_MAX_CHANGED_FILES}" \
+2026-10-20T22:49:00.7604999Z     --max-changed-lines "${ADMISSION_MAX_CHANGED_LINES}" \
+2026-10-20T22:49:00.7605407Z     "${docs_flag[@]}" > "$result"
+2026-10-20T22:49:00.7605730Z   rc_candidate=$?
+2026-10-20T22:49:00.7606081Z   python3 "$action_root/release_cut_admission.py" \
+2026-10-20T22:49:00.7606457Z     --packet "$packet" \
+2026-10-20T22:49:00.7606767Z     --current "$current" \
+2026-10-20T22:49:00.7607086Z     --base-commit "$base_commit" \
+2026-10-20T22:49:00.7607574Z     --pr-files "$pr_files" \
+2026-10-20T22:49:00.7607943Z     --expected-head "${ADMISSION_EXPECTED_HEAD:-}" \
+2026-10-20T22:49:00.7608339Z     "${cut_args[@]}" > "$cut_result"
+2026-10-20T22:49:00.7608659Z   rc_cut=$?
+2026-10-20T22:49:00.7608912Z   set -e
+2026-10-20T22:49:00.7609152Z 
+2026-10-20T22:49:00.7609655Z   base_sha_after="$(gh api "repos/${ADMISSION_REPOSITORY}/git/ref/heads/${base_ref}" --jq '.object.sha // empty')"
+2026-10-20T22:49:00.7610270Z   if [ "$base_sha_after" != "$base_sha" ]; then
+2026-10-20T22:49:00.7610730Z     # Movement is harmless only when both the evaluated and the newly
+2026-10-20T22:49:00.7611410Z     # observed base carry an inactive packet; any other state refuses.
+2026-10-20T22:49:00.7611962Z     # Only a positively read inactive packet, or a verified HTTP 404
+2026-10-20T22:49:00.7612473Z     # (when the evaluated base also had none), is benign movement.
+2026-10-20T22:49:00.7612890Z     moved_state=""
+2026-10-20T22:49:00.7613480Z     if gh api "repos/${ADMISSION_REPOSITORY}/contents/${packet_path}?ref=${base_sha_after}" > "$packet_meta" 2>"$packet_err"; then
+2026-10-20T22:49:00.7614351Z       moved_state="$(jq -r '.content' "$packet_meta" | tr -d '\n' | base64 --decode | jq -r '.state')" || moved_state="unreadable"
+2026-10-20T22:49:00.7615047Z     elif [ "$packet_from_base" = "0" ] && grep -q 'HTTP 404' "$packet_err"; then
+2026-10-20T22:49:00.7615504Z       moved_state=inactive
+2026-10-20T22:49:00.7615798Z     else
+2026-10-20T22:49:00.7616065Z       moved_state="unreadable"
+2026-10-20T22:49:00.7616374Z     fi
+2026-10-20T22:49:00.7616774Z     if [ "$(jq -r '.state' "$packet")" != "inactive" ] || [ "$moved_state" != "inactive" ]; then
+2026-10-20T22:49:00.7617592Z       echo "::error::candidate admission base moved during evaluation ($base_sha -> $base_sha_after)"
+2026-10-20T22:49:00.7618111Z       exit 1
+2026-10-20T22:49:00.7618364Z     fi
+2026-10-20T22:49:00.7618599Z   fi
+2026-10-20T22:49:00.7618840Z fi
+2026-10-20T22:49:00.7619066Z 
+2026-10-20T22:49:00.7619438Z validate_candidate_result "$result" "$rc_candidate" "$candidate_allowed"
+2026-10-20T22:49:00.7619921Z validate_cut_result "$cut_result" "$rc_cut"
+2026-10-20T22:49:00.7620256Z 
+2026-10-20T22:49:00.7620520Z status="$(jq -r '.status' "$result")"
+2026-10-20T22:49:00.7620881Z reason="$(jq -r '.reason' "$result")"
+2026-10-20T22:49:00.7621232Z claim="$(jq -r '.claim' "$result")"
+2026-10-20T22:49:00.7621648Z acceptance_delta="$(jq -r '.acceptance_delta' "$result")"
+2026-10-20T22:49:00.7622569Z competing_prs="$(jq -r '.competing_prs | map(tostring) | join(",")' "$result")"
+2026-10-20T22:49:00.7623332Z changed_files="$(jq -r '.changed_files' "$result")"
+2026-10-20T22:49:00.7623811Z changed_lines="$(jq -r '.changed_lines' "$result")"
+2026-10-20T22:49:00.7624252Z max_files="$(jq -r '.max_changed_files' "$result")"
+2026-10-20T22:49:00.7624736Z max_lines="$(jq -r '.max_changed_lines' "$result")"
+2026-10-20T22:49:00.7625179Z cut_status="$(jq -r '.status' "$cut_result")"
+2026-10-20T22:49:00.7625609Z cut_reason="$(jq -r '.reason' "$cut_result")"
+2026-10-20T22:49:00.7625949Z {
+2026-10-20T22:49:00.7626205Z   echo "status=$status"
+2026-10-20T22:49:00.7626513Z   echo "reason=$reason"
+2026-10-20T22:49:00.7626816Z   echo "claim=$claim"
+2026-10-20T22:49:00.7627166Z   echo "acceptance_delta=$acceptance_delta"
+2026-10-20T22:49:00.7627845Z   echo "competing_prs=$competing_prs"
+2026-10-20T22:49:00.7628254Z   echo "changed_files=$changed_files"
+2026-10-20T22:49:00.7628636Z   echo "changed_lines=$changed_lines"
+2026-10-20T22:49:00.7628986Z   echo "cut_status=$cut_status"
+2026-10-20T22:49:00.7629316Z   echo "cut_reason=$cut_reason"
+2026-10-20T22:49:00.7629637Z } >> "$GITHUB_OUTPUT"
+2026-10-20T22:49:00.7629919Z {
+2026-10-20T22:49:00.7630187Z   echo "### PR candidate admission"
+2026-10-20T22:49:00.7630510Z   echo ""
+2026-10-20T22:49:00.7630784Z   echo "- status: \`$status\`"
+2026-10-20T22:49:00.7631102Z   echo "- reason: \`$reason\`"
+2026-10-20T22:49:00.7631451Z   echo "- hard-cut status: \`$cut_status\`"
+2026-10-20T22:49:00.7631832Z   echo "- hard-cut reason: \`$cut_reason\`"
+2026-10-20T22:49:00.7632349Z   echo "- claim: \`$claim\`"
+2026-10-20T22:49:00.7632727Z   echo "- acceptance delta: \`$acceptance_delta\`"
+2026-10-20T22:49:00.7633161Z   echo "- competing PRs: \`${competing_prs:-none}\`"
+2026-10-20T22:49:00.7633651Z   echo "- scope: \`$changed_files files / $changed_lines changed lines\`"
+2026-10-20T22:49:00.7634197Z   echo "- ordinary limit: \`$max_files files / $max_lines changed lines\`"
+2026-10-20T22:49:00.7634638Z } >> "$GITHUB_STEP_SUMMARY"
+2026-10-20T22:49:00.7634931Z 
+2026-10-20T22:49:00.7635181Z if [ "$status" = "refused" ]; then
+2026-10-20T22:49:00.7635513Z   case "$reason" in
+2026-10-20T22:49:00.7635812Z     competing_candidate)
+2026-10-20T22:49:00.7636646Z       echo "::error::candidate admission refused ($reason): reconcile trusted competing PRs ${competing_prs:-unknown} and record the accepted winner/losing disposition before qualification" ;;
+2026-10-20T22:49:00.7637725Z     qualification_scope_oversized)
+2026-10-20T22:49:00.7638535Z       echo "::error::candidate admission refused ($reason): split or recompose the candidate before ordinary qualification ($changed_files files, $changed_lines changed lines)" ;;
+2026-10-20T22:49:00.7639334Z     claim_identity_missing)
+2026-10-20T22:49:00.7639985Z       echo "::error::candidate admission refused ($reason): complete Governing issue or accepted claim and Acceptance delta in the PR body" ;;
+2026-10-20T22:49:00.7640630Z     *)
+2026-10-20T22:49:00.7641205Z       echo "::error::candidate admission refused ($reason); refresh the exact PR/head evidence and retry the explicit admission event" ;;
+2026-10-20T22:49:00.7641837Z   esac
+2026-10-20T22:49:00.7642083Z   exit 1
+2026-10-20T22:49:00.7642324Z fi
+2026-10-20T22:49:00.7642587Z if [ "$cut_status" = "refused" ]; then
+2026-10-20T22:49:00.7643314Z   echo "::error::hard-cut admission refused ($cut_reason): the active cut is frozen; only a packet-only #5114/#2766 control update may qualify before #1609"
+2026-10-20T22:49:00.7644120Z   exit 1
+2026-10-20T22:49:00.7644361Z fi
+2026-10-20T22:49:00.7874062Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T22:49:00.7874650Z env:
+2026-10-20T22:49:00.7874978Z   CARGO_TERM_COLOR: always
+2026-10-20T22:49:00.7875338Z   GH_TOKEN: 
+2026-10-20T22:49:00.7875662Z   ADMISSION_REPOSITORY: 
+2026-10-20T22:49:00.7876017Z   ADMISSION_PR_NUMBER: 
+2026-10-20T22:49:00.7876367Z   ADMISSION_EXPECTED_HEAD: 
+2026-10-20T22:49:00.7876734Z   ADMISSION_DOCS_ONLY: false
+2026-10-20T22:49:00.7877123Z   ADMISSION_MAX_CHANGED_FILES: 160
+2026-10-20T22:49:00.7877746Z   ADMISSION_MAX_CHANGED_LINES: 3000
+2026-10-20T22:49:00.7878095Z   ADMISSION_MODE: self-test
+2026-10-20T22:49:00.7878382Z ##[endgroup]
+2026-10-20T22:49:00.8356812Z candidate-admission self-test: 21 controls passed
+2026-10-20T22:49:00.8779590Z release-cut-admission self-test: 12 controls passed
+2026-10-20T22:49:00.9324475Z ##[end-action id=__self.admit;outcome=success;conclusion=success;duration_ms=182]
+2026-10-20T22:49:00.9547214Z Prepare all required actions
+2026-10-20T22:49:00.9766255Z ##[group]Run ./.github/actions/pr-candidate-admission
+2026-10-20T22:49:00.9766674Z with:
+2026-10-20T22:49:00.9769611Z   token: ***
+2026-10-20T22:49:00.9769927Z   repository: EffortlessMetrics/ripr-swarm
+2026-10-20T22:49:00.9770273Z   pr-number: 8961
+2026-10-20T22:49:00.9770604Z   expected-head: fc7e17a409cf81b99c2447a409b55ec699752d06
+2026-10-20T22:49:00.9770974Z   docs-only: false
+2026-10-20T22:49:00.9771237Z   max-changed-files: 160
+2026-10-20T22:49:00.9771517Z   max-changed-lines: 3000
+2026-10-20T22:49:00.9771782Z   mode: admit
+2026-10-20T22:49:00.9772028Z env:
+2026-10-20T22:49:00.9772266Z   CARGO_TERM_COLOR: always
+2026-10-20T22:49:00.9772542Z ##[endgroup]
+2026-10-20T22:49:00.9780777Z ##[start-action display=Evaluate candidate and hard-cut admission;id=candidate.admit]
+2026-10-20T22:49:00.9810095Z ##[group]Run set -euo pipefail
+2026-10-20T22:49:00.9810792Z set -euo pipefail
+2026-10-20T22:49:00.9811187Z action_root="${GITHUB_ACTION_PATH}"
+2026-10-20T22:49:00.9811635Z packet_path="policy/release-hard-cut-admission.json"
+2026-10-20T22:49:00.9812107Z local_packet="${GITHUB_WORKSPACE}/${packet_path}"
+2026-10-20T22:49:00.9812491Z tmp="$(mktemp -d)"
+2026-10-20T22:49:00.9812804Z trap 'rm -rf "$tmp"' EXIT
+2026-10-20T22:49:00.9813137Z current="$tmp/current.json"
+2026-10-20T22:49:00.9813467Z open_prs="$tmp/open-prs.json"
+2026-10-20T22:49:00.9813803Z pr_files="$tmp/pr-files.json"
+2026-10-20T22:49:00.9814160Z base_commit="$tmp/base-commit.json"
+2026-10-20T22:49:00.9814533Z cut_commit="$tmp/cut-commit.json"
+2026-10-20T22:49:00.9814886Z packet="$tmp/cut-packet.json"
+2026-10-20T22:49:00.9815252Z packet_meta="$tmp/cut-packet-meta.json"
+2026-10-20T22:49:00.9815619Z result="$tmp/result.json"
+2026-10-20T22:49:00.9815949Z cut_result="$tmp/cut-result.json"
+2026-10-20T22:49:00.9816301Z rc_candidate=0
+2026-10-20T22:49:00.9816577Z rc_cut=0
+2026-10-20T22:49:00.9816967Z candidate_allowed="admitted,refused,self_test_pass,not_applicable"
+2026-10-20T22:49:00.9817720Z 
+2026-10-20T22:49:00.9818090Z python3 "$action_root/candidate_admission.py" --self-test
+2026-10-20T22:49:00.9818618Z python3 "$action_root/release_cut_admission.py" --self-test
+2026-10-20T22:49:00.9819022Z 
+2026-10-20T22:49:00.9819280Z validate_candidate_result() {
+2026-10-20T22:49:00.9819627Z   local file="$1" rc="$2" allowed="$3"
+2026-10-20T22:49:00.9820002Z   if ! jq -e --arg allowed "$allowed" '
+2026-10-20T22:49:00.9820355Z     type == "object"
+2026-10-20T22:49:00.9820670Z     and (.status | type == "string")
+2026-10-20T22:49:00.9821062Z     and (.reason | type == "string" and length > 0)
+2026-10-20T22:49:00.9821449Z     and (.claim | type == "string")
+2026-10-20T22:49:00.9822040Z     and (.acceptance_delta | type == "string")
+2026-10-20T22:49:00.9822431Z     and (.competing_prs | type == "array")
+2026-10-20T22:49:00.9822808Z     and (.changed_files | type == "number")
+2026-10-20T22:49:00.9823186Z     and (.changed_lines | type == "number")
+2026-10-20T22:49:00.9823581Z     and (.max_changed_files | type == "number")
+2026-10-20T22:49:00.9823982Z     and (.max_changed_lines | type == "number")
+2026-10-20T22:49:00.9824445Z     and (.status as $status | ($allowed | split(",") | index($status)) != null)
+2026-10-20T22:49:00.9824903Z   ' "$file" >/dev/null; then
+2026-10-20T22:49:00.9825312Z     echo "::error::candidate admission produced no valid result"
+2026-10-20T22:49:00.9825719Z     exit 1
+2026-10-20T22:49:00.9825972Z   fi
+2026-10-20T22:49:00.9826223Z   local status
+2026-10-20T22:49:00.9826526Z   status="$(jq -r '.status' "$file")"
+2026-10-20T22:49:00.9827070Z   case "$status:$rc" in
+2026-10-20T22:49:00.9827625Z     admitted:0|refused:1|self_test_pass:0|not_applicable:0) ;;
+2026-10-20T22:49:00.9828034Z     *)
+2026-10-20T22:49:00.9828408Z       echo "::error::candidate admission status/exit mismatch ($status/$rc)"
+2026-10-20T22:49:00.9828855Z       exit 1
+2026-10-20T22:49:00.9829108Z       ;;
+2026-10-20T22:49:00.9829350Z   esac
+2026-10-20T22:49:00.9829589Z }
+2026-10-20T22:49:00.9829819Z 
+2026-10-20T22:49:00.9830074Z validate_cut_result() {
+2026-10-20T22:49:00.9830395Z   local file="$1" rc="$2"
+2026-10-20T22:49:00.9830698Z   if ! jq -e '
+2026-10-20T22:49:00.9830974Z     type == "object"
+2026-10-20T22:49:00.9831322Z     and (.status == "admitted" or .status == "refused")
+2026-10-20T22:49:00.9831757Z     and (.reason | type == "string" and length > 0)
+2026-10-20T22:49:00.9832144Z   ' "$file" >/dev/null; then
+2026-10-20T22:49:00.9832540Z     echo "::error::hard-cut admission produced no valid result"
+2026-10-20T22:49:00.9832948Z     exit 1
+2026-10-20T22:49:00.9833197Z   fi
+2026-10-20T22:49:00.9833447Z   local status
+2026-10-20T22:49:00.9833751Z   status="$(jq -r '.status' "$file")"
+2026-10-20T22:49:00.9834099Z   case "$status:$rc" in
+2026-10-20T22:49:00.9834401Z     admitted:0|refused:1) ;;
+2026-10-20T22:49:00.9834707Z     *)
+2026-10-20T22:49:00.9835066Z       echo "::error::hard-cut admission status/exit mismatch ($status/$rc)"
+2026-10-20T22:49:00.9835501Z       exit 1
+2026-10-20T22:49:00.9835753Z       ;;
+2026-10-20T22:49:00.9835992Z   esac
+2026-10-20T22:49:00.9836233Z }
+2026-10-20T22:49:00.9836465Z 
+2026-10-20T22:49:00.9836760Z if [ "${ADMISSION_MODE:-admit}" != "admit" ]; then
+2026-10-20T22:49:00.9838130Z   printf '%s\n' '{"status":"self_test_pass","reason":"candidate_and_cut_controls_passed","claim":"","acceptance_delta":"","competing_prs":[],"changed_files":0,"changed_lines":0,"max_changed_files":160,"max_changed_lines":3000}' > "$result"
+2026-10-20T22:49:00.9839280Z   printf '%s\n' '{"status":"admitted","reason":"cut_self_test_pass"}' > "$cut_result"
+2026-10-20T22:49:00.9839794Z elif [ -z "${ADMISSION_PR_NUMBER:-}" ]; then
+2026-10-20T22:49:00.9840734Z   printf '%s\n' '{"status":"not_applicable","reason":"non_pull_request_invocation","claim":"","acceptance_delta":"","competing_prs":[],"changed_files":0,"changed_lines":0,"max_changed_files":160,"max_changed_lines":3000}' > "$result"
+2026-10-20T22:49:00.9841823Z   printf '%s\n' '{"status":"admitted","reason":"cut_non_pull_request_invocation"}' > "$cut_result"
+2026-10-20T22:49:00.9842312Z else
+2026-10-20T22:49:00.9842795Z   [ -n "${GH_TOKEN:-}" ] || { echo '::error::candidate admission requires a read-only GitHub token'; exit 1; }
+2026-10-20T22:49:00.9843763Z   [ -n "${ADMISSION_REPOSITORY:-}" ] || { echo '::error::candidate admission requires owner/name repository identity'; exit 1; }
+2026-10-20T22:49:00.9844511Z   gh api "repos/${ADMISSION_REPOSITORY}/pulls/${ADMISSION_PR_NUMBER}" > "$current"
+2026-10-20T22:49:00.9845229Z   gh api --paginate "repos/${ADMISSION_REPOSITORY}/pulls?state=open&per_page=100" | jq -s 'add' > "$open_prs"
+2026-10-20T22:49:00.9846082Z   gh api --paginate "repos/${ADMISSION_REPOSITORY}/pulls/${ADMISSION_PR_NUMBER}/files?per_page=100" | jq -s 'add' > "$pr_files"
+2026-10-20T22:49:00.9846683Z 
+2026-10-20T22:49:00.9846996Z   base_ref="$(jq -r '.base.ref // empty' "$current")"
+2026-10-20T22:49:00.9847836Z   [ -n "$base_ref" ] || { echo '::error::candidate admission received no base ref'; exit 1; }
+2026-10-20T22:49:00.9848786Z   base_sha="$(gh api "repos/${ADMISSION_REPOSITORY}/git/ref/heads/${base_ref}" --jq '.object.sha // empty')"
+2026-10-20T22:49:00.9849604Z   [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::candidate admission could not resolve exact live base SHA'; exit 1; }
+2026-10-20T22:49:00.9850318Z   gh api "repos/${ADMISSION_REPOSITORY}/git/commits/${base_sha}" > "$base_commit"
+2026-10-20T22:49:00.9850777Z 
+2026-10-20T22:49:00.9851145Z   # The enforcement packet comes from the exact live base commit, never
+2026-10-20T22:49:00.9851706Z   # the candidate checkout. The local inactive template is used only
+2026-10-20T22:49:00.9852252Z   # while the machinery PR is introduced on a base that has no packet.
+2026-10-20T22:49:00.9852725Z   packet_err="$RUNNER_TEMP/packet-err.$$"
+2026-10-20T22:49:00.9853349Z   if gh api "repos/${ADMISSION_REPOSITORY}/contents/${packet_path}?ref=${base_sha}" > "$packet_meta" 2>"$packet_err"; then
+2026-10-20T22:49:00.9854064Z     jq -r '.content' "$packet_meta" | tr -d '\n' | base64 --decode > "$packet"
+2026-10-20T22:49:00.9854535Z     packet_from_base=1
+2026-10-20T22:49:00.9879007Z   elif grep -q 'HTTP 404' "$packet_err"; then
+2026-10-20T22:49:00.9879551Z     cp "$local_packet" "$packet"
+2026-10-20T22:49:00.9879923Z     packet_from_base=0
+2026-10-20T22:49:00.9880235Z   else
+2026-10-20T22:49:00.9880701Z     echo '::error::hard-cut packet read from the live base failed for a reason other than absence'
+2026-10-20T22:49:00.9881211Z     exit 1
+2026-10-20T22:49:00.9881473Z   fi
+2026-10-20T22:49:00.9881916Z   cut_sha="$(jq -r 'if .state == "active" then .observed_main.sha // "" else "" end' "$packet")"
+2026-10-20T22:49:00.9882417Z   cut_args=()
+2026-10-20T22:49:00.9882704Z   if [ -n "$cut_sha" ]; then
+2026-10-20T22:49:00.9883268Z     [[ "$cut_sha" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::hard-cut packet has an invalid product-cut SHA'; exit 1; }
+2026-10-20T22:49:00.9883945Z     gh api "repos/${ADMISSION_REPOSITORY}/git/commits/${cut_sha}" > "$cut_commit"
+2026-10-20T22:49:00.9884447Z     cut_args=(--cut-commit "$cut_commit")
+2026-10-20T22:49:00.9884784Z   fi
+2026-10-20T22:49:00.9885023Z 
+2026-10-20T22:49:00.9885262Z   docs_flag=()
+2026-10-20T22:49:00.9885659Z   [ "${ADMISSION_DOCS_ONLY:-false}" = "true" ] && docs_flag=(--docs-only)
+2026-10-20T22:49:00.9886124Z   candidate_allowed="admitted,refused"
+2026-10-20T22:49:00.9886467Z   set +e
+2026-10-20T22:49:00.9886797Z   python3 "$action_root/candidate_admission.py" \
+2026-10-20T22:49:00.9887183Z     --current "$current" \
+2026-10-20T22:49:00.9888027Z     --open-prs "$open_prs" \
+2026-10-20T22:49:00.9888478Z     --expected-head "${ADMISSION_EXPECTED_HEAD:-}" \
+2026-10-20T22:49:00.9888942Z     --max-changed-files "${ADMISSION_MAX_CHANGED_FILES}" \
+2026-10-20T22:49:00.9889789Z     --max-changed-lines "${ADMISSION_MAX_CHANGED_LINES}" \
+2026-10-20T22:49:00.9890196Z     "${docs_flag[@]}" > "$result"
+2026-10-20T22:49:00.9890529Z   rc_candidate=$?
+2026-10-20T22:49:00.9890900Z   python3 "$action_root/release_cut_admission.py" \
+2026-10-20T22:49:00.9891293Z     --packet "$packet" \
+2026-10-20T22:49:00.9891611Z     --current "$current" \
+2026-10-20T22:49:00.9891938Z     --base-commit "$base_commit" \
+2026-10-20T22:49:00.9892276Z     --pr-files "$pr_files" \
+2026-10-20T22:49:00.9892646Z     --expected-head "${ADMISSION_EXPECTED_HEAD:-}" \
+2026-10-20T22:49:00.9893039Z     "${cut_args[@]}" > "$cut_result"
+2026-10-20T22:49:00.9893365Z   rc_cut=$?
+2026-10-20T22:49:00.9893619Z   set -e
+2026-10-20T22:49:00.9893864Z 
+2026-10-20T22:49:00.9894499Z   base_sha_after="$(gh api "repos/${ADMISSION_REPOSITORY}/git/ref/heads/${base_ref}" --jq '.object.sha // empty')"
+2026-10-20T22:49:00.9895136Z   if [ "$base_sha_after" != "$base_sha" ]; then
+2026-10-20T22:49:00.9895597Z     # Movement is harmless only when both the evaluated and the newly
+2026-10-20T22:49:00.9896137Z     # observed base carry an inactive packet; any other state refuses.
+2026-10-20T22:49:00.9896677Z     # Only a positively read inactive packet, or a verified HTTP 404
+2026-10-20T22:49:00.9897189Z     # (when the evaluated base also had none), is benign movement.
+2026-10-20T22:49:00.9897939Z     moved_state=""
+2026-10-20T22:49:00.9898544Z     if gh api "repos/${ADMISSION_REPOSITORY}/contents/${packet_path}?ref=${base_sha_after}" > "$packet_meta" 2>"$packet_err"; then
+2026-10-20T22:49:00.9899409Z       moved_state="$(jq -r '.content' "$packet_meta" | tr -d '\n' | base64 --decode | jq -r '.state')" || moved_state="unreadable"
+2026-10-20T22:49:00.9900117Z     elif [ "$packet_from_base" = "0" ] && grep -q 'HTTP 404' "$packet_err"; then
+2026-10-20T22:49:00.9900582Z       moved_state=inactive
+2026-10-20T22:49:00.9900879Z     else
+2026-10-20T22:49:00.9901151Z       moved_state="unreadable"
+2026-10-20T22:49:00.9901459Z     fi
+2026-10-20T22:49:00.9901869Z     if [ "$(jq -r '.state' "$packet")" != "inactive" ] || [ "$moved_state" != "inactive" ]; then
+2026-10-20T22:49:00.9902547Z       echo "::error::candidate admission base moved during evaluation ($base_sha -> $base_sha_after)"
+2026-10-20T22:49:00.9903069Z       exit 1
+2026-10-20T22:49:00.9903322Z     fi
+2026-10-20T22:49:00.9903560Z   fi
+2026-10-20T22:49:00.9903796Z fi
+2026-10-20T22:49:00.9904022Z 
+2026-10-20T22:49:00.9904391Z validate_candidate_result "$result" "$rc_candidate" "$candidate_allowed"
+2026-10-20T22:49:00.9904874Z validate_cut_result "$cut_result" "$rc_cut"
+2026-10-20T22:49:00.9905224Z 
+2026-10-20T22:49:00.9905484Z status="$(jq -r '.status' "$result")"
+2026-10-20T22:49:00.9905881Z reason="$(jq -r '.reason' "$result")"
+2026-10-20T22:49:00.9906233Z claim="$(jq -r '.claim' "$result")"
+2026-10-20T22:49:00.9906644Z acceptance_delta="$(jq -r '.acceptance_delta' "$result")"
+2026-10-20T22:49:00.9907180Z competing_prs="$(jq -r '.competing_prs | map(tostring) | join(",")' "$result")"
+2026-10-20T22:49:00.9907848Z changed_files="$(jq -r '.changed_files' "$result")"
+2026-10-20T22:49:00.9908290Z changed_lines="$(jq -r '.changed_lines' "$result")"
+2026-10-20T22:49:00.9908723Z max_files="$(jq -r '.max_changed_files' "$result")"
+2026-10-20T22:49:00.9909137Z max_lines="$(jq -r '.max_changed_lines' "$result")"
+2026-10-20T22:49:00.9909541Z cut_status="$(jq -r '.status' "$cut_result")"
+2026-10-20T22:49:00.9909935Z cut_reason="$(jq -r '.reason' "$cut_result")"
+2026-10-20T22:49:00.9910424Z {
+2026-10-20T22:49:00.9910684Z   echo "status=$status"
+2026-10-20T22:49:00.9911002Z   echo "reason=$reason"
+2026-10-20T22:49:00.9911307Z   echo "claim=$claim"
+2026-10-20T22:49:00.9911643Z   echo "acceptance_delta=$acceptance_delta"
+2026-10-20T22:49:00.9912033Z   echo "competing_prs=$competing_prs"
+2026-10-20T22:49:00.9912401Z   echo "changed_files=$changed_files"
+2026-10-20T22:49:00.9912765Z   echo "changed_lines=$changed_lines"
+2026-10-20T22:49:00.9913113Z   echo "cut_status=$cut_status"
+2026-10-20T22:49:00.9913445Z   echo "cut_reason=$cut_reason"
+2026-10-20T22:49:00.9913769Z } >> "$GITHUB_OUTPUT"
+2026-10-20T22:49:00.9914054Z {
+2026-10-20T22:49:00.9914319Z   echo "### PR candidate admission"
+2026-10-20T22:49:00.9914643Z   echo ""
+2026-10-20T22:49:00.9914916Z   echo "- status: \`$status\`"
+2026-10-20T22:49:00.9915353Z   echo "- reason: \`$reason\`"
+2026-10-20T22:49:00.9915715Z   echo "- hard-cut status: \`$cut_status\`"
+2026-10-20T22:49:00.9916093Z   echo "- hard-cut reason: \`$cut_reason\`"
+2026-10-20T22:49:00.9916439Z   echo "- claim: \`$claim\`"
+2026-10-20T22:49:00.9916812Z   echo "- acceptance delta: \`$acceptance_delta\`"
+2026-10-20T22:49:00.9917243Z   echo "- competing PRs: \`${competing_prs:-none}\`"
+2026-10-20T22:49:00.9917865Z   echo "- scope: \`$changed_files files / $changed_lines changed lines\`"
+2026-10-20T22:49:00.9918421Z   echo "- ordinary limit: \`$max_files files / $max_lines changed lines\`"
+2026-10-20T22:49:00.9918868Z } >> "$GITHUB_STEP_SUMMARY"
+2026-10-20T22:49:00.9919168Z 
+2026-10-20T22:49:00.9919425Z if [ "$status" = "refused" ]; then
+2026-10-20T22:49:00.9919758Z   case "$reason" in
+2026-10-20T22:49:00.9920052Z     competing_candidate)
+2026-10-20T22:49:00.9920873Z       echo "::error::candidate admission refused ($reason): reconcile trusted competing PRs ${competing_prs:-unknown} and record the accepted winner/losing disposition before qualification" ;;
+2026-10-20T22:49:00.9921735Z     qualification_scope_oversized)
+2026-10-20T22:49:00.9922535Z       echo "::error::candidate admission refused ($reason): split or recompose the candidate before ordinary qualification ($changed_files files, $changed_lines changed lines)" ;;
+2026-10-20T22:49:00.9923329Z     claim_identity_missing)
+2026-10-20T22:49:00.9923977Z       echo "::error::candidate admission refused ($reason): complete Governing issue or accepted claim and Acceptance delta in the PR body" ;;
+2026-10-20T22:49:00.9924619Z     *)
+2026-10-20T22:49:00.9925181Z       echo "::error::candidate admission refused ($reason); refresh the exact PR/head evidence and retry the explicit admission event" ;;
+2026-10-20T22:49:00.9925802Z   esac
+2026-10-20T22:49:00.9926049Z   exit 1
+2026-10-20T22:49:00.9926293Z fi
+2026-10-20T22:49:00.9926555Z if [ "$cut_status" = "refused" ]; then
+2026-10-20T22:49:00.9927276Z   echo "::error::hard-cut admission refused ($cut_reason): the active cut is frozen; only a packet-only #5114/#2766 control update may qualify before #1609"
+2026-10-20T22:49:00.9928316Z   exit 1
+2026-10-20T22:49:00.9928562Z fi
+2026-10-20T22:49:00.9979664Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-20T22:49:00.9980078Z env:
+2026-10-20T22:49:00.9980348Z   CARGO_TERM_COLOR: always
+2026-10-20T22:49:00.9983128Z   GH_TOKEN: ***
+2026-10-20T22:49:00.9983464Z   ADMISSION_REPOSITORY: EffortlessMetrics/ripr-swarm
+2026-10-20T22:49:00.9983846Z   ADMISSION_PR_NUMBER: 8961
+2026-10-20T22:49:00.9984225Z   ADMISSION_EXPECTED_HEAD: fc7e17a409cf81b99c2447a409b55ec699752d06
+2026-10-20T22:49:00.9984641Z   ADMISSION_DOCS_ONLY: false
+2026-10-20T22:49:00.9984954Z   ADMISSION_MAX_CHANGED_FILES: 160
+2026-10-20T22:49:00.9985463Z   ADMISSION_MAX_CHANGED_LINES: 3000
+2026-10-20T22:49:00.9985775Z   ADMISSION_MODE: admit
+2026-10-20T22:49:00.9986041Z ##[endgroup]
+2026-10-20T22:49:01.0440556Z candidate-admission self-test: 21 controls passed
+2026-10-20T22:49:01.0864944Z release-cut-admission self-test: 12 controls passed
+2026-10-20T22:49:05.4712913Z ##[error]candidate admission refused (claim_identity_missing): complete Governing issue or accepted claim and Acceptance delta in the PR body
+2026-10-20T22:49:05.4718636Z ##[error]Process completed with exit code 1.
+2026-10-20T22:49:05.4735709Z ##[end-action id=candidate.admit;outcome=failure;conclusion=failure;duration_ms=4495]
+2026-10-20T22:49:05.4914029Z Post job cleanup.
+2026-10-20T22:49:05.5780711Z [command]/usr/bin/git version
+2026-10-20T22:49:05.5820659Z git version 2.55.0
+2026-10-20T22:49:05.5864834Z Temporarily overriding HOME='/home/runner/work/_temp/5cfbb55c-8c58-4b4a-bf4f-cde9ff2e8d50' before making global git config changes
+2026-10-20T22:49:05.5866728Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-20T22:49:05.5871873Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/ripr-swarm/ripr-swarm
+2026-10-20T22:49:05.5909312Z Removing SSH command configuration
+2026-10-20T22:49:05.5916866Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-20T22:49:05.5958115Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-20T22:49:05.6226666Z Removing HTTP extra header
+2026-10-20T22:49:05.6232932Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-20T22:49:05.6271040Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-20T22:49:05.6531283Z Removing includeIf entries pointing to credentials config files
+2026-10-20T22:49:05.6539143Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-20T22:49:05.6570299Z includeif.gitdir:/home/runner/work/ripr-swarm/ripr-swarm/.git.path
+2026-10-20T22:49:05.6571242Z includeif.gitdir:/home/runner/work/ripr-swarm/ripr-swarm/.git/worktrees/*.path
+2026-10-20T22:49:05.6572000Z includeif.gitdir:/github/workspace/.git.path
+2026-10-20T22:49:05.6572607Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-10-20T22:49:05.6580905Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/ripr-swarm/ripr-swarm/.git.path
+2026-10-20T22:49:05.6606100Z /home/runner/work/_temp/git-credentials-e465db08-ec5a-4ed4-9e42-ba440f3633f6.config
+2026-10-20T22:49:05.6618159Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/ripr-swarm/ripr-swarm/.git.path /home/runner/work/_temp/git-credentials-e465db08-ec5a-4ed4-9e42-ba440f3633f6.config
+2026-10-20T22:49:05.6655634Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/ripr-swarm/ripr-swarm/.git/worktrees/*.path
+2026-10-20T22:49:05.6682236Z /home/runner/work/_temp/git-credentials-e465db08-ec5a-4ed4-9e42-ba440f3633f6.config
+2026-10-20T22:49:05.6691620Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/ripr-swarm/ripr-swarm/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-e465db08-ec5a-4ed4-9e42-ba440f3633f6.config
+2026-10-20T22:49:05.6726310Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-10-20T22:49:05.6750315Z /github/runner_temp/git-credentials-e465db08-ec5a-4ed4-9e42-ba440f3633f6.config
+2026-10-20T22:49:05.6759413Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-e465db08-ec5a-4ed4-9e42-ba440f3633f6.config
+2026-10-20T22:49:05.6794255Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-10-20T22:49:05.6818034Z /github/runner_temp/git-credentials-e465db08-ec5a-4ed4-9e42-ba440f3633f6.config
+2026-10-20T22:49:05.6827308Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-e465db08-ec5a-4ed4-9e42-ba440f3633f6.config
+2026-10-20T22:49:05.6865240Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-20T22:49:05.7126060Z Removing credentials config '/home/runner/work/_temp/git-credentials-e465db08-ec5a-4ed4-9e42-ba440f3633f6.config'
+2026-10-20T22:49:05.7277026Z Evaluate and set job outputs
+2026-10-20T22:49:05.7285030Z Set output 'status'
+2026-10-20T22:49:05.7286804Z Set output 'reason'
+2026-10-20T22:49:05.7288223Z Set output 'claim'
+2026-10-20T22:49:05.7288550Z Set output 'changed_files'
+2026-10-20T22:49:05.7288884Z Set output 'changed_lines'
+2026-10-20T22:49:05.7289653Z Cleaning up orphan processes

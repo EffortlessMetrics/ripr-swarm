@@ -1,0 +1,55 @@
+{
+  "observed_at": "2026-10-20T22:53:04.585589+00:00",
+  "candidate": "fc7e17a409cf81b99c2447a409b55ec699752d06",
+  "native_implementation_blob_head_and_current_main": "33df70331a1367ea74d5da16c9e46653b8297b6c",
+  "implementation_sha256": "a36ae5d57c3ac68c4926d953269c21d016335f4611b9beb2700700b0ffdb7ddf",
+  "classification": "candidate PR-body regression; native implementation identical at reviewed head and current main; no validator repair or exemption",
+  "scope": "focused metadata controls with empty peer list; not live competing-candidate or hard-cut admission proof",
+  "controls": [
+    {
+      "case": "before",
+      "result": {
+        "status": "refused",
+        "reason": "claim_identity_missing",
+        "claim": "this worker owns the scoped repair and hosted qualification through terminal inspection; parent retains integration judgment.",
+        "acceptance_delta": "",
+        "competing_prs": [],
+        "changed_files": 13,
+        "changed_lines": 606,
+        "max_changed_files": 160,
+        "max_changed_lines": 3000
+      }
+    },
+    {
+      "case": "fixed",
+      "result": {
+        "status": "admitted",
+        "reason": "candidate_current_unique_bounded",
+        "claim": "delegated brief input-status repair from the 2026-10-20 04:25 utc batch; inherited envelope authority #7331; ripr-spec-0010 and ripr-spec-0241.",
+        "acceptance_delta": "preserve empty and ordinary successful brief selections while refusing parser-limited, parser-unadmitted or truncated diff inputs through the typed non-consumable envelope. original base: `1e9468f4b0d133f0a50b64134318763d8cf48beb`.",
+        "competing_prs": [],
+        "changed_files": 13,
+        "changed_lines": 606,
+        "max_changed_files": 160,
+        "max_changed_lines": 3000
+      }
+    }
+  ],
+  "final_live_body_fields": {
+    "claim": "delegated brief input-status repair from the 2026-10-20 04:25 UTC batch; inherited envelope authority #7331; RIPR-SPEC-0010 and RIPR-SPEC-0241.",
+    "delta": "Preserve empty and ordinary successful brief selections while refusing parser-limited, parser-unadmitted or truncated diff inputs through the typed non-consumable envelope.",
+    "replacement": "",
+    "winner": ""
+  },
+  "final_live_body_control": {
+    "status": "admitted",
+    "reason": "candidate_current_unique_bounded",
+    "claim": "delegated brief input-status repair from the 2026-10-20 04:25 utc batch; inherited envelope authority #7331; ripr-spec-0010 and ripr-spec-0241.",
+    "acceptance_delta": "preserve empty and ordinary successful brief selections while refusing parser-limited, parser-unadmitted or truncated diff inputs through the typed non-consumable envelope.",
+    "competing_prs": [],
+    "changed_files": 13,
+    "changed_lines": 606,
+    "max_changed_files": 160,
+    "max_changed_lines": 3000
+  }
+}

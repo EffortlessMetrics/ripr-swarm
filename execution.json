@@ -74,6 +74,18 @@
     ],
     "write_result": "isError=true; detailed error messages were not retained by caller; reason unknown",
     "readback": "both remain unresolved; no resolution claimed",
-    "retries": 0
+    "later_readback": "All four threads verified resolved after one normal retry per repaired thread following published exact-head review and receiver-verified evidence.",
+    "initial_snapshot_retries": 0,
+    "later_retries_per_repaired_thread": 1
+  },
+  "qualification_continuation": {
+    "run": 39510731523,
+    "attempt": 2,
+    "admission_job": 118932062724,
+    "admission": "success",
+    "rust_job": 118932165873,
+    "status": "in_progress at toolchain setup; terminal and actual primary checkout proof pending",
+    "first_attempt": "claim_identity_missing; required PR-body fields lost during rewrite, restored and live-readback/native-controls verified; source unchanged; only failed jobs retried",
+    "companion_runs_preserved": true
   }
 }

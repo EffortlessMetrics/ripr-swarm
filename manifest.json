@@ -1,14 +1,40 @@
 {
-  "recorded_at": "2026-10-20T22:44:22.483041+00:00",
+  "recorded_at": "2026-10-20T22:53:04.607115+00:00",
   "source": "fc7e17a409cf81b99c2447a409b55ec699752d06",
   "tree": "eb5a63a1fdfed5b5f623a4b433544f589c9bf21f",
   "base": "1e9468f4b0d133f0a50b64134318763d8cf48beb",
-  "stage": "published composed repair; local proof and source review complete; hosted proof pending",
+  "previous_evidence_commit": "76a4a913b151796d51c641e283fd2f3c9b3c54c2",
+  "stage": "local terminal proof complete; threads resolved; same hosted run attempt2 admission passed and Rust gates active",
   "files": [
     {
       "path": "README.md",
-      "bytes": 3284,
-      "sha256": "26ed9e12a870c3a5c45b3befa83228fe3376f7a357d2fa11252b4973c85c7b1f"
+      "bytes": 3945,
+      "sha256": "1aa92085278692ed032bd429fc3d0ecd02139e12d007aa89d87395ef5104e9d8"
+    },
+    {
+      "path": "admission-attempt1.log",
+      "bytes": 49697,
+      "sha256": "a56ab874e56964dafa5a0c1bca42c5dee4ba9aa6e19b539b8b8f36eedd219bb1"
+    },
+    {
+      "path": "admission-current-before.json",
+      "bytes": 29681,
+      "sha256": "bd1951d8de9ddc2797c419f9aca4d3310d6cd2e11dee43db54e197c97417a583"
+    },
+    {
+      "path": "admission-current-fixed.json",
+      "bytes": 30187,
+      "sha256": "f4534ef6da26a7be83f2709f11c6c24cc09aa1b7d560c0062e52f6ca33436de6"
+    },
+    {
+      "path": "admission-current-live-fixed.json",
+      "bytes": 30190,
+      "sha256": "8d2d9c30bc604206717b144163c14a453c5b87dae506b231ac6bbda670250431"
+    },
+    {
+      "path": "admission-field-controls.json",
+      "bytes": 2831,
+      "sha256": "f4c68e7c48348fdfd2034b9344e42ea7497075a4d9f42df29ace3f5592fd43d0"
     },
     {
       "path": "candidate.json",
@@ -42,8 +68,8 @@
     },
     {
       "path": "execution.json",
-      "bytes": 2385,
-      "sha256": "5524b47ba6b3c6d4d782150bd5b6837d13e6e646609cea197cad1eb00f940d64"
+      "bytes": 3119,
+      "sha256": "43972719d94492d0f133108af2fa3b7f9a8598f864850c8cb05db97ed4f3b2fa"
     },
     {
       "path": "first-qualification-delivery.json",
@@ -391,6 +417,16 @@
       "sha256": "3e795395f3d026a8209442b56a5156f0f8df2de6c34eee876751bac98a796a1c"
     },
     {
+      "path": "qualification-attempt2-jobs.json",
+      "bytes": 21671,
+      "sha256": "a99bcffd4f99d55f6b213de4b2d691a12767d7d02429f122ceccc2e0e96e1b59"
+    },
+    {
+      "path": "qualification-attempt2-run.json",
+      "bytes": 15793,
+      "sha256": "fc46d42c399f61fe0eed52a2d9b41a2915b498d28146c7d79354708447eb3cd6"
+    },
+    {
       "path": "red-execution.json",
       "bytes": 1787,
       "sha256": "60f5c0557e0fda388174130674334c5bd9984763fbd4d278fd83a9830e904bd4"
@@ -414,6 +450,11 @@
       "path": "review-threads-after-repair.json",
       "bytes": 24873,
       "sha256": "d44314ce0ebc53ebbe4a40a5ef8d7a7a8c5e8398a4b81337378387a373b73b7b"
+    },
+    {
+      "path": "review-threads-verified-resolved.json",
+      "bytes": 25353,
+      "sha256": "f3912e59ea267a388dc89ba2ce6edd84d8414b7be0fd7c933a037c65c30304f3"
     },
     {
       "path": "selected-paths.txt",
