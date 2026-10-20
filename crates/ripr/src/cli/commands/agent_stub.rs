@@ -524,16 +524,15 @@ mod tests {
     /// the consequence, and the supported route; an agreeing placement (or
     /// no projected route) refuses nothing.
     #[test]
-    fn divergent_write_refuses_before_writing_with_actionable_guidance() {
+    fn divergent_write_refuses_before_writing_with_actionable_guidance() -> Result<(), String> {
         let agreeing = StubNextRepair {
             start_command: "ripr agent repair --root . --seam-id abc --phase before".to_string(),
             allowed_edit_surface: "tests/clamp_tests.rs".to_string(),
             placement_divergence: None,
         };
-        assert!(
-            divergent_write_refusal("abc", &agreeing).is_none(),
-            "an agreeing placement must not refuse the write"
-        );
+        if divergent_write_refusal("abc", &agreeing).is_some() {
+            return Err("an agreeing placement must not refuse the write".to_string());
+        }
 
         let divergent = StubNextRepair {
             placement_divergence: Some(StubPlacementDivergence {
@@ -543,18 +542,27 @@ mod tests {
             ..agreeing
         };
         let message = divergent_write_refusal("abc", &divergent)
-            .expect("a divergent placement must refuse the write");
-        assert!(message.contains("src/clamp.rs"), "{message}");
-        assert!(message.contains("tests/clamp_tests.rs"), "{message}");
-        assert!(
-            message.contains("before phase would refuse"),
-            "the refusal must state the dirty-premise consequence: {message}"
-        );
-        assert!(message.contains("No file was written"), "{message}");
-        assert!(
-            message.contains("ripr agent repair --root . --seam-id abc --phase before"),
-            "the refusal must name the supported repair start: {message}"
-        );
+            .ok_or_else(|| "a divergent placement must refuse the write".to_string())?;
+        if !message.contains("src/clamp.rs") {
+            return Err(format!("refusal must name the stub file: {message}"));
+        }
+        if !message.contains("tests/clamp_tests.rs") {
+            return Err(format!("refusal must name the packet surface: {message}"));
+        }
+        if !message.contains("before phase would refuse") {
+            return Err(format!(
+                "refusal must state the dirty-premise consequence: {message}"
+            ));
+        }
+        if !message.contains("No file was written") {
+            return Err(format!("refusal must state nothing was written: {message}"));
+        }
+        if !message.contains("ripr agent repair --root . --seam-id abc --phase before") {
+            return Err(format!(
+                "refusal must name the supported repair start: {message}"
+            ));
+        }
+        Ok(())
     }
 
     /// A location selector never resolved to a seam id, so the envelope
