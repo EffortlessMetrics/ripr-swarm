@@ -3049,7 +3049,13 @@ pub(crate) fn evidence_promotion_human_oracle_line_matches(
                     expected_kind.replace('_', " ")
                 )
             };
-            return if expected_strength == "unknown" {
+            // A row with no oracle reads "no oracle" (#8747).
+            let absent = phrase
+                .strip_prefix("no oracle")
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with([';', ':', ',']));
+            return if expected_strength == "none" {
+                expected_kind == "unknown" && absent
+            } else if expected_strength == "unknown" {
                 phrase.starts_with(ungraded.as_str())
             } else {
                 phrase.starts_with(projection.as_str())
