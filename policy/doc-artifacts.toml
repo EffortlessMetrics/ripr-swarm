@@ -1682,3 +1682,19 @@ path = "docs/specs/RIPR-SPEC-0281-pilot-ranking-refuted-count-growth-allowance.m
 status = "proposed"
 owner = "test-infra"
 standalone_reason = "States how the advisory ranking scoreboard compares the pooled refuted counts (pick_growth_allowance: a count may rise by the picks admitted, per repository, zero margin at flat or smaller pick counts, legacy evidence strict) so the gate sits inside the spec-test-code chain; RIPR-SPEC-0237 governs only the pilot ranking order."
+
+[[artifact]]
+id = "RIPR-SPEC-0282"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0282-repair-attempt-after-refusal-retry-budget.md"
+status = "proposed"
+owner = "agent-loop"
+standalone_reason = "States the repair attempt after-refusal history and 5-refusal retry budget (#8726): capped history with an uncapped count, the typed exit-3 stop that is not recorded as a refusal, and status and repair not offering a refused after command, so the behavior sits inside the spec-test-code chain; RIPR-SPEC-0011 governs only the LLM work loop."
+
+[[artifact]]
+id = "RIPR-SPEC-0284"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0284-agent-context-packet-clarity.md"
+status = "proposed"
+owner = "product-output"
+standalone_reason = "Issues #8743, #8744 and #8746 record the agent context packet clarity contract: the ripr context packet contract is 1.1 and states the exposure verdict outright (classification, severity resolved through the caller severity config, and confidence, wire-identical to the ripr check --json finding fields) so packet consumers never derive the class from the underdetermined stage states, and the context refusal envelope is keyed with the packet version; the human evidence window glosses the unknown sink row with the same contract."

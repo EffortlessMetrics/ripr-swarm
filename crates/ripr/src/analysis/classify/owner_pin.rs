@@ -10467,7 +10467,12 @@ fn expected_binding_calls_owner(test: &TestSummary, expected: &str, name: &str) 
             let plain = bindings.as_deref().is_some_and(plain_let_values)
                 && first_use_is_top_level_let(&masked_body, word)
                 && !item_names_word(&masked_body, word);
-            if bound_by_macro(&masked_body, word) || written_by_test(&masked_body, word, plain) {
+            let read_only = plain
+                && never_declared_mut(&masked_body, word)
+                && !named_as_segment_or_call(&masked_body, word);
+            if bound_by_macro(&masked_body, word)
+                || written_by_test(&masked_body, word, plain, read_only)
+            {
                 return true;
             }
             let Some(bindings) = bindings else {
@@ -10502,7 +10507,15 @@ fn expected_binding_calls_owner(test: &TestSummary, expected: &str, name: &str) 
 /// read. Method names stay mutators regardless (a test-local type may define
 /// any `replace`/`take`). A static, a const or any other binding, and any
 /// constructor call (it may be test-local), is never plain.
-fn written_by_test(masked: &str, name: &str, plain: bool) -> bool {
+///
+/// `read_only` (#8795 Part B, implies `plain`): additionally no `mut` precedes
+/// the name anywhere, so the one binding is an immutable `let` of a literal
+/// value. Such a value has no interior mutability, so no method call on it,
+/// whatever it is called or whichever test-local trait defines it, can write
+/// the binding: `expected.replace(..)`, `.take(n)` and `.lock()` read it.
+/// Assignments (`name = ..`, `name.0 += ..`) and every other write shape
+/// stay refusals.
+fn written_by_test(masked: &str, name: &str, plain: bool, read_only: bool) -> bool {
     whole_word_offsets(masked, name).into_iter().any(|offset| {
         // A raw identifier (`r#NAME`) is the same name: look past its `r#`.
         let before = strip_raw_ident_prefix(masked[..offset].trim_end());
@@ -10540,7 +10553,7 @@ fn written_by_test(masked: &str, name: &str, plain: bool) -> bool {
         before.ends_with("write!(")
             || before.ends_with("writeln!(")
             || (!plain && borrowed_into_path_call(before))
-            || place_is_written(&masked[offset + name.len()..])
+            || place_is_written(&masked[offset + name.len()..], !read_only)
             || (destructured_into(&masked[offset + name.len()..]) && !index_operand(before))
     })
 }
@@ -10611,6 +10624,37 @@ fn borrowed_into_path_call(before: &str) -> bool {
             "is_empty",
         ]
         .contains(&last)
+}
+
+/// Whether the masked body uses `name` anywhere as something other than the
+/// local: a field or path segment (`st().name`, `S::name`) or a callee
+/// (`name(..)`, `name!(..)`). Such a use is unrelated to the `let`, and a
+/// method on it may write, so the read-only exemption does not apply.
+fn named_as_segment_or_call(masked: &str, name: &str) -> bool {
+    whole_word_offsets(masked, name).into_iter().any(|offset| {
+        let before = strip_raw_ident_prefix(masked[..offset].trim_end());
+        let after = masked[offset + name.len()..].trim_start();
+        before.ends_with('.')
+            || before.ends_with("::")
+            || after.starts_with('(')
+            || after.starts_with('!')
+            || after.starts_with("::")
+    })
+}
+
+/// Whether no whole-word use of `name` in the masked body follows `mut`
+/// (`let mut name`, `ref mut name`, `|mut name|`, `(mut name, ..)`), so the
+/// name is never declared mutable.
+fn never_declared_mut(masked: &str, name: &str) -> bool {
+    whole_word_offsets(masked, name).into_iter().all(|offset| {
+        let before = strip_raw_ident_prefix(masked[..offset].trim_end());
+        !before.strip_suffix("mut").is_some_and(|rest| {
+            !rest
+                .as_bytes()
+                .last()
+                .is_some_and(|byte| is_ident_byte(*byte))
+        })
+    })
 }
 
 /// Whether the first whole-word use of `name` in the masked test body is a
@@ -11202,7 +11246,7 @@ fn split_top_level(text: &str) -> Vec<&str> {
 /// Whether the place expression that continues `rest` (a chain of `.field`,
 /// `.0`, `[..]` and calls) is assigned, or ends in a mutating call. An
 /// unreadable chain fails closed.
-fn place_is_written(rest: &str) -> bool {
+fn place_is_written(rest: &str, methods_mutate: bool) -> bool {
     let mut rest = rest.trim_start();
     loop {
         if let Some(call) = rest.strip_prefix('.') {
@@ -11220,7 +11264,7 @@ fn place_is_written(rest: &str) -> bool {
                 return true;
             }
             if rest.starts_with('(') {
-                if is_mutating_method(&method) {
+                if methods_mutate && is_mutating_method(&method) {
                     return true;
                 }
                 match skip_balanced(rest, '(', ')') {
@@ -11279,7 +11323,7 @@ fn destructured_into(rest: &str) -> bool {
                     }
                     tail = trimmed;
                 }
-                return place_is_written(tail.trim_start());
+                return place_is_written(tail.trim_start(), true);
             }
             ';' if depth == 0 => return false,
             _ => {}

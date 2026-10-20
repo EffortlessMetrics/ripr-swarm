@@ -3361,9 +3361,12 @@ Policy reports are advisory unless `--mode fail-on-new-warning` is used.
 
 ```json
 {
-  "version": "1.0",
+  "version": "1.1",
   "tool": "ripr",
   "canonical_gap_id": "gap:rust:src/lib.rs:discount:predicate_boundary:predicate:amount>=discount_threshold",
+  "classification": "weakly_exposed",
+  "severity": "warning",
+  "confidence": 0.75,
   "probe": {
     "id": "probe:src_lib.rs:predicate:bbaa2c25",
     "family": "predicate",
@@ -3420,6 +3423,13 @@ Policy reports are advisory unless `--mode fail-on-new-warning` is used.
   "recommended_next_step": "Add below, equal, and above threshold tests."
 }
 ```
+
+Since packet version 1.1 (#8743), `classification`, `severity`, and
+`confidence` state the finding's exposure verdict outright, wire-identical to
+the `ripr check --json` finding fields of the same names; consumers must not
+derive the class from the `ripr` stage states, which are underdetermined on
+their own. `severity` resolves through the run's `ripr.toml` severity config,
+so a user override applies here exactly as it does on the check surface.
 
 `witness.explain_command` names the resolved repository root, not the spelling
 typed on the command line, so it analyzes the same repository when pasted from
@@ -13977,8 +13987,8 @@ Field contract:
   commit that descends from it; for an attempt with an after verdict, whether
   `HEAD` is still the head that verdict recorded; `null` when `HEAD` cannot be
   read or related to the prepared head), `disposition` (`resumable`,
-  `prepared_at_other_head`, `head_unknown`, `not_published`, `finished`,
-  `gap_open`, `unconfirmed`, or `ended`), `manifest`, `command` (the command
+  `prepared_at_other_head`, `retry_budget_spent`, `head_unknown`,
+  `not_published`, `finished`, `gap_open`, `unconfirmed`, or `ended`), `manifest`, `command` (the command
   that would move this attempt or its seam forward, or `null`),
   `receipt`, and `last_after_refusal`. A `ready_to_finish` attempt reads
   `finished` only when its receipt is `advisory` with movement `improved`;
@@ -13990,7 +14000,11 @@ Field contract:
   the current `HEAD`: a trust-bound attempt whose `HEAD` moved, or an ordinary
   attempt whose `HEAD` no longer descends from its prepared head, in which case
   the restart reason repeats the after phase's recovery (`git reset --soft
-  <prepared-head>`, then the attempt's after command).
+  <prepared-head>`, then the attempt's after command). An attempt awaiting its edit that recorded 5
+  after-phase refusals reads `retry_budget_spent`: its after phase refuses
+  without running, so `command` is the fresh before-phase start (or `null`
+  when the repair eligibility gate refuses the seam) and never the after
+  command.
   - `receipt` - `null` unless the attempt is `ready_to_finish`. Otherwise an
     object read from the attempt-local terminal receipt when that attempt
     retained one, else from `target/ripr/reports/agent-receipt.json` for a
@@ -14013,11 +14027,16 @@ Field contract:
     `null` and `shows_gap_closed` `false`. An old result can remain
     historically valid while `head_current` is false for today's HEAD;
     retained history is not current proof.
-  - `last_after_refusal` - `null`, or `{reason, recorded_unix_ms}` when the
+  - `last_after_refusal` - `null`, or `{reason, recorded_unix_ms,
+    refusal_count, retry_budget_exhausted, history}` when the
     attempt's most recent after phase refused after selecting the attempt (the
     attempt manifest's `last_after_refusal`: the final error followed by the
     cause and recovery the after phase printed, such as the changed analysis
-    inputs, bounded to 4096 bytes).
+    inputs, bounded to 4096 bytes). `refusal_count` is the total after-phase
+    refusals recorded for the attempt, `retry_budget_exhausted` is `true` once
+    that reaches 5 (the after phase then refuses without running and a new
+    attempt is required), and `history` lists up to the 8 most recent refusals
+    oldest first as `{reason, recorded_unix_ms}`.
 - `test_run` - `null`, or `{status, test_changed, next_step}` when a repair
   receipt issued for an attempt records `verification.status`
   `verification_not_run`. `status` is `"not_recorded"`: the repair receipt
