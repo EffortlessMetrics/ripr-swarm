@@ -25457,6 +25457,105 @@ fn agent_status_names_a_refused_after_phase_before_repeating_it()
     Ok(())
 }
 
+/// #8726: repeated no-movement refusals keep a bounded, append-only history
+/// and a count (the single `last_after_refusal` slot is overwritten), the
+/// narration escalates, and a spent retry budget stops the after phase with a
+/// typed refusal instead of another retry. The stop is a state observation:
+/// it is not recorded as one more refusal, and it fails closed even when the
+/// next edit would have moved the gap.
+#[test]
+fn repeated_no_movement_refusals_keep_history_and_stop_at_the_retry_budget()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = repair_route_workspace("refusal retry budget")?;
+    let printed = repair_route_before(&root)?;
+    let attempt_id = repair_route_attempt_id(&printed)?;
+
+    for refusal_number in 1..=5_u64 {
+        let refused = repair_route_after(&root, &attempt_id);
+        assert_eq!(refused.status.code(), Some(3), "{refused:?}");
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert!(stderr.contains("no repository movement"), "{stderr}");
+        // Escalation starts at the second refusal, never on the first.
+        assert_eq!(
+            stderr.contains("retry budget for this attempt"),
+            refusal_number > 1,
+            "{stderr}"
+        );
+        let manifest = repair_route_manifest(&root, &attempt_id)?;
+        assert_eq!(manifest["state"], "awaiting_edit", "{manifest:#}");
+        assert_eq!(
+            manifest["after_refusal_count"], refusal_number,
+            "{manifest:#}"
+        );
+        let history = manifest["after_refusal_history"]
+            .as_array()
+            .ok_or("missing refusal history")?;
+        // Earlier refusals survive every later one.
+        assert_eq!(history.len() as u64, refusal_number, "{manifest:#}");
+        assert_eq!(
+            history.last().map(|entry| &entry["reason"]),
+            Some(&manifest["last_after_refusal"]["reason"]),
+            "{manifest:#}"
+        );
+    }
+
+    // Status discloses the count, the history, and the spent budget.
+    let report = repair_route_status(&root)?;
+    let attempt = repair_route_attempt(&report, &attempt_id)?;
+    assert_eq!(
+        attempt["last_after_refusal"]["refusal_count"], 5,
+        "{report:#}"
+    );
+    assert_eq!(
+        attempt["last_after_refusal"]["retry_budget_exhausted"], true,
+        "{report:#}"
+    );
+    assert_eq!(
+        attempt["last_after_refusal"]["history"]
+            .as_array()
+            .map(Vec::len),
+        Some(5),
+        "{report:#}"
+    );
+    let reason = report["next_command"]["reason"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(reason.contains("retry budget is spent"), "{reason}");
+
+    // Even an edit that would move the gap does not finish a spent attempt.
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{REPAIR_ROUTE_WEAK_TEST}{REPAIR_ROUTE_BOUNDARY_TEST}"),
+    )?;
+    let stopped = repair_route_after(&root, &attempt_id);
+    assert_eq!(stopped.status.code(), Some(3), "{stopped:?}");
+    let stopped_stderr = String::from_utf8_lossy(&stopped.stderr);
+    assert!(
+        stopped_stderr.contains("spent its after-phase retry budget"),
+        "{stopped_stderr}"
+    );
+    // The recovery names a new attempt; the shared repair gate may withhold
+    // the literal start command, which is its own authority.
+    assert!(
+        stopped_stderr.contains("set the failed edits aside"),
+        "{stopped_stderr}"
+    );
+    let manifest = repair_route_manifest(&root, &attempt_id)?;
+    assert_eq!(manifest["state"], "awaiting_edit", "{manifest:#}");
+    assert!(
+        manifest.get("after").is_none_or(serde_json::Value::is_null),
+        "{manifest:#}"
+    );
+    assert_eq!(
+        manifest["after_refusal_count"], 5,
+        "the stop is not a refusal: {manifest:#}"
+    );
+    assert!(!root.join("target/ripr/reports/agent-receipt.json").exists());
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
 /// The after phase's stdout is exactly one JSON document end-to-end: an
 /// orchestrator can run a single JSON.parse on it. The document is the
 /// versioned `repair_after_result` envelope (`schema_version` `0.1`): the

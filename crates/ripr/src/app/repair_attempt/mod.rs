@@ -159,6 +159,19 @@ pub(crate) struct RepairAttemptManifest {
     /// one keep their exact bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) last_after_refusal: Option<RepairAttemptAfterRefusal>,
+    /// How many after-phase refusals this attempt has recorded in total. It is
+    /// monotonic and survives the history cap, so an attempt that already
+    /// failed many edits cannot look fresh. Excluded from the before
+    /// commitment; absent when zero.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub(crate) after_refusal_count: u32,
+    /// The most recent after-phase refusals, oldest first, capped at
+    /// `REPAIR_ATTEMPT_REFUSAL_HISTORY_MAX` (the oldest entries drop first;
+    /// `after_refusal_count` keeps the true total). `last_after_refusal`
+    /// overwrites; this history does not. Excluded from the before commitment;
+    /// absent when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) after_refusal_history: Vec<RepairAttemptAfterRefusal>,
     /// Terminal static-result artifacts retained at finish (`agent_receipt`,
     /// and the `agent_verify` document it was built from). Absent or empty on
     /// legacy manifests. Excluded from the before commitment, so adding them
@@ -171,6 +184,39 @@ pub(crate) struct RepairAttemptManifest {
     /// record the locator; absolute checkout spelling is not identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) store: Option<RepairAttemptStoreIdentity>,
+}
+
+fn is_zero_u32(value: &u32) -> bool {
+    *value == 0
+}
+
+/// Most after-phase refusals retained in `after_refusal_history`.
+pub(crate) const REPAIR_ATTEMPT_REFUSAL_HISTORY_MAX: usize = 8;
+
+/// After-phase refusals one attempt may record before its after phase stops
+/// retrying and requires a fresh attempt instead of looping.
+pub(crate) const REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET: u32 = 5;
+
+/// True once the attempt has recorded as many after-phase refusals as its
+/// retry budget allows. The attempt authority owns this decision; callers
+/// narrate it but do not recompute it.
+pub(crate) fn after_refusal_budget_exhausted(manifest: &RepairAttemptManifest) -> bool {
+    manifest.after_refusal_count >= REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
+}
+
+/// Records one refusal: overwrites `last_after_refusal`, counts it, and
+/// appends it to the capped history without losing earlier entries.
+fn push_after_refusal(manifest: &mut RepairAttemptManifest, refusal: RepairAttemptAfterRefusal) {
+    manifest.after_refusal_count = manifest.after_refusal_count.saturating_add(1);
+    manifest.after_refusal_history.push(refusal.clone());
+    let excess = manifest
+        .after_refusal_history
+        .len()
+        .saturating_sub(REPAIR_ATTEMPT_REFUSAL_HISTORY_MAX);
+    if excess > 0 {
+        manifest.after_refusal_history.drain(..excess);
+    }
+    manifest.last_after_refusal = Some(refusal);
 }
 
 /// Why the last after phase of an attempt refused, recorded by the attempt
@@ -1143,6 +1189,8 @@ fn complete_repair_attempt(
                 ],
                 after: None,
                 last_after_refusal: None,
+                after_refusal_count: 0,
+                after_refusal_history: Vec::new(),
                 terminal_artifacts: Vec::new(),
                 store: store.manifest_identity(),
             };
@@ -1819,6 +1867,8 @@ fn manifest_before_bytes(manifest: &RepairAttemptManifest) -> Result<Vec<u8>, St
     before.state = RepairAttemptState::AwaitingEdit;
     before.after = None;
     before.last_after_refusal = None;
+    before.after_refusal_count = 0;
+    before.after_refusal_history.clear();
     before.terminal_artifacts.clear();
     serde_json::to_vec_pretty(&before)
         .map_err(|error| format!("serialize repair attempt commitment failed: {error}"))
@@ -2423,11 +2473,12 @@ pub(crate) fn record_repair_attempt_after_refusal_from(
     if reason.is_empty() {
         return Err("an after-phase refusal needs a non-empty reason".to_string());
     }
-    manifest.last_after_refusal = Some(RepairAttemptAfterRefusal {
+    let refusal = RepairAttemptAfterRefusal {
         reason,
         repository_head: crate::agent::artifact::current_git_head(&root).ok(),
         recorded_unix_ms: current_unix_ms()?,
-    });
+    };
+    push_after_refusal(&mut manifest, refusal);
     validate_manifest(&manifest)?;
     let mut bytes = serde_json::to_vec_pretty(&manifest)
         .map_err(|error| format!("serialize repair attempt refusal failed: {error}"))?;
@@ -2532,11 +2583,12 @@ fn record_terminal_after_refusal_beside_verdict(
         return Err("an after-phase refusal needs a non-empty reason".to_string());
     }
     let mut manifest = base_manifest;
-    manifest.last_after_refusal = Some(RepairAttemptAfterRefusal {
+    let refusal = RepairAttemptAfterRefusal {
         reason,
         repository_head: crate::agent::artifact::current_git_head(&root).ok(),
         recorded_unix_ms: current_unix_ms()?,
-    });
+    };
+    push_after_refusal(&mut manifest, refusal);
     validate_manifest(&manifest)?;
     let mut bytes = serde_json::to_vec_pretty(&manifest)
         .map_err(|error| format!("serialize repair attempt refusal failed: {error}"))?;
@@ -3352,6 +3404,15 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
     {
         return Err("repair attempt after-phase refusal has an empty reason".to_string());
     }
+    if manifest.after_refusal_history.len() > REPAIR_ATTEMPT_REFUSAL_HISTORY_MAX
+        || (manifest.after_refusal_history.len() as u64) > u64::from(manifest.after_refusal_count)
+        || manifest
+            .after_refusal_history
+            .iter()
+            .any(|refusal| refusal.reason.trim().is_empty())
+    {
+        return Err("repair attempt after-phase refusal history is inconsistent".to_string());
+    }
     if manifest.artifacts.iter().any(|artifact| {
         artifact.role.is_empty() || artifact.path.is_empty() || !is_sha256_digest(&artifact.sha256)
     }) {
@@ -3734,6 +3795,8 @@ mod tests {
             non_claims: vec!["not merge authority".to_string()],
             after: None,
             last_after_refusal: None,
+            after_refusal_count: 0,
+            after_refusal_history: Vec::new(),
             terminal_artifacts: Vec::new(),
             store: None,
         })

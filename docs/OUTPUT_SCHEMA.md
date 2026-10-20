@@ -14013,11 +14013,16 @@ Field contract:
     `null` and `shows_gap_closed` `false`. An old result can remain
     historically valid while `head_current` is false for today's HEAD;
     retained history is not current proof.
-  - `last_after_refusal` - `null`, or `{reason, recorded_unix_ms}` when the
+  - `last_after_refusal` - `null`, or `{reason, recorded_unix_ms,
+    refusal_count, retry_budget_exhausted, history}` when the
     attempt's most recent after phase refused after selecting the attempt (the
     attempt manifest's `last_after_refusal`: the final error followed by the
     cause and recovery the after phase printed, such as the changed analysis
-    inputs, bounded to 4096 bytes).
+    inputs, bounded to 4096 bytes). `refusal_count` is the total after-phase
+    refusals recorded for the attempt, `retry_budget_exhausted` is `true` once
+    that reaches 5 (the after phase then refuses without running and a new
+    attempt is required), and `history` lists up to the 8 most recent refusals
+    oldest first as `{reason, recorded_unix_ms}`.
 - `test_run` - `null`, or `{status, test_changed, next_step}` when a repair
   receipt issued for an attempt records `verification.status`
   `verification_not_run`. `status` is `"not_recorded"`: the repair receipt
