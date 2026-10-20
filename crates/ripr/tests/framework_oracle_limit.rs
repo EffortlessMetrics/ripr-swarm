@@ -686,30 +686,72 @@ fn a_commented_environment_write_activates_nothing() -> Result<(), String> {
 
 #[test]
 fn a_shadow_inside_a_callback_reaches_an_assertion_inside_it() -> Result<(), String> {
-    // The assertion sits in the callback block that rebinds the local.
-    let assertion = format!("{EXPECT_ASSERT}\n        }});");
-    for setup in [
-        "let tokens = tokenize(\"7\");\n        apply(|| {\n            let tokens = vec![1u32];",
-        "let tokens = tokenize(\"7\");\n        let f = || {\n            let tokens = vec![1u32];",
-        "let tokens = tokenize(\"7\");\n        std::thread::spawn(move || {\n            let tokens = vec![1u32];",
-        "let tokens = tokenize(\"7\");\n        apply(|| {\n            if ready() {\n                let tokens = vec![1u32];",
+    // Each case is the setup, then what closes the open block after the
+    // assertion (nothing when the shadow is not in a block).
+    let cases: [(&str, &str); 14] = [
+        // The assertion sits in the callback block that rebinds the local.
+        (
+            "let tokens = tokenize(\"7\");\n        apply(|| {\n            let tokens = vec![1u32];",
+            "\n        });",
+        ),
+        (
+            "let tokens = tokenize(\"7\");\n        let f = || {\n            let tokens = vec![1u32];",
+            "\n        };",
+        ),
+        (
+            "let tokens = tokenize(\"7\");\n        std::thread::spawn(move || {\n            let tokens = vec![1u32];",
+            "\n        });",
+        ),
+        (
+            "let tokens = tokenize(\"7\");\n        apply(|| {\n            if ready() {\n                let tokens = vec![1u32];",
+            "\n            }\n        });",
+        ),
+        // A closure parameter or `if let` binder of the same name.
+        (
+            "let tokens = tokenize(\"7\");\n        run(|tokens| {",
+            "\n        });",
+        ),
+        (
+            "let tokens = tokenize(\"7\");\n        run(a, |tokens| {\n            foo();",
+            "\n        });",
+        ),
+        (
+            "let tokens = tokenize(\"7\");\n        let g = |tokens| {",
+            "\n        };",
+        ),
+        (
+            "let tokens = tokenize(\"7\");\n        items.iter().for_each(|(i, tokens)| {",
+            "\n        });",
+        ),
+        (
+            "let tokens = tokenize(\"7\"); run(|tokens| {",
+            "\n        });",
+        ),
+        (
+            "let tokens = tokenize(\"7\");\n        foo(if let Some(tokens) = p {",
+            "\n        } else {\n        });",
+        ),
+        (
+            "let tokens = tokenize(\"7\");\n        let r = if let Some(tokens) = p {",
+            "\n        } else {\n        };",
+        ),
         // A closure body that rewrites a `mut` owner binding.
-        "let mut tokens = tokenize(\"7\");\n        run(|| {\n            tokens = vec![1u32];\n        });",
+        (
+            "let mut tokens = tokenize(\"7\");\n        run(|| {\n            tokens = vec![1u32];\n        });",
+            "",
+        ),
         // Attribute-prefixed shadow, and a borrow that can rewrite the value.
-        "let tokens = tokenize(\"7\");\n        #[inline]\n        let tokens = vec![1u32];",
-        "let mut tokens = tokenize(\"7\");\n        std::mem::replace(&mut tokens, vec![1u32]);",
-    ] {
-        let assertion = if setup.contains("run(|| {")
-            || setup.contains("#[allow")
-            || setup.contains("mem::replace")
-        {
-            EXPECT_ASSERT.to_string()
-        } else if setup.contains("if ready()") {
-            format!("{EXPECT_ASSERT}\n            }}\n        }});")
-        } else {
-            assertion.clone()
-        };
-        all_keep_gap(setup, &assertion)?;
+        (
+            "let tokens = tokenize(\"7\");\n        #[inline]\n        let tokens = vec![1u32];",
+            "",
+        ),
+        (
+            "let mut tokens = tokenize(\"7\");\n        std::mem::replace(&mut tokens, vec![1u32]);",
+            "",
+        ),
+    ];
+    for (setup, close) in cases {
+        all_keep_gap(setup, &format!("{EXPECT_ASSERT}{close}"))?;
     }
     Ok(())
 }
@@ -721,6 +763,8 @@ fn a_closed_callback_shadow_leaves_the_owner_binding() -> Result<(), String> {
         "let tokens = tokenize(\"7\");\n        apply(|| {\n            let tokens = vec![1u32];\n        });",
         "let tokens = tokenize(\"7\");\n        let f = || {\n            let tokens = vec![1u32];\n        };",
         "let tokens = tokenize(\"7\");\n        apply(|| {\n            let other = vec![1u32];\n        });",
+        "let tokens = tokenize(\"7\");\n        run(|other| {\n            foo();\n        });",
+        "let tokens = tokenize(\"7\");\n        foo(if let Some(other) = p {\n            bar();\n        } else {\n            baz();\n        });",
     ] {
         all_withheld(setup, EXPECT_ASSERT)?;
     }

@@ -274,7 +274,8 @@ non-ignored related test matches one of these shapes:
   operand is a call to the owner or a local whose live binding where the
   assertion runs was made by `let [mut] x = ..owner(..)`. A later `let`
   (even on the same line, in a closure or callback body the assertion sits in,
-  or behind an attribute), an assignment or `&mut x` borrow, a binding closed
+  behind an attribute, or a closure parameter or `if let` binder of the same name
+  whose body holds the assertion), an assignment (destructuring included) or `&mut x` borrow, a binding closed
   with its block, and a binding made only after the assertion do not reach it.
 - **insta**: a `direct_owner_call` test with a snapshot macro that has no
   inline `@` literal, whose snapshotted value (after an optional literal name)

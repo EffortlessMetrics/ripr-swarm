@@ -650,6 +650,15 @@ mod tests {
             "let out = row(1);\n#[inline]\nlet out = vec![1];",
             "let mut out = row(1); std::mem::replace(&mut out, vec![1]);",
             "let mut out = row(1);\nrun(|| { out = vec![1]; });",
+            "let mut out = row(1);\nlet taken = std::mem::take(&mut out);",
+            "let mut out = row(1);\nlet mut y = 0;\n(out, y) = (vec![1], 1);",
+            "let out = row(1);\nrun(|out| {",
+            "let out = row(1);\nrun(a, |out| {\n    foo();",
+            "let out = row(1);\nlet g = |out| {",
+            "let out = row(1);\nitems.iter().for_each(|(i, out)| {",
+            "let out = row(1); run(|out| {",
+            "let out = row(1);\nfoo(if let Some(out) = p {",
+            "let out = row(1);\nlet r = if let Some(out) = p {",
         ] {
             assert!(!derives(replaced, "out"), "{replaced}");
         }
@@ -662,6 +671,8 @@ mod tests {
             "let out = Wrap { items: vec![row(1)] };",
             "let out = row(1);\napply(|| {\n    let out = vec![1];\n});",
             "let out = row(1);\nlet f = || {\n    let other = vec![1];\n};",
+            "let out = row(1);\nrun(|other| {",
+            "let out = row(1);\nfoo(if let Some(other) = p {",
         ] {
             assert!(derives(kept, "out"), "{kept}");
         }

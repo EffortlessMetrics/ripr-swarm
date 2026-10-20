@@ -216,6 +216,22 @@ fn walk_bindings(
             '{' => {
                 let part_of_statement = nest > 0 || statement.starts_with_let();
                 let resumes = if part_of_statement {
+                    // A binder in the header (a closure parameter, `if let
+                    // Some(x) = ..` in an argument or initializer) is in scope
+                    // inside the body only, and the body is where the cut may
+                    // fall: the statement is judged again, whole, at its `;`.
+                    if matches!(
+                        statement_binding_verdict(
+                            &statement.skeleton,
+                            &statement.full,
+                            name,
+                            owner_name,
+                            reach,
+                        ),
+                        Some(BindingVerdict::Withdrawn)
+                    ) {
+                        scope.push((depth + 1, false));
+                    }
                     // Keep what precedes the brace; the statement resumes at
                     // the matching `}`.
                     Some((std::mem::take(&mut statement), statement_depth, nest))
@@ -417,7 +433,8 @@ fn statement_binding_verdict(
             // Binders are read outside braces: a closure parameter, not a
             // pattern in the closure's body.
             let outside = trimmed.strip_prefix("let ").unwrap_or(rest);
-            return binds_by_pattern(outside, name).then_some(BindingVerdict::Withdrawn);
+            return (binds_by_pattern(outside, name) || borrows_mutably(outside, name))
+                .then_some(BindingVerdict::Withdrawn);
         }
         let bound = pattern
             .split_once(':')
@@ -446,7 +463,9 @@ fn statement_binding_verdict(
     }
     match assignment_target(trimmed) {
         Some(target) if contains_word(target, name) => Some(BindingVerdict::Withdrawn),
-        _ => None,
+        _ => destructuring_target(trimmed)
+            .filter(|target| contains_word(target, name))
+            .map(|_| BindingVerdict::Withdrawn),
     }
 }
 
@@ -461,6 +480,15 @@ fn binds_by_pattern(statement: &str, name: &str) -> bool {
     if header.starts_with("if let ")
         || header.starts_with("while let ")
         || header.starts_with("for ")
+        || ["if let ", "while let ", "for "].iter().any(|keyword| {
+            // The binder can sit inside an argument list or an initializer.
+            statement.match_indices(keyword).any(|(at, _)| {
+                !statement[..at]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            })
+        })
     {
         return true;
     }
@@ -538,6 +566,25 @@ fn assignment_target(statement: &str) -> Option<&str> {
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '*'));
     plain_place.then_some(target)
+}
+
+/// The tuple or slice pattern assigned by `statement` (`(x, y) = ..`,
+/// `[x, _] = ..`).
+fn destructuring_target(statement: &str) -> Option<&str> {
+    let bytes = statement.as_bytes();
+    let at = (0..bytes.len()).find(|&at| {
+        bytes[at] == b'='
+            && !matches!(bytes.get(at + 1), Some(b'=') | Some(b'>'))
+            && !matches!(
+                at.checked_sub(1).map(|prev| bytes[prev]),
+                Some(b'=') | Some(b'!')
+            )
+            && !is_comparison_angle(bytes, at)
+    })?;
+    let target = statement[..at].trim();
+    (target.starts_with('(') && target.ends_with(')')
+        || target.starts_with('[') && target.ends_with(']'))
+    .then_some(target)
 }
 
 /// `<=` / `>=` compare; `<<=` / `>>=` assign.
@@ -781,6 +828,15 @@ mod tests {
             "let x = own(2);\napply(|| { let x = 2usize;",
             // An attribute does not hide the shadowing `let`.
             "let x = own(2);\n#[inline]\nlet x = 2usize;",
+            // A closure or `if let` binder of the same name shadows inside the body.
+            "let x = own(2);\nrun(|x| {",
+            "let x = own(2);\nrun(a, |x| {\n    foo();",
+            "let x = own(2);\nlet g = |x| {",
+            "let x = own(2);\nitems.iter().for_each(|x| {",
+            "let x = own(2);\nitems.iter().for_each(|(i, x)| {",
+            "let x = own(2); run(|x| {",
+            "let x = own(2);\nfoo(if let Some(x) = p {",
+            "let x = own(2);\nlet r = if let Some(x) = p {",
             // A closure body or a borrow that rewrites the binding.
             "let mut x = own(2);\napply(|| { x = 2usize; });",
         ] {
@@ -792,6 +848,10 @@ mod tests {
             "let x = own(2);\napply(|| {\n    let x = 2usize;\n});",
             "let x = own(2);\nlet f = || {\n    let x = 2usize;\n};",
             "let x = own(2);\napply(|| {\n    let y = 2usize;\n});",
+            // A parameter of another name leaves the owner binding visible.
+            "let x = own(2);\nrun(|y| {",
+            "let x = own(2);\nrun(a, |y| {\n    foo();",
+            "let x = own(2);\nfoo(if let Some(y) = p {",
             "let x = own(2);\napply(|| {\n    if c {\n        let x = 2usize;\n    }\n});",
             "let x = own(2);",
         ] {
