@@ -269,9 +269,17 @@ fn validate_test_covered_by_recorded_with(
             if key.as_ref().is_some_and(|key| warmed.contains(key)) {
                 continue;
             }
-            let captured = capture_past_lock_wait(&spawn, &mut capture);
-            diagnostics.push(CommandDiagnostic::captured("cargo", &spawn.args, &captured));
-            let output = captured?;
+            // One diagnostic row per attempt, so the time spent in earlier
+            // lock-wait attempts is not lost from the report.
+            let output = capture_past_lock_wait(&spawn, &mut |attempt| {
+                let captured = capture(attempt);
+                diagnostics.push(CommandDiagnostic::captured(
+                    "cargo",
+                    &attempt.args,
+                    &captured,
+                ));
+                captured
+            })?;
             if output.timed_out || !output.status.is_some_and(|status| status.success()) {
                 return Ok(enumeration_result(output, spawn.timeout));
             }
@@ -1623,6 +1631,107 @@ mod tests {
             timeout: TEST_COVERED_BY_LIST_TIMEOUT,
             description: "test",
         }
+    }
+
+    fn timed_for(
+        millis: u64,
+        status: Option<std::process::ExitStatus>,
+        stdout: &str,
+        stderr: &str,
+        timed_out: bool,
+    ) -> TimedOutput {
+        let mut output = timed_output(status, stdout, stderr, timed_out);
+        output.duration = Duration::from_millis(millis);
+        output
+    }
+
+    #[test]
+    fn test_covered_by_lock_wait_attempts_are_all_recorded_with_their_durations()
+    -> Result<(), String> {
+        let commands = [
+            common(1, "cargo test -p xtask slow_filter"),
+            common(2, "cargo test -p xtask other_filter"),
+        ];
+        let lock = "    Blocking waiting for file lock on build directory\n";
+        let mut script = vec![
+            (
+                "slow_filter",
+                "--no-run",
+                timed_for(1100, None, "", lock, true),
+            ),
+            (
+                "slow_filter",
+                "--no-run",
+                timed_for(2200, None, "", lock, true),
+            ),
+            (
+                "slow_filter",
+                "--no-run",
+                timed_for(3300, Some(status(0)), "", "", false),
+            ),
+            (
+                "slow_filter",
+                "--list",
+                timed_for(4400, Some(status(0)), "slow_case: test\n", "", false),
+            ),
+            // The second selector shares the first's warmed build, so it only
+            // lists.
+            (
+                "other_filter",
+                "--list",
+                timed_for(600, Some(status(0)), "other_case: test\n", "", false),
+            ),
+        ]
+        .into_iter();
+        let mut rows = Vec::new();
+        let observations = super::validate_test_covered_by_recorded_with(
+            "policy.toml",
+            &commands,
+            FilePolicyHost::Unix,
+            &mut rows,
+            |spawn| {
+                let (filter, flag, output) = script
+                    .next()
+                    .ok_or_else(|| "unexpected extra spawn".to_string())?;
+                if !spawn.args.iter().any(|arg| arg == filter)
+                    || !spawn.args.iter().any(|arg| arg == flag)
+                {
+                    return Err(format!("unexpected argv {:?}", spawn.args));
+                }
+                Ok(output)
+            },
+        )?;
+        if script.next().is_some() {
+            return Err("scripted spawns were not all consumed".to_string());
+        }
+        let selected = observations
+            .iter()
+            .map(|observation| observation.selected.clone())
+            .collect::<Vec<_>>();
+        if selected
+            != [
+                Some(vec!["slow_case".to_string()]),
+                Some(vec!["other_case".to_string()]),
+            ]
+        {
+            return Err(format!("selectors were not kept distinct: {selected:?}"));
+        }
+        let elapsed = rows.iter().filter_map(|row| row.elapsed_ms).sum::<u128>();
+        if rows.len() != 5 || elapsed != 11_600 {
+            return Err(format!(
+                "every attempt must be recorded: {} rows, {elapsed} ms",
+                rows.len()
+            ));
+        }
+        let first_selector = rows
+            .iter()
+            .take(4)
+            .filter_map(|row| row.elapsed_ms)
+            .sum::<u128>();
+        if first_selector != 11_000 {
+            return Err(format!("lock-wait attempts lost time: {first_selector}"));
+        }
+        Ok(())
     }
 
     #[test]
