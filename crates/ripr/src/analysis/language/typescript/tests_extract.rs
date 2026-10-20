@@ -2616,7 +2616,8 @@ fn unused_function_reach_body(
             call_text,
             function_body_statements_from_argument(
                 call.arguments.get(declaration_callback_index(call))?,
-            )?,
+            )?
+            .as_slice(),
         )
     };
     let code = byte_preserving_code_mask(body)?;
