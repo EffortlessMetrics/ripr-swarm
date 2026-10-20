@@ -16317,6 +16317,7 @@ tests = [
   "crates/ripr/tests/call_budget_limit.rs::an_independently_established_positive_keeps_its_class",
   "crates/ripr/tests/call_budget_limit.rs::a_saturated_test_past_the_related_row_cap_still_withholds_the_gap",
   "crates/ripr/tests/call_budget_limit.rs::an_already_unknown_finding_names_the_budget_and_drops_call_derived_absence",
+  "crates/ripr/tests/call_budget_limit.rs::the_call_budget_reason_wins_over_the_framework_reason_when_both_apply",
   "crates/ripr/src/analysis/classify/framework_oracle.rs::tests::a_mock_closure_counts_only_when_it_reads_a_named_argument",
   "crates/ripr/src/analysis/classify/framework_oracle.rs::tests::literal_call_names_read_the_first_literal_of_whole_callees",
   "crates/ripr/src/analysis/classify/framework_oracle.rs::tests::redaction_selectors_are_the_path_literals_of_the_argument_list",
