@@ -128,6 +128,9 @@ fn recomputed_stub_for_the_same_seam_is_flagged_already_present() -> Result<(), 
 
 /// A different test that happens to share the base name is not ripr's stub:
 /// the `--write` semantics are unchanged and the name still suffixes.
+/// #8990 review X1: applying the write twice must report ripr's own `_2`
+/// write as already present on the second run — the file stays unchanged —
+/// instead of suffixing a `_3` duplicate.
 #[test]
 fn same_named_but_different_test_still_suffixes() -> Result<(), String> {
     let with_other_test = "pub fn price(amount: u32, threshold: u32) -> u32 {
@@ -155,6 +158,84 @@ mod tests {
         !stub.already_present,
         "a genuinely different test with the same name is not an already-written stub"
     );
+
+    // Simulate the first `--write`: the `_2` stub text lands inside the
+    // inline module, after the user's same-named test.
+    let close = with_other_test.rfind('}').ok_or("module close brace")?;
+    let (head, tail) = with_other_test.split_at(close);
+    let rewritten = format!("{head}{}{tail}", stub.text.trim_start_matches('\n'));
+    let seam = seam_at(
+        "src/lib.rs",
+        &rewritten,
+        "amount >= threshold",
+        SeamKind::PredicateBoundary,
+        boundary("amount == threshold"),
+    )?;
+    let second = rust_test_stub(&seam, None, &rewritten).map_err(|r| r.reason().to_string())?;
+    assert!(
+        second.already_present,
+        "the second run must find ripr's own `_2` write under the suffixed name, not suffix a `_3`"
+    );
+    assert_eq!(
+        second.test_name, "price_boundary_discriminator_2",
+        "the already-written report names the test on disk"
+    );
+    // The second run proposes no edit: applying its text leaves the file
+    // byte-identical, which is what the CLI's already-present skip
+    // guarantees.
+    let close = rewritten.rfind('}').ok_or("module close brace")?;
+    let (head, tail) = rewritten.split_at(close);
+    let re_rewritten = format!("{head}{}{tail}", second.text.trim_start_matches('\n'));
+    assert_eq!(
+        re_rewritten, rewritten,
+        "an already-present second run must leave the file unchanged"
+    );
+    Ok(())
+}
+
+/// #8990 review X2: a copy of the rendered stub inside a block comment or a
+/// raw string is not a test Cargo discovers. The name-collision check and the
+/// already-written detection parse the module, so the commented stub neither
+/// occupies the base name nor flags the stub present: `--write` inserts the
+/// real test under the base name.
+#[test]
+fn commented_stub_does_not_count_as_written_or_named() -> Result<(), String> {
+    let seam = seam_at(
+        "src/lib.rs",
+        PRICE,
+        "amount >= threshold",
+        SeamKind::PredicateBoundary,
+        boundary("amount == threshold"),
+    )?;
+    let rendered = rust_test_stub(&seam, None, PRICE).map_err(|r| r.reason().to_string())?;
+    let anchor = "    #[test]\n    fn price_works() {";
+    for embedded in [
+        // Block comment holding the exact proposed function.
+        format!("    /*\n{}    */", rendered.text.trim_start_matches('\n')),
+        // Raw string holding the exact proposed function.
+        format!(
+            "    const COMMENTED: &str = r##\"\n{}\"##;",
+            rendered.text.trim_start_matches('\n')
+        ),
+    ] {
+        let source = PRICE.replacen(anchor, &format!("{embedded}\n{anchor}"), 1);
+        let seam = seam_at(
+            "src/lib.rs",
+            &source,
+            "amount >= threshold",
+            SeamKind::PredicateBoundary,
+            boundary("amount == threshold"),
+        )?;
+        let stub = rust_test_stub(&seam, None, &source).map_err(|r| r.reason().to_string())?;
+        assert_eq!(
+            stub.test_name, "price_boundary_discriminator",
+            "a commented-out stub does not occupy the base name: {embedded}"
+        );
+        assert!(
+            !stub.already_present,
+            "a commented-out stub is not an already-written test: {embedded}"
+        );
+    }
     Ok(())
 }
 
