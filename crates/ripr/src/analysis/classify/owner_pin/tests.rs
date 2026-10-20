@@ -2765,7 +2765,7 @@ fn declared_holder_types_and_unreadable_items_refuse_the_static_pin_but_plain_sc
             .functions()
             .iter()
             .find(|function| function.name == "weight")?;
-        expected_operand_value(&index, index.tests().at(0), operand, owner)
+        expected_operand_value_admitting(&index, index.tests().at(0), operand, owner)
             .map(|value| value.trim().to_string())
     };
     let read = "assert_eq!(weight(4), EXPECTED);";
@@ -2787,6 +2787,9 @@ fn declared_holder_types_and_unreadable_items_refuse_the_static_pin_but_plain_sc
         "include!(\"gen.rs\");\nstatic EXPECTED: u32 = weight(4);",
         "#[path = \"gen.rs\"]\nmod gen;\nstatic EXPECTED: u32 = weight(4);",
         "macro_rules! t { () => { type u32 = AtomicUsize; } }\nstatic EXPECTED: u32 = weight(4);",
+        // Glob-only fallback: the initializer's holder type refuses too.
+        "use super::*;\nstruct Counter(AtomicUsize);\nstatic EXPECTED: u32 = Counter::new().get();",
+        "use super::*;\nstruct Counter(AtomicUsize);\nstatic EXPECTED: u32 = weight(4) + Counter::new().get();",
     ] {
         assert_eq!(value(items, read, "EXPECTED"), None, "{items}");
     }
@@ -2797,10 +2800,107 @@ fn declared_holder_types_and_unreadable_items_refuse_the_static_pin_but_plain_sc
         "static EXPECTED: u32 = weight(4);",
         "use m::*;\nstatic EXPECTED: u32 = weight(4);",
         "use m::u32_helper::{self};\nstatic EXPECTED: u32 = weight(4);",
+        "use super::*;\nstatic EXPECTED: u32 = 12;",
+        "use super::*;\nstruct Counter(u32);\nstatic EXPECTED: u32 = weight(4);",
+        "const EXPECTED: u32 = 12;",
+        "static EXPECTED: u32 = 12;",
+        // A bare `include` identifier is not the `include!` macro.
+        "fn include() {}\nstatic EXPECTED: u32 = weight(4);",
     ] {
         let got = value(items, read, "EXPECTED");
         assert!(got.is_some(), "{items}");
     }
+}
+
+/// #8928 review: the reveal side's `expected_operand_value` must keep a
+/// self-computed binding readable (so the cap applies) whenever the scan can
+/// merely not rule a holder or rebinding out. A refusal there would return
+/// `None` and restore full credit, which is the unsafe direction.
+#[test]
+fn unreadable_items_never_clear_the_self_computed_expected_value() {
+    let lookup = |items: &str, body: &str, operand: &str, admitting: bool| -> Option<String> {
+        let tests = format!("use demo::weight;\n{items}\n#[test]\nfn weighs() {{\n{body}\n}}\n");
+        let index = index(&[(LIB, WEIGHT_LIB), (TESTS, &tests)]);
+        assert_eq!(index.tests().len(), 1, "fixture must hold exactly one test");
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "weight")?;
+        let test = index.tests().at(0);
+        if admitting {
+            expected_operand_value_admitting(&index, test, operand, owner)
+        } else {
+            expected_operand_value(&index, test, operand, owner)
+        }
+        .map(|value| value.trim().to_string())
+    };
+    let let_read =
+        |decl: &str| format!("let expected{decl} = weight(2);\nassert_eq!(weight(2), expected);");
+    for (items, body) in [
+        // cfg-gated holder, shadowed by the live same-name type.
+        (
+            "#[cfg(any())]\nstruct Counter(AtomicUsize);\nstruct Counter(u32);",
+            let_read(": Counter"),
+        ),
+        // Same name in an unrelated module.
+        (
+            "mod a { pub struct Counter(AtomicUsize); }\nstruct Counter(u32);",
+            let_read(": Counter"),
+        ),
+        // A helper macro anywhere in the file.
+        ("macro_rules! helper { () => {}; }", let_read(": u32")),
+        ("macro_rules! helper { () => {}; }", let_read("")),
+        ("include!(\"gen.rs\");", let_read(": u32")),
+        (
+            "use super::*;\nstruct Counter(AtomicUsize);",
+            let_read(": u32"),
+        ),
+    ] {
+        assert_eq!(
+            lookup(items, &body, "expected", false),
+            Some("weight(2)".to_string()),
+            "{items}"
+        );
+    }
+    // The same helper macro leaves plain literals and calls readable too.
+    for body in [
+        "let expected: u32 = 12;\nassert_eq!(weight(2), expected);",
+        "let expected: u32 = make();\nassert_eq!(weight(2), expected);",
+    ] {
+        assert!(
+            lookup("macro_rules! helper { () => {}; }", body, "expected", false).is_some(),
+            "{body}"
+        );
+    }
+    assert_eq!(
+        lookup(
+            "macro_rules! helper { () => {}; }\nstatic EXPECTED: u32 = 12;",
+            "assert_eq!(weight(2), EXPECTED);",
+            "EXPECTED",
+            false
+        ),
+        Some("12".to_string())
+    );
+    // Admission still refuses the unreadable shapes.
+    assert_eq!(
+        lookup(
+            "macro_rules! helper { () => {}; }",
+            &let_read(": u32"),
+            "expected",
+            true
+        ),
+        None
+    );
+    // Known interior-mutable names (#8112) keep refusing on both paths.
+    assert_eq!(
+        lookup(
+            "",
+            "let expected = Cell::new(weight(2));\nexpected.set(6);\nassert_eq!(weight(2), expected);",
+            "expected",
+            false
+        ),
+        None
+    );
 }
 
 #[test]
@@ -2811,12 +2911,16 @@ fn scalar_names_rebound_sees_raw_identifier_and_self_imports() {
         "use m::u32::{self};",
         "use m::{u32::{self, A}};",
         "include!(\"x.rs\");",
+        "include ! (\"x.rs\");",
         "#[path = \"x.rs\"]\nmod m;",
         "macro_rules! t { () => {}; }",
     ] {
         assert!(scalar_names_rebound("u32", source), "{source}");
     }
     for source in [
+        "fn include() {}",
+        "let include = 1;",
+        "const S: &str = include_str!(\"x.txt\");",
         "use m::u32::MAX;",
         "fn f(path: &str) {}",
         "let x = include_str;",

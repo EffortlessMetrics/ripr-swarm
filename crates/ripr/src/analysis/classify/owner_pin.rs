@@ -9805,6 +9805,32 @@ pub(in crate::analysis) fn expected_operand_value(
     operand: &str,
     owner: &FunctionSummary,
 ) -> Option<String> {
+    expected_operand_lookup(index, test, operand, owner, false)
+}
+
+/// #8928: [`expected_operand_value`] with the holder-type and unreadable-item
+/// refusals applied, as an owner-pin admission would. The reveal side never
+/// uses it: a refusal there returns `None`, which keeps full credit, so a
+/// refusal on a shape the scan merely cannot read (a cfg-gated or same-named
+/// holder, a `macro_rules!` file) would turn a self-computed comparison into
+/// a pin. Only a known interior-mutable name (#8112) clears the cap.
+#[cfg(test)]
+pub(in crate::analysis) fn expected_operand_value_admitting(
+    index: &RustIndex,
+    test: &TestSummary,
+    operand: &str,
+    owner: &FunctionSummary,
+) -> Option<String> {
+    expected_operand_lookup(index, test, operand, owner, true)
+}
+
+fn expected_operand_lookup(
+    index: &RustIndex,
+    test: &TestSummary,
+    operand: &str,
+    owner: &FunctionSummary,
+    admitting: bool,
+) -> Option<String> {
     let in_scope = constant_scope(index, test, &owner.file);
     let mut seen = BTreeSet::new();
     let mut current = mask_comments_and_strings(operand).trim().to_string();
@@ -9812,8 +9838,8 @@ pub(in crate::analysis) fn expected_operand_value(
     while is_plain_identifier(&current) && current != owner.name && seen.insert(current.clone()) {
         let next = match receiver_let_bindings(test, &current) {
             Some(bindings) => match bindings.as_slice() {
-                [binding] => immutable_let_value(index, test, binding),
-                [] => single_constant_value(index, &current, &in_scope),
+                [binding] => immutable_let_value(index, test, binding, admitting),
+                [] => single_constant_value(index, &current, &in_scope, admitting),
                 _ => None,
             },
             None => None,
@@ -9831,7 +9857,12 @@ pub(in crate::analysis) fn expected_operand_value(
 /// name), unless the `let` is `mut`, so a later assignment or `push` may
 /// change it, or carries an attribute (`#[cfg(..)] let`) that may compile
 /// it away (#7066 review), as [`let_bound_owner_call`] refuses.
-fn immutable_let_value(index: &RustIndex, test: &TestSummary, binding: &str) -> Option<String> {
+fn immutable_let_value(
+    index: &RustIndex,
+    test: &TestSummary,
+    binding: &str,
+    admitting: bool,
+) -> Option<String> {
     let masked = mask_comments_and_strings(&test.body);
     let binding_at = (binding.as_ptr() as usize).checked_sub(test.body.as_ptr() as usize)?;
     let let_at = *whole_word_offsets(masked.get(..binding_at)?, "let").last()?;
@@ -9848,7 +9879,7 @@ fn immutable_let_value(index: &RustIndex, test: &TestSummary, binding: &str) -> 
         .files()
         .get(&test.file)
         .map(|facts| facts.source.to_string());
-    if may_mutate_through_shared(declared_type(&binding), value, source.as_deref()) {
+    if may_mutate_through_shared(declared_type(&binding), value, source.as_deref(), admitting) {
         return None;
     }
     Some(value.to_string())
@@ -9984,21 +10015,31 @@ fn may_mutate_through_shared(
     declared: Option<&str>,
     initializer: &str,
     source: Option<&str>,
+    admitting: bool,
 ) -> bool {
+    // #8928: the declared-holder and unreadable-item refusals are admission
+    // only; see `expected_operand_value_admitting`.
+    let holder = |text: &str| admitting && names_interior_mutable_declared_type(text, source);
     match declared {
-        Some(declared) if has_interior_mutability(declared) => true,
-        Some(declared) if names_interior_mutable_declared_type(declared, source) => true,
-        Some(declared) if is_plain_scalar_type(declared) => match source {
-            Some(source) if !scalar_names_rebound(declared, source) => false,
-            // #8928: a rebound or unreadable scalar name proves nothing, so
-            // an opaque initializer (`make()`) cannot be trusted either.
-            Some(source) if !glob_only_rebound(declared, source) => true,
-            Some(_) | None => has_interior_mutability(initializer),
-        },
-        _ => {
-            has_interior_mutability(initializer)
-                || names_interior_mutable_declared_type(initializer, source)
+        Some(declared) if has_interior_mutability(declared) || holder(declared) => true,
+        Some(declared) if is_plain_scalar_type(declared) => {
+            if !admitting {
+                // Main's rules (#8112): rebinding by `type`/`use`/glob only.
+                let proven = source.is_some_and(|source| {
+                    !scalar_names_rebound_with(declared, source, true, false)
+                });
+                return !proven && has_interior_mutability(initializer);
+            }
+            match source {
+                Some(source) if !scalar_names_rebound(declared, source) => false,
+                // A rebound or unreadable scalar name proves nothing, so an
+                // opaque initializer (`make()`) cannot be trusted either.
+                Some(source) if !glob_only_rebound(declared, source) => true,
+                // Glob-only: the initializer text decides, holders included.
+                Some(_) | None => has_interior_mutability(initializer) || holder(initializer),
+            }
         }
+        _ => has_interior_mutability(initializer) || holder(initializer),
     }
 }
 
@@ -10029,17 +10070,18 @@ fn is_plain_scalar_type(declared: &str) -> bool {
 /// not. Limits: `include!`, `#[path]` and macro-generated types are not
 /// scanned.
 fn scalar_names_rebound(declared: &str, source: &str) -> bool {
-    scalar_names_rebound_with(declared, source, true)
+    scalar_names_rebound_with(declared, source, true, true)
 }
 
 /// #8928: whether a glob import is the only reason `declared` is no longer
 /// proven scalar, which keeps the initializer-text fallback (`use super::*`
 /// in a test module is common and names no specific rebinding).
 fn glob_only_rebound(declared: &str, source: &str) -> bool {
-    scalar_names_rebound(declared, source) && !scalar_names_rebound_with(declared, source, false)
+    scalar_names_rebound(declared, source)
+        && !scalar_names_rebound_with(declared, source, false, true)
 }
 
-fn scalar_names_rebound_with(declared: &str, source: &str, globs: bool) -> bool {
+fn scalar_names_rebound_with(declared: &str, source: &str, globs: bool, extended: bool) -> bool {
     let masked = mask_comments_and_strings(source);
     let is_word = |c: char| c.is_ascii_alphanumeric() || c == '_';
     let imports = |statement: &str| {
@@ -10059,21 +10101,30 @@ fn scalar_names_rebound_with(declared: &str, source: &str, globs: bool) -> bool 
         return true;
     }
     // #8928: items the scan cannot read (`include!`, `#[path]` modules,
-    // macro-introduced items) may rebind any primitive name.
-    let path_attribute = whole_word_offsets(&masked, "path")
-        .into_iter()
-        .any(|offset| {
-            let before = masked[..offset].trim_end();
-            masked[offset + "path".len()..]
-                .trim_start()
-                .starts_with('=')
-                && (before.ends_with('[') || before.ends_with(','))
-        });
-    if path_attribute
-        || !whole_word_offsets(&masked, "include").is_empty()
-        || !whole_word_offsets(&masked, "macro_rules").is_empty()
-    {
-        return true;
+    // macro-introduced items) may rebind any primitive name. Admission only.
+    if extended {
+        let path_attribute = whole_word_offsets(&masked, "path")
+            .into_iter()
+            .any(|offset| {
+                let before = masked[..offset].trim_end();
+                masked[offset + "path".len()..]
+                    .trim_start()
+                    .starts_with('=')
+                    && (before.ends_with('[') || before.ends_with(','))
+            });
+        // Only the `include!` macro form; a bare `include` identifier,
+        // `include_str!` or a field named `include` rebinds nothing.
+        let include_macro = whole_word_offsets(&masked, "include")
+            .into_iter()
+            .any(|offset| {
+                masked[offset + "include".len()..]
+                    .trim_start()
+                    .starts_with('!')
+            });
+        if path_attribute || include_macro || !whole_word_offsets(&masked, "macro_rules").is_empty()
+        {
+            return true;
+        }
     }
     declared
         .split(|c: char| !is_word(c))
@@ -10082,7 +10133,11 @@ fn scalar_names_rebound_with(declared: &str, source: &str, globs: bool) -> bool 
             whole_word_offsets(&masked, word).into_iter().any(|offset| {
                 let before = masked[..offset].trim_end();
                 // `r#u32` is the raw spelling of the same name.
-                let before = before.strip_suffix("r#").unwrap_or(before).trim_end();
+                let before = if extended {
+                    before.strip_suffix("r#").unwrap_or(before).trim_end()
+                } else {
+                    before
+                };
                 let after = masked[offset + word.len()..].trim_start();
                 let statement = before.rsplit(';').next().unwrap_or(before);
                 if imports(statement) {
@@ -10091,7 +10146,8 @@ fn scalar_names_rebound_with(declared: &str, source: &str, globs: bool) -> bool 
                         .split(';')
                         .next()
                         .unwrap_or("");
-                    let self_import = after.starts_with("::")
+                    let self_import = extended
+                        && after.starts_with("::")
                         && tail.trim_start()[2..].trim_start().starts_with('{')
                         && !whole_word_offsets(tail, "self").is_empty();
                     return (!after.starts_with("::") || self_import) && !before.ends_with('<');
@@ -10172,6 +10228,7 @@ fn single_constant_value(
     index: &RustIndex,
     name: &str,
     in_scope: &dyn Fn(&Path) -> bool,
+    admitting: bool,
 ) -> Option<String> {
     let constants = index
         .call_identity_memos
@@ -10196,6 +10253,7 @@ fn single_constant_value(
                 .get(file)
                 .map(|facts| facts.source.to_string())
                 .as_deref(),
+            admitting,
         )
     {
         return None;

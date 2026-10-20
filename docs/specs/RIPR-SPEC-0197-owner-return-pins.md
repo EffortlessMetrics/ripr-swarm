@@ -1725,6 +1725,38 @@ not hold because the line has a second call; an argument passed by
 reference (`check(&actual, "4")`); a helper over `&str`, a workspace type
 or two different types; and `.to_string()` or `.into()` expected values.
 
+### Reading a named expected value (#8928)
+
+The reveal side reads an expected operand that is a plain identifier through
+one immutable `let` or one in-scope constant (`expected_operand_value`), so a
+name weakens an assertion only where writing its initializer inline would
+(RIPR-SPEC-0035 self-computed expected value). Reading refuses, and the
+assertion keeps its credit, only when a known interior-mutable type name
+(`Cell`, `Mutex`, `AtomicUsize`, `AtomicU128`, `AtomicCell`, `ArcSwap`,
+`Lazy` and the rest of the list in `has_interior_mutability`) appears in the
+declared type or initializer, the `let` is `mut` or attribute-gated, or the
+constant is `static mut`.
+
+Supported holder and rebinding forms, applied only to owner-pin admission
+(`expected_operand_value_admitting`): a same-file `struct`/`enum`/`union`/
+`type` that names an interior-mutable type directly or through another such
+declared type; a scalar declared type rebound by `type r#u32`, `use m::u32::{self}`,
+an `include!` macro invocation, a `#[path = ..]` module or a `macro_rules!`
+definition; and, in the glob-only fallback (`use super::*;`), a holder type
+named in the initializer.
+
+Failure behaviour: these admission refusals never reach the self-computed
+cap. A refusal on the reveal side returns no value, which keeps full
+strength, so refusing a binding the scan merely cannot read (a cfg-gated
+holder shadowed by a plain same-named type, a same-named type in an
+unrelated module, any `macro_rules!` in the file) would turn a self-computed
+comparison into a full-credit pin. The reveal side therefore keeps returning
+the initializer, and a binding whose initializer calls the owner stays capped
+Weak. Limits: holder types declared in other files, cfg evaluation and
+module scoping of same-named types are not resolved; the admission scan
+over-refuses on a plain scalar in a file with a `macro_rules!`, which only
+withholds credit.
+
 ## Required Evidence
 
 - Rule 7 (#6482): in the RIPR-SPEC-0219 verdict corpus, `grid-arith-helper`
@@ -2379,6 +2411,15 @@ assertions. This repair shares the existing callback without that larger migrati
   `fixtures/tail_comparison_boundary`, whose tests pin a free owner's
   unconditional tail.
 
+- Named expected values (#8928): unit
+  `owner_pin/tests.rs`
+  (`declared_holder_types_and_unreadable_items_refuse_the_static_pin_but_plain_scalars_admit`,
+  `unreadable_items_never_clear_the_self_computed_expected_value`,
+  `scalar_names_rebound_sees_raw_identifier_and_self_imports`); reveal stage
+  `reveal.rs` (`unreadable_items_keep_the_self_computed_cap_at_the_reveal_stage`);
+  honesty case `rust_owner_pin_self_computed_holder_not_a_pin`
+  (`fixtures/owner_pin_self_computed_holder_not_a_pin`).
+
 - Check-helper argument pins: `crates/ripr/tests/check_helper_argument_pins.rs`
   (`a_helper_comparing_its_parameters_pins_the_arguments_the_test_passes`,
   `a_direct_template_rendering_pins_a_scalar_owner`,
@@ -2400,6 +2441,9 @@ assertions. This repair shares the existing callback without that larger migrati
   (`establish` for the owner-side gates, `admits` for the test-side gates;
   `OwnerPinSyntax::admits_equality_assertion` applies shared context independently
   of whether an owner-return pin can be established).
+- `crates/ripr/src/analysis/classify/owner_pin.rs`: `expected_operand_value`
+  (reveal side) and `expected_operand_value_admitting`, `may_mutate_through_shared`,
+  `scalar_names_rebound_with` (#8928).
 - `crates/ripr/src/analysis/classify/reveal.rs`: the pin joins the
   confirmation signals behind the family, oracle-kind and owner-binding
   defeats. `analyze_related_assertions` applies shared context before matching

@@ -12856,6 +12856,10 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::unreadable_items_never_clear_the_self_computed_expected_value",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::declared_holder_types_and_unreadable_items_refuse_the_static_pin_but_plain_scalars_admit",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::scalar_names_rebound_sees_raw_identifier_and_self_imports",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::unreadable_items_keep_the_self_computed_cap_at_the_reveal_stage",
   "crates/ripr/tests/check_helper_argument_pins.rs::a_helper_comparing_its_parameters_pins_the_arguments_the_test_passes",
   "crates/ripr/tests/check_helper_argument_pins.rs::a_direct_template_rendering_pins_a_scalar_owner",
   "crates/ripr/tests/check_helper_argument_pins.rs::a_later_genuine_pin_counts_after_a_wrong_owner_call",
@@ -13143,6 +13147,7 @@ tests = [
   "crates/ripr/src/analysis/classifier/evidence.rs::a_local_non_plain_drop_guard_keeps_return_value_exposed",
 ]
 fixtures = [
+  "fixtures/owner_pin_self_computed_holder_not_a_pin",
   "fixtures/rust_trait_default_import",
   "fixtures/rust_trait_default_shadow",
   "fixtures/rust_trait_impl_import",

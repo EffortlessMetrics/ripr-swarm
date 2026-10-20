@@ -10990,6 +10990,93 @@ return Err(\"typed pin\".into());
         );
     }
 
+    /// #8928 review: end to end through the production
+    /// `expected_operand_value`, an expected name the scan cannot rule a
+    /// holder or rebinding out of still reads as the owner call it was bound
+    /// to, so the equality stays capped Weak instead of a full-credit pin.
+    #[test]
+    fn unreadable_items_keep_the_self_computed_cap_at_the_reveal_stage() {
+        let lib = "pub fn tax(subtotal: u32) -> u32 {\n    subtotal * RATE\n}\n";
+        let params = vec!["subtotal".to_string()];
+        let stage = |items: &str, binding: &str| {
+            let tests = format!(
+                "use demo::tax;\n{items}\n#[test]\nfn taxes() {{\n{binding}\n    assert_eq!(tax(RATE), expected);\n}}\n"
+            );
+            let mut index = crate::analysis::rust_index::RustIndex::default();
+            index.package_names.insert("demo".to_string());
+            for (path, text) in [("src/lib.rs", lib), ("tests/taxes.rs", tests.as_str())] {
+                let facts = crate::analysis::rust_index::summarize_file(
+                    PathBuf::from(path),
+                    text.to_string(),
+                );
+                index.extend_functions(facts.functions.iter().cloned());
+                index.extend_tests(facts.tests.iter().cloned());
+                index.insert_file_only(PathBuf::from(path), facts);
+            }
+            assert_eq!(index.tests().len(), 1, "fixture must hold one test");
+            let owner = index.functions().iter().find(|f| f.name == "tax");
+            assert!(owner.is_some(), "the owner must be indexed");
+            let Some(owner) = owner else {
+                return (OracleStrength::None, StageState::No);
+            };
+            // The parsed test body with a strong exact-value oracle, so a cap
+            // is the only thing that can lower the stage.
+            let test = TestSummary {
+                assertions: vec![exact("assert_eq!(tax(RATE), expected);")],
+                ..index.tests().at(0).clone()
+            };
+            let test = &test;
+            let value = |test: &TestSummary, operand: &str| {
+                crate::analysis::classify::expected_operand_value(&index, test, operand, owner)
+            };
+            let (discriminate, strength) =
+                tax_reveal_with_operand("subtotal * RATE", test, &params, &|_, _| false, &value);
+            (strength, discriminate.state)
+        };
+        // Self-computed through a binding the scan cannot fully vouch for:
+        // the cap holds.
+        for (items, binding) in [
+            (
+                "#[cfg(any())]\nstruct Counter(AtomicUsize);\nstruct Counter(u32);",
+                "    let expected: Counter = tax(RATE);",
+            ),
+            (
+                "mod a { pub struct Counter(AtomicUsize); }\nstruct Counter(u32);",
+                "    let expected: Counter = tax(RATE);",
+            ),
+            (
+                "macro_rules! helper { () => {}; }",
+                "    let expected: u32 = tax(RATE);",
+            ),
+            (
+                "include!(\"gen.rs\");",
+                "    let expected: u32 = tax(RATE);",
+            ),
+        ] {
+            assert_eq!(
+                stage(items, binding),
+                (OracleStrength::Weak, StageState::Weak),
+                "{items} {binding}"
+            );
+        }
+        // Controls: a plain scalar independent of the owner keeps credit.
+        for (items, binding) in [
+            ("", "    let expected = 12;"),
+            ("", "    let expected: u32 = 12;"),
+            (
+                "macro_rules! helper { () => {}; }",
+                "    let expected: u32 = 12;",
+            ),
+            ("use super::*;", "    let expected: u32 = 12;"),
+        ] {
+            assert_eq!(
+                stage(items, binding),
+                (OracleStrength::Strong, StageState::Yes),
+                "{items} {binding}"
+            );
+        }
+    }
+
     #[test]
     fn expected_operand_holding_an_owner_value_is_weak_and_unconfirmed() {
         // RIPR-SPEC-0035: `RATE` is the changed token, so the assertion

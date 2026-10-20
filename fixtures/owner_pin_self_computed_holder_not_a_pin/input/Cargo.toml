@@ -1,0 +1,8 @@
+[package]
+name = "owner_pin_self_computed_holder_not_a_pin_fixture"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+path = "src/lib.rs"

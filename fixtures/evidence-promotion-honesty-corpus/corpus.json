@@ -10152,6 +10152,18 @@
         { "type": "must_not_report_clean" },
         { "type": "must_not_promote" }
       ]
+    },
+    {
+      "id": "rust_owner_pin_self_computed_holder_not_a_pin",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_pin_self_computed_holder_not_a_pin",
+      "vector": "owner_pin_self_computed_expected_stays_capped_when_holder_scan_is_unreadable",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" }
+      ]
     }
   ]
 }
