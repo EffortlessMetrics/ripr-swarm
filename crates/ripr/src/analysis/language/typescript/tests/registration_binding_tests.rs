@@ -7,6 +7,15 @@ const TEST: &str = "test('adds', () => { expect(sumAll([2, 3, 4])).toBe(9); });"
 const NOOP: &str = "(_name: string, _callback: () => void) => {}";
 
 fn registration_finding(label: &str, source: &str) -> Result<Finding, String> {
+    let allocator = oxc_allocator::Allocator::default();
+    let input = format!("{IMPORT}{source}");
+    let parsed = Parser::new(
+        &allocator,
+        &input,
+        source_type_for(Path::new("tests/sum.test.ts")),
+    )
+    .parse();
+    assert!(parsed.errors.is_empty(), "{label}: {:?}", parsed.errors);
     let root = ts_unique_tempdir(label)?;
     ts_write_file(&root.join("src/sum.ts"), OWNER)?;
     ts_write_file(
@@ -50,6 +59,7 @@ fn registration_bindings_keep_imported_and_global_controls() -> Result<(), Strin
         "import { describe, test, expect } from 'vitest';",
         "import { describe, it as test, expect } from '@jest/globals';",
         "const { describe, test } = require('node:test');",
+        "const describe = require('node:test').describe; const test = require('node:test').test;",
         "",
     ] {
         let source = format!("{prelude}\ndescribe('sum', () => {{ {TEST} }});");
@@ -82,6 +92,9 @@ fn registration_bindings_reject_local_noop_callbacks() -> Result<(), String> {
         ),
         format!("import {{ describe as test }} from 'vitest'; {TEST}"),
         format!("import {{ test }} from './local-helper'; {TEST}"),
+        format!("import test = require('./helper'); {TEST}"),
+        format!("import test = helpers.noop; {TEST}"),
+        format!("export import test = helpers.noop; {TEST}"),
         format!("enum test {{ A }}; {TEST}"),
         format!("export enum test {{ A }}; {TEST}"),
         format!("export namespace test {{ export const value = 1; }} {TEST}"),

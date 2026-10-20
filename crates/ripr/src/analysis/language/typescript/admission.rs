@@ -151,7 +151,31 @@ impl TypeScriptAdmissionContext {
                                 && declaration.kind == oxc_ast::ast::VariableDeclarationKind::Const)
                 })
                 .flat_map(|statement| {
-                    extract_imports_from_statements(std::slice::from_ref(statement))
+                    let mut imports =
+                        extract_imports_from_statements(std::slice::from_ref(statement));
+                    if let Statement::VariableDeclaration(declaration) = statement {
+                        for declarator in &declaration.declarations {
+                            let Some(Expression::StaticMemberExpression(member)) = declarator
+                                .init
+                                .as_ref()
+                                .map(Expression::get_inner_expression)
+                            else {
+                                continue;
+                            };
+                            if let Some(source) = require_string_literal_source(&member.object)
+                                && let Some(local) =
+                                    super::owners::binding_identifier_name(&declarator.id)
+                            {
+                                imports.push(TypeScriptImport {
+                                    source,
+                                    imported: Some(member.property.name.to_string()),
+                                    local: local.to_string(),
+                                    namespace: false,
+                                });
+                            }
+                        }
+                    }
+                    imports
                 })
                 .collect(),
             reexport_names: reexport_spellings(statements),

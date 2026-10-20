@@ -2189,6 +2189,11 @@ pub(super) fn collect_registration_scope_names(
             other => other.as_declaration(),
         };
         match declaration {
+            Some(oxc_ast::ast::Declaration::TSImportEqualsDeclaration(declaration))
+                if declaration.import_kind == ImportOrExportKind::Value =>
+            {
+                out.push(declaration.id.name.to_string());
+            }
             Some(oxc_ast::ast::Declaration::TSEnumDeclaration(declaration))
                 if !declaration.declare =>
             {
