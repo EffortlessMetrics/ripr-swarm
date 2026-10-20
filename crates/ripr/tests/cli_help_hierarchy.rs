@@ -72,6 +72,64 @@ fn init_ci_provider_valid_preview_keeps_workflow_contract() -> Result<(), String
 }
 
 #[test]
+fn agent_repair_phase_refusals_render_scoped_recovery_without_writes() -> Result<(), String> {
+    in_help_workspace(|root| {
+        for (value, suggestion) in [
+            ("befor", " Did you mean `before`?"),
+            ("aftr", " Did you mean `after`?"),
+            ("verfy", " Did you mean `verify`?"),
+            ("", ""),
+            ("zzzzzzzzzzzz", ""),
+            ("packet", ""),
+        ] {
+            // A later valid occurrence must not hide an earlier invalid one.
+            for repeated in [false, true] {
+                let mut args = vec![
+                    "agent",
+                    "repair",
+                    "--store",
+                    "must-not-exist",
+                    "--phase",
+                    value,
+                ];
+                if repeated {
+                    args.extend(["--phase", "before"]);
+                }
+                let output = run_ripr_in(&args, Some(root))?;
+                assert_eq!(output.status.code(), Some(2), "{args:?}");
+                assert!(output.stdout.is_empty(), "{args:?}: {output:?}");
+                assert_eq!(
+                    String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n"),
+                    format!(
+                        "ripr: unknown --phase {value:?}.{suggestion} Accepted: before, after, verify.\n"
+                    ),
+                    "{args:?}"
+                );
+            }
+        }
+        let missing = run_ripr_in(&["agent", "repair", "--phase"], Some(root))?;
+        assert_eq!(missing.status.code(), Some(2));
+        assert!(missing.stdout.is_empty());
+        assert_eq!(
+            String::from_utf8_lossy(&missing.stderr).replace("\r\n", "\n"),
+            "ripr: missing value for --phase\n"
+        );
+        let help = run_ripr_in(
+            &["agent", "repair", "--phase", "befor", "--help"],
+            Some(root),
+        )?;
+        assert!(help.status.success());
+        assert!(help.stderr.is_empty());
+        assert_contains(
+            "repair help",
+            &String::from_utf8_lossy(&help.stdout),
+            "Usage: ripr agent repair",
+        )?;
+        Ok(())
+    })
+}
+
+#[test]
 fn agent_subcommand_typos_render_scoped_recovery() -> Result<(), String> {
     let accepted = "start, brief, packet, card, stub, verify, verify-execute, receipt, status, review-summary, repair";
     for (typo, suggestion) in [("brief2", "brief"), ("verify-execue", "verify-execute")] {
