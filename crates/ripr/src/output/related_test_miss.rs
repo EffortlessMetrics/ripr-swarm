@@ -79,9 +79,12 @@ pub(crate) fn related_test_miss_reason(
 pub(crate) fn oracle_projection(
     strength: &crate::domain::OracleStrength,
     kind: &crate::domain::OracleKind,
+    has_assertion: bool,
 ) -> String {
     use crate::domain::{OracleKind, OracleStrength};
     match (strength, kind) {
+        // A row with no selected assertion has no oracle to describe.
+        (OracleStrength::Unknown, OracleKind::Unknown) if !has_assertion => "no oracle".to_string(),
         (OracleStrength::Unknown, OracleKind::Unknown) => {
             "an unclassified oracle, not graded against this probe".to_string()
         }
@@ -130,6 +133,25 @@ mod tests {
     use crate::domain::{MissingDiscriminatorFact, OracleKind, OracleStrength};
     use crate::output::perl_preview_card::tests::sample_perl_finding as sample_finding;
     use std::path::PathBuf;
+
+    #[test]
+    fn oracle_projection_separates_ungraded_assertions_from_absent_ones() {
+        let unknown = (&OracleStrength::Unknown, &OracleKind::Unknown);
+        assert_eq!(
+            oracle_projection(unknown.0, unknown.1, true),
+            "an unclassified oracle, not graded against this probe"
+        );
+        assert_eq!(oracle_projection(unknown.0, unknown.1, false), "no oracle");
+        // Every other pair keeps the "<strength> <kind> oracle" spelling.
+        assert_eq!(
+            oracle_projection(&OracleStrength::Unknown, &OracleKind::ExactValue, true),
+            "unknown exact value oracle"
+        );
+        assert_eq!(
+            oracle_projection(&OracleStrength::Strong, &OracleKind::ExactValue, true),
+            "strong exact value oracle"
+        );
+    }
 
     fn test_with(miss: Option<RelatedTestMiss>, reason: Option<RelationReason>) -> RelatedTest {
         RelatedTest {

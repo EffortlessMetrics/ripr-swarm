@@ -514,3 +514,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_fixture_name_relation (20)
+
+Reason:
+RIPR-SPEC-0224: a row with no selected assertion reads 'uses no oracle' (#8388)
+
+Command:
+`cargo xtask goldens bless python_fixture_name_relation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

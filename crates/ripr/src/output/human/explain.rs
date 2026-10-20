@@ -111,6 +111,7 @@ fn row_verdict(row: &RelatedTest, finding: &Finding) -> String {
             Some(_) => crate::output::related_test_miss::oracle_projection(
                 &row.oracle_strength,
                 &row.oracle_kind,
+                true,
             ),
             None => "no oracle row".to_string(),
         },

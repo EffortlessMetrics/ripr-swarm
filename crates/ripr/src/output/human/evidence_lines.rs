@@ -177,7 +177,8 @@ fn evidence_path<T>(
             test.name,
             crate::output::related_test_miss::oracle_projection(
                 &test.oracle_strength,
-                &test.oracle_kind
+                &test.oracle_kind,
+                test.oracle.is_some()
             )
         );
         if let Some(oracle) = &test.oracle {
