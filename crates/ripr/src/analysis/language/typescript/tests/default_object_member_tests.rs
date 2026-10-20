@@ -194,6 +194,15 @@ fn a_const_arrow_member_is_reached_like_a_function() -> Result<(), String> {
     let reassignable = owner
         .replacen("const merge", "let merge", 1)
         .replace("\nexport default", "\nmerge = () => ({});\nexport default");
+    // A `let` arrow rebound inside a nested function is just as unreliable.
+    let nested = owner.replacen("const merge", "let merge", 1).replace(
+        "\nexport default",
+        "\nfunction patch() {\n  merge = () => ({});\n}\nexport default",
+    );
+    assert!(
+        class_of("nested-write-arrow-member", &nested, &test_with(CALL))
+            .map_or(true, |class| class != ExposureClass::Exposed)
+    );
     // No finding for the dropped owner counts as uncredited.
     assert!(
         class_of("let-arrow-member", &reassignable, &test_with(CALL))

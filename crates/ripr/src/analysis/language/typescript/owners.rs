@@ -595,14 +595,31 @@ fn mark_default_object_members(body: &[Statement<'_>], owners: &mut [TypeScriptO
         }
         members.push(key.name.to_string());
     }
+    // An arrow owner qualifies only when its top-level binding is `const`:
+    // a `let`/`var` arrow can be rebound inside a nested function or block,
+    // which the top-level reassignment pass does not see.
+    let const_names: Vec<&str> = body
+        .iter()
+        .filter_map(|stmt| match stmt {
+            Statement::VariableDeclaration(decl) => Some(&**decl),
+            Statement::ExportNamedDeclaration(export) => match &export.declaration {
+                Some(oxc_ast::ast::Declaration::VariableDeclaration(decl)) => Some(&**decl),
+                _ => None,
+            },
+            _ => None,
+        })
+        .filter(|decl| decl.kind == oxc_ast::ast::VariableDeclarationKind::Const)
+        .flat_map(|decl| decl.declarations.iter())
+        .flat_map(|declarator| declarator.id.get_binding_identifiers())
+        .map(|identifier| identifier.name.as_str())
+        .collect();
     for owner in owners.iter_mut() {
-        if owner.class_name.is_none()
-            && matches!(
-                owner.owner_kind,
-                OwnerKind::Function | OwnerKind::ArrowFunction
-            )
-            && members.contains(&owner.name)
-        {
+        let callable = match owner.owner_kind {
+            OwnerKind::Function => true,
+            OwnerKind::ArrowFunction => const_names.contains(&owner.name.as_str()),
+            _ => false,
+        };
+        if owner.class_name.is_none() && callable && members.contains(&owner.name) {
             owner.default_object_member = true;
         }
     }

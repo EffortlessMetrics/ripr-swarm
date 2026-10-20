@@ -538,7 +538,8 @@ never an anchor for a bare call.
 
 Amended 2026-10-19 (decision 15): a default import is also the receiver of
 `local.name(...)` when the owner module's one `export default { ... }`
-object holds the top-level function (or `const` arrow function) `name` under
+object holds the top-level function (or `const` arrow function; a `let` or
+`var` arrow can be rebound in a nested scope and stays unreached) `name` under
 its own name (`{ name }` or
 `{ name: name }`). The object must be made only of such plain entries; a
 spread, computed key, method, getter, renamed entry or duplicate key leaves
