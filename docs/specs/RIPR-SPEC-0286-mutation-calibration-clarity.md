@@ -45,9 +45,9 @@ Policy impact:
   key changes meaning).
 - No new exposure class, oracle kind, severity, or grip-class value. The
   provenance verdict strings (`same_head`, `different_heads`,
-  `only_repo_exposure_head`, `only_mutants_head`, `no_head_recorded`)
-  describe artifact identity only; they never change a join or a
-  classification.
+  `only_repo_exposure_head`, `only_mutants_head`, `no_head_recorded`,
+  `conflicting_mutants_heads`) describe artifact identity only; they never
+  change a join or a classification.
 - Behavior ownership stays with RIPR-SPEC-0006 (the calibration report
   and its join); this spec records the output-clarity contract that
   #8750 and #8753 created on top of it.
@@ -88,10 +88,20 @@ The calibration report schema version is `0.3`. The report carries a
   null when the snapshot does not carry one (or carries a placeholder,
   using the same `is_full_sha` rule as `ripr outcome`).
 - `mutants_head`: the cargo-mutants artifact's repository head, or null —
-  the common case, since `outcomes.json` does not carry a head SHA.
+  the common case, since `outcomes.json` does not carry a head SHA. A
+  directory import combines `outcomes.json` and `mutants.json` into a JSON
+  array before joining; the combined shape is read member-by-member, so a
+  head recorded by either member file surfaces here and a headed directory
+  import does not read as headless.
+- `mutants_head_conflict`: present only when the directory member files
+  record more than one distinct head. It lists every distinct head; the
+  inputs disagree, so no single mutants subject is named and the
+  disagreement is disclosed as a conflict rather than misreported as a
+  missing head.
 - `verdict`: one of `same_head`, `different_heads`,
-  `only_repo_exposure_head`, `only_mutants_head`, `no_head_recorded`,
-  derived from the two optional heads.
+  `only_repo_exposure_head`, `only_mutants_head`, `no_head_recorded`, or
+  `conflicting_mutants_heads`, derived from the two optional heads (or from
+  the member conflict).
 
 The verdict is evidence about the artifacts, not about the join: a
 `different_heads` verdict never refuses, rewrites, or re-labels a match.
@@ -105,7 +115,8 @@ The md renderer gains a `## Provenance` section after the preamble and
 before `## Summary`, rendering the disclosure sentence plus the standing
 note that the join itself matches by seam_id, span containment, or
 file/line in every case. The JSON renderer gains a top-level
-`provenance` object with the same three fields and verdict. Both are
+`provenance` object with the same head fields and verdict (plus
+`mutants_head_conflict` only when directory members disagree). Both are
 rendered for every report, including one built without artifact inputs
 (`no_head_recorded`), so a saved artifact always discloses what it can
 and cannot claim about subject identity.
@@ -122,7 +133,8 @@ drift apart.
   class is outside the strong set `strongly_gripped` / `intentional` /
   `suppressed`), a **runtime gap signal** (`missed`, `survived`,
   `not_caught`, `uncaught`), and a **runtime clean signal** (`caught`,
-  `timeout`), followed by one `- `<bucket>`:` guide line per bucket.
+  `timeout`), followed by one `- `<bucket>`:` guide line per bucket, in the
+  same order as the agreement table rows.
 - The JSON report gains a top-level `how_to_read` object defining
   `static_gap`, `runtime_gap_signal`, and `runtime_clean_signal`, plus a
   `buckets` object whose values are verbatim the md guide lines.
