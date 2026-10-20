@@ -135,6 +135,14 @@ pub(in crate::analysis) fn build_finding(
             } else {
                 "assert_eq"
             },
+            if matches!(
+                context.probe.family,
+                ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+            ) {
+                "changed effect"
+            } else {
+                "changed returned value"
+            },
         ))
     } else if class == ExposureClass::WeaklyExposed
         && !wrapper_error_seam_expression(&[context.probe.expression.as_str()])
@@ -583,8 +591,13 @@ fn contains_token_sequence(text: &str, expected: &[String]) -> bool {
         .any(|window| window == expected)
 }
 
-/// The next step for a gap whose oracle rests on a refused `assert_eq!`.
-fn refused_assertion_next_step(note: Option<&AssertionRefusalNote>, macro_name: &str) -> String {
+/// The next step for a gap whose oracle rests on a refused assertion.
+fn refused_assertion_next_step(
+    note: Option<&AssertionRefusalNote>,
+    macro_name: &str,
+    subject: &str,
+) -> String {
+    let macro_name = note.map_or(macro_name, |note| note.macro_name.as_str());
     match note {
         Some(note) if note.calls_owner && note.is_analyzer_limit => format!(
             "ripr did not credit the {}; the \"not credited\" note says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.",
@@ -597,7 +610,9 @@ fn refused_assertion_next_step(note: Option<&AssertionRefusalNote>, macro_name: 
             "ripr did not credit the {}; the \"not credited\" note says why. That shape can keep the assertion from checking the change, so this is not a static limit: make the check run on every default test run, as the standard `{macro_name}!`, in a test expected to pass.",
             note.location
         ),
-        _ => "Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed returned value.".to_string(),
+        _ => format!(
+            "Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the {subject}."
+        ),
     }
 }
 
@@ -1294,19 +1309,28 @@ mod tests {
     fn refused_assertion_next_step_offers_a_static_limit_only_for_a_limit_refusal() {
         use super::{AssertionRefusalNote, refused_assertion_next_step};
         let note = |calls_owner, is_analyzer_limit| AssertionRefusalNote {
+            macro_name: "assert_eq".to_string(),
             location: "`assert_eq!` in t at tests/t.rs:3".to_string(),
             reason: "reason".to_string(),
             calls_owner,
             is_analyzer_limit,
         };
-        let limit = refused_assertion_next_step(Some(&note(true, true)), "assert_eq");
+        let limit = refused_assertion_next_step(
+            Some(&note(true, true)),
+            "assert_eq",
+            "changed returned value",
+        );
         assert!(
             limit.contains("this is a static limit, not a missing test"),
             "{limit}"
         );
 
         // #6903: an `#[ignore]`d, cfg-off, conditional or rebound assertion.
-        let not_limit = refused_assertion_next_step(Some(&note(true, false)), "assert_eq");
+        let not_limit = refused_assertion_next_step(
+            Some(&note(true, false)),
+            "assert_eq",
+            "changed returned value",
+        );
         assert!(
             not_limit.contains("this is not a static limit"),
             "{not_limit}"
@@ -1318,8 +1342,12 @@ mod tests {
 
         for unrelated in [Some(note(false, true)), Some(note(false, false)), None] {
             assert!(
-                refused_assertion_next_step(unrelated.as_ref(), "assert_eq")
-                    .starts_with("Establish that the test is collected")
+                refused_assertion_next_step(
+                    unrelated.as_ref(),
+                    "assert_eq",
+                    "changed returned value"
+                )
+                .starts_with("Establish that the test is collected")
             );
         }
     }

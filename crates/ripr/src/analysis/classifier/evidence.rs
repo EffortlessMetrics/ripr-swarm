@@ -64,6 +64,7 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
 
 #[derive(Clone, Debug)]
 pub(in crate::analysis) struct AssertionRefusalNote {
+    pub(in crate::analysis) macro_name: String,
     pub(in crate::analysis) location: String,
     pub(in crate::analysis) reason: String,
     pub(in crate::analysis) calls_owner: bool,
@@ -1013,18 +1014,17 @@ impl ClassifiedProbeEvidence {
                             continue;
                         };
                         let calls_owner = body_contains_owner_call(&assertion.text, owner_name);
+                        let macro_name = OwnerPinSyntax::assertion_macro_name(&assertion.text)
+                            .unwrap_or_default();
                         let note = AssertionRefusalNote {
                             location: format!(
                                 "`{}!` in {} at {}:{}",
-                                if context.probe.family == ProbeFamily::MatchArm {
-                                    "assert"
-                                } else {
-                                    "assert_eq"
-                                },
+                                macro_name,
                                 test.name,
                                 test.file.display(),
                                 assertion.line
                             ),
+                            macro_name,
                             reason: refusal.describe(),
                             calls_owner,
                             is_analyzer_limit: is_limit(&refusal),
@@ -2040,6 +2040,7 @@ mod tests {
     fn preferred_refusal_note_puts_a_non_limit_owner_call_first() {
         use super::{AssertionRefusalNote, preferred_refusal_note};
         let note = |name: &str, calls_owner, is_analyzer_limit| AssertionRefusalNote {
+            macro_name: "assert_eq".to_string(),
             location: name.to_string(),
             reason: String::new(),
             calls_owner,

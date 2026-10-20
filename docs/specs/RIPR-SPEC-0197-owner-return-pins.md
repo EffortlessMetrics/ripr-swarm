@@ -92,6 +92,16 @@ combination produces `reachable_unrevealed` with Observe `no` and Discriminate
 can never execute. Other owner-specific pin failures retain the existing token
 rule only for an assertion whose context was admitted.
 
+The same execution/macro-context admission applies to `assert_eq!` and `assert!`
+oracles for `side_effect` and `call_deletion` probes (#8927). Calling the changed
+owner before `return`, a literal-false block or an uncalled closure establishes
+reach without establishing that an assertion inside the skipped context runs.
+Refuse that assertion through the shared admission decision and retain the
+SPEC-0197 refusal note with its actual macro name. An independently admitted
+effect assertion in the same test still supplies its existing observation and
+discriminator; a refused sibling does not remove it. This does not change effect
+identity, propagation or observer matching.
+
 1. Oracle shape. The assertion is one plain `assert_eq!`, or that
    `assert_eq!` qualified through a `std` or `core` root (`std::assert_eq!`,
    `::core::assert_eq!`) when the root cannot be rebound (#7857). The test's
