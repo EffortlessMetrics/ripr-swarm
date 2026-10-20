@@ -1,0 +1,79 @@
+{
+  "recorded_at": "2026-10-20T22:44:22.472843+00:00",
+  "candidate": "fc7e17a409cf81b99c2447a409b55ec699752d06",
+  "tree": "eb5a63a1fdfed5b5f623a4b433544f589c9bf21f",
+  "original_base": "1e9468f4b0d133f0a50b64134318763d8cf48beb",
+  "runtime": "Linux x86_64/Bash, Rust and Cargo 1.95.0, jobs=2, incremental=0, dev debug=0",
+  "commands": [
+    {
+      "command": "cargo test --locked -p ripr --test task_first_facade brief_diff_status:: -- --test-threads=1",
+      "exit": 0,
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 51,
+      "cli_invocations": 28
+    },
+    {
+      "command": "cargo test --locked -p ripr --lib analysis::diff:: -- --test-threads=1",
+      "exit": 0,
+      "passed": 239,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 11625
+    },
+    {
+      "command": "cargo test --locked -p ripr --lib analysis::pipeline::tests::truncated_ -- --test-threads=1",
+      "exit": 0,
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 11858
+    },
+    {
+      "command": "cargo xtask check-fast",
+      "exit": 0,
+      "ran_gates": 15,
+      "selected_paths": 13,
+      "selector": "stable; independently matched",
+      "skipped": [
+        "check-fixture-contracts; subsequently passed in precommit"
+      ]
+    },
+    {
+      "command": "cargo xtask precommit",
+      "exit": 0,
+      "composition": "local_precommit",
+      "skipped": [],
+      "limitations": [],
+      "report_digest": "sha256:9c36394e4eefcbdda4647dc82723af171902a60e60c89259bc9856ef5ee7dfce",
+      "fresh_goldens": "pass"
+    }
+  ],
+  "source_review": "independent-source-review.txt",
+  "earlier_qualification": "https://github.com/EffortlessMetrics/ripr-swarm/tree/b22e34ddcd34808279b1a5b977182e5e6a02f72c",
+  "held": [
+    "merge",
+    "auto-merge",
+    "release",
+    "deployment"
+  ],
+  "unestablished": [
+    "fresh hosted qualification of fc7e17a4",
+    "final-strengthened-payload pre-repair red",
+    "complete Windows/all-feature runtime qualification"
+  ],
+  "thread_resolution": {
+    "targets": [
+      "PRRT_kwDOSiSx0c6uh8K9",
+      "PRRT_kwDOSiSx0c6uh8Ni"
+    ],
+    "replies_verified": [
+      4331108478,
+      4331109095
+    ],
+    "write_result": "isError=true; detailed error messages were not retained by caller; reason unknown",
+    "readback": "both remain unresolved; no resolution claimed",
+    "retries": 0
+  }
+}

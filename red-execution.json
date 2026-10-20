@@ -1,0 +1,31 @@
+{
+  "observed_at": "2026-10-20T22:10:00.810647+00:00",
+  "production_head": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+  "test_source": "uncommitted tests-only red-test.patch",
+  "command": "cargo test --locked -p ripr --test task_first_facade brief_diff_status:: -- --test-threads=1",
+  "native_exit": 101,
+  "tests": {
+    "passed": 4,
+    "failed": 2,
+    "ignored": 0,
+    "filtered": 51
+  },
+  "failures": [
+    "truncated header-only input returned successful exit0, expected typed exit2",
+    "Git-produced slash-heavy raw-string hunk payload returned diff_path_too_deep exit2, expected successful scoped selection"
+  ],
+  "case_limit": "Both new test functions stop at their first failing case; later mixed/truncation, removed-payload and metadata-only cases are not claimed executed by this red run. Existing four functions, including the additional mixed real-depth refusal control, passed.",
+  "files": {
+    "crates/ripr/src/analysis/diff/parse/stream.rs": "05dafa403fe7a875d19bb9db67fc3ca89a96cf34e9c5d151acabb5e3f3678ece",
+    "crates/ripr/src/cli/commands_agent_support.rs": "49299c575fe296ab0827905fb8397293f89d212e35eabf0e3b55bf393b06c6f6",
+    "crates/ripr/tests/task_first_facade/brief_diff_status.rs": "43b61632b82b75a85f247f0eba6faa20cd084b4ae2eb634d4e9b40278a4bd6a4"
+  },
+  "patch_sha256": "84121fe7603fa8b401e0b7c70254438361743a3fddd49ea4dc2bce059d9204f0",
+  "cli_witness": {
+    "path": "target/debug/ripr",
+    "bytes": 127224704,
+    "sha256": "177c13cd4ab223c40c22c82df02236e36b3efc928df7892d431c2acd58f5e90e"
+  },
+  "runtime": "Linux x86_64, Rust/Cargo1.95.0, jobs2, incremental off, dev debug0",
+  "admission": "Continuing original cumulative12GiB growth and8GiB reserve; local target approximately3.1GiB and free space approximately27GiB before repair."
+}

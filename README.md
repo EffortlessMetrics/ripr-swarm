@@ -1,0 +1,18 @@
+PR #8961 repair evidence: fc7e17a409cf81b99c2447a409b55ec699752d06
+
+Full source: https://github.com/EffortlessMetrics/ripr-swarm/commit/fc7e17a409cf81b99c2447a409b55ec699752d06
+PR: https://github.com/EffortlessMetrics/ripr-swarm/pull/8961
+
+Read execution.json and the raw command logs for actual exact-candidate results. Six real-CLI functions (28 invocations), 239 shared diff tests, six pipeline truncation tests, check-fast and precommit pass. No local full workspace runtime matrix was repeated. Shared parser admission now follows existing hunk boundaries; actual path-header bounds remain. The independent truncation scalar refuses before brief selection. Empty/mode-only positive controls retain success. Prior bounded inventory totals and their tests are untouched.
+
+candidate.patch is the complete source delta from original base 1e9468f4b0d133f0a50b64134318763d8cf48beb; repair.patch is this wave from published production 1a525eaa. Apply with git apply in an isolated checkout of the named base, or fetch the exact published source commit. No credentials or configuration are needed beyond normal repository access and its pinned toolchain.
+
+red-test.patch and red-execution.json bind a tests-only failing observation against production 1a525eaa. Both new functions stopped at their first intended failure. The final path-like payload fixture was strengthened afterward with a real predicate edit; it was not executed pre-repair in final form. Green source and oracle are the published commit. No false final-stimulus red/green claim.
+
+Fresh precommit goldens passed. All 1521 current actual outputs match the previous verified archive by bytes, size and mode (golden-byte-comparison.json). Reuse golden-actuals.tar.gz from immutable evidence commit 278cbf64c2364dafb6563c42e3e8b5c86de76a20 (SHA-256 53f470a374680a733de1cc23f70c6ad79803ff3b1369a3278743f48fb8c688f8); its original restoration verification is there. No duplicate archive was generated. Native-reports contains 54 reports freshly written during these owned native gates. Executable hashes in the receipts are observations of the actual CLI at that execution, not a delivered binary archive; the Cargo target remains mutable task-owned build state.
+
+publication-and-merge-subject.json binds the observed GitHub merge subject, its parents/tree and unchanged relevant mainline inputs. This is pre-qualification metadata, not actual job-checkout proof. The earlier qualification of 1a525eaa is delivered separately at b22e34ddcd34808279b1a5b977182e5e6a02f72c and is not relabeled as fc7e17a4 proof. Windows and all-feature runtime limits remain explicit.
+
+Two repaired review threads have verified replies but resolution calls returned errors; readback confirms both remain open. Exact error details were not retained, so the reason is unknown. Those writes were not retried. No merge, auto-merge, release or deployment occurred. Hosted qualification of this repair is the next transition.
+
+Integrity: manifest.json lists retained payload bytes and SHA-256, excluding itself. Candidate worktree /workspace/brief-status and target remain retained for this open repair and qualification. Original cumulative admission: 12 GiB additional growth, 8 GiB reserve, including wrappers/dependencies/artifacts/restoration.

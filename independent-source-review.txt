@@ -1,0 +1,12 @@
+Review subject: fc7e17a409cf81b99c2447a409b55ec699752d06
+Tree: eb5a63a1fdfed5b5f623a4b433544f589c9bf21f
+Reviewer: existing read-only review_brief_diff_status agent
+Observed: 2026-10-20 22:20:52 UTC
+No material scoped source or oracle defect found.
+The independent truncation scalar refuses before selection, including mixed complete/truncated input. Mode-only input retains fallback.
+Parser ordering preserves declared-span precedence and reuses existing plain/combined boundary decisions. Actual diff --git headers remain guarded even within unfinished hunks before old-path resolution.
+Literal payload pins and a real predicate edit in the CLI fixture reject discarded-payload and always-refuse alternatives. Deep old/new/plain/Git controls reject bypassed admission.
+Specs, traceability and diagnostic claims match this scope. Inventory totals are untouched.
+Disposition: REVIEW_INCOMPLETE; runtime outcomes and hosted qualification were not observed by this source reviewer. Root must join actual exact-candidate execution and remote proof separately.
+Earlier CI on 1a525eaa is historical evidence, not proof for this parser change. No final-stimulus pre-repair red claim.
+No builds, edits, publication, Ready/label or integration actions performed by reviewer.

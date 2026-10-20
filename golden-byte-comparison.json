@@ -1,0 +1,16 @@
+{
+  "recorded_at": "2026-10-20T22:40:47.420706+00:00",
+  "candidate": "fc7e17a409cf81b99c2447a409b55ec699752d06",
+  "fresh_precommit_goldens": "pass",
+  "old_archive_evidence_commit": "278cbf64c2364dafb6563c42e3e8b5c86de76a20",
+  "old_archive": "golden-actuals.tar.gz",
+  "old_archive_sha256": "53f470a374680a733de1cc23f70c6ad79803ff3b1369a3278743f48fb8c688f8",
+  "compared_files": 1521,
+  "compared": [
+    "bytes",
+    "size",
+    "mode"
+  ],
+  "mismatches": [],
+  "reuse": "All files match; reuse immutable old verified archive instead of creating a duplicate."
+}

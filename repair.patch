@@ -1,0 +1,445 @@
+diff --git a/.ripr/traceability.toml b/.ripr/traceability.toml
+index 90bab6ed7..f3a6418f5 100644
+--- a/.ripr/traceability.toml
++++ b/.ripr/traceability.toml
+@@ -1518,6 +1518,10 @@ tests = [
+   "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_refusals_cannot_become_empty_or_fallback_successes",
+   "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_base_uses_the_same_parser_refusal_before_inventory",
+   "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_errors_keep_diff_input_identity_and_budget_guards",
++  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_truncated_sections_cannot_become_empty_or_partial_successes",
++  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_path_like_hunk_payload_keeps_real_changed_line_selection",
++  "crates/ripr/src/analysis/diff/parse/stream/path_admission_tests.rs::path_like_added_and_removed_lines_stay_hunk_payload",
++  "crates/ripr/src/analysis/diff/parse/stream/path_admission_tests.rs::actual_deep_headers_still_refuse_after_hunk_payload",
+   "crates/ripr/src/app/agent_brief.rs::tests::agent_brief_selector_ranks_explicit_seam_id_first",
+   "crates/ripr/src/app/agent_brief.rs::tests::changed_scope_that_fills_the_slots_selects_the_same_seams_as_the_full_scope",
+   "crates/ripr/src/app/agent_brief.rs::tests::changed_scope_does_not_fill_the_slots_with_hidden_or_too_few_seams",
+@@ -1556,6 +1560,8 @@ fixtures = [
+ code = [
+   "crates/ripr/src/app/agent_brief.rs",
+   "crates/ripr/src/cli/commands_agent_support.rs",
++  "crates/ripr/src/analysis/diff/parse.rs",
++  "crates/ripr/src/analysis/diff/parse/stream.rs",
+   "crates/ripr/src/core_error.rs",
+   "crates/ripr/src/cli/agent.rs",
+   "crates/ripr/src/cli/commands.rs",
+@@ -16408,6 +16414,8 @@ tests = [
+   "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_refusals_cannot_become_empty_or_fallback_successes",
+   "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_base_uses_the_same_parser_refusal_before_inventory",
+   "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_errors_keep_diff_input_identity_and_budget_guards",
++  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_truncated_sections_cannot_become_empty_or_partial_successes",
++  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_path_like_hunk_payload_keeps_real_changed_line_selection",
+   "crates/ripr/tests/cli_smoke/sample_output.rs::retained_oracles_reject_wrong_contract_shape_count_and_refusal",
+   "crates/ripr/tests/cli_smoke.rs::check_json_unresolvable_base_emits_refusal_envelope",
+   "crates/ripr/tests/cli_smoke.rs::check_json_unusable_root_emits_repository_root_unusable",
+diff --git a/changelog.d/brief-parser-refusal-status.md b/changelog.d/brief-parser-refusal-status.md
+index dab73adf5..c8f202294 100644
+--- a/changelog.d/brief-parser-refusal-status.md
++++ b/changelog.d/brief-parser-refusal-status.md
+@@ -1,5 +1,8 @@
+ <!-- section: Fixed -->
+ - `ripr agent brief --diff` and `--base` refuse shared-parser limitations and
+-  admission errors with the typed `diff_input_unsupported` identity
++  admission errors and truncated textual sections with the typed `diff_input_unsupported` identity
+   instead of emitting a successful empty or repository-fallback brief;
+   valid empty and ordinary patches retain their behavior (#7331).
++- Diff path-depth admission follows hunk boundaries so slash-heavy added or
++  removed source lines are not refused as path headers; actual path headers
++  retain their existing bounds (#8961).
+diff --git a/crates/ripr/src/analysis/diff/parse.rs b/crates/ripr/src/analysis/diff/parse.rs
+index cbce57e2c..6e447ec45 100644
+--- a/crates/ripr/src/analysis/diff/parse.rs
++++ b/crates/ripr/src/analysis/diff/parse.rs
+@@ -83,8 +83,9 @@ pub(crate) struct ParsedDiff {
+     /// misclaiming a line-endings-only change.
+     pub(crate) raw_line1_bom_paths: Vec<PathBuf>,
+     /// Typed record of diff regions this parser deliberately refused to read as
+-    /// ordinary source (#2828). An empty vector means the parser read the whole
+-    /// input; it never means "no such region existed but we said nothing".
++    /// ordinary source (#2828). Truncated textual sections are recorded
++    /// separately in `truncated_file_sections`, so this vector alone cannot
++    /// establish that the input was read completely.
+     pub(crate) limitations: Vec<AnalysisLimitation>,
+ }
+ 
+diff --git a/crates/ripr/src/analysis/diff/parse/stream.rs b/crates/ripr/src/analysis/diff/parse/stream.rs
+index 324019eb9..d389ad1fa 100644
+--- a/crates/ripr/src/analysis/diff/parse/stream.rs
++++ b/crates/ripr/src/analysis/diff/parse/stream.rs
+@@ -67,9 +67,29 @@ fn parse_lines<'a, E>(
+     // this file-count policy does not bound its bytes or a single large hunk.
+     let mut lines = lines.peekable();
+     while let Some(raw) = lines.next() {
+-        // Depth admission precedes every consumer of a path header: deeper
+-        // paths make ancestor walks and path comparisons quadratic.
+-        admit_line(raw)?;
++        if state.combined_quarantine()
++            && parse_old_path_marker(raw)
++            && lines.peek().is_some_and(|next| is_new_path_marker(next))
++        {
++            // Quarantined parent columns remain inert until this grammar
++            // recognizes an unprefixed plain file boundary.
++            state.close_combined_quarantine();
++        }
++
++        if state.in_hunk()
++            && state.can_end_at_plain_boundary()
++            && parse_old_path_marker(raw)
++            && lines.peek().is_some_and(|next| is_new_path_marker(next))
++        {
++            state.close_hunk();
++        }
++
++        // Decide whether ---/+++ is hunk data before path admission. A Git
++        // boundary can close even an unfinished hunk and resolves its old
++        // path immediately, so it must still be admitted before that work.
++        if (!state.in_hunk() && !state.combined_quarantine()) || raw.starts_with("diff --git ") {
++            admit_line(raw)?;
++        }
+         if state.handle_diff_boundary(raw) {
+             continue;
+         }
+@@ -94,23 +114,6 @@ fn parse_lines<'a, E>(
+             continue;
+         }
+ 
+-        if state.combined_quarantine()
+-            && parse_old_path_marker(raw)
+-            && lines.peek().is_some_and(|next| is_new_path_marker(next))
+-        {
+-            // Unprefixed plain markers may follow a combined hunk without a
+-            // diff --git boundary; quarantined parent columns must stay inert.
+-            state.close_combined_quarantine();
+-        }
+-
+-        if state.in_hunk()
+-            && state.can_end_at_plain_boundary()
+-            && parse_old_path_marker(raw)
+-            && lines.peek().is_some_and(|next| is_new_path_marker(next))
+-        {
+-            state.close_hunk();
+-        }
+-
+         if state.register_path_marker(raw, &mut files) {
+             admit_file_count(files.len())?;
+             continue;
+@@ -144,3 +147,6 @@ fn parse_lines<'a, E>(
+ 
+ #[cfg(test)]
+ mod tests;
++
++#[cfg(test)]
++mod path_admission_tests;
+diff --git a/crates/ripr/src/analysis/diff/parse/stream/path_admission_tests.rs b/crates/ripr/src/analysis/diff/parse/stream/path_admission_tests.rs
+new file mode 100644
+index 000000000..bb3b70887
+--- /dev/null
++++ b/crates/ripr/src/analysis/diff/parse/stream/path_admission_tests.rs
+@@ -0,0 +1,43 @@
++use super::{parse_bounded_lines, parse_unbounded};
++use std::path::Path;
++
++#[test]
++fn path_like_added_and_removed_lines_stay_hunk_payload() -> Result<(), String> {
++    let old = format!("-- {}", "/".repeat(600));
++    let new = format!("++ {}", "/".repeat(600));
++    let input = format!("--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1 +1 @@\n-{old}\n+{new}\n");
++    let parsed = parse_bounded_lines(input.lines(), 1)?;
++    assert_eq!(parsed.changed_files.len(), 1);
++    let file = &parsed.changed_files[0];
++    assert_eq!(file.path, Path::new("src/a.rs"));
++    assert_eq!(file.removed_lines[0].text, old);
++    assert_eq!(file.added_lines[0].text, new);
++    assert!(parsed.limitations.is_empty());
++    assert_eq!(parsed.truncated_file_sections, 0);
++    let compatibility = parse_unbounded(&input);
++    assert_eq!(file.added_lines, compatibility.changed_files[0].added_lines);
++    assert_eq!(
++        file.removed_lines,
++        compatibility.changed_files[0].removed_lines
++    );
++    Ok(())
++}
++
++#[test]
++fn actual_deep_headers_still_refuse_after_hunk_payload() {
++    let path = format!("{}lib.rs", "deep/".repeat(600));
++    let complete = "--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1 +1 @@\n-old\n+new\n";
++    let unfinished = "--- a/src/a.rs\n+++ b/src/a.rs\n@@ -1,2 +1,2 @@\n-old\n+new\n";
++    for input in [
++        format!("{complete}--- a/{path}\n+++ b/src/b.rs\n"),
++        format!("{complete}--- a/src/b.rs\n+++ b/{path}\n"),
++        format!("{complete}diff --git a/{path} b/{path}\n"),
++        format!("{unfinished}diff --git a/{path} b/{path}\n"),
++    ] {
++        assert!(
++            matches!(parse_bounded_lines(input.lines(), 2), Err(error)
++                if error.starts_with("diff_path_too_deep:")),
++            "actual path headers must retain depth admission"
++        );
++    }
++}
+diff --git a/crates/ripr/src/analysis/mod.rs b/crates/ripr/src/analysis/mod.rs
+index 8cb24a8e2..d580c9ed5 100644
+--- a/crates/ripr/src/analysis/mod.rs
++++ b/crates/ripr/src/analysis/mod.rs
+@@ -42,6 +42,8 @@ mod value_resolution;
+ mod witness;
+ mod workspace;
+ 
++pub(crate) use diff::parse_unified_diff_bounded_with_metadata;
++
+ /// Shared pinned PR-evidence diff assembly (#3930, #4004): the one named
+ /// owner for packet diff presentation, consumed by the product route and the
+ /// xtask route alike. Neither route may rebuild its argv inline.
+@@ -55,9 +57,9 @@ pub(crate) use diff::{
+     AnalyzedRevisions, another_base_candidate, load_diff, load_diff_core,
+     load_diff_range_with_deadline_core, load_diff_with_effective_base_core, load_worktree_diff,
+     load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis, parse_unified_diff,
+-    parse_unified_diff_bounded_with_metadata, probe_working_tree_tracked_changes_within,
+-    resolve_base_commit, resolve_effective_base, resolve_effective_base_core,
+-    working_tree_has_tracked_changes, working_tree_has_uncommitted_changes,
++    probe_working_tree_tracked_changes_within, resolve_base_commit, resolve_effective_base,
++    resolve_effective_base_core, working_tree_has_tracked_changes,
++    working_tree_has_uncommitted_changes,
+ };
+ /// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
+ /// diff assembly (#4003): the one named owner for badge input base/diff,
+diff --git a/crates/ripr/src/cli/commands_agent_support.rs b/crates/ripr/src/cli/commands_agent_support.rs
+index ebf4d1ee5..c437ae581 100644
+--- a/crates/ripr/src/cli/commands_agent_support.rs
++++ b/crates/ripr/src/cli/commands_agent_support.rs
+@@ -319,6 +319,16 @@ fn agent_brief_checked_lines_from_diff(
+             ),
+         ));
+     }
++    if parsed.truncated_file_sections > 0 {
++        return Err(crate::core_error::CoreError::diff_input_unsupported(
++            format!(
++                "agent brief cannot select a working set from this diff: malformed_diff: \
++                 {} file section(s) parsed a header but no hunk body; the diff appears \
++                 truncated. Re-run with the complete diff stream.",
++                parsed.truncated_file_sections,
++            ),
++        ));
++    }
+     Ok(parsed
+         .changed_files
+         .into_iter()
+diff --git a/crates/ripr/tests/task_first_facade/brief_diff_status.rs b/crates/ripr/tests/task_first_facade/brief_diff_status.rs
+index 24cb1948c..62316dfe1 100644
+--- a/crates/ripr/tests/task_first_facade/brief_diff_status.rs
++++ b/crates/ripr/tests/task_first_facade/brief_diff_status.rs
+@@ -29,6 +29,107 @@ fn brief_env(fixture: &Fixture, patch: &str, envs: &[(&str, &str)]) -> Result<Ou
+     )
+ }
+ 
++#[test]
++fn brief_truncated_sections_cannot_become_empty_or_partial_successes() -> Result<(), String> {
++    const TRUNCATED: &str =
++        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n";
++    let empty = Fixture::empty("brief-truncated-empty")?;
++    let boundary = Fixture::boundary("brief-truncated-boundary")?;
++    let mixed = format!(
++        "{ORDINARY}{}",
++        TRUNCATED.replace("src/lib.rs", "src/unfinished.rs")
++    );
++    for fixture in [&empty, &boundary] {
++        for patch in [TRUNCATED, mixed.as_str()] {
++            assert_refusal(&brief(fixture, patch)?, "malformed_diff")?;
++        }
++    }
++    let mode_only = brief(
++        &boundary,
++        "diff --git a/src/lib.rs b/src/lib.rs\nold mode 100644\nnew mode 100755\n",
++    )?;
++    assert_exit(
++        &mode_only,
++        0,
++        "valid metadata-only input keeps its fallback",
++    );
++    assert_eq!(
++        document(&mode_only)?["top_seams"][0]["why_now"]["reason"],
++        "repo_actionable_fallback"
++    );
++    Ok(())
++}
++
++#[test]
++fn brief_path_like_hunk_payload_keeps_real_changed_line_selection() -> Result<(), String> {
++    for (label, old, new, marker) in [
++        ("added", "ordinary", "++ ", '+'),
++        ("removed", "-- ", "ordinary", '-'),
++    ] {
++        let fixture = Fixture::boundary(&format!("brief-path-payload-{label}"))?;
++        let source = fixture.root.join("src/lib.rs");
++        let original = std::fs::read_to_string(&source).map_err(|e| e.to_string())?;
++        let payload_source = |text: &str| {
++            original.replacen(
++                " {\n",
++                &format!(" {{\n    let _payload = r#\"\n{text}\n\"#;\n"),
++                1,
++            )
++        };
++        let slashes = "/".repeat(600);
++        let old = if old == "-- " {
++            format!("{old}{slashes}")
++        } else {
++            old.to_string()
++        };
++        let new = if new == "++ " {
++            format!("{new}{slashes}")
++        } else {
++            new.to_string()
++        };
++        let before = payload_source(&old);
++        assert_ne!(
++            before, original,
++            "fixture must insert a valid Rust raw string"
++        );
++        std::fs::write(&source, before).map_err(|e| e.to_string())?;
++        run_git(&fixture.root, &["add", "src/lib.rs"])?;
++        git_commit(&fixture.root, "path-like payload before edit")?;
++        std::fs::write(&source, payload_source(&new)).map_err(|e| e.to_string())?;
++        weaken_boundary_predicate(&fixture.root)?;
++        let patch = run_git(&fixture.root, &["diff", "HEAD", "--", "src/lib.rs"])?;
++        let payload = if marker == '+' { &new } else { &old };
++        assert!(
++            patch.contains(&format!("\n{marker}{payload}\n")),
++            "Git must emit the intended path-like hunk payload"
++        );
++        assert!(
++            patch.contains("+    if amount > discount_threshold"),
++            "the same real patch must change the actionable predicate"
++        );
++        let output = brief(&fixture, &patch)?;
++        assert_exit(
++            &output,
++            0,
++            "slash-heavy hunk text is source, not a path header",
++        );
++        let value = document(&output)?;
++        let seams = value["top_seams"]
++            .as_array()
++            .ok_or("missing successful brief")?;
++        assert!(
++            !seams.is_empty(),
++            "fixture must retain real actionable seams"
++        );
++        assert!(
++            seams
++                .iter()
++                .any(|seam| { seam["why_now"]["reason"] == "changed_line_intersects_seam" })
++        );
++    }
++    Ok(())
++}
++
+ #[test]
+ fn brief_parser_errors_keep_diff_input_identity_and_budget_guards() -> Result<(), String> {
+     let fixture = Fixture::boundary("brief-parser-errors")?;
+@@ -93,6 +194,13 @@ fn brief_parser_errors_keep_diff_input_identity_and_budget_guards() -> Result<()
+         )?,
+         "diff_path_too_deep",
+     )?;
++    assert_refusal(
++        &brief(
++            &fixture,
++            &format!("{ORDINARY}--- a/{deep_path}\n+++ b/{deep_path}\n@@ -1 +1 @@\n-old\n+new\n"),
++        )?,
++        "diff_path_too_deep",
++    )?;
+ 
+     weaken_boundary_predicate(&fixture.root)?;
+     std::fs::write(
+diff --git a/docs/OUTPUT_SCHEMA.md b/docs/OUTPUT_SCHEMA.md
+index f446f37f7..7dfe675f6 100644
+--- a/docs/OUTPUT_SCHEMA.md
++++ b/docs/OUTPUT_SCHEMA.md
+@@ -875,7 +875,7 @@ zeroed `summary`, same empty `findings`, same
+ | `check_artifact_unusable` | `analysis/check-artifact` | A named `ripr context --from` check artifact is unreadable, malformed, foreign, or identity-mismatched (#7331). |
+ | `gap_ledger_unusable` | `analysis/gap-ledger` | A named `ripr rerun --gap-ledger` file cannot be read or parsed (#7331). |
+ | `seam_id_unknown` | `analysis/seam-inventory` | A named `ripr agent packet --seam-id` matches no current seam (#7331). |
+-| `diff_input_unsupported` | `analysis/diff-input` | The shared diff parser refused a region of an `agent brief --diff` or `--base` input; no brief selection ran. |
++| `diff_input_unsupported` | `analysis/diff-input` | The shared diff parser refused a region, admission, or truncated textual section of an `agent brief --diff` or `--base` input; no brief selection ran. |
+ | `git_invocation_timeout` | `analysis/git-timeout` | A git invocation exceeded its cooperative deadline and was terminated. |
+ | `analysis_timeout` | `analysis/timeout` | The `ripr check` wall-clock budget (`--timeout SECS`, `RIPR_CHECK_TIMEOUT`) ran out before analysis finished; no findings were produced (#5369). |
+ | `analysis_failed` | `analysis/failure` | Honest fallback for any other failure: the run produced no findings, with no claim about which stage stopped. |
+@@ -15945,16 +15945,20 @@ small working-set summary that selects the top seams relevant to the files,
+ lines, diff, base ref, or explicit seam ID an agent is touching.
+ 
+ For `--diff` and `--base`, shared-parser limitations (combined hunks,
+-unresolved conflict regions, or malformed hunks) refuse the invocation before
++unresolved conflict regions, or malformed hunks) and independently recorded
++truncated textual sections refuse the invocation before
+ selection. The command exits `2` with the refusal envelope above, identity
+ `diff_input_unsupported`, `downstream_consumable: false`, and the parser's
+ reason and recovery in the diagnostic. This also applies when ordinary hunks
+ are present and to parser admission errors such as changed-file-count and
+ path-depth bounds. The brief keeps `diff_input_unsupported` for these errors;
+-`check` retains its existing budget-refusal identities. A valid empty patch
++`check` retains its existing budget-refusal identities. Path-depth admission
++follows hunk-boundary decisions, so slash-heavy source lines beginning with
++`++ ` or `-- ` are payload rather than path headers. A valid empty patch
+ still succeeds: an empty inventory returns
+ empty `top_seams`; a nonempty inventory retains the disclosed repository
+-fallback. Successful emptiness does not establish test adequacy.
++fallback. Valid mode-only input retains its existing fallback too. Successful
++emptiness does not establish test adequacy.
+ 
+ Command forms:
+ 
+diff --git a/docs/specs/RIPR-SPEC-0010-agent-working-set-brief.md b/docs/specs/RIPR-SPEC-0010-agent-working-set-brief.md
+index dc8e58267..95fc7a4f9 100644
+--- a/docs/specs/RIPR-SPEC-0010-agent-working-set-brief.md
++++ b/docs/specs/RIPR-SPEC-0010-agent-working-set-brief.md
+@@ -92,12 +92,16 @@ The command should:
+   static evidence;
+ - remain advisory and static;
+ - refuse `--diff` and `--base` input when the shared diff parser reports
+-  combined hunks, unresolved conflict regions, or malformed hunks, including
++  combined hunks, unresolved conflict regions, malformed hunks, or truncated
++  textual file sections, including
+   mixed ordinary/refused input; exit `2` through the JSON refusal envelope
+   with identity `diff_input_unsupported` before selecting any seams;
+ - use that same brief refusal identity for shared-parser admission errors,
+   including changed-file-count and path-depth bounds, without changing the
+   parser's limits or the existing `check` budget-refusal contract;
++- apply path-depth admission to actual path headers after hunk-boundary
++  decisions; added or removed source text that resembles a path header
++  remains hunk payload, including slash-heavy raw-string content;
+ - retain successful empty selection and the documented repository fallback
+   for a valid empty patch; neither is a test-adequacy claim;
+ - avoid automatic edits, generated tests, runtime mutation execution, cache
+@@ -558,6 +562,10 @@ Planned tests:
+ - `brief_parser_refusals_cannot_become_empty_or_fallback_successes`
+ - `brief_base_uses_the_same_parser_refusal_before_inventory`
+ - `brief_parser_errors_keep_diff_input_identity_and_budget_guards`
++- `brief_truncated_sections_cannot_become_empty_or_partial_successes`
++- `brief_path_like_hunk_payload_keeps_real_changed_line_selection`
++- `path_like_added_and_removed_lines_stay_hunk_payload`
++- `actual_deep_headers_still_refuse_after_hunk_payload`
+ - `agent_brief_ranks_changed_line_intersection_first`
+ - `agent_brief_ranks_explicit_seam_id_first`
+ - `agent_brief_selector_routes_changed_owner_function_to_seam`
+diff --git a/docs/specs/RIPR-SPEC-0241-check-json-refusal-envelope.md b/docs/specs/RIPR-SPEC-0241-check-json-refusal-envelope.md
+index 19773bde8..32a8978be 100644
+--- a/docs/specs/RIPR-SPEC-0241-check-json-refusal-envelope.md
++++ b/docs/specs/RIPR-SPEC-0241-check-json-refusal-envelope.md
+@@ -201,7 +201,7 @@ machine-readable `check` formats carry their own refusal documents:
+ | `check_artifact_unusable` | `analysis/check-artifact` | A named `ripr context --from` check artifact is unreadable, malformed, foreign, or identity-mismatched. |
+ | `gap_ledger_unusable` | `analysis/gap-ledger` | A named `ripr rerun --gap-ledger` file cannot be read or parsed. |
+ | `seam_id_unknown` | `analysis/seam-inventory` | A named `ripr agent packet --seam-id` matches no current seam. |
+-| `diff_input_unsupported` | `analysis/diff-input` | An `agent brief --diff` or `--base` working set carries a shared-parser limitation; brief selection did not run. Empty valid patches retain their successful brief behavior. |
++| `diff_input_unsupported` | `analysis/diff-input` | An `agent brief --diff` or `--base` working set carries a shared-parser limitation, admission refusal, or truncated textual section; brief selection did not run. Empty valid patches retain their successful brief behavior. |
+ | `analysis_timeout` | `analysis/timeout` | The `ripr check` wall-clock budget (`--timeout SECS`, `RIPR_CHECK_TIMEOUT`) ran out before analysis finished (#5369). No findings are produced and the result is never a clean pass. |
+ 
+ - For `ripr check`, the machine-readable formats `sarif`, `github`,
+@@ -225,6 +225,8 @@ all renderers.
+ - `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_refusals_cannot_become_empty_or_fallback_successes`
+ - `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_base_uses_the_same_parser_refusal_before_inventory`
+ - `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_errors_keep_diff_input_identity_and_budget_guards`
++- `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_truncated_sections_cannot_become_empty_or_partial_successes`
++- `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_path_like_hunk_payload_keeps_real_changed_line_selection`
+ - `crates/ripr/tests/cli_smoke.rs::diff_json_unresolvable_base_emits_refusal_envelope`
+ - `crates/ripr/tests/cli_smoke.rs::diff_json_outside_work_tree_emits_refusal_envelope`
+ - `crates/ripr/tests/cli_smoke.rs::rerun_json_unreadable_gap_ledger_emits_refusal_envelope`

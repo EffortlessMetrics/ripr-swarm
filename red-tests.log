@@ -1,0 +1,117 @@
+   Compiling ripr v0.11.0 (/workspace/brief-status/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 1.90s
+     Running tests/task_first_facade.rs (target/debug/deps/task_first_facade-76c7a3d2385779ae)
+
+running 6 tests
+test brief_diff_status::brief_base_uses_the_same_parser_refusal_before_inventory ... ok
+test brief_diff_status::brief_empty_and_ordinary_patches_keep_successful_selection ... ok
+test brief_diff_status::brief_parser_errors_keep_diff_input_identity_and_budget_guards ... ok
+test brief_diff_status::brief_parser_refusals_cannot_become_empty_or_fallback_successes ... ok
+test brief_diff_status::brief_path_like_hunk_payload_keeps_real_changed_line_selection ... FAILED
+test brief_diff_status::brief_truncated_sections_cannot_become_empty_or_partial_successes ... FAILED
+
+failures:
+
+---- brief_diff_status::brief_path_like_hunk_payload_keeps_real_changed_line_selection stdout ----
+
+thread 'brief_diff_status::brief_path_like_hunk_payload_keeps_real_changed_line_selection' (1684) panicked at crates/ripr/tests/task_first_facade.rs:265:5:
+assertion `left == right` failed: slash-heavy hunk text is source, not a path header: expected exit 0
+stdout:
+{
+  "analysis_scope": {
+    "basis": "diff_input_unsupported",
+    "downstream_consumable": false,
+    "limitation": "diff_input_unsupported",
+    "repair_route": "analysis/diff-input",
+    "run_status": "diff_input_unsupported",
+    "scope": "repo"
+  },
+  "findings": [],
+  "root": "/workspace/brief-status/target/ripr-brief-path-payload-added-1792533970925318688-1509-6",
+  "run_limitations": [
+    {
+      "basis": "diff_input_unsupported",
+      "category": "diff_input_unsupported",
+      "downstream_consumable": false,
+      "message": "diff_path_too_deep: a diff path header exceeds the 256-component path depth bound; parsing stopped before the header was resolved and analysis was not run. Repair route: regenerate the diff from a real checkout, whose paths are far shallower than this bound.",
+      "repair_route": "analysis/diff-input",
+      "run_status": "diff_input_unsupported"
+    }
+  ],
+  "schema_version": "0.1",
+  "summary": {
+    "changed_files_by_language": [],
+    "changed_rust_files": 0,
+    "exposed": 0,
+    "findings": 0,
+    "infection_unknown": 0,
+    "no_static_path": 0,
+    "probes": 0,
+    "propagation_unknown": 0,
+    "reachable_unrevealed": 0,
+    "static_unknown": 0,
+    "weakly_exposed": 0
+  },
+  "tool": "ripr"
+}
+
+stderr:
+ripr: diff_path_too_deep: a diff path header exceeds the 256-component path depth bound; parsing stopped before the header was resolved and analysis was not run. Repair route: regenerate the diff from a real checkout, whose paths are far shallower than this bound.
+
+  left: Some(2)
+ right: Some(0)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- brief_diff_status::brief_truncated_sections_cannot_become_empty_or_partial_successes stdout ----
+
+thread 'brief_diff_status::brief_truncated_sections_cannot_become_empty_or_partial_successes' (1697) panicked at crates/ripr/tests/task_first_facade.rs:265:5:
+assertion `left == right` failed: malformed_diff: expected exit 2
+stdout:
+{
+  "config": {
+    "fingerprint": null,
+    "path": null,
+    "state": "missing"
+  },
+  "limits": {
+    "default": 3,
+    "hard_cap": 10,
+    "requested": 3,
+    "returned": 0
+  },
+  "mode": "draft",
+  "next": {
+    "inspect_packet": "mkdir -p /workspace/brief-status/target/ripr-brief-truncated-empty-1792533970958673556-1509-7/target/ripr/workflow && ripr check --root /workspace/brief-status/target/ripr-brief-truncated-empty-1792533970958673556-1509-7 --mode draft --format agent-seam-packets-json > /workspace/brief-status/target/ripr-brief-truncated-empty-1792533970958673556-1509-7/target/ripr/workflow/agent-seam-packets.json",
+    "verify_after_edit": "ripr agent verify --root /workspace/brief-status/target/ripr-brief-truncated-empty-1792533970958673556-1509-7 --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
+  },
+  "root": "/workspace/brief-status/target/ripr-brief-truncated-empty-1792533970958673556-1509-7",
+  "schema_version": "0.1",
+  "scope": "working_set",
+  "tool": "ripr",
+  "top_seams": [],
+  "warnings": [
+    "No seams matched the requested scope (source: diff), and no other agent-actionable seam in the analyzed inventory is visible under the current config."
+  ],
+  "working_set": {
+    "base": null,
+    "changed_lines": [],
+    "diff": "/workspace/brief-status/target/ripr-brief-truncated-empty-1792533970958673556-1509-7/change.patch",
+    "files": [],
+    "seam_id": null,
+    "source": "diff"
+  }
+}
+
+stderr:
+
+  left: Some(0)
+ right: Some(2)
+
+
+failures:
+    brief_diff_status::brief_path_like_hunk_payload_keeps_real_changed_line_selection
+    brief_diff_status::brief_truncated_sections_cannot_become_empty_or_partial_successes
+
+test result: FAILED. 4 passed; 2 failed; 0 ignored; 0 measured; 51 filtered out; finished in 0.52s
+
+error: test failed, to rerun pass `-p ripr --test task_first_facade`

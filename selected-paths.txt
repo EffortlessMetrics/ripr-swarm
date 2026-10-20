@@ -1,0 +1,13 @@
+.ripr/traceability.toml
+changelog.d/brief-parser-refusal-status.md
+crates/ripr/src/analysis/diff/parse.rs
+crates/ripr/src/analysis/diff/parse/stream.rs
+crates/ripr/src/analysis/diff/parse/stream/path_admission_tests.rs
+crates/ripr/src/analysis/mod.rs
+crates/ripr/src/cli/commands_agent_support.rs
+crates/ripr/src/core_error.rs
+crates/ripr/tests/task_first_facade.rs
+crates/ripr/tests/task_first_facade/brief_diff_status.rs
+docs/OUTPUT_SCHEMA.md
+docs/specs/RIPR-SPEC-0010-agent-working-set-brief.md
+docs/specs/RIPR-SPEC-0241-check-json-refusal-envelope.md

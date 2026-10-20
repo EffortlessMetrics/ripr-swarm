@@ -1,0 +1,9 @@
+{
+  "observed_at": "2026-10-20T22:34:15.205770+00:00",
+  "evidence_commit": "b22e34ddcd34808279b1a5b977182e5e6a02f72c",
+  "route": "installed GitHub fetch_file UTF-8",
+  "path": "manifest.json",
+  "bytes": 3320,
+  "sha256": "695e715963960bc81c918ec92901f516d6bd8f2817274fdcb9e6f037225958e4",
+  "comparison": "exact bytes match"
+}

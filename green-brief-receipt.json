@@ -1,0 +1,27 @@
+{
+  "observed_at": "2026-10-20T22:20:45.953972+00:00",
+  "candidate": "fc7e17a409cf81b99c2447a409b55ec699752d06",
+  "command": "cargo test --locked -p ripr --test task_first_facade brief_diff_status:: -- --test-threads=1",
+  "native_exit": 0,
+  "result": {
+    "passed": 6,
+    "failed": 0,
+    "ignored": 0,
+    "filtered": 51,
+    "cli_invocations": 28
+  },
+  "controls": [
+    "truncated-only and ordinary+truncated refuse before empty/fallback selection on empty and nonempty inventories",
+    "valid empty and metadata-only mode diff preserve success/fallback",
+    "Git-produced added and removed slash-heavy Rust raw-string payloads plus real predicate edit retain changed_line_intersects_seam selection",
+    "actual excessive path-depth refuses both alone and after an ordinary hunk",
+    "file-count, --base, combined/malformed/conflict and unchanged check identity controls retained"
+  ],
+  "red_binding": "red-execution.json and red-test.patch bind tests-only run against production 1a525ea; both new functions fail at their first case. Final path-like fixture was strengthened after red with a real predicate edit. The final strengthened stimulus was not executed pre-repair, and later cases are not claimed by red.",
+  "cli_witness": {
+    "path": "/workspace/brief-status/target/debug/ripr",
+    "bytes": 127223488,
+    "sha256": "20aed9ca0a331f6a28c79476641bd1b3327406a8116e64e5cdcbfa38807d1229"
+  },
+  "runtime": "Linux x86_64, Rust/Cargo 1.95.0, Bash; jobs2, incremental off, dev debug0"
+}

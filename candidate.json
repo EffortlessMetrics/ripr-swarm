@@ -1,0 +1,10 @@
+{
+  "candidate": "fc7e17a409cf81b99c2447a409b55ec699752d06",
+  "tree": "eb5a63a1fdfed5b5f623a4b433544f589c9bf21f",
+  "base": "1e9468f4b0d133f0a50b64134318763d8cf48beb",
+  "integration_basis": "5403d85084486d7804a5bb08a08cda9c2d4a5710",
+  "utc": "2026-10-20T22:18:07.342687+00:00",
+  "runtime": "rustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.95.0\nLLVM version: 22.1.2",
+  "platform": "Linux-6.18.55-x86_64-with-glibc2.41",
+  "admission": "Original cumulative 12 GiB additional growth; reserve 8 GiB; jobs=2, incremental=0, dev debug=0; target and wrapper/dependencies/restoration included."
+}

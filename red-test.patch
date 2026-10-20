@@ -1,0 +1,121 @@
+diff --git a/crates/ripr/tests/task_first_facade/brief_diff_status.rs b/crates/ripr/tests/task_first_facade/brief_diff_status.rs
+index 24cb1948c..ea6030135 100644
+--- a/crates/ripr/tests/task_first_facade/brief_diff_status.rs
++++ b/crates/ripr/tests/task_first_facade/brief_diff_status.rs
+@@ -29,6 +29,102 @@ fn brief_env(fixture: &Fixture, patch: &str, envs: &[(&str, &str)]) -> Result<Ou
+     )
+ }
+ 
++#[test]
++fn brief_truncated_sections_cannot_become_empty_or_partial_successes() -> Result<(), String> {
++    const TRUNCATED: &str =
++        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n";
++    let empty = Fixture::empty("brief-truncated-empty")?;
++    let boundary = Fixture::boundary("brief-truncated-boundary")?;
++    let mixed = format!(
++        "{ORDINARY}{}",
++        TRUNCATED.replace("src/lib.rs", "src/unfinished.rs")
++    );
++    for fixture in [&empty, &boundary] {
++        for patch in [TRUNCATED, mixed.as_str()] {
++            assert_refusal(&brief(fixture, patch)?, "malformed_diff")?;
++        }
++    }
++    let mode_only = brief(
++        &boundary,
++        "diff --git a/src/lib.rs b/src/lib.rs\nold mode 100644\nnew mode 100755\n",
++    )?;
++    assert_exit(
++        &mode_only,
++        0,
++        "valid metadata-only input keeps its fallback",
++    );
++    assert_eq!(
++        document(&mode_only)?["top_seams"][0]["why_now"]["reason"],
++        "repo_actionable_fallback"
++    );
++    Ok(())
++}
++
++#[test]
++fn brief_path_like_hunk_payload_keeps_real_changed_line_selection() -> Result<(), String> {
++    for (label, old, new, marker) in [
++        ("added", "ordinary", "++ ", '+'),
++        ("removed", "-- ", "ordinary", '-'),
++    ] {
++        let fixture = Fixture::boundary(&format!("brief-path-payload-{label}"))?;
++        let source = fixture.root.join("src/lib.rs");
++        let original = std::fs::read_to_string(&source).map_err(|e| e.to_string())?;
++        let payload_source = |text: &str| {
++            original.replacen(
++                " {\n",
++                &format!(" {{\n    let _payload = r#\"\n{text}\n\"#;\n"),
++                1,
++            )
++        };
++        let slashes = "/".repeat(600);
++        let old = if old == "-- " {
++            format!("{old}{slashes}")
++        } else {
++            old.to_string()
++        };
++        let new = if new == "++ " {
++            format!("{new}{slashes}")
++        } else {
++            new.to_string()
++        };
++        let before = payload_source(&old);
++        assert_ne!(
++            before, original,
++            "fixture must insert a valid Rust raw string"
++        );
++        std::fs::write(&source, before).map_err(|e| e.to_string())?;
++        run_git(&fixture.root, &["add", "src/lib.rs"])?;
++        git_commit(&fixture.root, "path-like payload before edit")?;
++        std::fs::write(&source, payload_source(&new)).map_err(|e| e.to_string())?;
++        let patch = run_git(&fixture.root, &["diff", "HEAD", "--", "src/lib.rs"])?;
++        let payload = if marker == '+' { &new } else { &old };
++        assert!(
++            patch.contains(&format!("\n{marker}{payload}\n")),
++            "Git must emit the intended path-like hunk payload"
++        );
++        let output = brief(&fixture, &patch)?;
++        assert_exit(
++            &output,
++            0,
++            "slash-heavy hunk text is source, not a path header",
++        );
++        let value = document(&output)?;
++        let seams = value["top_seams"]
++            .as_array()
++            .ok_or("missing successful brief")?;
++        assert!(
++            !seams.is_empty(),
++            "fixture must retain real actionable seams"
++        );
++        assert!(
++            seams
++                .iter()
++                .any(|seam| { seam["why_now"]["reason"] == "changed_line_intersects_seam" })
++        );
++    }
++    Ok(())
++}
++
+ #[test]
+ fn brief_parser_errors_keep_diff_input_identity_and_budget_guards() -> Result<(), String> {
+     let fixture = Fixture::boundary("brief-parser-errors")?;
+@@ -93,6 +189,13 @@ fn brief_parser_errors_keep_diff_input_identity_and_budget_guards() -> Result<()
+         )?,
+         "diff_path_too_deep",
+     )?;
++    assert_refusal(
++        &brief(
++            &fixture,
++            &format!("{ORDINARY}--- a/{deep_path}\n+++ b/{deep_path}\n@@ -1 +1 @@\n-old\n+new\n"),
++        )?,
++        "diff_path_too_deep",
++    )?;
+ 
+     weaken_boundary_predicate(&fixture.root)?;
+     std::fs::write(

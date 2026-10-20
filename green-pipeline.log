@@ -1,0 +1,13 @@
+    Finished `test` profile [unoptimized] target(s) in 0.33s
+     Running unittests src/lib.rs (target/debug/deps/ripr-ae895c9b88ff76c4)
+
+running 6 tests
+test analysis::pipeline::tests::truncated_diff_after_file_header_projects_incomplete_outcome ... ok
+test analysis::pipeline::tests::truncated_diff_disclosure_names_truncated_sections_and_truncation ... ok
+test analysis::pipeline::tests::truncated_section_after_complete_hunk_projects_incomplete_outcome ... ok
+test analysis::pipeline::tests::truncated_section_survives_beside_adapter_limitations ... ok
+test analysis::pipeline::tests::truncated_source_section_after_gitlink_section_projects_incomplete_outcome ... ok
+test analysis::pipeline::tests::truncated_stream_gate_fires_only_on_truncated_sections ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 11858 filtered out; finished in 0.01s
+

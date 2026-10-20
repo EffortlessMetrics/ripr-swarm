@@ -1,0 +1,129 @@
+{
+  "recorded_at": "2026-10-20T22:41:59.651Z",
+  "candidate": "fc7e17a409cf81b99c2447a409b55ec699752d06",
+  "candidate_tree": "eb5a63a1fdfed5b5f623a4b433544f589c9bf21f",
+  "original_base": "1e9468f4b0d133f0a50b64134318763d8cf48beb",
+  "remote_merge": {
+    "commit": "7ae2509ba2d4d9173e5d21e8bd3ad306a0be9a53",
+    "parents": [
+      "a816499ecf9544fe49f3c3ca4d4964584ab02f70",
+      "fc7e17a409cf81b99c2447a409b55ec699752d06"
+    ],
+    "tree": "a0d5776fdaf3303e5744fc903805f4b51a1f969f"
+  },
+  "current_main": "a816499ecf9544fe49f3c3ca4d4964584ab02f70",
+  "currentness": "Only a subsequent MCP adapter commit since inspected 5403d85. Native instructions/workflows, parser, brief intake and CoreError paths unchanged across those main heads. Actual GitHub merge parents match inspected main and published candidate; source conflict resolved without restack.",
+  "precommit_digest": "sha256:9c36394e4eefcbdda4647dc82723af171902a60e60c89259bc9856ef5ee7dfce",
+  "workflow_runs_before_request": [
+    {
+      "id": 39509895571,
+      "name": "Qualify ripr-rs Python Wheel (read-only)",
+      "status": "in_progress",
+      "conclusion": null,
+      "run_number": 5266,
+      "jobs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39509895571/jobs",
+      "logs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39509895571/logs",
+      "workflow_id": 369738926
+    },
+    {
+      "id": 39509895501,
+      "name": "Test Analytics",
+      "status": "completed",
+      "conclusion": "skipped",
+      "run_number": 19058,
+      "jobs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39509895501/jobs",
+      "logs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39509895501/logs",
+      "workflow_id": 279750515
+    },
+    {
+      "id": 39509895539,
+      "name": "macOS Advisory",
+      "status": "completed",
+      "conclusion": "skipped",
+      "run_number": 1370,
+      "jobs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39509895539/jobs",
+      "logs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39509895539/logs",
+      "workflow_id": 387431233
+    },
+    {
+      "id": 39509895500,
+      "name": "CI",
+      "status": "completed",
+      "conclusion": "skipped",
+      "run_number": 19508,
+      "jobs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39509895500/jobs",
+      "logs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39509895500/logs",
+      "workflow_id": 279750501
+    },
+    {
+      "id": 39509895609,
+      "name": "Future Clippy (advisory)",
+      "status": "completed",
+      "conclusion": "skipped",
+      "run_number": 19370,
+      "jobs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39509895609/jobs",
+      "logs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39509895609/logs",
+      "workflow_id": 279750507
+    },
+    {
+      "id": 39509895470,
+      "name": "ub-review",
+      "status": "in_progress",
+      "conclusion": null,
+      "run_number": 13248,
+      "jobs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39509895470/jobs",
+      "logs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39509895470/logs",
+      "workflow_id": 307106043
+    },
+    {
+      "id": 39509895455,
+      "name": "Printed Command Paste",
+      "status": "completed",
+      "conclusion": "skipped",
+      "run_number": 3962,
+      "jobs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39509895455/jobs",
+      "logs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39509895455/logs",
+      "workflow_id": 374385460
+    },
+    {
+      "id": 39509895499,
+      "name": "Source of Truth",
+      "status": "in_progress",
+      "conclusion": null,
+      "run_number": 12344,
+      "jobs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39509895499/jobs",
+      "logs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39509895499/logs",
+      "workflow_id": 280973842
+    },
+    {
+      "id": 39509895574,
+      "name": "Windows Advisory",
+      "status": "completed",
+      "conclusion": "skipped",
+      "run_number": 11429,
+      "jobs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39509895574/jobs",
+      "logs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39509895574/logs",
+      "workflow_id": 320138673
+    },
+    {
+      "id": 39509895471,
+      "name": "Security",
+      "status": "completed",
+      "conclusion": "skipped",
+      "run_number": 18683,
+      "jobs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39509895471/jobs",
+      "logs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39509895471/logs",
+      "workflow_id": 279750513
+    },
+    {
+      "id": 39509895477,
+      "name": "Coverage",
+      "status": "completed",
+      "conclusion": "skipped",
+      "run_number": 19063,
+      "jobs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39509895477/jobs",
+      "logs_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39509895477/logs",
+      "workflow_id": 279750502
+    }
+  ]
+}
