@@ -91,6 +91,23 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
             )));
         }
     };
+    // #8727: a divergent placement and `--write` cannot combine honestly.
+    // Writing the stub would dirty a file outside the repair packet's
+    // admitted edit surface, and the before phase's dirty-premise gate would
+    // refuse the very start command named below. Committing the stub does
+    // not repair the journey either: the packet's edit cage admits only its
+    // own surface, so the written test would still sit where the repair
+    // cannot use it. Refuse before the write, naming both files and the
+    // supported route (EXIT_CODES.md: a refused `--write` stays exit 2).
+    if options.write {
+        if let Some(message) = resolution
+            .next_repair
+            .as_ref()
+            .and_then(|next| divergent_write_refusal(&resolution.seam_id, next))
+        {
+            return Err(CommandError::Failure(message));
+        }
+    }
     let written = if options.write {
         Some(write_test_stub(&options.root, &resolution, stub).map_err(CommandError::Failure)?)
     } else {
@@ -238,15 +255,21 @@ fn run_line(
 }
 
 /// The `next_repair` block of the ready `rust_test_stub` document (#8727).
+/// `placement_divergence` is inserted only when the placements disagree:
+/// absence, not a JSON null — consumers branch on field presence, and an
+/// agreeing stub must not read as divergent.
 fn next_repair_json(next_repair: &StubNextRepair) -> serde_json::Value {
-    serde_json::json!({
+    let mut block = serde_json::json!({
         "start_command": next_repair.start_command,
         "allowed_edit_surface": next_repair.allowed_edit_surface,
-        "placement_divergence": next_repair.placement_divergence.as_ref().map(|divergence| serde_json::json!({
+    });
+    if let Some(divergence) = &next_repair.placement_divergence {
+        block["placement_divergence"] = serde_json::json!({
             "stub_file": divergence.stub_file,
             "packet_file": divergence.packet_file,
-        })),
-    })
+        });
+    }
+    block
 }
 
 /// The plain-language divergence warning: both files named, and the
@@ -257,6 +280,22 @@ fn divergence_warning_line(divergence: &StubPlacementDivergence) -> String {
         "Warning: this stub lands in {}, but the repair packet admits only {} as its edit surface. Write the test in {} instead, then run the repair; writing the stub to {} makes the repair's before phase refuse the edit.",
         divergence.stub_file, divergence.packet_file, divergence.packet_file, divergence.stub_file,
     )
+}
+
+/// Why a `--write` is refused when the stub's placement diverges from the
+/// packet's admitted edit surface (#8727 review): the write would dirty a
+/// file the repair's before phase refuses, so the command stops before
+/// touching anything and names the supported route. `None` when the
+/// placement agrees (or no repair route was projected), where the write is
+/// safe to apply.
+fn divergent_write_refusal(seam_id: &str, next_repair: &StubNextRepair) -> Option<String> {
+    let divergence = next_repair.placement_divergence.as_ref()?;
+    Some(format!(
+        "agent stub: the stub for seam {seam_id} lands in {stub_file}, but the repair packet admits only {packet_file} as its edit surface; --write would leave {stub_file} dirty outside that surface and the repair's before phase would refuse the start. Rerun without --write, write the test in {packet_file} instead, then start the repair: {start_command}. No file was written.",
+        stub_file = divergence.stub_file,
+        packet_file = divergence.packet_file,
+        start_command = next_repair.start_command,
+    ))
 }
 
 #[cfg(test)]
@@ -440,8 +479,8 @@ mod tests {
         );
         assert_eq!(value["allowed_edit_surface"], "tests/clamp_tests.rs");
         assert!(
-            value["placement_divergence"].is_null(),
-            "agreeing placements must not carry a divergence: {value}"
+            value.get("placement_divergence").is_none(),
+            "agreeing placements must omit the divergence key entirely: {value}"
         );
 
         let divergent = StubNextRepair {
@@ -475,6 +514,46 @@ mod tests {
         assert!(
             line.contains("before phase refuse"),
             "the warning must state the refusal consequence: {line}"
+        );
+    }
+
+    /// #8727 review: `--write` with divergent placements is refused before
+    /// any file changes — the write would dirty a file outside the packet's
+    /// admitted surface and the advertised start command would meet the
+    /// before phase's dirty-premise refusal. The message names both files,
+    /// the consequence, and the supported route; an agreeing placement (or
+    /// no projected route) refuses nothing.
+    #[test]
+    fn divergent_write_refuses_before_writing_with_actionable_guidance() {
+        let agreeing = StubNextRepair {
+            start_command: "ripr agent repair --root . --seam-id abc --phase before".to_string(),
+            allowed_edit_surface: "tests/clamp_tests.rs".to_string(),
+            placement_divergence: None,
+        };
+        assert!(
+            divergent_write_refusal("abc", &agreeing).is_none(),
+            "an agreeing placement must not refuse the write"
+        );
+
+        let divergent = StubNextRepair {
+            placement_divergence: Some(StubPlacementDivergence {
+                stub_file: "src/clamp.rs".to_string(),
+                packet_file: "tests/clamp_tests.rs".to_string(),
+            }),
+            ..agreeing
+        };
+        let message = divergent_write_refusal("abc", &divergent)
+            .expect("a divergent placement must refuse the write");
+        assert!(message.contains("src/clamp.rs"), "{message}");
+        assert!(message.contains("tests/clamp_tests.rs"), "{message}");
+        assert!(
+            message.contains("before phase would refuse"),
+            "the refusal must state the dirty-premise consequence: {message}"
+        );
+        assert!(message.contains("No file was written"), "{message}");
+        assert!(
+            message.contains("ripr agent repair --root . --seam-id abc --phase before"),
+            "the refusal must name the supported repair start: {message}"
         );
     }
 
