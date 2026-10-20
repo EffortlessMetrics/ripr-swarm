@@ -1332,7 +1332,10 @@ fn run_pipeline_for_diff_text_with_language_config(
     // #7663: name every ripr-artifact file the intake dropped, so the counts
     // below never silently disagree with the commit the diff came from.
     if !own_artifact_files.is_empty() {
-        eprintln!("{}", ripr_artifact_disclosure(&own_artifact_files));
+        eprintln!(
+            "{}",
+            ripr_artifact_disclosure(&artifact_roots, &own_artifact_files)
+        );
     }
 
     if findings.is_empty()
@@ -2069,18 +2072,31 @@ fn bounded_path_listing(paths: &[String]) -> String {
 /// The stderr line naming the ripr-artifact files the intake dropped from
 /// changed-scope accounting (#7663). Pure so the disclosure contract is
 /// testable without capturing stderr. The recovery names the exact
-/// `.gitignore` entry because the common trigger is a Python repo whose
-/// template `.gitignore` does not cover Rust-conventional `target/`.
-fn ripr_artifact_disclosure(own_artifact_files: &[diff::ChangedFile]) -> String {
+/// `.gitignore` entries for the artifact roots that actually excluded the
+/// files — the default `/target/ripr/`, or the writer-layer directories a
+/// relocated `RIPR_CACHE_DIR` / `[perl].cache_dir` produced (#8751; PR #8901
+/// review: stale `/target/ripr/` advice covers nothing when the relocated
+/// cache was what the intake excluded) — because the common trigger is a
+/// Python repo whose template `.gitignore` does not cover Rust-conventional
+/// `target/`.
+fn ripr_artifact_disclosure(
+    artifact_roots: &[PathBuf],
+    own_artifact_files: &[diff::ChangedFile],
+) -> String {
     let listed = bounded_path_listing(
         &own_artifact_files
             .iter()
             .map(|file| file.path.to_string_lossy().replace('\\', "/"))
             .collect::<Vec<_>>(),
     );
+    let entries = artifact_roots
+        .iter()
+        .map(|root| format!("/{}/", diff::artifact_root_pathspec(root)))
+        .collect::<Vec<_>>()
+        .join(", ");
     format!(
-        "ripr: {count} ripr artifact file(s) under target/ripr are tool output, not user \
-         source, and were not counted as changed scope: {listed}. Add `/target/ripr/` to \
+        "ripr: {count} ripr artifact file(s) are tool output, not user source, \
+         and were not counted as changed scope: {listed}. Add {entries} to \
          `.gitignore` to keep ripr's reports and caches out of commits.",
         count = own_artifact_files.len()
     )
@@ -2939,13 +2955,28 @@ mod tests {
             changed_file("target/ripr/pilot/pilot-summary.md"),
             changed_file("target/ripr/cache/repo-seam-facts/1.61/abc.json"),
         ];
-        let message = ripr_artifact_disclosure(&files);
+        let message = ripr_artifact_disclosure(&[PathBuf::from("target").join("ripr")], &files);
         assert!(message.contains("2 ripr artifact file(s)"), "{message}");
         assert!(
             message.contains("target/ripr/pilot/pilot-summary.md"),
             "{message}"
         );
         assert!(message.contains("/target/ripr/"), "{message}");
+    }
+
+    #[test]
+    fn ripr_artifact_disclosure_advice_follows_relocated_roots() {
+        // PR #8901 review (devin #7): when the intake excluded a relocated
+        // cache, the recovery must name the relocated layer entries, not the
+        // stale `/target/ripr/` rule that covers none of them.
+        let files = [changed_file(".ripr-cache/repo-seam-facts/1.61/abc.json")];
+        let roots = vec![PathBuf::from(".ripr-cache").join("repo-seam-facts")];
+        let message = ripr_artifact_disclosure(&roots, &files);
+        assert!(
+            message.contains("/.ripr-cache/repo-seam-facts/"),
+            "{message}"
+        );
+        assert!(!message.contains("/target/ripr/"), "{message}");
     }
 
     #[test]

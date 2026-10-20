@@ -431,13 +431,27 @@ where
 /// Repository-relative roots whose contents are ripr's own artifacts
 /// (#8751). The default `target/ripr` always counts. A relocated seam-cache
 /// base (`RIPR_CACHE_DIR`, passed as `cache_base`) and a configured
-/// `[perl].cache_dir` add their root only when the writer's resolved path
+/// `[perl].cache_dir` add their roots only when the writer's resolved path
 /// stays anchored inside the repository; absolute bases outside the root and
 /// bases that traverse above it are refused, because diff paths are
 /// repository-relative and ripr cannot exclude — and doctor must not probe —
-/// a location it cannot anchor at the root. A root already covered by a
-/// broader root (the default cache base under `target/ripr`, the default
-/// Perl facts dir likewise) is not listed twice.
+/// a location it cannot anchor at the root.
+///
+/// The two relocated writers scope differently, matching what each writer
+/// actually owns (PR #8901 review, devin #3):
+///
+/// - The seam-cache base may be pointed at a directory that also holds user
+///   content (`RIPR_CACHE_DIR=src`). The writer only ever creates its named
+///   layer directories there — `CACHE_LAYER_NAMES`, the same inventory
+///   cache maintenance uses — so masking the whole base would erase real
+///   source from the diff. Each writer-owned layer directory under the base
+///   is an artifact root; the base itself stays user scope.
+/// - The Perl facts directory is exclusively ripr-owned by configuration
+///   (the writer stages packets directly inside it), so the whole
+///   configured directory is the root.
+///
+/// A root already covered by a broader root (every default writer location
+/// lives under `target/ripr`) is not listed twice.
 pub(crate) fn ripr_artifact_roots(
     root: &Path,
     cache_base: &Path,
@@ -452,7 +466,9 @@ pub(crate) fn ripr_artifact_roots(
         roots.push(candidate);
     };
     if let Some(relative) = anchored_at_root(root, cache_base) {
-        push_root(&mut roots, relative);
+        for layer in crate::analysis::seam_cache::cache_layer_names() {
+            push_root(&mut roots, relative.join(layer));
+        }
     }
     if let Some(configured) = perl_cache_dir
         && let Some(relative) = anchored_at_root(root, &root.join(configured))
@@ -518,6 +534,25 @@ pub(crate) fn artifact_root_pathspec(root: &Path) -> String {
         .map(|component| component.as_os_str().to_string_lossy())
         .collect::<Vec<_>>()
         .join("/")
+}
+
+/// The git-probe form of [`artifact_root_pathspec`]: every git pathspec
+/// glob metacharacter (`*`, `?`, `[`, `]`, `\`) is backslash-escaped, so a
+/// configured root such as `build/cache*` probes the LITERAL path and never
+/// wildcard-matches `build/cache1` (PR #8901 review, owner P1). Doctor and
+/// diff/worktree intake agree on literal component semantics; `git
+/// check-ignore` does not support the `literal` pathspec magic, so explicit
+/// escaping — not `--literal-pathspecs` — is the one form both probed
+/// commands accept. Escaping is only for the git argument: the filesystem
+/// and the rendered `.gitignore` advice keep the plain spelling.
+pub(crate) fn literal_artifact_root_pathspec(root: &Path) -> String {
+    artifact_root_pathspec(root)
+        .chars()
+        .flat_map(|ch| match ch {
+            '*' | '?' | '[' | ']' | '\\' => vec!['\\', ch],
+            other => vec![other],
+        })
+        .collect()
 }
 
 /// Whether a repository-relative diff path names content under one of
@@ -628,15 +663,22 @@ mod tests {
     #[test]
     fn ripr_artifact_roots_adds_relocated_bases_inside_the_repo() {
         let root = std::env::temp_dir().join("ripr-artifact-roots-relocated");
-        // An in-repo relocation (RIPR_CACHE_DIR=.ripr-cache) joins the roots.
+        // An in-repo relocation (RIPR_CACHE_DIR=.ripr-cache) joins the roots
+        // at the writer's layer directories: the writer only creates
+        // CACHE_LAYER_NAMES children there, so those are what ripr owns
+        // (PR #8901 review, devin #3).
+        let mut expected = vec![PathBuf::from("target").join("ripr")];
+        expected.extend(
+            crate::analysis::seam_cache::cache_layer_names()
+                .iter()
+                .map(|layer| PathBuf::from(".ripr-cache").join(layer)),
+        );
         assert_eq!(
             ripr_artifact_roots(&root, &root.join(".ripr-cache"), None),
-            vec![
-                PathBuf::from("target").join("ripr"),
-                PathBuf::from(".ripr-cache"),
-            ]
+            expected
         );
-        // A configured [perl].cache_dir leaving target/ripr joins too.
+        // A configured [perl].cache_dir leaving target/ripr joins too; the
+        // Perl writer owns the whole configured directory.
         assert_eq!(
             ripr_artifact_roots(
                 &root,
@@ -648,6 +690,28 @@ mod tests {
                 PathBuf::from("facts").join("perl"),
             ]
         );
+    }
+
+    #[test]
+    fn ripr_artifact_roots_scopes_a_shared_cache_base_to_writer_layers() {
+        // PR #8901 review (devin #3): RIPR_CACHE_DIR may name a directory
+        // that also holds user content. Only the writer's layer directories
+        // are artifact roots; the base itself and everything beside the
+        // layers stay user scope.
+        let root = std::env::temp_dir().join("ripr-artifact-roots-shared-base");
+        let roots = ripr_artifact_roots(&root, &root.join("src"), None);
+        assert!(
+            !roots.iter().any(|root| root == Path::new("src")),
+            "the shared base itself must not be an artifact root: {roots:?}"
+        );
+        assert!(is_ripr_artifact_path_under(
+            Path::new("src/repo-seam-facts/1.0/key.json"),
+            &roots
+        ));
+        assert!(!is_ripr_artifact_path_under(
+            Path::new("src/lib.rs"),
+            &roots
+        ));
     }
 
     #[test]
@@ -678,14 +742,14 @@ mod tests {
     fn is_ripr_artifact_path_under_matches_relocated_roots() {
         let roots = vec![
             PathBuf::from("target").join("ripr"),
-            PathBuf::from(".ripr-cache"),
+            PathBuf::from(".ripr-cache").join("repo-seam-facts"),
         ];
         assert!(is_ripr_artifact_path_under(
-            Path::new(".ripr-cache/seams/x.json"),
+            Path::new(".ripr-cache/repo-seam-facts/1.0/x.json"),
             &roots
         ));
         assert!(is_ripr_artifact_path_under(
-            Path::new(".ripr-cache"),
+            Path::new(".ripr-cache/repo-seam-facts"),
             &roots
         ));
         assert!(is_ripr_artifact_path_under(
@@ -694,11 +758,15 @@ mod tests {
         ));
         // Other depths and lookalikes stay user scope.
         assert!(!is_ripr_artifact_path_under(
-            Path::new("pkg/.ripr-cache/x"),
+            Path::new("pkg/.ripr-cache/repo-seam-facts/x"),
             &roots
         ));
         assert!(!is_ripr_artifact_path_under(
-            Path::new(".ripr-cachex/x"),
+            Path::new(".ripr-cache/repo-seam-facts-extra/x"),
+            &roots
+        ));
+        assert!(!is_ripr_artifact_path_under(
+            Path::new(".ripr-cache/repo-corpus-fingerprint/x"),
             &roots
         ));
         assert!(!is_ripr_artifact_path_under(
@@ -716,6 +784,27 @@ mod tests {
         assert_eq!(
             artifact_root_pathspec(&PathBuf::from(".ripr-cache")),
             ".ripr-cache"
+        );
+    }
+
+    #[test]
+    fn literal_artifact_root_pathspec_escapes_glob_magic() {
+        // Ordinary roots pass through unchanged...
+        assert_eq!(
+            literal_artifact_root_pathspec(&PathBuf::from("target").join("ripr")),
+            "target/ripr"
+        );
+        // ...so the common probe form is byte-identical to the display form.
+        assert_eq!(
+            literal_artifact_root_pathspec(&PathBuf::from(".ripr-cache").join("repo-seam-facts")),
+            artifact_root_pathspec(&PathBuf::from(".ripr-cache").join("repo-seam-facts"))
+        );
+        // ...while every git pathspec glob metacharacter is backslash-escaped
+        // (owner P1, PR #8901: `build/cache*` must probe the literal path).
+        // Host-independent: `*?[]` are filename characters on every host.
+        assert_eq!(
+            literal_artifact_root_pathspec(&Path::new("build/cache*[x]?")),
+            "build/cache\\*\\[x\\]\\?"
         );
     }
 
