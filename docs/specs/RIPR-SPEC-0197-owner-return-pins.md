@@ -102,6 +102,14 @@ effect assertion in the same test still supplies its existing observation and
 discriminator; a refused sibling does not remove it. This does not change effect
 identity, propagation or observer matching.
 
+An effect oracle whose fact text is a compound statement rather than the macro
+invocation (`loop { break; assert_eq!(..); }`, a labeled block, a `macro_rules!`
+body, a cfg-dropped `let`) names no invocation to admit, so it is gated by the
+assertion macro it contains and refused. A root `loop` with no `break` and a root
+`std::process::exit` / `abort` call end the test like an earlier `return`, for every
+family that reads this admission. Not covered: `assert_ne!` and `debug_assert*!`
+(#8983), and `process::exit` reached through a `use` alias.
+
 1. Oracle shape. The assertion is one plain `assert_eq!`, or that
    `assert_eq!` qualified through a `std` or `core` root (`std::assert_eq!`,
    `::core::assert_eq!`) when the root cannot be rebound (#7857). The test's

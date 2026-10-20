@@ -2097,6 +2097,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                     .is_some_and(|owner| owner == *function.syntax())
             })
             .map(|expression| expression.syntax().text_range().start())
+            .chain(root_divergence_start(&function))
             .min();
         let assertions = admitted_assertions(candidates, &function, first_return);
         let helper_assertions = if is_test_function(&function) {
@@ -2128,6 +2129,41 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
         .functions
         .retain(|key, _| identities.get(key) == Some(&1));
     result
+}
+
+/// Where a root statement of `function` never completes: a `loop` with no
+/// `break` (`loop {}`) or a standard-library `process::exit` / `abort` call.
+/// Like an earlier `return`, it keeps every later invocation from running
+/// (#8927). Nested statements do not count: only the body's own list.
+fn root_divergence_start(function: &ast::Fn) -> Option<TextSize> {
+    function
+        .body()?
+        .stmt_list()?
+        .statements()
+        .filter_map(|statement| match statement {
+            ast::Stmt::ExprStmt(statement) => statement.expr(),
+            _ => None,
+        })
+        .find(|expression| match expression {
+            ast::Expr::LoopExpr(body) => !body
+                .syntax()
+                .descendants()
+                .any(|node| ast::BreakExpr::can_cast(node.kind())),
+            ast::Expr::CallExpr(call) => call.expr().is_some_and(|callee| {
+                let path: String = callee
+                    .syntax()
+                    .text()
+                    .to_string()
+                    .split_whitespace()
+                    .collect();
+                matches!(
+                    path.strip_prefix("::").unwrap_or(&path),
+                    "std::process::exit" | "std::process::abort"
+                )
+            }),
+            _ => false,
+        })
+        .map(|expression| expression.syntax().text_range().start())
 }
 
 /// `#[test]`, `#[tokio::test]` and other attributes whose last segment is

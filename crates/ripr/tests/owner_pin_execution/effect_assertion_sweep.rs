@@ -38,6 +38,38 @@ fn effect_assertion_dead_context_sweep_refuses_every_never_run_assertion() -> Re
                 format!("match 1 {{ 2 => {{\n{a}\n}} _ => {{}} }}"),
             ),
             ("const_false_cfg", format!("if cfg!(any()) {{\n{a}\n}}")),
+            (
+                "for_after_break",
+                format!("for _ in [1, 2] {{ break; {a} }}"),
+            ),
+            (
+                "for_after_continue",
+                format!("for _ in [1, 2] {{ continue; {a} }}"),
+            ),
+            ("for_empty_range", format!("for _ in 0..0 {{\n{a}\n}}")),
+            (
+                "labeled_block_after_break",
+                format!("'a: {{ break 'a; {a} }}"),
+            ),
+            (
+                "outer_loop_after_inner_break",
+                format!("'o: loop {{ loop {{ break 'o; }} {a} }}"),
+            ),
+            ("labeled_block", format!("'a: {{\n{a}\n}}")),
+            ("loop_after_break", format!("loop {{ break; {a} }}")),
+            (
+                "uninvoked_macro_rules",
+                format!("macro_rules! never {{ () => {{ {a} }}; }}"),
+            ),
+            (
+                "cfg_dropped_let",
+                format!("#[cfg(any())]\nlet _x = {{ {a} 1 }};"),
+            ),
+            (
+                "after_process_exit",
+                format!("::std::process::exit(1);\n{a}"),
+            ),
+            ("after_empty_loop", format!("loop {{}}\n{a}")),
         ]
     };
     let live = |a: &str| -> Vec<(&'static str, String)> {
@@ -58,14 +90,26 @@ fn effect_assertion_dead_context_sweep_refuses_every_never_run_assertion() -> Re
     let mut bad = Vec::new();
     let mut n = 0;
     for (name, a) in &forms {
-        let mut cases: Vec<(&str, String, bool)> = Vec::new();
+        // (context, oracle, runs): `runs` holds for a live assertion.
+        let mut cases: Vec<(String, String, bool)> = Vec::new();
         for (c, o) in dead(a) {
-            cases.push((c, o, false));
+            cases.push((c.to_string(), o, false));
         }
-        if let Some((c, o)) = live(a).into_iter().next() {
-            cases.push((c, o, true));
+        for (c, o) in live(a) {
+            cases.push((c.to_string(), o, true));
+        }
+        // Mixed: a dead assertion beside a live one keeps the live credit.
+        for (c, o) in [
+            ("mixed_if_false", format!("if false {{\n{a}\n}}\n{a}")),
+            (
+                "mixed_uncalled_closure",
+                format!("let _c = || {{\n{a}\n}};\n{a}"),
+            ),
+        ] {
+            cases.push((c.to_string(), o, true));
         }
         for (ctx, oracle, is_live) in cases {
+            let ctx = ctx.as_str();
             n += 1;
             let src = format!(
                 "{}\n#[cfg(test)]\nmod tests {{\nuse super::*;\n#[test]\nfn process_order_sends_exact_order_id() {{\nlet notifier = Notifier::new();\nprocess_order(&notifier, \"order-42\");\n{oracle}\n}}\n}}\n",
@@ -91,31 +135,39 @@ fn effect_assertion_dead_context_sweep_refuses_every_never_run_assertion() -> Re
             let json: serde_json::Value =
                 serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
                     .map_err(|e| e.to_string())?;
+            let mut effect_findings = 0;
             for f in json["findings"].as_array().ok_or("f")? {
                 let fam = f["probe"]["family"].as_str().unwrap_or("");
                 if fam != "side_effect" && fam != "call_deletion" {
                     continue;
                 }
+                effect_findings += 1;
                 let cls = f["classification"].as_str().unwrap_or("").to_string();
                 let credited = cls == "exposed" || cls == "weakly_exposed";
                 if !is_live && credited {
                     bad.push(format!("DEAD-CREDITED {name}/{ctx}/{fam} {cls}"));
                 }
-                if is_live
-                    && !credited
-                    && matches!(
-                        name.as_str(),
-                        "assert_eq" | "assert_matches" | "assert_eqexpr"
-                    )
-                {
+                // Direct and mixed live assertions of the unqualified forms are
+                // the discriminating controls. Other live contexts (`if true`,
+                // a called closure or fn, a conditional return before) are
+                // refused conservatively, and a qualified `std::` form with
+                // `vec!` operands reads `static_unknown` even in direct
+                // position (fail-closed, as for the return family).
+                let must_credit = ctx == "direct" || ctx.starts_with("mixed");
+                if is_live && must_credit && !credited && !name.starts_with("std::") {
                     bad.push(format!(
                         "direct control uncredited {name}/{ctx}/{fam} {cls}"
                     ));
                 }
             }
+            if effect_findings != 2 {
+                bad.push(format!(
+                    "vacuous case {name}/{ctx}: {effect_findings} effect findings"
+                ));
+            }
         }
     }
-    assert!(n >= 60, "sweep must cover generated cases, ran {n}");
+    assert!(n >= 150, "sweep must cover generated cases, ran {n}");
     assert!(bad.is_empty(), "{bad:#?}");
     Ok(())
 }

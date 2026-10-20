@@ -550,7 +550,32 @@ impl OwnerPinSyntax {
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> bool {
-        let gated = match Self::assertion_macro_name(&assertion.text).as_deref() {
+        let outer = Self::assertion_macro_name(&assertion.text);
+        // An oracle whose text is a compound statement (`loop { break;
+        // assert_eq!(..); }`, `'a: { .. }`, a `macro_rules!` body, a
+        // cfg-dropped `let`) names no invocation the admission can identify:
+        // its "macro path" is statement text, so it would skip the gate. An
+        // effect oracle that merely contains an assertion macro takes the same
+        // admission and is refused unless that exact invocation is
+        // established (#8927).
+        let compound = outer.as_deref().is_none_or(|name| {
+            name == "macro_rules"
+                || !name
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == ':')
+        });
+        let gated = match outer.as_deref() {
+            _ if compound => {
+                let masked = mask_comments_and_strings(&assertion.text);
+                matches!(
+                    probe.family,
+                    ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+                ) && ["assert_eq", "assert"].iter().any(|name| {
+                    whole_word_offsets(&masked, name)
+                        .into_iter()
+                        .any(|at| masked[at + name.len()..].trim_start().starts_with('!'))
+                })
+            }
             Some("assert_eq") => matches!(
                 probe.family,
                 ProbeFamily::ReturnValue

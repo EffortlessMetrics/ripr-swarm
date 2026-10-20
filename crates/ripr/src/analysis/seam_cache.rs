@@ -4599,8 +4599,8 @@ mod tests {
         // 1.82 -> 1.83: canonical direct-record field match selection (#5500).
         // 1.83 -> 1.84: check-helper argument pins (RIPR-SPEC-0197).
         // 1.84 -> 1.85: call-fact budget withholding (#8600).
-        // 1.84 -> 1.85: effect assertions require execution admission (#8927).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.85");
+        // 1.85 -> 1.86: effect assertions require execution admission (#8927).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.86");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4674,9 +4674,9 @@ mod tests {
         // 0.84 -> 0.85: same early error-variant pins as full 1.79 (#7063).
         // 0.85 -> 0.86: same composed golden-file, early error-variant and
         // returned-element field pins as full 1.80.
-        // 0.90 -> 0.91: same effect assertion admission as full 1.85.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.91");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.91");
+        // 0.91 -> 0.92: same effect assertion admission as full 1.86.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.92");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.92");
     }
 
     #[test]
