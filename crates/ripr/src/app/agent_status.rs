@@ -639,6 +639,17 @@ fn status_repair_attempt(
                         )),
                     ),
                 ),
+                // A spent budget dominates a moved head: the after phase stops
+                // on the budget before it looks at HEAD, so the diverged-head
+                // reset-then-rerun recipe would offer the refused command.
+                Some(AfterPhaseHeadAdmission::RefusedDiverged { .. })
+                    if crate::app::repair_attempt::after_refusal_budget_exhausted(manifest) =>
+                {
+                    (
+                        Some(false),
+                        ("awaiting_edit", "retry_budget_spent", restart),
+                    )
+                }
                 Some(AfterPhaseHeadAdmission::FinishesStale { .. }) => (
                     Some(false),
                     ("awaiting_edit", "prepared_at_other_head", restart),

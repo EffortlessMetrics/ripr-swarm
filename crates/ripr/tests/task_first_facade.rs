@@ -2421,6 +2421,82 @@ fn repair_after_a_spent_retry_budget_starts_a_fresh_attempt() -> Result<(), Stri
     Ok(())
 }
 
+/// #8726: a spent retry budget dominates a moved HEAD. The diverged-head
+/// recovery would otherwise offer "reset, then rerun the after phase", a command
+/// the spent attempt refuses without running.
+#[test]
+fn spent_retry_budget_withholds_the_diverged_head_after_recipe() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-spent-budget-diverged")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let first = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&first, 0, "first repair");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "the first repair prepares one attempt");
+    let attempt_id = ids[0].clone();
+    for refusal in 1..=5 {
+        let refused = run_ripr(
+            root,
+            &[
+                "agent",
+                "repair",
+                "--root",
+                &root_arg,
+                "--attempt",
+                &attempt_id,
+                "--phase",
+                "after",
+            ],
+        )?;
+        assert_exit(&refused, 3, &format!("unedited after phase {refusal}"));
+    }
+    let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+        .map_err(|error| format!("read pricing tests: {error}"))?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{pricing}{FIXTURE_OFF_BOUNDARY_TEST}"),
+    )
+    .map_err(|error| format!("write edit: {error}"))?;
+    run_git(
+        root,
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "commit",
+            "-a",
+            "--amend",
+            "--allow-empty",
+            "--no-edit",
+        ],
+    )?;
+    let status = run_ripr(
+        root,
+        &[
+            "status",
+            "--root",
+            &root_arg,
+            "--attempt",
+            &attempt_id,
+            "--json",
+        ],
+    )?;
+    let doc: serde_json::Value =
+        serde_json::from_str(&stdout_text(&status)).map_err(|e| e.to_string())?;
+    assert!(
+        doc["attempt"]["diverged_recovery"].is_null(),
+        "a spent attempt offers no reset-then-after recipe: {doc}"
+    );
+    assert_eq!(doc["attempt"]["last_after_refusal"]["refusal_count"], 5);
+    let offered = doc["next_action"]["command"].as_str().unwrap_or_default();
+    assert!(
+        !offered.contains(&attempt_id) && !offered.contains("--phase after"),
+        "status offered the spent attempt's after phase: {doc}"
+    );
+    Ok(())
+}
+
 /// #8742: a repeated `ripr repair` for the seam that already has an attempt
 /// awaiting its edit at this HEAD resumes it. No second attempt is prepared,
 /// the printed `continue` command names the existing attempt, and a bare
