@@ -1,0 +1,38 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/effect_assertion_in_false_block/input
+
+Summary: 2 probes (0 exposed, 0 weak, 2 unrevealed, 0 no path); 2 of 2 findings unsuppressed
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+
+Start here:
+  State: a test gap to inspect or repair
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  File: ./src/lib.rs:17
+  Static exposure: unrevealed (severity: warning, confidence 0.79)
+  Why unrevealed: a related test asserts here, but ripr could not establish that the assertion runs and is the standard `assert_eq!`
+  Not credited: `assert!` in process_order_sends_exact_order_id at src/lib.rs:30: the assertion is inside an `if` branch
+  Canonical gap: gap:rust:src/lib.rs:process_order:call_deletion:call_deletion:notifier.send_order_id
+  Changed behavior: notifier.send(order_id)
+  Missing discriminator (1 of 2): No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
+  Related test: src/lib.rs:26 process_order_sends_exact_order_id (assertion not credited: ripr could not establish that this assertion counts here)
+  Next step: Establish that the test is collected and enabled, that the assertion runs on its
+    executed path, and that it resolves to the intended standard macro, then check the changed
+    effect
+  Evidence: reach yes · infection yes · propagation yes · observation no · discriminator no
+    - reach yes: Related tests appear to reach process_order: process_order_sends_exact_order_id
+    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - 7 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/effect_assertion_in_false_block/input --diff <cwd>/fixtures/effect_assertion_in_false_block/diff.patch --mode fast probe:src_lib.rs:call_deletion:934aa430
+  ripr context --root <cwd>/fixtures/effect_assertion_in_false_block/input --diff <cwd>/fixtures/effect_assertion_in_false_block/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:934aa430
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:call_deletion:934aa430 --root <cwd>/fixtures/effect_assertion_in_false_block/input` for the full gate's answer
+
+Hidden:
+  1 lower-priority finding(s) omitted from default human output.
+    - ./src/lib.rs:17 (unrevealed)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

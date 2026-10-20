@@ -13146,6 +13146,9 @@ tests = [
   "crates/ripr/src/analysis/classifier/evidence.rs::a_local_non_plain_drop_guard_keeps_return_value_exposed",
 ]
 fixtures = [
+  "fixtures/effect_assertion_after_return",
+  "fixtures/effect_assertion_in_false_block",
+  "fixtures/effect_assertion_uncalled_closure",
   "fixtures/rust_trait_default_import",
   "fixtures/rust_trait_default_shadow",
   "fixtures/rust_trait_impl_import",

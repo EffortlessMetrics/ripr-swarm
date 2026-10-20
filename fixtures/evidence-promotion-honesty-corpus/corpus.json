@@ -10233,6 +10233,124 @@
         { "type": "must_not_report_clean" },
         { "type": "must_not_promote" }
       ]
+    },
+    {
+      "id": "rust_effect_assertion_after_return_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/effect_assertion_after_return",
+      "vector": "effect_assertion_after_unconditional_return_is_not_credited",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "reachable_unrevealed" },
+        { "type": "maximum_class", "class": "reachable_unrevealed" }
+      ]
+    },
+    {
+      "id": "rust_effect_assertion_after_return_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/effect_assertion_after_return",
+      "vector": "effect_assertion_after_unconditional_return_is_not_credited",
+      "probe_family": "call_deletion",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "reachable_unrevealed" },
+        { "type": "maximum_class", "class": "reachable_unrevealed" }
+      ]
+    },
+    {
+      "id": "rust_effect_assertion_in_false_block_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/effect_assertion_in_false_block",
+      "vector": "effect_assertion_in_literal_false_block_is_not_credited",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "reachable_unrevealed" },
+        { "type": "maximum_class", "class": "reachable_unrevealed" }
+      ]
+    },
+    {
+      "id": "rust_effect_assertion_in_false_block_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/effect_assertion_in_false_block",
+      "vector": "effect_assertion_in_literal_false_block_is_not_credited",
+      "probe_family": "call_deletion",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "reachable_unrevealed" },
+        { "type": "maximum_class", "class": "reachable_unrevealed" }
+      ]
+    },
+    {
+      "id": "rust_effect_assertion_uncalled_closure_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/effect_assertion_uncalled_closure",
+      "vector": "effect_assertion_in_uncalled_closure_is_not_credited",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "reachable_unrevealed" },
+        { "type": "maximum_class", "class": "reachable_unrevealed" }
+      ]
+    },
+    {
+      "id": "rust_effect_assertion_uncalled_closure_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/effect_assertion_uncalled_closure",
+      "vector": "effect_assertion_in_uncalled_closure_is_not_credited",
+      "probe_family": "call_deletion",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "reachable_unrevealed" },
+        { "type": "maximum_class", "class": "reachable_unrevealed" }
+      ]
+    },
+    {
+      "id": "rust_observation_verified_side_effect_side_effect",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/observation_verified_side_effect",
+      "vector": "effect_assertion_that_runs_keeps_its_exposed_credit",
+      "probe_family": "side_effect",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ],
+      "control": "must_stay_exposed"
+    },
+    {
+      "id": "rust_observation_verified_side_effect_call_deletion",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/observation_verified_side_effect",
+      "vector": "effect_assertion_that_runs_keeps_its_exposed_credit",
+      "probe_family": "call_deletion",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" }
+      ],
+      "control": "must_stay_exposed"
     }
   ]
 }
