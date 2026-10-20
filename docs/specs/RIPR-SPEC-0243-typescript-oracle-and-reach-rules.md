@@ -148,6 +148,20 @@ assertion is `weakly_exposed`, not `reachable_unrevealed`.
 - A registration is an expression statement whose expression is the root
   call. `const x = test(...)` registers nothing.
 
+**Rule 12. A named function passed as the callback is the test body
+(2026-10-20).** `test("title", name)` runs the function `name`, so its body
+supplies the test's assertions and owner calls, as an inline callback would.
+The reference resolves only when `name` is declared exactly once in the file
+as `function name() {...}` (not a generator, not exported) with no
+parameters, and every other mention of `name` in the file is the callback of
+a titled `test` / `it` call (`.only`, `.concurrent`, `.sequential` allowed;
+a title with an escape or a template substitution is not read). A call, a
+reassignment, a same-named parameter or variable, an export, a second
+declaration or the name inside a title leaves the reference unresolved, as
+does any `.each` or `.skip` form. The runner shadow checks of rule 3 read
+the function body. Arrow and function-expression bindings (`const name =
+...`) are not resolved.
+
 **Rule 1. An awaited root registers.** An expression statement whose
 expression is `await <root call>` at file or describe level registers
 exactly as the bare call does. This covers the node:test ESM form
@@ -727,6 +741,13 @@ rejected alternative. Any can be reversed later without touching the rest.
     later write can replace the member), and following a renamed entry
     (`{ merge: mergeImpl }`), which needs the owner name to differ from the
     exported name.
+16. **Function-reference callbacks (2026-10-20).** Adopted: rule 12, for
+    the jest `function sumsEveryValue() {...}; test("...", sumsEveryValue)`
+    shape that read `no_static_path` (`jest-mined-test-fn-reference`). A
+    function declared once and mentioned only as a test callback cannot be
+    replaced between declaration and registration. Rejected: resolving
+    `const` arrow bindings and parameterised factories
+    (`jest-mined-suite-factory`), which need call-site parameter binding.
 
 ## Required Evidence
 
@@ -980,6 +1001,11 @@ to `amount - 20`, and `tests/lib.test.ts` has
   shape that could replace the member, and every test use of the default
   import other than a member call. The corpus case
   `jest-mined-default-export-object` reads `credited`.
+- `crates/ripr/src/analysis/language/typescript/tests/function_reference_callback_tests.rs`
+  pins rule 12 and decision 16: the credited forms (declared first, hoisted,
+  async, `.only`, inside `describe`) against every mention, signature and
+  registration shape that must stay unresolved. The corpus case
+  `jest-mined-test-fn-reference` reads `credited`.
 - Existing: `crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs`
   and the `tests/` modules beside it: `mock_form_tests.rs`,
   `scope_receiver_tests.rs`, `reexport_chain_tests.rs`.
@@ -1006,7 +1032,8 @@ to `amount - 20`, and `tests/lib.test.ts` has
   (`test_from_statement`, `describe_body_from_statement`) and the
   `expect` binding facts rule 3 reads.
 - `crates/ripr/src/analysis/language/typescript/owners.rs`:
-  `mark_default_object_members` (decision 15); `related_tests.rs`
+  `mark_default_object_members` (decision 15); `referenced_callback_function`
+  and `function_used_only_as_test_callback` (rule 12); `related_tests.rs`
   `import_references_owner_call` and `tests_extract.rs`
   `default_member_only_locals` (the whole-file use check), and
   `classifier.rs` `owner_namespace_receivers`, read the marker.
