@@ -14,8 +14,8 @@ Shared evidence and guidance
   E4 [findings 1, 2]: observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   E5 [findings 1, 2]: discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   E6 [findings 1, 2]: local flow reaches error variant: Result::Err(ParseError::InvalidData) (line 9)
-  E7 [findings 1, 2]: related test tests/messages.rs:4 logs_failures_without_discriminating uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
-  E8 [findings 1, 2]: related test tests/messages.rs:14 wildcard_panic_without_variant_pin uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
+  E7 [findings 1, 2]: related test tests/messages.rs:4 logs_failures_without_discriminating uses none unknown oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
+  E8 [findings 1, 2]: related test tests/messages.rs:14 wildcard_panic_without_variant_pin uses none unknown oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
   E9 [findings 1, 2]: source function argument value kind = "busy" at line 5
   E10 [findings 1, 2]: source function argument value len = 12 at line 5
   E11 [findings 1, 2]: source assertion argument value 12 at line 9

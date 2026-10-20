@@ -3037,7 +3037,15 @@ pub(crate) fn evidence_promotion_human_oracle_line_matches(
             {
                 continue;
             }
-            return related_test[separator + " uses ".len()..].starts_with(projection.as_str());
+            let phrase = &related_test[separator + " uses ".len()..];
+            // A row ungraded against the probe with an unclassified oracle
+            // kind is worded "an unclassified oracle, not graded against
+            // this probe" (#8388).
+            return phrase.starts_with(projection.as_str())
+                || (expected_kind == "unknown"
+                    && expected_strength == "unknown"
+                    && phrase
+                        .starts_with("an unclassified oracle, not graded against this probe:"));
         }
         return false;
     }

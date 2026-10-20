@@ -3335,6 +3335,31 @@ pub(crate) fn owner_namespace_receivers(
         })
         .map(|import| import.local.clone())
         .collect();
+    // RIPR-SPEC-0243 rule 5: a default import of a module whose `export
+    // default { owner }` object holds the owner is the receiver of
+    // `local.owner(...)`, exactly as a namespace import is.
+    if owner.default_object_member {
+        receivers.extend(
+            test.imports_in_file
+                .iter()
+                .filter(|import| {
+                    !import.namespace
+                        && import.imported.as_deref() == Some("default")
+                        && test
+                            .default_member_only_locals_in_file
+                            .iter()
+                            .any(|(local, member)| *local == import.local && *member == owner.name)
+                        && import_source_matches_owner(
+                            import,
+                            &test.file,
+                            owner,
+                            alias_map,
+                            workspace_root,
+                        )
+                })
+                .map(|import| import.local.clone()),
+        );
+    }
     // A dynamic import binds the same module namespace a static
     // `import * as` would, but as a local declaration, so it never reaches
     // `imports_in_file`. Without it the member-call gate below would

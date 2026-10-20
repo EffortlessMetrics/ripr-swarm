@@ -17,7 +17,7 @@ Start here:
   Canonical gap: gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold
   Changed behavior: amount >= discount_threshold
   Missing discriminator (1 of 2): No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
-  Related test: src/lib.rs:13 equality_threshold_discounts (assertion not credited: ripr could not establish that it runs as the standard macro)
+  Related test: src/lib.rs:13 equality_threshold_discounts (assertion not credited: ripr could not establish that this assertion counts here)
   Next step: ripr did not credit the `assert_eq!` in equality_threshold_discounts at src/lib.rs:14;
     the "not credited" note says why. That shape can keep the assertion from checking the change, so
     this is not a static limit: make the check run on every default test run, as the standard
