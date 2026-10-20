@@ -957,6 +957,8 @@ mod tests {
         assert_eq!(
             StaticLimitKind::RustCallFactBudget.as_str(),
             "rust_call_fact_budget"
+        );
+        assert_eq!(
             StaticLimitKind::RustFrameworkOracleUnresolved.as_str(),
             "rust_framework_oracle_unresolved"
         );
