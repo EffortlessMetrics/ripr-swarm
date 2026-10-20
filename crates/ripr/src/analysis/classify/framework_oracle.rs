@@ -698,6 +698,8 @@ mod tests {
             "let out = row(1);\nlet f = || {\n    let other = vec![1];\n};",
             "let out = row(1);\nrun(|other| {",
             "let out = row(1);\nif let Foo { other } = foo() {",
+            "let out = row(1);\nlet out =",
+            "let out = row(1);\nlet out = foo(",
             "let out = row(1);\nmatch p {\n    Foo { other } => {",
             "let out = row(1);\nrun(a | b, |other| {",
             "let out = row(1);\nfoo(if let Some(other) = p {",

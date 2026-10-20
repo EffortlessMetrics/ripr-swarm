@@ -815,6 +815,8 @@ fn a_closed_callback_shadow_leaves_the_owner_binding() -> Result<(), String> {
         "let tokens = tokenize(\"7\");\n        run(|| 1, |other| {\n            foo();\n        });",
         "let tokens = tokenize(\"7\");\n        let other = |count: usize| {\n            foo();\n        };",
         "let tokens = tokenize(\"7\");\n        run(a | b, |other| {\n            foo();\n        });",
+        // An unfinished `let tokens =` has not rebound the name where its initializer runs.
+        "let tokens = tokenize(\"7\");\n        let tokens =",
         "let tokens = tokenize(\"7\");\n        if let Foo { other } = foo() {\n            bar();\n        }",
         "let tokens = tokenize(\"7\");\n        run(|| {\n            foo(tokens);\n        });",
         "let tokens = tokenize(\"7\");\n        foo(if let Some(other) = p {\n            bar();\n        } else {\n            baz();\n        });",

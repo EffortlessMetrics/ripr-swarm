@@ -316,7 +316,23 @@ fn walk_bindings(
         text.push(ch);
     }
     if judge_open_statement {
-        judge(&mut statement, statement_depth, &mut scope);
+        // A `let` still open has not bound its name yet: the initializer
+        // (where the cut falls) reads the previous binding. Only a binder
+        // (`let r = foo(|x|`) is read from it.
+        let unbound_let = statement.starts_with_let()
+            && !matches!(
+                statement_binding_verdict(
+                    &statement.skeleton,
+                    &statement.full,
+                    name,
+                    owner_name,
+                    reach,
+                ),
+                Some(BindingVerdict::Withdrawn)
+            );
+        if !unbound_let {
+            judge(&mut statement, statement_depth, &mut scope);
+        }
     }
     scope.last().is_some_and(|(_, owner_bound)| *owner_bound)
 }
@@ -986,6 +1002,9 @@ mod tests {
             "let x = own(2);\nfoo(if let Some(y) = p {",
             "let x = own(2);\nrun(|| 1, |y| {",
             "let x = own(2);\nlet z = |y: usize| {",
+            // An unfinished `let x =` has not rebound `x` where its initializer runs.
+            "let x = own(2);\nlet x =",
+            "let x = own(2);\nlet x = foo(",
             "let x = own(2);\nif let Foo { y } = foo() {",
             "let x = own(2);\nmatch p {\n    Foo { y } => {",
             "let x = own(2);\nrun(a | b, |y| {",
