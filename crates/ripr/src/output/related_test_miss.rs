@@ -396,10 +396,14 @@ mod tests {
             let json: serde_json::Value =
                 serde_json::from_str(&crate::output::json::render(&output))
                     .map_err(|error| format!("parse check JSON: {error}"))?;
-            let context: serde_json::Value = serde_json::from_str(
-                &crate::output::json::render_context_packet(&finding, 8, std::path::Path::new(".")),
-            )
-            .map_err(|error| format!("parse context packet: {error}"))?;
+            let context: serde_json::Value =
+                serde_json::from_str(&crate::output::json::render_context_packet(
+                    &finding,
+                    8,
+                    &crate::config::RiprConfig::default(),
+                    std::path::Path::new("."),
+                ))
+                .map_err(|error| format!("parse context packet: {error}"))?;
             for rows in [
                 &json["findings"][0]["related_tests"],
                 &context["related_tests"],
@@ -480,6 +484,7 @@ mod tests {
                     serde_json::from_str(&crate::output::json::render_context_packet(
                         finding,
                         8,
+                        &crate::config::RiprConfig::default(),
                         std::path::Path::new("."),
                     ))
                     .map_err(|error| format!("parse context packet: {error}"))?;

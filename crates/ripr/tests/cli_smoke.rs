@@ -2688,7 +2688,10 @@ fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
             "explain output's context command lost the scope: {next_line}"
         ));
     }
-    if !String::from_utf8_lossy(&context.stdout).contains("\"version\": \"1.0\"") {
+    // #8743: the packet contract is 1.1 since classification/severity/
+    // confidence joined the packet; the assertion only proves the
+    // context command emitted its JSON packet.
+    if !String::from_utf8_lossy(&context.stdout).contains("\"version\": \"1.1\"") {
         return Err("context command did not return its JSON packet".to_string());
     }
     Ok(())
@@ -2799,7 +2802,10 @@ fn check_explain_and_context_replay_from_a_checkout_path_with_space_and_apostrop
         assert_success(&explain);
         let context = replay_printed_ripr(context_line, &decoy)?;
         assert_success(&context);
-        if !String::from_utf8_lossy(&context.stdout).contains("\"version\": \"1.0\"") {
+        // #8743: the packet contract is 1.1 since classification/severity/
+        // confidence joined the packet; the assertion only proves the
+        // context command emitted its JSON packet.
+        if !String::from_utf8_lossy(&context.stdout).contains("\"version\": \"1.1\"") {
             return Err("context command did not return its JSON packet".to_string());
         }
         let explain_stdout = String::from_utf8_lossy(&explain.stdout);
@@ -3867,9 +3873,11 @@ fn context_json_missing_artifact_emits_refusal_envelope() -> Result<(), String> 
         "--from",
         "nope-7331.json",
     ]);
+    // #8743: the refusal envelope is keyed with the context packet's own
+    // version, now 1.1.
     let value = assert_json_refusal_envelope(
         &output,
-        "1.0",
+        "1.1",
         "diff",
         "check_artifact_unusable",
         "analysis/check-artifact",
@@ -4036,9 +4044,11 @@ fn context_json_refusal_reports_configured_mode() -> Result<(), String> {
         "--from",
         "nope-7331.json",
     ]);
+    // #8743: the refusal envelope is keyed with the context packet's own
+    // version, now 1.1.
     let value = assert_json_refusal_envelope(
         &output,
-        "1.0",
+        "1.1",
         "diff",
         "check_artifact_unusable",
         "analysis/check-artifact",
@@ -4111,9 +4121,11 @@ fn context_json_scope_mismatch_refuses_as_artifact_unusable() -> Result<(), Stri
             "--at",
             "src/lib.rs:1",
         ]);
+        // #8743: the refusal envelope is keyed with the context packet's
+        // own version, now 1.1.
         let value = assert_json_refusal_envelope(
             &output,
-            "1.0",
+            "1.1",
             "diff",
             "check_artifact_unusable",
             "analysis/check-artifact",
