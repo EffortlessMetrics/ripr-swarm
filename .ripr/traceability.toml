@@ -15611,6 +15611,17 @@ tests = [
   "crates/ripr/tests/error_path_sibling_variant.rs::spec_0231_sibling_inequality_off_the_owner_call_stays_refused",
   "crates/ripr/src/analysis/syntax/ra/property_macros.rs::tests::drop_in_assertion_crate_paths_keep_assertion_authority",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::shared_return_admission_uses_the_outer_invocation_identity",
+  "crates/ripr/src/analysis/extract/oracles/reach_tests.rs::spec_0231_rule_8_literal_false_blocks_are_unreached",
+  "crates/ripr/src/analysis/extract/oracles/reach_tests.rs::spec_0231_rule_8_live_branches_keep_their_oracles",
+  "crates/ripr/src/analysis/extract/oracles/reach_tests.rs::spec_0231_rule_8_uncalled_closures_are_unreached",
+  "crates/ripr/src/analysis/extract/oracles/reach_tests.rs::spec_0231_rule_8_referenced_closures_keep_their_oracles",
+  "crates/ripr/src/analysis/extract/oracles/reach_tests.rs::spec_0231_rule_8_code_after_divergence_is_unreached",
+  "crates/ripr/src/analysis/extract/oracles/reach_tests.rs::spec_0231_rule_8_pre_divergence_and_conditional_divergence_keep_oracles",
+  "crates/ripr/src/analysis/extract/oracles/reach_tests.rs::spec_0231_rule_8_fails_closed_on_unbalanced_and_macro_input",
+  "crates/ripr/src/analysis/extract/oracles/reach_tests.rs::spec_0231_rule_8_marks_only_lines_whose_code_is_all_unreached",
+  "crates/ripr/src/analysis/extract/oracles/reach_tests.rs::spec_0231_rule_8_leaves_admission_governed_assertions_to_their_refusal",
+  "crates/ripr/src/analysis/rust_index.rs::tests::parser_and_lexical_oracles_skip_statements_that_never_run",
+  "crates/ripr/tests/returned_element_field_pin.rs::a_test_that_may_skip_or_fake_the_assertion_keeps_the_gap",
 ]
 fixtures = [
   "fixtures/inequality_assertion_not_exact",
@@ -15628,7 +15639,9 @@ code = [
   "crates/ripr/src/analysis/extract/oracles/classify.rs",
   "crates/ripr/src/analysis/extract/oracles/pattern_admission.rs",
   "crates/ripr/src/analysis/extract/oracles/patterns.rs",
+  "crates/ripr/src/analysis/extract/oracles/reach.rs",
   "crates/ripr/src/analysis/extract/oracles/scan.rs",
+  "crates/ripr/src/analysis/syntax/ra.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0231-rust-oracle-kind-admission.md",
