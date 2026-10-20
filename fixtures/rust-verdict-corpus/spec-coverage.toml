@@ -758,3 +758,8 @@ reason = "explain/context packet drill-in projection of an observed signature; n
 id = "RIPR-SPEC-0268"
 scope = "out"
 reason = "render-only collapse of a duplicated evidence row; not an analyzer verdict"
+
+[[spec]]
+id = "RIPR-SPEC-0280"
+scope = "out"
+reason = "wire-facing MCP adapter clarity (resource-id decoding, paging echo, status recovery, tool descriptions); not an exposure-verdict example a corpus case labels"
