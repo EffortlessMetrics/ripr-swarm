@@ -600,6 +600,50 @@ fn optional_capped_page_limit(
     }
 }
 
+/// Resolve one captured resource-id segment through an exact-id lookup with
+/// the #8736 URI-decoding rules and the collision fail-closed follow-up:
+///
+/// - the raw capture is tried first (legacy raw URI support);
+/// - when the raw capture misses with `item_not_found`, the segment decodes
+///   once and the decoded form is tried instead;
+/// - when the raw capture succeeds *and* the segment also decodes to a
+///   different existing id, both spellings name two distinct items (for
+///   example `a%20b.py` raw versus `a b.py` decoded), so the route fails
+///   closed with `id_ambiguous` instead of silently picking one — the wire
+///   form cannot say which file the client meant.
+///
+/// Recovery for every ambiguous or unresolved read names the equivalent
+/// tool route, which takes the canonical id as a plain JSON string with no
+/// URI encoding.
+fn resource_id_document(
+    captured: &str,
+    lookup: impl Fn(&str) -> Result<Value, workspace::AttemptFailure>,
+) -> Result<Value, workspace::AttemptFailure> {
+    match lookup(captured) {
+        Ok(document) => {
+            if let Some(decoded) = gaps::percent_decode_resource_id(captured)
+                && lookup(&decoded).is_ok()
+            {
+                return Err(workspace::AttemptFailure::new(
+                    workspace::CODE_ID_AMBIGUOUS,
+                    format!(
+                        "the resource id is ambiguous: the captured segment resolves both as sent ({captured}) and as its percent-decoded form ({decoded}), which name two distinct canonical items"
+                    ),
+                    "read the item through the equivalent tool (ripr_get_gap or ripr_get_repair_card) with the canonical_id as a plain JSON string, which carries no URI encoding",
+                ));
+            }
+            Ok(document)
+        }
+        Err(failure) if failure.code == workspace::CODE_ITEM_NOT_FOUND => {
+            match gaps::percent_decode_resource_id(captured) {
+                Some(decoded) => lookup(&decoded),
+                None => Err(failure),
+            }
+        }
+        Err(failure) => Err(failure),
+    }
+}
+
 /// The declared input schemas set `additionalProperties: false`; the adapter
 /// enforces the same bound at the dispatch edge instead of trusting the SDK
 /// or the client to reject unknown argument names.
@@ -874,35 +918,15 @@ impl ServerHandler for McpServer {
         }
         if let Some(canonical_id) = gaps::gap_resource_id(&request.uri) {
             let session = self.session.lock().await;
-            return match session.get_gap(canonical_id, None) {
+            let result = resource_id_document(canonical_id, |id| session.get_gap(id, None));
+            return match result {
                 Ok(document) => self.resource_result(
                     document,
                     &request.uri,
                     workspace::RECOVERY_GAP_ITEM_TOO_LARGE,
                     max_envelope_bytes,
                 ),
-                Err(failure) => {
-                    // The canonical id embeds a raw workspace-relative path,
-                    // so a URI-emitting client percent-encodes characters
-                    // like space, `#`, and `%` (#8736). When the raw capture
-                    // misses, retry once with the decoded segment before
-                    // reporting item_not_found.
-                    if failure.code != workspace::CODE_ITEM_NOT_FOUND {
-                        return Err(resource_failure("gap", &failure, None));
-                    }
-                    match gaps::percent_decode_resource_id(canonical_id) {
-                        Some(decoded) => match session.get_gap(&decoded, None) {
-                            Ok(document) => self.resource_result(
-                                document,
-                                &request.uri,
-                                workspace::RECOVERY_GAP_ITEM_TOO_LARGE,
-                                max_envelope_bytes,
-                            ),
-                            Err(failure) => Err(resource_failure("gap", &failure, None)),
-                        },
-                        None => Err(resource_failure("gap", &failure, None)),
-                    }
-                }
+                Err(failure) => Err(resource_failure("gap", &failure, None)),
             };
         }
         if let Some(attempt_id) = repair::repair_attempt_resource_id(&request.uri) {
@@ -929,41 +953,18 @@ impl ServerHandler for McpServer {
         }
         if let Some(item_id) = repair_card::repair_card_resource_id(&request.uri) {
             let session = self.session.lock().await;
-            return match session.repair_card_document(item_id, None, self.analysis_root.as_deref())
-            {
+            let root = self.analysis_root.clone();
+            let result = resource_id_document(item_id, |id| {
+                session.repair_card_document(id, None, root.as_deref())
+            });
+            return match result {
                 Ok(document) => self.resource_result(
                     document,
                     &request.uri,
                     workspace::RECOVERY_REPAIR_TOO_LARGE,
                     max_envelope_bytes,
                 ),
-                Err(failure) => {
-                    // Same encoded-id retry as the gap route (#8736): the
-                    // canonical id embeds a raw workspace-relative path.
-                    if failure.code != workspace::CODE_ITEM_NOT_FOUND {
-                        return Err(resource_failure("repair-card", &failure, None));
-                    }
-                    match gaps::percent_decode_resource_id(item_id) {
-                        Some(decoded) => {
-                            match session.repair_card_document(
-                                &decoded,
-                                None,
-                                self.analysis_root.as_deref(),
-                            ) {
-                                Ok(document) => self.resource_result(
-                                    document,
-                                    &request.uri,
-                                    workspace::RECOVERY_REPAIR_TOO_LARGE,
-                                    max_envelope_bytes,
-                                ),
-                                Err(failure) => {
-                                    Err(resource_failure("repair-card", &failure, None))
-                                }
-                            }
-                        }
-                        None => Err(resource_failure("repair-card", &failure, None)),
-                    }
-                }
+                Err(failure) => Err(resource_failure("repair-card", &failure, None)),
             };
         }
         let resource_templates = [

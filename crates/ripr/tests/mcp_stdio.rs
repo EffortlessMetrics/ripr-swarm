@@ -3120,6 +3120,168 @@ fn read_resource_document(
 /// resource has no tool twin, so it pins its envelope instead
 /// (`ripr-mcp-snapshot-v1`, identity, typed outcome). A drift in URI
 /// parsing, resource envelopes, or error mapping fails this control (#7145).
+/// #8736 review follow-up: with both `src/a b.py` and `src/a%20b.py`
+/// carrying matching Python gaps, one raw `ripr://gap/` segment resolves as
+/// both the literal-percent file and the decoded space file. The routes
+/// must fail closed with `id_ambiguous` on that collision instead of
+/// silently returning one item, while the unambiguous spellings (raw space,
+/// fully encoded `%2520`) keep resolving to their own files, and the tool
+/// route with a plain JSON string id works for both.
+#[cfg(feature = "lang-python")]
+#[test]
+fn encoded_resource_ids_fail_closed_when_raw_and_decoded_both_exist() -> Result<(), String> {
+    const REFRESH_TIMEOUT: Duration = Duration::from_mins(3);
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("clock before Unix epoch: {error}"))?
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-mcp-stdio-id-collision-{}-{stamp}",
+        std::process::id()
+    ));
+    let _guard = FixtureGuard { root: root.clone() };
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"id-collision-fixture\"\nversion = \"0.0.0\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[languages]\nenabled = [\"python\"]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join(".gitignore"), ".ripr/\ntarget/\n")
+        .map_err(|error| error.to_string())?;
+    let open_boundary = "def accepts(amount, threshold):\n    if amount >= threshold:\n        return amount - 1\n    return amount\n";
+    let closed_boundary = open_boundary.replace(">=", ">");
+    for file in ["a b.py", "a%20b.py"] {
+        std::fs::write(root.join("src").join(file), open_boundary)
+            .map_err(|error| error.to_string())?;
+    }
+    fixture_git_ok(&root, &["-c", "init.defaultBranch=main", "init", "-q"])?;
+    fixture_git_ok(&root, &["config", "core.autocrlf", "false"])?;
+    commit_fixture(&root, "open boundary")?;
+    fixture_git_ok(&root, &["checkout", "-q", "-b", "journey"])?;
+    for file in ["a b.py", "a%20b.py"] {
+        std::fs::write(root.join("src").join(file), &closed_boundary)
+            .map_err(|error| error.to_string())?;
+    }
+    commit_fixture(&root, "closed boundary")?;
+
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    let refresh = structured_tool_success(&refresh, "ripr_refresh")?;
+    if refresh
+        .pointer("/snapshot/finding_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        != 2
+    {
+        return Err(format!(
+            "collision fixture must yield exactly two gaps: {refresh}"
+        ));
+    }
+    let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    let list = structured_tool_success(&list, "ripr_list_gaps")?;
+    let items = list
+        .pointer("/items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("ripr_list_gaps omitted items: {list}"))?;
+    let mut space_id: Option<String> = None;
+    let mut percent_id: Option<String> = None;
+    for item in items {
+        let id = item
+            .pointer("/canonical_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("list item lost its canonical id: {item}"))?;
+        if id.contains("src/a b.py") {
+            space_id = Some(id.to_string());
+        } else if id.contains("src/a%20b.py") {
+            percent_id = Some(id.to_string());
+        }
+    }
+    let (space_id, percent_id) = match (space_id, percent_id) {
+        (Some(space), Some(percent)) => (space, percent),
+        _ => {
+            return Err(format!(
+                "collision fixture must list both file spellings: {list}"
+            ));
+        }
+    };
+
+    // Ground truth through the tool route (plain JSON string ids).
+    let gap_for = |session: &mut SequentialStdio, label: &str, id: &str| -> Result<Value, String> {
+        let reply = session.call_tool(
+            label,
+            "ripr_get_gap",
+            json!({ "canonical_id": id }),
+            REPLY_TIMEOUT,
+        )?;
+        structured_tool_success(&reply, "ripr_get_gap")
+    };
+    let space_document = gap_for(&mut session, "space-tool", &space_id)?;
+    let percent_document = gap_for(&mut session, "percent-tool", &percent_id)?;
+
+    // The raw percent spelling is ambiguous between the literal-percent
+    // file and the decoded space file. The gap route resolves both lookups
+    // and fails closed with `id_ambiguous`. The repair-card route shares
+    // the same resolution helper; until Python items bind card seams it
+    // fails earlier with `seam_not_found` — either way it must never
+    // silently return the other file's card.
+    let reply = session.call(
+        "gap-ambiguous",
+        "resources/read",
+        json!({ "uri": format!("ripr://gap/{percent_id}") }),
+        REPLY_TIMEOUT,
+    )?;
+    if reply.pointer("/error/data/code").and_then(Value::as_str) != Some("id_ambiguous") {
+        return Err(format!(
+            "raw percent id must fail closed as id_ambiguous on the gap route: {reply}"
+        ));
+    }
+    let reply = session.call(
+        "card-ambiguous",
+        "resources/read",
+        json!({ "uri": format!("ripr://repair-card/{percent_id}") }),
+        REPLY_TIMEOUT,
+    )?;
+    if reply.pointer("/error").is_none() {
+        return Err(format!(
+            "raw percent id must fail closed on the repair-card route: {reply}"
+        ));
+    }
+
+    // The fully encoded spelling names only the literal-percent file.
+    let encoded_percent = percent_id.replace('%', "%25");
+    let resolved = read_resource_document(
+        &mut session,
+        "gap-encoded",
+        &format!("ripr://gap/{encoded_percent}"),
+        REPLY_TIMEOUT,
+    )?;
+    if resolved != percent_document {
+        return Err(
+            "fully encoded percent id must resolve to the percent file's document".to_string(),
+        );
+    }
+
+    // The raw space spelling has no decodable escape and stays legacy-raw.
+    let resolved = read_resource_document(
+        &mut session,
+        "gap-space",
+        &format!("ripr://gap/{space_id}"),
+        REPLY_TIMEOUT,
+    )?;
+    if resolved != space_document {
+        return Err("raw space id must resolve to the space file's document".to_string());
+    }
+    Ok(())
+}
+
 #[test]
 fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
     const REFRESH_TIMEOUT: Duration = Duration::from_mins(3);
