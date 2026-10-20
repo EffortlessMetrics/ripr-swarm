@@ -688,7 +688,7 @@ fn a_commented_environment_write_activates_nothing() -> Result<(), String> {
 fn a_shadow_inside_a_callback_reaches_an_assertion_inside_it() -> Result<(), String> {
     // Each case is the setup, then what closes the open block after the
     // assertion (nothing when the shadow is not in a block).
-    let cases: [(&str, &str); 14] = [
+    let cases: [(&str, &str); 17] = [
         // The assertion sits in the callback block that rebinds the local.
         (
             "let tokens = tokenize(\"7\");\n        apply(|| {\n            let tokens = vec![1u32];",
@@ -735,6 +735,19 @@ fn a_shadow_inside_a_callback_reaches_an_assertion_inside_it() -> Result<(), Str
             "let tokens = tokenize(\"7\");\n        let r = if let Some(tokens) = p {",
             "\n        } else {\n        };",
         ),
+        // `||` earlier in the header does not hide the parameter list.
+        (
+            "let tokens = tokenize(\"7\");\n        run(|| 1, |tokens| {",
+            "\n        });",
+        ),
+        (
+            "let tokens = tokenize(\"7\");\n        run(a || b, |tokens| {",
+            "\n        });",
+        ),
+        (
+            "let tokens = tokenize(\"7\");\n        let r = foo(a || b, |tokens| {",
+            "\n        });",
+        ),
         // A closure body that rewrites a `mut` owner binding.
         (
             "let mut tokens = tokenize(\"7\");\n        run(|| {\n            tokens = vec![1u32];\n        });",
@@ -764,6 +777,8 @@ fn a_closed_callback_shadow_leaves_the_owner_binding() -> Result<(), String> {
         "let tokens = tokenize(\"7\");\n        let f = || {\n            let tokens = vec![1u32];\n        };",
         "let tokens = tokenize(\"7\");\n        apply(|| {\n            let other = vec![1u32];\n        });",
         "let tokens = tokenize(\"7\");\n        run(|other| {\n            foo();\n        });",
+        "let tokens = tokenize(\"7\");\n        run(|| 1, |other| {\n            foo();\n        });",
+        "let tokens = tokenize(\"7\");\n        run(|| {\n            foo(tokens);\n        });",
         "let tokens = tokenize(\"7\");\n        foo(if let Some(other) = p {\n            bar();\n        } else {\n            baz();\n        });",
     ] {
         all_withheld(setup, EXPECT_ASSERT)?;

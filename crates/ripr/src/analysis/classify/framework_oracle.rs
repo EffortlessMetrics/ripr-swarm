@@ -658,6 +658,13 @@ mod tests {
             "let out = row(1);\nitems.iter().for_each(|(i, out)| {",
             "let out = row(1); run(|out| {",
             "let out = row(1);\nfoo(if let Some(out) = p {",
+            "let out = row(1);\nrun(|| 1, |out| {",
+            "let out = row(1);\nrun(a || b, |out| {",
+            "let out = row(1);\nrun(move || (), |out| {",
+            "let out = row(1);\nrun(|| {\n  a || b;\n}, |out| {",
+            "let out = row(1);\nlet r = foo(a || b, |out| {",
+            "let out = row(1);\nrun(a, b || c,\n    |out|\n    {",
+            "let out = row(1);\nrun(|out|",
             "let out = row(1);\nlet r = if let Some(out) = p {",
         ] {
             assert!(!derives(replaced, "out"), "{replaced}");
@@ -673,6 +680,8 @@ mod tests {
             "let out = row(1);\nlet f = || {\n    let other = vec![1];\n};",
             "let out = row(1);\nrun(|other| {",
             "let out = row(1);\nfoo(if let Some(other) = p {",
+            "let out = row(1);\nrun(|| 1, |other| {",
+            "let out = row(1);\nrun(|| {\n    foo(out);\n});",
         ] {
             assert!(derives(kept, "out"), "{kept}");
         }

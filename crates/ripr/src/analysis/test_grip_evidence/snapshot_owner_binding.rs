@@ -105,7 +105,7 @@ fn name_is_direct_owner_result(
         name,
         owner_name,
         BindingReach::DirectOwnerCall,
-        false,
+        true,
     )
 }
 
@@ -495,14 +495,42 @@ fn binds_by_pattern(statement: &str, name: &str) -> bool {
     if statement.contains("=>") {
         let mut arms: Vec<&str> = statement.split("=>").collect();
         arms.pop();
-        return arms.iter().any(|pattern| {
+        let in_arm = arms.iter().any(|pattern| {
             let arm = pattern
                 .rsplit_once([',', '{'])
                 .map_or(*pattern, |(_, arm)| arm);
             contains_word(arm, name)
         });
+        if in_arm {
+            return true;
+        }
     }
-    statement.contains('|') && !statement.contains("||")
+    closure_parameters_name(statement, name)
+}
+
+/// A closure parameter list in `statement` names `name`. `||` is an empty
+/// parameter list (or a boolean or); it never hides a later `|name|`.
+fn closure_parameters_name(statement: &str, name: &str) -> bool {
+    let bytes = statement.as_bytes();
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] != b'|' {
+            at += 1;
+            continue;
+        }
+        if bytes.get(at + 1) == Some(&b'|') {
+            at += 2;
+            continue;
+        }
+        let Some(len) = statement[at + 1..].find('|') else {
+            return false;
+        };
+        if contains_word(&statement[at + 1..at + 1 + len], name) {
+            return true;
+        }
+        at += len + 2;
+    }
+    false
 }
 
 /// The initializer's top-level expression is the owner call itself, with an
@@ -837,6 +865,17 @@ mod tests {
             "let x = own(2); run(|x| {",
             "let x = own(2);\nfoo(if let Some(x) = p {",
             "let x = own(2);\nlet r = if let Some(x) = p {",
+            // `||` earlier in the header does not hide a later parameter list.
+            "let x = own(2);\nrun(|| 1, |x| {",
+            "let x = own(2);\nrun(a || b, |x| {",
+            "let x = own(2);\nrun(move || (), |x| {",
+            "let x = own(2);\nrun(|| {\n    foo();\n}, |x| {",
+            "let x = own(2);\nrun(|| {\n    a || b;\n}, |x| {",
+            "let x = own(2);\nlet r = foo(a || b, |x| {",
+            "let x = own(2);\nrun(a, b || c,\n    |x|\n    {",
+            // A statement still open at the assertion is judged too.
+            "let x = own(2);\nrun(|x|",
+            "let x = own(2);\nmatch p {\n    Some(x) =>",
             // A closure body or a borrow that rewrites the binding.
             "let mut x = own(2);\napply(|| { x = 2usize; });",
         ] {
@@ -852,6 +891,9 @@ mod tests {
             "let x = own(2);\nrun(|y| {",
             "let x = own(2);\nrun(a, |y| {\n    foo();",
             "let x = own(2);\nfoo(if let Some(y) = p {",
+            "let x = own(2);\nrun(|| 1, |y| {",
+            "let x = own(2);\nrun(a || b, || {",
+            "let x = own(2);\nrun(|| {\n    foo(x);\n});",
             "let x = own(2);\napply(|| {\n    if c {\n        let x = 2usize;\n    }\n});",
             "let x = own(2);",
         ] {
