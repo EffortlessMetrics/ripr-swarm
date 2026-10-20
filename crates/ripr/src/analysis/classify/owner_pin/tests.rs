@@ -4366,7 +4366,11 @@ fn shared_return_admission_uses_the_outer_invocation_identity() {
         "pretty_assertions::assert_eq!(weight(input), 12);",
         "similar_asserts :: assert_eq !(weight(input), 12);",
     ] {
-        assert!(is_admission_gated_assert_eq(assertion), "{assertion}");
+        assert_eq!(
+            OwnerPinSyntax::assertion_macro_name(assertion).as_deref(),
+            Some("assert_eq"),
+            "{assertion}"
+        );
     }
     for assertion in [
         "assert!({ assert_eq!(weight(input), 12); true });",
@@ -4376,7 +4380,11 @@ fn shared_return_admission_uses_the_outer_invocation_identity() {
         "matches!(value, Some(_));",
         "match value { _ => assert_eq!(weight(input), 12) }",
     ] {
-        assert!(!is_admission_gated_assert_eq(assertion), "{assertion}");
+        assert_ne!(
+            OwnerPinSyntax::assertion_macro_name(assertion).as_deref(),
+            Some("assert_eq"),
+            "{assertion}"
+        );
     }
 }
 
