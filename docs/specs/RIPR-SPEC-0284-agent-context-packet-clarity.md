@@ -1,4 +1,4 @@
-# RIPR-SPEC-0281: Agent context packet clarity contract
+# RIPR-SPEC-0284: Agent context packet clarity contract
 
 Status: proposed
 

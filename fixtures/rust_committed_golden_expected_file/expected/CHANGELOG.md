@@ -98,3 +98,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_committed_golden_expected_file (8)
+
+Reason:
+RIPR-SPEC-0284: unknown-sink row gloss from the context-packet clarity lane lands on this golden after merging main
+
+Command:
+`cargo xtask goldens bless rust_committed_golden_expected_file --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
