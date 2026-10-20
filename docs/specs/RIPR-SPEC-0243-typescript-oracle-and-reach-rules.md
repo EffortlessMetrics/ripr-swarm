@@ -176,6 +176,16 @@ when all of these hold, and otherwise the call registers nothing as before:
   changes an expected value or a title;
 - the file contains no `\u` escape, and at most eight calls expand per file.
 
+The file-level passes follow the expansion rather than the declaration. A
+committed snapshot (RIPR-SPEC-0258) counts the file's snapshot calls with each
+fully expanded factory's declaration left out and each expansion in, so two
+calls of one factory each earn their own entry when their titles join to
+different keys. The partial-extraction disclosure skips a fully expanded
+factory's own registrations, still discloses a registration an expansion
+dropped, and names the call's line. A rendered pointer to an expanded test's
+assertion names the call's line; the assertion's own line stays an offset from
+the call, which the classifier indexes.
+
 **Rule 12. A named function passed as the callback is the test body
 (2026-10-20).** `test("title", name)` runs the function `name`, so its body
 supplies the test's assertions and owner calls, as an inline callback would.
@@ -1051,7 +1061,9 @@ to `amount - 20`, and `tests/lib.test.ts` has
 - `crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs`
   pins rule 13 and decision 17: calls that read like the written-out suite
   against every factory shape, extra mention and argument form that must stay
-  unexpanded. The corpus case `jest-mined-suite-factory` reads `credited`.
+  unexpanded, and the snapshot count, partial-extraction disclosure and
+  evidence pointer of an expanded call. The corpus case
+  `jest-mined-suite-factory` reads `credited`.
 - Existing: `crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs`
   and the `tests/` modules beside it: `mock_form_tests.rs`,
   `scope_receiver_tests.rs`, `reexport_chain_tests.rs`.
