@@ -1,3 +1,4 @@
+use ripr::domain::context_packet::ContextPacket;
 use ripr::domain::{
     ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, OracleKind, OracleStrength,
     Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
@@ -35,6 +36,73 @@ fn context_packet_related_test_totals_distinguish_identical_bounded_rows() -> Re
             .remove("related_tests_total");
     }
     assert_eq!(packets[0], packets[1]);
+    Ok(())
+}
+
+#[test]
+fn context_packet_related_test_totals_preserve_floors_and_display_windows() -> Result<(), String> {
+    for (metadata, retained_count, limit, expected_total, expected_shown) in [
+        (Some(12), 8, 8, 12, 8),
+        (Some(13), 8, 8, 13, 8),
+        (Some(1), 1, 1, 1, 1),
+        (Some(0), 0, 8, 0, 0),
+        (Some(12), 8, 0, 12, 0),
+        (Some(12), 8, 3, 12, 3),
+        (None, 8, 3, 8, 3),
+        (Some(0), 8, 3, 8, 3),
+    ] {
+        let mut finding = sample_finding();
+        finding.related_tests = (0..retained_count)
+            .map(|index| related(&format!("retained_{index}")))
+            .collect();
+        finding.related_tests_matched_total = metadata;
+        let original = finding.clone();
+        let packet = ContextPacket::from_finding(&finding, limit, Vec::new(), Path::new("."));
+        assert_eq!(packet.related_tests_total, expected_total);
+        assert_eq!(packet.related_tests.len(), expected_shown);
+        assert_eq!(
+            packet.related_tests,
+            original.related_tests[..expected_shown]
+        );
+        let rendered: serde_json::Value =
+            serde_json::from_str(&render_context_packet(&finding, limit, Path::new(".")))
+                .map_err(|error| error.to_string())?;
+        assert_eq!(rendered["related_tests_total"], expected_total);
+        assert_eq!(
+            rendered["related_tests"].as_array().map(Vec::len),
+            Some(expected_shown)
+        );
+        assert_eq!(
+            finding, original,
+            "projection cannot mutate producer evidence"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn context_packet_related_test_totals_accept_legacy_omitted_and_null_metadata() -> Result<(), String>
+{
+    let mut finding = sample_finding();
+    finding.related_tests = (0..8)
+        .map(|index| related(&format!("retained_{index}")))
+        .collect();
+    finding.related_tests_matched_total = Some(8);
+    let explicit = render_context_packet(&finding, 3, Path::new("."));
+    for metadata in [None, Some(serde_json::Value::Null)] {
+        let mut raw = serde_json::to_value(&finding).map_err(|error| error.to_string())?;
+        let fields = raw.as_object_mut().ok_or("finding must be an object")?;
+        fields.remove("related_tests_matched_total");
+        if let Some(metadata) = metadata {
+            fields.insert("related_tests_matched_total".to_string(), metadata);
+        }
+        let legacy: Finding = serde_json::from_value(raw).map_err(|error| error.to_string())?;
+        assert_eq!(legacy.related_tests_matched_total, None);
+        let packet = ContextPacket::from_finding(&legacy, 3, Vec::new(), Path::new("."));
+        assert_eq!(packet.related_tests_total, 8);
+        assert_eq!(packet.related_tests.len(), 3);
+        assert_eq!(render_context_packet(&legacy, 3, Path::new(".")), explicit);
+    }
     Ok(())
 }
 

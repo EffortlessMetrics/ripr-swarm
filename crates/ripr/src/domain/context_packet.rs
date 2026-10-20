@@ -11,6 +11,9 @@ pub struct ContextPacket {
     /// `unresolved_subject` packets as candidate edit targets.
     pub source_currentness: &'static str,
     pub ripr: ContextPacketRipr,
+    /// Matched related-test rows before the packet's display window, using
+    /// the finding's conservative retained-count fallback for legacy data.
+    pub related_tests_total: usize,
     pub related_tests: Vec<RelatedTest>,
     pub observed_values: Vec<ValueFact>,
     pub missing_discriminators: Vec<MissingDiscriminatorFact>,
@@ -94,6 +97,7 @@ impl ContextPacket {
                 observe: finding.ripr.reveal.observe.state.as_str().to_string(),
                 discriminate: finding.ripr.reveal.discriminate.state.as_str().to_string(),
             },
+            related_tests_total: finding.related_tests_total(),
             related_tests: finding
                 .related_tests
                 .iter()

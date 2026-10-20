@@ -42,6 +42,7 @@ The packet should include:
 - owner symbol
 - recommended test location
 - related existing tests
+- the matched related-test row count before the packet's display window
 - fixture or builder hints
 - missing input values
 - missing oracle shape
@@ -50,6 +51,16 @@ The packet should include:
 - stop reasons
 
 ## Required Evidence
+
+### Bounded related-test totals (#8952)
+
+The shared packet DTO and JSON renderer retain `Finding::related_tests_total()`
+as `related_tests_total` beside the bounded `related_tests` window. Identical
+eight-row windows with matched totals of 12 and 13 remain distinguishable.
+The count uses the existing retained-count fallback and floor for legacy or
+underspecified metadata, before applying the packet's display limit. A zero
+display limit preserves the total. Rendering preserves producer evidence,
+witnesses, selection and identity algorithms.
 
 ### Unknown finding guidance (#7477)
 
