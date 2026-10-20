@@ -1127,17 +1127,38 @@ fn package_edition(root: &Path, manifest: &Path, package: &toml::Table) -> Optio
         Some(value @ toml::Value::String(_)) => parse(value),
         Some(toml::Value::Table(table)) if table.get("workspace")?.as_bool()? => {
             let start = manifest.parent().unwrap_or(Path::new(""));
-            // The manifest's own `[workspace.package]` first, then ancestors.
-            start.ancestors().find_map(|dir| {
-                let text = std::fs::read_to_string(root.join(dir).join("Cargo.toml")).ok()?;
-                let parsed = text.parse::<toml::Table>().ok()?;
-                let workspace = parsed.get("workspace")?.as_table()?;
-                workspace
-                    .get("package")?
-                    .as_table()?
-                    .get("edition")
-                    .and_then(parse)
-            })
+            // Cargo reads only one workspace: the explicit `package.workspace`
+            // pointer, else the first ancestor (the manifest's own directory
+            // included) that has a `[workspace]` table. If that workspace has
+            // no `[workspace.package] edition`, the inheritance is invalid.
+            let workspace_manifest = |dir: &Path| -> Option<toml::Table> {
+                std::fs::read_to_string(root.join(dir).join("Cargo.toml"))
+                    .ok()?
+                    .parse::<toml::Table>()
+                    .ok()
+            };
+            let workspace_dir: PathBuf = match package.get("workspace") {
+                Some(pointer) => {
+                    let pointed = start.join(pointer.as_str()?);
+                    let pointed = pointed.strip_prefix(".").unwrap_or(&pointed);
+                    PathBuf::from(normalize_components(pointed)?)
+                }
+                None => start
+                    .ancestors()
+                    .find(|dir| {
+                        workspace_manifest(dir)
+                            .is_some_and(|parsed| parsed.contains_key("workspace"))
+                    })?
+                    .to_path_buf(),
+            };
+            let parsed = workspace_manifest(&workspace_dir)?;
+            parsed
+                .get("workspace")?
+                .as_table()?
+                .get("package")?
+                .as_table()?
+                .get("edition")
+                .and_then(parse)
         }
         Some(_) => None,
     }
@@ -1640,6 +1661,40 @@ mod tests {
             )
             .map_err(|error| error.to_string())?;
             assert_eq!(lookup("pkg/tests/discount.rs"), TargetLookup::Unresolved);
+            // only the nearest workspace counts: an inner `[workspace]` without
+            // an edition does not fall through to an outer one
+            let write = |path: &str, text: &str| -> Result<(), String> {
+                if let Some(parent) = Path::new(path).parent() {
+                    std::fs::create_dir_all(root.join(parent))
+                        .map_err(|error| error.to_string())?;
+                }
+                std::fs::write(root.join(path), text).map_err(|error| error.to_string())
+            };
+            write(
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"pkg\"]\n[workspace.package]\nedition = \"2021\"\n",
+            )?;
+            assert_eq!(got(&inherit, "pkg/tests/discount.rs")?, some("discount"));
+            write("pkg/Cargo.toml", "[workspace]\n")?;
+            let inner = format!("[package]\nname = \"in\"\nedition.workspace = true\n{other}");
+            write("pkg/in/Cargo.toml", &inner)?;
+            let nested = integration_target_lookup(
+                &root,
+                Path::new("pkg/in/Cargo.toml"),
+                &stub("pkg/in/tests/discount.rs"),
+            );
+            assert_eq!(nested, TargetLookup::Unresolved);
+            // an explicit `package.workspace` pointer selects the outer workspace
+            let pointed = format!(
+                "[package]\nname = \"in\"\nworkspace = \"../..\"\nedition.workspace = true\n{other}"
+            );
+            write("pkg/in/Cargo.toml", &pointed)?;
+            let by_pointer = integration_target_lookup(
+                &root,
+                Path::new("pkg/in/Cargo.toml"),
+                &stub("pkg/in/tests/discount.rs"),
+            );
+            assert_eq!(by_pointer, TargetLookup::Name("discount".to_string()));
             Ok::<(), String>(())
         })();
         let _ = std::fs::remove_dir_all(&root);
