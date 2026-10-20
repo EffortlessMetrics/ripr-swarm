@@ -16839,6 +16839,28 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0285"
+name = "Python framework scan is bounded, deterministic, and string-aware"
+spec = "docs/specs/RIPR-SPEC-0285-python-framework-scan-bounded-deterministic-string-aware.md"
+tests = [
+  "crates/ripr/src/analysis/language/python/tests.rs::detect_python_test_frameworks_scan_is_starvation_free_and_deterministic",
+  "crates/ripr/src/analysis/language/python/tests.rs::detect_python_test_frameworks_test_named_directories_do_not_starve_the_scan",
+  "crates/ripr/src/analysis/language/python/tests.rs::detect_python_test_frameworks_ignores_imports_inside_string_literals",
+  "crates/ripr/src/analysis/language/python/tests.rs::detect_python_test_frameworks_ignores_comment_and_string_quote_delimiters",
+  "crates/ripr/src/analysis/language/python/tests.rs::detect_python_test_frameworks_pins_backslash_continuation_limitation",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/language/python/source_facts.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0285-python-framework-scan-bounded-deterministic-string-aware.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0284"
 name = "Agent context packet clarity contract"
 spec = "docs/specs/RIPR-SPEC-0284-agent-context-packet-clarity.md"

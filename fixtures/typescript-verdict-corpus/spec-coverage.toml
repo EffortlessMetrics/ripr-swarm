@@ -594,3 +594,7 @@ reason = "agent repair-loop retry bound and status routing; not an analyzer verd
 [[unmeasured]]
 id = "RIPR-SPEC-0283"
 reason = "acceptance examples are bullet prose, not numbered; no corpus case cites an example number"
+[[spec]]
+id = "RIPR-SPEC-0285"
+scope = "out"
+reason = "doctor/repo-input framework-scan admission, ordering, and string-awareness hygiene; not an exposure-verdict example a corpus case labels"
