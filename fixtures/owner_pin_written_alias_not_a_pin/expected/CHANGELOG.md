@@ -22,3 +22,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_pin_written_alias_not_a_pin (3)
+
+Reason:
+RIPR-SPEC-0224: ungraded classified oracle wording changed by #8947 in merged main; classification unchanged
+
+Command:
+`cargo xtask goldens bless owner_pin_written_alias_not_a_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
