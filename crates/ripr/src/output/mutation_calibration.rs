@@ -2186,7 +2186,7 @@ mod tests {
         let agreeing = format!(
             r#"[{{"artifact":{{"repository":{{"head":"{head}"}}}},"outcomes":[{{"id":"m1","seam_id":"seam-a","operator":"replace","outcome":"missed"}}]}},{{"mutants":[{{"id":"m1","seam_id":"seam-a","operator":"replace"}}]}}]"#
         );
-        let report = mutation_calibration_report_from_json(exposure, &agreeing)?;
+        let report = mutation_calibration_report_from_json(&exposure, &agreeing)?;
         assert_eq!(report.provenance.mutants_head.as_deref(), Some(head));
         assert_eq!(report.provenance.verdict(), "same_head");
         let markdown = render_mutation_calibration_md(&report);
@@ -2198,7 +2198,7 @@ mod tests {
         let conflicting = format!(
             r#"[{{"artifact":{{"repository":{{"head":"{head}"}}}},"outcomes":[{{"id":"m1","seam_id":"seam-a","operator":"replace","outcome":"missed"}}]}},{{"artifact":{{"repository":{{"head":"{other}"}}}},"mutants":[{{"id":"m1","seam_id":"seam-a","operator":"replace"}}]}}]"#
         );
-        let report = mutation_calibration_report_from_json(exposure, &conflicting)?;
+        let report = mutation_calibration_report_from_json(&exposure, &conflicting)?;
         assert_eq!(report.provenance.verdict(), "conflicting_mutants_heads");
         assert!(
             report.provenance.mutants_head.is_none(),
@@ -2524,6 +2524,7 @@ mod tests {
                 .map(str::to_string),
             agreement_how_to_read()
                 .get("runtime_signal_without_static_gap")
+                .copied()
                 .map(str::to_string),
             "the JSON guide must carry the same corrected text"
         );
