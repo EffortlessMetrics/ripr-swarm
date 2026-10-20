@@ -4479,8 +4479,12 @@ mod tests {
                     warning.contains("rm --cached -r -- .ripr-cache/repo-seam-facts"),
                     "{warning}"
                 );
+                // Match the root as a pathspec only: the `git -C <root>`
+                // prefix legitimately embeds the temp checkout path, which on
+                // Linux CI lives under `target/ripr-command-...` and would
+                // false-positive a bare substring check.
                 assert!(
-                    !warning.contains("target/ripr"),
+                    !warning.contains("-- target/ripr"),
                     "untracked default root must not reach the remedy: {warning}"
                 );
             }
