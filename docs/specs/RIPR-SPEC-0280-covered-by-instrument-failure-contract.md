@@ -120,10 +120,14 @@ failure kind `infrastructure`.
 
 - An instrument failure is never a pass: the run always fails, and the failure
   is never reported as a clean `covered_by` result.
-- A real failure alongside an instrument failure wins. Both are reported, the
-  error does not carry the instrument prefix, and under `precommit-v2` the
-  report is `source_or_policy_failure`, later stages do not run, and the run
-  is not classified as infrastructure.
+- A real policy failure alongside an instrument failure wins. Both are
+  reported, the error does not carry the instrument prefix, and under
+  `precommit-v2` the report is `source_or_policy_failure`, later stages do not
+  run, and the run is not classified as infrastructure.
+- A later diff-check or Clippy failure after a deferred instrument failure is
+  reported with that failure's own kind (`fail_with_diagnostic_report`), not
+  forced to `source_or_policy_failure`; the instrument failure text survives
+  only in the report's limitations.
 - Only an instrument failure is deferred past later gates. A genuine policy
   error stops at the first one, as before.
 - Exhausted retries or an exhausted ceiling stay failures; they are never
@@ -178,8 +182,9 @@ failure kind `infrastructure`.
    `covered_by_instrument_timeout`.
 5. `precommit-v2` with only a deferred instrument failure: the diff checks and
    Clippy run; the report is `infrastructure_failure`.
-6. The same with a failing later gate: `source_or_policy_failure`, not
-   infrastructure.
+6. The same with a failing later policy gate: `source_or_policy_failure`, not
+   infrastructure. A later diff-check or Clippy failure instead carries its own
+   kind, with the instrument text only in limitations.
 
 ## Test Mapping
 
