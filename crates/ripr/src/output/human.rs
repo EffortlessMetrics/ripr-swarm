@@ -5127,6 +5127,7 @@ mod tests {
         // sample_finding already carries one observed value; 13 more make 14.
         for index in 0..13 {
             finding.activation.observed_values.push(ValueFact {
+                file: None,
                 line: 200 + index,
                 text: format!("sample({index})"),
                 value: format!("arg{index} = {index}"),
@@ -5143,9 +5144,58 @@ mod tests {
             "only the windowed observed values render:\n{rendered}"
         );
         assert!(
-            rendered.contains("source values (showing 8 of 14; full list in --format json)"),
+            rendered.contains("source values (showing 8 of 14 read from related tests; full list in --format json)"),
             "expected the observed-values window disclosure; got:\n{rendered}"
         );
+    }
+
+    /// #8389: a bare `at line N` is ambiguous once the shown window mixes
+    /// related-test files, so each line then names its file; a window from one
+    /// file keeps `at line N`.
+    #[test]
+    fn source_value_lines_name_the_test_file_only_when_files_differ() {
+        let fact = |file: &str, line: usize, value: &str, context| ValueFact {
+            file: Some(std::path::PathBuf::from(file)),
+            line,
+            text: "assert!(true);".to_string(),
+            value: value.to_string(),
+            context,
+        };
+        let mut finding = sample_finding();
+        finding.activation.observed_values = vec![
+            fact(
+                "tests/pricing.rs",
+                7,
+                "true",
+                ValueContext::AssertionArgument,
+            ),
+            fact("tests/other.rs", 9, "3", ValueContext::FunctionArgument),
+        ];
+        let rendered = render_finding(&finding);
+        assert!(
+            rendered.contains("source assertion argument value true at tests/pricing.rs:7"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("source function argument value 3 at tests/other.rs:9"),
+            "{rendered}"
+        );
+
+        finding.activation.observed_values = vec![
+            fact(
+                "tests/pricing.rs",
+                7,
+                "true",
+                ValueContext::AssertionArgument,
+            ),
+            fact("tests/pricing.rs", 9, "3", ValueContext::FunctionArgument),
+        ];
+        let rendered = render_finding(&finding);
+        assert!(
+            rendered.contains("source assertion argument value true at line 7"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("tests/pricing.rs:"), "{rendered}");
     }
 
     /// #4320 review: beyond JSON's own ranked 32-value cap, both formats are
@@ -5158,6 +5208,7 @@ mod tests {
         // (over the 8-value human window and the 32-value ranked JSON cap).
         for index in 0..41 {
             finding.activation.observed_values.push(ValueFact {
+                file: None,
                 line: 300 + index,
                 text: format!("sample({index})"),
                 value: format!("arg{index} = {index}"),
@@ -5169,7 +5220,7 @@ mod tests {
         let rendered = render_finding(&finding);
 
         assert!(
-            rendered.contains("source values (showing 8 of 42; --format json keeps a ranked 32)"),
+            rendered.contains("source values (showing 8 of 42 read from related tests; --format json keeps a ranked 32)"),
             "the pointer must disclose JSON's ranked cap; got:\n{rendered}"
         );
         assert!(
@@ -5200,6 +5251,7 @@ mod tests {
         }
         for index in 0..13 {
             finding.activation.observed_values.push(ValueFact {
+                file: None,
                 line: 200 + index,
                 text: format!("sample({index})"),
                 value: format!("arg{index} = {index}"),
@@ -5215,7 +5267,7 @@ mod tests {
         );
         assert!(
             explained.contains(
-                "source values (showing 8 of 14; full list via ripr check, using its JSON format)"
+                "source values (showing 8 of 14 read from related tests; full list via ripr check, using its JSON format)"
             ),
             "{explained}"
         );
@@ -5232,7 +5284,7 @@ mod tests {
 
         let checked = super::render_finding(&finding);
         assert!(
-            checked.contains("source values (showing 8 of 14; full list in --format json)"),
+            checked.contains("source values (showing 8 of 14 read from related tests; full list in --format json)"),
             "{checked}"
         );
         assert!(
@@ -5242,6 +5294,7 @@ mod tests {
 
         for index in 0..28 {
             finding.activation.observed_values.push(ValueFact {
+                file: None,
                 line: 400 + index,
                 text: format!("extra({index})"),
                 value: format!("extra{index} = {index}"),
@@ -5256,7 +5309,7 @@ mod tests {
         );
         assert!(
             over_cap.contains(
-                "source values (showing 8 of 42; ripr check, using its JSON format, keeps a ranked 32)"
+                "source values (showing 8 of 42 read from related tests; ripr check, using its JSON format, keeps a ranked 32)"
             ),
             "{over_cap}"
         );
@@ -5281,6 +5334,7 @@ mod tests {
         }
         for index in 0..13 {
             finding.activation.observed_values.push(ValueFact {
+                file: None,
                 line: 200 + index,
                 text: format!("sample({index})"),
                 value: format!("arg{index} = {index}"),
@@ -5309,7 +5363,7 @@ mod tests {
         // Only the window pointer carries the explain wording.
         assert!(
             explained.contains(
-                "source values (showing 8 of 14; full list via ripr check, using its JSON format)"
+                "source values (showing 8 of 14 read from related tests; full list via ripr check, using its JSON format)"
             ),
             "{explained}"
         );
@@ -5322,7 +5376,7 @@ mod tests {
             "{checked}"
         );
         assert!(
-            checked.contains("source values (showing 8 of 14; full list in --format json)"),
+            checked.contains("source values (showing 8 of 14 read from related tests; full list in --format json)"),
             "{checked}"
         );
     }
@@ -6303,6 +6357,7 @@ mod tests {
             }],
             activation: ActivationEvidence {
                 observed_values: vec![ValueFact {
+                    file: None,
                     line: 22,
                     text: "sample(false)".to_string(),
                     value: "enabled = false".to_string(),

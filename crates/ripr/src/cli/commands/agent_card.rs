@@ -431,6 +431,7 @@ mod tests {
         ] {
             let options = AgentCardOptions {
                 root: std::path::PathBuf::from("."),
+                root_explicit: true,
                 seam_id: "seam-a".to_string(),
                 json: true,
             };

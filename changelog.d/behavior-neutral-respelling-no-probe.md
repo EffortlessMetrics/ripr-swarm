@@ -5,4 +5,6 @@
   probe, so lint-cleanup commits stop naming a refactor as the top "Start
   here" finding (#8747). The same holds when the respelled statement is
   rewrapped across a different number of lines, and a respelling inside a
-  multi-line string literal or `stringify!` keeps its probe.
+  multi-line string literal, or inside an invocation of a macro that renders
+  its argument as text (`stringify!`, `dbg!`, `assert!`, `assert_matches!`, including
+  continuation lines of a multi-line call), keeps its probe.

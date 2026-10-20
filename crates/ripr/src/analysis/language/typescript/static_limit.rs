@@ -655,6 +655,7 @@ mod module_identity_tests {
             imports: Vec::new(),
             method_kind: TypeScriptMethodKind::Ordinary,
             class_default_export: false,
+            default_object_member: false,
             module_entries: Vec::new(),
             arity: None,
             params: Vec::new(),
