@@ -30,13 +30,13 @@ mod tests {
 
     // A keyword before `[` starts an array destructuring assignment.
     #[test]
-    #[allow(unused_assignments)]
     fn match_destructuring_is_not_independent() {
         let mut expected = 0;
         let mut other = 0;
         match [expected, other] = [weight(4), 0] {
             _ => {}
         }
+        let _ = other;
         assert_eq!(weight(4), expected);
     }
 }

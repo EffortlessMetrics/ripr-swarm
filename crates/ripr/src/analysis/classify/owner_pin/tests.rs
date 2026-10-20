@@ -8912,6 +8912,7 @@ fn written_by_test_reads_operators_and_let_boundaries() {
         // #8795: any `let` annotation shape that names the type.
         "let e: crate::EXPECTED = 1;",
         "let e: &EXPECTED = &1;",
+        "let mut EXPECTED = 1; let r = &EXPECTED;",
         "let e: &mut EXPECTED = g();",
         "let e: (EXPECTED, u8) = p;",
         "let e: Vec<EXPECTED> = p;",
@@ -8920,6 +8921,8 @@ fn written_by_test_reads_operators_and_let_boundaries() {
         "v[EXPECTED] = 1;",
         "v[i][EXPECTED] += 1;",
         "v [EXPECTED] = 1;",
+        "v[EXPECTED][0] = 1;",
+        "foo(EXPECTED);",
         "f(a)[EXPECTED] = 1;",
     ] {
         assert!(!super::written_by_test(read, "EXPECTED", false), "{read}");
@@ -8966,6 +8969,18 @@ fn written_by_test_reads_operators_and_let_boundaries() {
         "return [EXPECTED, o] = p;",
         "break [EXPECTED, o] = p;",
         "break 'a [EXPECTED, o] = p;",
+        // Postfix keyspace: a place chain after a closing group, a `?`
+        // before the bracket, and macro-built arrays all refuse.
+        "(EXPECTED)[0] = 1;",
+        "(EXPECTED).f = 1;",
+        "foo()?[EXPECTED] = 1;",
+        "EXPECTED?[0] = 1;",
+        "vec![EXPECTED][0] = 1;",
+        "m![EXPECTED][i] = 1;",
+        "foo(EXPECTED).x = 1;",
+        "let r = & mut EXPECTED; *r = 1;",
+        "let r = &raw mut EXPECTED;",
+        "let r = &\n mut EXPECTED;",
         "continue 'a [EXPECTED, o] = p;",
         "(EXPECTED, v[0]) = p;",
         "EXPECTED.replace(f(4));",
@@ -8976,9 +8991,9 @@ fn written_by_test_reads_operators_and_let_boundaries() {
     ] {
         assert!(super::written_by_test(write, "EXPECTED", false), "{write}");
     }
-    // #8795: on a plain `let` value a shared borrow is a read and the
-    // two-argument `replace` / argument `take` return new values; the
-    // one-argument `Cell::replace` and the argument-free `take` still write.
+    // #8795: on a plain `let` value a shared borrow is a read; every
+    // `replace`, `take`, `lock`, assignment and `&mut` stays a write (a
+    // test-local type may define any method arity).
     for read in [
         "Some(&EXPECTED);",
         "Ok(&EXPECTED);",

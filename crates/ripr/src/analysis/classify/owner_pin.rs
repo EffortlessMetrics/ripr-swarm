@@ -10328,7 +10328,7 @@ fn written_by_test(masked: &str, name: &str, plain: bool) -> bool {
         if in_let_annotation(before) {
             return false;
         }
-        if before.ends_with("&mut") {
+        if mut_borrow_before(before) {
             return true;
         }
         // A `let` (or `let mut`) declaration is the binding the let scan reads.
@@ -10412,6 +10412,19 @@ fn borrowed_into_path_call(before: &str) -> bool {
             "is_empty",
         ]
         .contains(&last)
+}
+
+/// Whether `before` ends in a mutable borrow operator: `&mut`, `& mut` or
+/// `&raw mut` (with any whitespace between the tokens).
+fn mut_borrow_before(before: &str) -> bool {
+    let Some(head) = before.strip_suffix("mut") else {
+        return false;
+    };
+    let head = head.trim_end();
+    head.ends_with('&')
+        || head
+            .strip_suffix("raw")
+            .is_some_and(|rest| rest.trim_end().ends_with('&'))
 }
 
 /// Whether the text before a name sits inside a `let` pattern's type
@@ -10669,9 +10682,11 @@ fn destructured_into(rest: &str) -> bool {
                     continue;
                 }
                 // The enclosing group closed: what follows decides.
+                // What follows may be a place chain (`(name)[0] = ..`,
+                // `m![name][i] = ..`): read it like any place expression.
                 let mut tail = rest[at..].trim_start_matches([')', ']', '}']);
                 tail = tail.trim_start();
-                return assignment_operator_at(tail);
+                return place_is_written(tail);
             }
             ';' if depth == 0 => return false,
             _ => {}

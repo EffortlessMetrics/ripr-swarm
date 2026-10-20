@@ -41,16 +41,16 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach weight: deref_store_is_not_independent, match_destructuring_is_not_independent", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: x * 3", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: x * 3 (line 2)", "related test src/lib.rs:25 deref_store_is_not_independent uses strong exact value oracle: assert_eq!(weight(4), expected.load(Ordering::SeqCst));", "related test src/lib.rs:34 match_destructuring_is_not_independent uses none unknown oracle", "source function argument value x = 4 at line 27", "source enum variant value Ordering::SeqCst at line 28", "source function argument value x = 4 at line 28", "source function argument value x = 4 at line 37", "source function argument value x = 4 at line 40"],
+      "evidence_path": ["reach yes: Related tests appear to reach weight: deref_store_is_not_independent, match_destructuring_is_not_independent", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: x * 3", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: x * 3 (line 2)", "related test src/lib.rs:25 deref_store_is_not_independent uses strong exact value oracle: assert_eq!(weight(4), expected.load(Ordering::SeqCst));", "related test src/lib.rs:33 match_destructuring_is_not_independent uses strong exact value oracle: assert_eq!(weight(4), expected);", "source function argument value x = 4 at line 27", "source enum variant value Ordering::SeqCst at line 28", "source function argument value x = 4 at line 28", "source function argument value x = 4 at line 36", "source function argument value x = 4 at line 40"],
       "flow_sinks": [
         {"kind":"return_value","text":"x * 3","line":2}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: x * 3", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach weight: deref_store_is_not_independent, match_destructuring_is_not_independent", "assertion not credited: `assert_eq!` in match_destructuring_is_not_independent at src/lib.rs:40: the test carries `#[allow(unused_assignments)]`, which may change whether or how it runs"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: x * 3", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach weight: deref_store_is_not_independent, match_destructuring_is_not_independent"],
       "missing": ["No strong discriminator was detected"],
       "assertion_texts": {
         "27": "AtomicU32::store(&expected, weight(4), Ordering::SeqCst);",
         "28": "assert_eq!(weight(4), expected.load(Ordering::SeqCst));",
-        "37": "match [expected, other] = [weight(4), 0] {",
+        "36": "match [expected, other] = [weight(4), 0] {",
         "40": "assert_eq!(weight(4), expected);"
       },
       "activation": {
@@ -71,7 +71,7 @@
             "context": "function_argument"
           },
           {
-            "line": 37,
+            "line": 36,
             "value": "x = 4",
             "context": "function_argument"
           },
@@ -101,7 +101,7 @@
           "context": "function_argument"
         },
         {
-          "line": 37,
+          "line": 36,
           "value": "x = 4",
           "context": "function_argument"
         },
@@ -130,21 +130,21 @@
         {
           "name": "match_destructuring_is_not_independent",
           "file": "src/lib.rs",
-          "line": 34,
-          "oracle_strength": "none",
-          "oracle_kind": "unknown",
-          "oracle": "",
+          "line": 33,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(weight(4), expected);",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that it runs as the standard macro"
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "The related test `deref_store_is_not_independent` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
-      "suggested_next_action": "The related test `deref_store_is_not_independent` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
+      "recommended_next_step": "The related test `match_destructuring_is_not_independent` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
+      "suggested_next_action": "The related test `match_destructuring_is_not_independent` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
       "language": "rust",
       "source_currentness": "candidate_current"
     },
@@ -180,7 +180,7 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"unknown","confidence":"low","summary":"Assertions exist, but oracle strength is unknown"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach weight: deref_store_is_not_independent, match_destructuring_is_not_independent", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 2)", "related test src/lib.rs:25 deref_store_is_not_independent uses unknown exact value oracle: assert_eq!(weight(4), expected.load(Ordering::SeqCst));", "related test src/lib.rs:34 match_destructuring_is_not_independent uses unknown exact value oracle: assert_eq!(weight(4), expected);", "source function argument value x = 4 at line 27", "source enum variant value Ordering::SeqCst at line 28", "source function argument value x = 4 at line 28", "source function argument value x = 4 at line 37", "source function argument value x = 4 at line 40"],
+      "evidence_path": ["reach yes: Related tests appear to reach weight: deref_store_is_not_independent, match_destructuring_is_not_independent", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 2)", "related test src/lib.rs:25 deref_store_is_not_independent uses unknown exact value oracle: assert_eq!(weight(4), expected.load(Ordering::SeqCst));", "related test src/lib.rs:33 match_destructuring_is_not_independent uses unknown exact value oracle: assert_eq!(weight(4), expected);", "source function argument value x = 4 at line 27", "source enum variant value Ordering::SeqCst at line 28", "source function argument value x = 4 at line 28", "source function argument value x = 4 at line 36", "source function argument value x = 4 at line 40"],
       "flow_sinks": [
         {"kind":"unknown","text":"unknown sink","line":2}
       ],
@@ -189,7 +189,7 @@
       "assertion_texts": {
         "27": "AtomicU32::store(&expected, weight(4), Ordering::SeqCst);",
         "28": "assert_eq!(weight(4), expected.load(Ordering::SeqCst));",
-        "37": "match [expected, other] = [weight(4), 0] {",
+        "36": "match [expected, other] = [weight(4), 0] {",
         "40": "assert_eq!(weight(4), expected);"
       },
       "activation": {
@@ -210,7 +210,7 @@
             "context": "function_argument"
           },
           {
-            "line": 37,
+            "line": 36,
             "value": "x = 4",
             "context": "function_argument"
           },
@@ -240,7 +240,7 @@
           "context": "function_argument"
         },
         {
-          "line": 37,
+          "line": 36,
           "value": "x = 4",
           "context": "function_argument"
         },
@@ -267,7 +267,7 @@
         {
           "name": "match_destructuring_is_not_independent",
           "file": "src/lib.rs",
-          "line": 34,
+          "line": 33,
           "oracle_strength": "unknown",
           "oracle_kind": "exact_value",
           "oracle": "assert_eq!(weight(4), expected);",
