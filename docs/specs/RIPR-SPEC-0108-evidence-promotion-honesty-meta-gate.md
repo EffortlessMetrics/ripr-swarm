@@ -592,6 +592,7 @@ or tampered fingerprint at ingestion.
 | dynamic require/eval dispatch | `perl_dynamic_require_eval_dispatch` | `static_unknown` + `must_emit_limitation: metaprogramming` |
 | token substring collision | `perl_token_substring` | `weakly_exposed` (sink alignment requires exact equality) |
 | fixture/harness test reaches but does not discriminate | `perl_fixture_setup_no_discrimination` | `reachable_unrevealed` (fixture-setup relations are advisory-only) |
+| `isnt` rejects one value (producer grades it `strong_exact`) | `perl_isnt_is_not_exact` | `reachable_unrevealed` (RIPR-SPEC-0235 rule 17; oracle read as smoke) |
 
 Rust family coverage for same-method-other-impl identity (#4760):
 

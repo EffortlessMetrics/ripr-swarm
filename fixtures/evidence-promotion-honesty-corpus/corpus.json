@@ -5520,6 +5520,46 @@
       ]
     },
     {
+      "id": "perl_isnt_is_not_exact",
+      "language": "perl",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/perl_isnt_is_not_exact.json",
+      "vector": "isnt_single_value_rejection_is_not_an_exact_oracle",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_verify_command"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "smoke"
+        },
+        {
+          "type": "expected_class",
+          "class": "reachable_unrevealed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "reachable_unrevealed"
+        }
+      ]
+    },
+    {
       "id": "perl_import_alias_defining_package",
       "language": "perl",
       "tier": "pure",

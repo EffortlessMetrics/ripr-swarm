@@ -10393,8 +10393,35 @@ fn item_names_word(masked: &str, word: &str) -> bool {
         whole_word_offsets(masked, keyword).into_iter().any(|at| {
             let rest = &masked[at + keyword.len()..];
             let end = rest.find([';', '=']).unwrap_or(rest.len());
-            contains_as_whole_word(&rest[..end], word)
+            let header = &rest[..end];
+            if *keyword == "use" {
+                return use_header_binds_word(header, word);
+            }
+            contains_as_whole_word(header, word)
         })
+    })
+}
+
+/// Whether a `use` header names `word` other than as the source of a rename
+/// (`use m::word as other` imports `other`, not `word`). Every other mention
+/// (a bare import, a path segment, a group member, `word as word`) counts, so
+/// the check stays conservative (#8944).
+fn use_header_binds_word(header: &str, word: &str) -> bool {
+    whole_word_offsets(header, word).into_iter().any(|at| {
+        let tail = header[at + word.len()..].trim_start();
+        let renamed = tail
+            .strip_prefix("as")
+            .filter(|after| after.starts_with(char::is_whitespace))
+            .map(|after| {
+                // `as r#name` imports `name`: look past the raw marker.
+                let target = after.trim_start();
+                let target = target.strip_prefix("r#").unwrap_or(target);
+                let end = target
+                    .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .unwrap_or(target.len());
+                &target[..end]
+            });
+        renamed.is_none_or(|target| target.is_empty() || target == word)
     })
 }
 
@@ -10440,7 +10467,9 @@ fn expected_binding_calls_owner(test: &TestSummary, expected: &str, name: &str) 
             let plain = bindings.as_deref().is_some_and(plain_let_values)
                 && first_use_is_top_level_let(&masked_body, word)
                 && !item_names_word(&masked_body, word);
-            let read_only = plain && never_declared_mut(&masked_body, word);
+            let read_only = plain
+                && never_declared_mut(&masked_body, word)
+                && !named_as_segment_or_call(&masked_body, word);
             if bound_by_macro(&masked_body, word)
                 || written_by_test(&masked_body, word, plain, read_only)
             {
@@ -10597,6 +10626,22 @@ fn borrowed_into_path_call(before: &str) -> bool {
         .contains(&last)
 }
 
+/// Whether the masked body uses `name` anywhere as something other than the
+/// local: a field or path segment (`st().name`, `S::name`) or a callee
+/// (`name(..)`, `name!(..)`). Such a use is unrelated to the `let`, and a
+/// method on it may write, so the read-only exemption does not apply.
+fn named_as_segment_or_call(masked: &str, name: &str) -> bool {
+    whole_word_offsets(masked, name).into_iter().any(|offset| {
+        let before = strip_raw_ident_prefix(masked[..offset].trim_end());
+        let after = masked[offset + name.len()..].trim_start();
+        before.ends_with('.')
+            || before.ends_with("::")
+            || after.starts_with('(')
+            || after.starts_with('!')
+            || after.starts_with("::")
+    })
+}
+
 /// Whether no whole-word use of `name` in the masked body follows `mut`
 /// (`let mut name`, `ref mut name`, `|mut name|`, `(mut name, ..)`), so the
 /// name is never declared mutable.
@@ -10722,10 +10767,11 @@ fn peel_group_and_path(before: &str) -> &str {
             let qualifier = rest.trim_end_matches(|c: char| c.is_ascii_alphanumeric() || c == '_');
             // A raw-identifier segment (`r#m::name`) is consumed whole.
             let raw = strip_raw_ident_prefix(qualifier);
-            // `& mut ::name` has an empty qualifier: keep the `mut` keyword.
+            // `& mut ::name` and the edition-2015 `match ::name` have an
+            // empty qualifier: keep the keyword (#8944).
             head = if raw.len() != qualifier.len() {
                 raw
-            } else if rest.ends_with("mut") && rest.len() - qualifier.len() == "mut".len() {
+            } else if matches!(&rest[qualifier.len()..], "mut" | "match") {
                 rest
             } else {
                 qualifier.trim_end()
@@ -10781,6 +10827,11 @@ fn addr_of_mut_before(before: &str) -> bool {
 /// text after the name. The binding is a mutable reference into the place,
 /// so a later `*r = ..` writes it; the scan cannot follow `r`, so it refuses.
 fn ref_mut_scrutinee(before: &str, rest: &str, open: usize) -> bool {
+    // `matches!(name, Some(ref mut r) if ..)` binds the pattern against the
+    // first argument like a `match` does (#8944).
+    if open > 0 && matches_macro_before(before) && macro_pattern_binds_ref_mut(rest, open - 1) {
+        return true;
+    }
     let head = peel_group_and_path(before);
     if let Some(pattern_end) = head.strip_suffix('=') {
         // `==`, `<=`, `+=` and the like compare or assign; only a bare `=`
@@ -10795,6 +10846,13 @@ fn ref_mut_scrutinee(before: &str, rest: &str, open: usize) -> bool {
         // The pattern ends at a top-level `;`: a `ref mut` in an earlier
         // statement does not bind this scrutinee (#8944).
         if has_top_level_semicolon(pattern) {
+            return false;
+        }
+        // `if let Some(ref mut r) = a { y = name; }`: a second bare `=` at the
+        // top level of the text after `let` is the `=` of a later assignment,
+        // so this `=` binds nothing of that pattern. An annotation colon may
+        // hold an `=` (`Box<dyn I<Item = u8>>`), so it keeps the scan (#8944).
+        if has_later_bare_assignment(pattern) {
             return false;
         }
         // `let ref mut r: Vec<u8>= name` closes a type annotation with the
@@ -10836,15 +10894,14 @@ fn ref_mut_scrutinee(before: &str, rest: &str, open: usize) -> bool {
                     let group = &rest[at..];
                     let end = skip_balanced(group, '{', '}')
                         .map_or(group.len(), |after| group.len() - after.len());
-                    let has = has_ref_mut(&group[..end]);
                     if depth > 0 {
-                        if has {
+                        if has_ref_mut(&group[..end]) {
                             return true;
                         }
                     } else if closed {
-                        return has;
+                        return arm_patterns_bind_ref_mut(&group[..end]);
                     } else {
-                        if !seen_group && has {
+                        if !seen_group && arm_patterns_bind_ref_mut(&group[..end]) {
                             return true;
                         }
                         seen_group = true;
@@ -10855,6 +10912,112 @@ fn ref_mut_scrutinee(before: &str, rest: &str, open: usize) -> bool {
                 _ => {}
             }
             at += character.len_utf8();
+        }
+    }
+    false
+}
+
+/// Whether `before` ends in the opener of a `matches!`-family macro
+/// (`matches!(`, `std::matches!(`, `assert_matches!(`): `before` is the text
+/// before the opener, so it ends in the macro's `!`.
+fn matches_macro_before(before: &str) -> bool {
+    let Some(head) = before.trim_end().strip_suffix('!') else {
+        return false;
+    };
+    // `matches !(..)` is the same macro: rustc allows space before the `!`.
+    let head = head.trim_end();
+    ["matches", "assert_matches", "debug_assert_matches"]
+        .iter()
+        .any(|name| {
+            head.strip_suffix(name)
+                .is_some_and(|rest| !rest.as_bytes().last().is_some_and(|b| is_ident_byte(*b)))
+        })
+}
+
+/// Whether the rest of a `matches!(name, pattern if guard)` invocation holds
+/// `ref mut`. `inside` brackets are open between the macro's opener and the
+/// name; the invocation ends at the first closer that returns past it.
+fn macro_pattern_binds_ref_mut(rest: &str, inside: usize) -> bool {
+    let mut depth = inside;
+    for (at, character) in rest.char_indices() {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                if depth == 0 {
+                    return has_ref_mut(&rest[..at]);
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    has_ref_mut(rest)
+}
+
+/// Whether a `match` arm list `{ .. }` binds `ref mut` in an arm pattern or
+/// guard: the text before each top-level `=>`. A block body (`=> { .. }`) is
+/// skipped. Every other text, a non-block body included, stays part of the
+/// scanned text up to the next `=>`, because a block-like body needs no comma
+/// and the next arm's pattern may follow it directly (#8944).
+fn arm_patterns_bind_ref_mut(group: &str) -> bool {
+    let inner = group.strip_prefix('{').unwrap_or(group);
+    let bytes = inner.as_bytes();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    let mut at = 0usize;
+    while at < inner.len() {
+        match bytes[at] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b'=' if depth == 0 && bytes.get(at + 1) == Some(&b'>') => {
+                if has_ref_mut(&inner[start..at]) {
+                    return true;
+                }
+                at += 2;
+                let body = inner[at..].trim_start();
+                let body_at = inner.len() - body.len();
+                if body.starts_with('{') {
+                    at = match skip_balanced(body, '{', '}') {
+                        Some(after) => inner.len() - after.len(),
+                        None => return has_ref_mut(&inner[body_at..]),
+                    };
+                } else {
+                    at = body_at;
+                }
+                start = at;
+                continue;
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    false
+}
+
+/// Whether the text after a `let` holds a second bare `=` at its top level
+/// (not `==`, `=>`, `<=`, `>=`, `!=`, `..=` or a compound assignment) before
+/// any top-level annotation colon.
+fn has_later_bare_assignment(pattern: &str) -> bool {
+    let bytes = pattern.as_bytes();
+    let mut depth = 0usize;
+    for (at, byte) in bytes.iter().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b':' if depth == 0
+                && bytes.get(at + 1) != Some(&b':')
+                && (at == 0 || bytes[at - 1] != b':') =>
+            {
+                return false;
+            }
+            b'=' if depth == 0 => {
+                let prev = if at == 0 { b' ' } else { bytes[at - 1] };
+                let next = bytes.get(at + 1).copied().unwrap_or(b' ');
+                if !b"=!<>+-*/%|&^.".contains(&prev) && next != b'=' && next != b'>' {
+                    return true;
+                }
+            }
+            _ => {}
         }
     }
     false
