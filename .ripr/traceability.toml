@@ -16145,6 +16145,10 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/mocked_callee_tests.rs::spec0243_rule8_reads_every_exposing_test_file",
   "crates/ripr/src/analysis/language/typescript/tests/table_case_tests.rs::literal_table_rows_pinning_the_boundary_are_exposed",
   "crates/ripr/src/analysis/language/typescript/tests/table_case_tests.rs::non_literal_table_stays_unresolved",
+  "crates/ripr/src/analysis/language/typescript/tests/function_reference_callback_tests.rs::a_named_function_registered_as_the_callback_credits_the_owner",
+  "crates/ripr/src/analysis/language/typescript/tests/function_reference_callback_tests.rs::a_reference_that_could_name_another_function_credits_nothing",
+  "crates/ripr/src/analysis/language/typescript/tests/function_reference_callback_tests.rs::a_function_the_runner_cannot_call_bare_credits_nothing",
+  "crates/ripr/src/analysis/language/typescript/tests/function_reference_callback_tests.rs::only_a_test_registration_resolves_the_reference",
 ]
 fixtures = [
   "fixtures/typescript-verdict-corpus",
