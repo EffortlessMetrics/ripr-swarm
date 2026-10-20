@@ -224,12 +224,12 @@ Producing the input:
 Limitation: the join matches by seam_id, span containment, or file/line. It
 does not check that the cargo-mutants JSON and the repo-exposure snapshot
 describe the same repository or commit. cargo-mutants outcomes.json does not carry a head SHA.
-When the snapshot carries a head, ripr names that subject on stderr; when
+When the snapshot carries a head, ripr names that subject in the report and on stderr; when
 either artifact lacks a head, ripr says so and asks you to ensure both
 artifacts are from the same repository and adjacent commits. Matching heads
 still do not mean matching working trees. A coincidental file:line from
 another subject can still join, including with a high-signal confidence
-label.
+label. Saved JSON and Markdown reports retain the same provenance disclosure.
 "#;
 
 #[cfg(test)]

@@ -8,7 +8,7 @@
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(crate) const MUTATION_CALIBRATION_SCHEMA_VERSION: &str = "0.2";
+pub(crate) const MUTATION_CALIBRATION_SCHEMA_VERSION: &str = "0.3";
 
 const STATIC_WITHOUT_RUNTIME_SAMPLE_LIMIT: usize = 50;
 const AGREEMENT_SAMPLE_LIMIT: usize = 50;
@@ -162,6 +162,7 @@ struct MutationOutcomeRecord {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct MutationCalibrationReport {
+    provenance: CalibrationHeadProvenance,
     static_seams_total: usize,
     mutants_total: usize,
     agreement: MutationCalibrationAgreement,
@@ -233,49 +234,66 @@ pub(crate) fn mutation_calibration_report_from_json(
     Ok(build_mutation_calibration_report(
         static_seams,
         runtime_mutants,
+        calibrate_head_provenance(repo_exposure_json, mutants_json),
     ))
 }
 
-/// The stderr disclosure `ripr calibrate cargo-mutants` prints beside a join.
-///
-/// The join itself matches by `seam_id`, span containment, or file/line in
-/// every case; what changes is what can be said about artifact identity.
-/// cargo-mutants `outcomes.json` does not carry a head, so the usual case is
-/// a snapshot that may or may not name one. A disclosure that stays silent
-/// lets a foreign `file:line` inherit the static seam's authority (#7449).
-/// Reuses the outcome snapshot head reader so "full SHA" means the same thing
-/// on both surfaces.
-pub(crate) fn calibrate_head_provenance_disclosure(
+/// One projection of input head identity, shared by both artifacts and stderr.
+/// The existing head reader deliberately treats malformed/short SHAs and the
+/// combined directory array as absent; matching heads do not identify dirty trees.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+struct CalibrationHeadProvenance {
+    repo_exposure_head: Option<String>,
+    cargo_mutants_head: Option<String>,
+    head_relationship: &'static str,
+    disclosure: String,
+}
+
+impl MutationCalibrationReport {
+    pub(crate) fn head_provenance_disclosure(&self) -> &str {
+        &self.provenance.disclosure
+    }
+}
+
+fn calibrate_head_provenance(
     repo_exposure_json: &str,
     mutants_json: &str,
-) -> String {
-    match (
-        crate::output::outcome::snapshot_repository_head(repo_exposure_json),
-        crate::output::outcome::snapshot_repository_head(mutants_json),
+) -> CalibrationHeadProvenance {
+    let repo_exposure_head = crate::output::outcome::snapshot_repository_head(repo_exposure_json);
+    let cargo_mutants_head = crate::output::outcome::snapshot_repository_head(mutants_json);
+    let (head_relationship, disclosure) = match (
+        repo_exposure_head.as_deref(),
+        cargo_mutants_head.as_deref(),
     ) {
         (Some(snapshot_head), Some(mutants_head)) if snapshot_head == mutants_head => {
-            format!(
+            ("matching_heads", format!(
                 "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; both artifacts report repository head {snapshot_head}, so they are from the same commit (the working tree may still differ between them)."
-            )
+            ))
         }
         (Some(snapshot_head), Some(mutants_head)) => {
-            format!(
+            ("different_heads", format!(
                 "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; the artifacts report different repository heads (repo-exposure {snapshot_head}, cargo-mutants {mutants_head}), so matched rows may describe a different subject than the static snapshot."
-            )
+            ))
         }
         (Some(snapshot_head), None) => {
-            format!(
+            ("missing_head", format!(
                 "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; the repo-exposure snapshot reports repository head {snapshot_head}, so the join assumes that subject. The cargo-mutants JSON does not carry a head SHA, so ensure the mutants were produced from the same repository and adjacent commits."
-            )
+            ))
         }
         (None, Some(mutants_head)) => {
-            format!(
+            ("missing_head", format!(
                 "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; the cargo-mutants JSON reports repository head {mutants_head}, but the repo-exposure snapshot does not carry a head SHA, so ensure both artifacts are from the same repository and adjacent commits."
-            )
+            ))
         }
         (None, None) => {
-            "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; at least one of the repo-exposure / cargo-mutants artifacts does not carry a head SHA, so ensure both artifacts are from the same repository and adjacent commits.".to_string()
+            ("missing_head", "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; at least one of the repo-exposure / cargo-mutants artifacts does not carry a head SHA, so ensure both artifacts are from the same repository and adjacent commits.".to_string())
         }
+    };
+    CalibrationHeadProvenance {
+        repo_exposure_head,
+        cargo_mutants_head,
+        head_relationship,
+        disclosure,
     }
 }
 
@@ -299,6 +317,7 @@ pub(crate) fn render_mutation_calibration_json(
         "schema_version": MUTATION_CALIBRATION_SCHEMA_VERSION,
         "scope": "repo",
         "status": "advisory",
+        "provenance": &report.provenance,
         "metrics": {
             "static_seams_total": report.static_seams_total,
             "mutants_total": report.mutants_total,
@@ -362,6 +381,9 @@ pub(crate) fn render_mutation_calibration_md(report: &MutationCalibrationReport)
          Runtime outcome vocabulary in this report comes from that runtime data; static \
          ripr reports continue to use audit vocabulary only.\n\n",
     );
+    out.push_str("## Join provenance\n\n");
+    out.push_str(report.head_provenance_disclosure());
+    out.push_str("\n\n");
     out.push_str("## Summary\n\n");
     out.push_str("| Metric | Count |\n| --- | ---: |\n");
     out.push_str(&format!(
@@ -624,6 +646,7 @@ fn parse_repo_exposure_static_seams(json: &str) -> Result<Vec<StaticSeamRecord>,
 fn build_mutation_calibration_report(
     static_seams: Vec<StaticSeamRecord>,
     runtime_mutants: Vec<MutationOutcomeRecord>,
+    provenance: CalibrationHeadProvenance,
 ) -> MutationCalibrationReport {
     let mut static_by_id: BTreeMap<String, usize> = BTreeMap::new();
     let mut static_by_line: BTreeMap<(String, usize), Vec<usize>> = BTreeMap::new();
@@ -752,6 +775,7 @@ fn build_mutation_calibration_report(
     static_only_findings.truncate(AGREEMENT_SAMPLE_LIMIT);
 
     let mut report = MutationCalibrationReport {
+        provenance,
         static_seams_total: static_seams.len(),
         mutants_total: matched.len()
             + ambiguous_file_line.len()
@@ -1827,10 +1851,9 @@ mod tests {
 
     #[test]
     fn calibrate_disclosure_warns_when_neither_artifact_has_a_head() {
-        let line = calibrate_head_provenance_disclosure(
-            &snapshot_with_head(None),
-            foreign_same_line_mutants(),
-        );
+        let line =
+            calibrate_head_provenance(&snapshot_with_head(None), foreign_same_line_mutants())
+                .disclosure;
         assert!(
             line.contains("does not carry a head SHA"),
             "identity-free snapshot plus cargo-mutants JSON must keep the caveat: {line}"
@@ -1848,10 +1871,9 @@ mod tests {
     #[test]
     fn calibrate_disclosure_names_the_snapshot_head_when_mutants_have_none() {
         let head = "2bd22c0b0718157870e2e78c9a70b9da1c9c1b21";
-        let line = calibrate_head_provenance_disclosure(
-            &snapshot_with_head(Some(head)),
-            foreign_same_line_mutants(),
-        );
+        let line =
+            calibrate_head_provenance(&snapshot_with_head(Some(head)), foreign_same_line_mutants())
+                .disclosure;
         assert!(
             line.contains(head),
             "the snapshot head must be named: {line}"
@@ -1870,10 +1892,11 @@ mod tests {
     fn calibrate_disclosure_flags_different_heads() {
         let snapshot = "1111111111111111111111111111111111111111";
         let mutants = "2222222222222222222222222222222222222222";
-        let line = calibrate_head_provenance_disclosure(
+        let line = calibrate_head_provenance(
             &snapshot_with_head(Some(snapshot)),
             &mutants_with_head(Some(mutants)),
-        );
+        )
+        .disclosure;
         assert!(
             line.contains(snapshot) && line.contains(mutants),
             "both heads must be named: {line}"
@@ -1891,10 +1914,11 @@ mod tests {
     #[test]
     fn calibrate_disclosure_reports_matching_heads_as_agreement() {
         let head = "2bd22c0b0718157870e2e78c9a70b9da1c9c1b21";
-        let line = calibrate_head_provenance_disclosure(
+        let line = calibrate_head_provenance(
             &snapshot_with_head(Some(head)),
             &mutants_with_head(Some(head)),
-        );
+        )
+        .disclosure;
         assert!(line.contains(head), "the shared head must be named: {line}");
         assert!(
             line.contains("same commit"),
@@ -1909,10 +1933,9 @@ mod tests {
     #[test]
     fn calibrate_disclosure_warns_when_only_mutants_name_a_head() {
         let head = "3333333333333333333333333333333333333333";
-        let line = calibrate_head_provenance_disclosure(
-            &snapshot_with_head(None),
-            &mutants_with_head(Some(head)),
-        );
+        let line =
+            calibrate_head_provenance(&snapshot_with_head(None), &mutants_with_head(Some(head)))
+                .disclosure;
         assert!(
             line.contains(head),
             "the mutants head must be named: {line}"
@@ -1933,7 +1956,7 @@ mod tests {
     fn calibrate_disclosure_treats_combined_directory_array_as_no_mutants_head() {
         let head = "2bd22c0b0718157870e2e78c9a70b9da1c9c1b21";
         let combined = r#"[{"outcomes":[{"id":"m1","file":"src/lib.rs","line":2,"outcome":"missed"}]},{"mutants":[]}]"#;
-        let line = calibrate_head_provenance_disclosure(&snapshot_with_head(Some(head)), combined);
+        let line = calibrate_head_provenance(&snapshot_with_head(Some(head)), combined).disclosure;
         assert!(
             line.contains(head) && line.contains("does not carry a head SHA"),
             "a combined directory array is not a headed mutants file: {line}"
@@ -1955,10 +1978,11 @@ mod tests {
             "2bd22c0b0718157870e2e78c9a70b9da1c9c1b2",
             "  ",
         ] {
-            let line = calibrate_head_provenance_disclosure(
+            let line = calibrate_head_provenance(
                 &snapshot_with_head(Some(placeholder)),
                 foreign_same_line_mutants(),
-            );
+            )
+            .disclosure;
             assert!(
                 line.contains("does not carry a head SHA")
                     && !line.contains(&format!("head {placeholder}")),
@@ -1977,6 +2001,7 @@ mod tests {
                 42,
             )],
             Vec::new(),
+            calibrate_head_provenance("{}", "{}"),
         );
         assert_eq!(report.mutants_total, 0);
         let markdown = render_mutation_calibration_md(&report);
@@ -1998,6 +2023,7 @@ mod tests {
         let empty_both = render_mutation_calibration_md(&build_mutation_calibration_report(
             Vec::new(),
             Vec::new(),
+            calibrate_head_provenance("{}", "{}"),
         ));
         assert!(
             empty_both.contains("No runtime mutants were imported."),
@@ -2044,7 +2070,11 @@ mod tests {
             runtime("m5", None, Some("src/other.rs"), Some(99), "missed"),
         ];
 
-        let report = build_mutation_calibration_report(static_seams, runtime_mutants);
+        let report = build_mutation_calibration_report(
+            static_seams,
+            runtime_mutants,
+            calibrate_head_provenance("{}", "{}"),
+        );
         assert_eq!(report.agreement.static_gap_and_runtime_signal, 1);
         assert_eq!(report.agreement.static_gap_without_runtime_signal, 2);
         assert_eq!(report.agreement.static_clean_and_runtime_clean, 1);
@@ -2053,7 +2083,7 @@ mod tests {
         assert_eq!(report.static_only_findings.len(), 2);
 
         let json = render_mutation_calibration_json(&report)?;
-        assert!(json.contains(r#""schema_version": "0.2""#));
+        assert!(json.contains(r#""schema_version": "0.3""#));
         assert!(json.contains(r#""static_gap_and_runtime_signal": 1"#));
         assert!(json.contains(r#""confidence_label": "supports_static_gap""#));
         assert!(json.contains(r#""confidence_label": "contradicts_static_gap""#));
@@ -2098,7 +2128,11 @@ mod tests {
             runtime("m5", None, Some("src/other.rs"), Some(99), "missed"),
         ];
 
-        let report = build_mutation_calibration_report(static_seams, runtime_mutants);
+        let report = build_mutation_calibration_report(
+            static_seams,
+            runtime_mutants,
+            calibrate_head_provenance("{}", "{}"),
+        );
         assert_eq!(report.agreement.runtime_signal_without_static_gap, 2);
         assert_eq!(report.unmatched_mutants.len(), 1);
 
@@ -2152,6 +2186,7 @@ mod tests {
                 1,
             )],
             vec![runtime("m1", Some("clean-clean"), None, None, "caught")],
+            calibrate_head_provenance("{}", "{}"),
         );
         let clean_markdown = render_mutation_calibration_md(&clean);
         assert!(
@@ -2183,7 +2218,11 @@ mod tests {
             })
             .collect();
 
-        let report = build_mutation_calibration_report(static_seams, runtime_mutants);
+        let report = build_mutation_calibration_report(
+            static_seams,
+            runtime_mutants,
+            calibrate_head_provenance("{}", "{}"),
+        );
         assert_eq!(
             report.agreement.runtime_signal_without_static_gap,
             over_limit
@@ -2260,7 +2299,11 @@ mod tests {
             ),
         ];
 
-        let report = build_mutation_calibration_report(static_seams, runtime_mutants);
+        let report = build_mutation_calibration_report(
+            static_seams,
+            runtime_mutants,
+            calibrate_head_provenance("{}", "{}"),
+        );
         assert_eq!(report.matched.len(), 2);
         assert_eq!(report.matched[0].join_method, "seam_id");
         assert_eq!(report.matched[1].join_method, "file_line");
@@ -2469,7 +2512,11 @@ mod tests {
     #[test]
     fn mutation_calibration_renders_empty_ambiguous_unmatched_and_inconclusive()
     -> Result<(), String> {
-        let empty_report = build_mutation_calibration_report(Vec::new(), Vec::new());
+        let empty_report = build_mutation_calibration_report(
+            Vec::new(),
+            Vec::new(),
+            calibrate_head_provenance("{}", "{}"),
+        );
         let empty_markdown = render_mutation_calibration_md(&empty_report);
         assert!(empty_markdown.contains("| none | 0 |"));
         assert!(empty_markdown.contains("No runtime mutants were imported."));
@@ -2525,7 +2572,11 @@ mod tests {
             },
         ];
 
-        let report = build_mutation_calibration_report(static_seams, runtime_mutants);
+        let report = build_mutation_calibration_report(
+            static_seams,
+            runtime_mutants,
+            calibrate_head_provenance("{}", "{}"),
+        );
         assert_eq!(report.matched.len(), 1);
         assert_eq!(report.ambiguous_file_line.len(), 1);
         assert_eq!(report.unmatched_mutants.len(), 2);
@@ -2814,7 +2865,11 @@ mod tests {
             spanned_runtime("m-inside", "src/display.rs", (20, 15), (20, 16)),
         ];
 
-        let report = build_mutation_calibration_report(static_seams, runtime_mutants);
+        let report = build_mutation_calibration_report(
+            static_seams,
+            runtime_mutants,
+            calibrate_head_provenance("{}", "{}"),
+        );
 
         assert_eq!(
             joins(&report),
@@ -2842,7 +2897,11 @@ mod tests {
             spanned_runtime("m-return", "src/context.rs", (40, 30), (40, 31)),
         ];
 
-        let report = build_mutation_calibration_report(static_seams, runtime_mutants);
+        let report = build_mutation_calibration_report(
+            static_seams,
+            runtime_mutants,
+            calibrate_head_provenance("{}", "{}"),
+        );
 
         assert!(report.ambiguous_file_line.is_empty(), "{report:?}");
         assert!(report.ambiguous_span_overlap.is_empty(), "{report:?}");
@@ -2877,10 +2936,18 @@ mod tests {
             ]
         };
 
-        let report = build_mutation_calibration_report(seams(), mutants());
+        let report = build_mutation_calibration_report(
+            seams(),
+            mutants(),
+            calibrate_head_provenance("{}", "{}"),
+        );
         let mut reversed_seams = seams();
         reversed_seams.reverse();
-        let reversed = build_mutation_calibration_report(reversed_seams, mutants());
+        let reversed = build_mutation_calibration_report(
+            reversed_seams,
+            mutants(),
+            calibrate_head_provenance("{}", "{}"),
+        );
 
         assert_eq!(
             joins(&report),
@@ -2929,7 +2996,11 @@ mod tests {
             by_id,
         ];
 
-        let report = build_mutation_calibration_report(static_seams, runtime_mutants);
+        let report = build_mutation_calibration_report(
+            static_seams,
+            runtime_mutants,
+            calibrate_head_provenance("{}", "{}"),
+        );
 
         assert_eq!(
             joins(&report),
@@ -3000,7 +3071,11 @@ mod tests {
             spanned_seam("spanned", "src/lib.rs", (4, 1), (4, 20)),
         ];
 
-        let report = build_mutation_calibration_report(static_seams, runtime_mutants);
+        let report = build_mutation_calibration_report(
+            static_seams,
+            runtime_mutants,
+            calibrate_head_provenance("{}", "{}"),
+        );
 
         assert!(report.matched.is_empty(), "{report:?}");
         assert_eq!(
@@ -3069,7 +3144,7 @@ mod tests {
         assert_eq!(report.matched[0].join_method, "span_containment");
         let json: Value = serde_json::from_str(&render_mutation_calibration_json(&report)?)
             .map_err(|err| err.to_string())?;
-        assert_eq!(json["schema_version"], "0.2");
+        assert_eq!(json["schema_version"], "0.3");
         let matched = &json["matches"][0];
         assert_eq!(matched["runtime"]["column"], 7);
         assert_eq!(matched["runtime"]["end_column"], 8);

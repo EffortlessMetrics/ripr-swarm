@@ -51,7 +51,7 @@ use std::time::Duration;
 const SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v2";
 /// Calibration schema that carries the span-containment join and explicit
 /// span-overlap and unmatched reasons.
-const CALIBRATION_SCHEMA_VERSION: &str = "0.2";
+const CALIBRATION_SCHEMA_VERSIONS: &[&str] = &["0.2", "0.3"];
 const CANONICAL_PRECISE: &str = "canonical_precise";
 const CANONICAL_JOIN_METHODS: &[&str] = &["seam_id", "span_containment"];
 const SUPPORTED_GENRES: &[&str] = &["BinaryOperator", "UnaryOperator"];
@@ -791,9 +791,9 @@ fn classify_records(
         .get("schema_version")
         .and_then(Value::as_str)
         .unwrap_or("missing");
-    if schema != CALIBRATION_SCHEMA_VERSION {
+    if !CALIBRATION_SCHEMA_VERSIONS.contains(&schema) {
         return Err(format!(
-            "mutation calibration schema {schema} has no span-containment join; the spot check needs calibration schema {CALIBRATION_SCHEMA_VERSION}"
+            "mutation calibration schema {schema} has no span-containment join; the spot check needs calibration schema 0.2 or 0.3"
         ));
     }
     let expressions: BTreeMap<&str, &str> = exposure
@@ -1688,6 +1688,12 @@ mod tests {
             "BinaryOperator".to_string(),
         )]);
         let records = classify_records(&calibration, &exposure, &genres)?;
+        let mut v3 = calibration.clone();
+        v3["schema_version"] = json!("0.3");
+        v3["provenance"] = json!({"head_relationship": "missing_head"});
+        let v3_records = classify_records(&v3, &exposure, &genres)?;
+        assert_eq!(v3_records.len(), records.len());
+        assert_eq!(v3_records[0].disposition, records[0].disposition);
         assert_eq!(records[0].disposition, "canonical_precise");
         assert_eq!(records[0].operator_token, "absent");
         let report = build_report(&[repo_run(records)], 5, TEST_ANALYZER);

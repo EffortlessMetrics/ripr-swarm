@@ -4,6 +4,10 @@ Status: advisory
 
 This report joins static seam evidence to supplied cargo-mutants runtime data. Runtime outcome vocabulary in this report comes from that runtime data; static ripr reports continue to use audit vocabulary only.
 
+## Join provenance
+
+ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; at least one of the repo-exposure / cargo-mutants artifacts does not carry a head SHA, so ensure both artifacts are from the same repository and adjacent commits.
+
 ## Summary
 
 | Metric | Count |

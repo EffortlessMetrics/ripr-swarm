@@ -913,6 +913,8 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::calibrate_cargo_mutants_writes_json_when_requested",
   "crates/ripr/tests/cli_smoke.rs::calibrate_foreign_same_line_join_discloses_missing_head",
   "crates/ripr/tests/cli_smoke.rs::calibrate_headed_snapshot_names_the_assumed_subject",
+  "crates/ripr/tests/cli_smoke/mutation_calibration_provenance.rs::calibrate_saved_json_retains_head_provenance",
+  "crates/ripr/tests/cli_smoke/mutation_calibration_provenance.rs::calibrate_saved_markdown_retains_head_provenance",
   "crates/ripr/tests/cli_smoke/snapshot_recovery.rs::missing_snapshot_recovery_preserves_native_redirect_target",
   "crates/ripr/tests/cli_smoke.rs::calibration_runtime_fixture_matches_checked_reports",
   "crates/ripr/tests/cli_smoke.rs::calibration_runtime_fixture_v2_matches_checked_reports",

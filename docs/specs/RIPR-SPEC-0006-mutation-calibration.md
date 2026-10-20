@@ -48,13 +48,19 @@ The report should:
   cargo-mutants` returns an error instead of rendering
   "All imported runtime mutants matched a static seam." Vacuous all-matched
   wording is reserved for imports that actually contained mutant records;
-- disclose join provenance on stderr the way `ripr outcome` discloses
+- disclose join provenance in saved JSON and Markdown and on stderr the way
+  `ripr outcome` discloses
   snapshot heads: when the repo-exposure snapshot carries a head SHA, name
   the subject the join assumes; when the cargo-mutants JSON names a
   different head, flag the mismatch; when either artifact lacks a head
   (the usual cargo-mutants case), print that the join cannot confirm the
   pair came from the same repository or adjacent commits. This does not
-  refuse a coincidental file/line join;
+  refuse a coincidental file/line join. JSON schema `0.3` adds `provenance`
+  with nullable `repo_exposure_head` and `cargo_mutants_head`, a
+  `head_relationship` of `matching_heads`, `different_heads`, or `missing_head`,
+  and the shared `disclosure`. Non-full heads and a combined directory array
+  remain absent under the existing snapshot reader. Matching heads do not
+  establish identical working trees;
 - disclose on the default Markdown Summary, and in `--help`, that a
   `mutants.json`-only import (or any import whose records have no
   observed runtime outcome) still counts those never-executed candidates
@@ -88,6 +94,13 @@ The Unix CLI regression replays all three emitted capture routes with plain and
 quoted filenames, requires nonempty snapshot evidence at the requested path,
 and checks that the slash-spelled decoy keeps its bytes. This establishes POSIX
 shell replay on Unix, not universal shell or native Windows qualification.
+
+### Saved provenance
+
+Both renderers retain the same qualification as stderr, including when `--out`
+leaves stdout empty. JSON `provenance` qualifies all joined results and their
+confidence labels; Markdown places the disclosure before the summary. The join,
+confidence labels, advisory status and imported counts are unchanged.
 
 ## Required Evidence
 
@@ -373,6 +386,8 @@ Current tests:
 - `crates/ripr/src/output/mutation_calibration.rs::tests::calibrate_disclosure_treats_combined_directory_array_as_no_mutants_head`
 - `crates/ripr/tests/cli_smoke.rs::calibrate_foreign_same_line_join_discloses_missing_head`
 - `crates/ripr/tests/cli_smoke.rs::calibrate_headed_snapshot_names_the_assumed_subject`
+- `crates/ripr/tests/cli_smoke/mutation_calibration_provenance.rs::calibrate_saved_json_retains_head_provenance`
+- `crates/ripr/tests/cli_smoke/mutation_calibration_provenance.rs::calibrate_saved_markdown_retains_head_provenance`
 - `crates/ripr/tests/cli_smoke/snapshot_recovery.rs::missing_snapshot_recovery_preserves_native_redirect_target`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::mutants_json_only_import_discloses_unexecuted_matched_total`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::mixed_import_names_how_many_matched_rows_lack_outcomes`

@@ -925,7 +925,13 @@
     "agreement buckets mix counting units: `static_gap_and_runtime_signal`, `static_gap_without_runtime_signal`, `static_clean_and_runtime_clean`, and `runtime_inconclusive` count static seams (with ambiguous records also counted in `runtime_inconclusive`), while `runtime_signal_without_static_gap` counts runtime gap-signal records, so the bucket column need not sum to `matched_total` or `mutants_total`",
     "`runtime_signal_without_static_gap` includes 7 unmatched gap-signal records also counted in `unmatched_mutants_total`"
   ],
-  "schema_version": "0.2",
+  "provenance": {
+    "cargo_mutants_head": null,
+    "disclosure": "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; at least one of the repo-exposure / cargo-mutants artifacts does not carry a head SHA, so ensure both artifacts are from the same repository and adjacent commits.",
+    "head_relationship": "missing_head",
+    "repo_exposure_head": null
+  },
+  "schema_version": "0.3",
   "scope": "repo",
   "static_only_findings": [
     {

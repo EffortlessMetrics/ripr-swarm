@@ -18260,13 +18260,34 @@ the `runtime` side of each match. Static reports continue using the audit
 vocabulary (`test grip`, `missing discriminator`, `static evidence`, `runtime
 confirmation`).
 
+Schema `0.3` adds the top-level `provenance` object to `0.2`. It qualifies
+all joins and confidence labels without changing them. `repo_exposure_head` and
+`cargo_mutants_head` contain a trimmed full SHA or `null`, using the same head
+reader as `ripr outcome`. Short, malformed, missing, or non-string heads are
+absent. A directory-combined array has no top-level head, so its cargo-mutants
+head remains `null`; nested member heads are not inferred.
+
+`head_relationship` is `matching_heads` when both full heads match,
+`different_heads` when both exist and differ, and `missing_head` when either is
+absent. Matching heads establish reported commit agreement, not identical dirty
+working trees or authenticated producers. `disclosure` is the same qualification
+printed on stderr and before the Markdown summary. Both saved-file formats retain
+it; stdout and `--out` render identical report bytes. The spot-check consumer
+accepts both `0.2` and `0.3`; older reports have no in-band provenance guarantee.
+
 JSON shape:
 
 ```jsonc
 {
-  "schema_version": "0.2",
+  "schema_version": "0.3",
   "scope": "repo",
   "status": "advisory",
+  "provenance": {
+    "repo_exposure_head": null,
+    "cargo_mutants_head": null,
+    "head_relationship": "missing_head",
+    "disclosure": "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; at least one of the repo-exposure / cargo-mutants artifacts does not carry a head SHA, so ensure both artifacts are from the same repository and adjacent commits."
+  },
   "metrics": {
     "static_seams_total": 120,
     "mutants_total": 8,
