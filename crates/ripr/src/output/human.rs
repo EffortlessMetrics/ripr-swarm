@@ -379,8 +379,9 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
         // renderer doctor's root line uses, so a backslash-typed or
         // drive-letter verbatim `\\?\`-prefixed root does not leak raw
         // `Path::display` bytes here while every sibling surface renders the
-        // forward-slash form. UNC and volume verbatim prefixes keep their
-        // raw spelling by design (`human_path_text`).
+        // forward-slash form. UNC verbatim prefixes fold to `\\server\share`
+        // and volume GUID prefixes keep their raw spelling, per the shared
+        // `human_path_text` owner (#8754).
         crate::output::path::human_path(&output.root)
     ));
     // RIPR-SPEC-0255 (#7536): name the ripr.toml that governed the run, in

@@ -1181,6 +1181,86 @@ fn pilot_terminal_prints_top_test_and_follow_up_commands() {
     );
 }
 
+/// #8696: the loaded config path arrives canonicalized (#7652), which on
+/// Windows carries the verbatim `\\?\` prefix. Both pilot human surfaces must
+/// render the plain spelling, matching the check header and doctor lines —
+/// the terminal line is what a new user reads, and the markdown line is what
+/// review links keep.
+#[cfg(windows)]
+#[test]
+fn pilot_human_surfaces_strip_verbatim_config_prefix_natively_on_windows() {
+    // `check-local-context` forbids drive-letter path literals, so the
+    // Windows shapes are assembled from parts.
+    let drive = "F:";
+    let verbatim = format!(r"\\?\{drive}\tmp\demo\ripr.toml");
+    let artifacts = pilot_artifacts();
+    let mut context = pilot_context(&artifacts);
+    context.config_path = Some(Path::new(&verbatim));
+
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        terminal.contains(&format!("  config: loaded {drive}/tmp/demo/ripr.toml")),
+        "terminal must render the plain config spelling:\n{terminal}"
+    );
+    assert!(!terminal.contains("/?/"), "{terminal}");
+
+    let md = render_pilot_summary_md(&[], context);
+    assert!(
+        md.contains(&format!("- Config: loaded `{drive}/tmp/demo/ripr.toml`")),
+        "markdown must render the plain config spelling:\n{md}"
+    );
+    assert!(!md.contains("/?/"), "{md}");
+
+    // The timed-out pilot uses its own renderers; they carry the same rule
+    // so a partial run does not resurrect the raw prefix.
+    let timeout_terminal = render_pilot_timeout_terminal(context);
+    assert!(
+        timeout_terminal.contains(&format!("  loaded: {drive}/tmp/demo/ripr.toml")),
+        "timeout terminal must render the plain config spelling:\n{timeout_terminal}"
+    );
+    assert!(!timeout_terminal.contains("/?/"), "{timeout_terminal}");
+    let timeout_md = render_pilot_timeout_summary_md(context);
+    assert!(
+        timeout_md.contains(&format!("- Config: loaded `{drive}/tmp/demo/ripr.toml`")),
+        "timeout markdown must render the plain config spelling:\n{timeout_md}"
+    );
+    assert!(!timeout_md.contains("/?/"), "{timeout_md}");
+}
+
+/// The Unix-native counterpart of the #8696 control: a verbatim-looking
+/// spelling is an ordinary relative filename there, so the human-path owner
+/// keeps it byte-for-byte and the pilot line carries the spelling as given.
+#[cfg(unix)]
+#[test]
+fn pilot_human_surfaces_keep_verbatim_looking_config_spelling_natively_on_unix() {
+    let drive = "F:";
+    let verbatim = format!(r"\\?\{drive}\tmp\demo\ripr.toml");
+    let artifacts = pilot_artifacts();
+    let mut context = pilot_context(&artifacts);
+    context.config_path = Some(Path::new(&verbatim));
+
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(
+        terminal.contains(&format!("  config: loaded {verbatim}")),
+        "unix keeps the verbatim-looking filename spelling:\n{terminal}"
+    );
+    let md = render_pilot_summary_md(&[], context);
+    assert!(
+        md.contains(&format!("- Config: loaded `{verbatim}`")),
+        "unix keeps the verbatim-looking filename spelling:\n{md}"
+    );
+    let timeout_terminal = render_pilot_timeout_terminal(context);
+    assert!(
+        timeout_terminal.contains(&format!("  loaded: {verbatim}")),
+        "unix keeps the verbatim-looking filename spelling:\n{timeout_terminal}"
+    );
+    let timeout_md = render_pilot_timeout_summary_md(context);
+    assert!(
+        timeout_md.contains(&format!("- Config: loaded `{verbatim}`")),
+        "unix keeps the verbatim-looking filename spelling:\n{timeout_md}"
+    );
+}
+
 #[test]
 fn timeout_summary_json_is_partial_and_points_to_retry() {
     let artifacts = PilotArtifacts {
