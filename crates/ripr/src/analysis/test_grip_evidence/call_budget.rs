@@ -79,25 +79,34 @@ pub(super) fn withhold(evidence: &mut TestGripEvidence, saturated: bool) -> bool
         }
         changed = true;
     }
-    if changed {
-        return true;
-    }
-    // Nothing to downgrade: an already-unknown seam keeps its class and gains
-    // the reason on its first unresolved stage.
-    for stage in [
-        &mut evidence.activate,
-        &mut evidence.propagate,
-        &mut evidence.observe,
-        &mut evidence.discriminate,
-    ] {
-        if matches!(stage.state, StageState::Unknown | StageState::Opaque)
-            && !stage.summary.contains(LIMIT.as_str())
-        {
-            stage.summary = format!("{}; {}", stage.summary, clause());
-            return true;
+    // An already-unknown or opaque stage keeps its class and gains the
+    // reason, even when a missing value was cleared above: otherwise the
+    // typed category would be unreachable from the evidence record.
+    if !stage_names_limit(evidence) {
+        for stage in [
+            &mut evidence.activate,
+            &mut evidence.propagate,
+            &mut evidence.observe,
+            &mut evidence.discriminate,
+        ] {
+            if matches!(stage.state, StageState::Unknown | StageState::Opaque) {
+                stage.summary = format!("{}; {}", stage.summary, clause());
+                return true;
+            }
         }
     }
-    false
+    changed
+}
+
+fn stage_names_limit(evidence: &TestGripEvidence) -> bool {
+    [
+        &evidence.activate,
+        &evidence.propagate,
+        &evidence.observe,
+        &evidence.discriminate,
+    ]
+    .iter()
+    .any(|stage| stage.summary.contains(LIMIT.as_str()))
 }
 
 #[cfg(test)]

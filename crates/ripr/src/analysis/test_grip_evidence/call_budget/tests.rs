@@ -134,3 +134,17 @@ fn an_already_unknown_stage_gains_the_reason_once() {
     assert!(!withhold(&mut unknown, true), "idempotent");
     assert_eq!(unknown.propagate.summary, once);
 }
+
+#[test]
+fn clearing_a_missing_value_still_names_the_reason_on_an_unknown_stage() {
+    use StageState::{Unknown, Yes};
+    // Activation already unknown beside a missing value: the value is
+    // cleared and the existing unknown stage gains the typed reason.
+    let mut seam = evidence([Yes, Unknown, Yes, Yes, Unknown], 1);
+    assert!(withhold(&mut seam, true));
+    assert!(seam.missing_discriminators.is_empty());
+    assert_eq!(seam.activate.state, Unknown);
+    assert!(seam.activate.summary.starts_with("plain stage; "));
+    assert!(seam.activate.summary.contains(LIMIT.as_str()));
+    assert!(!withhold(&mut seam, true), "idempotent");
+}

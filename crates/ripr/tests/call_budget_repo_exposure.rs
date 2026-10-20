@@ -301,6 +301,37 @@ fn saturation_that_does_not_limit_the_proof_keeps_the_seam() -> Result<(), Strin
     Ok(())
 }
 
+/// A direct owner call with an unresolved argument leaves activation unknown
+/// beside a missing boundary value; clearing that value must still name the
+/// typed reason on the existing unknown stage (the category was unreachable
+/// when the early return skipped it).
+#[test]
+fn clearing_a_missing_value_beside_an_unknown_stage_still_names_the_reason() -> Result<(), String> {
+    let body = |noise: usize| {
+        format!(
+            "let n = compute(); assert_eq!(row(n), 25);{}",
+            (1..=noise).map(|i| format!("h{i}();")).collect::<String>()
+        )
+    };
+    let control = Repo::create(&body(10), None)?.seam("predicate_boundary", 2)?;
+    assert!(
+        !categories(&control)?.iter().any(|c| c == BUDGET),
+        "premise: {control}"
+    );
+    let seam = Repo::create(&body(299), None)?.seam("predicate_boundary", 2)?;
+    assert_eq!(
+        text(&seam, "/grip_class")?,
+        text(&control, "/grip_class")?,
+        "the reason never changes an unknown class: {seam}"
+    );
+    assert!(
+        categories(&seam)?.iter().any(|c| c == BUDGET),
+        "{:?}",
+        categories(&seam)?
+    );
+    Ok(())
+}
+
 /// The compact reading behind `repo-exposure-summary-json` is a second
 /// producer of the same evidence; its counts must withhold too.
 #[test]
