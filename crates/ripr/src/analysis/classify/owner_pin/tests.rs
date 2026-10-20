@@ -8940,6 +8940,69 @@ fn an_expected_value_a_macro_or_a_static_rebinds_from_the_owner_is_not_a_pin() {
             "",
             "let EXPECTED = 0;\n        {\n            static EXPECTED: AtomicU32 = AtomicU32::new(0);\n            same(crate::weight(4), &EXPECTED);\n            assert_eq!(crate::weight(4), EXPECTED.load(Ordering::SeqCst));\n        }",
         ),
+        // #8795 Part B negative controls: a `mut` plain binding, a plain
+        // binding shadowed by a `mut` rebinding, and an assignment to an
+        // immutable plain binding still refuse.
+        (
+            "",
+            "let mut expected = [0, 0];\n        expected.swap(0, crate::weight(4) as usize);\n        assert_eq!(crate::weight(4), expected[0]);",
+        ),
+        (
+            "",
+            "let expected = [0; 2];\n        let mut expected = expected;\n        expected.fill(crate::weight(4));\n        assert_eq!(crate::weight(4), expected[0]);",
+        ),
+        (
+            "",
+            "let expected = (0, 0);\n        expected.0 = crate::weight(4);\n        assert_eq!(crate::weight(4), expected.0);",
+        ),
+        (
+            "",
+            "let expected = \"12\";\n        let expected = std::cell::Cell::new(0);\n        expected.replace(crate::weight(4));\n        assert_eq!(crate::weight(4), expected.get());",
+        ),
+        // #8944: `use .. as r#expected` imports `expected`, shadowing the
+        // plain `let` for the shared borrow below.
+        (
+            "mod shared {\n    pub static expected: AtomicU32 = AtomicU32::new(0);\n}\nfn update(_: &AtomicU32, _: u32) {}\n\n",
+            "let expected = 1;\n        {\n            use crate::shared::expected as r#expected;\n            update(&expected, crate::weight(4));\n            assert_eq!(crate::weight(4), expected.load(Ordering::SeqCst));\n        }",
+        ),
+        // #8795 Part B review: a field/path segment or call named like the
+        // literal `let` is not the binding; the real write must refuse.
+        (
+            "use std::cell::Cell;\nuse std::sync::atomic::{AtomicU32, Ordering};\npub struct St {\n    count: AtomicU32,\n    cell: Cell<u32>,\n    pair: (AtomicU32, u8),\n}\npub fn st() -> &'static St {\n    unimplemented!()\n}\npub fn sts() -> &'static [St] {\n    unimplemented!()\n}\n\n",
+            "let count = 12;\n        st().count.store(crate::weight(4), Ordering::SeqCst);\n        assert_eq!(crate::weight(4), st().count.load(Ordering::SeqCst));",
+        ),
+        (
+            "use std::cell::Cell;\nuse std::sync::atomic::{AtomicU32, Ordering};\npub struct St {\n    count: AtomicU32,\n    cell: Cell<u32>,\n    pair: (AtomicU32, u8),\n}\npub fn st() -> &'static St {\n    unimplemented!()\n}\npub fn sts() -> &'static [St] {\n    unimplemented!()\n}\n\n",
+            "let count = 12;\n        sts()[0].count.store(crate::weight(4), Ordering::SeqCst);\n        assert_eq!(crate::weight(4), sts()[0].count.load(Ordering::SeqCst));",
+        ),
+        (
+            "use std::cell::Cell;\nuse std::sync::atomic::{AtomicU32, Ordering};\npub struct St {\n    count: AtomicU32,\n    cell: Cell<u32>,\n    pair: (AtomicU32, u8),\n}\npub fn st() -> &'static St {\n    unimplemented!()\n}\npub fn sts() -> &'static [St] {\n    unimplemented!()\n}\n\n",
+            "let cell = 12;\n        st().cell.set(crate::weight(4));\n        assert_eq!(crate::weight(4), st().cell.get());",
+        ),
+        (
+            "use std::cell::Cell;\nuse std::sync::atomic::{AtomicU32, Ordering};\npub struct St {\n    count: AtomicU32,\n    cell: Cell<u32>,\n    pair: (AtomicU32, u8),\n}\npub fn st() -> &'static St {\n    unimplemented!()\n}\npub fn sts() -> &'static [St] {\n    unimplemented!()\n}\n\n",
+            "let cell = 12;\n        st().cell.replace(crate::weight(4));\n        assert_eq!(crate::weight(4), st().cell.get());",
+        ),
+        (
+            "use std::cell::Cell;\nuse std::sync::atomic::{AtomicU32, Ordering};\npub struct St {\n    count: AtomicU32,\n    cell: Cell<u32>,\n    pair: (AtomicU32, u8),\n}\npub fn st() -> &'static St {\n    unimplemented!()\n}\npub fn sts() -> &'static [St] {\n    unimplemented!()\n}\n\n",
+            "let cell = 12;\n        st().cell.swap(&Cell::new(crate::weight(4)));\n        assert_eq!(crate::weight(4), st().cell.get());",
+        ),
+        (
+            "use std::cell::Cell;\nuse std::sync::atomic::{AtomicU32, Ordering};\npub struct St {\n    count: AtomicU32,\n    cell: Cell<u32>,\n    pair: (AtomicU32, u8),\n}\npub fn st() -> &'static St {\n    unimplemented!()\n}\npub fn sts() -> &'static [St] {\n    unimplemented!()\n}\n\n",
+            "let count = [3; 2];\n        st().count.store(crate::weight(4), Ordering::SeqCst);\n        assert_eq!(crate::weight(4), st().count.load(Ordering::SeqCst));",
+        ),
+        (
+            "use std::cell::Cell;\nuse std::sync::atomic::{AtomicU32, Ordering};\npub struct St {\n    count: AtomicU32,\n    cell: Cell<u32>,\n    pair: (AtomicU32, u8),\n}\npub fn st() -> &'static St {\n    unimplemented!()\n}\npub fn sts() -> &'static [St] {\n    unimplemented!()\n}\n\n",
+            "let count = (1, 2);\n        st().count.store(crate::weight(4), Ordering::SeqCst);\n        assert_eq!(crate::weight(4), st().count.load(Ordering::SeqCst));",
+        ),
+        (
+            "use std::cell::Cell;\nuse std::sync::atomic::{AtomicU32, Ordering};\npub struct St {\n    count: AtomicU32,\n    cell: Cell<u32>,\n    pair: (AtomicU32, u8),\n}\npub fn st() -> &'static St {\n    unimplemented!()\n}\npub fn sts() -> &'static [St] {\n    unimplemented!()\n}\n\n",
+            "let count = 12;\n        St::count.store(crate::weight(4), Ordering::SeqCst);\n        assert_eq!(crate::weight(4), st().count.load(Ordering::SeqCst));",
+        ),
+        (
+            "use std::cell::Cell;\nuse std::sync::atomic::{AtomicU32, Ordering};\npub struct St {\n    count: AtomicU32,\n    cell: Cell<u32>,\n    pair: (AtomicU32, u8),\n}\npub fn st() -> &'static St {\n    unimplemented!()\n}\npub fn sts() -> &'static [St] {\n    unimplemented!()\n}\n\n",
+            "let pair = 12;\n        st().pair.0.store(crate::weight(4), Ordering::SeqCst);\n        assert_eq!(crate::weight(4), st().pair.0.load(Ordering::SeqCst));",
+        ),
         // #8795 negative controls: a non-plain value still refuses a shared
         // borrow, the one-argument `replace` and the argument-free `take`
         // still write, and a pattern is not an annotation.
@@ -9017,6 +9080,16 @@ fn an_expected_value_a_macro_or_a_static_rebinds_from_the_owner_is_not_a_pin() {
         (
             "",
             "let expected = 12;\n        let _ = Some(&expected);\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        // #8795 Part B: a method call on an immutable `let` of a literal
+        // reads it, whatever the method is called.
+        (
+            "",
+            "let _w = crate::weight(4);\n        let expected = 12;\n        let _r = expected.replace(1, 2);\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        (
+            "",
+            "let _w = crate::weight(4);\n        let expected = [12; 2];\n        let _t = expected.take(1);\n        let _l = expected.lock();\n        assert_eq!(crate::weight(4), expected[0]);",
         ),
         // #8795: the name only indexes another place.
         (
@@ -9125,7 +9198,10 @@ fn written_by_test_refuses_grouped_pathed_ref_mut_and_addr_of_mut_writes() {
         "foo(EXPECTED).await?.x = 1;",
         "*foo(EXPECTED)? = 1;",
     ] {
-        assert!(super::written_by_test(write, "EXPECTED", false), "{write}");
+        assert!(
+            super::written_by_test(write, "EXPECTED", false, false),
+            "{write}"
+        );
     }
     for read in [
         "let r = &(EXPECTED);",
@@ -9158,7 +9234,303 @@ fn written_by_test_refuses_grouped_pathed_ref_mut_and_addr_of_mut_writes() {
         "let x = foo(EXPECTED).await;",
         "bar(foo(EXPECTED)?);",
     ] {
-        assert!(!super::written_by_test(read, "EXPECTED", false), "{read}");
+        assert!(
+            !super::written_by_test(read, "EXPECTED", false, false),
+            "{read}"
+        );
+    }
+}
+
+/// #8944: fail-open residuals of #8943. Raw identifiers, a `>` before `=`,
+/// a deref-then-borrow, `ref mut` scrutinees in a tuple or block, and borrow
+/// operands that are groups, tuples, blocks or qualified/turbofish paths are
+/// all mutable aliases of the expected value. Each read row is the nearby
+/// shape that must stay a read.
+#[test]
+fn written_by_test_refuses_raw_deref_tuple_and_generic_path_aliases() {
+    for write in [
+        // The `>` closing a type annotation sits directly before `=`.
+        "let ref mut r: Vec<u8>= EXPECTED; *r = f(4);",
+        "let ref mut r: Option<Vec<u8>>= EXPECTED;",
+        // Raw identifiers.
+        "let r = &mut r#EXPECTED; *r = f(4);",
+        "let p = addr_of_mut!(r#EXPECTED); *p = f(4);",
+        "let ref mut r = r#EXPECTED; *r = f(4);",
+        "let r = &mut m::r#EXPECTED;",
+        // Deref then borrow.
+        "let r = &mut *EXPECTED; *r = f(4);",
+        "let r = &mut *(EXPECTED);",
+        "let r = &mut (*EXPECTED);",
+        "let r = &mut **EXPECTED;",
+        "let p = addr_of_mut!(*EXPECTED); *p = f(4);",
+        "let ref mut r = *EXPECTED; *r = f(4);",
+        // `ref mut` away from the first position of the scrutinee.
+        "let (a, ref mut b) = (x, EXPECTED); *b = f(4);",
+        "match (x, EXPECTED) { (_, ref mut r) => { *r = f(4); } }",
+        "if let (_, Some(ref mut r)) = (x, EXPECTED) {}",
+        "let ref mut r = {EXPECTED}; *r = f(4);",
+        "let [a, ref mut b] = [x, EXPECTED];",
+        // Borrow operands that wrap the name.
+        "let r = &mut {EXPECTED};",
+        "let r = &mut (x, EXPECTED); r.1 = f(4);",
+        "let r = &mut [x, EXPECTED];",
+        "let r = &mut <T>::EXPECTED; *r = f(4);",
+        "let r = &mut <T as Tr>::EXPECTED;",
+        "let r = &mut m::<T>::EXPECTED;",
+        "let r = &mut m::n::<T>::EXPECTED;",
+        "let p = addr_of_mut!(<T>::EXPECTED);",
+        "let p = addr_of_mut!(m::<T>::EXPECTED);",
+        "let ref mut r = <T>::EXPECTED;",
+        "let ref mut r = m::<T>::EXPECTED;",
+        // A `ref mut` range-pattern binding keeps its `=` inside the pattern.
+        "if let ref mut a @ 0..=9 = EXPECTED {}",
+        // A pattern that keeps its own bracketed `;` or follows an earlier
+        // statement still binds the scrutinee.
+        "let S { ref mut a } = EXPECTED;",
+        "let ref mut r: [u8; 3] = EXPECTED;",
+        "let other = 1; let ref mut r = EXPECTED;",
+    ] {
+        assert!(
+            super::written_by_test(write, "EXPECTED", false, false),
+            "{write}"
+        );
+    }
+    for read in [
+        "let r: Vec<u8>= EXPECTED;",
+        "let r: Vec<u8> = EXPECTED;",
+        "let r = r#EXPECTED;",
+        "let r = &r#EXPECTED;",
+        "let p = addr_of!(r#EXPECTED);",
+        "let r = &*EXPECTED;",
+        "let r = x * EXPECTED;",
+        "let r = &mut x * EXPECTED;",
+        "let p = addr_of!(*EXPECTED);",
+        "let (a, b) = (x, EXPECTED);",
+        "let (ref mut a, b) = (EXPECTED_OTHER, y); let v = EXPECTED;",
+        "match (x, EXPECTED) { (_, r) => {} }",
+        "let ref mut r = other; let v = (x, EXPECTED);",
+        "let ref mut r = other; v = EXPECTED;",
+        "let r = {EXPECTED};",
+        "let r = &{EXPECTED};",
+        "let r = &(x, EXPECTED);",
+        "let r = &mut foo(x, EXPECTED);",
+        "let r = &mut foo(<T>::EXPECTED);",
+        "let r = &<T>::EXPECTED;",
+        "let r = m::<T>::EXPECTED;",
+        "let p = addr_of!(m::<T>::EXPECTED);",
+        "let r = x > ::EXPECTED;",
+        "foo(&mut x, EXPECTED);",
+        "foo(&mut x, (EXPECTED, 1));",
+        "if x >= EXPECTED {}",
+    ] {
+        assert!(
+            !super::written_by_test(read, "EXPECTED", false, false),
+            "{read}"
+        );
+    }
+}
+
+/// #8960: a brace-bearing element after the name inside a `match` scrutinee
+/// group, raw-identifier path segments and a `match <T>::NAME` head are all
+/// mutable aliases of the expected value; each read row is the nearby shape
+/// that must stay a read.
+#[test]
+fn written_by_test_refuses_scrutinee_brace_raw_segment_and_generic_head_aliases() {
+    for write in [
+        "match (EXPECTED, S { a: 1 }) { (ref mut r, _) => { *r = f(4); } }",
+        "match (EXPECTED, { 1 }) { (ref mut r, _) => {} }",
+        "match (EXPECTED, || {}) { (ref mut r, _) => {} }",
+        "match [EXPECTED, S { a: 1 }] { [ref mut r, _] => {} }",
+        "match [EXPECTED; 3] { [ref mut r, ..] => {} }",
+        // The name nested two or more groups deep: the first unmatched closer
+        // closes an inner group, so a sibling `{..}` is no arm list (#8960).
+        "match ((EXPECTED, 1), S { a: 1 }) { ((ref mut r, _), _) => { *r = f(4); } }",
+        "match [[EXPECTED], S { a: 1 }] { [[ref mut r], _] => {} }",
+        "match [[EXPECTED], { 1 }] { [[ref mut r], _] => {} }",
+        "match [[EXPECTED], || {}] { [[ref mut r], _] => {} }",
+        "match ((EXPECTED), { 1 }) { ((ref mut r), _) => {} }",
+        "let p = addr_of_mut!(r#type::EXPECTED);",
+        "let r = &mut r#m::EXPECTED;",
+        "let r = &mut crate::r#m::EXPECTED;",
+        "let r = &mut r#mut::EXPECTED;",
+        "match <T>::EXPECTED { ref mut r => {} }",
+        "match m::<T>::EXPECTED { ref mut r => {} }",
+        "let r = &mut <fn() -> u8>::EXPECTED;",
+        "let r = &mut <T as Tr<{ N > 1 }>>::EXPECTED;",
+    ] {
+        assert!(
+            super::written_by_test(write, "EXPECTED", false, false),
+            "{write}"
+        );
+    }
+    for read in [
+        "match (EXPECTED, S { a: 1 }) { (r, _) => {} }",
+        "match (EXPECTED, { 1 }) { (r, _) => {} }",
+        "match [EXPECTED, S { a: 1 }] { [r, _] => {} }",
+        "match [EXPECTED; 3] { [r, ..] => {} }",
+        "match ((EXPECTED, 1), S { a: 1 }) { ((r, _), _) => {} }",
+        "match [[EXPECTED], { 1 }] { [[r], _] => {} } if c { let ref mut x = y; }",
+        "match <T>::EXPECTED { r => {} }",
+        "match EXPECTED { _ => {} } if c { let ref mut x = y; }",
+        "let r = &r#m::EXPECTED;",
+        "let p = addr_of!(r#type::EXPECTED);",
+        "let r = &mut foo(r#m::EXPECTED);",
+        "let r = &<fn() -> u8>::EXPECTED;",
+        "let r = &<T as Tr<{ N > 1 }>>::EXPECTED;",
+    ] {
+        assert!(
+            !super::written_by_test(read, "EXPECTED", false, false),
+            "{read}"
+        );
+    }
+}
+
+/// #8944: a `matches!` scrutinee and an edition-2015 `match ::NAME` head are
+/// mutable aliases like their `match` siblings; arm bodies, a later
+/// assignment after an `if let` and a rename-only `use` are not. Every group
+/// pairs write rows with the nearby read control that fails without the fix.
+#[test]
+fn written_by_test_refuses_matches_macro_and_root_path_scrutinees() {
+    for write in [
+        "matches!(EXPECTED, Some(ref mut r) if { *r = 1; true })",
+        "matches!(EXPECTED, ref mut r)",
+        "std::matches!(EXPECTED, ref mut r)",
+        "core::matches!(EXPECTED, Some(ref mut r))",
+        "assert!(matches!(EXPECTED, Some(ref mut r)));",
+        "assert_matches!(EXPECTED, Some(ref mut r));",
+        "debug_assert_matches!(EXPECTED, Some(ref mut r));",
+        "matches!((x, EXPECTED), (_, ref mut r))",
+        "matches!((EXPECTED, 1), (ref mut r, _))",
+        "matches!([[EXPECTED], 1], [[ref mut r], _])",
+        "matches!{EXPECTED, ref mut r}",
+        "matches !(EXPECTED, ref mut r)",
+        "std::matches ! (EXPECTED, ref mut r)",
+        "assert_matches !(EXPECTED, Some(ref mut r));",
+        "debug_assert_matches\n!(EXPECTED, Some(ref mut r));",
+        "assert!(matches !((x, EXPECTED), (_, ref mut r)));",
+        "matches!(crate::EXPECTED, ref mut r)",
+        "matches!(EXPECTED.0, (ref mut r, _))",
+        "match ::EXPECTED { ref mut r => {} }",
+        "match ::EXPECTED { Some(ref mut r) => { *r = 1; } _ => {} }",
+        "match (::EXPECTED, 1) { (ref mut r, _) => {} }",
+        "let r = &mut ::EXPECTED;",
+    ] {
+        assert!(
+            super::written_by_test(write, "EXPECTED", false, false),
+            "{write}"
+        );
+    }
+    for read in [
+        "matches!(EXPECTED, Some(r))",
+        "matches!(EXPECTED, Some(ref r))",
+        "matches!(EXPECTED, Some(_)) && { let ref mut r = other; true }",
+        "matches!(other, Some(ref mut r)) && EXPECTED == 1",
+        "my_matches!(EXPECTED, ref mut r)",
+        "my_matches !(EXPECTED, ref mut r)",
+        "matches !(EXPECTED, Some(r))",
+        "matches !(other, ref mut r) && EXPECTED == 1",
+        "match ::EXPECTED { r => {} }",
+        "match ::EXPECTED { _ => {} } if c { let ref mut x = y; }",
+    ] {
+        assert!(
+            !super::written_by_test(read, "EXPECTED", false, false),
+            "{read}"
+        );
+    }
+}
+
+#[test]
+fn written_by_test_scans_match_arm_patterns_not_arm_bodies() {
+    for write in [
+        "match EXPECTED { ref mut r => {} }",
+        "match EXPECTED { A => { let ref mut r = other; } ref mut r => {} }",
+        "match EXPECTED { A => if c { 1 } else { 2 } ref mut r => {} }",
+        "match EXPECTED { A => foo(), Some(ref mut r) if c => {} }",
+        "match EXPECTED { Some(x) if { let ref mut q = z; true } => {} }",
+        "match EXPECTED { A => { 1 } B | Some(ref mut r) => { 2 } }",
+        "match EXPECTED { A => bar(|a, b| a), ref mut r => {} }",
+        "match <T>::EXPECTED { A => {} ref mut r => {} }",
+        "match (EXPECTED, 1) { A => { let ref mut z = q; } (ref mut r, _) => {} }",
+    ] {
+        assert!(
+            super::written_by_test(write, "EXPECTED", false, false),
+            "{write}"
+        );
+    }
+    for read in [
+        "match EXPECTED { _ => { let ref mut r = other; } }",
+        "match EXPECTED { A => { let ref mut r = a; } B => { let ref mut q = b; } }",
+        "match EXPECTED { A => foo(), _ => {} }",
+        "match EXPECTED { A => 1, B => { let ref mut r = other; } }",
+        "match <T>::EXPECTED { x => { let ref mut z = q; } }",
+        "match ::EXPECTED { x => { let ref mut z = q; } }",
+    ] {
+        assert!(
+            !super::written_by_test(read, "EXPECTED", false, false),
+            "{read}"
+        );
+    }
+}
+
+#[test]
+fn written_by_test_cuts_a_let_pattern_at_a_later_assignment() {
+    for write in [
+        "if let Some(ref mut r) = EXPECTED { y = 1; }",
+        "while let Some(ref mut r) = EXPECTED { y = 1; }",
+        "if let Foo { x: ref mut r } = EXPECTED {}",
+        "let ref mut r @ 1..=5 = EXPECTED;",
+        "let ref mut r: Box<dyn I<Item = u8>> = EXPECTED;",
+        "let ref mut r: Vec<u8>= EXPECTED;",
+        "let (a, ref mut b) = (x, EXPECTED);",
+        "if let Some(ref mut r) = a { y = 1; } let ref mut z = EXPECTED;",
+    ] {
+        assert!(
+            super::written_by_test(write, "EXPECTED", false, false),
+            "{write}"
+        );
+    }
+    for read in [
+        "if let Some(ref mut r) = a { y = EXPECTED; }",
+        "while let Some(ref mut r) = a { y = EXPECTED; }",
+        "if let Foo { x: ref mut r } = a { y = EXPECTED; }",
+        "if let Some(ref mut r) = a { y = 1; } y = EXPECTED;",
+        "if let Some(ref mut r) = a { y += EXPECTED; }",
+    ] {
+        assert!(
+            !super::written_by_test(read, "EXPECTED", false, false),
+            "{read}"
+        );
+    }
+}
+
+#[test]
+fn item_names_word_counts_only_the_imported_binding_of_a_use() {
+    for named in [
+        "use m::expected;",
+        "use m::{expected, y};",
+        "use m::{x as expected};",
+        "use m::expected as expected;",
+        "use m::expected as r#expected;",
+        "use m::r#expected;",
+        "use m::expected as r#;",
+        "use m::expected::{self};",
+        "use m::{expected as o, expected};",
+        "static expected: u8 = 1;",
+        "const expected: u8 = 1;",
+        "use expected_other::expected;",
+    ] {
+        assert!(super::item_names_word(named, "expected"), "{named}");
+    }
+    for unnamed in [
+        "use m::expected as other;",
+        "use m::expected as r#other;",
+        "use m::{expected as other, y};",
+        "use m::{x, expected as _y};",
+        "use m::expected   as\n other;",
+        "use m::expectedly;",
+        "let expected = 1;",
+    ] {
+        assert!(!super::item_names_word(unnamed, "expected"), "{unnamed}");
     }
 }
 
@@ -9196,7 +9568,10 @@ fn written_by_test_reads_operators_and_let_boundaries() {
         "foo(EXPECTED);",
         "f(a)[EXPECTED] = 1;",
     ] {
-        assert!(!super::written_by_test(read, "EXPECTED", false), "{read}");
+        assert!(
+            !super::written_by_test(read, "EXPECTED", false, false),
+            "{read}"
+        );
     }
     for write in [
         "EXPECTED = 1;",
@@ -9260,7 +9635,10 @@ fn written_by_test_reads_operators_and_let_boundaries() {
         "EXPECTED.replace(1, 2);",
         "EXPECTED.take(2);",
     ] {
-        assert!(super::written_by_test(write, "EXPECTED", false), "{write}");
+        assert!(
+            super::written_by_test(write, "EXPECTED", false, false),
+            "{write}"
+        );
     }
     // #8795: on a plain `let` value a shared borrow is a read; every
     // `replace`, `take`, `lock`, assignment and `&mut` stays a write (a
@@ -9270,7 +9648,10 @@ fn written_by_test_reads_operators_and_let_boundaries() {
         "Ok(&EXPECTED);",
         "helper(f(4), &EXPECTED);",
     ] {
-        assert!(!super::written_by_test(read, "EXPECTED", true), "{read}");
+        assert!(
+            !super::written_by_test(read, "EXPECTED", true, false),
+            "{read}"
+        );
     }
     for write in [
         "EXPECTED.replace(f(4));",
@@ -9281,7 +9662,62 @@ fn written_by_test_reads_operators_and_let_boundaries() {
         "EXPECTED = 1;",
         "EXPECTED.lock();",
     ] {
-        assert!(super::written_by_test(write, "EXPECTED", true), "{write}");
+        assert!(
+            super::written_by_test(write, "EXPECTED", true, false),
+            "{write}"
+        );
+    }
+    // #8795 Part B: on an immutable plain `let` a method call is a read;
+    // assignments, `&mut` and a `mut` (non read-only) binding stay writes.
+    for read in [
+        "EXPECTED.replace(f(4));",
+        "EXPECTED.take(2);",
+        "EXPECTED.lock();",
+        "EXPECTED.0.swap(1);",
+        "Some(&EXPECTED);",
+    ] {
+        assert!(
+            !super::written_by_test(read, "EXPECTED", true, true),
+            "{read}"
+        );
+    }
+    for write in [
+        "EXPECTED = 1;",
+        "EXPECTED.0 = 1;",
+        "EXPECTED[0] += 1;",
+        "g(&mut EXPECTED);",
+        "EXPECTED?;",
+    ] {
+        assert!(
+            super::written_by_test(write, "EXPECTED", true, true),
+            "{write}"
+        );
+    }
+    // A field, path segment or callee named like the binding disables it.
+    for segment in [
+        "st().e.store(1);",
+        "st() . e.store(1);",
+        "S::e.store(1);",
+        "e(1);",
+        "e!(1);",
+        "e::f();",
+    ] {
+        assert!(super::named_as_segment_or_call(segment, "e"), "{segment}");
+    }
+    assert!(!super::named_as_segment_or_call(
+        "let e = 1; f(e); e.take();",
+        "e"
+    ));
+    // Which bindings are never declared `mut`.
+    assert!(super::never_declared_mut("let e = 1; e.take();", "e"));
+    for mutable in [
+        "let mut e = 1;",
+        "let (a, mut e) = p;",
+        "|mut e| e.take()",
+        "let ref mut e = p;",
+        "let mut r#e = 1;",
+    ] {
+        assert!(!super::never_declared_mut(mutable, "e"), "{mutable}");
     }
     // Which bindings are plain: literals and values built only of them.
     for init in [

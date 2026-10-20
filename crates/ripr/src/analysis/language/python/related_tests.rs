@@ -302,22 +302,45 @@ pub(super) fn related_tests_for_candidates(
 }
 
 pub(super) fn verify_command_for_test(test: &PythonTest) -> Option<String> {
+    verify_command_for_test_on(test, cfg!(windows))
+}
+
+/// [`verify_command_for_test`] with the host made explicit so both shell
+/// grammars are testable anywhere (#4378 pattern).
+pub(super) fn verify_command_for_test_on(test: &PythonTest, windows: bool) -> Option<String> {
     let path = normalized_path(&test.file);
     match test.framework {
         "pytest" => {
             let node = test.qualified_name.replace('.', "::");
+            // #8752: the quoting grammar must match the host's default shell
+            // or the suggested command fails for exactly the paths that need
+            // quoting. On Windows the node id sits inside the quotes: cmd
+            // only strips surrounding quotes when an argument both starts and
+            // ends with one, so `pytest "path"::test` would hand pytest the
+            // quote bytes as part of the file name. A token with bytes cmd
+            // or PowerShell expand inside double quotes gets no command.
+            let selector = if windows {
+                shell_quote_file_arg_for_host(&format!("{path}::{node}"), true)?
+            } else {
+                format!("{}::{node}", shell_quote_file_arg_for_host(&path, false)?)
+            };
             Some(format!(
-                "{} {}::{node}",
-                crate::domain::PYTEST_VERIFY_PROGRAM,
-                shell_quote_file_arg(&path)
+                "{} {selector}",
+                crate::domain::PYTEST_VERIFY_PROGRAM
             ))
         }
         "unittest" => {
-            let module = shell_quote_file_arg(&unittest_module_for_path(&path)?);
-            Some(format!(
-                "python -m unittest {module}.{}",
-                test.qualified_name
-            ))
+            let module = unittest_module_for_path(&path)?;
+            let selector = if windows {
+                shell_quote_file_arg_for_host(&format!("{module}.{}", test.qualified_name), true)?
+            } else {
+                format!(
+                    "{}.{}",
+                    shell_quote_file_arg_for_host(&module, false)?,
+                    test.qualified_name
+                )
+            };
+            Some(format!("python -m unittest {selector}"))
         }
         _ => None,
     }
@@ -334,28 +357,55 @@ fn unittest_module_for_path(path: &str) -> Option<String> {
     Some(module_path.replace(['/', '\\'], "."))
 }
 
-/// Quote one path or module token for a POSIX shell.
+/// Quote one path or module token for the host's default shell grammar.
 ///
-/// Suggested verify commands are text an agent may paste into a shell. The
-/// TypeScript command uses the same character class: a relative path made of
-/// ASCII letters, digits, `.`, `_`, `/`, and `-` stays readable, and any other
-/// byte is single-quoted so `$()`, backticks, spaces, and quotes are not
-/// expanded. Stored node ids and test-file paths stay the raw spelling; only
-/// the command text is quoted. This does not run the command.
-fn shell_quote_file_arg(file_str: &str) -> String {
-    if !file_str.is_empty()
-        && file_str
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'))
-    {
-        return file_str.to_string();
+/// Suggested verify commands are text an agent may paste into a shell, so the
+/// quoting must match the host's grammar or the command fails for exactly the
+/// paths that need quoting (#8752). A relative path made of ASCII letters,
+/// digits, `.`, `_`, `/`, `-` stays readable (`:` too on Windows, where it is
+/// not a metachar and the pytest `::` separator must not force quotes); any
+/// other byte is quoted so spaces, unicode, and shell metacharacters reach
+/// the test runner intact. On POSIX hosts the quote is single-quote escaping
+/// (`'\''`), so `$()`, backticks, spaces, and quotes are not expanded. On
+/// Windows hosts the quote is double quotes — the common denominator of cmd
+/// and PowerShell for literal text — but both shells still expand some bytes
+/// inside double quotes (PowerShell: `$()`, `$var`, and backtick escapes;
+/// cmd: `%VAR%`). A token carrying any of those bytes gets no paste-ready
+/// command at all: the verify route stays silent rather than emitting a
+/// command whose paste executes the file name. An embedded `"` in a
+/// quotable token is doubled per the PowerShell grammar; cmd has no
+/// representation for an embedded quote, which stays a documented limit.
+/// Stored node ids and test-file paths stay the raw spelling; only the
+/// command text is quoted. This does not run the command.
+fn shell_quote_file_arg_for_host(file_str: &str, windows: bool) -> Option<String> {
+    let in_safe_class = |c: char| {
+        c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-') || (windows && c == ':')
+    };
+    if !file_str.is_empty() && file_str.chars().all(in_safe_class) {
+        return Some(file_str.to_string());
     }
-    format!("'{}'", file_str.replace('\'', "'\\''"))
+    if windows {
+        if file_str.contains(['$', '`', '%']) {
+            return None;
+        }
+        return Some(format!("\"{}\"", file_str.replace('"', "\"\"")));
+    }
+    Some(format!("'{}'", file_str.replace('\'', "'\\''")))
 }
 
 pub(super) fn python_repair_placement(
     class: &ExposureClass,
     related_candidates: &[PythonRelatedCandidate<'_>],
+) -> Option<PythonRepairPlacement> {
+    python_repair_placement_on(class, related_candidates, cfg!(windows))
+}
+
+/// [`python_repair_placement`] with the host made explicit so both shell
+/// grammars are testable anywhere (#4378 pattern).
+pub(super) fn python_repair_placement_on(
+    class: &ExposureClass,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    windows: bool,
 ) -> Option<PythonRepairPlacement> {
     if !matches!(class, ExposureClass::WeaklyExposed) {
         return None;
@@ -364,7 +414,7 @@ pub(super) fn python_repair_placement(
         .iter()
         .filter(|candidate| candidate.relation.uses_oracle())
         .find_map(|candidate| {
-            verify_command_for_test(candidate.test).map(|command| (candidate, command))
+            verify_command_for_test_on(candidate.test, windows).map(|command| (candidate, command))
         })?;
     let path = normalized_path(&candidate.test.file);
     // Public rows use bare names, so two classes/frameworks in one file can

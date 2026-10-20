@@ -231,6 +231,27 @@ pub(crate) enum AgentStatusAttemptReceipt {
 pub(crate) struct AgentStatusAfterRefusal {
     pub(crate) reason: String,
     pub(crate) recorded_unix_ms: u64,
+    /// Total after-phase refusals the attempt recorded (not capped).
+    pub(crate) refusal_count: u32,
+    /// True once the attempt spent its after-phase retry budget.
+    pub(crate) retry_budget_exhausted: bool,
+    /// Bounded earlier-to-latest history as `(recorded_unix_ms, reason)`.
+    pub(crate) history: Vec<(u64, String)>,
+}
+
+impl AgentStatusAfterRefusal {
+    fn json(&self) -> Value {
+        serde_json::json!({
+            "reason": self.reason,
+            "recorded_unix_ms": self.recorded_unix_ms,
+            "refusal_count": self.refusal_count,
+            "retry_budget_exhausted": self.retry_budget_exhausted,
+            "history": self.history.iter().map(|(recorded_unix_ms, reason)| serde_json::json!({
+                "reason": reason,
+                "recorded_unix_ms": recorded_unix_ms
+            })).collect::<Vec<_>>()
+        })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -600,6 +621,14 @@ fn status_repair_attempt(
     let (head_current, (state, disposition, command)) = match manifest.state {
         RepairAttemptState::AwaitingEdit => {
             match head_reading.after_admission {
+                // #8726: a spent after-phase retry budget makes the recorded
+                // after command a refusal, so it is never offered; the
+                // fresh start goes through the same repair gate below.
+                Some(AfterPhaseHeadAdmission::Current { .. })
+                    if crate::app::repair_attempt::after_refusal_budget_exhausted(manifest) =>
+                {
+                    (Some(true), ("awaiting_edit", "retry_budget_spent", restart))
+                }
                 Some(AfterPhaseHeadAdmission::Current { .. }) => (
                     Some(true),
                     (
@@ -610,6 +639,17 @@ fn status_repair_attempt(
                         )),
                     ),
                 ),
+                // A spent budget dominates a moved head: the after phase stops
+                // on the budget before it looks at HEAD, so the diverged-head
+                // reset-then-rerun recipe would offer the refused command.
+                Some(AfterPhaseHeadAdmission::RefusedDiverged { .. })
+                    if crate::app::repair_attempt::after_refusal_budget_exhausted(manifest) =>
+                {
+                    (
+                        Some(false),
+                        ("awaiting_edit", "retry_budget_spent", restart),
+                    )
+                }
                 Some(AfterPhaseHeadAdmission::FinishesStale { .. }) => (
                     Some(false),
                     ("awaiting_edit", "prepared_at_other_head", restart),
@@ -696,6 +736,22 @@ fn status_repair_attempt(
                     refusal.reason.clone()
                 },
                 recorded_unix_ms: refusal.recorded_unix_ms,
+                refusal_count: crate::app::repair_attempt::after_refusal_total(manifest),
+                retry_budget_exhausted: crate::app::repair_attempt::after_refusal_budget_exhausted(
+                    manifest,
+                ),
+                history: manifest
+                    .after_refusal_history
+                    .iter()
+                    .map(|entry| {
+                        let reason = if seam_refused {
+                            without_start_recipe(&entry.reason)
+                        } else {
+                            entry.reason.clone()
+                        };
+                        (entry.recorded_unix_ms, reason)
+                    })
+                    .collect(),
             }
         }),
         diverged_recovery,
@@ -1136,12 +1192,9 @@ fn select_next_command(
                 // The same command is still the only way forward for this
                 // attempt, but status must not present it as if it had never
                 // run: it names the refusal the attempt recorded.
-                Some(refusal) => format!(
-                    "the last after phase of repair attempt `{}` for seam `{}` was refused: {}. The attempt still awaits the focused test edit; the command below repeats that after phase and refuses again until the cause the refusal names is resolved",
-                    attempt.attempt_id,
-                    attempt.seam_id,
-                    refusal.reason.trim_end_matches('.')
-                ),
+                Some(refusal) => {
+                    refused_after_phase_reason(&attempt.attempt_id, &attempt.seam_id, refusal)
+                }
                 None => format!(
                     "repair attempt `{}` for seam `{}` is awaiting the focused test edit; once the test is in place, run the after phase its before phase recorded",
                     attempt.attempt_id, attempt.seam_id
@@ -1907,6 +1960,10 @@ fn attempt_condition(attempt: &AgentStatusRepairAttempt) -> String {
             None => "awaiting an edit but was prepared at a different HEAD".to_string(),
         },
         "not_published" => "prepared but never published".to_string(),
+        "retry_budget_spent" => {
+            "awaiting an edit, but it spent its after-phase retry budget and its after phase now refuses"
+                .to_string()
+        }
         "gap_open" => {
             let AgentStatusAttemptReceipt::Issued { reading, .. } = &attempt.receipt else {
                 return attempt.state.to_string();
@@ -2165,10 +2222,7 @@ fn agent_status_repair_attempt_json(attempt: &AgentStatusRepairAttempt) -> Value
         "manifest": attempt.manifest,
         "command": attempt.command,
         "receipt": attempt_receipt_json(&attempt.receipt),
-        "last_after_refusal": attempt.last_after_refusal.as_ref().map(|refusal| serde_json::json!({
-            "reason": refusal.reason,
-            "recorded_unix_ms": refusal.recorded_unix_ms
-        }))
+        "last_after_refusal": attempt.last_after_refusal.as_ref().map(AgentStatusAfterRefusal::json)
     })
 }
 
@@ -2680,10 +2734,13 @@ fn attempt_status_class(
 fn restart_recommended_for(status_class: &str, view: &AgentStatusRepairAttempt) -> bool {
     match status_class {
         "prepared" | "stale" | "incomparable" | "failed" | "corrupt_or_unavailable" => true,
-        "limited" => matches!(
-            &view.receipt,
-            AgentStatusAttemptReceipt::Issued { reading, .. } if reading.leaves_gap_open()
-        ),
+        "limited" => {
+            view.disposition == "retry_budget_spent"
+                || matches!(
+                    &view.receipt,
+                    AgentStatusAttemptReceipt::Issued { reading, .. } if reading.leaves_gap_open()
+                )
+        }
         "legacy_compatibility_only" => {
             !matches!(&view.receipt, AgentStatusAttemptReceipt::Issued { .. })
         }
@@ -2831,6 +2888,24 @@ fn attempt_next_action(
     }
 }
 
+/// Status reason for an awaiting attempt whose after phase already refused.
+/// It discloses the refusal count, and once the retry budget is spent it names
+/// the stop state instead of presenting another retry as progress.
+fn refused_after_phase_reason(id: &str, seam: &str, refusal: &AgentStatusAfterRefusal) -> String {
+    let reason = refusal.reason.trim_end_matches('.');
+    if refusal.retry_budget_exhausted {
+        return format!(
+            "the after phase of repair attempt `{id}` for seam `{seam}` was refused {} times and its retry budget is spent; the latest refusal was: {reason}. Stop retrying this attempt: its after phase now refuses without running. Inspect the recorded refusal history in the attempt manifest, fix the cause, then start a new attempt while the gap is still open",
+            refusal.refusal_count
+        );
+    }
+    format!(
+        "the last after phase of repair attempt `{id}` for seam `{seam}` was refused: {reason} (refusal {} of a {}-refusal retry budget). The attempt still awaits the focused test edit; the command below repeats that after phase and refuses again until the cause the refusal names is resolved",
+        refusal.refusal_count,
+        crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
+    )
+}
+
 /// The recorded after phase for an attempt awaiting its focused test edit.
 fn after_attempt_command(
     manifest: &RepairAttemptManifest,
@@ -2840,10 +2915,7 @@ fn after_attempt_command(
     let id = manifest.repair_attempt_id.as_str();
     let seam = manifest.seam_id.as_str();
     let reason = match &view.last_after_refusal {
-        Some(refusal) => format!(
-            "the last after phase of repair attempt `{id}` for seam `{seam}` was refused: {}. The attempt still awaits the focused test edit; the command below repeats that after phase and refuses again until the cause the refusal names is resolved",
-            refusal.reason.trim_end_matches('.')
-        ),
+        Some(refusal) => refused_after_phase_reason(id, seam, refusal),
         None => format!(
             "repair attempt `{id}` for seam `{seam}` is awaiting the focused test edit; once the test is in place, run the after phase its before phase recorded"
         ),
@@ -2916,6 +2988,9 @@ fn restart_attempt_command(
         "failed" => restart(format!(
             "repair attempt `{id}` for seam `{seam}` ended failed; start a new attempt while the gap is still open"
         )),
+        "limited" if view.disposition == "retry_budget_spent" => restart(format!(
+            "repair attempt `{id}` for seam `{seam}` spent its after-phase retry budget, so its after phase now refuses without running; start a new attempt while the gap is still open"
+        )),
         "limited" => match &view.receipt {
             AgentStatusAttemptReceipt::Issued { reading, .. } if reading.leaves_gap_open() => {
                 restart(format!(
@@ -2979,10 +3054,7 @@ pub(crate) fn render_agent_attempt_status_json(
             "evidence_head": attempt.evidence_head,
             "unreadable_reason": attempt.unreadable_reason,
             "receipt": receipt,
-            "last_after_refusal": attempt.last_after_refusal.as_ref().map(|refusal| serde_json::json!({
-                "reason": refusal.reason,
-                "recorded_unix_ms": refusal.recorded_unix_ms
-            })),
+            "last_after_refusal": attempt.last_after_refusal.as_ref().map(AgentStatusAfterRefusal::json),
             "diverged_recovery": diverged_recovery,
         },
         "next_action": report.next_action.as_ref().map(agent_status_command_json),
@@ -4217,6 +4289,8 @@ mod tests {
                 },
             }),
             last_after_refusal: None,
+            after_refusal_count: 0,
+            after_refusal_history: Vec::new(),
             terminal_artifacts: Vec::new(),
             store: None,
         })
@@ -5147,6 +5221,9 @@ mod tests {
         refused.last_after_refusal = Some(AgentStatusAfterRefusal {
             reason: "the edit cage refused 1 path(s): src/lib.rs (ForbiddenPath)".to_string(),
             recorded_unix_ms: 1_700_000_000_000,
+            refusal_count: 1,
+            retry_budget_exhausted: false,
+            history: Vec::new(),
         });
         let store = || StoreFollowUp {
             locator: REPAIR_ATTEMPT_DIRECTORY,
@@ -5880,6 +5957,8 @@ mod tests {
             non_claims: Vec::new(),
             after: None,
             last_after_refusal: None,
+            after_refusal_count: 0,
+            after_refusal_history: Vec::new(),
             terminal_artifacts: Vec::new(),
             store: None,
         })
@@ -6085,6 +6164,9 @@ mod tests {
         view.last_after_refusal = Some(AgentStatusAfterRefusal {
             reason: "the edit cage refused 1 path(s); only the packet's allowed test surface may change: src/lib.rs (ForbiddenPath). To recover: undo the refused changes, then start a new attempt.".to_string(),
             recorded_unix_ms: 1_700_000_000_000,
+            refusal_count: 1,
+            retry_budget_exhausted: false,
+            history: Vec::new(),
         });
         let action = attempt_next_action(
             &manifest,

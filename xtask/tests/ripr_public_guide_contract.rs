@@ -709,6 +709,7 @@ const PORTABLE_TESTS: &[&str] = &[
     "outcome_help_matches_the_enforced_canonical_gap_contract",
     "agent_help_makes_repair_primary_without_removing_control_surfaces",
     "agent_repair_help_names_the_primary_transaction_and_its_limits",
+    "agent_repair_phase_refusals_render_scoped_recovery_without_writes",
     "agent_status_help_names_the_selected_store_and_exact_attempt_selection",
     "agent_subcommand_typos_render_scoped_recovery",
     "agent_subcommand_far_and_sibling_misses_render_no_suggestion",
