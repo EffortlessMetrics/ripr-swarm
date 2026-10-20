@@ -10413,13 +10413,15 @@ fn use_header_binds_word(header: &str, word: &str) -> bool {
             .strip_prefix("as")
             .filter(|after| after.starts_with(char::is_whitespace))
             .map(|after| {
+                // `as r#name` imports `name`: look past the raw marker.
                 let target = after.trim_start();
+                let target = target.strip_prefix("r#").unwrap_or(target);
                 let end = target
                     .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
                     .unwrap_or(target.len());
                 &target[..end]
             });
-        !renamed.is_some_and(|target| !target.is_empty() && target != word)
+        renamed.is_none_or(|target| target.is_empty() || target == word)
     })
 }
 
@@ -10725,9 +10727,7 @@ fn peel_group_and_path(before: &str) -> &str {
             // empty qualifier: keep the keyword (#8944).
             head = if raw.len() != qualifier.len() {
                 raw
-            } else if ["mut", "match"].iter().any(|keyword| {
-                rest.ends_with(keyword) && rest.len() - qualifier.len() == keyword.len()
-            }) {
+            } else if matches!(&rest[qualifier.len()..], "mut" | "match") {
                 rest
             } else {
                 qualifier.trim_end()
@@ -10880,6 +10880,8 @@ fn matches_macro_before(before: &str) -> bool {
     let Some(head) = before.trim_end().strip_suffix('!') else {
         return false;
     };
+    // `matches !(..)` is the same macro: rustc allows space before the `!`.
+    let head = head.trim_end();
     ["matches", "assert_matches", "debug_assert_matches"]
         .iter()
         .any(|name| {

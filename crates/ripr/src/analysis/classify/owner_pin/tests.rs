@@ -8940,6 +8940,12 @@ fn an_expected_value_a_macro_or_a_static_rebinds_from_the_owner_is_not_a_pin() {
             "",
             "let EXPECTED = 0;\n        {\n            static EXPECTED: AtomicU32 = AtomicU32::new(0);\n            same(crate::weight(4), &EXPECTED);\n            assert_eq!(crate::weight(4), EXPECTED.load(Ordering::SeqCst));\n        }",
         ),
+        // #8944: `use .. as r#expected` imports `expected`, shadowing the
+        // plain `let` for the shared borrow below.
+        (
+            "mod shared {\n    pub static expected: AtomicU32 = AtomicU32::new(0);\n}\nfn update(_: &AtomicU32, _: u32) {}\n\n",
+            "let expected = 1;\n        {\n            use crate::shared::expected as r#expected;\n            update(&expected, crate::weight(4));\n            assert_eq!(crate::weight(4), expected.load(Ordering::SeqCst));\n        }",
+        ),
         // #8795 negative controls: a non-plain value still refuses a shared
         // borrow, the one-argument `replace` and the argument-free `take`
         // still write, and a pattern is not an annotation.
@@ -9312,6 +9318,11 @@ fn written_by_test_refuses_matches_macro_and_root_path_scrutinees() {
         "matches!((EXPECTED, 1), (ref mut r, _))",
         "matches!([[EXPECTED], 1], [[ref mut r], _])",
         "matches!{EXPECTED, ref mut r}",
+        "matches !(EXPECTED, ref mut r)",
+        "std::matches ! (EXPECTED, ref mut r)",
+        "assert_matches !(EXPECTED, Some(ref mut r));",
+        "debug_assert_matches\n!(EXPECTED, Some(ref mut r));",
+        "assert!(matches !((x, EXPECTED), (_, ref mut r)));",
         "matches!(crate::EXPECTED, ref mut r)",
         "matches!(EXPECTED.0, (ref mut r, _))",
         "match ::EXPECTED { ref mut r => {} }",
@@ -9327,6 +9338,9 @@ fn written_by_test_refuses_matches_macro_and_root_path_scrutinees() {
         "matches!(EXPECTED, Some(_)) && { let ref mut r = other; true }",
         "matches!(other, Some(ref mut r)) && EXPECTED == 1",
         "my_matches!(EXPECTED, ref mut r)",
+        "my_matches !(EXPECTED, ref mut r)",
+        "matches !(EXPECTED, Some(r))",
+        "matches !(other, ref mut r) && EXPECTED == 1",
         "match ::EXPECTED { r => {} }",
         "match ::EXPECTED { _ => {} } if c { let ref mut x = y; }",
     ] {
@@ -9393,6 +9407,9 @@ fn item_names_word_counts_only_the_imported_binding_of_a_use() {
         "use m::{expected, y};",
         "use m::{x as expected};",
         "use m::expected as expected;",
+        "use m::expected as r#expected;",
+        "use m::r#expected;",
+        "use m::expected as r#;",
         "use m::expected::{self};",
         "use m::{expected as o, expected};",
         "static expected: u8 = 1;",
@@ -9403,6 +9420,7 @@ fn item_names_word_counts_only_the_imported_binding_of_a_use() {
     }
     for unnamed in [
         "use m::expected as other;",
+        "use m::expected as r#other;",
         "use m::{expected as other, y};",
         "use m::{x, expected as _y};",
         "use m::expected   as\n other;",
