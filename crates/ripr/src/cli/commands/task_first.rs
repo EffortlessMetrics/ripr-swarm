@@ -616,8 +616,18 @@ fn start_with_repair_clause(root: &std::path::Path, root_arg: &str) -> String {
             "`ripr repair` starts nothing right now: {}",
             no_eligible_seam_message(root, total_seams, &reasons, reasons_total)
         ),
-        Ok(RepairStartDecision::Start { .. }) => {
-            format!("start with `ripr repair --root {root_arg}`")
+        // The auto selector uses only the packet-eligibility gate; the start
+        // itself also applies the edit-target and held-inline checks, so the
+        // picked seam goes through the same shared gate before it is offered.
+        Ok(RepairStartDecision::Start { seam_id }) => {
+            match crate::app::task_first::repair_start_refusal(root, &seam_id) {
+                Some(refusal) => crate::app::task_first::repair_start_withheld_note(
+                    &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
+                    &seam_id,
+                    &refusal,
+                ),
+                None => format!("start with `ripr repair --root {root_arg}`"),
+            }
         }
         // The auto selector needs a named seam: `ripr repair` alone would
         // not start one, so it is not printed as the start.

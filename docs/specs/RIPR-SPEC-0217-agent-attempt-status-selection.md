@@ -135,7 +135,10 @@ receipt strength, and currentness as separate facts:
   multi-seam list, the legacy seam start and the recorded pilot start. When it
   refuses the seam, for example `repair route not ready` after the input is
   covered but the producer-owned discriminator fact is missing, `next_action`
-  is absent, the canonical decision does not recommend a restart, and the
+  carries no restart (it is absent, except that an attempt whose prepared head
+  moved keeps its recovery `next_action`: step `repair_attempt_after`, reset
+  the head, then rerun the after phase), the canonical decision does not
+  recommend a restart, and the
   claim boundary (selected attempt) or a `repair_start_withheld` warning
   (inventory) states that the remaining work is strengthening the oracle of
   the named related test by hand. `ripr continue` applies the same gate to
@@ -144,6 +147,17 @@ receipt strength, and currentness as separate facts:
   seam ids move with the code, or a seam beyond a truncated inventory) no
   start is printed: the same warning kind or claim-boundary line says the
   seam could not be verified and names `ripr check` to re-read the seams.
+
+Text that already embeds a new-attempt recipe is also kept free of it while
+the gate refuses the seam: a recorded after-phase refusal reason and a
+receipt's recommended action in status output (only the `--phase before`
+clause is replaced by "a new attempt is not offered"; undo guidance, later
+sentences and every `--phase after` rerun stay), `diverged_recovery.restart`
+(`null` in the attempt-status JSON; `reset` is kept), and the after phase's own
+narration, which `ripr continue` runs in process. Non-goal: the final error
+`ripr agent repair --phase after` gives for an attempt that already ended
+names its own restart and is not gated. `start_withheld` on a status attempt is
+an internal marker and not part of the JSON output.
 
 The command remains read-only end to end: it executes nothing a returned
 route names, writes no workflow or attempt file, and introduces no execution

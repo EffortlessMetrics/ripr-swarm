@@ -14195,9 +14195,15 @@ Field contract:
   establish the repair is correct or that any project test ran), the
   manifest's own limitations and non-claims, and the store resolver's
   non-claims. When a restart would be recommended but the repair eligibility
-  gate refuses the seam (or cannot verify it), `next_action` is absent and
-  `claim_boundary` carries the `restart_withheld` line naming the by-hand
-  work. The MCP durable attempt document carries the same line in its
+  gate refuses the seam (or cannot verify it), `next_action` carries no
+  restart: it is absent, except that an attempt whose prepared head moved keeps
+  its recovery `next_action` (step `repair_attempt_after`, restore the prepared
+  head, then rerun the after phase), and `claim_boundary` carries the
+  `restart_withheld` line naming the by-hand work. In that case
+  `diverged_recovery.restart` is `null` (`reset` is kept), and recorded
+  `last_after_refusal.reason` and receipt `recommended_action` text have their
+  `--phase before` clause replaced by "a new attempt is not offered". The
+  internal `start_withheld` marker is not part of the JSON. The MCP durable attempt document carries the same line in its
   `limitations` and likewise omits `next_command`. The Markdown rendering
   prints the same fields.
 

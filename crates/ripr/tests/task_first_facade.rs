@@ -3491,6 +3491,80 @@ fn diverged_head_recovery_drops_only_the_restart_when_the_gate_refuses() -> Resu
     Ok(())
 }
 
+/// #8766: `ripr continue` runs the after phase in process, and the recovery
+/// narration of a refused after phase names a `--phase before` attempt. When
+/// the repair gate refuses a new start, that recipe is not printed (control:
+/// with the gap still open the narration keeps it).
+#[test]
+fn continue_after_phase_narration_drops_the_start_recipe_when_the_gate_refuses()
+-> Result<(), String> {
+    let narration = |label: &str, test: &str| -> Result<String, String> {
+        let fixture = Fixture::boundary(label)?;
+        let root = &fixture.root;
+        let root_arg = root.to_string_lossy().into_owned();
+        let before = run_ripr(
+            root,
+            &[
+                "agent",
+                "repair",
+                "--root",
+                &root_arg,
+                "--seam-id",
+                FIXTURE_SEAM,
+                "--phase",
+                "before",
+            ],
+        )?;
+        assert_exit(&before, 0, "advanced before phase");
+        let attempt_id = attempt_id_from_before_stderr(&stderr_text(&before))?;
+        let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+            .map_err(|error| format!("read pricing tests: {error}"))?;
+        std::fs::write(root.join("tests/pricing.rs"), format!("{pricing}{test}"))
+            .map_err(|error| format!("write focused edit: {error}"))?;
+        std::fs::write(root.join("stray.txt"), "outside the edit cage\n")
+            .map_err(|error| format!("write stray file: {error}"))?;
+        let cont = run_ripr(
+            root,
+            &["continue", "--attempt", &attempt_id, "--root", &root_arg],
+        )?;
+        assert!(
+            !cont.status.success(),
+            "precondition: the stray file must violate the edit cage"
+        );
+        Ok(stderr_text(&cont))
+    };
+
+    let open = narration("facade-continue-open", FIXTURE_OFF_BOUNDARY_TEST)?;
+    assert!(
+        open.contains("--phase before"),
+        "control: an admitted seam keeps the recovery recipe:\n{open}"
+    );
+    let gripped = narration("facade-continue-gripped", FIXTURE_BOUNDARY_TEST)?;
+    assert!(
+        !gripped.contains("--phase before") && gripped.contains("a new attempt is not offered"),
+        "continue printed a start the same build refuses:\n{gripped}"
+    );
+    Ok(())
+}
+
+/// #8766 control: with no attempt at all and an eligible seam the auto
+/// selector picks, the picked seam passes the shared gate and bare `continue`
+/// still offers `ripr repair`.
+#[test]
+fn bare_continue_still_offers_ripr_repair_for_an_admitted_picked_seam() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-continue-picked")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let bare = run_ripr(root, &["continue", "--root", &root_arg])?;
+    assert_exit(&bare, 3, "bare continue with nothing to continue");
+    let text = stderr_text(&bare);
+    assert!(
+        text.contains("start with `ripr repair --root"),
+        "an admitted picked seam keeps the `ripr repair` start:\n{text}"
+    );
+    Ok(())
+}
+
 /// Negative control for #8766: while the repair gate still admits the seam
 /// (the focused edit missed the boundary, so the gap stays open), `status`
 /// keeps its restart command and prints no by-hand note.

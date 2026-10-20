@@ -1303,8 +1303,33 @@ fn render_repair_after_failure_json(
 impl AfterPhaseRefusalContext {
     /// Prints one narration line and keeps it for the refusal record.
     fn narrate(&mut self, line: String) {
+        let line = self.without_refused_start(line);
         eprintln!("ripr: {line}");
         self.narration.push(line);
+    }
+
+    /// #8766: a narrated recovery that names a new `--phase before` attempt
+    /// is printed (and recorded) without that recipe when the shared repair
+    /// gate does not admit a new start for the attempt's seam. `ripr
+    /// continue`'s in-process after phase narrates through here too.
+    fn without_refused_start(&self, line: String) -> String {
+        if !line.contains("--phase before") {
+            return line;
+        }
+        let Some((root, store, attempt_id)) = &self.selected_attempt else {
+            return line;
+        };
+        let Ok(manifest) = crate::app::repair_attempt::load_repair_attempt_manifest_from(
+            root,
+            store.as_deref(),
+            attempt_id,
+        ) else {
+            return line;
+        };
+        match crate::app::task_first::repair_start_refusal(root, &manifest.seam_id) {
+            Some(_) => crate::app::agent_status::without_start_recipe(&line),
+            None => line,
+        }
     }
 }
 

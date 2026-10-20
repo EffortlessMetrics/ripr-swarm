@@ -650,7 +650,15 @@ fn status_repair_attempt(
         || manifest
             .last_after_refusal
             .as_ref()
-            .is_some_and(|refusal| refusal.reason.contains("--phase before"));
+            .is_some_and(|refusal| refusal.reason.contains("--phase before"))
+        || matches!(
+            &receipt,
+            AgentStatusAttemptReceipt::Issued { reading, .. }
+                if reading
+                    .recommended_action
+                    .as_deref()
+                    .is_some_and(|action| action.contains("--phase before"))
+        );
     let seam_refused =
         (command_is_restart || carries_start_recipe) && gate.check(&manifest.seam_id).is_some();
     let withheld = command_is_restart && seam_refused;
@@ -658,6 +666,13 @@ fn status_repair_attempt(
     if seam_refused && let Some(recovery) = diverged_recovery.as_mut() {
         // Keep the reset route; the new-attempt route is withheld.
         recovery.restart = String::new();
+    }
+    let mut receipt = receipt;
+    if seam_refused
+        && let AgentStatusAttemptReceipt::Issued { reading, .. } = &mut receipt
+        && let Some(action) = reading.recommended_action.as_mut()
+    {
+        *action = without_start_recipe(action);
     }
     AgentStatusRepairAttempt {
         attempt_id: manifest.repair_attempt_id.as_str().to_string(),
@@ -687,37 +702,98 @@ fn status_repair_attempt(
     }
 }
 
-/// A recorded refusal's recovery text with the new-attempt recipe removed
-/// (#8766). Refusal reasons end their `to recover:` / `otherwise,` lines with
-/// a recipe that runs `ripr agent repair ... --phase before`; when the repair
-/// gate does not admit a new start that recipe is cut at its first clause
-/// and replaced by a statement that no new attempt is offered, so the undo
-/// and inspect guidance before it is kept.
-fn without_start_recipe(reason: &str) -> String {
-    const WITHHELD: &str =
-        "a new attempt is not offered: the repair gate does not admit a new start";
-    reason
-        .split('\n')
-        .map(|line| {
-            let Some(at) = line.find("--phase before") else {
-                return line.to_string();
-            };
-            let head = &line[..at];
-            let cut = [
-                "start a fresh attempt",
-                "otherwise, prepare a new attempt",
-                "set your test edit aside",
-                "run `ripr agent repair",
-            ]
-            .iter()
-            .filter_map(|marker| head.find(marker))
-            .min()
-            .unwrap_or(head.len());
-            let kept = line[..cut].trim_end_matches([' ', ',', ':']);
-            format!("{kept} ({WITHHELD})")
-        })
+/// Recorded or narrated recovery text with the new-attempt recipe removed
+/// (#8766). Recovery text ends its `to recover:` / `otherwise,` / `Then start
+/// a new attempt:` sentences with a recipe that runs
+/// `ripr agent repair ... --phase before`; when the repair gate does not
+/// admit a new start, only that recipe is replaced by a statement that no
+/// new attempt is offered. The undo and inspect guidance before it, any
+/// sentence after it, and every `--phase after` rerun stay: the recipe is
+/// bounded to its own sentence, starts at a recipe marker (or at the nearest
+/// `rerun` / `run` before the command), and never reaches back across a
+/// `--phase after` command.
+pub(crate) fn without_start_recipe(text: &str) -> String {
+    text.split('\n')
+        .map(without_start_recipe_in_line)
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Byte offsets of every ". " sentence break that is outside a backtick span.
+fn sentence_breaks(line: &str) -> impl Iterator<Item = usize> + '_ {
+    line.match_indices(". ")
+        .map(|(i, _)| i)
+        .filter(|&i| line[..i].matches('`').count().is_multiple_of(2))
+}
+
+fn without_start_recipe_in_line(line: &str) -> String {
+    const WITHHELD: &str =
+        "a new attempt is not offered: the repair gate does not admit a new start";
+    const MARKERS: [&str; 6] = [
+        "Then start a new attempt",
+        "To keep the change,",
+        "start a fresh attempt",
+        "start a new attempt",
+        "otherwise, prepare a new attempt",
+        "set your test edit aside",
+    ];
+    const FALLBACKS: [&str; 4] = [
+        ", then rerun ",
+        " then rerun ",
+        "rerun ",
+        "run `ripr agent repair",
+    ];
+    const AFTER: &str = "--phase after";
+    let mut line = line.to_string();
+    while let Some(at) = line.find("--phase before") {
+        // The recipe lives in one sentence; a sentence ends at ". " outside
+        // a backtick span (a command can contain `--root . --store x`).
+        let sentence_start = sentence_breaks(&line)
+            .filter(|&i| i < at)
+            .last()
+            .map_or(0, |i| i + 2);
+        // Never reach back across a `--phase after` command.
+        let window_start = line[sentence_start..at]
+            .rfind(AFTER)
+            .map_or(sentence_start, |i| {
+                let mut end = sentence_start + i + AFTER.len();
+                if line[end..].starts_with('`') {
+                    end += 1;
+                }
+                end
+            });
+        let window = &line[window_start..at];
+        let start = MARKERS
+            .iter()
+            .filter_map(|marker| window.find(marker))
+            .min()
+            .or_else(|| FALLBACKS.iter().find_map(|marker| window.rfind(marker)))
+            .map_or(at, |i| window_start + i);
+        let tail = &line[at..];
+        let sentence_end = sentence_breaks(&line)
+            .find(|&i| i >= at)
+            .map(|i| i - at)
+            .unwrap_or_else(|| {
+                if tail.ends_with('.') {
+                    tail.len() - 1
+                } else {
+                    tail.len()
+                }
+            });
+        // When a runnable `--phase after` command follows in the same
+        // sentence it is kept: the recipe ends at its own closing backtick.
+        let after_command_follows = tail[..sentence_end].contains("ripr agent repair")
+            && tail[..sentence_end].contains(AFTER);
+        let end = if after_command_follows {
+            at + tail.find('`').map_or(sentence_end, |i| i + 1)
+        } else {
+            at + sentence_end
+        };
+        let kept = line[..start].trim_end_matches([' ', ',']);
+        let separator = if kept.is_empty() { "" } else { " " };
+        line = format!("{kept}{separator}({WITHHELD}){}", &line[end..]);
+    }
+    line
 }
 
 /// The recovery route for an attempt whose prepared head moved, offered when
@@ -4873,6 +4949,74 @@ mod tests {
 
         // Text with no recipe is untouched.
         assert_eq!(without_start_recipe("plain refusal."), "plain refusal.");
+    }
+
+    /// #8766: the sanitizer cuts only the `--phase before` recipe's own
+    /// clause. It never cuts mid-word, never drops a legitimate
+    /// `--phase after` rerun, and keeps the guidance after the recipe, on the
+    /// recorded shapes the after phase and the before phase print.
+    #[test]
+    fn without_start_recipe_cuts_only_the_before_clause_on_every_recorded_shape() {
+        let cut = "a new attempt is not offered";
+        // Cage-input change (cli/commands/agent.rs): a legitimate after-phase
+        // rerun, then a keep-the-change sentence carrying the recipe.
+        let inputs = "to recover: restore those files to their before-phase state (for example `git checkout abc -- <path>`), then rerun `ripr agent repair --root '/r' --attempt id --phase after`. To keep the change, set your test edit aside, run `ripr agent repair --root '/r' --seam-id abc --phase before`, restore the edit, then run the new --attempt command it prints.";
+        let cleaned = without_start_recipe(inputs);
+        assert!(
+            cleaned
+                .contains("then rerun `ripr agent repair --root '/r' --attempt id --phase after`")
+                && cleaned.contains("restore those files to their before-phase state")
+                && !cleaned.contains("--phase before`")
+                && !cleaned.contains("then re ")
+                && cleaned.contains(cut),
+            "{cleaned}"
+        );
+
+        // Dirty-premise start refusal: the recipe is the tail of a clause and
+        // a later sentence must survive.
+        let dirty = "repair attempt cannot start: tracked file(s) differ from HEAD: src/lib.rs. to recover: commit the listed file(s) (for example `git commit -- src/lib.rs`), or restore them, then rerun `ripr agent repair --root '/r' --seam-id abc --phase before`. No workflow was prepared and no repair attempt was started.";
+        let cleaned = without_start_recipe(dirty);
+        assert!(
+            !cleaned.contains("--phase before")
+                && cleaned.contains("or restore them")
+                && cleaned.contains("No workflow was prepared and no repair attempt was started.")
+                && cleaned.contains(cut),
+            "{cleaned}"
+        );
+
+        // Before-phase gitignore refusal (no `ripr agent repair` in the
+        // recipe): the guidance after it is kept.
+        let ignore = "Rust repair requires Cargo's build directory `target` to be Git-ignored before the test edit. Add `/target` to the repository's .gitignore (or an equivalent Git exclude rule), then rerun --phase before. A rule for only a child directory is insufficient: Cargo also writes files at the build-directory root.";
+        let cleaned = without_start_recipe(ignore);
+        assert!(
+            !cleaned.contains("--phase before")
+                && cleaned.contains("Add `/target` to the repository's .gitignore")
+                && cleaned.contains("A rule for only a child directory is insufficient")
+                && cleaned.contains(cut),
+            "{cleaned}"
+        );
+
+        // `Then start a new attempt:` sentence after inspect guidance.
+        let moved = "to recover: first inspect what moved (`git diff -- <path>`). Only `git checkout abc -- <path>` restores the before-phase content. Then start a new attempt: set your test edit aside (`git stash`), run `ripr agent repair --root '/r' --seam-id abc --phase before` while the gap still exists, restore the test edit (`git stash pop`), and run the new --attempt command it prints.";
+        let cleaned = without_start_recipe(moved);
+        assert!(
+            !cleaned.contains("--phase before")
+                && cleaned.contains("first inspect what moved")
+                && cleaned.contains("restores the before-phase content")
+                && cleaned.contains(cut),
+            "{cleaned}"
+        );
+
+        // Receipt recommended action: the generic `--phase after` mention
+        // belongs to the new attempt and goes with it.
+        let receipt = "This receipt is not review evidence; rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --seam-id <seam-id> --phase before` and run the `--phase after` command it prints.";
+        let cleaned = without_start_recipe(receipt);
+        assert!(
+            !cleaned.contains("--phase before")
+                && cleaned.contains("rerun agent verify and agent receipt")
+                && cleaned.contains(cut),
+            "{cleaned}"
+        );
     }
 
     #[test]

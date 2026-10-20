@@ -13,3 +13,8 @@
   cannot verify (for example a seam id that moved) instead of printing it, and
   explains an already-gripped seam as a static reading rather than telling the
   reader to strengthen a test.
+  Recorded refusal text, receipt recommendations, the diverged-head restart and
+  the after-phase narration that `ripr continue` prints drop the new-attempt
+  recipe for such a seam, while the reset-and-rerun-after recovery stays. The
+  final error `ripr agent repair --phase after` gives for an attempt that
+  already ended is not covered.
