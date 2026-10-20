@@ -48,6 +48,20 @@ fn stub(root: &Path, at: &str, kind: &str, json: bool) -> Result<Output, String>
         .map_err(|error| format!("spawn ripr agent stub: {error}"))
 }
 
+fn stub_write(root: &Path, at: &str, kind: &str, json: bool) -> Result<Output, String> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command
+        .args(["agent", "stub", "--root"])
+        .arg(root)
+        .args(["--at", at, "--kind", kind, "--write"]);
+    if json {
+        command.arg("--json");
+    }
+    command
+        .output()
+        .map_err(|error| format!("spawn ripr agent stub --write: {error}"))
+}
+
 fn split_refusal_envelope(stderr: &str) -> Result<(serde_json::Value, &str), String> {
     let prose_at = stderr
         .find("ripr: agent stub: ")
@@ -114,8 +128,13 @@ fn off_line_predicate_note_precedes_the_grip_class_warning() -> Result<(), Strin
     let grip = warnings[1]
         .as_str()
         .ok_or_else(|| format!("warnings[1] must be the grip omission: {warnings:?}"))?;
-    if !grip.contains("strongly_gripped") || !grip.contains("configured off") {
-        return Err(format!("grip-class warning must follow the note: {grip}"));
+    if !grip.contains("strongly_gripped")
+        || !grip.contains("existing tests already discriminate it")
+        || grip.contains("configured off")
+    {
+        return Err(format!(
+            "grip-class warning must name the real reason, not 'configured off': {grip}"
+        ));
     }
 
     let human = stub(&scratch.0, "src/lib.rs:3", "predicate", false)?;
@@ -172,6 +191,99 @@ fn off_line_at_that_refuses_keeps_the_note_first_in_json_warnings() -> Result<()
     note_names_substitution(note, "src/lib.rs:3", "src/lib.rs:2")?;
     if !prose.contains("owner_async") {
         return Err(format!("human tail must still name the refusal: {prose}"));
+    }
+    Ok(())
+}
+
+/// An open-gap seam owns the stub ripr writes; the stub's own seam is then
+/// strongly gripped. #8891: the second `--write` must report the existing
+/// stub ("already written", with the run command) instead of suffixing a
+/// `_2` duplicate, and its disclosure must name the real reason (the seam is
+/// exposed) rather than claiming it is "configured off".
+#[test]
+fn second_write_reports_already_written_instead_of_a_duplicate() -> Result<(), String> {
+    const OPEN_GAP: &str =
+        "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n";
+    let scratch = Scratch::create("rewrite-clarity", OPEN_GAP)?;
+    let root = &scratch.0;
+
+    let first = stub_write(root, "src/lib.rs:2", "predicate", false)?;
+    if !first.status.success() {
+        return Err(format!(
+            "first --write must succeed: {}",
+            String::from_utf8_lossy(&first.stderr)
+        ));
+    }
+
+    let second = stub_write(root, "src/lib.rs:2", "predicate", false)?;
+    let stdout = String::from_utf8_lossy(&second.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&second.stderr).to_string();
+    if !second.status.success() {
+        return Err(format!("second --write must stay exit 0: {stderr}"));
+    }
+    if !stdout.contains("Stub already written at") {
+        return Err(format!(
+            "second --write must report the existing stub: {stdout}"
+        ));
+    }
+    if stdout.contains("Wrote test stub") || stdout.contains("_2") {
+        return Err(format!(
+            "second --write must not write or name a `_2` duplicate: {stdout}"
+        ));
+    }
+    if !stdout.contains("Run it:") {
+        return Err(format!(
+            "the already-written report must still carry the run command: {stdout}"
+        ));
+    }
+    if stdout.contains("configured off") {
+        return Err(format!(
+            "nothing was configured off; the disclosure must name the real reason: {stdout}"
+        ));
+    }
+    if !stdout.contains("strongly_gripped") {
+        return Err(format!(
+            "the disclosure must still name the grip class: {stdout}"
+        ));
+    }
+
+    let written = std::fs::read_to_string(root.join("src/lib.rs"))
+        .map_err(|error| format!("read back the written file: {error}"))?;
+    let occurrences = written
+        .matches("fn clamp_to_boundary_discriminator(")
+        .count();
+    if occurrences != 1 || written.contains("_2(") {
+        return Err(format!(
+            "the file must hold exactly one base-named stub, no `_2` duplicate:\n{written}"
+        ));
+    }
+
+    // The JSON document reports the same state for machine consumers.
+    let json = stub_write(root, "src/lib.rs:2", "predicate", true)?;
+    let document: serde_json::Value = serde_json::from_slice(&json.stdout)
+        .map_err(|error| format!("ready stub JSON did not parse: {error}"))?;
+    if document["state"] != "ready"
+        || document["already_present"] != true
+        || document["written"] != false
+    {
+        return Err(format!(
+            "the second write document must be ready, already present, not rewritten: {document}"
+        ));
+    }
+    let warnings = document["warnings"]
+        .as_array()
+        .ok_or_else(|| format!("warnings must be an array: {document}"))?;
+    let warning = warnings
+        .first()
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("the disclosure warning must be present: {document}"))?;
+    if !warning.contains("strongly_gripped")
+        || !warning.contains("existing tests already discriminate it")
+        || warning.contains("configured off")
+    {
+        return Err(format!(
+            "the disclosure must name the real reason, not 'configured off': {warning}"
+        ));
     }
     Ok(())
 }

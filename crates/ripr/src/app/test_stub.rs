@@ -1434,6 +1434,7 @@ mod tests {
             placement,
             test_name: "owner_boundary".to_string(),
             text: String::new(),
+            already_present: false,
             fill_ins: Vec::new(),
             derived_inputs: Vec::new(),
         };
@@ -1490,6 +1491,7 @@ mod tests {
             },
             test_name: "t".to_string(),
             text: String::new(),
+            already_present: false,
             fill_ins: Vec::new(),
             derived_inputs: Vec::new(),
         };

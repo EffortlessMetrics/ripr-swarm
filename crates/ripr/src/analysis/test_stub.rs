@@ -90,6 +90,10 @@ pub(crate) struct RustTestStub {
     pub(crate) test_name: String,
     /// Exact text to insert at the placement offset, or the whole new file.
     pub(crate) text: String,
+    /// The uniqueness scope already holds the identical test function: a
+    /// second run for the same seam recomputed byte-identical text (#8891).
+    /// The CLI reports "already written" instead of writing a duplicate.
+    pub(crate) already_present: bool,
     /// Each `todo!()` the developer still fills, in source order.
     pub(crate) fill_ins: Vec<String>,
     /// Inputs ripr wrote from the seam's own comparison, as `name = value`.
@@ -339,14 +343,28 @@ fn rust_test_stub_for_target(
         snake_case(&signature.name),
         name_suffix(seam.kind())
     );
-    let test_name = unique_test_name(&base_name, existing_source.unwrap_or(source));
     let path_scope = if integration_placement {
         PathScope::Integration(integration_crate.unwrap_or("crate"))
     } else {
         PathScope::ChildModule
     };
     let body = stub_body(seam, &signature, &scope_import, source, path_scope)?;
-    let test_fn = render_test_fn(seam, &signature, &test_name, &body, &indent);
+    // #8891: a second run for the same seam recomputes byte-identical text.
+    // When the base-name collision is that earlier stub, the CLI reports
+    // "already written" instead of suffixing a `_2` duplicate; a different
+    // test that happens to share the name still suffixes as before.
+    let scope_source = existing_source.unwrap_or(source);
+    let unique_name = unique_test_name(&base_name, scope_source);
+    let rendered_base = render_test_fn(seam, &signature, &base_name, &body, &indent);
+    let already_present =
+        unique_name != base_name && scope_contains_test_fn(scope_source, &rendered_base);
+    // The already-present stub keeps the base name: that is the test on disk.
+    let (test_name, test_fn) = if already_present || unique_name == base_name {
+        (base_name, rendered_base)
+    } else {
+        let test_fn = render_test_fn(seam, &signature, &unique_name, &body, &indent);
+        (unique_name, test_fn)
+    };
 
     let text = match &placement {
         TestStubPlacement::ExistingInlineModule { .. } => format!("\n{test_fn}"),
@@ -361,9 +379,18 @@ fn rust_test_stub_for_target(
         placement,
         test_name,
         text,
+        already_present,
         fill_ins: body.fill_ins,
         derived_inputs: body.derived_inputs,
     })
+}
+
+/// Whether `scope` already holds the exact test function `rendered`, modulo
+/// line endings (the write adapts the stub's `\n` breaks to a CRLF file).
+fn scope_contains_test_fn(scope: &str, rendered: &str) -> bool {
+    scope
+        .replace("\r\n", "\n")
+        .contains(&rendered.replace("\r\n", "\n"))
 }
 
 /// Whether the innermost `fn` at `offset` is declared with plain `pub` (not

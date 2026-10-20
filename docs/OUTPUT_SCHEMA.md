@@ -327,13 +327,24 @@ from absence. The disclosure fields introduced in `0.1` (#7290) remain:
   from the shared grip-to-exposure table (`strongly_gripped` → `exposed`,
   `weakly_gripped` → `weakly_exposed`, `ungripped` → `no_static_path`, …),
   else `null`. No per-surface translation fork.
-- `warnings` — when the class is omitted from agent packet/repair results,
-  one string reusing that omission reason, for example
-  `seam <id> is configured off for strongly_gripped seams and is not included in agent results`.
-  Empty when the class is included in agent results or the grip is unknown.
+- `warnings` — one string naming why the class carries omission prose. A
+  `strongly_gripped` seam is exposed because its tests already discriminate
+  it, so the warning says exactly that (`seam <id> is strongly_gripped:
+  existing tests already discriminate it, so a stub would add nothing`); the
+  default `Off` severity for the class is the agent-brief rendering policy,
+  not user configuration, so the packet/brief "configured off" wording is not
+  reused here (#8891). A class a user severity actually disables keeps the
+  packet wording, for example `seam <id> is configured off for
+  weakly_gripped seams and is not included in agent results`. Empty when the
+  class is included in agent results or the grip is unknown.
   Human output prints the same strings. Serving a strongly_gripped seam as
   a scaffold remains `state: ready` / exit 0; the warning is disclosure,
   not a refusal.
+- `already_present` — `true` when the placement already holds the identical
+  test function ripr would write (a second run for the same seam recomputes
+  byte-identical text). A repeated `--write` then reports the stub as already
+  written instead of appending a `_2`-suffixed duplicate; `written` stays
+  `false` for that run (#8891).
 
 Existing fields (`placement`, `test_name`, `text`, `fill_ins`,
 `derived_inputs`, `written`, `run_command`, and the refusal `refusal`

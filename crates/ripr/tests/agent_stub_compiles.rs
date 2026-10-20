@@ -1241,7 +1241,9 @@ const STRONGLY_GRIPPED_CLAMP: &str = "pub fn clamp_to(x: i32) -> i32 {\n    if x
 
 /// #7290: `ripr agent stub --at --kind` still yields a ready scaffold for a
 /// seam inventory classifies `strongly_gripped`, and both JSON and human
-/// output disclose that class with the packet/repair omission reason.
+/// output disclose that class. #8891: the disclosure names the real reason
+/// (the seam is exposed; nothing was configured off), not the packet/brief
+/// "configured off" wording.
 #[test]
 fn at_kind_stub_discloses_strongly_gripped_classification() -> Result<(), String> {
     let scratch = kind_refusal_crate(STRONGLY_GRIPPED_CLAMP)?;
@@ -1276,10 +1278,13 @@ fn at_kind_stub_discloses_strongly_gripped_classification() -> Result<(), String
         .as_str()
         .ok_or_else(|| format!("warning must be a string: {document}"))?;
     assert!(
-        warning.contains(
-            "is configured off for strongly_gripped seams and is not included in agent results"
-        ),
+        warning.contains("is strongly_gripped")
+            && warning.contains("existing tests already discriminate it"),
         "{warning}"
+    );
+    assert!(
+        !warning.contains("configured off"),
+        "nothing was configured off for an exposed seam: {warning}"
     );
 
     let mut human = ripr_command();
@@ -1303,10 +1308,13 @@ fn at_kind_stub_discloses_strongly_gripped_classification() -> Result<(), String
     );
     let stdout = String::from_utf8_lossy(&human.stdout);
     assert!(
-        stdout.contains(
-            "is configured off for strongly_gripped seams and is not included in agent results"
-        ),
+        stdout.contains("is strongly_gripped")
+            && stdout.contains("existing tests already discriminate it"),
         "{stdout}"
+    );
+    assert!(
+        !stdout.contains("configured off"),
+        "nothing was configured off for an exposed seam: {stdout}"
     );
     assert!(
         stdout.contains("Test stub"),

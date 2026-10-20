@@ -87,6 +87,77 @@ fn boundary_stub_inserts_into_the_existing_inline_module_and_stops_at_the_expect
     Ok(())
 }
 
+/// #8891: a second run for the same seam recomputes byte-identical text. The
+/// name collision is ripr's own earlier write, so the stub is flagged
+/// already present instead of suffixing a `_2` duplicate.
+#[test]
+fn recomputed_stub_for_the_same_seam_is_flagged_already_present() -> Result<(), String> {
+    let seam = seam_at(
+        "src/lib.rs",
+        PRICE,
+        "amount >= threshold",
+        SeamKind::PredicateBoundary,
+        boundary("amount == threshold"),
+    )?;
+    let first = rust_test_stub(&seam, None, PRICE).map_err(|r| r.reason().to_string())?;
+    assert!(!first.already_present);
+    assert_eq!(first.test_name, "price_boundary_discriminator");
+    // Simulate the first `--write`: the insertion is the stub text at the
+    // placement offset.
+    let close = PRICE.rfind('}').ok_or("module close brace")?;
+    let (head, tail) = PRICE.split_at(close);
+    let rewritten = format!("{head}{}{tail}", first.text.trim_start_matches('\n'));
+    let seam = seam_at(
+        "src/lib.rs",
+        &rewritten,
+        "amount >= threshold",
+        SeamKind::PredicateBoundary,
+        boundary("amount == threshold"),
+    )?;
+    let second = rust_test_stub(&seam, None, &rewritten).map_err(|r| r.reason().to_string())?;
+    assert!(
+        second.already_present,
+        "the byte-identical recompute must be detected as already present"
+    );
+    assert_eq!(
+        second.test_name, "price_boundary_discriminator",
+        "no `_2` suffix for ripr's own earlier write"
+    );
+    Ok(())
+}
+
+/// A different test that happens to share the base name is not ripr's stub:
+/// the `--write` semantics are unchanged and the name still suffixes.
+#[test]
+fn same_named_but_different_test_still_suffixes() -> Result<(), String> {
+    let with_other_test = "pub fn price(amount: u32, threshold: u32) -> u32 {
+    if amount >= threshold { amount - 10 } else { amount }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn price_boundary_discriminator() {
+        assert_eq!(price(100, 100), 90);
+    }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        with_other_test,
+        "amount >= threshold",
+        SeamKind::PredicateBoundary,
+        boundary("amount == threshold"),
+    )?;
+    let stub = rust_test_stub(&seam, None, with_other_test).map_err(|r| r.reason().to_string())?;
+    assert_eq!(stub.test_name, "price_boundary_discriminator_2");
+    assert!(
+        !stub.already_present,
+        "a genuinely different test with the same name is not an already-written stub"
+    );
+    Ok(())
+}
+
 #[test]
 fn method_owner_uses_receiver_syntax_not_a_free_call() -> Result<(), String> {
     // #5357: a method owner was suggested as `as_whole_units(...)`.
