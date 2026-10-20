@@ -15,7 +15,7 @@ Shared evidence and guidance
   E2 [findings 1, 2]: infection unknown: TypeScript preview adapter does not yet model infection
   E3 [findings 1, 2]: propagation unknown: TypeScript preview adapter does not yet model propagation
   E4 [findings 1, 2]: observation weak: Strongest extracted oracle kind: `unknown` (rank 0)
-  E5 [findings 1, 2]: related test tests/load.test.ts:7 missing token uses unknown unknown oracle
+  E5 [findings 1, 2]: related test tests/load.test.ts:7 missing token uses an unclassified oracle, not graded against this probe
 
 Finding 1: WARNING src/load.ts:3
   id: probe:src_load.ts:typescript_preview:fd09bc48

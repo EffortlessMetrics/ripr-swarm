@@ -47,7 +47,7 @@ Evidence
   - observation weak: Strongest extracted oracle kind: `unknown` (rank 0)
   - discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `return value == total - penalty + 0`
   - local flow reaches returned value: return total - penalty + 0; (line 2)
-  - related test tests/score.test.ts:3 unknown t method mentions the result uses unknown unknown oracle
+  - related test tests/score.test.ts:3 unknown t method mentions the result uses an unclassified oracle, not graded against this probe
 
 Weakness
   - Related test reaches `score` but the strongest extracted oracle is `unknown`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form with an exact payload (string, object, or class reference)

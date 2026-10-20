@@ -599,3 +599,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_effect_probe_shapes (21)
+
+Reason:
+RIPR-SPEC-0224: unclassified-kind oracle not graded against this probe (#8388)
+
+Command:
+`cargo xtask goldens bless typescript_effect_probe_shapes --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -37,7 +37,7 @@ Evidence
   - observation weak: No related Python assertion observes the changed error path; the strongest related assertion observes another behavior (`exact_value`)
   - discriminator weak: Python preview adapter found no strong discriminator; missing proof: `raises KeyError matching "empty"`
   - local flow reaches error variant: raise KeyError("empty") (line 3)
-  - related test tests/test_parseint.py:4 test_parse_ok uses unknown unknown oracle
+  - related test tests/test_parseint.py:4 test_parse_ok uses an unclassified oracle, not graded against this probe
 
 Weakness
   - Related Python test reaches `parse`, but its assertions observe a different behavior (strongest: `exact_value`) and none observes the changed error path; add or strengthen a focused assertion for the exact exception type/message

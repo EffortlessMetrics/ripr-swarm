@@ -1146,14 +1146,15 @@ fn evidence_path_values(finding: &Finding) -> Vec<String> {
     );
 
     values.extend(finding.related_tests.iter().take(5).map(|test| {
-        let oracle_kind = display_label(test.oracle_kind.as_str());
         let mut value = format!(
-            "related test {}:{} {} uses {} {} oracle",
+            "related test {}:{} {} uses {}",
             crate::output::path::display_path(&test.file),
             test.line,
             test.name,
-            test.oracle_strength.as_str(),
-            oracle_kind
+            crate::output::related_test_miss::oracle_projection(
+                &test.oracle_strength,
+                &test.oracle_kind
+            )
         );
         if let Some(oracle) = &test.oracle {
             value.push_str(&format!(": {oracle}"));
@@ -1180,10 +1181,6 @@ fn evidence_path_values(finding: &Finding) -> Vec<String> {
     );
 
     values
-}
-
-fn display_label(value: &str) -> String {
-    value.replace('_', " ")
 }
 
 fn strongest_related_test(finding: &Finding) -> Option<&RelatedTest> {

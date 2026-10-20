@@ -526,3 +526,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_no_projectable_owner (18)
+
+Reason:
+RIPR-SPEC-0224: unclassified-kind oracle not graded against this probe (#8388)
+
+Command:
+`cargo xtask goldens bless python_no_projectable_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

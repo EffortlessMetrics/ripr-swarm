@@ -396,3 +396,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_oracle_helper_gated (21)
+
+Reason:
+RIPR-SPEC-0224: unclassified-kind oracle not graded against this probe (#8388)
+
+Command:
+`cargo xtask goldens bless typescript_oracle_helper_gated --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

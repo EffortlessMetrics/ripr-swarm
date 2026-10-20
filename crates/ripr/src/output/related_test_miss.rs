@@ -71,6 +71,28 @@ pub(crate) fn related_test_miss_reason(
     })
 }
 
+/// The oracle phrase of a related-test row, after "uses". A strength of
+/// `unknown` means the assertion was not graded against this probe (the
+/// probe family has no typed oracle relationships), not that the assertion
+/// itself is of unknown quality (#8388); `none` means the test has no oracle
+/// at all (#8747).
+pub(crate) fn oracle_projection(
+    strength: &crate::domain::OracleStrength,
+    kind: &crate::domain::OracleKind,
+) -> String {
+    use crate::domain::{OracleKind, OracleStrength};
+    match (strength, kind) {
+        (OracleStrength::Unknown, OracleKind::Unknown) => {
+            "an unclassified oracle, not graded against this probe".to_string()
+        }
+        (strength, kind) => format!(
+            "{} {} oracle",
+            strength.as_str(),
+            kind.as_str().replace('_', " ")
+        ),
+    }
+}
+
 /// The word placed before the reason. An unconfirmed observation is an
 /// unknown, so it is not introduced as a miss (#5508).
 pub(crate) fn related_test_miss_label(test: &RelatedTest) -> &'static str {
