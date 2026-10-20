@@ -611,6 +611,72 @@ fn detect_python_test_frameworks_ignores_imports_inside_string_literals() -> Res
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
+
+#[test]
+fn detect_python_test_frameworks_ignores_comment_and_string_quote_delimiters() -> Result<(), String>
+{
+    // PR #8901 review (graphite #2 / devin #5): a `"""` or `'''` inside a
+    // comment or an ordinary single-line string must not open a phantom
+    // triple-quoted string that swallows later real imports — the exact
+    // false negative the #8707 string-awareness work exists to prevent.
+    let root = unique_test_root("commented-delimiter");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test_comment.py"),
+        "# use \"\"\" for docstrings\nimport pytest\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    // A bare quoted delimiter in a comment alone is not evidence either.
+    let root = unique_test_root("commented-delimiter-only");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("test_note.py"), "# \"\"\" example\n")
+        .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        Vec::<&str>::new()
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    // A triple-quote-looking literal inside an ordinary single-line string
+    // is content, not a delimiter.
+    let root = unique_test_root("string-literal-delimiter");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test_literal.py"),
+        "x = \"'''\"\nimport unittest\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_frameworks_test_named_directories_do_not_starve_the_scan()
+-> Result<(), String> {
+    // PR #8901 review (devin #6): directories named `test_*.py` pass the
+    // name and test-path admission filters but can never yield evidence;
+    // counting them toward the per-directory cap starves real test files
+    // behind them. Only files count.
+    let root = unique_test_root("dir-starvation");
+    let tests_dir = root.join("tests");
+    std::fs::create_dir_all(&tests_dir).map_err(|err| format!("create tests dir: {err}"))?;
+    for index in 0..64 {
+        std::fs::create_dir_all(tests_dir.join(format!("test_{index:02}.py")))
+            .map_err(|err| format!("create test-named directory: {err}"))?;
+    }
+    std::fs::write(tests_dir.join("test_z.py"), "import pytest\n")
+        .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
 use super::super::super::diff::ChangedLine;
 use super::bounded_read::{
     DEFAULT_PYTHON_MAX_FILE_READ_BYTES, DEFAULT_PYTHON_MAX_WORKSPACE_FILES,

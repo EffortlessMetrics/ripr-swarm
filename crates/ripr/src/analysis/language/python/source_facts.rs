@@ -148,17 +148,22 @@ pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
-        // #8706: sort by file name and count only admitted `.py` test
+        // #8706: sort by file name and count only admitted `.py` test file
         // candidates toward the per-directory cap. The #8257 review applied
         // the same discipline to the app-directory list; capping the raw
         // entry stream here let 64 non-test entries starve the scan of every
         // test file and made the surviving set depend on unspecified
         // `read_dir` enumeration order, so the same repository could report
-        // a different framework set between runs and machines.
+        // a different framework set between runs and machines. The
+        // `is_file` gate extends the same discipline to test-named
+        // directories: a directory named `test_*.py` cannot be read for
+        // evidence, so admitting it toward the cap would starve real test
+        // files behind it (review of #8706, PR #8901).
         let mut candidates: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
         candidates.sort();
         for path in candidates
             .iter()
+            .filter(|path| path.is_file())
             .filter(|path| {
                 path.file_name()
                     .and_then(|name| name.to_str())
@@ -242,9 +247,10 @@ pub(crate) fn detect_python_test_framework(root: &Path) -> Option<&'static str> 
 /// one extra byte so a cut final line can be dropped instead of classified.
 const PYTHON_FRAMEWORK_EVIDENCE_PREFIX_BYTES: u64 = 4096;
 
-/// Admitted `.py` test candidates inspected per scanned directory. The cap
-/// counts candidates after the `.py` / test-path admission filter, never raw
-/// directory entries, so non-test files cannot starve the scan (#8706).
+/// Admitted `.py` test file candidates inspected per scanned directory. The
+/// cap counts candidates after the file / `.py` / test-path admission
+/// filters, never raw directory entries, so non-test files and test-named
+/// directories cannot starve the scan (#8706, PR #8901 review).
 const PYTHON_FRAMEWORK_SCAN_DIR_ENTRY_CAP: usize = 64;
 
 /// Lines of `text` that are code — every line that does not fall inside a
@@ -252,10 +258,15 @@ const PYTHON_FRAMEWORK_SCAN_DIR_ENTRY_CAP: usize = 64;
 /// merely SHOW an `import unittest` / `import pytest` line are not framework
 /// evidence (#8707); a `tests.py` / `test.py` module is admitted by file name
 /// alone (#7706), so string awareness is what keeps a helper module's
-/// example text from reporting a confirmed framework. Tracking the dominant
-/// triple-quote state covers the failure mode honestly without claiming a
-/// full tokenization; single-line strings cannot place an import at line
-/// start, and the import matchers already reject lookalike tokens.
+/// example text from reporting a confirmed framework. The scanner tracks
+/// the dominant triple-quote state: it stops scanning a line at an
+/// unquoted `#` and skips ordinary single-line string contents before
+/// looking for triple-quote delimiters, so a comment like
+/// `# use """ for docstrings` or a literal like `x = "'''"` cannot open a
+/// phantom string that swallows later real imports (review of #8707,
+/// PR #8901). This remains a bounded heuristic, not a full tokenization:
+/// single-line strings cannot place an import at line start, and the
+/// import matchers already reject lookalike tokens.
 fn code_lines_outside_triple_quoted_strings(text: &str) -> String {
     let mut out = String::new();
     let mut open: Option<char> = None;
@@ -269,57 +280,90 @@ fn code_lines_outside_triple_quoted_strings(text: &str) -> String {
     out
 }
 
-/// Advance the triple-quote state across one line. Every unescaped `"""` or
-/// `'''` occurrence toggles the state; quotes of the other delimiter inside
-/// a string are ordinary content, and escaped quotes never toggle.
+/// Advance the triple-quote state across one line. Outside a string, an
+/// unquoted `#` ends the scannable line and an ordinary single-line string
+/// is skipped to its matching unescaped quote, so delimiters inside
+/// comments and string literals never toggle the state (review of #8707,
+/// PR #8901). Inside a triple-quoted string only the matching closing
+/// delimiter matters; `#` and quotes of the other delimiter are content.
 fn update_triple_quote_state(line: &str, open: &mut Option<char>) {
     let mut rest = line;
-    while let Some(position) = rest.find(['\'', '"']) {
-        let (before, from) = rest.split_at(position);
-        // A quote preceded by an odd run of backslashes is escaped.
-        let backslashes = before.chars().rev().take_while(|ch| *ch == '\\').count();
-        if backslashes % 2 == 1 {
-            rest = &from[1..];
+    loop {
+        if let Some(delimiter) = *open {
+            match find_closing_triple(rest, delimiter) {
+                Some(end) => {
+                    *open = None;
+                    rest = &rest[end..];
+                }
+                None => return,
+            }
             continue;
         }
-        let delimiter = if from.starts_with("\"\"\"") {
-            Some('"')
-        } else if from.starts_with("'''") {
-            Some('\'')
-        } else {
-            None
-        };
-        match (open.take(), delimiter) {
-            // The matching delimiter closes the string; code may resume
-            // later on the same line, so keep scanning the remainder.
-            (Some(current), Some(found)) if current == found => {
-                rest = &from[3..];
+        match find_triple_open(rest) {
+            Some((delimiter, after)) => {
+                *open = Some(delimiter);
+                rest = &rest[after..];
             }
-            // Any other quote inside a string is content.
-            (Some(current), _) => {
-                *open = Some(current);
-                rest = &from[1..];
-            }
-            (None, Some(found)) => {
-                match from[3..].find(if found == '"' { "\"\"\"" } else { "'''" }) {
-                    // A triple-quoted string that opens and closes on one line
-                    // hides only its own interior.
-                    Some(close) => {
-                        rest = &from[3 + close + 3..];
-                    }
-                    None => {
-                        *open = Some(found);
-                        return;
+            None => return,
+        }
+    }
+}
+
+/// End (exclusive) of the first unescaped closing triple delimiter in
+/// `text`, or `None` when the string continues past this line.
+fn find_closing_triple(text: &str, delimiter: char) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let quote = delimiter as u8;
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'\\' {
+            // A backslash escapes the next character.
+            index += 2;
+            continue;
+        }
+        if bytes[index] == quote && bytes[index..].starts_with(&[quote, quote, quote]) {
+            return Some(index + 3);
+        }
+        index += 1;
+    }
+    None
+}
+
+/// Scan code outside any string for the first triple-quote delimiter.
+/// Returns the delimiter and the index just past the opening triple quote
+/// when one starts on this line. An unquoted `#` ends the scan (the rest is
+/// a comment) and an ordinary single-line string is skipped to its
+/// matching unescaped closing quote, so neither can contribute a phantom
+/// delimiter.
+fn find_triple_open(code: &str) -> Option<(char, usize)> {
+    let bytes = code.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            // The rest of the line is a comment.
+            b'#' => return None,
+            quote @ (b'"' | b'\'') => {
+                if bytes[index..].starts_with(&[quote, quote, quote]) {
+                    return Some((quote as char, index + 3));
+                }
+                // Ordinary single-line string: skip to its matching
+                // unescaped closing quote on the same line.
+                index += 1;
+                while index < bytes.len() {
+                    if bytes[index] == b'\\' {
+                        index += 2;
+                    } else if bytes[index] == quote {
+                        index += 1;
+                        break;
+                    } else {
+                        index += 1;
                     }
                 }
             }
-            // Outside a string an ordinary quote starts nothing the scan
-            // tracks; skip it.
-            (None, None) => {
-                rest = &from[1..];
-            }
+            _ => index += 1,
         }
     }
+    None
 }
 
 fn read_framework_evidence_prefix(path: &Path) -> Option<String> {
