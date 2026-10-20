@@ -119,7 +119,15 @@ fn validate_fast_report(files: &[String], report: &str) -> Result<(), String> {
         .ok_or_else(|| "success report has no bounded Ran/Skipped sections".to_string())?;
 
     let categories = super::super::categorize_changed_files(files);
-    let mut required = Vec::new();
+    // Match the runner's unconditional floor even for a valid empty diff.
+    let mut required = vec![
+        "fmt --check",
+        "check-static-language",
+        "check-command-catalog",
+        "check-generated",
+        "check-generated-clean",
+        "check-lint-policy",
+    ];
     if categories.support_tiers {
         required.push("check-support-tiers");
     }
@@ -138,7 +146,11 @@ fn validate_fast_report(files: &[String], report: &str) -> Result<(), String> {
         required.push("check-workflows");
     }
     if categories.policy {
-        required.extend(["check-process-policy", "check-network-policy"]);
+        required.extend([
+            "check-covered-by",
+            "check-process-policy",
+            "check-network-policy",
+        ]);
     }
     if categories.fixture {
         required.push("check-fixture-contracts");
