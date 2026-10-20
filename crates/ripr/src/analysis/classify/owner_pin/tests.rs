@@ -4618,6 +4618,16 @@ fn weight_refusal_under(
     others: &[(&str, &str)],
     root: Option<&Path>,
 ) -> Option<AssertionRefusal> {
+    weight_refusal_nth(tests, others, root, 0)
+}
+
+/// `weight_refusal_under` for the test's `nth` assertion.
+fn weight_refusal_nth(
+    tests: &str,
+    others: &[(&str, &str)],
+    root: Option<&Path>,
+    nth: usize,
+) -> Option<AssertionRefusal> {
     let mut files = vec![(LIB, WEIGHT_LIB), (TESTS, tests)];
     files.extend_from_slice(others);
     let mut index = index(&files);
@@ -4631,10 +4641,10 @@ fn weight_refusal_under(
     assert!(test.is_some(), "the fixture test must be indexed");
     let test = test?;
     assert!(
-        !test.assertions.is_empty(),
+        test.assertions.len() > nth,
         "the test's assertions must parse"
     );
-    OwnerPinSyntax::default().refusal(test, &test.assertions[0], &index)
+    OwnerPinSyntax::default().refusal(test, &test.assertions[nth], &index)
 }
 
 #[test]
@@ -7518,6 +7528,9 @@ fn a_feature_gated_test_is_refused_for_its_attribute_not_a_macro_rebinding() {
             AssertionContextRefusal::TestAttribute(gate.clone())
         ))
     );
+    // The exact-value `assert_eq!` oracle (the second assertion) is refused
+    // for the same attribute, not only the first assertion.
+    assert_eq!(weight_refusal_nth(&gated, &[], None, 1), refusal);
     // The gate is unknown availability, not a settled outcome: an analyzer
     // limit that withholds a gap, and the clause names the attribute.
     let clause = refusal.as_ref().map(AssertionRefusal::describe);
@@ -7532,14 +7545,21 @@ fn a_feature_gated_test_is_refused_for_its_attribute_not_a_macro_rebinding() {
     // the cause.
     let plain = format!("{prelude}#[test]\n{body}");
     assert_eq!(weight_refusal(&plain, &[]), None);
-    // Fail closed: a glob of a foreign crate still refuses the ungated test.
+    assert_eq!(weight_refusal_nth(&plain, &[], None, 1), None);
+    // Fail closed: a glob of a foreign crate still refuses the ungated test,
+    // for the `assert_eq!` oracle as well as the first assertion.
     let foreign = format!("use rayon::prelude::*;\n{plain}");
-    assert!(matches!(
-        weight_refusal(&foreign, &[]),
-        Some(AssertionRefusal::Syntax(
-            AssertionContextRefusal::MacroBinding(_)
-        ))
-    ));
+    for nth in 0..2 {
+        assert!(
+            matches!(
+                weight_refusal_nth(&foreign, &[], None, nth),
+                Some(AssertionRefusal::Syntax(
+                    AssertionContextRefusal::MacroBinding(_)
+                ))
+            ),
+            "assertion {nth}"
+        );
+    }
 }
 
 #[test]
