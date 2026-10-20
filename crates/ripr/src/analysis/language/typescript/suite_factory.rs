@@ -177,6 +177,7 @@ fn substituted_body(
         return None;
     }
     let body = &factory.body;
+    let code = code_bytes(body)?;
     let mut edits: Vec<(usize, usize, String)> = Vec::new();
     for (param, argument) in factory.params.iter().zip(&call.arguments) {
         let (replacement, as_callee) = match argument {
@@ -192,7 +193,9 @@ fn substituted_body(
             return None;
         }
         let hits: Vec<usize> = word_occurrences(body, param).collect();
-        if hits.len() != identifier_occurrences(body, param).count() {
+        if hits.len() != identifier_occurrences(body, param).count()
+            || hits.iter().any(|at| !code[*at])
+        {
             return None;
         }
         for at in hits {
@@ -221,4 +224,40 @@ fn span_text(source: &str, span: oxc_span::Span) -> Option<String> {
     source
         .get(span.start as usize..span.end as usize)
         .map(str::to_string)
+}
+
+/// Per byte of `body`: `true` outside string, template and comment text.
+/// `None` for a bare `/` (a regex or a division), which this scan does not
+/// classify; a parameter spelled inside text the runner reads as data must
+/// not be renamed, because that would change an expected value or title.
+fn code_bytes(body: &str) -> Option<Vec<bool>> {
+    let bytes = body.as_bytes();
+    let mut code = vec![true; bytes.len()];
+    let mut at = 0;
+    while at < bytes.len() {
+        let end = match bytes[at] {
+            quote @ (b'\'' | b'"' | b'`') => {
+                let mut end = at + 1;
+                while end < bytes.len() && bytes[end] != quote {
+                    end += if bytes[end] == b'\\' { 2 } else { 1 };
+                }
+                end + 1
+            }
+            b'/' if bytes.get(at + 1) == Some(&b'/') => {
+                body[at..].find('\n').map_or(bytes.len(), |n| at + n)
+            }
+            b'/' if bytes.get(at + 1) == Some(&b'*') => body[at + 2..]
+                .find("*/")
+                .map_or(bytes.len(), |n| at + n + 4),
+            b'/' => return None,
+            _ => {
+                at += 1;
+                continue;
+            }
+        };
+        let end = end.min(bytes.len());
+        code[at..end].fill(false);
+        at = end;
+    }
+    Some(code)
 }

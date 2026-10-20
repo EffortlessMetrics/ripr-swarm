@@ -6,4 +6,5 @@
   `no_static_path`. Only a parameter-simple, non-exported, singly declared
   factory called from the top level expands; defaults, rest or destructured
   parameters, a title built from a parameter, reassignment and `\u` escapes
-  still refuse (#8950).
+  still refuse, as does a parameter spelled inside a string, template
+  or comment; at most eight calls expand per file (#8950).

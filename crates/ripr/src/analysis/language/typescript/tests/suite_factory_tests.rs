@@ -218,3 +218,13 @@ fn a_substitution_that_breaks_the_parse_keeps_the_unexpanded_tests() -> Result<(
     assert_eq!(class, written_out);
     Ok(())
 }
+
+#[test]
+fn a_parameter_spelling_inside_a_string_credits_nothing() -> Result<(), String> {
+    // The expected value `'prefix impl('` must not be rewritten to the
+    // owner's name: the expansion would assert a different value.
+    let factory = "function runSuite(name: string, impl: (values: number[]) => number) {\n  describe(name, () => {\n    test('adds', () => {\n      expect(String(impl([2, 3, 4]))).toBe('prefix impl(');\n    });\n  });\n}\n";
+    let class = class_of("string-spelling", &file(&format!("{factory}{CALL}")))?;
+    assert_eq!(class, ExposureClass::NoStaticPath);
+    Ok(())
+}

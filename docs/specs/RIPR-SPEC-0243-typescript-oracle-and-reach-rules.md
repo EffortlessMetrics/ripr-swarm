@@ -171,6 +171,9 @@ when all of these hold, and otherwise the call registers nothing as before:
   (`describe(name, ...)`), not inside a template or as a member;
 - the body does not rebind a parameter and does not already mention an
   identifier argument, so the renaming captures nothing;
+- no parameter is spelled inside a string, template or comment of the body,
+  and the body has no bare `/` (a regex or division), so the renaming never
+  changes an expected value or a title;
 - the file contains no `\u` escape, and at most eight calls expand per file.
 
 **Rule 12. A named function passed as the callback is the test body

@@ -197,10 +197,8 @@ fn extract_tests_expanding_suite_factories(
     // A substitution that lands inside a string can leave the expanded source
     // unparsable, which would drop every test the file yielded before
     // expansion; fall back to the unexpanded extraction then.
-    let (original_tests, original_gap) =
-        extract_tests_expanding_suite_factories(file, source, false);
-    if tests.len() < original_tests.len() {
-        return (original_tests, original_gap);
+    if tests.is_empty() {
+        return extract_tests_expanding_suite_factories(file, source, false);
     }
     for test in &mut tests {
         // Assertion lines stay offsets from the test line: the classifier

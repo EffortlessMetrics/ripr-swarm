@@ -16149,6 +16149,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/function_reference_callback_tests.rs::only_a_test_registration_resolves_the_reference",
   "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_called_suite_factory_reads_like_the_written_out_suite",
   "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_substitution_that_breaks_the_parse_keeps_the_unexpanded_tests",
+  "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_parameter_spelling_inside_a_string_credits_nothing",
   "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_factory_the_calls_cannot_rename_into_credits_nothing",
   "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_factory_mentioned_beyond_its_calls_credits_nothing",
   "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_call_with_a_computed_argument_credits_nothing",
