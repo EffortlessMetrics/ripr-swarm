@@ -333,6 +333,8 @@ impl PathDependencyAdjacency {
                 .and_then(|(_node, children)| children.next());
             match advance {
                 Some(child) => {
+                    #[cfg(test)]
+                    tests::WALK_EDGE_VISITS.with(|count| count.set(count.get() + 1));
                     if on_path.contains(&child) {
                         #[cfg(test)]
                         cycles.insert(child);
@@ -607,6 +609,164 @@ mod tests {
         workspace_graph_provenance,
     };
     use std::path::{Path, PathBuf};
+
+    std::thread_local! {
+        pub(super) static WALK_EDGE_VISITS: std::cell::Cell<usize> = const {
+            std::cell::Cell::new(0)
+        };
+    }
+
+    /// Exercise the production expansion, including graph construction and
+    /// the declared-target fallback. Each changed root reaches one shared
+    /// tail; the fallback alone reaches only c0, not the rest of that tail.
+    #[test]
+    fn expansion_shared_tail_visits_each_edge_at_most_twice() {
+        let mut samples = Vec::new();
+        for width in [16, 32, 64] {
+            let changed = (0..width).map(|n| format!("r{n}/")).collect();
+            let mut edges = (0..width)
+                .map(|n| {
+                    edge_from_manifest(
+                        "c0/Cargo.toml",
+                        PathDependencyResolution::Resolved,
+                        Some(&format!("r{n}")),
+                    )
+                })
+                .collect::<Vec<_>>();
+            for n in 1..width {
+                edges.push(edge_from_manifest(
+                    &format!("c{n}/Cargo.toml"),
+                    PathDependencyResolution::Resolved,
+                    Some(&format!("c{}", n - 1)),
+                ));
+            }
+            let edge_count = edges.len();
+            let provenance = WorkspaceGraphProvenance {
+                package_graph_status: "complete".to_string(),
+                path_dependency_edges: edges,
+                ..WorkspaceGraphProvenance::default()
+            };
+            WALK_EDGE_VISITS.with(|count| count.set(0));
+            let expansion = expansion_from_provenance(&provenance, &[], &changed, &BTreeSet::new());
+            let visits = WALK_EDGE_VISITS.with(std::cell::Cell::get);
+            assert_eq!(expansion.status(), PathDependencyGraphStatus::Complete);
+            assert_eq!(
+                expansion.into_dependent_package_roots(),
+                (0..width).map(|n| format!("c{n}/")).collect(),
+                "all shared-tail packages must be reached, with no changed roots added"
+            );
+            eprintln!("shared-tail seeds={width} edges={edge_count} visits={visits}");
+            samples.push((width, edge_count, visits));
+        }
+        for (width, edges, visits) in samples {
+            assert!(visits >= edges, "the nonempty traversal must actually run");
+            assert!(
+                visits <= 2 * edges,
+                "{width} roots repeated shared graph work: {visits} visits for {edges} edges"
+            );
+        }
+    }
+
+    fn provenance_for_reverse_edges(edges: &[(&str, &str)]) -> WorkspaceGraphProvenance {
+        WorkspaceGraphProvenance {
+            package_graph_status: "complete".to_string(),
+            path_dependency_edges: edges
+                .iter()
+                .map(|(dependency, dependent)| {
+                    edge_from_manifest(
+                        &format!("{dependent}/Cargo.toml"),
+                        PathDependencyResolution::Resolved,
+                        Some(dependency),
+                    )
+                })
+                .collect(),
+            ..WorkspaceGraphProvenance::default()
+        }
+    }
+
+    #[test]
+    fn expansion_preserves_overlapping_seeds_and_cycle_roots() {
+        let expand = |edges: &[(&str, &str)], changed: &[&str]| {
+            expansion_from_provenance(
+                &provenance_for_reverse_edges(edges),
+                &[],
+                &roots(changed),
+                &BTreeSet::new(),
+            )
+            .into_dependent_package_roots()
+        };
+        assert_eq!(
+            expand(&[("b", "a"), ("a", "c")], &["b/", "c/"]),
+            roots(&["a/", "c/"]),
+            "a changed seed still belongs in the union when another seed reaches it"
+        );
+        assert_eq!(
+            expand(
+                &[("a", "x"), ("b", "x"), ("c", "x"), ("x", "a")],
+                &["a/", "b/", "c/"]
+            ),
+            roots(&["a/", "x/"]),
+            "shared origins must propagate through a cycle back to another seed"
+        );
+        assert_eq!(
+            expand(&[("a", "x"), ("x", "a")], &["a/"]),
+            roots(&["x/"]),
+            "a cycle alone does not put its sole seed in its own walk result"
+        );
+        assert_eq!(
+            expand(&[("a", "a")], &["a/"]),
+            roots(&["a/"]),
+            "the unchanged declared-target fallback includes a directly self-dependent seed"
+        );
+    }
+
+    /// The original per-root DFS is an independent oracle for every directed
+    /// three-node graph (including self edges) and every seed subset. Always
+    /// add an unknown seed, and account independently for the one-hop index.
+    #[test]
+    fn expansion_matches_per_seed_walks_on_all_three_node_graphs() {
+        let names = ["a", "b", "c"];
+        for graph_mask in 0..(1_usize << 9) {
+            let mut edges = Vec::new();
+            for (from, dependency) in names.iter().enumerate() {
+                for (to, dependent) in names.iter().enumerate() {
+                    if graph_mask & (1 << (3 * from + to)) != 0 {
+                        edges.push((*dependency, *dependent));
+                    }
+                }
+            }
+            let provenance = provenance_for_reverse_edges(&edges);
+            let adjacency = PathDependencyAdjacency::build(&provenance);
+            for seed_mask in 0..8 {
+                let mut changed = roots(&["ghost/"]);
+                let mut expected = BTreeSet::new();
+                for (seed, name) in names.iter().enumerate() {
+                    if seed_mask & (1 << seed) == 0 {
+                        continue;
+                    }
+                    changed.insert(format!("{name}/"));
+                    if let Some(walk) = adjacency.reverse_walk(&format!("{name}/Cargo.toml")) {
+                        expected
+                            .extend(walk.reachable().iter().map(|m| package_root_of_manifest(m)));
+                    }
+                    // Every captured edge here is resolved. The secondary
+                    // index contributes exactly the seed's direct callers.
+                    for &(dependency, dependent) in &edges {
+                        if dependency == *name {
+                            expected.insert(format!("{dependent}/"));
+                        }
+                    }
+                }
+                let actual =
+                    expansion_from_provenance(&provenance, &[], &changed, &BTreeSet::new());
+                assert_eq!(
+                    actual.into_dependent_package_roots(),
+                    expected,
+                    "graph={graph_mask}, seeds={seed_mask}"
+                );
+            }
+        }
+    }
 
     fn unique_dir(label: &str) -> PathBuf {
         use std::time::{SystemTime, UNIX_EPOCH};
