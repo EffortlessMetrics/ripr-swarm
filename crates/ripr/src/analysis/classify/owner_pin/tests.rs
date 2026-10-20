@@ -4618,6 +4618,16 @@ fn weight_refusal_under(
     others: &[(&str, &str)],
     root: Option<&Path>,
 ) -> Option<AssertionRefusal> {
+    weight_refusal_nth(tests, others, root, 0)
+}
+
+/// `weight_refusal_under` for the test's `nth` assertion.
+fn weight_refusal_nth(
+    tests: &str,
+    others: &[(&str, &str)],
+    root: Option<&Path>,
+    nth: usize,
+) -> Option<AssertionRefusal> {
     let mut files = vec![(LIB, WEIGHT_LIB), (TESTS, tests)];
     files.extend_from_slice(others);
     let mut index = index(&files);
@@ -4631,10 +4641,10 @@ fn weight_refusal_under(
     assert!(test.is_some(), "the fixture test must be indexed");
     let test = test?;
     assert!(
-        !test.assertions.is_empty(),
+        test.assertions.len() > nth,
         "the test's assertions must parse"
     );
-    OwnerPinSyntax::default().refusal(test, &test.assertions[0], &index)
+    OwnerPinSyntax::default().refusal(test, &test.assertions[nth], &index)
 }
 
 #[test]
@@ -7501,6 +7511,58 @@ fn an_outcome_settling_attribute_is_the_refusal_wherever_it_sits() {
 }
 
 #[test]
+fn a_feature_gated_test_is_refused_for_its_attribute_not_a_macro_rebinding() {
+    // #8388, rand 94c9078 `uniform_other.rs` `test_char_bad_deser`: a test
+    // carrying `#[cfg(feature = "serde")]` is "assertion not credited" because
+    // the feature may be off in the build under analysis, so the test may not
+    // run at all. No macro is rebound anywhere; the plain `assert!` and
+    // `assert_eq!` spellings are credited without the gate.
+    let body = "fn char_bad_deser() {\n    let result = weight(4);\n    assert!(result > 0);\n    assert_eq!(result, 12);\n}\n";
+    let prelude = "use demo::weight;\n";
+    let gated = format!("{prelude}#[test]\n#[cfg(feature = \"serde\")]\n{body}");
+    let gate = "#[cfg(feature = \"serde\")]".to_string();
+    let refusal = weight_refusal(&gated, &[]);
+    assert_eq!(
+        refusal,
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::TestAttribute(gate.clone())
+        ))
+    );
+    // The exact-value `assert_eq!` oracle (the second assertion) is refused
+    // for the same attribute, not only the first assertion.
+    assert_eq!(weight_refusal_nth(&gated, &[], None, 1), refusal);
+    // The gate is unknown availability, not a settled outcome: an analyzer
+    // limit that withholds a gap, and the clause names the attribute.
+    let clause = refusal.as_ref().map(AssertionRefusal::describe);
+    assert!(
+        refusal.is_some_and(|refusal| refusal.is_analyzer_limit())
+            && clause.as_deref().is_some_and(|clause| {
+                clause.contains(&gate) && clause.contains("may change whether or how it runs")
+            }),
+        "{clause:?}"
+    );
+    // The same test without the gate is credited, so the attribute alone is
+    // the cause.
+    let plain = format!("{prelude}#[test]\n{body}");
+    assert_eq!(weight_refusal(&plain, &[]), None);
+    assert_eq!(weight_refusal_nth(&plain, &[], None, 1), None);
+    // Fail closed: a glob of a foreign crate still refuses the ungated test,
+    // for the `assert_eq!` oracle as well as the first assertion.
+    let foreign = format!("use rayon::prelude::*;\n{plain}");
+    for nth in 0..2 {
+        assert!(
+            matches!(
+                weight_refusal_nth(&foreign, &[], None, nth),
+                Some(AssertionRefusal::Syntax(
+                    AssertionContextRefusal::MacroBinding(_)
+                ))
+            ),
+            "assertion {nth}"
+        );
+    }
+}
+
+#[test]
 fn the_workspace_site_is_the_first_rebinding_in_path_order_else_the_first_site() {
     // The workspace scan runs per file on the rayon pool; the reported site
     // must still be the first rebinding in path order, or failing that the
@@ -8872,6 +8934,12 @@ fn an_expected_value_a_macro_or_a_static_rebinds_from_the_owner_is_not_a_pin() {
             "struct String(Cell<u32>);\nimpl String {\n    fn new() -> Self {\n        Self(Cell::new(0))\n    }\n}\n\n",
             "let expected = String::new();\n        Cell::set(&expected.0, crate::weight(4));\n        assert_eq!(crate::weight(4), expected.0.get());",
         ),
+        // #8929: an inner-block `static` redeclaring the name after a plain
+        // top-level `let` makes the later `&EXPECTED` a static borrow.
+        (
+            "",
+            "let EXPECTED = 0;\n        {\n            static EXPECTED: AtomicU32 = AtomicU32::new(0);\n            same(crate::weight(4), &EXPECTED);\n            assert_eq!(crate::weight(4), EXPECTED.load(Ordering::SeqCst));\n        }",
+        ),
         // #8795 negative controls: a non-plain value still refuses a shared
         // borrow, the one-argument `replace` and the argument-free `take`
         // still write, and a pattern is not an annotation.
@@ -8994,6 +9062,103 @@ fn an_expected_value_a_macro_or_a_static_rebinds_from_the_owner_is_not_a_pin() {
     ] {
         let lib = unit_tests(prelude, body);
         assert_eq!(path_admitted(&lib, "x * 3", None).len(), 1, "{body}");
+    }
+}
+
+/// #8929: the `&mut` family spelled through grouping parentheses or a path,
+/// `ref mut` bindings on a place, the `addr_of_mut!` macro and a `?` / `.await`
+/// tail after a call group. Every write row is a mutable alias or write of the
+/// expected value the scan must refuse; every read row is the sibling shape
+/// that must stay a read so the fix does not become a blanket refusal.
+#[test]
+fn written_by_test_refuses_grouped_pathed_ref_mut_and_addr_of_mut_writes() {
+    for write in [
+        // `&mut (name)` / `&mut (name).f`.
+        "let r = &mut (EXPECTED); *r = f(4);",
+        "let r = &mut (EXPECTED).f; *r = f(4);",
+        "let r = & mut ( EXPECTED );",
+        "let r = &raw mut (EXPECTED);",
+        // `ref mut` on a scrutinee place.
+        "let ref mut r = EXPECTED; *r = f(4);",
+        "let ref mut r: u32 = EXPECTED; *r = f(4);",
+        "let (ref mut a, b) = EXPECTED;",
+        "match EXPECTED { ref mut r => { *r = f(4); } }",
+        "match EXPECTED.f { ref mut r => { *r = f(4); } }",
+        "if let Some(ref mut x) = EXPECTED { *x = f(4); }",
+        "while let Some(ref mut x) = EXPECTED.f {}",
+        // `ref mut` on a path-qualified or grouped scrutinee.
+        "let ref mut r = crate::EXPECTED; *r = f(4);",
+        "let ref mut r = self::EXPECTED;",
+        "let ref mut r = m::n::EXPECTED;",
+        "let ref mut r = (crate::EXPECTED);",
+        "let ref mut r = ((EXPECTED));",
+        "if let Some(ref mut x) = crate::EXPECTED {}",
+        "if let Some(ref mut x) = self::EXPECTED {}",
+        "if let Some(ref mut x) = m::n::EXPECTED {}",
+        "while let Some(ref mut x) = crate::EXPECTED.f {}",
+        "while let Some(ref mut x) = m::n::EXPECTED {}",
+        "match crate::EXPECTED { ref mut r => {} }",
+        "match self::EXPECTED { ref mut r => {} }",
+        "match m::n::EXPECTED { ref mut r => {} }",
+        "match (crate::EXPECTED) { ref mut r => {} }",
+        "match (EXPECTED) { ref mut r => {} }",
+        // `addr_of_mut!` and its path-qualified spellings.
+        "let p = addr_of_mut!(EXPECTED); *p = f(4);",
+        "let p = ptr::addr_of_mut!(EXPECTED);",
+        "let p = std::ptr::addr_of_mut!( EXPECTED );",
+        "let p = addr_of_mut! (EXPECTED);",
+        "let p = addr_of_mut!((EXPECTED).f);",
+        "let p = addr_of_mut!(crate::EXPECTED); *p = f(4);",
+        "let p = std::ptr::addr_of_mut!(m::EXPECTED);",
+        "let p = addr_of_mut!( (EXPECTED) );",
+        "let p = addr_of_mut!(self::EXPECTED);",
+        // A path-qualified name behind `&mut`.
+        "let r = &mut crate::EXPECTED; *r = f(4);",
+        "let r = &mut self::EXPECTED;",
+        "let r = &mut m::n::EXPECTED;",
+        "let r = & mut ::EXPECTED;",
+        "let r = &mut (crate::EXPECTED);",
+        // A `?` / `.await` tail followed by a place write still refuses.
+        "foo(EXPECTED)?.x = 1;",
+        "foo(EXPECTED)?[0] = 1;",
+        "(foo(EXPECTED)?).x = 1;",
+        "foo(EXPECTED).await?.x = 1;",
+        "*foo(EXPECTED)? = 1;",
+    ] {
+        assert!(super::written_by_test(write, "EXPECTED", false), "{write}");
+    }
+    for read in [
+        "let r = &(EXPECTED);",
+        "let r = &mut foo(EXPECTED);",
+        "let r = &mut foo::bar(EXPECTED);",
+        "let r = x & (EXPECTED);",
+        "let r = &crate::EXPECTED;",
+        "let r = crate::EXPECTED;",
+        "let r = self::EXPECTED;",
+        "match crate::EXPECTED { _ => {} }",
+        "match m::n::EXPECTED { r => {} }",
+        "if let Some(x) = crate::EXPECTED {}",
+        "while let Some(x) = m::n::EXPECTED {}",
+        "let r = EXPECTED;",
+        "let mut r = EXPECTED;",
+        "let ref r = EXPECTED;",
+        "let ref mut r = other; let v = EXPECTED;",
+        "match EXPECTED { x => {} }",
+        "match EXPECTED { Some(ref x) => {} }",
+        "match other { ref mut r => {} } let v = EXPECTED;",
+        "if let Some(x) = EXPECTED {}",
+        "let p = addr_of!(EXPECTED);",
+        "let p = ptr::addr_of!(EXPECTED);",
+        "let p = my_addr_of_mut!(EXPECTED);",
+        // A `?` / `.await` after a call group only reads the argument.
+        "foo(EXPECTED)?;",
+        "let x = foo(EXPECTED)?;",
+        "assert_eq!(f(4), parse(EXPECTED)?);",
+        "foo(EXPECTED).await?;",
+        "let x = foo(EXPECTED).await;",
+        "bar(foo(EXPECTED)?);",
+    ] {
+        assert!(!super::written_by_test(read, "EXPECTED", false), "{read}");
     }
 }
 

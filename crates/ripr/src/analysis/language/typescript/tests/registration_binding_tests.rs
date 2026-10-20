@@ -296,3 +296,74 @@ fn registration_bindings_keep_verified_runner_extensions() -> Result<(), String>
     }
     Ok(())
 }
+
+/// Combined-source control only: #8950 remains independently owned.
+#[test]
+fn registration_bindings_called_factory_controls() -> Result<(), String> {
+    for (prelude, called_class) in [
+        (
+            "import { describe, test, expect } from 'vitest';".to_string(),
+            ExposureClass::Exposed,
+        ),
+        (String::new(), ExposureClass::Exposed),
+        (
+            format!("import {{ test, expect }} from 'vitest'; const describe = {NOOP};"),
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            format!("import {{ describe, expect }} from 'vitest'; const test = {NOOP};"),
+            ExposureClass::NoStaticPath,
+        ),
+    ] {
+        for (call, expected) in [
+            ("", ExposureClass::NoStaticPath),
+            ("register();", called_class),
+        ] {
+            let source = format!(
+                "{prelude} function register() {{ describe('sum', () => {{ {TEST} }}); }} {call}"
+            );
+            let finding = registration_finding("registration-factory-integration", &source)?;
+            assert_eq!(finding.class, expected, "{source}");
+            if expected == ExposureClass::Exposed {
+                assert_eq!(finding.related_tests.len(), 1);
+                assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::ExactValue);
+                assert_eq!(
+                    finding.related_tests[0].oracle_strength,
+                    OracleStrength::Strong
+                );
+            } else {
+                assert!(finding.related_tests.is_empty(), "{finding:?}");
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn registration_bindings_named_callback_preserves_live_and_dead_reach() -> Result<(), String> {
+    for (body, expected) in [
+        (
+            "const unused = () => { expect(sumAll([2, 3, 4])).toBe(9); };",
+            ExposureClass::NoStaticPath,
+        ),
+        (
+            "const unused = () => sumAll([0]); expect(sumAll([2, 3, 4])).toBe(9);",
+            ExposureClass::Exposed,
+        ),
+    ] {
+        let source = format!("function check() {{ {body} }} test('sumAll', check);");
+        let finding = registration_finding("registration-named-callback", &source)?;
+        assert_eq!(finding.class, expected, "{source}");
+        if expected == ExposureClass::NoStaticPath {
+            assert!(finding.related_tests.is_empty());
+        } else {
+            assert_eq!(finding.related_tests.len(), 1);
+            assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::ExactValue);
+            assert_eq!(
+                finding.related_tests[0].oracle_strength,
+                OracleStrength::Strong
+            );
+        }
+    }
+    Ok(())
+}

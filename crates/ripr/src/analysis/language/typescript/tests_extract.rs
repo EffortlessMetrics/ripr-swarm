@@ -83,13 +83,29 @@ pub(crate) fn extract_tests_and_conditional_credit_gap(
     file: &Path,
     source: &str,
 ) -> (Vec<TypeScriptTest>, Option<TypeScriptConditionalCreditGap>) {
+    extract_tests_expanding_suite_factories(file, source, true)
+}
+
+/// `expand` is off for the rerun on an already-expanded source, whose
+/// factory calls are still present.
+fn extract_tests_expanding_suite_factories(
+    file: &Path,
+    source: &str,
+    expand: bool,
+) -> (Vec<TypeScriptTest>, Option<TypeScriptConditionalCreditGap>) {
     // Same guard as owner extraction (#4101): a file under the nesting
     // budget can still overflow the caller stack, so the parse must
     // not run on the main thread.
-    let Ok(out) = parse_on_worker(file, source, |file, source, allocator| {
+    let Ok(out) = parse_on_worker(file, source, move |file, source, allocator| {
         let ret = Parser::new(allocator, source, source_type_for(file)).parse();
         if !ret.errors.is_empty() {
-            return (Vec::new(), None);
+            return (Vec::new(), None, None);
+        }
+        if expand
+            && let Some(expansion) =
+                super::suite_factory::expand_suite_factories(&ret.program.body, source)
+        {
+            return (Vec::new(), None, Some(expansion));
         }
         let imports = extract_imports_for_test_file(&ret.program.body);
         let mocks = extract_mocks_from_statements(&ret.program.body, &imports);
@@ -167,11 +183,34 @@ pub(crate) fn extract_tests_and_conditional_credit_gap(
         } else {
             None
         };
-        (tests, conditional_credit_gap)
+        (tests, conditional_credit_gap, None)
     }) else {
         return (Vec::new(), None);
     };
-    out
+    let (tests, gap, expansion) = out;
+    let Some(expansion) = expansion else {
+        return (tests, gap);
+    };
+    // Rerun on the source with the factory calls expanded; a test found in
+    // an appended expansion reports its call's line.
+    let (mut tests, gap) = extract_tests_expanding_suite_factories(file, &expansion.source, false);
+    // A substitution that lands inside a string can leave the expanded source
+    // unparsable, which would drop every test the file yielded before
+    // expansion; fall back to the unexpanded extraction then.
+    if tests.is_empty() {
+        return extract_tests_expanding_suite_factories(file, source, false);
+    }
+    for test in &mut tests {
+        // Assertion lines stay offsets from the test line: the classifier
+        // indexes `body_text` by `assertion.line - test.line`.
+        let expanded_start = test.line;
+        let reported_start = expansion.reported_line(expanded_start);
+        test.line = reported_start;
+        for assertion in &mut test.assertions {
+            assertion.line = reported_start + assertion.line.saturating_sub(expanded_start);
+        }
+    }
+    (tests, gap)
 }
 
 /// Walk a list of statements and collect every syntactic owner-module mock
@@ -670,8 +709,8 @@ fn string_value(expression: &Expression<'_>) -> Option<String> {
     }
 }
 
-pub(crate) fn collect_tests_from_statements(
-    statements: &[Statement<'_>],
+pub(crate) fn collect_tests_from_statements<'s, 'a>(
+    statements: &'s [Statement<'a>],
     file: &Path,
     source: &SourceText<'_>,
     mocks: &[String],
@@ -679,6 +718,15 @@ pub(crate) fn collect_tests_from_statements(
     scope: &mut TestScope,
     tests: &mut Vec<TypeScriptTest>,
 ) {
+    // Zero-parameter function declarations a `test(title, name)` registration
+    // in this same statement list can reference by name (RIPR-SPEC-0243).
+    // Hoisted, so a declaration after the registration counts. An enclosing
+    // scope's function is not resolved: the test's scope bindings come from
+    // the registration's scope, not from where the body was written.
+    let functions: Vec<_> = statements
+        .iter()
+        .filter_map(declared_callback_function)
+        .collect();
     // Bindings that hold for every test in this scope: variable, function and
     // class declarations and `beforeEach`/`beforeAll` assignments at this
     // level. Collected before any test so a hook written after a test still
@@ -865,6 +913,7 @@ pub(crate) fn collect_tests_from_statements(
             source,
             &scope.describe_names,
             &assertion_bindings,
+            &functions,
         ) {
             test.mocks_in_file = mocks.to_vec();
             test.imports_in_file = imports.to_vec();
@@ -1705,7 +1754,10 @@ fn returns_only(
 }
 
 /// Byte offsets of `identifier` as a whole word, member names included.
-fn word_occurrences<'a>(code: &'a str, identifier: &'a str) -> impl Iterator<Item = usize> + 'a {
+pub(super) fn word_occurrences<'a>(
+    code: &'a str,
+    identifier: &'a str,
+) -> impl Iterator<Item = usize> + 'a {
     let word =
         |ch: Option<char>| ch.is_some_and(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric());
     code.match_indices(identifier).filter_map(move |(at, _)| {
@@ -2352,23 +2404,159 @@ pub(crate) fn describe_body_from_statement<'a>(
     Some((name, body))
 }
 
-pub(crate) fn test_from_statement(
+/// A top-level `function name() { ... }` a registration can name as its
+/// callback: `(name, declaration)`.
+pub(crate) type DeclaredFunction<'s, 'a> = (&'s str, &'s oxc_ast::ast::Function<'a>);
+
+/// The declared function of `stmt` when it has a name, a body, no parameters
+/// and is not a generator: the only shape whose body is exactly what the
+/// runner executes when `test(title, name)` calls it.
+fn declared_callback_function<'s, 'a>(stmt: &'s Statement<'a>) -> Option<DeclaredFunction<'s, 'a>> {
+    let Statement::FunctionDeclaration(function) = stmt else {
+        return None;
+    };
+    let name = function.id.as_ref()?.name.as_str();
+    (function.body.is_some()
+        && !function.generator
+        && function.params.items.is_empty()
+        && function.params.rest.is_none())
+    .then_some((name, &**function))
+}
+
+/// The function a plain `test(title, name)` registration runs, when `name`
+/// is declared once, with no parameters, and the file uses it nowhere else
+/// than as the callback of a titled `test` / `it` call. Any other mention (a
+/// reassignment, a parameter or variable of the same name, a call, an export,
+/// a second declaration) leaves the reference unresolved.
+fn referenced_callback_function<'s, 'a>(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    functions: &[DeclaredFunction<'s, 'a>],
+    source: &SourceText<'_>,
+) -> Option<&'s oxc_ast::ast::Function<'a>> {
+    if call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test) {
+        return None;
+    }
+    let oxc_ast::ast::Argument::Identifier(identifier) =
+        call.arguments.get(declaration_callback_index(call))?
+    else {
+        return None;
+    };
+    let name = identifier.name.as_str();
+    let (_, function) = functions.iter().find(|(declared, _)| *declared == name)?;
+    function_used_only_as_test_callback(source, name).then_some(*function)
+}
+
+fn function_used_only_as_test_callback(source: &str, name: &str) -> bool {
+    // A unicode-escaped identifier (`\u0063hecks = ...`) spells a mention the
+    // word scan below cannot see, so any escape leaves the reference
+    // unresolved.
+    if source.contains("\\u") {
+        return false;
+    }
+    let word = |ch: char| ch == '_' || ch == '$' || ch.is_alphanumeric();
+    let mut declarations = 0;
+    for at in word_occurrences(source, name) {
+        let before = source[..at].trim_end();
+        if before
+            .strip_suffix("function")
+            .is_some_and(|rest| !rest.ends_with(word))
+        {
+            declarations += 1;
+            continue;
+        }
+        let callback_position = source[at + name.len()..]
+            .trim_start()
+            .starts_with([')', ',']);
+        if !callback_position || !follows_test_title(before) {
+            return false;
+        }
+    }
+    declarations == 1
+}
+
+/// Whether `before` ends with `test('title',` / `it("title",` (optionally
+/// `.only`, `.concurrent`, `.sequential`), the position of a registration
+/// callback. A title with an escape or a template substitution is not read.
+fn follows_test_title(before: &str) -> bool {
+    let word = |ch: char| ch == '_' || ch == '$' || ch.is_alphanumeric();
+    let trailing_word = |text: &str| -> (usize, bool) {
+        let start = text
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| !word(*ch))
+            .map_or(0, |(at, ch)| at + ch.len_utf8());
+        (start, start > 0 && text[..start].ends_with('.'))
+    };
+    let Some(rest) = before.strip_suffix(',').map(str::trim_end) else {
+        return false;
+    };
+    let Some(quote) = rest
+        .chars()
+        .next_back()
+        .filter(|ch| matches!(ch, '"' | '\'' | '`'))
+    else {
+        return false;
+    };
+    let title = &rest[..rest.len() - 1];
+    let Some(open) = title.rfind(quote) else {
+        return false;
+    };
+    if title[open..].contains('\\') || (quote == '`' && title[open..].contains("${")) {
+        return false;
+    }
+    let Some(head) = title[..open]
+        .trim_end()
+        .strip_suffix('(')
+        .map(str::trim_end)
+    else {
+        return false;
+    };
+    let (start, member) = trailing_word(head);
+    let mut root = &head[start..];
+    let mut head = &head[..start];
+    if member {
+        if !matches!(root, "only" | "concurrent" | "sequential") {
+            return false;
+        }
+        head = &head[..head.len() - 1];
+        let (start, member) = trailing_word(head);
+        if member {
+            return false;
+        }
+        root = &head[start..];
+    }
+    matches!(root, "test" | "it")
+}
+
+pub(crate) fn test_from_statement<'s, 'a>(
     stmt: &Statement<'_>,
     file: &Path,
     source: &SourceText<'_>,
     describe_stack: &[String],
     bindings: &TypeScriptAssertionBindings,
+    functions: &[DeclaredFunction<'s, 'a>],
 ) -> Option<TypeScriptTest> {
     let call = statement_call(stmt)?;
-    let (name, assertions) = test_name_and_assertions_from_call(call, source, bindings)?;
+    let referenced = referenced_callback_function(call, functions, source);
+    let (name, assertions) =
+        test_name_and_assertions_from_registration(call, referenced, source, bindings)?;
     Some(TypeScriptTest {
         name: qualified_test_name(describe_stack, &name),
         local_name: name,
         describe_names: describe_stack.to_vec(),
         file: file.to_path_buf(),
         line: source.line_for_offset(call.span.start as usize),
-        body_text: source[call.span.start as usize..call.span.end as usize].to_string(),
-        reach_body_text: unused_function_reach_body(call, source),
+        // The referenced function's text joins the call's, so the relation
+        // gates see the owner call the runner actually executes.
+        body_text: match referenced {
+            Some(function) => format!(
+                "{}\n{}",
+                &source[call.span.start as usize..call.span.end as usize],
+                &source[function.span.start as usize..function.span.end as usize]
+            ),
+            None => source[call.span.start as usize..call.span.end as usize].to_string(),
+        },
+        reach_body_text: unused_function_reach_body(call, referenced, source),
         assertions,
         // Populated by `extract_tests` (the only public extractor) once
         // per file before the test is returned to the caller.
@@ -2412,17 +2600,29 @@ pub(super) fn byte_preserving_code_mask(source: &str) -> Option<String> {
 /// called, aliased, returned or passed values retain the existing relation rules.
 fn unused_function_reach_body(
     call: &oxc_ast::ast::CallExpression<'_>,
+    referenced: Option<&oxc_ast::ast::Function<'_>>,
     source: &SourceText<'_>,
 ) -> Option<String> {
-    let start = call.span.start as usize;
-    let body = &source[start..call.span.end as usize];
+    let call_text = &source[call.span.start as usize..call.span.end as usize];
+    let (start, body, statements) = if let Some(function) = referenced {
+        (
+            function.span.start as usize,
+            &source[function.span.start as usize..function.span.end as usize],
+            function.body.as_ref()?.statements.as_slice(),
+        )
+    } else {
+        (
+            call.span.start as usize,
+            call_text,
+            function_body_statements_from_argument(
+                call.arguments.get(declaration_callback_index(call))?,
+            )?,
+        )
+    };
     let code = byte_preserving_code_mask(body)?;
     if file_is_opaque(&code) {
         return None;
     }
-    let statements = function_body_statements_from_argument(
-        call.arguments.get(declaration_callback_index(call))?,
-    )?;
     let mut ranges = Vec::new();
     collect_unused_function_ranges(statements, &code, start, &mut ranges);
     if ranges.is_empty() {
@@ -2439,7 +2639,12 @@ fn unused_function_reach_body(
             }
         }
     }
-    String::from_utf8(bytes).ok()
+    let filtered = String::from_utf8(bytes).ok()?;
+    Some(if referenced.is_some() {
+        format!("{call_text}\n{filtered}")
+    } else {
+        filtered
+    })
 }
 
 fn collect_unused_function_ranges(
@@ -2511,8 +2716,20 @@ fn collect_unused_function_ranges(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn test_name_and_assertions_from_call(
     call: &oxc_ast::ast::CallExpression<'_>,
+    source: &SourceText<'_>,
+    bindings: &TypeScriptAssertionBindings,
+) -> Option<(String, Vec<TypeScriptAssertion>)> {
+    test_name_and_assertions_from_registration(call, None, source, bindings)
+}
+
+/// `referenced` is the same-file function a `test(title, name)` registration
+/// runs; its body stands in for the inline callback.
+fn test_name_and_assertions_from_registration(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    referenced: Option<&oxc_ast::ast::Function<'_>>,
     source: &SourceText<'_>,
     bindings: &TypeScriptAssertionBindings,
 ) -> Option<(String, Vec<TypeScriptAssertion>)> {
@@ -2537,7 +2754,15 @@ pub(crate) fn test_name_and_assertions_from_call(
     let call_text = source
         .get(call.span.start as usize..call.span.end as usize)
         .unwrap_or_default();
-    let body_declarations = function_body_statements_from_argument(callback)
+    let function_text = referenced
+        .and_then(|function| source.get(function.span.start as usize..function.span.end as usize))
+        .unwrap_or_default();
+    let call_text = &format!("{call_text}\n{function_text}");
+    let callback_statements = referenced
+        .and_then(|function| function.body.as_ref())
+        .map(|body| &body.statements)
+        .or_else(|| function_body_statements_from_argument(callback));
+    let body_declarations = callback_statements
         .map(|statements| {
             let mut names = Vec::new();
             collect_block_declared_names(statements, &mut names);
@@ -2579,7 +2804,7 @@ pub(crate) fn test_name_and_assertions_from_call(
     {
         return Some((name, assertions));
     }
-    let assertions = function_body_statements_from_argument(callback)
+    let assertions = callback_statements
         .map(|statements| {
             collect_assertions_in_statements_with_bindings(
                 statements,

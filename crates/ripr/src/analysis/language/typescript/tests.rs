@@ -17195,6 +17195,7 @@ mod default_object_member_tests;
 mod directory_specifier_tests;
 mod dropped_term_tests;
 mod error_payload_tests;
+mod function_reference_callback_tests;
 mod instance_class_tests;
 mod issue7507_shadow_tests;
 mod literal_matcher_tests;
@@ -17213,6 +17214,7 @@ mod registration_binding_tests;
 mod scope_receiver_tests;
 mod spec0243_owner_tests;
 mod spy_module_object_tests;
+mod suite_factory_tests;
 mod table_case_tests;
 mod typed_loose_equality_tests;
 
