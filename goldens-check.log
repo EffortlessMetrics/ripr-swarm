@@ -1,0 +1,4 @@
+    Finished `dev` profile [unoptimized] target(s) in 0.42s
+     Running `target/debug/xtask goldens check`
+$ CARGO_HOME=/workspace/.cargo RUSTUP_TOOLCHAIN=1.95.0 RUSTUP_HOME=/workspace/.rustup cargo build -p ripr
+    Finished `dev` profile [unoptimized] target(s) in 0.21s

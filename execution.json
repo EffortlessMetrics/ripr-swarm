@@ -1,0 +1,125 @@
+{
+  "repository": "https://github.com/EffortlessMetrics/ripr-swarm",
+  "observed_utc": "2026-10-20T05:14:09.484600+00:00",
+  "candidate": "b1998c3907f0470138fd67df0feaec5af5d61d68",
+  "candidate_tree": "ab2948b3783baf434a0df1be40390d75aea42454",
+  "base": "1e9468f4b0d133f0a50b64134318763d8cf48beb",
+  "latest_inspected_main": "ce0966416c4bc3c7d6c470737a3e3cd716055fd3",
+  "branch": "fix/brief-diff-input-status",
+  "environment": {
+    "shell": "Bash",
+    "host": "x86_64-unknown-linux-gnu",
+    "rust": "1.95.0",
+    "cargo": "1.95.0",
+    "CARGO_HOME": "/workspace/.cargo",
+    "RUSTUP_HOME": "/workspace/.rustup",
+    "CARGO_TARGET_DIR": "/workspace/brief-status/target",
+    "CARGO_BUILD_JOBS": "2",
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "git_common_dir": "/workspace/ripr-swarm/.git"
+  },
+  "commands": [
+    {
+      "subject": "base",
+      "command": "cargo xtask worktree doctor",
+      "exit": 0
+    },
+    {
+      "subject": "base",
+      "command": "cargo xtask check-fast",
+      "exit": 0,
+      "selected_paths": 0,
+      "ran_gates": 6,
+      "skipped_gates": 7
+    },
+    {
+      "subject": "base",
+      "command": "cargo check --locked -p ripr --all-targets",
+      "exit": 0
+    },
+    {
+      "subject": "base production plus added regression stimulus",
+      "command": "cargo test --locked -p ripr --test task_first_facade brief_diff_status:: -- --test-threads=1",
+      "exit": 101,
+      "valid_witness": "combined-only patch returned success on empty inventory",
+      "positive_control": "empty/ordinary group passed",
+      "withdrawn_interpretation": "initial base fixture was uncommitted and supplied an empty committed diff, so its failure is not a valid base refusal red"
+    },
+    {
+      "subject": "cf3e437d1a73a01985ba33b21e0933a4cd740b83",
+      "command": "cargo test --locked -p ripr --test task_first_facade brief_diff_status:: -- --test-threads=1",
+      "exit": 101,
+      "passed": 2,
+      "failed": 1,
+      "classification": "base fixture setup error, corrected in b1998c390; production unchanged"
+    },
+    {
+      "subject": "candidate",
+      "command": "cargo test --locked -p ripr --test task_first_facade brief_diff_status:: -- --test-threads=1",
+      "exit": 0,
+      "passed": 3,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 51,
+      "cli_invocations": 14
+    },
+    {
+      "subject": "candidate",
+      "command": "cargo xtask check-fast",
+      "exit": 0,
+      "selected_paths": 10,
+      "ran_gates": 15,
+      "skipped": [
+        "check-fixture-contracts"
+      ],
+      "embedded_help_parity_test": "1 passed; 11861 filtered",
+      "embedded_clippy": "cargo clippy --workspace --all-targets -- -D warnings, exit 0"
+    },
+    {
+      "subject": "candidate",
+      "command": "cargo xtask precommit",
+      "exit": 0,
+      "golden_comparison": "initially INCOMPLETE for missing locked anyhow 1.0.100; not a golden pass"
+    },
+    {
+      "subject": "candidate, cache preparation only",
+      "command": "cargo xtask goldens prepare",
+      "exit": 0,
+      "source_or_expected_output_changes": false
+    },
+    {
+      "subject": "candidate, same source after preparation",
+      "command": "cargo xtask goldens check",
+      "exit": 0,
+      "goldens_report_status": "pass",
+      "source_or_expected_output_changes": false
+    }
+  ],
+  "not_established": [
+    "corrected-base pre-repair red run",
+    "full workspace test execution",
+    "all-features qualification",
+    "Windows/native non-Linux qualification",
+    "hosted required CI",
+    "combined-tree qualification with latest main",
+    "language-scope admission",
+    "binary/mode/header-only input classification",
+    "unknown seam IDs"
+  ],
+  "ownership": {
+    "prior_bounded_totals_candidate": "untouched; app/agent_brief and seam_inventory sources/tests unchanged",
+    "follow_through": "coordinating parent; worker ends at reviewed Draft PR",
+    "merge_release_deployment": "no action; holds preserved"
+  },
+  "resources": {
+    "admitted_peak_additional_bytes": 12884901888,
+    "workspace_reserve_bytes": 8589934592,
+    "free_workspace_bytes_observed": 28497473536,
+    "worktree": "/workspace/brief-status",
+    "target_disposition": "retained with reason: open candidate review/qualification continuation",
+    "artifact_readback": "golden archive restored into separate staging and compared all 1521 file byte hashes, sizes, modes; originals retained",
+    "staging": "/workspace/scratch/brief-status-golden-readback"
+  },
+  "base_cli_sha256_observed": "5dff6dcfbdcbf1438419a88006462166c30bf6ac59a89c33411d8848f5c84e1e"
+}

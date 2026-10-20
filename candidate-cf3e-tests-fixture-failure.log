@@ -1,0 +1,65 @@
+   Compiling ripr v0.11.0 (/workspace/brief-status/crates/ripr)
+    Finished `test` profile [unoptimized] target(s) in 1m 50s
+     Running tests/task_first_facade.rs (target/debug/deps/task_first_facade-76c7a3d2385779ae)
+
+running 3 tests
+test brief_diff_status::brief_base_uses_the_same_parser_refusal_before_inventory ... FAILED
+test brief_diff_status::brief_empty_and_ordinary_patches_keep_successful_selection ... ok
+test brief_diff_status::brief_parser_refusals_cannot_become_empty_or_fallback_successes ... ok
+
+failures:
+
+---- brief_diff_status::brief_base_uses_the_same_parser_refusal_before_inventory stdout ----
+
+thread 'brief_diff_status::brief_base_uses_the_same_parser_refusal_before_inventory' (8299) panicked at crates/ripr/tests/task_first_facade.rs:265:5:
+assertion `left == right` failed: unresolved_conflict_markers: expected exit 2
+stdout:
+{
+  "config": {
+    "fingerprint": null,
+    "path": null,
+    "state": "missing"
+  },
+  "limits": {
+    "default": 3,
+    "hard_cap": 10,
+    "requested": 3,
+    "returned": 0
+  },
+  "mode": "draft",
+  "next": {
+    "inspect_packet": "mkdir -p /workspace/brief-status/target/ripr-brief-base-conflict-1792471658742733528-8298-0/target/ripr/workflow && ripr check --root /workspace/brief-status/target/ripr-brief-base-conflict-1792471658742733528-8298-0 --mode draft --format agent-seam-packets-json > /workspace/brief-status/target/ripr-brief-base-conflict-1792471658742733528-8298-0/target/ripr/workflow/agent-seam-packets.json",
+    "verify_after_edit": "ripr agent verify --root /workspace/brief-status/target/ripr-brief-base-conflict-1792471658742733528-8298-0 --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
+  },
+  "root": "/workspace/brief-status/target/ripr-brief-base-conflict-1792471658742733528-8298-0",
+  "schema_version": "0.1",
+  "scope": "working_set",
+  "tool": "ripr",
+  "top_seams": [],
+  "warnings": [
+    "No seams matched the requested scope (source: base), and no other agent-actionable seam in the analyzed inventory is visible under the current config."
+  ],
+  "working_set": {
+    "base": "HEAD",
+    "changed_lines": [],
+    "diff": null,
+    "files": [],
+    "seam_id": null,
+    "source": "base"
+  }
+}
+
+stderr:
+ripr: lexical fallback was used for 1 Rust file(s): src/lib.rs; repo seam inventory may under-credit these files because lexical fallback emits no probe shapes.
+
+  left: Some(0)
+ right: Some(2)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    brief_diff_status::brief_base_uses_the_same_parser_refusal_before_inventory
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 51 filtered out; finished in 0.28s
+
+error: test failed, to rerun pass `-p ripr --test task_first_facade`
