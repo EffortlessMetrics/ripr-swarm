@@ -115,6 +115,7 @@ mod issue7813_alias_member_tests;
 #[cfg(test)]
 #[path = "tests/issue7815_typeof_mixed_tests.rs"]
 mod issue7815_typeof_mixed_tests;
+mod suite_factory;
 mod tests_extract;
 #[cfg(test)]
 mod tests_extract_tests;
