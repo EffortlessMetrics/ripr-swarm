@@ -69,6 +69,11 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             "import { test as base } from 'vitest'; const it = base.extend({}); it('x', () => { checkout(1); });",
             unresolved,
         ),
+        (
+            "Playwright fixture extension without an oracle",
+            "import { test as base } from '@playwright/test'; const it = base.extend({}); it('x', () => { checkout(1); });",
+            unresolved,
+        ),
         // -- established absence (control 1, 7) --
         (
             "owner call only",

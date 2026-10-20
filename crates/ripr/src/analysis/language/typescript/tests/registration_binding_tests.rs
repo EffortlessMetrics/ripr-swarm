@@ -195,6 +195,7 @@ fn registration_bindings_reached_owner_without_live_oracle_stays_weak() -> Resul
     for body in [
         "const value = sumAll([2, 3, 4]); const unused = () => { expect(value).toBe(9); };",
         "const run = () => sumAll([2, 3, 4]); run();",
+        "const run = () => sumAll([2, 3, 4]); const value = `ééé ${run()}`;",
         "const run = () => sumAll([2, 3, 4]); const alias = run; alias();",
         "const consume = (fn) => fn(); const run = () => sumAll([2, 3, 4]); consume(run);",
     ] {
@@ -218,7 +219,7 @@ fn registration_bindings_reached_owner_without_live_oracle_stays_weak() -> Resul
 fn registration_bindings_unused_closure_preserves_live_owner_oracle() -> Result<(), String> {
     for body in [
         "const unused = () => sumAll([0]); expect(sumAll([2, 3, 4])).toBe(9);",
-        "const unused = () => sumAll([0]), value = sumAll([2, 3, 4]); expect(value).toBe(9);",
+        "const unused = () => sumAll([0]), value = sumAll([2, 3, 4]); expect(sumAll([2, 3, 4])).toBe(9);",
     ] {
         let source = format!("test('sumAll', () => {{ {body} }});");
         let finding = registration_finding("registration-live-oracle", &source)?;
@@ -230,6 +231,19 @@ fn registration_bindings_unused_closure_preserves_live_owner_oracle() -> Result<
             OracleStrength::Strong
         );
     }
+    // The existing alias classifier cannot discriminate this multi-declarator
+    // value, but the executed owner and extracted exact oracle must survive.
+    let finding = registration_finding(
+        "registration-multi-declarator",
+        "test('sumAll', () => { const unused = () => sumAll([0]), value = sumAll([2, 3, 4]); expect(value).toBe(9); });",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.related_tests.len(), 1);
+    assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::ExactValue);
+    assert_eq!(
+        finding.related_tests[0].oracle_strength,
+        OracleStrength::Strong
+    );
     Ok(())
 }
 
@@ -246,17 +260,19 @@ fn registration_bindings_distinguish_script_hoisting_from_strict_blocks() {
 #[test]
 fn registration_bindings_keep_verified_runner_extensions() -> Result<(), String> {
     for runner in ["vitest", "@playwright/test"] {
-        let source = format!(
-            "import {{ test as base, expect }} from '{runner}'; const test = base.extend({{}}); {TEST}"
-        );
-        let finding = registration_finding("registration-runner-extend", &source)?;
-        assert_eq!(finding.class, ExposureClass::Exposed, "{source}");
-        assert_eq!(finding.related_tests.len(), 1);
-        assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::ExactValue);
-        assert_eq!(
-            finding.related_tests[0].oracle_strength,
-            OracleStrength::Strong
-        );
+        for sibling in ["", "base('unrelated', () => { expect(1).toBe(1); });"] {
+            let source = format!(
+                "import {{ test as base, expect }} from '{runner}'; const test = base.extend({{}}); {sibling} {TEST}"
+            );
+            let finding = registration_finding("registration-runner-extend", &source)?;
+            assert_eq!(finding.class, ExposureClass::Exposed, "{source}");
+            assert_eq!(finding.related_tests.len(), 1);
+            assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::ExactValue);
+            assert_eq!(
+                finding.related_tests[0].oracle_strength,
+                OracleStrength::Strong
+            );
+        }
     }
     for prelude in [
         format!("const base = {{ extend: () => {NOOP} }}; const test = base.extend({{}});"),

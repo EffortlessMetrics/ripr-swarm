@@ -312,7 +312,8 @@ fn verified_extended_registrations(
     let mut result = Vec::new();
     for import in imports.iter().filter(|import| {
         matches!(import.source.as_str(), "vitest" | "@playwright/test")
-            && import.imported.as_deref() == Some("test")
+            && (import.imported.as_deref() == Some("test")
+                || (import.source == "vitest" && import.imported.as_deref() == Some("it")))
             && !import.namespace
     }) {
         let mut allowed = Vec::new();
@@ -355,6 +356,16 @@ fn verified_extended_registrations(
                     continue;
                 }
                 allowed.push(receiver.span.start as usize..receiver.span.end as usize);
+                // Exclude only this declaration's initializing write. A later
+                // assignment must not acquire the synthetic import exemption.
+                let outside = format!(
+                    "{}{}",
+                    &code[..declarator.span.start as usize],
+                    &code[declarator.span.end as usize..]
+                );
+                if super::tests_extract::identifier_written_in(&outside, local.name.as_str()) {
+                    continue;
+                }
                 candidates.push(TypeScriptImport {
                     source: import.source.clone(),
                     imported: Some("test".to_string()),
@@ -363,9 +374,12 @@ fn verified_extended_registrations(
                 });
             }
         }
-        if super::tests_extract::identifier_occurrences(&code, &import.local)
-            .all(|at| allowed.iter().any(|range| range.contains(&at)))
-        {
+        if super::tests_extract::identifier_occurrences(&code, &import.local).all(|at| {
+            allowed.iter().any(|range| range.contains(&at))
+                // Calling the genuine imported test does not expose its mutable
+                // extension method. Other value escapes/member uses stay refused.
+                || code[at + import.local.len()..].trim_start().starts_with('(')
+        }) {
             result.extend(candidates);
         }
     }
@@ -463,6 +477,7 @@ enum ImportClass {
 
 const RUNNER_MODULES: &[&str] = &[
     "vitest",
+    "@playwright/test",
     "@jest/globals",
     "bun:test",
     "node:test",

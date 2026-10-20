@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "return_value",
   "test_shape": "jest_local_noop_test_in_describe",
-  "hard_case": "test rebound to a local no-op inside a real describe: test(name, fn) never runs its callback",
+  "hard_case": "module-local test no-op invoked inside a real describe: test(name, fn) never runs its callback",
   "truth": {
     "state": "not_discriminated",
     "method": "runtime_mutant_kill",
