@@ -758,3 +758,8 @@ reason = "explain/context packet drill-in projection of an observed signature; n
 id = "RIPR-SPEC-0268"
 scope = "out"
 reason = "render-only collapse of a duplicated evidence row; not an analyzer verdict"
+
+[[spec]]
+id = "RIPR-SPEC-0281"
+scope = "out"
+reason = "agent context packet field and refusal-envelope clarity; a wire contract, not an exposure-verdict example a corpus case labels"
