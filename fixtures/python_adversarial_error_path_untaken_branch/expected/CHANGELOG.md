@@ -512,3 +512,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_error_path_untaken_branch (25)
+
+Reason:
+RIPR-SPEC-0224: unclassified-kind oracle not graded against this probe (#8388)
+
+Command:
+`cargo xtask goldens bless python_adversarial_error_path_untaken_branch --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_error_path_untaken_branch (26)
+
+Reason:
+RIPR-SPEC-0224: a row with no selected assertion reads 'uses no oracle' (#8388)
+
+Command:
+`cargo xtask goldens bless python_adversarial_error_path_untaken_branch --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
