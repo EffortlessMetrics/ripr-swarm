@@ -838,7 +838,12 @@ pub(super) fn strong_owner_call_rows_with_gaps(
                     };
                     candidate_rows += 1;
                     let line = first_line + text[..offset].matches('\n').count();
-                    let text = call_line_text(text, offset, name.len() + arglist.len() + 2);
+                    // The call runs from its name to its closing parenthesis,
+                    // the byte after the arglist; whitespace between the name
+                    // and `(` is part of it.
+                    let arglist_end =
+                        arglist.as_ptr().addr() - text.as_ptr().addr() + arglist.len();
+                    let text = call_line_text(text, offset, arglist_end + 1 - offset);
                     match (&candidate.test.parametrize, case_arguments.is_empty()) {
                         (Some(parametrize), false) => {
                             rows.extend(parametrize.cases.iter().map(|case| {
@@ -907,9 +912,11 @@ fn call_line_text(body: &str, offset: usize, call_len: usize) -> String {
     // A call that fits the window is kept whole: the lead shrinks so its
     // closing parenthesis stays inside.
     let lead = CALL_ROW_TEXT_LEAD.min(CALL_ROW_TEXT_LIMIT.saturating_sub(call_len));
+    // Round the start forward (toward the call) so the window never loses
+    // trailing bytes of a call that fits it.
     let mut from = offset.saturating_sub(lead).max(start);
     while !body.is_char_boundary(from) {
-        from -= 1;
+        from += 1;
     }
     let mut to = (from + CALL_ROW_TEXT_LIMIT).min(end);
     while !body.is_char_boundary(to) {
@@ -918,8 +925,18 @@ fn call_line_text(body: &str, offset: usize, call_len: usize) -> String {
     let window = body[from..to].trim();
     format!(
         "{}{window}{}",
-        if from > start { "..." } else { "" },
-        if to < end { "..." } else { "" }
+        // A marker only where visible text was cut, not bare indentation or
+        // trailing whitespace.
+        if body[start..from].trim().is_empty() {
+            ""
+        } else {
+            "..."
+        },
+        if body[to..end].trim().is_empty() {
+            ""
+        } else {
+            "..."
+        }
     )
 }
 
@@ -1221,4 +1238,70 @@ fn test_body_after_header(text: &str) -> Option<&str> {
     let close = matching_call_paren(text, open)?;
     let colon = close + text[close..].find(':')?;
     text.get(colon + 1..)
+}
+
+#[cfg(test)]
+mod call_line_text_tests {
+    use super::{CALL_ROW_TEXT_LIMIT, call_line_text};
+
+    #[test]
+    fn indentation_only_cut_emits_no_leading_marker() {
+        let body = format!("{}price(1) {}", " ".repeat(70), "x".repeat(250));
+        let text = call_line_text(&body, 70, "price(1)".len());
+        assert!(text.starts_with("price(1)"), "{text}");
+        assert!(text.ends_with("..."), "{text}");
+    }
+
+    #[test]
+    fn cut_content_still_emits_leading_marker() {
+        let body = format!("{} price(1) {}", "y".repeat(100), "x".repeat(250));
+        let text = call_line_text(&body, 101, "price(1)".len());
+        assert!(text.starts_with("..."), "{text}");
+    }
+
+    #[test]
+    fn multibyte_start_keeps_the_whole_call() {
+        // The lead lands inside a 3-byte char; a 238-byte call must still end
+        // with its closing parenthesis.
+        let call = format!("price({})", "a".repeat(238 - "price()".len()));
+        assert_eq!(call.len(), 238);
+        for pad in 0..4 {
+            let body = format!(
+                "{}{}{call} {}",
+                "x".repeat(pad),
+                "\u{20ac}".repeat(30),
+                "z".repeat(50)
+            );
+            let offset = body.find("price").unwrap_or(0);
+            let text = call_line_text(&body, offset, call.len());
+            assert!(text.contains(&call), "pad {pad}: {text}");
+        }
+    }
+
+    #[test]
+    fn exact_limit_line_is_whole_and_one_over_is_cut() {
+        let call = "price(1)";
+        let whole = format!("{call}{}", "x".repeat(CALL_ROW_TEXT_LIMIT - call.len()));
+        assert_eq!(whole.len(), CALL_ROW_TEXT_LIMIT);
+        assert_eq!(call_line_text(&whole, 0, call.len()), whole);
+        let over = format!("{whole}x");
+        let cut = call_line_text(&over, 0, call.len());
+        assert!(cut.starts_with(call) && cut.ends_with("..."), "{cut}");
+        assert!(!cut.contains(&over));
+    }
+
+    #[test]
+    fn exact_call_length_with_space_before_paren_keeps_the_closing_paren() {
+        let spaces = " ".repeat(30);
+        let argument = "a".repeat(200);
+        let body = format!(
+            "{}price{spaces}({argument}) tail {}",
+            "p".repeat(80),
+            "t".repeat(60)
+        );
+        let offset = body.find("price").unwrap_or(0);
+        let call_len = "price".len() + spaces.len() + argument.len() + 2;
+        let text = call_line_text(&body, offset, call_len);
+        assert!(text.contains(&format!("({argument})")), "{text}");
+    }
 }

@@ -16601,6 +16601,12 @@ tests = [
   "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::rebinding_scan_keeps_reads_and_attributes_readable",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::loop_body_rebinding_after_guard_keeps_oracle_credit",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::reversed_tuple_rebinding_keeps_oracle_credit",
+  "crates/ripr/src/analysis/language/python/boundary.rs::call_line_text_tests::indentation_only_cut_emits_no_leading_marker",
+  "crates/ripr/src/analysis/language/python/boundary.rs::call_line_text_tests::cut_content_still_emits_leading_marker",
+  "crates/ripr/src/analysis/language/python/boundary.rs::call_line_text_tests::multibyte_start_keeps_the_whole_call",
+  "crates/ripr/src/analysis/language/python/boundary.rs::call_line_text_tests::exact_limit_line_is_whole_and_one_over_is_cut",
+  "crates/ripr/src/analysis/language/python/boundary.rs::call_line_text_tests::exact_call_length_with_space_before_paren_keeps_the_closing_paren",
+  "crates/ripr/src/analysis/language/python/tests.rs::boundary_call_row_window_counts_whitespace_before_the_paren",
 ]
 code = [
   "crates/ripr/src/analysis/language/python/guard_activation.rs",
