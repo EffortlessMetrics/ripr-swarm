@@ -621,6 +621,14 @@ fn status_repair_attempt(
     let (head_current, (state, disposition, command)) = match manifest.state {
         RepairAttemptState::AwaitingEdit => {
             match head_reading.after_admission {
+                // #8726: a spent after-phase retry budget makes the recorded
+                // after command a refusal, so it is never offered; the
+                // fresh start goes through the same repair gate below.
+                Some(AfterPhaseHeadAdmission::Current { .. })
+                    if crate::app::repair_attempt::after_refusal_budget_exhausted(manifest) =>
+                {
+                    (Some(true), ("awaiting_edit", "retry_budget_spent", restart))
+                }
                 Some(AfterPhaseHeadAdmission::Current { .. }) => (
                     Some(true),
                     (
@@ -717,7 +725,7 @@ fn status_repair_attempt(
                     refusal.reason.clone()
                 },
                 recorded_unix_ms: refusal.recorded_unix_ms,
-                refusal_count: manifest.after_refusal_count,
+                refusal_count: crate::app::repair_attempt::after_refusal_total(manifest),
                 retry_budget_exhausted: crate::app::repair_attempt::after_refusal_budget_exhausted(
                     manifest,
                 ),
@@ -1941,6 +1949,10 @@ fn attempt_condition(attempt: &AgentStatusRepairAttempt) -> String {
             None => "awaiting an edit but was prepared at a different HEAD".to_string(),
         },
         "not_published" => "prepared but never published".to_string(),
+        "retry_budget_spent" => {
+            "awaiting an edit, but it spent its after-phase retry budget and its after phase now refuses"
+                .to_string()
+        }
         "gap_open" => {
             let AgentStatusAttemptReceipt::Issued { reading, .. } = &attempt.receipt else {
                 return attempt.state.to_string();
@@ -2711,10 +2723,13 @@ fn attempt_status_class(
 fn restart_recommended_for(status_class: &str, view: &AgentStatusRepairAttempt) -> bool {
     match status_class {
         "prepared" | "stale" | "incomparable" | "failed" | "corrupt_or_unavailable" => true,
-        "limited" => matches!(
-            &view.receipt,
-            AgentStatusAttemptReceipt::Issued { reading, .. } if reading.leaves_gap_open()
-        ),
+        "limited" => {
+            view.disposition == "retry_budget_spent"
+                || matches!(
+                    &view.receipt,
+                    AgentStatusAttemptReceipt::Issued { reading, .. } if reading.leaves_gap_open()
+                )
+        }
         "legacy_compatibility_only" => {
             !matches!(&view.receipt, AgentStatusAttemptReceipt::Issued { .. })
         }
@@ -2961,6 +2976,9 @@ fn restart_attempt_command(
         )),
         "failed" => restart(format!(
             "repair attempt `{id}` for seam `{seam}` ended failed; start a new attempt while the gap is still open"
+        )),
+        "limited" if view.disposition == "retry_budget_spent" => restart(format!(
+            "repair attempt `{id}` for seam `{seam}` spent its after-phase retry budget, so its after phase now refuses without running; start a new attempt while the gap is still open"
         )),
         "limited" => match &view.receipt {
             AgentStatusAttemptReceipt::Issued { reading, .. } if reading.leaves_gap_open() => {

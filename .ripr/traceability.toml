@@ -16864,3 +16864,27 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0282"
+name = "Repair attempt after-refusal history and retry budget"
+spec = "docs/specs/RIPR-SPEC-0282-repair-attempt-after-refusal-retry-budget.md"
+tests = [
+  "crates/ripr/tests/cli_smoke.rs::repeated_no_movement_refusals_keep_history_and_stop_at_the_retry_budget",
+  "crates/ripr/tests/task_first_facade.rs::repair_after_a_spent_retry_budget_starts_a_fresh_attempt",
+  "crates/ripr/src/app/task_first.rs::tests::reuse_skips_an_attempt_that_spent_its_retry_budget",
+  "crates/ripr/src/app/repair_attempt/mod.rs::tests::legacy_manifest_refusal_seeds_count_and_history_before_the_first_append",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/app/repair_attempt/mod.rs",
+  "crates/ripr/src/cli/commands/agent.rs",
+  "crates/ripr/src/app/agent_status.rs",
+  "crates/ripr/src/app/task_first.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0282-repair-attempt-after-refusal-retry-budget.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

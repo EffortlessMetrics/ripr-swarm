@@ -1608,12 +1608,14 @@ fn run_agent_repair_phase(
             .map_err(|error| {
                 repair_attempt_input_error(&root, store_ref, attempt_id.as_deref(), error)
             })?;
-            if crate::app::repair_attempt::after_refusal_budget_exhausted(&prior_refusals) {
+            if prior_refusals.state == crate::app::repair_attempt::RepairAttemptState::AwaitingEdit
+                && crate::app::repair_attempt::after_refusal_budget_exhausted(&prior_refusals)
+            {
                 for line in repair_after_retry_budget_lines(
                     &root,
                     store_ref,
                     &attempt,
-                    prior_refusals.after_refusal_count,
+                    crate::app::repair_attempt::after_refusal_total(&prior_refusals),
                 ) {
                     refusal.narrate(line);
                 }
@@ -1622,10 +1624,10 @@ fn run_agent_repair_phase(
                 return Err(format!(
                     "repair attempt `{}` has spent its after-phase retry budget ({} refusals)",
                     attempt.attempt_id.as_str(),
-                    prior_refusals.after_refusal_count
+                    crate::app::repair_attempt::after_refusal_total(&prior_refusals)
                 ));
             }
-            let prior_refusals = prior_refusals.after_refusal_count;
+            let prior_refusals = crate::app::repair_attempt::after_refusal_total(&prior_refusals);
             eprintln!(
                 "ripr: consuming attempt manifest {}",
                 output::path::human_path(&attempt.manifest_path)
@@ -2525,6 +2527,23 @@ fn repair_after_no_movement_lines(
     } else {
         format!("make the focused test edit in `{target}`; leave production code unchanged")
     };
+    if this_refusal >= budget {
+        // The refusal that spends the budget must not advise another retry:
+        // the next after phase stops without running.
+        let seam_arg = shell_arg(&attempt.seam_id);
+        return vec![
+            format!(
+                "attempt `{}` recorded after-phase refusal {this_refusal} and spent the {budget}-refusal retry budget for this attempt; its next after phase refuses without running.",
+                attempt.attempt_id.as_str()
+            ),
+            format!(
+                "to recover: set the failed edits aside, then start a new attempt with `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before` while the gap still exists."
+            ),
+            format!(
+                "inspect the recorded refusals with `ripr agent status --root {root_arg}{store_flag} --attempt {attempt_arg}`."
+            ),
+        ];
+    }
     let mut lines = vec![format!(
         "attempt `{}` remains `awaiting_edit` and still awaits the focused test edit.",
         attempt.attempt_id.as_str()

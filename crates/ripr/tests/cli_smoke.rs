@@ -25520,7 +25520,50 @@ fn repeated_no_movement_refusals_keep_history_and_stop_at_the_retry_budget()
     let reason = report["next_command"]["reason"]
         .as_str()
         .unwrap_or_default();
-    assert!(reason.contains("retry budget is spent"), "{reason}");
+    assert!(
+        reason.contains("spent its after-phase retry budget"),
+        "{reason}"
+    );
+    // The spent attempt's after command is a refusal, so status must not offer
+    // it as the next command (the #8766 false-actionable class): it recommends
+    // a new attempt through the shared repair-start gate or withholds it.
+    assert_eq!(attempt["disposition"], "retry_budget_spent", "{report:#}");
+    let (step, command) = repair_route_next(&report);
+    assert!(
+        !command.contains(&attempt_id) && !command.contains("--phase after"),
+        "status offered the refused after phase: {step} {command}"
+    );
+    assert!(
+        attempt["command"]
+            .as_str()
+            .is_none_or(|offered| !offered.contains(&attempt_id)),
+        "{report:#}"
+    );
+    assert_ne!(step, "repair_attempt_after", "{report:#}");
+    if !command.is_empty() {
+        assert_eq!(step, "repair_attempt_before", "{report:#}");
+        assert!(command.contains("--phase before"), "{command}");
+    }
+    let root_arg = root.to_string_lossy().into_owned();
+    let selected = run_ripr(&[
+        "agent",
+        "status",
+        "--root",
+        &root_arg,
+        "--attempt",
+        &attempt_id,
+        "--json",
+    ]);
+    assert_success(&selected);
+    let selected_text = String::from_utf8_lossy(&selected.stdout).into_owned();
+    let selected_json: serde_json::Value = serde_json::from_str(&selected_text)?;
+    let selected_action = selected_json["next_action"]["command"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        !selected_action.contains(&attempt_id) && !selected_action.contains("--phase after"),
+        "selected-attempt status offered the refused after phase: {selected_json:#}"
+    );
 
     // Even an edit that would move the gap does not finish a spent attempt.
     std::fs::write(

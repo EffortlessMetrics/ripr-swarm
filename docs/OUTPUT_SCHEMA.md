@@ -13977,8 +13977,8 @@ Field contract:
   commit that descends from it; for an attempt with an after verdict, whether
   `HEAD` is still the head that verdict recorded; `null` when `HEAD` cannot be
   read or related to the prepared head), `disposition` (`resumable`,
-  `prepared_at_other_head`, `head_unknown`, `not_published`, `finished`,
-  `gap_open`, `unconfirmed`, or `ended`), `manifest`, `command` (the command
+  `prepared_at_other_head`, `retry_budget_spent`, `head_unknown`,
+  `not_published`, `finished`, `gap_open`, `unconfirmed`, or `ended`), `manifest`, `command` (the command
   that would move this attempt or its seam forward, or `null`),
   `receipt`, and `last_after_refusal`. A `ready_to_finish` attempt reads
   `finished` only when its receipt is `advisory` with movement `improved`;
@@ -13990,7 +13990,11 @@ Field contract:
   the current `HEAD`: a trust-bound attempt whose `HEAD` moved, or an ordinary
   attempt whose `HEAD` no longer descends from its prepared head, in which case
   the restart reason repeats the after phase's recovery (`git reset --soft
-  <prepared-head>`, then the attempt's after command).
+  <prepared-head>`, then the attempt's after command). An attempt awaiting its edit that recorded 5
+  after-phase refusals reads `retry_budget_spent`: its after phase refuses
+  without running, so `command` is the fresh before-phase start (or `null`
+  when the repair eligibility gate refuses the seam) and never the after
+  command.
   - `receipt` - `null` unless the attempt is `ready_to_finish`. Otherwise an
     object read from the attempt-local terminal receipt when that attempt
     retained one, else from `target/ripr/reports/agent-receipt.json` for a

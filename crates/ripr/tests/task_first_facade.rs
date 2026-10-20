@@ -2360,6 +2360,67 @@ fn continue_two_attempts_requires_explicit_selection() -> Result<(), String> {
     Ok(())
 }
 
+/// #8726: once an attempt spent its after-phase retry budget it refuses its
+/// after phase, so a repeated `ripr repair` must start a fresh attempt (the
+/// shared repair-start gate still admits the seam) instead of resuming the
+/// dead one.
+#[test]
+fn repair_after_a_spent_retry_budget_starts_a_fresh_attempt() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-repair-spent-budget")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let first = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&first, 0, "first repair");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "the first repair prepares one attempt");
+
+    for refusal in 1..=5 {
+        let refused = run_ripr(
+            root,
+            &[
+                "agent",
+                "repair",
+                "--root",
+                &root_arg,
+                "--attempt",
+                &ids[0],
+                "--phase",
+                "after",
+            ],
+        )?;
+        assert_exit(&refused, 3, &format!("unedited after phase {refusal}"));
+    }
+    assert_eq!(read_manifest(root, &ids[0])?["after_refusal_count"], 5);
+
+    let second = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
+    assert_exit(&second, 0, "repair after the budget is spent");
+    let after = attempt_ids(root);
+    assert_eq!(
+        after.len(),
+        2,
+        "a fresh attempt must be prepared: {after:?}"
+    );
+    assert!(after.contains(&ids[0]), "the spent attempt stays on disk");
+    // The spent attempt is not a continue candidate: a bare continue picks the
+    // fresh attempt instead of reporting two awaiting attempts.
+    let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+        .map_err(|error| format!("read pricing tests: {error}"))?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{pricing}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|error| format!("write focused edit: {error}"))?;
+    let continued = run_ripr(root, &["continue", "--root", &root_arg])?;
+    assert_exit(&continued, 0, "bare continue after the spent attempt");
+    let fresh = after
+        .iter()
+        .find(|id| **id != ids[0])
+        .ok_or("no fresh attempt")?;
+    assert_eq!(read_manifest(root, fresh)?["state"], "ready_to_finish");
+    assert_eq!(read_manifest(root, &ids[0])?["state"], "awaiting_edit");
+    Ok(())
+}
+
 /// #8742: a repeated `ripr repair` for the seam that already has an attempt
 /// awaiting its edit at this HEAD resumes it. No second attempt is prepared,
 /// the printed `continue` command names the existing attempt, and a bare

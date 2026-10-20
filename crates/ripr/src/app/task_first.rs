@@ -1024,6 +1024,11 @@ pub(crate) fn select_continue_attempt(
                     .is_some()
                     {
                         trust_bound += 1;
+                    } else if crate::app::repair_attempt::after_refusal_budget_exhausted(&manifest)
+                    {
+                        // #8726: a spent retry budget refuses the after phase,
+                        // so the attempt is ended, not a continue candidate.
+                        terminal += 1;
                     } else {
                         eligible.push(manifest.repair_attempt_id.as_str().to_string());
                     }
@@ -1098,6 +1103,10 @@ fn pick_reusable_attempt<'a>(
             manifest.state == RepairAttemptState::AwaitingEdit
                 && manifest.seam_id == seam_id
                 && manifest.repository_head == head
+                // #8726: an attempt whose after-phase retry budget is spent
+                // refuses its after phase, so reusing it would strand `ripr
+                // repair` on a dead attempt instead of starting a fresh one.
+                && !crate::app::repair_attempt::after_refusal_budget_exhausted(manifest)
                 && find_manifest_artifact_by_role(
                     manifest,
                     crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE,
@@ -1501,6 +1510,23 @@ pub(crate) mod tests {
                 "head1"
             )
             .is_none()
+        );
+        Ok(())
+    }
+
+    /// #8726: an attempt that spent its after-phase retry budget refuses its
+    /// after phase, so a repeated repair must start a fresh attempt instead of
+    /// resuming it. An older attempt still within budget remains reusable.
+    #[test]
+    fn reuse_skips_an_attempt_that_spent_its_retry_budget() -> Result<(), String> {
+        let mut spent = awaiting('a', "seam1", "head1", 20)?;
+        spent.after_refusal_count = crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET;
+        assert!(pick_reusable_attempt([&spent].into_iter(), "seam1", "head1").is_none());
+        let within = awaiting('b', "seam1", "head1", 10)?;
+        let picked = pick_reusable_attempt([&spent, &within].into_iter(), "seam1", "head1");
+        assert_eq!(
+            picked.map(|attempt| attempt.attempt_id),
+            Some(within.repair_attempt_id.as_str().to_string())
         );
         Ok(())
     }

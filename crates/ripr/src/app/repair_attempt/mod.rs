@@ -201,12 +201,30 @@ pub(crate) const REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET: u32 = 5;
 /// retry budget allows. The attempt authority owns this decision; callers
 /// narrate it but do not recompute it.
 pub(crate) fn after_refusal_budget_exhausted(manifest: &RepairAttemptManifest) -> bool {
-    manifest.after_refusal_count >= REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
+    after_refusal_total(manifest) >= REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
+}
+
+/// Total after-phase refusals the attempt recorded. A manifest written before
+/// the count existed carries only `last_after_refusal`, which is one known
+/// refusal, so the total never reads below that.
+pub(crate) fn after_refusal_total(manifest: &RepairAttemptManifest) -> u32 {
+    manifest
+        .after_refusal_count
+        .max(u32::from(manifest.last_after_refusal.is_some()))
 }
 
 /// Records one refusal: overwrites `last_after_refusal`, counts it, and
 /// appends it to the capped history without losing earlier entries.
 fn push_after_refusal(manifest: &mut RepairAttemptManifest, refusal: RepairAttemptAfterRefusal) {
+    // A legacy manifest holds its one known refusal only in the single slot:
+    // seed the count and history from it before the first append.
+    if manifest.after_refusal_count == 0
+        && manifest.after_refusal_history.is_empty()
+        && let Some(legacy) = manifest.last_after_refusal.clone()
+    {
+        manifest.after_refusal_count = 1;
+        manifest.after_refusal_history.push(legacy);
+    }
     manifest.after_refusal_count = manifest.after_refusal_count.saturating_add(1);
     manifest.after_refusal_history.push(refusal.clone());
     let excess = manifest
@@ -3804,6 +3822,54 @@ mod tests {
 
     fn prepared_store(root: &Path) -> Result<RepairAttemptStoreRef, String> {
         resolve_store(root, None, RepairAttemptStoreAccess::Prepare)
+    }
+
+    /// #8726: a manifest written before the count existed carries one refusal
+    /// only in `last_after_refusal`. The count and history seed from it before
+    /// the first append, so the budget does not undercount by one.
+    #[test]
+    fn legacy_manifest_refusal_seeds_count_and_history_before_the_first_append()
+    -> Result<(), String> {
+        let root = test_root("legacy-refusal-seed")?;
+        let manifest = sample_manifest(&root)?;
+        let mut json = serde_json::to_value(&manifest).map_err(|error| error.to_string())?;
+        let object = json.as_object_mut().ok_or("manifest is not an object")?;
+        object.insert(
+            "last_after_refusal".to_string(),
+            serde_json::json!({"reason": "legacy refusal", "repository_head": null, "recorded_unix_ms": 7}),
+        );
+        for field in ["after_refusal_count", "after_refusal_history"] {
+            if object.remove(field).is_some() {
+                return Err(format!("a fresh manifest should omit `{field}`"));
+            }
+        }
+        let mut legacy: RepairAttemptManifest =
+            serde_json::from_value(json).map_err(|error| error.to_string())?;
+        if after_refusal_total(&legacy) != 1 || after_refusal_budget_exhausted(&legacy) {
+            return Err("a legacy manifest holds exactly one known refusal".to_string());
+        }
+        push_after_refusal(
+            &mut legacy,
+            RepairAttemptAfterRefusal {
+                reason: "second".to_string(),
+                repository_head: None,
+                recorded_unix_ms: 8,
+            },
+        );
+        let reasons = legacy
+            .after_refusal_history
+            .iter()
+            .map(|refusal| refusal.reason.as_str())
+            .collect::<Vec<_>>();
+        if legacy.after_refusal_count != 2 || reasons != ["legacy refusal", "second"] {
+            return Err(format!(
+                "legacy refusal was not seeded: {} {reasons:?}",
+                legacy.after_refusal_count
+            ));
+        }
+        validate_manifest(&legacy)?;
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 
     #[test]
