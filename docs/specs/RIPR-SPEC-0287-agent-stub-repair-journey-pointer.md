@@ -104,6 +104,16 @@ line follows, naming both files and stating the consequence: writing the
 stub where the stub says makes the repair's before phase refuse the edit;
 the test belongs in the packet's admitted surface.
 
+With `--write`, that divergence refuses the write instead of warning after
+it: the command names both files and the supported route — write the test
+in the packet's admitted surface, then run the repair — and touches no
+file. The written stub would leave a file dirty outside the admitted
+surface, and the repair's before phase would refuse the advertised start
+command at the dirty-premise gate; a warning printed after the write
+cannot prevent that. Committing the stub does not repair the journey
+either, because the packet's edit cage admits only its own surface, so the
+refusal is the honest resolution.
+
 ## Required Evidence
 
 - A repair-ready stub whose placement agrees with the packet surface
@@ -118,6 +128,9 @@ the test belongs in the packet's admitted surface.
   or a `--at --kind` file-parse selection with no classified entry), the
   ready document omits `next_repair` and the human output prints no
   repair line; no route is invented.
+- `agent stub --write` on a seam whose placement diverges from the packet
+  surface refuses before writing, names both files and the supported
+  route, and leaves the tree untouched.
 - The schema version is `0.3` on every ready and refused
   `rust_test_stub` document, and the docs/help literals agree.
 
@@ -126,10 +139,16 @@ the test belongs in the packet's admitted surface.
 - `crates/ripr/src/app/test_stub.rs::tests::next_repair_names_the_start_and_the_agreeing_surface`
 - `crates/ripr/src/app/test_stub.rs::tests::next_repair_warns_when_the_stub_lands_outside_the_packet_surface`
 - `crates/ripr/src/app/test_stub.rs::tests::next_repair_stays_silent_when_the_repair_route_is_not_eligible`
+- `crates/ripr/src/app/test_stub.rs::tests::next_repair_stays_silent_when_the_class_is_configured_off`
+  (a policy-omitted seam gets no start command, in both human output and JSON)
+- `crates/ripr/src/app/test_stub.rs::tests::next_repair_start_preserves_a_literal_backslash_unix_root`
+  (the quoted root renders exactly as the filesystem spells it)
 - `crates/ripr/src/app/test_stub.rs::tests::at_kind_stub_on_an_open_gap_is_not_strongly_gripped`
   (extended: a `--at --kind` resolution carries no invented route)
 - `crates/ripr/src/cli/commands/agent_stub.rs::tests::next_repair_block_carries_the_start_command_and_surface`
+  (extended: an agreeing placement omits `placement_divergence` entirely)
 - `crates/ripr/src/cli/commands/agent_stub.rs::tests::divergence_warning_names_both_files_and_the_consequence`
+- `crates/ripr/src/cli/commands/agent_stub.rs::tests::divergent_write_refuses_before_writing_with_actionable_guidance`
 
 ## Acceptance Examples
 
