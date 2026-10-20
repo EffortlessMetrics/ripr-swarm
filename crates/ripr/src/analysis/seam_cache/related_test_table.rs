@@ -18,7 +18,8 @@ use crate::analysis::new_test_target::NewTestTargetAdmission;
 use crate::analysis::seam_classification::ClassifiedSeam;
 use crate::analysis::seams::{RepoSeam, SeamGripClass, SeamId};
 use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence};
-use crate::domain::{MissingDiscriminatorFact, StageEvidence, ValueFact};
+use crate::domain::{MissingDiscriminatorFact, StageEvidence, ValueContext, ValueFact};
+use std::path::PathBuf;
 use serde::de::Error as _;
 use serde::ser::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -47,6 +48,7 @@ struct EvidenceRef<'a> {
     propagate: &'a StageEvidence,
     observe: &'a StageEvidence,
     discriminate: &'a StageEvidence,
+    #[serde(serialize_with = "serialize_values")]
     observed_values: &'a [ValueFact],
     missing_discriminators: &'a [MissingDiscriminatorFact],
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -75,10 +77,85 @@ struct EvidenceOwned {
     propagate: StageEvidence,
     observe: StageEvidence,
     discriminate: StageEvidence,
+    #[serde(deserialize_with = "deserialize_values")]
     observed_values: Vec<ValueFact>,
     missing_discriminators: Vec<MissingDiscriminatorFact>,
     #[serde(default)]
     new_test_target: Option<NewTestTargetAdmission>,
+}
+
+/// A cached observed value. [`ValueFact::file`] is `serde(skip)` so check
+/// JSON, MCP gap evidence and evidence digests never carry it, but the human
+/// renderer prints it and `PartialEq` compares it, so a cache that dropped it
+/// would make output and equality depend on cache temperature (#8948). The
+/// cache body therefore carries it here, outside the public serde shape.
+/// Lossy UTF-8 keeps a non-UTF-8 path from failing the whole cache write.
+#[derive(Serialize)]
+struct CachedValueRef<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file: Option<String>,
+    line: usize,
+    text: &'a str,
+    value: &'a str,
+    context: &'a ValueContext,
+}
+
+#[derive(Deserialize)]
+struct CachedValueOwned {
+    #[serde(default)]
+    file: Option<String>,
+    line: usize,
+    text: String,
+    value: String,
+    context: ValueContext,
+}
+
+fn serialize_values<S: Serializer>(values: &[ValueFact], serializer: S) -> Result<S::Ok, S::Error> {
+    serializer.collect_seq(values.iter().map(|fact| {
+        // Exhaustive: a new `ValueFact` field fails to compile here until the
+        // cache body carries it.
+        let ValueFact {
+            file,
+            line,
+            text,
+            value,
+            context,
+        } = fact;
+        CachedValueRef {
+            file: file
+                .as_ref()
+                .map(|path| path.to_string_lossy().into_owned()),
+            line: *line,
+            text,
+            value,
+            context,
+        }
+    }))
+}
+
+fn deserialize_values<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<ValueFact>, D::Error> {
+    let owned = Vec::<CachedValueOwned>::deserialize(deserializer)?;
+    Ok(owned
+        .into_iter()
+        .map(|cached| {
+            let CachedValueOwned {
+                file,
+                line,
+                text,
+                value,
+                context,
+            } = cached;
+            ValueFact {
+                file: file.map(PathBuf::from),
+                line,
+                text,
+                value,
+                context,
+            }
+        })
+        .collect())
 }
 
 pub(super) fn serialize<S: Serializer>(
@@ -354,8 +431,6 @@ pub(super) mod tests {
         Confidence, OracleKind, OracleStrength, RelationConfidence, RelationReason, StageState,
         SymbolId,
     };
-    use std::path::PathBuf;
-
     #[derive(Serialize, Deserialize)]
     struct Body {
         #[serde(with = "super")]
@@ -458,6 +533,63 @@ pub(super) mod tests {
         assert!(Arc::ptr_eq(&tests(0)[0], &tests(3)[0]));
         assert!(Arc::ptr_eq(&tests(0)[1], &tests(1)[0]));
         assert!(!Arc::ptr_eq(&tests(0)[0], &tests(1)[2]));
+        Ok(())
+    }
+
+    /// #8948: a cached seam keeps each observed value's test file, so a warm
+    /// load renders `path:line` and compares equal to a fresh fact. Values
+    /// without a file stay without one, and the stored object omits the key.
+    #[test]
+    fn observed_value_file_survives_the_cache_round_trip() -> Result<(), String> {
+        use crate::domain::ValueContext;
+        let fact = |file: Option<&str>, line: usize| ValueFact {
+            file: file.map(PathBuf::from),
+            line,
+            text: "assert_eq!(f(5), 6)".to_owned(),
+            value: "5".to_owned(),
+            context: ValueContext::FunctionArgument,
+        };
+        let mut with_files = seam(1, Vec::new());
+        with_files.evidence.observed_values = vec![
+            fact(Some("tests/a.rs"), 12),
+            fact(Some("tests/b.rs"), 12),
+            fact(None, 30),
+        ];
+        let seams = vec![with_files];
+        let encoded = serde_json::to_value(Body {
+            seams: seams.clone(),
+        })
+        .map_err(|err| err.to_string())?;
+        let stored = &encoded["seams"]["seams"][0]["evidence"]["observed_values"];
+        assert_eq!(stored[0]["file"], "tests/a.rs");
+        assert!(stored[2].get("file").is_none(), "{stored:#}");
+        let decoded: Body = serde_json::from_value(encoded).map_err(|err| err.to_string())?;
+        assert_eq!(
+            decoded.seams[0].evidence.observed_values,
+            seams[0].evidence.observed_values,
+            "a cached fact must equal the fresh fact, file included"
+        );
+        // Public serde shape stays file-free: JSON consumers are unchanged.
+        let public = serde_json::to_value(&seams[0].evidence.observed_values[0])
+            .map_err(|err| err.to_string())?;
+        assert!(public.get("file").is_none());
+        Ok(())
+    }
+
+    /// An entry written before `file` was cached has no key; it decodes to
+    /// `None` rather than failing (the schema bump retires such entries, this
+    /// pins that the decoder is not the thing that would break).
+    #[test]
+    fn observed_value_without_a_cached_file_decodes_to_none() -> Result<(), String> {
+        let mut encoded = serde_json::to_value(Body {
+            seams: vec![seam(1, Vec::new())],
+        })
+        .map_err(|err| err.to_string())?;
+        encoded["seams"]["seams"][0]["evidence"]["observed_values"] = serde_json::json!([
+            {"line": 3, "text": "t", "value": "v", "context": "return_value"}
+        ]);
+        let decoded: Body = serde_json::from_value(encoded).map_err(|err| err.to_string())?;
+        assert_eq!(decoded.seams[0].evidence.observed_values[0].file, None);
         Ok(())
     }
 

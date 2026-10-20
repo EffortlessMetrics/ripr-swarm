@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A warm classified-seam cache now keeps each observed value's test file, so cached seams render `path:line` and compare equal to freshly computed facts instead of printing a bare `at line N`; output no longer depends on cache temperature. The public `ValueFact` serde shape (check JSON, MCP gap evidence, evidence digests) is unchanged. The full, sharded and compact classified-seam cache generations moved to `1.86` / `0.92` / `0.92`, so older entries are rebuilt rather than served without the file (#8948).
