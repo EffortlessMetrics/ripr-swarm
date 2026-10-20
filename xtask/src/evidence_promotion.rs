@@ -3038,14 +3038,19 @@ pub(crate) fn evidence_promotion_human_oracle_line_matches(
                 continue;
             }
             let phrase = &related_test[separator + " uses ".len()..];
-            // A row ungraded against the probe with an unclassified oracle
-            // kind is worded "an unclassified oracle, not graded against
-            // this probe" (#8388).
+            // A row ungraded against the probe reads "<kind> oracle, not
+            // graded against this probe" (an unclassified kind reads "an
+            // unclassified oracle") (#8388).
+            let ungraded = if expected_kind == "unknown" {
+                "an unclassified oracle, not graded against this probe:".to_string()
+            } else {
+                format!(
+                    "{} oracle, not graded against this probe:",
+                    expected_kind.replace('_', " ")
+                )
+            };
             return phrase.starts_with(projection.as_str())
-                || (expected_kind == "unknown"
-                    && expected_strength == "unknown"
-                    && phrase
-                        .starts_with("an unclassified oracle, not graded against this probe:"));
+                || (expected_strength == "unknown" && phrase.starts_with(ungraded.as_str()));
         }
         return false;
     }
