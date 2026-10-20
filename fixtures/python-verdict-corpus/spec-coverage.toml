@@ -569,7 +569,6 @@ id = "RIPR-SPEC-0268"
 scope = "out"
 reason = "render-only collapse of a duplicated evidence row; a Python case cannot label it"
 
-[[spec]]
+[[unmeasured]]
 id = "RIPR-SPEC-0280"
-scope = "out"
-reason = "wire-facing MCP adapter clarity (resource-id decoding, paging echo, status recovery, tool descriptions); not an exposure-verdict example a corpus case labels"
+reason = "acceptance examples are bullet prose, not numbered; no corpus case cites an example number"
