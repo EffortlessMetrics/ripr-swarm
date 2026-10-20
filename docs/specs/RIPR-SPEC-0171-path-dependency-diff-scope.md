@@ -53,8 +53,8 @@ through the reverse path-dependency adjacency:
   `BTreeSet`-ordered);
 - scope expansion shares traversal across changed roots: each connected
   reverse edge is examined at most twice, independent of the number of
-  changed roots (ordered-map lookup costs still apply). The result remains
-  the union of single-root walks, each excluding only its own seed; a seed
+  changed roots (ordered-map lookup costs still apply). The connected
+  traversal result remains the union of single-root walks, each excluding only its own seed; a seed
   reached from another seed stays included;
 - cycles are cut by the walk and disclosed on the graph surfaces; the
   reachable set itself stays exact for the walked edges;
