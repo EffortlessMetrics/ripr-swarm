@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "The describe body declares `const test = (_name, _body) => {}`, so the registration never runs and its `toBe(9)` is never evaluated; only the `it` placeholder runs. The `total -= v` mutant passes the whole package. ripr must not credit the unexecuted assertion: `test` is the enclosing scope's own function (RIPR-SPEC-0243 rule 14, #8959). Before the rule ripr reported `exposed`, a false actionable.",
+  "reasoning": "The module declares `const test = (_name, _body) => {}`, so the registration never runs and its `toBe(9)` is never evaluated; only the `it` placeholder runs. The `total -= v` mutant passes the whole package. ripr must not credit the unexecuted assertion: `test` is the enclosing scope's own function (RIPR-SPEC-0243 rule 14, #8959). Before the rule ripr reported `exposed`, a false actionable.",
   "labeling_observation": {
     "ripr_commit": "8994ec5",
     "full_checkout_verdict": "credited",

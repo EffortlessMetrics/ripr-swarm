@@ -210,7 +210,6 @@ fn mock_interaction_test_for(owner_name: &str) -> TypeScriptTest {
 fn direct_test_with_assertion(
     test_name: &str,
     owner_name: &str,
-    reach_body_text: None,
     body_text: impl Into<String>,
     matcher: &str,
     argument_count: usize,

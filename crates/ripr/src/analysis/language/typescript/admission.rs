@@ -347,7 +347,7 @@ fn verified_extended_registrations(
                 let Expression::Identifier(receiver) = member.object.get_inner_expression() else {
                     continue;
                 };
-                if receiver.name != import.local
+                if receiver.name.as_str() != import.local
                     || member.property.name != "extend"
                     || call.optional
                     || member.optional
