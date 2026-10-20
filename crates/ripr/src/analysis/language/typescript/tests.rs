@@ -17144,6 +17144,7 @@ mod module_entry_tests;
 mod nested_callback_tests;
 mod out_dir_specifier_tests;
 mod reexport_chain_tests;
+mod registration_binding_tests;
 mod scope_receiver_tests;
 mod spec0243_owner_tests;
 mod spy_module_object_tests;
