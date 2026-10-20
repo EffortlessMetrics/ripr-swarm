@@ -31,7 +31,7 @@
 //! Rust adapter feeds into the Draft/Fast package selection. Dep-driven
 //! impact analysis beyond scope expansion is still future work.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::Path;
 
 use crate::analysis::seam_cache::{
@@ -66,8 +66,9 @@ impl PathDependencyGraphStatus {
 /// One reachability walk result: the transitively reachable manifests plus
 /// the cycle markers cut to keep the walk finite.
 ///
-/// #2970 slice C consumes reverse walks for diff-scope expansion; the
-/// forward direction has no production consumer yet.
+/// Single-root reference for adjacency/cycle tests. Production scope
+/// expansion uses the shared reverse union instead.
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PathDependencyWalk {
     /// Manifest identities reached from the start node, sorted, excluding the
@@ -84,6 +85,7 @@ pub(crate) struct PathDependencyWalk {
     cycle_manifests: Vec<String>,
 }
 
+#[cfg(test)]
 impl PathDependencyWalk {
     /// Manifests reached from the start node, sorted, start excluded.
     pub(crate) fn reachable(&self) -> &[String] {
@@ -294,9 +296,52 @@ impl PathDependencyAdjacency {
         self.walk(&self.forward, manifest)
     }
 
-    /// Transitive reverse reach: every manifest that reaches `manifest`
+    /// Union of the single-root reverse walks, each excluding its own seed.
+    /// A seed reached from another seed must still be included, even when
+    /// their paths meet before cycling back to it. Retain up to two distinct
+    /// origins per node: if further origins meet here, every descendant is
+    /// already reachable from two seeds, at least one different from itself.
+    /// Thus each node/edge expands at most twice, independent of seed count
+    /// (ordered-map lookups still cost O(log nodes)). Borrow canonical names
+    /// from the graph instead of cloning neighbor lists for every walk.
+    fn reverse_reachable_union(&self, starts: impl IntoIterator<Item = String>) -> BTreeSet<&str> {
+        let mut pending = VecDeque::new();
+        for start in starts {
+            if let Some(node) = self.nodes.get(start.as_str()) {
+                pending.push_back((node.as_str(), node.as_str()));
+            }
+        }
+        let mut sources = BTreeMap::<&str, (&str, Option<&str>)>::new();
+        let mut reached = BTreeSet::new();
+        while let Some((node, origin)) = pending.pop_front() {
+            match sources.entry(node) {
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    entry.insert((origin, None));
+                }
+                std::collections::btree_map::Entry::Occupied(mut entry) => {
+                    let (first, second) = entry.get_mut();
+                    if *first == origin || second.is_some() {
+                        continue;
+                    }
+                    *second = Some(origin);
+                }
+            }
+            if node != origin {
+                reached.insert(node);
+            }
+            for neighbor in self.reverse.get(node).into_iter().flatten() {
+                #[cfg(test)]
+                tests::WALK_EDGE_VISITS.with(|count| count.set(count.get() + 1));
+                pending.push_back((neighbor.as_str(), origin));
+            }
+        }
+        reached
+    }
+
+    /// Reference reverse reach: every manifest that reaches `manifest`
     /// through path dependencies, with cycles cut and disclosed. `None` when
     /// the manifest is not a graph node.
+    #[cfg(test)]
     pub(crate) fn reverse_walk(&self, manifest: &str) -> Option<PathDependencyWalk> {
         self.walk(&self.reverse, manifest)
     }
@@ -306,6 +351,7 @@ impl PathDependencyAdjacency {
     /// already on the current path is a cycle back-edge: disclosed, never
     /// recursed. Together the two guards bound the walk to O(nodes + edges)
     /// steps on any input, cyclic or not.
+    #[cfg(test)]
     fn walk(
         &self,
         adjacency: &BTreeMap<String, BTreeSet<String>>,
@@ -513,14 +559,13 @@ pub(crate) fn expansion_from_provenance(
             .insert(edge.from_manifest.clone());
     }
 
-    let mut dependent_package_roots = BTreeSet::new();
+    let mut dependent_package_roots = adjacency
+        .reverse_reachable_union(seed_roots.iter().map(|root| manifest_of_package_root(root)))
+        .into_iter()
+        .map(package_root_of_manifest)
+        .collect::<BTreeSet<_>>();
     for changed in &seed_roots {
         let manifest = manifest_of_package_root(changed);
-        if let Some(walk) = adjacency.reverse_walk(&manifest) {
-            for reached in walk.reachable() {
-                dependent_package_roots.insert(package_root_of_manifest(reached));
-            }
-        }
         if let Some(declarers) = declared_dependents.get(&manifest) {
             for declarer in declarers {
                 dependent_package_roots.insert(package_root_of_manifest(declarer));

@@ -11385,6 +11385,9 @@ id = "RIPR-SPEC-0171"
 name = "path-dependency diff-scope expansion"
 spec = "docs/specs/RIPR-SPEC-0171-path-dependency-diff-scope.md"
 tests = [
+  "crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_shared_tail_visits_each_edge_at_most_twice",
+  "crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_matches_per_seed_walks_on_all_three_node_graphs",
+  "crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_preserves_overlapping_seeds_and_cycle_roots",
   "crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_reaches_dependents_of_changed_packages_only",
   "crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_adds_nothing_for_unmapped_or_empty_changed_roots",
   "crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_discloses_limited_and_unavailable_graph_states",
