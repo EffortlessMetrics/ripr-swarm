@@ -426,7 +426,9 @@ pub(crate) fn render_mutation_calibration_md(report: &MutationCalibrationReport)
     );
     out.push_str("## Provenance\n\n");
     out.push_str(&report.provenance.disclosure_sentence());
-    out.push_str(" The join itself matches by seam_id, span containment, or file/line in every case.\n\n");
+    out.push_str(
+        " The join itself matches by seam_id, span containment, or file/line in every case.\n\n",
+    );
     out.push_str("## Summary\n\n");
     out.push_str("| Metric | Count |\n| --- | ---: |\n");
     out.push_str(&format!(
@@ -2081,6 +2083,164 @@ mod tests {
     }
 
     #[test]
+    fn calibration_provenance_verdict_covers_all_head_combinations() {
+        let head = "2bd22c0b0718157870e2e78c9a70b9da1c9c1b21";
+        let other = "3333333333333333333333333333333333333333";
+        let cases = [
+            (None, None, "no_head_recorded"),
+            (Some(head), None, "only_repo_exposure_head"),
+            (None, Some(head), "only_mutants_head"),
+            (Some(head), Some(head), "same_head"),
+            (Some(head), Some(other), "different_heads"),
+        ];
+        for (repo_exposure_head, mutants_head, expected) in cases {
+            let provenance = CalibrationProvenance {
+                repo_exposure_head: repo_exposure_head.map(str::to_string),
+                mutants_head: mutants_head.map(str::to_string),
+            };
+            assert_eq!(
+                provenance.verdict(),
+                expected,
+                "verdict must map ({repo_exposure_head:?}, {mutants_head:?}) to {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn calibration_provenance_disclosure_sentence_is_nonempty_and_names_verdict_facts() {
+        let head = "2bd22c0b0718157870e2e78c9a70b9da1c9c1b21";
+        let other = "3333333333333333333333333333333333333333";
+        for (repo_exposure_head, mutants_head) in [
+            (None, None),
+            (Some(head.to_string()), None),
+            (None, Some(head.to_string())),
+            (Some(head.to_string()), Some(head.to_string())),
+            (Some(head.to_string()), Some(other.to_string())),
+        ] {
+            let provenance = CalibrationProvenance {
+                repo_exposure_head,
+                mutants_head,
+            };
+            let sentence = provenance.disclosure_sentence();
+            assert!(
+                !sentence.trim().is_empty(),
+                "every verdict must disclose something: {provenance:?}"
+            );
+            if let Some(head) = &provenance.repo_exposure_head {
+                assert!(
+                    sentence.contains(head),
+                    "the repo-exposure head must be named: {sentence}"
+                );
+            }
+            if let Some(head) = &provenance.mutants_head {
+                assert!(
+                    sentence.contains(head),
+                    "the mutants head must be named: {sentence}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn calibration_provenance_json_shape_mirrors_verdict() {
+        let provenance = CalibrationProvenance {
+            repo_exposure_head: Some("2bd22c0b0718157870e2e78c9a70b9da1c9c1b21".to_string()),
+            mutants_head: None,
+        };
+        let value = provenance.json();
+        assert_eq!(
+            value["repo_exposure_head"],
+            "2bd22c0b0718157870e2e78c9a70b9da1c9c1b21"
+        );
+        assert_eq!(value["mutants_head"], serde_json::Value::Null);
+        assert_eq!(value["verdict"], "only_repo_exposure_head");
+        let empty = CalibrationProvenance::default().json();
+        assert_eq!(empty["repo_exposure_head"], serde_json::Value::Null);
+        assert_eq!(empty["mutants_head"], serde_json::Value::Null);
+        assert_eq!(empty["verdict"], "no_head_recorded");
+    }
+
+    /// #8750/#8753: a saved `--out` artifact must define the vocabulary it
+    /// uses. The how-to-read guide must be present, non-empty, and identical
+    /// in substance on both the md and JSON surfaces, and the md report must
+    /// carry the Provenance section between the preamble and the Summary.
+    #[test]
+    fn agreement_how_to_read_is_present_on_md_and_json_surfaces() -> Result<(), String> {
+        let guide = agreement_how_to_read();
+        assert_eq!(
+            guide.len(),
+            5,
+            "one guide line per agreement bucket: {guide:?}"
+        );
+        for (bucket, text) in &guide {
+            assert!(
+                !text.trim().is_empty(),
+                "bucket {bucket} must have a non-empty reading guide"
+            );
+        }
+
+        let report = build_mutation_calibration_report(
+            vec![static_seam(
+                "seam-a",
+                "weakly_gripped",
+                "src/pricing.rs",
+                42,
+            )],
+            vec![runtime("m1", Some("seam-a"), None, None, "missed")],
+        );
+        let markdown = render_mutation_calibration_md(&report);
+        let provenance_at = markdown
+            .find("## Provenance")
+            .ok_or("md report must carry a Provenance section")?;
+        let summary_at = markdown
+            .find("## Summary")
+            .ok_or("md report must keep its Summary section")?;
+        let agreement_at = markdown
+            .find("## Static/runtime agreement")
+            .ok_or("md report must keep its agreement section")?;
+        assert!(
+            provenance_at < summary_at && summary_at < agreement_at,
+            "Provenance must render after the preamble and before Summary, and Summary before the agreement table:\n{markdown}"
+        );
+        assert!(
+            markdown.contains("How to read this table:"),
+            "the agreement section must define its vocabulary:\n{markdown}"
+        );
+        for bucket in guide.keys() {
+            assert!(
+                markdown.contains(&format!("- `{bucket}`:")),
+                "md must render a guide line for bucket {bucket}:\n{markdown}"
+            );
+        }
+
+        let json = render_mutation_calibration_json(&report)?;
+        let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(
+            value["how_to_read"]["buckets"].as_object().map(|b| b.len()),
+            Some(5),
+            "JSON how_to_read.buckets must carry one guide per agreement bucket:\n{json}"
+        );
+        for key in ["static_gap", "runtime_gap_signal", "runtime_clean_signal"] {
+            assert!(
+                value["how_to_read"].get(key).is_some(),
+                "JSON how_to_read must define {key}:\n{json}"
+            );
+        }
+        for (bucket, text) in &guide {
+            assert_eq!(
+                value["how_to_read"]["buckets"][*bucket].as_str(),
+                Some(*text),
+                "JSON guide for {bucket} must match the md guide verbatim"
+            );
+        }
+        assert_eq!(
+            value["provenance"]["verdict"], "no_head_recorded",
+            "a report built without artifact inputs must disclose that no head was recorded:\n{json}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn empty_import_markdown_does_not_claim_all_mutants_matched() {
         let report = build_mutation_calibration_report(
             vec![static_seam(
@@ -2166,7 +2326,7 @@ mod tests {
         assert_eq!(report.static_only_findings.len(), 2);
 
         let json = render_mutation_calibration_json(&report)?;
-        assert!(json.contains(r#""schema_version": "0.2""#));
+        assert!(json.contains(r#""schema_version": "0.3""#));
         assert!(json.contains(r#""static_gap_and_runtime_signal": 1"#));
         assert!(json.contains(r#""confidence_label": "supports_static_gap""#));
         assert!(json.contains(r#""confidence_label": "contradicts_static_gap""#));
@@ -3182,7 +3342,7 @@ mod tests {
         assert_eq!(report.matched[0].join_method, "span_containment");
         let json: Value = serde_json::from_str(&render_mutation_calibration_json(&report)?)
             .map_err(|err| err.to_string())?;
-        assert_eq!(json["schema_version"], "0.2");
+        assert_eq!(json["schema_version"], "0.3");
         let matched = &json["matches"][0];
         assert_eq!(matched["runtime"]["column"], 7);
         assert_eq!(matched["runtime"]["end_column"], 8);

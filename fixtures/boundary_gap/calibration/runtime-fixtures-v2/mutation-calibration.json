@@ -50,6 +50,18 @@
     }
   ],
   "ambiguous_span_overlap_matches": [],
+  "how_to_read": {
+    "buckets": {
+      "runtime_inconclusive": "ambiguous joins (several seams on one line, or crossing spans) or unobserved runtime outcomes: counted separately as evidence neither for nor against the static verdict until a seam_id or unambiguous location is available.",
+      "runtime_signal_without_static_gap": "a runtime mutant went uncaught where ripr reports no static gap: the sources disagree, so these rows are the first ones to investigate; see the Runtime signals without static gaps table.",
+      "static_clean_and_runtime_clean": "ripr reports no static gap (the seam is strongly_gripped, intentional, or suppressed) and the runtime caught the mutant: the two sources agree.",
+      "static_gap_and_runtime_signal": "ripr flags a static gap (a seam outside the strongly_gripped / intentional / suppressed set) and a runtime mutant went uncaught at that seam: the two sources agree, which supports the static classification.",
+      "static_gap_without_runtime_signal": "ripr flags a static gap but this import produced no runtime gap signal (missed / survived / not_caught / uncaught) for it: unexercised by this import, not contradicted; see the Static gaps without runtime signals table."
+    },
+    "runtime_clean_signal": "an imported cargo-mutants outcome the runtime caught: caught or timeout",
+    "runtime_gap_signal": "an imported cargo-mutants outcome the runtime failed to catch: missed, survived, not_caught, or uncaught",
+    "static_gap": "a static seam whose grip class is outside the strong set: anything other than strongly_gripped, intentional, or suppressed (for example ungripped or weakly_gripped)"
+  },
   "matches": [
     {
       "confidence_label": "supports_static_clean",
@@ -209,7 +221,12 @@
     "agreement buckets mix counting units: `static_gap_and_runtime_signal`, `static_gap_without_runtime_signal`, `static_clean_and_runtime_clean`, and `runtime_inconclusive` count static seams (with ambiguous records also counted in `runtime_inconclusive`), while `runtime_signal_without_static_gap` counts runtime gap-signal records, so the bucket column need not sum to `matched_total` or `mutants_total`",
     "`runtime_signal_without_static_gap` includes 1 unmatched gap-signal record also counted in `unmatched_mutants_total`"
   ],
-  "schema_version": "0.2",
+  "provenance": {
+    "mutants_head": null,
+    "repo_exposure_head": null,
+    "verdict": "no_head_recorded"
+  },
+  "schema_version": "0.3",
   "scope": "repo",
   "static_only_findings": [
     {

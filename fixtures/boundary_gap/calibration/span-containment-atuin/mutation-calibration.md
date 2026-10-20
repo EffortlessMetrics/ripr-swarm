@@ -4,6 +4,10 @@ Status: advisory
 
 This report joins static seam evidence to supplied cargo-mutants runtime data. Runtime outcome vocabulary in this report comes from that runtime data; static ripr reports continue to use audit vocabulary only.
 
+## Provenance
+
+Neither artifact carries a repository head SHA, so ensure both artifacts are from the same repository and adjacent commits. The join itself matches by seam_id, span containment, or file/line in every case.
+
 ## Summary
 
 | Metric | Count |
@@ -17,6 +21,14 @@ This report joins static seam evidence to supplied cargo-mutants runtime data. R
 | static_without_runtime_total | 12 |
 
 ## Static/runtime agreement
+
+How to read this table: a **static gap** is a static seam whose grip class is outside the strong set `strongly_gripped` / `intentional` / `suppressed` (for example `ungripped` or `weakly_gripped`). A **runtime gap signal** is an imported cargo-mutants outcome the runtime failed to catch (`missed`, `survived`, `not_caught`, `uncaught`); a **runtime clean signal** is one it caught (`caught`, `timeout`).
+
+- `runtime_inconclusive`: ambiguous joins (several seams on one line, or crossing spans) or unobserved runtime outcomes: counted separately as evidence neither for nor against the static verdict until a seam_id or unambiguous location is available.
+- `runtime_signal_without_static_gap`: a runtime mutant went uncaught where ripr reports no static gap: the sources disagree, so these rows are the first ones to investigate; see the Runtime signals without static gaps table.
+- `static_clean_and_runtime_clean`: ripr reports no static gap (the seam is strongly_gripped, intentional, or suppressed) and the runtime caught the mutant: the two sources agree.
+- `static_gap_and_runtime_signal`: ripr flags a static gap (a seam outside the strongly_gripped / intentional / suppressed set) and a runtime mutant went uncaught at that seam: the two sources agree, which supports the static classification.
+- `static_gap_without_runtime_signal`: ripr flags a static gap but this import produced no runtime gap signal (missed / survived / not_caught / uncaught) for it: unexercised by this import, not contradicted; see the Static gaps without runtime signals table.
 
 | Agreement bucket | Count |
 | --- | ---: |

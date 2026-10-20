@@ -16925,3 +16925,46 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+
+[[behavior]]
+id = "RIPR-SPEC-0286"
+name = "Mutation calibration output clarity contract"
+spec = "docs/specs/RIPR-SPEC-0286-mutation-calibration-clarity.md"
+tests = [
+  "crates/ripr/src/output/mutation_calibration.rs::tests::calibration_provenance_verdict_covers_all_head_combinations",
+  "crates/ripr/src/output/mutation_calibration.rs::tests::calibration_provenance_disclosure_sentence_is_nonempty_and_names_verdict_facts",
+  "crates/ripr/src/output/mutation_calibration.rs::tests::calibration_provenance_json_shape_mirrors_verdict",
+  "crates/ripr/src/output/mutation_calibration.rs::tests::agreement_how_to_read_is_present_on_md_and_json_surfaces",
+  "crates/ripr/src/output/mutation_calibration.rs::tests::mutation_calibration_summarizes_static_runtime_agreement",
+  "crates/ripr/src/output/mutation_calibration.rs::tests::span_join_reads_cargo_mutants_columns_end_to_end",
+  "crates/ripr/tests/cli_smoke.rs::calibration_runtime_fixture_v1_matches_checked_reports",
+  "crates/ripr/tests/cli_smoke.rs::calibration_runtime_fixture_v2_matches_checked_reports",
+  "crates/ripr/tests/cli_smoke.rs::calibration_runtime_fixture_v3_matches_checked_reports",
+  "crates/ripr/tests/cli_smoke.rs::calibration_span_containment_atuin_fixture_matches_checked_reports",
+  "crates/ripr/tests/cli_smoke.rs::calibration_span_containment_semver_display_refuses_same_line_pairing",
+]
+fixtures = [
+  "fixtures/boundary_gap/calibration/runtime-fixtures-v1/mutation-calibration.json",
+  "fixtures/boundary_gap/calibration/runtime-fixtures-v1/mutation-calibration.md",
+  "fixtures/boundary_gap/calibration/runtime-fixtures-v2/mutation-calibration.json",
+  "fixtures/boundary_gap/calibration/runtime-fixtures-v2/mutation-calibration.md",
+  "fixtures/boundary_gap/calibration/runtime-fixtures-v3/mutation-calibration.json",
+  "fixtures/boundary_gap/calibration/runtime-fixtures-v3/mutation-calibration.md",
+  "fixtures/boundary_gap/calibration/span-containment-atuin/mutation-calibration.json",
+  "fixtures/boundary_gap/calibration/span-containment-atuin/mutation-calibration.md",
+  "fixtures/boundary_gap/calibration/span-containment-semver-display/mutation-calibration.json",
+  "fixtures/boundary_gap/calibration/span-containment-semver-display/mutation-calibration.md",
+]
+code = [
+  "crates/ripr/src/output/mutation_calibration.rs",
+  "crates/ripr/src/output/outcome/mod.rs",
+  "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/help/reports.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0286-mutation-calibration-clarity.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
