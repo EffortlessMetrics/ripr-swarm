@@ -164,8 +164,8 @@ separators (#6313).
 
 `ripr agent repair --phase` accepts only `before`, `after`, and `verify`.
 An unknown value uses the shared CLI value-suggestion rules: `befor`, `aftr`,
-and `verfy` suggest their corresponding phase; an empty, distant, or unrelated
-value lists the accepted phases without a suggestion. Suggestions never accept
+and `verfy` suggest their corresponding phase; empty and distant values,
+including the sibling command name `packet`, list the phases without a suggestion. Suggestions never accept
 or execute the rejected spelling. Invalid occurrences, including one followed
 by a valid repeated flag, exit 2 with empty stdout and the refusal on stderr
 before configuration loading or repair/store writes. A missing value retains
