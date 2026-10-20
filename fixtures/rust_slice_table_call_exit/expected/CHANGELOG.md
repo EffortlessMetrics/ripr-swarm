@@ -77,3 +77,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_slice_table_call_exit (7)
+
+Reason:
+RIPR-SPEC-0224: a test with no assertion reads 'uses no oracle' (#8747)
+
+Command:
+`cargo xtask goldens bless rust_slice_table_call_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

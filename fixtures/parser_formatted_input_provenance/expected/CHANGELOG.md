@@ -63,3 +63,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — parser_formatted_input_provenance (6)
+
+Reason:
+RIPR-SPEC-0224: a test with no assertion reads 'uses no oracle' (#8747)
+
+Command:
+`cargo xtask goldens bless parser_formatted_input_provenance --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

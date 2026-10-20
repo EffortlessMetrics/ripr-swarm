@@ -195,3 +195,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — predicate_boundary_oracle_refused (16)
+
+Reason:
+RIPR-SPEC-0224: a test with no assertion reads 'uses no oracle' (#8747)
+
+Command:
+`cargo xtask goldens bless predicate_boundary_oracle_refused --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

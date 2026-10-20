@@ -370,3 +370,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — guarded_result_match_swallowed (29)
+
+Reason:
+RIPR-SPEC-0224: a test with no assertion reads 'uses no oracle' (#8747)
+
+Command:
+`cargo xtask goldens bless guarded_result_match_swallowed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

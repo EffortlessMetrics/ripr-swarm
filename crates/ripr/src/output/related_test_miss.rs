@@ -83,6 +83,7 @@ pub(crate) fn oracle_projection(
 ) -> String {
     use crate::domain::{OracleKind, OracleStrength};
     match (strength, kind) {
+        (OracleStrength::None, _) => "no oracle".to_string(),
         // A row with no selected assertion has no oracle to describe.
         (OracleStrength::Unknown, OracleKind::Unknown) if !has_assertion => "no oracle".to_string(),
         (OracleStrength::Unknown, OracleKind::Unknown) => {

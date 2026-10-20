@@ -333,3 +333,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — decimal_field_observer_non_member_access (29)
+
+Reason:
+RIPR-SPEC-0224: a test with no assertion reads 'uses no oracle' (#8747)
+
+Command:
+`cargo xtask goldens bless decimal_field_observer_non_member_access --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
