@@ -5736,6 +5736,7 @@ fn perl_isnt_is_a_smoke_oracle_not_an_exact_one() -> Result<(), String> {
         "isnt ($got, 10, 'discount threshold')",
         "Test::More::isnt($got, 10, 'discount threshold')",
         "Test2::V0::isnt($got, 10, 'discount threshold')",
+        "Test2::V1::isnt($got, 10, 'discount threshold')",
         "  isnt($got, 10)",
     ] {
         let packet = EXACT_RETURN_PACKET.replace("is($got, 10, 'discount threshold')", spelling);

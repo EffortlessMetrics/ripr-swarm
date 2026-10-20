@@ -3025,6 +3025,7 @@ impl OracleFact {
         let call = call
             .strip_prefix("Test::More::")
             .or_else(|| call.strip_prefix("Test2::V0::"))
+            .or_else(|| call.strip_prefix("Test2::V1::"))
             .unwrap_or(call);
         call.strip_prefix("isnt").is_some_and(|rest| {
             !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_' || c == ':')

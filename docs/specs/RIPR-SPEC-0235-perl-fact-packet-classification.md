@@ -316,18 +316,18 @@ For each change, the first match wins:
     recommended next step says the producer grades the assertion broad and that
     no change is needed if it asserts the message, class or value.
 17. **`isnt` pins nothing.** An oracle whose recorded expression begins with
-    the call `isnt` (bare, or qualified `Test::More::` / `Test2::V0::`) is
-    read as `weak_smoke` when the producer graded it `strong_exact` or
-    `weak_broad`, because
-    `isnt($got, $v)` passes for every wrong result but `$v` and cannot
-    notice the changed behavior. It earns no rule 6 credit and is not a
-    rule 16 broad oracle, so its relation reads `reachable_unrevealed`
-    unless another bound oracle credits it (aggregation is unchanged).
-    Only the leading call token is read (a name such as `isnt_zero` is not
-    `isnt`); ripr does not parse the argument list. The producer fix is to
-    grade `isnt` weak at the source; this keeps older packets from earning
-    `weakly_exposed` meanwhile (corpus: `perl-test2-fee-isnt-zero`,
-    `perl-testmore-clamp-isnt` were credited, truth not discriminated).
+    the call `isnt` (bare, or qualified `Test::More::`, `Test2::V0::` or
+    `Test2::V1::`) is read as `weak_smoke` when the producer graded it
+    `strong_exact` or `weak_broad`, because `isnt($got, $v)` passes for
+    every wrong result but `$v` and cannot notice the changed behavior. It
+    earns no rule 6 credit and is not a rule 16 broad oracle, so its
+    relation reads `reachable_unrevealed` unless another bound oracle
+    credits it (aggregation is unchanged). Only the leading call token is
+    read (a name such as `isnt_zero` is not `isnt`); ripr does not parse the
+    argument list. The producer fix is to grade `isnt` weak at the source;
+    this keeps older packets from earning `weakly_exposed` meanwhile
+    (corpus: `perl-test2-fee-isnt-zero`, `perl-testmore-clamp-isnt` were
+    credited, truth not discriminated).
 
 ### Decisions
 
