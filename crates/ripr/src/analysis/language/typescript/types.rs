@@ -112,6 +112,9 @@ pub(crate) struct TypeScriptTest {
     pub(crate) file: PathBuf,
     pub(crate) line: usize,
     pub(crate) body_text: String,
+    /// Reach-only source with unreferenced local function values masked.
+    /// The original body remains available for snippets and oracle evidence.
+    pub(crate) reach_body_text: Option<String>,
     pub(crate) assertions: Vec<TypeScriptAssertion>,
     /// Module paths referenced by syntactic `vi.mock("...")` /
     /// `jest.mock("...")` calls discovered at the top level of the
@@ -178,6 +181,18 @@ impl TypeScriptTest {
     /// The file line a rendered pointer to `assertion` should name.
     pub(crate) fn evidence_line(&self, assertion: &TypeScriptAssertion) -> usize {
         self.factory_call_line.unwrap_or(assertion.line)
+    }
+}
+
+impl TypeScriptTest {
+    /// Relation decisions use the admitted execution surface without changing
+    /// the source/oracle object retained in a related-test candidate.
+    pub(crate) fn reach_view(&self) -> Option<Self> {
+        let body = self.reach_body_text.as_ref()?;
+        let mut view = self.clone();
+        view.body_text = body.clone();
+        view.reach_body_text = None;
+        Some(view)
     }
 }
 
