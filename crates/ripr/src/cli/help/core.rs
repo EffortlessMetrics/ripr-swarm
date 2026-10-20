@@ -505,6 +505,12 @@ accepted and changes nothing. To read the same finding as prose, run
 Usage: ripr context [--root PATH] [--base REV] [--worktree|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json] [--quiet]
 
 Options:
+  --root PATH  Workspace root. Defaults to the current directory, then
+               walks up to the enclosing workspace or package, or the git
+               top level; `--root .` pins this directory. A member-relative
+               `file:line` selector binds to the directory you ran from like
+               `ripr explain`; --diff and --from paths are read as typed from
+               the current directory.
   --finding ID
                Select the finding by id or `file:line`, like `--at`.
   --quiet      Suppress analysis progress and heartbeats on stderr, like

@@ -144,18 +144,34 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     // parsing and can fail on the Git probe; `context` is JSON-only, so the
     // failure writes the shared refusal envelope (with a root-unusable
     // identity) instead of leaving stdout empty.
-    let root_resolution =
-        super::resolve_worktree_root(&mut input, worktree, root_explicitly_provided);
-    if let Err(err) = root_resolution {
-        return Err(crate::cli::commands_context::refuse_json_envelope(
-            crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
-            "diff",
-            Some(input.mode.as_str()),
-            &input.root,
-            input.base.as_deref(),
-            crate::core_error::CoreError::repository_root_unusable(err),
-        ));
-    }
+    //
+    // #8902: the implicit root is the one `ripr check` uses (this subsumes the
+    // `--worktree` resolution); `--root .` opts out. A member-relative
+    // `file:line` selector binds to the invocation directory like `explain`.
+    // `--diff` and `--from` are read as typed from the invocation directory,
+    // which is already the file the operator named.
+    let prefix = match super::check::resolve_implicit_command_root(
+        &mut input.root,
+        root_explicitly_provided,
+    ) {
+        Ok(prefix) => prefix,
+        Err(err) => {
+            return Err(crate::cli::commands_context::refuse_json_envelope(
+                crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
+                "diff",
+                Some(input.mode.as_str()),
+                &input.root,
+                input.base.as_deref(),
+                crate::core_error::CoreError::repository_root_unusable(err),
+            ));
+        }
+    };
+    let replay = from_artifact.is_some() || input.diff_file.is_some();
+    let selector = selector
+        .map(|item| {
+            super::bind_member_drill_in_selector(prefix.as_deref(), &input.root, item, replay)
+        })
+        .transpose()?;
     // #7331: `context` produces JSON only, so every post-argv-parse failure
     // below writes the shared refusal envelope (keyed with the context
     // packet's own version) to stdout before the prose error reaches
