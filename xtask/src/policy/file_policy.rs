@@ -1904,6 +1904,18 @@ mod tests {
         if !is_covered_by_instrument_failure(&error) {
             return Err(format!("ceiling stop not an instrument failure: {error}"));
         }
+        // A sum landing exactly on the ceiling is exhausted: the comparison is
+        // inclusive.
+        let mut calls = 0;
+        let output = capture_past_lock_wait(&lock_spawn(), &mut |_| {
+            calls += 1;
+            let mut output = lock_wait_output(true);
+            output.duration = LOCK_WAIT_CEILING / 3;
+            Ok(output)
+        })?;
+        if calls != 3 || !output.stderr.contains(LOCK_WAIT_CEILING_NOTE_PREFIX) {
+            return Err(format!("exact-ceiling sum was not exhausted: {calls}"));
+        }
         // A sequence below the ceiling is still retried to completion.
         let mut calls = 0;
         let output = capture_past_lock_wait(&lock_spawn(), &mut |_| {

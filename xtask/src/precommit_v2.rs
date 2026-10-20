@@ -1963,8 +1963,11 @@ mod tests {
         policy_result: Result<(), String>,
     ) -> Result<Driven, String> {
         let mut calls = Vec::new();
+        // Temp dirs may sit behind a symlink (macOS /var -> /private/var) and
+        // package roots are canonicalized before prefix stripping.
+        let root = fs::canonicalize(&fixture.path).map_err(|error| error.to_string())?;
         let result = run_composition_in(
-            fixture.path.clone(),
+            root,
             false,
             &mut |_| policy_result.clone(),
             &mut |program, args| {
