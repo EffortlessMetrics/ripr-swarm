@@ -595,3 +595,7 @@ reason = "agent repair-loop retry bound and status routing; not an analyzer verd
 id = "RIPR-SPEC-0285"
 scope = "out"
 reason = "doctor/repo-input framework-scan admission, ordering, and string-awareness hygiene; not an exposure-verdict example a corpus case labels"
+[[spec]]
+id = "RIPR-SPEC-0289"
+scope = "out"
+reason = "edit-cage refusal narration wording; not an exposure-verdict example a corpus case labels"
