@@ -1,0 +1,37 @@
+{
+  "candidate": "fc7e17a409cf81b99c2447a409b55ec699752d06",
+  "merge_subject": {
+    "commit": "7ae2509ba2d4d9173e5d21e8bd3ad306a0be9a53",
+    "parents": [
+      "a816499ecf9544fe49f3c3ca4d4964584ab02f70",
+      "fc7e17a409cf81b99c2447a409b55ec699752d06"
+    ],
+    "tree": "a0d5776fdaf3303e5744fc903805f4b51a1f969f"
+  },
+  "paste_run": 39510731471,
+  "jobs": [
+    {
+      "id": 118930805562,
+      "platform": "ubuntu-latest",
+      "passed": 7,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "id": 118930805657,
+      "platform": "macos-latest",
+      "passed": 7,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "id": 118930806129,
+      "platform": "windows-latest",
+      "passed": 7,
+      "failed": 0,
+      "ignored": 0
+    }
+  ],
+  "scope": "Actual checkout and seven printed-command tests verified separately in each completed job log; does not establish primary Rust-job checkout, all Windows tests, or Rust qualification.",
+  "log_normalization": "Decoded connector text, ANSI stripped. Patch tool retains text with platform newline normalization; hashes will bind retained bytes."
+}

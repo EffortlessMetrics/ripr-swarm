@@ -1,0 +1,15 @@
+PR #8961 repaired-candidate qualification
+
+Candidate: fc7e17a409cf81b99c2447a409b55ec699752d06. Actual Rust checkout: 7ae2509ba2d4d9173e5d21e8bd3ad306a0be9a53; parents a816499ecf9544fe49f3c3ca4d4964584ab02f70 and candidate; tree a0d5776fdaf3303e5744fc903805f4b51a1f969f.
+
+Run 39510731523 attempt 2 / primary job 118932165873 / required Result 118947878432 completed success at 2026-10-20 23:34:38 UTC. Nextest: 17,790 passed, 4 skipped, 3 slow, 805.247 seconds across 131 binaries. Doctests: 2 passed, 1 ignored. Native primary wrapper elapsed 2549 seconds including dependencies, policy, compilation, tests and evidence. Read qualification-receipt.json plus terminal metadata and logs. All six changed CLI functions and both parser functions have explicit PASS rows. Four skip identities were not printed; no claim is made that they executed.
+
+Primary source, totals and required aggregation are fresh proof for this repaired candidate. Earlier run 39499639623 / 17,761 passed belongs to old 1a525eaa and remains historical. No replacement run was dispatched: attempt 1 failed missing PR-body metadata before Rust; restored fields were validated, then only failed jobs were retried.
+
+Source recovery: candidate.patch applies to original base 1e9468f4b0d133f0a50b64134318763d8cf48beb. qualified-tree.patch applies to basis a816499ecf9544fe49f3c3ca4d4964584ab02f70 and recreates the actual qualified tree exactly. An isolated-index restoration verified a0d5776fdaf3303e5744fc903805f4b51a1f969f; its receipt records commands/hashes and index release. Source worktree/index were unchanged. Full earlier local controls, native reports, red limitations and verified golden archive references: https://github.com/EffortlessMetrics/ripr-swarm/tree/f81a27908877f5a411e9d7c12c2fd7541fa72dc2 .
+
+Fresh companions: Rust-only and all three platform paste jobs pass on actual merge 7ae2509b. Windows advisory uses candidate head fc7e17a4; 84/7/1 subsets pass, but unchanged all-target Clippy and selector journey failures remain with #8845/#8849. windows-disposition.json records exact blob controls and owner state. No complete Windows, all-feature runtime or selector replay pass is claimed.
+
+Review: https://github.com/EffortlessMetrics/ripr-swarm/pull/8961#pullrequestreview-5593137251 gives scoped technical REVIEW_READY with landing held. The public advisory questions were dispositioned at review 5592946604. Four observed repaired threads are resolved; pagination completeness remains unestablished after a denied native gh lookup. Classic protection 403 remains unknown. No denied artifact/private diagnostic was retried or republished, and no settings, credentials, merge, auto-merge, release or deployment action occurred.
+
+Native nextest/wildcard artifact metadata and five-day routes are in artifacts.json; payloads were not downloaded. The retained decoded job logs provide the runtime evidence beyond that expiry. Logs strip ANSI and normalize trailing/newline whitespace; manifest hashes bind the retained bytes. manifest.json excludes itself. This evidence does not certify SDK bytes, test adequacy or unrelated main/release health.

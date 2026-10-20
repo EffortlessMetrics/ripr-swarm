@@ -1,0 +1,40 @@
+{
+  "sha": "7ae2509ba2d4d9173e5d21e8bd3ad306a0be9a53",
+  "node_id": "C_kwDOSiSx0doAKDdhZTI1MDliYTJkNGQ5MTczZTVkMjFlOGJkM2FkMzA2YTBiZTlhNTM",
+  "url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/git/commits/7ae2509ba2d4d9173e5d21e8bd3ad306a0be9a53",
+  "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/commit/7ae2509ba2d4d9173e5d21e8bd3ad306a0be9a53",
+  "author": {
+    "name": "Steven Zimmerman, CPA",
+    "email": "15812269+EffortlessSteven@users.noreply.github.com",
+    "date": "2026-10-20T22:41:08Z"
+  },
+  "committer": {
+    "name": "GitHub",
+    "email": "noreply@github.com",
+    "date": "2026-10-20T22:41:08Z"
+  },
+  "tree": {
+    "sha": "a0d5776fdaf3303e5744fc903805f4b51a1f969f",
+    "url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/git/trees/a0d5776fdaf3303e5744fc903805f4b51a1f969f"
+  },
+  "message": "Merge fc7e17a409cf81b99c2447a409b55ec699752d06 into a816499ecf9544fe49f3c3ca4d4964584ab02f70",
+  "parents": [
+    {
+      "sha": "a816499ecf9544fe49f3c3ca4d4964584ab02f70",
+      "url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/git/commits/a816499ecf9544fe49f3c3ca4d4964584ab02f70",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/commit/a816499ecf9544fe49f3c3ca4d4964584ab02f70"
+    },
+    {
+      "sha": "fc7e17a409cf81b99c2447a409b55ec699752d06",
+      "url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/git/commits/fc7e17a409cf81b99c2447a409b55ec699752d06",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/commit/fc7e17a409cf81b99c2447a409b55ec699752d06"
+    }
+  ],
+  "verification": {
+    "verified": true,
+    "reason": "valid",
+    "signature": "-----BEGIN PGP SIGNATURE-----\n\nwsFcBAABCAAQBQJq1+4ECRC1aQ7uu5UhlAAAzUEQAKFxtkkRLiFdjl9W4gm5BcLY\nW0Ny8MJng/6TM3dOd9GJaPFyNyWJnaZbdpY8nmM4QVVyc3ra6ZxwcvmsF8e+NEp8\nRn8/+3uQ/pge7LWy3DRXMLSg+oPXDV3Is7N86tpktitaru/Qyq+RBUTFIMGvNReU\nrYh1Y2ZHaVt+4dPktJugQEl2OWLcpQ/iCGIyWlhbLirFgxr05YpRCVfl8KhGRh4I\n191do0r0HCxYIjjkBaDwU8QQxyE1wylnHEjfsct84AQ5FQdGHhjN7Kh98zNSUeYL\nUpsrKuYujxlqPX5VupAIF827wLds6h44MrQUSRu8OZJPUXPyAUUKYJzVv9Vy/LlX\nilQcVVF1leFqhHMQmRK1lgvrUkl7YwmIWLh5kVmUdyPEkFwk3H3Ey8+xjxKEsz4G\n0AHA05mXTyBTXhZz2hx2wLMtH5Zxe3RY6AzVmsrym4qnq/UhnXu75Pkh8xIWJ+oI\nSWVljNJLBcQemsNj1SQNlHLmYTTb/vNzxbS8qy30VGu0iIsFw6BdT9QA6GMd7iro\n0hUC3rNrTVXJH7EtO1ZIJCRIHQBXX4dj4O9lm+YxdsGDqmL105XL7yBJ++uZeek7\nMHm28FqA6pxI4i+hAhjtTRUJdDs3SS+EFb2qLQzfFwqiuRjV9y0SH58uqgv4NeNw\ndRfdfLob9ldXfWClPxAE\n=WYY8\n-----END PGP SIGNATURE-----\n",
+    "payload": "tree a0d5776fdaf3303e5744fc903805f4b51a1f969f\nparent a816499ecf9544fe49f3c3ca4d4964584ab02f70\nparent fc7e17a409cf81b99c2447a409b55ec699752d06\nauthor Steven Zimmerman, CPA <15812269+EffortlessSteven@users.noreply.github.com> 1792536068 +0000\ncommitter GitHub <noreply@github.com> 1792536068 +0000\n\nMerge fc7e17a409cf81b99c2447a409b55ec699752d06 into a816499ecf9544fe49f3c3ca4d4964584ab02f70\n",
+    "verified_at": "2026-10-20T22:41:09Z"
+  }
+}

@@ -1,0 +1,340 @@
+{
+  "observed_at": "2026-10-20T23:43:26.403221+00:00",
+  "candidate": "fc7e17a409cf81b99c2447a409b55ec699752d06",
+  "candidate_tree": "eb5a63a1fdfed5b5f623a4b433544f589c9bf21f",
+  "original_base": "1e9468f4b0d133f0a50b64134318763d8cf48beb",
+  "qualified_checkout": "7ae2509ba2d4d9173e5d21e8bd3ad306a0be9a53",
+  "qualified_parents": [
+    "a816499ecf9544fe49f3c3ca4d4964584ab02f70",
+    "fc7e17a409cf81b99c2447a409b55ec699752d06"
+  ],
+  "qualified_tree": "a0d5776fdaf3303e5744fc903805f4b51a1f969f",
+  "run": 39510731523,
+  "attempt": 2,
+  "primary_job": 118932165873,
+  "aggregate_job": 118947878432,
+  "conclusion": "success",
+  "completed_at": "2026-10-20T23:34:38Z",
+  "primary_job_elapsed_seconds": 2549.0,
+  "required_tests": {
+    "command": "cargo nextest run --workspace --profile ci",
+    "binaries": 131,
+    "run": 17790,
+    "passed": 17790,
+    "skipped": 4,
+    "slow": 3,
+    "nextest_run_seconds": 805.247,
+    "skip_identity_limit": "The console verifies four skipped but does not emit their individual identities; native JUnit artifact metadata/route is retained, payload not downloaded."
+  },
+  "doctests": {
+    "command": "cargo test --workspace --doc",
+    "passed": 2,
+    "ignored": 1
+  },
+  "runtime": {
+    "host": "GitHub-hosted Linux x86_64 Ubuntu24.04",
+    "runner_image": "ubuntu24/20261012.334",
+    "rustc": "1.95.0 (59807616e 2026-04-14)",
+    "cargo_nextest": "0.9.148 (cd1d6d546 2026-10-07)"
+  },
+  "changed_test_PASS_rows": [
+    "2026-10-20T23:10:17.7767011Z         PASS [   0.013s] ( 1789/17790) ripr analysis::diff::parse::stream::path_admission_tests::path_like_added_and_removed_lines_stay_hunk_payload",
+    "2026-10-20T23:10:17.7796869Z         PASS [   0.017s] ( 1790/17790) ripr analysis::diff::parse::stream::path_admission_tests::actual_deep_headers_still_refuse_after_hunk_payload",
+    "2026-10-20T23:16:56.0526458Z         PASS [   0.060s] (13577/17790) ripr::task_first_facade brief_diff_status::brief_base_uses_the_same_parser_refusal_before_inventory",
+    "2026-10-20T23:16:56.2201867Z         PASS [   0.167s] (13579/17790) ripr::task_first_facade brief_diff_status::brief_empty_and_ordinary_patches_keep_successful_selection",
+    "2026-10-20T23:16:56.2958099Z         PASS [   0.147s] (13580/17790) ripr::task_first_facade brief_diff_status::brief_parser_errors_keep_diff_input_identity_and_budget_guards",
+    "2026-10-20T23:16:56.3287556Z         PASS [   0.106s] (13581/17790) ripr::task_first_facade brief_diff_status::brief_parser_refusals_cannot_become_empty_or_fallback_successes",
+    "2026-10-20T23:16:56.4349814Z         PASS [   0.139s] (13582/17790) ripr::task_first_facade brief_diff_status::brief_path_like_hunk_payload_keeps_real_changed_line_selection",
+    "2026-10-20T23:16:56.4527647Z         PASS [   0.124s] (13583/17790) ripr::task_first_facade brief_diff_status::brief_truncated_sections_cannot_become_empty_or_partial_successes"
+  ],
+  "primary_step_results": [
+    {
+      "name": "Set up job",
+      "conclusion": "success",
+      "started_at": "2026-10-20T22:52:04Z",
+      "completed_at": "2026-10-20T22:52:07Z"
+    },
+    {
+      "name": "Run actions/checkout@v6",
+      "conclusion": "success",
+      "started_at": "2026-10-20T22:52:07Z",
+      "completed_at": "2026-10-20T22:52:28Z"
+    },
+    {
+      "name": "Acquire scratch lease",
+      "conclusion": "skipped",
+      "started_at": "2026-10-20T22:52:28Z",
+      "completed_at": "2026-10-20T22:52:28Z"
+    },
+    {
+      "name": "Reclaim terminal scratch",
+      "conclusion": "skipped",
+      "started_at": "2026-10-20T22:52:28Z",
+      "completed_at": "2026-10-20T22:52:28Z"
+    },
+    {
+      "name": "Prepare toolchain temp",
+      "conclusion": "skipped",
+      "started_at": "2026-10-20T22:52:28Z",
+      "completed_at": "2026-10-20T22:52:28Z"
+    },
+    {
+      "name": "Configure scratch environment",
+      "conclusion": "skipped",
+      "started_at": "2026-10-20T22:52:28Z",
+      "completed_at": "2026-10-20T22:52:28Z"
+    },
+    {
+      "name": "Prepare scratch",
+      "conclusion": "skipped",
+      "started_at": "2026-10-20T22:52:28Z",
+      "completed_at": "2026-10-20T22:52:28Z"
+    },
+    {
+      "name": "Run dtolnay/rust-toolchain@v1",
+      "conclusion": "success",
+      "started_at": "2026-10-20T22:52:28Z",
+      "completed_at": "2026-10-20T22:52:39Z"
+    },
+    {
+      "name": "Formatting preflight",
+      "conclusion": "success",
+      "started_at": "2026-10-20T22:52:39Z",
+      "completed_at": "2026-10-20T22:52:59Z"
+    },
+    {
+      "name": "Install CI tools",
+      "conclusion": "success",
+      "started_at": "2026-10-20T22:52:59Z",
+      "completed_at": "2026-10-20T22:52:59Z"
+    },
+    {
+      "name": "Restore hosted Rust cache",
+      "conclusion": "success",
+      "started_at": "2026-10-20T22:52:59Z",
+      "completed_at": "2026-10-20T22:53:19Z"
+    },
+    {
+      "name": "Start sccache server",
+      "conclusion": "skipped",
+      "started_at": "2026-10-20T22:53:19Z",
+      "completed_at": "2026-10-20T22:53:19Z"
+    },
+    {
+      "name": "Agent skill contracts",
+      "conclusion": "success",
+      "started_at": "2026-10-20T22:53:19Z",
+      "completed_at": "2026-10-20T22:53:22Z"
+    },
+    {
+      "name": "Prepare locked owner-return fixture dependencies",
+      "conclusion": "success",
+      "started_at": "2026-10-20T22:53:22Z",
+      "completed_at": "2026-10-20T22:53:22Z"
+    },
+    {
+      "name": "Repository policy preflight",
+      "conclusion": "success",
+      "started_at": "2026-10-20T22:53:22Z",
+      "completed_at": "2026-10-20T23:00:22Z"
+    },
+    {
+      "name": "Evidence promotion honesty",
+      "conclusion": "success",
+      "started_at": "2026-10-20T23:00:22Z",
+      "completed_at": "2026-10-20T23:00:22Z"
+    },
+    {
+      "name": "Dependency policy",
+      "conclusion": "success",
+      "started_at": "2026-10-20T23:00:22Z",
+      "completed_at": "2026-10-20T23:00:22Z"
+    },
+    {
+      "name": "Process policy",
+      "conclusion": "success",
+      "started_at": "2026-10-20T23:00:22Z",
+      "completed_at": "2026-10-20T23:00:23Z"
+    },
+    {
+      "name": "Network policy",
+      "conclusion": "success",
+      "started_at": "2026-10-20T23:00:23Z",
+      "completed_at": "2026-10-20T23:00:26Z"
+    },
+    {
+      "name": "Workspace and all-target check",
+      "conclusion": "success",
+      "started_at": "2026-10-20T23:00:26Z",
+      "completed_at": "2026-10-20T23:02:05Z"
+    },
+    {
+      "name": "All-features ripr target check",
+      "conclusion": "success",
+      "started_at": "2026-10-20T23:02:05Z",
+      "completed_at": "2026-10-20T23:03:31Z"
+    },
+    {
+      "name": "Strict workspace Clippy",
+      "conclusion": "success",
+      "started_at": "2026-10-20T23:03:31Z",
+      "completed_at": "2026-10-20T23:06:02Z"
+    },
+    {
+      "name": "Required Rust tests",
+      "conclusion": "success",
+      "started_at": "2026-10-20T23:06:02Z",
+      "completed_at": "2026-10-20T23:23:15Z"
+    },
+    {
+      "name": "Upload required Rust test results",
+      "conclusion": "success",
+      "started_at": "2026-10-20T23:23:15Z",
+      "completed_at": "2026-10-20T23:23:17Z"
+    },
+    {
+      "name": "Required Rust doctests",
+      "conclusion": "success",
+      "started_at": "2026-10-20T23:23:17Z",
+      "completed_at": "2026-10-20T23:23:24Z"
+    },
+    {
+      "name": "Golden output contracts",
+      "conclusion": "success",
+      "started_at": "2026-10-20T23:23:24Z",
+      "completed_at": "2026-10-20T23:23:39Z"
+    },
+    {
+      "name": "Retain wildcard calibration producer outputs",
+      "conclusion": "success",
+      "started_at": "2026-10-20T23:23:39Z",
+      "completed_at": "2026-10-20T23:23:40Z"
+    },
+    {
+      "name": "Fixture contracts",
+      "conclusion": "success",
+      "started_at": "2026-10-20T23:23:40Z",
+      "completed_at": "2026-10-20T23:23:53Z"
+    },
+    {
+      "name": "Verdict corpora",
+      "conclusion": "success",
+      "started_at": "2026-10-20T23:23:53Z",
+      "completed_at": "2026-10-20T23:25:24Z"
+    },
+    {
+      "name": "PR evidence",
+      "conclusion": "success",
+      "started_at": "2026-10-20T23:25:24Z",
+      "completed_at": "2026-10-20T23:34:28Z"
+    },
+    {
+      "name": "Proof route dry-run (advisory)",
+      "conclusion": "success",
+      "started_at": "2026-10-20T23:34:28Z",
+      "completed_at": "2026-10-20T23:34:28Z"
+    },
+    {
+      "name": "Advisory reports",
+      "conclusion": "skipped",
+      "started_at": "2026-10-20T23:34:28Z",
+      "completed_at": "2026-10-20T23:34:28Z"
+    },
+    {
+      "name": "Show sccache stats",
+      "conclusion": "skipped",
+      "started_at": "2026-10-20T23:34:28Z",
+      "completed_at": "2026-10-20T23:34:28Z"
+    },
+    {
+      "name": "Write gate summary",
+      "conclusion": "success",
+      "started_at": "2026-10-20T23:34:28Z",
+      "completed_at": "2026-10-20T23:34:28Z"
+    },
+    {
+      "name": "Remove RIPR analysis cache before artifact upload",
+      "conclusion": "skipped",
+      "started_at": "2026-10-20T23:34:28Z",
+      "completed_at": "2026-10-20T23:34:28Z"
+    },
+    {
+      "name": "Upload RIPR reports",
+      "conclusion": "skipped",
+      "started_at": "2026-10-20T23:34:28Z",
+      "completed_at": "2026-10-20T23:34:28Z"
+    },
+    {
+      "name": "Clean scratch",
+      "conclusion": "skipped",
+      "started_at": "2026-10-20T23:34:28Z",
+      "completed_at": "2026-10-20T23:34:28Z"
+    },
+    {
+      "name": "Release scratch lease",
+      "conclusion": "skipped",
+      "started_at": "2026-10-20T23:34:28Z",
+      "completed_at": "2026-10-20T23:34:28Z"
+    },
+    {
+      "name": "Post Restore hosted Rust cache",
+      "conclusion": "success",
+      "started_at": "2026-10-20T23:34:28Z",
+      "completed_at": "2026-10-20T23:34:28Z"
+    },
+    {
+      "name": "Post Run actions/checkout@v6",
+      "conclusion": "success",
+      "started_at": "2026-10-20T23:34:28Z",
+      "completed_at": "2026-10-20T23:34:28Z"
+    },
+    {
+      "name": "Complete job",
+      "conclusion": "success",
+      "started_at": "2026-10-20T23:34:28Z",
+      "completed_at": "2026-10-20T23:34:28Z"
+    }
+  ],
+  "check_snapshot": {
+    "returned": 65,
+    "total": 65,
+    "conclusions": {
+      "skipped": 43,
+      "success": 22
+    },
+    "required_check_id": 118947878432,
+    "required_check_head": "fc7e17a409cf81b99c2447a409b55ec699752d06"
+  },
+  "route": "GitHub hosted selected; nonselected self-hosted jobs and docs-only route are skipped. Self-hosted query failed / availability counts unavailable, not zero.",
+  "local_proof_evidence": "f81a27908877f5a411e9d7c12c2fd7541fa72dc2",
+  "historical_old_head_proof": {
+    "candidate": "1a525eaaba07bb416a83a4f4d76c833a20cb5256",
+    "run": 39499639623,
+    "attempt": 1,
+    "passed": 17761,
+    "skipped": 4,
+    "evidence": "b22e34ddcd34808279b1a5b977182e5e6a02f72c",
+    "role": "historical, not substituted for current repair"
+  },
+  "review": {
+    "coordinator_record": 5593137251,
+    "advisory_disposition": 5592946604,
+    "disposition": "REVIEW_READY for bounded technical claim/qualification; landing held",
+    "observed_threads_resolved": 4,
+    "thread_pagination_limit": "Connector snapshot only; complete pagination not independently established. Denied native gh GraphQL pagination was not retried or bypassed."
+  },
+  "limits": [
+    "all-feature compile passed; all-feature runtime not claimed",
+    "Windows advisory retains two independent payload failures under #8845/#8849; full Windows/selector replay not claimed",
+    "provider quota / rejected model proof intent and docstring warning remain advisory limitations",
+    "classic protection read 403 remains unknown; no retry or permissions change",
+    "no denied artifact/private diagnostic fetched or published",
+    "decoded logs have ANSI/trailing/newline whitespace normalization; hashes bind retained text, not original HTTP bytes"
+  ],
+  "holds": [
+    "merge",
+    "auto-merge",
+    "release",
+    "deployment"
+  ]
+}

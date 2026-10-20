@@ -1,0 +1,711 @@
+{
+  "total_count": 9,
+  "jobs": [
+    {
+      "id": 118932062724,
+      "run_id": 39510731523,
+      "workflow_name": "Merge-ready request fc7e17a409cf81b99c2447a409b55ec699752d06",
+      "head_branch": "fix/brief-diff-input-status",
+      "run_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39510731523",
+      "run_attempt": 2,
+      "node_id": "CR_kwDOSiSx0c8AAAAbsOdCBA",
+      "head_sha": "fc7e17a409cf81b99c2447a409b55ec699752d06",
+      "url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/jobs/118932062724",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39510731523/job/118932062724",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-10-20T22:51:44Z",
+      "started_at": "2026-10-20T22:51:46Z",
+      "completed_at": "2026-10-20T22:52:00Z",
+      "name": "Admit PR Candidate",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-20T22:51:47Z",
+          "completed_at": "2026-10-20T22:51:48Z"
+        },
+        {
+          "name": "Run actions/checkout@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-20T22:51:48Z",
+          "completed_at": "2026-10-20T22:51:53Z"
+        },
+        {
+          "name": "Exercise admission discriminators",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-20T22:51:53Z",
+          "completed_at": "2026-10-20T22:51:53Z"
+        },
+        {
+          "name": "Admit exact candidate",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-20T22:51:53Z",
+          "completed_at": "2026-10-20T22:51:57Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-10-20T22:51:57Z",
+          "completed_at": "2026-10-20T22:51:57Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-10-20T22:51:57Z",
+          "completed_at": "2026-10-20T22:51:57Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/check-runs/118932062724",
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "runner_id": 1003636504,
+      "runner_name": "GitHub Actions 1003636504",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 118932063754,
+      "run_id": 39510731523,
+      "workflow_name": "Merge-ready request fc7e17a409cf81b99c2447a409b55ec699752d06",
+      "head_branch": "fix/brief-diff-input-status",
+      "run_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39510731523",
+      "run_attempt": 2,
+      "node_id": "CR_kwDOSiSx0c8AAAAbsOdGCg",
+      "head_sha": "fc7e17a409cf81b99c2447a409b55ec699752d06",
+      "url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/jobs/118932063754",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39510731523/job/118932063754",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-10-20T22:51:44Z",
+      "started_at": "2026-10-20T22:48:28Z",
+      "completed_at": "2026-10-20T22:48:30Z",
+      "name": "Route Ripr Rust Small",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-20T22:48:28Z",
+          "completed_at": "2026-10-20T22:48:29Z"
+        },
+        {
+          "name": "Select runner",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-20T22:48:29Z",
+          "completed_at": "2026-10-20T22:48:29Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-20T22:48:29Z",
+          "completed_at": "2026-10-20T22:48:29Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/check-runs/118932063754",
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "runner_id": 1003636495,
+      "runner_name": "GitHub Actions 1003636495",
+      "runner_group_id": null,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 118932099351,
+      "run_id": 39510731523,
+      "workflow_name": "Merge-ready request fc7e17a409cf81b99c2447a409b55ec699752d06",
+      "head_branch": "fix/brief-diff-input-status",
+      "run_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39510731523",
+      "run_attempt": 2,
+      "node_id": "CR_kwDOSiSx0c8AAAAbsOfRFw",
+      "head_sha": "fc7e17a409cf81b99c2447a409b55ec699752d06",
+      "url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/jobs/118932099351",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39510731523/job/118932099351",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-10-20T22:51:50Z",
+      "started_at": "2026-10-20T22:48:28Z",
+      "completed_at": "2026-10-20T22:48:52Z",
+      "name": "Detect Docs-Only Surface",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-20T22:48:29Z",
+          "completed_at": "2026-10-20T22:48:29Z"
+        },
+        {
+          "name": "Run actions/checkout@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-20T22:48:29Z",
+          "completed_at": "2026-10-20T22:48:48Z"
+        },
+        {
+          "name": "Check whether every changed file is docs/spec/markdown",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-20T22:48:48Z",
+          "completed_at": "2026-10-20T22:48:48Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-20T22:48:48Z",
+          "completed_at": "2026-10-20T22:48:49Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-10-20T22:48:49Z",
+          "completed_at": "2026-10-20T22:48:49Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/check-runs/118932099351",
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "runner_id": 1003636494,
+      "runner_name": "GitHub Actions 1003636494",
+      "runner_group_id": null,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 118932165873,
+      "run_id": 39510731523,
+      "workflow_name": "Merge-ready request fc7e17a409cf81b99c2447a409b55ec699752d06",
+      "head_branch": "fix/brief-diff-input-status",
+      "run_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39510731523",
+      "run_attempt": 2,
+      "node_id": "CR_kwDOSiSx0c8AAAAbsOjU8Q",
+      "head_sha": "fc7e17a409cf81b99c2447a409b55ec699752d06",
+      "url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/jobs/118932165873",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39510731523/job/118932165873",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-10-20T22:52:00Z",
+      "started_at": "2026-10-20T22:52:03Z",
+      "completed_at": "2026-10-20T23:34:32Z",
+      "name": "Ripr Rust Small on GitHub Hosted / Rust gates",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-20T22:52:04Z",
+          "completed_at": "2026-10-20T22:52:07Z"
+        },
+        {
+          "name": "Run actions/checkout@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-20T22:52:07Z",
+          "completed_at": "2026-10-20T22:52:28Z"
+        },
+        {
+          "name": "Acquire scratch lease",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 3,
+          "started_at": "2026-10-20T22:52:28Z",
+          "completed_at": "2026-10-20T22:52:28Z"
+        },
+        {
+          "name": "Reclaim terminal scratch",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 4,
+          "started_at": "2026-10-20T22:52:28Z",
+          "completed_at": "2026-10-20T22:52:28Z"
+        },
+        {
+          "name": "Prepare toolchain temp",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 5,
+          "started_at": "2026-10-20T22:52:28Z",
+          "completed_at": "2026-10-20T22:52:28Z"
+        },
+        {
+          "name": "Configure scratch environment",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 6,
+          "started_at": "2026-10-20T22:52:28Z",
+          "completed_at": "2026-10-20T22:52:28Z"
+        },
+        {
+          "name": "Prepare scratch",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 7,
+          "started_at": "2026-10-20T22:52:28Z",
+          "completed_at": "2026-10-20T22:52:28Z"
+        },
+        {
+          "name": "Run dtolnay/rust-toolchain@v1",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-10-20T22:52:28Z",
+          "completed_at": "2026-10-20T22:52:39Z"
+        },
+        {
+          "name": "Formatting preflight",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-10-20T22:52:39Z",
+          "completed_at": "2026-10-20T22:52:59Z"
+        },
+        {
+          "name": "Install CI tools",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10,
+          "started_at": "2026-10-20T22:52:59Z",
+          "completed_at": "2026-10-20T22:52:59Z"
+        },
+        {
+          "name": "Restore hosted Rust cache",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 11,
+          "started_at": "2026-10-20T22:52:59Z",
+          "completed_at": "2026-10-20T22:53:19Z"
+        },
+        {
+          "name": "Start sccache server",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 12,
+          "started_at": "2026-10-20T22:53:19Z",
+          "completed_at": "2026-10-20T22:53:19Z"
+        },
+        {
+          "name": "Agent skill contracts",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 13,
+          "started_at": "2026-10-20T22:53:19Z",
+          "completed_at": "2026-10-20T22:53:22Z"
+        },
+        {
+          "name": "Prepare locked owner-return fixture dependencies",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 14,
+          "started_at": "2026-10-20T22:53:22Z",
+          "completed_at": "2026-10-20T22:53:22Z"
+        },
+        {
+          "name": "Repository policy preflight",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 15,
+          "started_at": "2026-10-20T22:53:22Z",
+          "completed_at": "2026-10-20T23:00:22Z"
+        },
+        {
+          "name": "Evidence promotion honesty",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 16,
+          "started_at": "2026-10-20T23:00:22Z",
+          "completed_at": "2026-10-20T23:00:22Z"
+        },
+        {
+          "name": "Dependency policy",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 17,
+          "started_at": "2026-10-20T23:00:22Z",
+          "completed_at": "2026-10-20T23:00:22Z"
+        },
+        {
+          "name": "Process policy",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 18,
+          "started_at": "2026-10-20T23:00:22Z",
+          "completed_at": "2026-10-20T23:00:23Z"
+        },
+        {
+          "name": "Network policy",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 19,
+          "started_at": "2026-10-20T23:00:23Z",
+          "completed_at": "2026-10-20T23:00:26Z"
+        },
+        {
+          "name": "Workspace and all-target check",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 20,
+          "started_at": "2026-10-20T23:00:26Z",
+          "completed_at": "2026-10-20T23:02:05Z"
+        },
+        {
+          "name": "All-features ripr target check",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 21,
+          "started_at": "2026-10-20T23:02:05Z",
+          "completed_at": "2026-10-20T23:03:31Z"
+        },
+        {
+          "name": "Strict workspace Clippy",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 22,
+          "started_at": "2026-10-20T23:03:31Z",
+          "completed_at": "2026-10-20T23:06:02Z"
+        },
+        {
+          "name": "Required Rust tests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 23,
+          "started_at": "2026-10-20T23:06:02Z",
+          "completed_at": "2026-10-20T23:23:15Z"
+        },
+        {
+          "name": "Upload required Rust test results",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 24,
+          "started_at": "2026-10-20T23:23:15Z",
+          "completed_at": "2026-10-20T23:23:17Z"
+        },
+        {
+          "name": "Required Rust doctests",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 25,
+          "started_at": "2026-10-20T23:23:17Z",
+          "completed_at": "2026-10-20T23:23:24Z"
+        },
+        {
+          "name": "Golden output contracts",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 26,
+          "started_at": "2026-10-20T23:23:24Z",
+          "completed_at": "2026-10-20T23:23:39Z"
+        },
+        {
+          "name": "Retain wildcard calibration producer outputs",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 27,
+          "started_at": "2026-10-20T23:23:39Z",
+          "completed_at": "2026-10-20T23:23:40Z"
+        },
+        {
+          "name": "Fixture contracts",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 28,
+          "started_at": "2026-10-20T23:23:40Z",
+          "completed_at": "2026-10-20T23:23:53Z"
+        },
+        {
+          "name": "Verdict corpora",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 29,
+          "started_at": "2026-10-20T23:23:53Z",
+          "completed_at": "2026-10-20T23:25:24Z"
+        },
+        {
+          "name": "PR evidence",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 30,
+          "started_at": "2026-10-20T23:25:24Z",
+          "completed_at": "2026-10-20T23:34:28Z"
+        },
+        {
+          "name": "Proof route dry-run (advisory)",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 31,
+          "started_at": "2026-10-20T23:34:28Z",
+          "completed_at": "2026-10-20T23:34:28Z"
+        },
+        {
+          "name": "Advisory reports",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 32,
+          "started_at": "2026-10-20T23:34:28Z",
+          "completed_at": "2026-10-20T23:34:28Z"
+        },
+        {
+          "name": "Show sccache stats",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 33,
+          "started_at": "2026-10-20T23:34:28Z",
+          "completed_at": "2026-10-20T23:34:28Z"
+        },
+        {
+          "name": "Write gate summary",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 34,
+          "started_at": "2026-10-20T23:34:28Z",
+          "completed_at": "2026-10-20T23:34:28Z"
+        },
+        {
+          "name": "Remove RIPR analysis cache before artifact upload",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 35,
+          "started_at": "2026-10-20T23:34:28Z",
+          "completed_at": "2026-10-20T23:34:28Z"
+        },
+        {
+          "name": "Upload RIPR reports",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 36,
+          "started_at": "2026-10-20T23:34:28Z",
+          "completed_at": "2026-10-20T23:34:28Z"
+        },
+        {
+          "name": "Clean scratch",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 37,
+          "started_at": "2026-10-20T23:34:28Z",
+          "completed_at": "2026-10-20T23:34:28Z"
+        },
+        {
+          "name": "Release scratch lease",
+          "status": "completed",
+          "conclusion": "skipped",
+          "number": 38,
+          "started_at": "2026-10-20T23:34:28Z",
+          "completed_at": "2026-10-20T23:34:28Z"
+        },
+        {
+          "name": "Post Restore hosted Rust cache",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 75,
+          "started_at": "2026-10-20T23:34:28Z",
+          "completed_at": "2026-10-20T23:34:28Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v6",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 76,
+          "started_at": "2026-10-20T23:34:28Z",
+          "completed_at": "2026-10-20T23:34:28Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 77,
+          "started_at": "2026-10-20T23:34:28Z",
+          "completed_at": "2026-10-20T23:34:28Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/check-runs/118932165873",
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "runner_id": 1003636506,
+      "runner_name": "GitHub Actions 1003636506",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    {
+      "id": 118932166786,
+      "run_id": 39510731523,
+      "workflow_name": "Merge-ready request fc7e17a409cf81b99c2447a409b55ec699752d06",
+      "head_branch": "fix/brief-diff-input-status",
+      "run_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39510731523",
+      "run_attempt": 2,
+      "node_id": "CR_kwDOSiSx0c8AAAAbsOjYgg",
+      "head_sha": "fc7e17a409cf81b99c2447a409b55ec699752d06",
+      "url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/jobs/118932166786",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39510731523/job/118932166786",
+      "status": "completed",
+      "conclusion": "skipped",
+      "created_at": "2026-10-20T22:52:00Z",
+      "started_at": "2026-10-20T22:52:00Z",
+      "completed_at": "2026-10-20T22:52:00Z",
+      "name": "Ripr Rust Small on CX43",
+      "steps": [],
+      "check_run_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/check-runs/118932166786",
+      "labels": [],
+      "runner_id": null,
+      "runner_name": null,
+      "runner_group_id": null,
+      "runner_group_name": null
+    },
+    {
+      "id": 118932166848,
+      "run_id": 39510731523,
+      "workflow_name": "Merge-ready request fc7e17a409cf81b99c2447a409b55ec699752d06",
+      "head_branch": "fix/brief-diff-input-status",
+      "run_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39510731523",
+      "run_attempt": 2,
+      "node_id": "CR_kwDOSiSx0c8AAAAbsOjYwA",
+      "head_sha": "fc7e17a409cf81b99c2447a409b55ec699752d06",
+      "url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/jobs/118932166848",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39510731523/job/118932166848",
+      "status": "completed",
+      "conclusion": "skipped",
+      "created_at": "2026-10-20T22:52:00Z",
+      "started_at": "2026-10-20T22:52:00Z",
+      "completed_at": "2026-10-20T22:52:00Z",
+      "name": "Ripr Rust Small on CX53",
+      "steps": [],
+      "check_run_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/check-runs/118932166848",
+      "labels": [],
+      "runner_id": null,
+      "runner_name": null,
+      "runner_group_id": null,
+      "runner_group_name": null
+    },
+    {
+      "id": 118932167673,
+      "run_id": 39510731523,
+      "workflow_name": "Merge-ready request fc7e17a409cf81b99c2447a409b55ec699752d06",
+      "head_branch": "fix/brief-diff-input-status",
+      "run_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39510731523",
+      "run_attempt": 2,
+      "node_id": "CR_kwDOSiSx0c8AAAAbsOjb-Q",
+      "head_sha": "fc7e17a409cf81b99c2447a409b55ec699752d06",
+      "url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/jobs/118932167673",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39510731523/job/118932167673",
+      "status": "completed",
+      "conclusion": "skipped",
+      "created_at": "2026-10-20T22:52:01Z",
+      "started_at": "2026-10-20T22:52:01Z",
+      "completed_at": "2026-10-20T22:52:00Z",
+      "name": "Ripr Docs Gate",
+      "steps": [],
+      "check_run_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/check-runs/118932167673",
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "runner_id": null,
+      "runner_name": null,
+      "runner_group_id": null,
+      "runner_group_name": null
+    },
+    {
+      "id": 118932167676,
+      "run_id": 39510731523,
+      "workflow_name": "Merge-ready request fc7e17a409cf81b99c2447a409b55ec699752d06",
+      "head_branch": "fix/brief-diff-input-status",
+      "run_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39510731523",
+      "run_attempt": 2,
+      "node_id": "CR_kwDOSiSx0c8AAAAbsOjb_A",
+      "head_sha": "fc7e17a409cf81b99c2447a409b55ec699752d06",
+      "url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/jobs/118932167676",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39510731523/job/118932167676",
+      "status": "completed",
+      "conclusion": "skipped",
+      "created_at": "2026-10-20T22:52:01Z",
+      "started_at": "2026-10-20T22:52:01Z",
+      "completed_at": "2026-10-20T22:52:00Z",
+      "name": "Ripr Rust Small on CPX42",
+      "steps": [],
+      "check_run_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/check-runs/118932167676",
+      "labels": [],
+      "runner_id": null,
+      "runner_name": null,
+      "runner_group_id": null,
+      "runner_group_name": null
+    },
+    {
+      "id": 118947878432,
+      "run_id": 39510731523,
+      "workflow_name": "Merge-ready request fc7e17a409cf81b99c2447a409b55ec699752d06",
+      "head_branch": "fix/brief-diff-input-status",
+      "run_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/runs/39510731523",
+      "run_attempt": 2,
+      "node_id": "CR_kwDOSiSx0c8AAAAbsdiWIA",
+      "head_sha": "fc7e17a409cf81b99c2447a409b55ec699752d06",
+      "url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/actions/jobs/118947878432",
+      "html_url": "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/39510731523/job/118947878432",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-10-20T23:34:32Z",
+      "started_at": "2026-10-20T23:34:34Z",
+      "completed_at": "2026-10-20T23:34:38Z",
+      "name": "Ripr Rust Small Result",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-20T23:34:35Z",
+          "completed_at": "2026-10-20T23:34:35Z"
+        },
+        {
+          "name": "Summarize routed result",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-20T23:34:35Z",
+          "completed_at": "2026-10-20T23:34:35Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-20T23:34:35Z",
+          "completed_at": "2026-10-20T23:34:35Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/EffortlessMetrics/ripr-swarm/check-runs/118947878432",
+      "labels": [
+        "ubuntu-latest"
+      ],
+      "runner_id": 1003636687,
+      "runner_name": "GitHub Actions 1003636687",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    }
+  ]
+}

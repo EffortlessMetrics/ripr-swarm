@@ -1,0 +1,71 @@
+{
+  "observed_at": "2026-10-20T23:06:41.425987+00:00",
+  "run": 39510731488,
+  "job": 118930809394,
+  "actual_checkout": "fc7e17a409cf81b99c2447a409b55ec699752d06",
+  "candidate_tree": "eb5a63a1fdfed5b5f623a4b433544f589c9bf21f",
+  "runtime": "GitHub-hosted Windows x86_64 MSVC Rust1.95.0",
+  "wrapper_conclusion": "success",
+  "passing_subsets": [
+    {
+      "scope": "gap artifacts",
+      "passed": 84,
+      "failed": 0,
+      "filtered": 11632
+    },
+    {
+      "scope": "Cargo-home",
+      "passed": 7,
+      "failed": 0,
+      "filtered": 11709
+    },
+    {
+      "scope": "cache-warning",
+      "passed": 1,
+      "failed": 0,
+      "filtered": 541
+    }
+  ],
+  "failing_payloads": [
+    {
+      "scope": "all-target Clippy",
+      "native_error": "E0425 cannot find run_sh",
+      "native_exit": 101,
+      "issue": 8840,
+      "existing_owner_pr": 8845,
+      "owner_pr_state": "open Ready at 8cf448c075705a863fe595101686bd645f20c55c"
+    },
+    {
+      "scope": "selector literal journey",
+      "receipt_state": "FAIL",
+      "error": "printed command lost frozen root/diff/JSON scope",
+      "stage": "before recovery replay",
+      "issue": 8848,
+      "existing_owner_pr": 8849,
+      "owner_pr_state": "open Draft at 3f56a863a702804fc63e6cbd1dba322ef2516041"
+    }
+  ],
+  "unchanged_source_blobs": {
+    ".github/workflows/windows-advisory.yml": {
+      "1e9468f4b0d133f0a50b64134318763d8cf48beb": "a5e09f8a5583733fd4d8ff1cef4f83a9a558ae7e",
+      "fc7e17a409cf81b99c2447a409b55ec699752d06": "a5e09f8a5583733fd4d8ff1cef4f83a9a558ae7e",
+      "a816499ecf9544fe49f3c3ca4d4964584ab02f70": "a5e09f8a5583733fd4d8ff1cef4f83a9a558ae7e"
+    },
+    "crates/ripr/tests/generated_review_workflow.rs": {
+      "1e9468f4b0d133f0a50b64134318763d8cf48beb": "9e4d6591f0b96390892accd7ca0a1e18a3b1fe2e",
+      "fc7e17a409cf81b99c2447a409b55ec699752d06": "9e4d6591f0b96390892accd7ca0a1e18a3b1fe2e",
+      "a816499ecf9544fe49f3c3ca4d4964584ab02f70": "9e4d6591f0b96390892accd7ca0a1e18a3b1fe2e"
+    },
+    "crates/ripr/src/app/navigation.rs": {
+      "1e9468f4b0d133f0a50b64134318763d8cf48beb": "47e4e046e23ce6b9be9c78b38adc3add0227dac1",
+      "fc7e17a409cf81b99c2447a409b55ec699752d06": "47e4e046e23ce6b9be9c78b38adc3add0227dac1",
+      "a816499ecf9544fe49f3c3ca4d4964584ab02f70": "47e4e046e23ce6b9be9c78b38adc3add0227dac1"
+    },
+    "crates/ripr/src/agent/loop_commands.rs": {
+      "1e9468f4b0d133f0a50b64134318763d8cf48beb": "9dea49afc942d515da98862bea0d83556399c3a2",
+      "fc7e17a409cf81b99c2447a409b55ec699752d06": "9dea49afc942d515da98862bea0d83556399c3a2",
+      "a816499ecf9544fe49f3c3ca4d4964584ab02f70": "9dea49afc942d515da98862bea0d83556399c3a2"
+    }
+  },
+  "classification": "Independent existing harness/consumer failures in unchanged paths; neither introduced nor worsened by the brief parser repair. Existing owners preserved; no duplicate repair or known-failure rerun. Full Windows / selector replay / all-target Clippy pass is not claimed."
+}
