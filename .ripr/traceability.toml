@@ -16714,9 +16714,9 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0280"
+id = "RIPR-SPEC-0282"
 name = "Python framework scan is bounded, deterministic, and string-aware"
-spec = "docs/specs/RIPR-SPEC-0280-python-framework-scan-bounded-deterministic-string-aware.md"
+spec = "docs/specs/RIPR-SPEC-0282-python-framework-scan-bounded-deterministic-string-aware.md"
 tests = [
   "crates/ripr/src/analysis/language/python/tests.rs::detect_python_test_frameworks_scan_is_starvation_free_and_deterministic",
   "crates/ripr/src/analysis/language/python/tests.rs::detect_python_test_frameworks_test_named_directories_do_not_starve_the_scan",
@@ -16728,7 +16728,7 @@ code = [
   "crates/ripr/src/analysis/language/python/source_facts.rs",
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0280-python-framework-scan-bounded-deterministic-string-aware.md",
+  "docs/specs/RIPR-SPEC-0282-python-framework-scan-bounded-deterministic-string-aware.md",
 ]
 metrics = [
   "unit_test_pass_rate",

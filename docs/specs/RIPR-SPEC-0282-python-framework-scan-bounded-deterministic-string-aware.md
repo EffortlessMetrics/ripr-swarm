@@ -1,4 +1,4 @@
-# RIPR-SPEC-0280: Python framework scan is bounded, deterministic, and string-aware
+# RIPR-SPEC-0282: Python framework scan is bounded, deterministic, and string-aware
 
 Status: proposed
 
