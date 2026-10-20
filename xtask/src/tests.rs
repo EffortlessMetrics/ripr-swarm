@@ -1365,6 +1365,27 @@ fn evidence_promotion_human_oracle_line_accepts_kind_ungraded_wording() {
 }
 
 #[test]
+fn evidence_promotion_human_oracle_line_accepts_absent_oracle_wording() {
+    let line = "- related test tests/a.rs:3 t uses no oracle; misses: has no assertion";
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        line, "unknown", "none"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        "- related test tests/a.rs:3 t uses none unknown oracle; misses: has no assertion",
+        "unknown",
+        "none"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        "- related test tests/a.rs:3 t uses no oracles here",
+        "unknown",
+        "none"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line, "unknown", "weak"
+    ));
+}
+
+#[test]
 fn evidence_promotion_semantic_assertions_accept_human_oracle_projection() {
     let assertions = vec![super::EvidencePromotionSemanticAssertion::ExpectedOracle {
         kind: "exact_value".to_string(),
