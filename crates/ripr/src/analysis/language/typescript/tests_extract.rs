@@ -940,36 +940,72 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
 }
 
 /// Names a statement list declares as a function: a function declaration, or
-/// a `const` / `let` / `var` bound to an arrow or function expression.
+/// a `const` / `let` / `var` bound to an arrow or function expression, with
+/// or without `export` and through parentheses or a TypeScript assertion.
 fn local_callable_names(statements: &[Statement<'_>]) -> Vec<String> {
+    use oxc_ast::ast::{Declaration, ExportDefaultDeclarationKind};
     let mut names = Vec::new();
     for statement in statements {
         match statement {
-            Statement::FunctionDeclaration(function) if !function.declare => {
-                if let Some(identifier) = &function.id {
-                    names.push(identifier.name.to_string());
-                }
-            }
+            Statement::FunctionDeclaration(function) => push_function_name(function, &mut names),
             Statement::VariableDeclaration(declaration) => {
-                for declarator in &declaration.declarations {
-                    if let oxc_ast::ast::BindingPattern::BindingIdentifier(identifier) =
-                        &declarator.id
-                        && matches!(
-                            declarator.init,
-                            Some(
-                                Expression::ArrowFunctionExpression(_)
-                                    | Expression::FunctionExpression(_)
-                            )
-                        )
-                    {
-                        names.push(identifier.name.to_string());
-                    }
+                push_callable_declarators(declaration, &mut names);
+            }
+            Statement::ExportNamedDeclaration(export) => match &export.declaration {
+                Some(Declaration::FunctionDeclaration(function)) => {
+                    push_function_name(function, &mut names);
+                }
+                Some(Declaration::VariableDeclaration(declaration)) => {
+                    push_callable_declarators(declaration, &mut names);
+                }
+                _ => {}
+            },
+            Statement::ExportDefaultDeclaration(export) => {
+                if let ExportDefaultDeclarationKind::FunctionDeclaration(function) =
+                    &export.declaration
+                {
+                    push_function_name(function, &mut names);
                 }
             }
             _ => {}
         }
     }
     names
+}
+
+fn push_function_name(function: &oxc_ast::ast::Function<'_>, names: &mut Vec<String>) {
+    if !function.declare
+        && let Some(identifier) = &function.id
+    {
+        names.push(identifier.name.to_string());
+    }
+}
+
+fn push_callable_declarators(
+    declaration: &oxc_ast::ast::VariableDeclaration<'_>,
+    names: &mut Vec<String>,
+) {
+    for declarator in &declaration.declarations {
+        if let oxc_ast::ast::BindingPattern::BindingIdentifier(identifier) = &declarator.id
+            && declarator.init.as_ref().is_some_and(is_function_expression)
+        {
+            names.push(identifier.name.to_string());
+        }
+    }
+}
+
+/// An arrow or function expression, looking through parentheses and a
+/// TypeScript `as` / `satisfies` / `!` / angle-bracket assertion.
+fn is_function_expression(expression: &Expression<'_>) -> bool {
+    match expression {
+        Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_) => true,
+        Expression::ParenthesizedExpression(inner) => is_function_expression(&inner.expression),
+        Expression::TSAsExpression(inner) => is_function_expression(&inner.expression),
+        Expression::TSSatisfiesExpression(inner) => is_function_expression(&inner.expression),
+        Expression::TSNonNullExpression(inner) => is_function_expression(&inner.expression),
+        Expression::TSTypeAssertion(inner) => is_function_expression(&inner.expression),
+        _ => false,
+    }
 }
 
 /// Modules whose `beforeEach`/`beforeAll` run before every test in scope.

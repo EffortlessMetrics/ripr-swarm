@@ -81,6 +81,36 @@ fn a_locally_declared_registration_function_donates_no_assertions() -> Result<()
                 "{header}{IMPORTS}\nconst it = function (_name: string, _body: () => void) {{}};\nit('adds every value', () => {{\n  expect(sumAll([2, 3, 4])).toBe(9);\n}});\n"
             ),
         ),
+        (
+            "exported-noop-describe",
+            format!(
+                "{header}{IMPORTS}\nexport const describe = (_name: string, _body: () => void) => {{}};\ndescribe('sum', () => {{\n{SUITE_BODY}}});\n"
+            ),
+        ),
+        (
+            "exported-noop-describe-declaration",
+            format!(
+                "{header}{IMPORTS}\nexport function describe(_name: string, _body: () => void) {{}}\ndescribe('sum', () => {{\n{SUITE_BODY}}});\n"
+            ),
+        ),
+        (
+            "asserted-noop-describe",
+            format!(
+                "{header}{IMPORTS}\nconst describe = ((_name: string, _body: () => void) => {{}}) as typeof globalThis.describe;\ndescribe('sum', () => {{\n{SUITE_BODY}}});\n"
+            ),
+        ),
+        (
+            "noop-describe-only-form",
+            format!(
+                "{header}{IMPORTS}\nfunction describe(_name: string, _body: () => void) {{}}\ndescribe.only('sum', () => {{\n{SUITE_BODY}}});\n"
+            ),
+        ),
+        (
+            "noop-describe-each-form",
+            format!(
+                "{header}{IMPORTS}\nfunction describe(_name: string, _body: () => void) {{}}\ndescribe.each([1])('sum', () => {{\n{SUITE_BODY}}});\n"
+            ),
+        ),
     ] {
         assert_eq!(
             class_of(label, &source)?,
@@ -113,5 +143,18 @@ fn a_registration_helper_the_file_does_not_redeclare_keeps_its_credit() -> Resul
         "import {{ describe, test, expect }} from 'vitest';\n{IMPORTS}\nfunction helper() {{}}\nconst unrelated = () => {{}};\ndescribe('sum', () => {{\n{SUITE_BODY}}});\n"
     );
     assert_eq!(class_of("sibling-functions", &source)?, genuine);
+    Ok(())
+}
+
+#[test]
+fn a_registration_name_bound_to_a_non_function_keeps_its_credit() -> Result<(), String> {
+    // Only a declared function is a shadow; a name bound to a call result
+    // keeps the name-based reading, and this also shows the fixtures above
+    // parse and score, so their `NoStaticPath` is the gate's doing.
+    let genuine = genuine_class()?;
+    let source = format!(
+        "import {{ expect }} from 'vitest';\nimport {{ makeDescribe }} from './helpers';\n{IMPORTS}\nconst describe = makeDescribe();\ndescribe('sum', () => {{\n{SUITE_BODY}}});\n"
+    );
+    assert_eq!(class_of("call-result", &source)?, genuine);
     Ok(())
 }

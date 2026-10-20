@@ -152,7 +152,8 @@ assertion is `weakly_exposed`, not `reachable_unrevealed`.
 the runner's (2026-10-20).** `describe(...)`, `test(...)` and their
 `.each` / modifier forms are recognized by name, so a callee that this file
 or an enclosing `describe` body declares as a function (`function describe()
-{}`, `const test = () => {}`, `const it = function () {}`) is a call of that
+{}`, `const test = () => {}`, `const it = function () {}`, each also as an
+`export` or behind parentheses or an `as` assertion) is a call of that
 function, whose callback may never run. The registration then registers no
 test and donates no assertion, so a changed owner reached only through it
 reads `no_static_path`. A callee bound any other way (an import, a
@@ -810,7 +811,10 @@ rejected alternative. Any can be reversed later without touching the rest.
     also drops `test.extend(...)` registrations and `require` members that
     do run; declaring a function is the shape that cannot be the runner's.
     Not yet taken: a local wrapper that forwards to the real runner is read
-    as a no-op, which only withholds credit.
+    as a no-op, which only withholds credit; a function declared in a nested
+    block, a later assignment (`let describe; describe = () => {}`) and a
+    `class` or destructured binding are not collected, so they keep the
+    name-based reading.
 
 ## Required Evidence
 
