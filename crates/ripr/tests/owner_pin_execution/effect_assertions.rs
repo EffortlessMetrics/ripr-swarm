@@ -40,6 +40,14 @@ const ASSERTIONS: [(&str, &str, &str, &str); 3] = [
     ),
 ];
 
+fn human_has_effect_guidance(report: &ripr::CheckOutput) -> Result<bool, String> {
+    Ok(render_check(report, &OutputFormat::Human)?
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .contains("check the changed effect"))
+}
+
 #[test]
 fn effect_assertions_require_execution_but_keep_reachable_oracles() -> Result<(), String> {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -141,11 +149,16 @@ fn effect_assertions_require_execution_but_keep_reachable_oracles() -> Result<()
                             .is_some_and(|text| text.contains("check the changed effect"))
                     );
                     assert!(
-                        render_check(&report, &OutputFormat::Human)?
-                            .split_whitespace()
-                            .collect::<Vec<_>>()
-                            .join(" ")
-                            .contains("check the changed effect")
+                        human_has_effect_guidance(&report)?,
+                        "{macro_name}/{context}/{family}: Human output must retain effect guidance"
+                    );
+                    let mut without_guidance = report.clone();
+                    for finding in &mut without_guidance.findings {
+                        finding.recommended_next_step = None;
+                    }
+                    assert!(
+                        !human_has_effect_guidance(&without_guidance)?,
+                        "missing guidance must not satisfy the Human output check"
                     );
                     assert!(
                         finding["ripr"]["observe"]["summary"].as_str().is_some_and(
