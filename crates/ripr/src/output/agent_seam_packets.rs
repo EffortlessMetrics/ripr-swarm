@@ -6018,6 +6018,46 @@ mod tests {
     }
 
     #[test]
+    fn targeted_test_brief_oracle_wording_distinguishes_ungraded_assertions() -> Result<(), String>
+    {
+        for (kind, strength, expected) in [
+            (
+                OracleKind::ExactValue,
+                OracleStrength::Unknown,
+                "exact value oracle, not graded against this probe",
+            ),
+            (
+                OracleKind::Unknown,
+                OracleStrength::Unknown,
+                "an unclassified oracle, not graded against this probe",
+            ),
+            (
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+                "strong exact value oracle",
+            ),
+        ] {
+            let mut entry = weakly_gripped_classified();
+            entry.evidence.related_tests = vec![std::sync::Arc::new(related_test_with(
+                "observes_price",
+                kind,
+                strength,
+                crate::analysis::test_grip_evidence::RelationConfidence::High,
+            ))];
+            let brief = targeted_test_brief_for_classified_seam(&entry);
+            let row = brief
+                .lines()
+                .find(|line| line.starts_with("- Related test evidence:"))
+                .ok_or_else(|| format!("missing related-test evidence: {brief}"))?;
+            assert_eq!(
+                row,
+                format!("- Related test evidence: observes_price uses {expected}.")
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn packet_v2_fails_closed_when_no_related_test_exists() -> Result<(), String> {
         let json = render_agent_seam_packets_json(&[ungripped_classified()], None);
         for needle in [

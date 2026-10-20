@@ -27271,6 +27271,161 @@ fn hover_keeps_oracle_kind_on_a_matched_row_that_still_misses() -> Result<(), St
     Ok(())
 }
 
+fn oracle_wording_finding(kind: OracleKind, strength: OracleStrength) -> Finding {
+    let mut finding = sample_finding();
+    finding.class = ExposureClass::WeaklyExposed;
+    finding.related_tests = vec![RelatedTest {
+        name: "selected_observer".to_string(),
+        file: PathBuf::from("tests/pricing.rs"),
+        line: 12,
+        oracle: Some("assert_eq!(total, expected)".to_string()),
+        oracle_kind: kind,
+        oracle_strength: strength,
+        relation_reason: None,
+        relation_confidence: None,
+        miss: None,
+    }];
+    finding
+}
+
+#[test]
+fn finding_hover_oracle_wording_distinguishes_ungraded_assertions() -> Result<(), String> {
+    for (kind, strength, expected) in [
+        (
+            OracleKind::ExactValue,
+            OracleStrength::Unknown,
+            "exact value oracle, not graded against this probe",
+        ),
+        (
+            OracleKind::Unknown,
+            OracleStrength::Unknown,
+            "an unclassified oracle, not graded against this probe",
+        ),
+        (
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            "strong exact value oracle",
+        ),
+        (
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+            "weak relational check oracle",
+        ),
+    ] {
+        let finding = oracle_wording_finding(kind, strength);
+        let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+        let HoverContents::Markup(markup) =
+            super::hover::finding_hover_response(&finding, &diagnostic).contents
+        else {
+            return Err("expected finding hover markdown".to_string());
+        };
+        let row = markup
+            .value
+            .lines()
+            .find(|line| line.starts_with("- `tests/pricing.rs:12`"))
+            .ok_or_else(|| format!("missing related-test row: {}", markup.value))?;
+        assert_eq!(
+            row,
+            format!(
+                "- `tests/pricing.rs:12` `selected_observer` — {expected}: assert_eq!(total, expected)"
+            )
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn finding_diagnostic_oracle_wording_preserves_selected_row() -> Result<(), String> {
+    for (kind, strength, expected) in [
+        (
+            OracleKind::ExactValue,
+            OracleStrength::Unknown,
+            "exact value oracle, not graded against this probe",
+        ),
+        (
+            OracleKind::Unknown,
+            OracleStrength::Unknown,
+            "an unclassified oracle, not graded against this probe",
+        ),
+        (
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            "strong exact value oracle",
+        ),
+        (
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+            "weak relational check oracle",
+        ),
+    ] {
+        let finding = oracle_wording_finding(kind, strength);
+        let witness = crate::domain::DiagnosticWitness::from_finding(&finding)
+            .ok_or_else(|| "expected witness".to_string())?;
+        let site = witness
+            .fix_site
+            .as_ref()
+            .ok_or_else(|| "expected selected fix site".to_string())?;
+        assert_eq!(
+            site.oracle_kind,
+            finding.related_tests[0].oracle_kind.as_str()
+        );
+        assert_eq!(
+            site.oracle_strength,
+            finding.related_tests[0].oracle_strength.as_str()
+        );
+        let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+        let rows = diagnostic
+            .related_information
+            .as_ref()
+            .ok_or_else(|| "expected fix-site information".to_string())?;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].location.uri.as_str(),
+            "file:///workspace/tests/pricing.rs"
+        );
+        assert_eq!(rows[0].location.range.start.line, 11);
+        assert_eq!(
+            rows[0].message,
+            format!(
+                "Fix site: related test `selected_observer` has {expected}: assert_eq!(total, expected)"
+            )
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn absent_assertion_oracle_wording_keeps_reason_only_hover() -> Result<(), String> {
+    for strength in [OracleStrength::None, OracleStrength::Unknown] {
+        let mut finding = oracle_wording_finding(OracleKind::Unknown, strength);
+        finding.related_tests[0].oracle = None;
+        finding.related_tests[0].miss = Some(crate::domain::RelatedTestMiss::NoAssertion);
+        let diagnostic = diagnostic_for_finding(Path::new("/workspace"), &finding);
+        let HoverContents::Markup(markup) =
+            super::hover::finding_hover_response(&finding, &diagnostic).contents
+        else {
+            return Err("expected finding hover markdown".to_string());
+        };
+        let row = markup
+            .value
+            .lines()
+            .find(|line| line.starts_with("- `tests/pricing.rs:12`"))
+            .ok_or_else(|| format!("missing related-test row: {}", markup.value))?;
+        assert_eq!(
+            row,
+            "- `tests/pricing.rs:12` `selected_observer` misses: has no assertion"
+        );
+        assert!(
+            diagnostic
+                .related_information
+                .iter()
+                .flatten()
+                .all(|row| !row.message.starts_with("Fix site:"))
+        );
+    }
+    Ok(())
+}
+
 /// #5510: the packet-backed Perl finding's rows reach hover, related
 /// information and the diagnostic data with the shared sentence on the
 /// direct row only.

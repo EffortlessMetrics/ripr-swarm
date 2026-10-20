@@ -3893,6 +3893,51 @@ mod seam_diagnostic_tests {
     }
 
     #[test]
+    fn seam_diagnostic_oracle_wording_distinguishes_ungraded_assertions() -> Result<(), String> {
+        for (kind, strength, expected) in [
+            (
+                OracleKind::ExactValue,
+                OracleStrength::Unknown,
+                "exact value oracle, not graded against this probe",
+            ),
+            (
+                OracleKind::Unknown,
+                OracleStrength::Unknown,
+                "an unclassified oracle, not graded against this probe",
+            ),
+            (
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+                "strong exact value oracle",
+            ),
+        ] {
+            let mut entry = classified(SeamGripClass::WeaklyGripped);
+            let mut grip = related_grip("observes_price", "tests/pricing.rs", 12);
+            let test = std::sync::Arc::make_mut(&mut grip);
+            test.oracle_kind = kind;
+            test.oracle_strength = strength;
+            entry.evidence.related_tests = vec![grip];
+            let diagnostic = diagnostic_for_classified_seam(Path::new("/repo"), &entry)
+                .ok_or_else(|| "expected seam diagnostic".to_string())?;
+            let rows = diagnostic
+                .related_information
+                .as_ref()
+                .ok_or_else(|| "expected related information".to_string())?;
+            assert_eq!(rows.len(), 1);
+            assert_eq!(
+                rows[0].location.uri.as_str(),
+                "file:///repo/tests/pricing.rs"
+            );
+            assert_eq!(rows[0].location.range.start.line, 11);
+            assert_eq!(
+                rows[0].message,
+                format!("Related test `observes_price` has {expected}")
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn seam_diagnostic_omits_out_of_root_related_tests_and_keeps_in_root_rows() -> Result<(), String>
     {
         let mut entry = classified(SeamGripClass::WeaklyGripped);
