@@ -83,16 +83,35 @@ pub(crate) fn extract_tests_and_conditional_credit_gap(
     file: &Path,
     source: &str,
 ) -> (Vec<TypeScriptTest>, Option<TypeScriptConditionalCreditGap>) {
+    let (tests, gap, _) = extract_tests_with_expansion(file, source);
+    (tests, gap)
+}
+
+/// [`extract_tests_and_conditional_credit_gap`] plus the suite-factory
+/// expansion the tests came from (`None` when nothing expanded). The
+/// whole-file passes that read the original source (committed-snapshot
+/// promotion, the partial-extraction disclosure) need it: the tests'
+/// `body_text` is cut from the expanded source, not the file.
+pub(crate) fn extract_tests_with_expansion(
+    file: &Path,
+    source: &str,
+) -> (
+    Vec<TypeScriptTest>,
+    Option<TypeScriptConditionalCreditGap>,
+    Option<super::suite_factory::SuiteFactoryExpansion>,
+) {
     extract_tests_expanding_suite_factories(file, source, true)
 }
 
+type Extraction = (
+    Vec<TypeScriptTest>,
+    Option<TypeScriptConditionalCreditGap>,
+    Option<super::suite_factory::SuiteFactoryExpansion>,
+);
+
 /// `expand` is off for the rerun on an already-expanded source, whose
 /// factory calls are still present.
-fn extract_tests_expanding_suite_factories(
-    file: &Path,
-    source: &str,
-    expand: bool,
-) -> (Vec<TypeScriptTest>, Option<TypeScriptConditionalCreditGap>) {
+fn extract_tests_expanding_suite_factories(file: &Path, source: &str, expand: bool) -> Extraction {
     // Same guard as owner extraction (#4101): a file under the nesting
     // budget can still overflow the caller stack, so the parse must
     // not run on the main thread.
@@ -185,15 +204,16 @@ fn extract_tests_expanding_suite_factories(
         };
         (tests, conditional_credit_gap, None)
     }) else {
-        return (Vec::new(), None);
+        return (Vec::new(), None, None);
     };
     let (tests, gap, expansion) = out;
     let Some(expansion) = expansion else {
-        return (tests, gap);
+        return (tests, gap, None);
     };
     // Rerun on the source with the factory calls expanded; a test found in
     // an appended expansion reports its call's line.
-    let (mut tests, gap) = extract_tests_expanding_suite_factories(file, &expansion.source, false);
+    let (mut tests, gap, _) =
+        extract_tests_expanding_suite_factories(file, &expansion.source, false);
     // A substitution that lands inside a string can leave the expanded source
     // unparsable, which would drop every test the file yielded before
     // expansion; fall back to the unexpanded extraction then.
@@ -202,15 +222,17 @@ fn extract_tests_expanding_suite_factories(
     }
     for test in &mut tests {
         // Assertion lines stay offsets from the test line: the classifier
-        // indexes `body_text` by `assertion.line - test.line`.
+        // indexes `body_text` by `assertion.line - test.line`. A rendered
+        // pointer reads the call line instead (`evidence_line`).
         let expanded_start = test.line;
         let reported_start = expansion.reported_line(expanded_start);
+        test.factory_call_line = expansion.call_line_of(expanded_start);
         test.line = reported_start;
         for assertion in &mut test.assertions {
             assertion.line = reported_start + assertion.line.saturating_sub(expanded_start);
         }
     }
-    (tests, gap)
+    (tests, gap, Some(expansion))
 }
 
 /// Walk a list of statements and collect every syntactic owner-module mock
@@ -1808,7 +1830,7 @@ fn declared_names(code: &str) -> Vec<String> {
 
 /// `source` with the ASCII bytes of `ranges` replaced by spaces, byte
 /// offsets unchanged.
-fn blank_ranges(source: &str, ranges: &[std::ops::Range<usize>]) -> String {
+pub(super) fn blank_ranges(source: &str, ranges: &[std::ops::Range<usize>]) -> String {
     let mut bytes = source.as_bytes().to_vec();
     for range in ranges {
         for byte in bytes.get_mut(range.clone()).into_iter().flatten() {
@@ -2474,6 +2496,7 @@ pub(crate) fn test_from_statement<'s, 'a>(
         // Replaced by `collect_tests_from_statements`, which has the file's
         // admission context; fail-closed until then.
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        factory_call_line: None,
     })
 }
 
@@ -3071,11 +3094,36 @@ pub(crate) fn qualified_test_name(describe_stack: &[String], name: &str) -> Stri
 /// Returns `None` for a fully extracted file (the negative control contract):
 /// every test-shaped call at a position the extractor visits carries a string
 /// literal title and therefore already appears in `extracted`.
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "unit-test surface for files without suite factories; the analysis path calls detect_partial_test_extraction_expanded"
+    )
+)]
 pub(crate) fn detect_partial_test_extraction(
     file: &Path,
     source: &str,
     extracted: &[TypeScriptTest],
 ) -> Option<TypeScriptTestExtractionGap> {
+    detect_partial_test_extraction_expanded(file, source, extracted, None)
+}
+
+/// [`detect_partial_test_extraction`] for tests extracted with suite-factory
+/// expansion (RIPR-SPEC-0243 rule 13). Their `body_text` is cut from the
+/// expanded source, so the walk runs there: a covered factory's own
+/// registrations are skipped (the appended copies stand for them), a copy
+/// the extractor still dropped is disclosed, and its sample line is the
+/// call's.
+pub(crate) fn detect_partial_test_extraction_expanded(
+    file: &Path,
+    source: &str,
+    extracted: &[TypeScriptTest],
+    expansion: Option<&super::suite_factory::SuiteFactoryExpansion>,
+) -> Option<TypeScriptTestExtractionGap> {
+    let source = expansion.map_or(source, |expansion| expansion.source.as_str());
+    let covered = expansion.map(|expansion| expansion.covered.clone());
+    let call_lines = expansion.map(|expansion| expansion.call_lines.clone());
     // Span starts are pure string search. Compute them before the worker:
     // the parse closure is `'static` and cannot borrow `extracted`.
     let extracted_starts = extracted_span_starts(source, extracted);
@@ -3091,6 +3139,7 @@ pub(crate) fn detect_partial_test_extraction(
         let mut finder = UnextractedTestFinder {
             source: &source,
             extracted_starts: &extracted_starts,
+            covered: covered.as_deref().unwrap_or_default(),
             admission,
             gap: None,
         };
@@ -3098,7 +3147,10 @@ pub(crate) fn detect_partial_test_extraction(
         finder.gap.map(
             |(sample_line, shape, snippet)| TypeScriptTestExtractionGap {
                 file: file.to_path_buf(),
-                sample_line,
+                sample_line: call_lines
+                    .as_deref()
+                    .and_then(|lines| super::suite_factory::call_line_in(lines, sample_line))
+                    .unwrap_or(sample_line),
                 shape,
                 snippet,
             },
@@ -3140,6 +3192,9 @@ fn extracted_span_starts(source: &str, extracted: &[TypeScriptTest]) -> Vec<usiz
 struct UnextractedTestFinder<'a> {
     source: &'a SourceText<'a>,
     extracted_starts: &'a [usize],
+    /// Suite-factory declarations whose registrations the appended
+    /// expansions already stand for.
+    covered: &'a [std::ops::Range<usize>],
     admission: TypeScriptAdmissionContext,
     gap: Option<(usize, &'static str, String)>,
 }
@@ -3212,7 +3267,12 @@ impl UnextractedTestFinder<'_> {
                     }
                 }
             }
-            Statement::FunctionDeclaration(func) => self.visit_function(func),
+            Statement::FunctionDeclaration(func) => {
+                let span = func.span.start as usize..func.span.end as usize;
+                if !self.covered.contains(&span) {
+                    self.visit_function(func);
+                }
+            }
             Statement::ClassDeclaration(class) => self.visit_class(class),
             Statement::ExportDefaultDeclaration(export_default) => {
                 match &export_default.declaration {

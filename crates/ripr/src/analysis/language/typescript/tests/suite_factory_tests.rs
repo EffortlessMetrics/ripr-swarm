@@ -228,3 +228,185 @@ fn a_parameter_spelling_inside_a_string_credits_nothing() -> Result<(), String> 
     assert_eq!(class, ExposureClass::NoStaticPath);
     Ok(())
 }
+
+/// What the whole-file pipeline sees of `source` at `tests/sum.test.ts`: the
+/// extracted tests, the partial-extraction gap, and the committed-snapshot
+/// promotion (`mod.rs` runs them in this order on one extraction).
+struct Pipeline {
+    tests: Vec<TypeScriptTest>,
+    gap: Option<TypeScriptTestExtractionGap>,
+}
+
+fn pipeline(label: &str, source: &str, snapshots: &[(&str, &str)]) -> Result<Pipeline, String> {
+    let root = ts_unique_tempdir(label)?;
+    let relative = Path::new("tests/sum.test.ts");
+    let written = ts_write_file(&root.join(".git/HEAD"), "x\n").and_then(|()| {
+        let header = "// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing\n\n";
+        let body: String = snapshots
+            .iter()
+            .map(|(key, value)| format!("exports[`{key}`] = `{value}`;\n\n"))
+            .collect();
+        ts_write_file(
+            &root.join("tests/__snapshots__/sum.test.ts.snap"),
+            &format!("{header}{body}"),
+        )
+    });
+    let (mut tests, _, expansion) = extract_tests_with_expansion(relative, source);
+    if written.is_ok() {
+        let counted = expansion.as_ref().map_or_else(
+            || source.to_string(),
+            SuiteFactoryExpansion::snapshot_source,
+        );
+        promote_committed_snapshots(&root, relative, &counted, &mut tests);
+    }
+    let gap = detect_partial_test_extraction_expanded(relative, source, &tests, expansion.as_ref());
+    let _ = std::fs::remove_dir_all(&root);
+    written?;
+    Ok(Pipeline { tests, gap })
+}
+
+fn snapshot_strengths(pipeline: &Pipeline) -> Vec<OracleStrength> {
+    pipeline
+        .tests
+        .iter()
+        .flat_map(|test| &test.assertions)
+        .filter(|assertion| assertion.matcher == "toMatchSnapshot")
+        .map(|assertion| assertion.oracle_strength.clone())
+        .collect()
+}
+
+const SNAPSHOT_FACTORY: &str = "import { sumAll } from '../src/sum';\n\nfunction runSuite(name: string, impl: (values: number[]) => number) {\n  describe(name, () => {\n    test('adds', () => {\n      expect(impl([2, 3, 4])).toMatchSnapshot();\n    });\n  });\n}\n";
+
+#[test]
+fn each_call_of_a_suite_factory_earns_its_own_committed_snapshot() -> Result<(), String> {
+    let snapshots = [("a adds 1", "9"), ("b adds 1", "9")];
+    let two = format!("{SNAPSHOT_FACTORY}runSuite('a', sumAll);\nrunSuite('b', sumAll);\n");
+    let got = pipeline("snap-two-calls", &two, &snapshots)?;
+    assert_eq!(
+        snapshot_strengths(&got),
+        vec![OracleStrength::Strong, OracleStrength::Strong]
+    );
+    // Control: one call was already credited before call provenance.
+    let one = format!("{SNAPSHOT_FACTORY}runSuite('a', sumAll);\n");
+    let got = pipeline("snap-one-call", &one, &snapshots)?;
+    assert_eq!(snapshot_strengths(&got), vec![OracleStrength::Strong]);
+    Ok(())
+}
+
+#[test]
+fn factory_calls_that_share_a_snapshot_key_stay_medium() -> Result<(), String> {
+    // Both calls record under `a adds`, so the one entry belongs to neither.
+    let two = format!("{SNAPSHOT_FACTORY}runSuite('a', sumAll);\nrunSuite('a', sumAll);\n");
+    let got = pipeline("snap-same-key", &two, &[("a adds 1", "9")])?;
+    assert_eq!(
+        snapshot_strengths(&got),
+        vec![OracleStrength::Medium, OracleStrength::Medium]
+    );
+    // A snapshot call outside every test body still refuses credit.
+    let outside = format!(
+        "{SNAPSHOT_FACTORY}runSuite('a', sumAll);\nrunSuite('b', sumAll);\nexpect(sumAll([1])).toMatchSnapshot();\n"
+    );
+    let got = pipeline(
+        "snap-outside-body",
+        &outside,
+        &[("a adds 1", "9"), ("b adds 1", "9")],
+    )?;
+    assert!(
+        !snapshot_strengths(&got).contains(&OracleStrength::Strong),
+        "{:?}",
+        snapshot_strengths(&got)
+    );
+    Ok(())
+}
+
+#[test]
+fn an_unexpanded_factory_still_counts_its_snapshot_call() -> Result<(), String> {
+    // The call is refused (a computed argument), so the factory body's
+    // snapshot call stays in the file but in no test: the counts disagree.
+    let source = format!(
+        "{SNAPSHOT_FACTORY}runSuite('a', sumAll);\nrunSuite('b', (v) => sumAll(v));\nrunSuite('c', sumAll);\n"
+    );
+    let got = pipeline(
+        "snap-unexpanded",
+        &source,
+        &[("a adds 1", "9"), ("c adds 1", "9")],
+    )?;
+    assert!(
+        !snapshot_strengths(&got).contains(&OracleStrength::Strong),
+        "{:?}",
+        snapshot_strengths(&got)
+    );
+    Ok(())
+}
+
+#[test]
+fn an_expanded_factory_is_not_disclosed_as_partial_extraction() -> Result<(), String> {
+    let source = file(&format!("{FACTORY}{CALL}"));
+    let got = pipeline("partial-silent", &source, &[])?;
+    assert_eq!(got.tests.len(), 1);
+    assert!(got.gap.is_none(), "{:?}", got.gap);
+    // Control: without the expansion the factory's own registration, which
+    // reads `impl(...)`, is the unextracted shape the detector exists to find.
+    assert!(
+        detect_partial_test_extraction(Path::new("tests/sum.test.ts"), &source, &got.tests)
+            .is_some()
+    );
+    Ok(())
+}
+
+#[test]
+fn a_registration_the_expansion_drops_is_still_disclosed_at_its_call() -> Result<(), String> {
+    // The tagged-template `.each` is never extracted, expanded or not, and the
+    // appended copy sits on a line the file does not have: the disclosure
+    // reports the call's line.
+    let factory = "function runSuite(name: string, impl: (values: number[]) => number) {\n  describe(name, () => {\n    test('adds', () => {\n      expect(impl([2, 3, 4])).toBe(9);\n    });\n    test.each`\n      a\n      ${1}\n    `('row', () => {\n      expect(impl([1])).toBe(1);\n    });\n  });\n}\n";
+    let source = file(&format!("{factory}{CALL}"));
+    let got = pipeline("partial-dropped", &source, &[])?;
+    let gap = got
+        .gap
+        .ok_or_else(|| "a dropped registration must stay disclosed".to_string())?;
+    assert_eq!(gap.shape, "tagged-template .each");
+    let call_line = source
+        .lines()
+        .position(|line| line == CALL.trim_end())
+        .map(|index| index + 1)
+        .ok_or_else(|| "call line".to_string())?;
+    assert_eq!(gap.sample_line, call_line);
+    Ok(())
+}
+
+#[test]
+fn an_expanded_test_points_its_evidence_at_the_call() -> Result<(), String> {
+    let source = file(&format!(
+        "{FACTORY}runSuite('one', sumAll);\nrunSuite('two', sumAll);\n"
+    ));
+    let got = pipeline("evidence-line", &source, &[])?;
+    let call_lines: Vec<usize> = source
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| line.starts_with("runSuite("))
+        .map(|(index, _)| index + 1)
+        .collect();
+    assert_eq!(call_lines.len(), 2);
+    let pointed: Vec<usize> = got
+        .tests
+        .iter()
+        .flat_map(|test| {
+            test.assertions
+                .iter()
+                .map(|assertion| test.evidence_line(assertion))
+        })
+        .collect();
+    assert_eq!(pointed, call_lines);
+    // Control: a test written out keeps the assertion's own line.
+    let plain = file("test('direct', () => {\n  expect(sumAll([2, 3, 4])).toBe(9);\n});\n");
+    let got = pipeline("evidence-plain", &plain, &[])?;
+    let assertion = got
+        .tests
+        .first()
+        .and_then(|test| test.assertions.first().map(|assertion| (test, assertion)))
+        .ok_or_else(|| "plain assertion".to_string())?;
+    assert_eq!(assertion.0.evidence_line(assertion.1), assertion.1.line);
+    assert_eq!(assertion.1.line, 5);
+    Ok(())
+}

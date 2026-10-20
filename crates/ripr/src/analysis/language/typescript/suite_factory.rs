@@ -24,17 +24,39 @@ pub(crate) struct SuiteFactoryExpansion {
     /// `(first line of an appended expansion, line of the call it came from)`,
     /// ascending. A test found on an appended line reports the call's line.
     pub(crate) call_lines: Vec<(usize, usize)>,
+    /// Byte spans of the factory declarations every one of whose calls was
+    /// expanded. Their own registrations read `impl(...)` and are never
+    /// extracted; the appended copies stand for them.
+    pub(crate) covered: Vec<std::ops::Range<usize>>,
 }
 
 impl SuiteFactoryExpansion {
     /// The line a test found at `line` of the expanded source reports.
     pub(crate) fn reported_line(&self, line: usize) -> usize {
-        self.call_lines
-            .iter()
-            .rev()
-            .find(|(start, _)| *start <= line)
-            .map_or(line, |(_, call_line)| *call_line)
+        self.call_line_of(line).unwrap_or(line)
     }
+
+    /// The line of the call a test starting at `line` of the expanded source
+    /// was expanded from, or `None` for a test written out in the file.
+    pub(crate) fn call_line_of(&self, line: usize) -> Option<usize> {
+        call_line_in(&self.call_lines, line)
+    }
+
+    /// The expanded source with each covered factory declaration blanked, so
+    /// a count of the calls the file's tests contain finds each factory call
+    /// once per expansion and the declaration's own text not at all.
+    pub(crate) fn snapshot_source(&self) -> String {
+        super::tests_extract::blank_ranges(&self.source, &self.covered)
+    }
+}
+
+/// The call line of the last expansion starting at or before `line`.
+pub(crate) fn call_line_in(call_lines: &[(usize, usize)], line: usize) -> Option<usize> {
+    call_lines
+        .iter()
+        .rev()
+        .find(|(start, _)| *start <= line)
+        .map(|(_, call_line)| *call_line)
 }
 
 struct Factory<'a> {
@@ -57,6 +79,7 @@ pub(crate) fn expand_suite_factories(
     let lines = SourceText::new(source);
     let mut expanded = source.to_string();
     let mut call_lines = Vec::new();
+    let mut covered = Vec::new();
     for stmt in program {
         let Statement::FunctionDeclaration(function) = stmt else {
             continue;
@@ -73,7 +96,8 @@ pub(crate) fn expand_suite_factories(
         if calls.is_empty() || word_occurrences(source, factory.name).count() != 1 + calls.len() {
             continue;
         }
-        for call in calls {
+        let mut expanded_calls = 0;
+        for call in &calls {
             if call_lines.len() >= MAX_EXPANSIONS {
                 break;
             }
@@ -84,11 +108,16 @@ pub(crate) fn expand_suite_factories(
             let start = expanded.matches('\n').count() + 1;
             expanded.push_str(&text);
             call_lines.push((start, lines.line_for_offset(call.span.start as usize)));
+            expanded_calls += 1;
+        }
+        if expanded_calls == calls.len() {
+            covered.push(function.span.start as usize..function.span.end as usize);
         }
     }
     (!call_lines.is_empty()).then_some(SuiteFactoryExpansion {
         source: expanded,
         call_lines,
+        covered,
     })
 }
 

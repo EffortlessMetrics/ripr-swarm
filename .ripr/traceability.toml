@@ -16153,6 +16153,12 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_factory_the_calls_cannot_rename_into_credits_nothing",
   "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_factory_mentioned_beyond_its_calls_credits_nothing",
   "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_call_with_a_computed_argument_credits_nothing",
+  "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::each_call_of_a_suite_factory_earns_its_own_committed_snapshot",
+  "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::factory_calls_that_share_a_snapshot_key_stay_medium",
+  "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::an_unexpanded_factory_still_counts_its_snapshot_call",
+  "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::an_expanded_factory_is_not_disclosed_as_partial_extraction",
+  "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::a_registration_the_expansion_drops_is_still_disclosed_at_its_call",
+  "crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs::an_expanded_test_points_its_evidence_at_the_call",
 ]
 fixtures = [
   "fixtures/typescript-verdict-corpus",
