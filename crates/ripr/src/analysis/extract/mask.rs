@@ -198,9 +198,18 @@ pub(crate) fn string_literal_spans(text: &str) -> Vec<(usize, usize, bool)> {
     scan(text).string_spans
 }
 
-/// Inclusive quote ranges of Rust string and character literals, from the
-/// same scanner used by the lexical extractors. Literal whitespace is data.
-pub(crate) fn rust_literal_ranges(text: &str) -> Vec<(usize, usize)> {
+/// Source spans whose whitespace affects Rust expression identity.
+pub(crate) struct RustIdentitySpans {
+    /// Inclusive quote ranges whose contents remain literal data.
+    pub literal_ranges: Vec<(usize, usize)>,
+    /// Byte offsets of LF characters ending actual line comments.
+    pub line_comment_ends: Vec<usize>,
+}
+
+/// Inclusive literal quote ranges and LF offsets ending actual line comments,
+/// from the shared lexical scanner. Quotes or `//` inside another comment or
+/// literal cannot introduce an identity boundary.
+pub(crate) fn rust_identity_spans(text: &str) -> RustIdentitySpans {
     let scanned = scan(text);
     let mut ranges = scanned.char_literals;
     ranges.extend(
@@ -210,7 +219,10 @@ pub(crate) fn rust_literal_ranges(text: &str) -> Vec<(usize, usize)> {
             .map(|(open, close, _)| (open, close)),
     );
     ranges.sort_unstable();
-    ranges
+    RustIdentitySpans {
+        literal_ranges: ranges,
+        line_comment_ends: scanned.line_comment_ends,
+    }
 }
 
 /// What one [`scan`] pass reads from a text.
@@ -224,15 +236,19 @@ struct Scanned {
     /// Delimiter offsets of every terminated string literal, and whether
     /// it is raw.
     string_spans: Vec<(usize, usize, bool)>,
+    /// LF offsets at which a line comment returns to code.
+    line_comment_ends: Vec<usize>,
 }
 
 /// One pass over `text` producing the masked output, the byte ranges of
 /// the character literals it masked, the string-delimiter quote count and
-/// the delimiter offsets of every terminated string literal.
+/// the delimiter offsets of every terminated string literal and the LF offsets
+/// at which line comments return to code.
 fn scan(text: &str) -> Scanned {
     let mut char_literals = Vec::new();
     let mut string_quotes = 0usize;
     let mut string_spans = Vec::new();
+    let mut line_comment_ends = Vec::new();
     let mut string_open = 0usize;
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(text.len());
@@ -289,6 +305,7 @@ fn scan(text: &str) -> Scanned {
             }
             MaskState::LineComment => {
                 if byte == b'\n' {
+                    line_comment_ends.push(index);
                     state = MaskState::Code;
                     out.push(b'\n');
                 } else {
@@ -387,6 +404,7 @@ fn scan(text: &str) -> Scanned {
         char_literals,
         string_quotes,
         string_spans,
+        line_comment_ends,
     }
 }
 

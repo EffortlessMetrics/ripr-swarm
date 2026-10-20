@@ -305,12 +305,12 @@ fn formatting_whitespace_outside_literal_data_keeps_the_id() -> Result<(), Strin
 
 fn line_comment_literal_cases() -> [(&'static str, &'static str); 6] {
     [
-        ("x == // note\n        \"a b\"", "353daaf8"),
-        ("x == // note\n        \"a  b\"", "bd483d1f"),
-        ("x  == //  note\n          \"a  b\"", "bd483d1f"),
-        ("x == // \" fake\n        \"a b\"", "2f8257db"),
-        ("x == // \" fake\n        \"a  b\"", "0075a8f9"),
-        ("x  == // \"  fake\n          \"a  b\"", "0075a8f9"),
+        ("x == // note\n        \"a b\"", "140cd247"),
+        ("x == // note\n        \"a  b\"", "3b5f49f5"),
+        ("x  == //  note\n          \"a  b\"", "3b5f49f5"),
+        ("x == // \" fake\n        \"a b\"", "a2f249d8"),
+        ("x == // \" fake\n        \"a  b\"", "8f080155"),
+        ("x  == // \"  fake\n          \"a  b\"", "8f080155"),
     ]
 }
 
@@ -330,6 +330,99 @@ fn current_predicate_id(output: &CheckOutput, expression: &str) -> String {
         .collect();
     assert_eq!(selected.len(), 1, "missing current predicate: {output:?}");
     selected[0].id.clone()
+}
+
+const COMMENTED_CONCAT: &str = "x == concat!(\"a\", // \"b\",\n        \"c\")";
+const ACTIVE_CONCAT: &str = "x == concat!(\"a\", //\n        \"b\", \"c\")";
+
+fn concat_policy(id: &str) -> String {
+    format!(
+        "schema_version = 1\n[[suppressions]]\nkind = \"exposure_gap\"\nfinding_id = \"{id}\"\nreason = \"reviewed concat value\"\nowner = \"identity-test\"\n"
+    )
+}
+
+#[test]
+fn line_comment_terminators_distinguish_active_macro_tokens() -> Result<(), String> {
+    let before = comparison_source("x == \"previous\"");
+    let mut ids = Vec::new();
+    // Expected fingerprints independently hash the documented payload with
+    // a single LF at the lexical comment boundary, without indentation.
+    for (expression, fingerprint) in [(COMMENTED_CONCAT, "31fab427"), (ACTIVE_CONCAT, "bad61db1")] {
+        let source = comparison_source(expression);
+        let fixture = Fixture::new(&[("src/lib.rs", &source)])?;
+        let diff = fixture.check(&[("src/lib.rs", &before, &source)])?;
+        let diff_id = current_predicate_id(&diff, expression);
+        assert_eq!(diff_id, format!("probe:src_lib.rs:predicate:{fingerprint}"));
+        let repo = ripr::app::check_workspace_repo(CheckInput {
+            root: fixture.root.clone(),
+            mode: Mode::Draft,
+            format: OutputFormat::Json,
+            ..CheckInput::default()
+        })?;
+        assert_eq!(
+            current_predicate_id(&repo, expression),
+            format!("repo-probe:src_lib.rs:predicate:{fingerprint}")
+        );
+        ids.push(diff_id);
+    }
+    assert_ne!(
+        ids[0], ids[1],
+        "commented and active tokens have different values"
+    );
+    Ok(())
+}
+
+#[test]
+fn line_comment_terminators_reject_ambiguous_old_suppressions() -> Result<(), String> {
+    let before = comparison_source("x == \"previous\"");
+    for expression in [COMMENTED_CONCAT, ACTIVE_CONCAT] {
+        let source = comparison_source(expression);
+        let fixture = Fixture::new(&[("src/lib.rs", &source)])?;
+        // The old normalized payload assigned this exact ID to both values.
+        fixture.write(
+            "suppressions.toml",
+            &concat_policy("probe:src_lib.rs:predicate:48fcc202"),
+        )?;
+        let output = fixture.check(&[("src/lib.rs", &before, &source)])?;
+        let suppression = output.suppression.ok_or("policy outcome missing")?;
+        assert!(
+            suppression.suppressed.is_empty(),
+            "an ambiguous old ID must fail closed"
+        );
+        assert!(
+            suppression
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("did not match"))
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn line_comment_terminators_keep_format_and_comment_only_edits_stable() -> Result<(), String> {
+    let before = comparison_source("x == \"previous\"");
+    let source = comparison_source(ACTIVE_CONCAT);
+    let fixture = Fixture::new(&[("src/lib.rs", &source)])?;
+    let original = fixture.check(&[("src/lib.rs", &before, &source)])?;
+    let id = current_predicate_id(&original, ACTIVE_CONCAT);
+    fixture.write("suppressions.toml", &concat_policy(&id))?;
+    for expression in [
+        "x  ==\tconcat!(\"a\", //  \n          \"b\", \"c\")",
+        "x  ==\tconcat!(\"a\", //  \r\n          \"b\", \"c\")",
+    ] {
+        let source = format!(
+            "// unrelated comment-only edit\n{}",
+            comparison_source(expression)
+        );
+        fixture.write("src/lib.rs", &source)?;
+        let output = fixture.check(&[("src/lib.rs", &before, &source)])?;
+        assert_eq!(current_predicate_id(&output, expression), id);
+        let suppression = output.suppression.ok_or("policy outcome missing")?;
+        assert_eq!(suppression.suppressed.len(), 1);
+        assert!(suppression.warnings.is_empty());
+    }
+    Ok(())
 }
 
 #[test]
@@ -378,14 +471,14 @@ fn line_comment_literal_change_rejects_stale_suppression() -> Result<(), String>
             "schema_version = 1\n[[suppressions]]\nkind = \"exposure_gap\"\nfinding_id = \"probe:src_lib.rs:predicate:{fingerprint}\"\nreason = \"reviewed literal\"\nowner = \"identity-test\"\n"
         )
     };
-    fixture.write("suppressions.toml", &policy("2f8257db"))?;
+    fixture.write("suppressions.toml", &policy("a2f249d8"))?;
     let stale = fixture.check(&[("src/lib.rs", &before, &source)])?;
     let suppression = stale.suppression.ok_or("explicit policy outcome missing")?;
     assert!(
         suppression.suppressed.is_empty(),
         "the one-space literal's ID must not suppress the two-space value"
     );
-    fixture.write("suppressions.toml", &policy("0075a8f9"))?;
+    fixture.write("suppressions.toml", &policy("8f080155"))?;
     let current = fixture.check(&[("src/lib.rs", &before, &source)])?;
     let suppression = current
         .suppression
@@ -393,7 +486,7 @@ fn line_comment_literal_change_rejects_stale_suppression() -> Result<(), String>
     assert_eq!(suppression.suppressed.len(), 1);
     assert_eq!(
         suppression.suppressed[0].finding_id,
-        "probe:src_lib.rs:predicate:0075a8f9"
+        "probe:src_lib.rs:predicate:8f080155"
     );
     Ok(())
 }

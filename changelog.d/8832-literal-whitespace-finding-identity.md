@@ -1,5 +1,6 @@
 <!-- section: Fixed -->
-- Rust finding IDs retain literal whitespace in the hashed expression, with
-  formatting whitespace outside literals still normalized, including strings
-  following line comments, and historical suppression IDs reconstructed for
-  stale-selector warnings (#8832).
+- Rust finding IDs retain literal whitespace and significant line-comment
+  terminators in the hashed expression while normalizing formatting, including
+  LF/CRLF comment endings. Affected old suppression IDs fail closed with visible
+  unmatched warnings and require re-review; ambiguous IDs are never retargeted.
+  The fingerprint format and historical ID reconstruction remain unchanged (#8832).

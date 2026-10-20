@@ -6,24 +6,42 @@ use std::path::Path;
 /// 0.10 ID reconstruction retain this boundary until their native literal
 /// semantics are handled by their language owner.
 pub(crate) fn normalize_expression(expr: &str) -> String {
-    normalize_outside_literals(expr.trim(), &[])
+    normalize_outside_literals(expr.trim(), &[], &[])
 }
 
-/// Collapse formatting whitespace without collapsing Rust literal values.
+/// Collapse formatting whitespace without collapsing Rust literal values or
+/// the lexical boundary that ends a line comment.
 /// Keep the shared lexical scanner's raw-string, escape and lifetime rules.
 /// Consume original source once: flattening a line comment's newline changes
 /// how a second lexical scan would interpret the following literal.
 pub(crate) fn normalize_rust_expression(expr: &str) -> String {
     let trimmed = expr.trim();
-    let ranges = crate::analysis::extract::rust_literal_ranges(trimmed);
-    normalize_outside_literals(trimmed, &ranges)
+    let spans = crate::analysis::extract::rust_identity_spans(trimmed);
+    normalize_outside_literals(trimmed, &spans.literal_ranges, &spans.line_comment_ends)
 }
 
-fn normalize_outside_literals(trimmed: &str, ranges: &[(usize, usize)]) -> String {
+fn normalize_outside_literals(
+    trimmed: &str,
+    ranges: &[(usize, usize)],
+    line_comment_ends: &[usize],
+) -> String {
     let mut ranges = ranges.iter().peekable();
+    let mut line_comment_ends = line_comment_ends.iter().peekable();
     let mut result = String::with_capacity(trimmed.len());
     let mut last_was_space = false;
     for (offset, ch) in trimmed.char_indices() {
+        if line_comment_ends.peek().is_some_and(|end| **end == offset) {
+            // A line comment's terminator separates comment text from active
+            // tokens. Canonicalize CRLF, trailing comment whitespace and the
+            // following indentation to one LF, retaining that distinction.
+            if result.ends_with(' ') {
+                result.pop();
+            }
+            result.push('\n');
+            last_was_space = true;
+            line_comment_ends.next();
+            continue;
+        }
         while ranges.peek().is_some_and(|(_, close)| offset > *close) {
             ranges.next();
         }
@@ -176,6 +194,39 @@ mod tests {
     use crate::domain::ProbeFamily;
     use std::path::PathBuf;
 
+    #[test]
+    fn line_comment_terminators_preserve_lexical_boundaries() {
+        assert_eq!(
+            normalize_rust_expression("x == concat!(\"a\", // \"b\",\n        \"c\")"),
+            "x == concat!(\"a\", // \"b\",\n\"c\")"
+        );
+        assert_eq!(
+            normalize_rust_expression("x  ==\tconcat!(\"a\", //  \r\n        \"b\", \"c\")"),
+            "x == concat!(\"a\", //\n\"b\", \"c\")"
+        );
+        assert_eq!(
+            normalize_rust_expression("x == // \"a  b\"\n        \"value\""),
+            "x == // \"a b\"\n\"value\""
+        );
+    }
+
+    #[test]
+    fn line_comment_terminators_are_not_invented_inside_literals_or_block_comments() {
+        for (expression, expected) in [
+            ("x == \"// a  b\"", "x == \"// a  b\""),
+            ("x == r#\"//\na  b\"#", "x == r#\"//\na  b\"#"),
+            (
+                "x == /* // fake\n */ \"a  b\"",
+                "x == /* // fake */ \"a  b\"",
+            ),
+            (
+                "x == /* outer /* // fake\n */ */ \"a  b\"",
+                "x == /* outer /* // fake */ */ \"a  b\"",
+            ),
+        ] {
+            assert_eq!(normalize_rust_expression(expression), expected);
+        }
+    }
     #[test]
     fn sanitize_path_converts_separators_and_colons() {
         let path = PathBuf::from("src/lib.rs");
