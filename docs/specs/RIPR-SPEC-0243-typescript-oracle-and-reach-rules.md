@@ -149,6 +149,32 @@ assertion is `weakly_exposed`, not `reachable_unrevealed`.
 - A registration is an expression statement whose expression is the root
   call. `const x = test(...)` registers nothing.
 
+**Rule 14. Registration provenance and unused function values (#8959).**
+Bare and awaited registrations use the same runner-binding admission. A
+local no-op, unrelated import or shadow cannot donate its callback's tests.
+A top-level immutable result of a named Vitest/Playwright `test` import's
+`.extend(...)` retains registration provenance when the imported receiver
+has no other uses that could replace or expose its mutable extension method.
+Arbitrary factory results and mutable bindings are not treated as runners.
+
+A plain `const` function value with no reference outside its declaration
+does not execute its body. Relation discovery masks that initializer in a
+separate reach view, including heuristic fallbacks, while retaining the
+original source for evidence. Called, aliased or passed functions retain
+the existing bounded rules; opaque `eval`, `with` and escaped identifiers
+prevent this unused-value proof. Byte-preserving masking keeps Unicode
+source offsets aligned with parser spans. If the owner call is only in that
+unused closure, no test path is established. If the owner executes outside
+the closure but only its assertion is dead, the existing `weakly_exposed`
+with unknown oracle remains correct. Supported executed callbacks retain
+RIPR-SPEC-0246 semantics; this is not a general invocation graph.
+
+The complementary `jest-mined-local-noop-describe` and
+`jest-mined-local-noop-test` corpus cases are incorporated from #8968,
+commit `5d7657fbc7240b2c0a62c9934ca2e7fda3a1b209` (Claude). Their original
+Jest runtime-mutant labels and source hashes are retained with attribution;
+copying those labels does not claim an independent runtime rerun.
+
 **Rule 1. An awaited root registers.** An expression statement whose
 expression is `await <root call>` at file or describe level registers
 exactly as the bare call does. This covers the node:test ESM form

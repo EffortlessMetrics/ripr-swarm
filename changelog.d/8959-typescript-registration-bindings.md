@@ -1,4 +1,5 @@
 <!-- section: Fixed -->
-- TypeScript bare test and suite registrations now require a genuine runner
-  binding, so local no-op `describe` or `test` callbacks cannot donate test
-  evidence; independent valid registrations retain their credit (#8959).
+- TypeScript test registrations now respect runner provenance and lexical
+  shadows, preserve verified fixture extensions, and withhold owner reach
+  found only inside unused local function values; complementary no-op
+  registration corpus evidence comes from #8968 (#8959).

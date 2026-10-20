@@ -1614,7 +1614,7 @@ fn object_expression<'b, 'a>(
 
 /// `true` when the file can reach a name without spelling it: `eval`, a
 /// `with` statement, or a `\u` escape.
-fn file_is_opaque(code: &str) -> bool {
+pub(super) fn file_is_opaque(code: &str) -> bool {
     identifier_occurrences(code, "eval").next().is_some()
         || identifier_occurrences(code, "with")
             .any(|at| code[at + "with".len()..].trim_start().starts_with('('))
@@ -1727,7 +1727,7 @@ fn is_direct_call(code: &str, at: usize, name: &str) -> bool {
 }
 
 /// Byte offsets of `identifier` as a whole word, not a member name.
-fn identifier_occurrences<'a>(
+pub(super) fn identifier_occurrences<'a>(
     code: &'a str,
     identifier: &'a str,
 ) -> impl Iterator<Item = usize> + 'a {
@@ -2368,6 +2368,7 @@ pub(crate) fn test_from_statement(
         file: file.to_path_buf(),
         line: source.line_for_offset(call.span.start as usize),
         body_text: source[call.span.start as usize..call.span.end as usize].to_string(),
+        reach_body_text: unused_function_reach_body(call, source),
         assertions,
         // Populated by `extract_tests` (the only public extractor) once
         // per file before the test is returned to the caller.
@@ -2382,6 +2383,132 @@ pub(crate) fn test_from_statement(
         // admission context; fail-closed until then.
         assertion_admission: TypeScriptAssertionAdmission::Unresolved,
     })
+}
+
+/// The shared masker preserves characters, but not byte widths of masked
+/// Unicode literals. Expand only its spaces back to the original byte widths
+/// before comparing identifier offsets with parser spans.
+pub(super) fn byte_preserving_code_mask(source: &str) -> Option<String> {
+    let masked = super::classifier::ts_mask_literals_and_comments(source);
+    if source.chars().count() != masked.chars().count() {
+        return None;
+    }
+    let mut code = String::with_capacity(source.len());
+    for (original, masked) in source.chars().zip(masked.chars()) {
+        if original == masked {
+            code.push(original);
+        } else if masked == ' ' {
+            code.extend(std::iter::repeat_n(' ', original.len_utf8()));
+        } else {
+            return None;
+        }
+    }
+    Some(code)
+}
+
+/// A reach-only view; the original test source remains the evidence surface.
+/// Creating a function value does not execute its body. Refuse only plain
+/// const-bound function values with no reference outside their declaration;
+/// called, aliased, returned or passed values retain the existing relation rules.
+fn unused_function_reach_body(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    source: &SourceText<'_>,
+) -> Option<String> {
+    let start = call.span.start as usize;
+    let body = &source[start..call.span.end as usize];
+    let code = byte_preserving_code_mask(body)?;
+    if file_is_opaque(&code) {
+        return None;
+    }
+    let statements = function_body_statements_from_argument(
+        call.arguments.get(declaration_callback_index(call))?,
+    )?;
+    let mut ranges = Vec::new();
+    collect_unused_function_ranges(statements, &code, start, &mut ranges);
+    if ranges.is_empty() {
+        return None;
+    }
+    let mut bytes = body.as_bytes().to_vec();
+    for range in ranges {
+        // AST spans end on UTF-8 boundaries. Replacing every byte (including
+        // multibyte identifiers) preserves offsets and cannot leave a false
+        // Unicode owner reference behind in a dead function body.
+        for byte in bytes.get_mut(range).into_iter().flatten() {
+            if *byte != b'\n' {
+                *byte = b' ';
+            }
+        }
+    }
+    String::from_utf8(bytes).ok()
+}
+
+fn collect_unused_function_ranges(
+    statements: &[Statement<'_>],
+    code: &str,
+    offset: usize,
+    ranges: &mut Vec<std::ops::Range<usize>>,
+) {
+    for statement in statements {
+        match statement {
+            Statement::VariableDeclaration(declaration)
+                if declaration.kind == oxc_ast::ast::VariableDeclarationKind::Const
+                    && !declaration.declare =>
+            {
+                for declarator in &declaration.declarations {
+                    let BindingPattern::BindingIdentifier(id) = &declarator.id else {
+                        continue;
+                    };
+                    let Some(initializer) = &declarator.init else {
+                        continue;
+                    };
+                    if !matches!(
+                        initializer.get_inner_expression(),
+                        Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_)
+                    ) {
+                        continue;
+                    }
+                    let declaration_range = (declarator.span.start as usize - offset)
+                        ..(declarator.span.end as usize - offset);
+                    if identifier_occurrences(code, id.name.as_str())
+                        .any(|at| !declaration_range.contains(&at))
+                    {
+                        continue;
+                    }
+                    let span = initializer.span();
+                    ranges.push((span.start as usize - offset)..(span.end as usize - offset));
+                }
+            }
+            Statement::BlockStatement(block) => {
+                collect_unused_function_ranges(&block.body, code, offset, ranges);
+            }
+            Statement::IfStatement(branch) => {
+                collect_unused_function_ranges(
+                    std::slice::from_ref(&branch.consequent),
+                    code,
+                    offset,
+                    ranges,
+                );
+                if let Some(alternate) = &branch.alternate {
+                    collect_unused_function_ranges(
+                        std::slice::from_ref(alternate),
+                        code,
+                        offset,
+                        ranges,
+                    );
+                }
+            }
+            Statement::TryStatement(attempt) => {
+                collect_unused_function_ranges(&attempt.block.body, code, offset, ranges);
+                if let Some(handler) = &attempt.handler {
+                    collect_unused_function_ranges(&handler.body.body, code, offset, ranges);
+                }
+                if let Some(finalizer) = &attempt.finalizer {
+                    collect_unused_function_ranges(&finalizer.body, code, offset, ranges);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 pub(crate) fn test_name_and_assertions_from_call(

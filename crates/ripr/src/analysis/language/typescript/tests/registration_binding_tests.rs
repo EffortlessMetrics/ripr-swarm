@@ -161,20 +161,75 @@ fn registration_bindings_do_not_execute_uncalled_closures_or_factories() -> Resu
     Ok(())
 }
 
-/// Owner reach currently scans a genuine test's body text. The unused
-/// closure supplies no oracle, but correcting that reach is separate from
-/// registration provenance (#8959).
+/// A function value that is never referenced does not execute its owner call.
+/// Matching titles must not recreate a relation through heuristic fallback.
 #[test]
 fn registration_bindings_uncalled_test_closure_has_no_oracle() -> Result<(), String> {
-    let source =
-        "test('uncalled', () => { const unused = () => { expect(sumAll([2, 3, 4])).toBe(9); }; });";
-    let tests = extract_tests(Path::new("tests/sum.test.ts"), source);
-    assert_eq!(tests.len(), 1);
-    assert!(tests[0].assertions.is_empty());
-    let finding = registration_finding("registration-unused-oracle", source)?;
-    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-    assert_eq!(finding.related_tests.len(), 1);
-    assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::Unknown);
+    for closure in [
+        "() => { expect(sumAll([2, 3, 4])).toBe(9); }",
+        "() => expect(sumAll([2, 3, 4])).toBe(9)",
+        "function () { expect(sumAll([2, 3, 4])).toBe(9); }",
+    ] {
+        for body in [
+            format!("const unused = {closure};"),
+            format!("if (true) {{ const unused = {closure}; }}"),
+        ] {
+            let source =
+                format!("describe('sumAll', () => {{ test('sumAll', () => {{ {body} }}); }});");
+            let tests = extract_tests(Path::new("tests/sum.test.ts"), &source);
+            assert_eq!(tests.len(), 1);
+            assert!(tests[0].assertions.is_empty());
+            assert!(tests[0].body_text.contains("sumAll([2, 3, 4])"));
+            let finding = registration_finding("registration-unused-owner", &source)?;
+            assert_eq!(finding.class, ExposureClass::NoStaticPath, "{source}");
+            assert!(finding.related_tests.is_empty(), "{finding:?}");
+        }
+    }
+    Ok(())
+}
+
+/// WeaklyExposed/Unknown is correct when the owner executes but no live
+/// oracle observes its result. Do not turn this distinct case into NoStaticPath.
+#[test]
+fn registration_bindings_reached_owner_without_live_oracle_stays_weak() -> Result<(), String> {
+    for body in [
+        "const value = sumAll([2, 3, 4]); const unused = () => { expect(value).toBe(9); };",
+        "const run = () => sumAll([2, 3, 4]); run();",
+        "const run = () => sumAll([2, 3, 4]); const alias = run; alias();",
+        "const consume = (fn) => fn(); const run = () => sumAll([2, 3, 4]); consume(run);",
+    ] {
+        for title in ["called", "éééééééééééééééééééééééééééééééé"]
+        {
+            let source = format!("test('{title}', () => {{ {body} }});");
+            let finding = registration_finding("registration-live-owner", &source)?;
+            assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{source}");
+            assert_eq!(finding.related_tests.len(), 1);
+            assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::Unknown);
+            assert_eq!(
+                finding.related_tests[0].oracle_strength,
+                OracleStrength::Unknown
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn registration_bindings_unused_closure_preserves_live_owner_oracle() -> Result<(), String> {
+    for body in [
+        "const unused = () => sumAll([0]); expect(sumAll([2, 3, 4])).toBe(9);",
+        "const unused = () => sumAll([0]), value = sumAll([2, 3, 4]); expect(value).toBe(9);",
+    ] {
+        let source = format!("test('sumAll', () => {{ {body} }});");
+        let finding = registration_finding("registration-live-oracle", &source)?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{source}");
+        assert_eq!(finding.related_tests.len(), 1);
+        assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::ExactValue);
+        assert_eq!(
+            finding.related_tests[0].oracle_strength,
+            OracleStrength::Strong
+        );
+    }
     Ok(())
 }
 
@@ -186,4 +241,42 @@ fn registration_bindings_distinguish_script_hoisting_from_strict_blocks() {
         let tests = extract_tests(Path::new("tests/sum.test.cjs"), &source);
         assert_eq!(tests.len(), count, "{source}");
     }
+}
+
+#[test]
+fn registration_bindings_keep_verified_runner_extensions() -> Result<(), String> {
+    for runner in ["vitest", "@playwright/test"] {
+        let source = format!(
+            "import {{ test as base, expect }} from '{runner}'; const test = base.extend({{}}); {TEST}"
+        );
+        let finding = registration_finding("registration-runner-extend", &source)?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{source}");
+        assert_eq!(finding.related_tests.len(), 1);
+        assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::ExactValue);
+        assert_eq!(
+            finding.related_tests[0].oracle_strength,
+            OracleStrength::Strong
+        );
+    }
+    for prelude in [
+        format!("const base = {{ extend: () => {NOOP} }}; const test = base.extend({{}});"),
+        "import { test as base } from './helper'; const test = base.extend({});".to_string(),
+        "import { describe as base } from 'vitest'; const test = base.extend({});".to_string(),
+        "import { test as base } from 'vitest'; let test = base.extend({});".to_string(),
+        format!(
+            "import {{ test as base }} from 'vitest'; base.extend = () => {NOOP}; const test = base.extend({{}});"
+        ),
+        format!(
+            "import {{ test as base }} from 'vitest'; base['extend'] = () => {NOOP}; const test = base.extend({{}});"
+        ),
+        format!(
+            "import {{ test as base }} from 'vitest'; const test = base.extend({{}}); test = {NOOP};"
+        ),
+    ] {
+        let source = format!("{prelude} {TEST}");
+        let finding = registration_finding("registration-unverified-extend", &source)?;
+        assert_eq!(finding.class, ExposureClass::NoStaticPath, "{source}");
+        assert!(finding.related_tests.is_empty());
+    }
+    Ok(())
 }

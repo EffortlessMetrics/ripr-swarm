@@ -194,6 +194,9 @@ impl TypeScriptAdmissionContext {
                 .unwrap_or_default(),
             ..Self::default()
         };
+        context
+            .registration_imports
+            .extend(verified_extended_registrations(program, &esm_imports));
         let mut helpers = BTreeSet::new();
         let mut enclosing = BTreeSet::new();
         collect_setup_names(statements, &mut helpers, &mut enclosing);
@@ -290,6 +293,83 @@ impl TypeScriptAdmissionContext {
     fn import_class(&self, import: &TypeScriptImport) -> ImportClass {
         classify_source(&import.source, &self.test_dir)
     }
+}
+
+/// A bounded fixture-extension registration: one immutable top-level result
+/// of a named Vitest/Playwright test import's `.extend(...)`. Other uses of
+/// that imported receiver remain unresolved: they could replace or expose
+/// its mutable `extend` member. Arbitrary factory results are never trusted.
+fn verified_extended_registrations(
+    program: &oxc_ast::ast::Program<'_>,
+    imports: &[TypeScriptImport],
+) -> Vec<TypeScriptImport> {
+    let Some(code) = super::tests_extract::byte_preserving_code_mask(program.source_text) else {
+        return Vec::new();
+    };
+    if super::tests_extract::file_is_opaque(&code) {
+        return Vec::new();
+    }
+    let mut result = Vec::new();
+    for import in imports.iter().filter(|import| {
+        matches!(import.source.as_str(), "vitest" | "@playwright/test")
+            && import.imported.as_deref() == Some("test")
+            && !import.namespace
+    }) {
+        let mut allowed = Vec::new();
+        let mut candidates = Vec::new();
+        for statement in &program.body {
+            if let Statement::ImportDeclaration(declaration) = statement {
+                allowed.push(declaration.span.start as usize..declaration.span.end as usize);
+            }
+            let Statement::VariableDeclaration(declaration) = statement else {
+                continue;
+            };
+            if declaration.declare
+                || declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const
+            {
+                continue;
+            }
+            for declarator in &declaration.declarations {
+                let BindingPattern::BindingIdentifier(local) = &declarator.id else {
+                    continue;
+                };
+                let Some(Expression::CallExpression(call)) = declarator
+                    .init
+                    .as_ref()
+                    .map(Expression::get_inner_expression)
+                else {
+                    continue;
+                };
+                let Expression::StaticMemberExpression(member) = call.callee.get_inner_expression()
+                else {
+                    continue;
+                };
+                let Expression::Identifier(receiver) = member.object.get_inner_expression() else {
+                    continue;
+                };
+                if receiver.name != import.local
+                    || member.property.name != "extend"
+                    || call.optional
+                    || member.optional
+                {
+                    continue;
+                }
+                allowed.push(receiver.span.start as usize..receiver.span.end as usize);
+                candidates.push(TypeScriptImport {
+                    source: import.source.clone(),
+                    imported: Some("test".to_string()),
+                    local: local.name.to_string(),
+                    namespace: false,
+                });
+            }
+        }
+        if super::tests_extract::identifier_occurrences(&code, &import.local)
+            .all(|at| allowed.iter().any(|range| range.contains(&at)))
+        {
+            result.extend(candidates);
+        }
+    }
+    result
 }
 
 /// Visible spellings of top-level re-exports (`export { x } from './y'`),

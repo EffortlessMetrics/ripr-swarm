@@ -64,6 +64,11 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
             "import { expect } from 'chai';\nit('x', () => { expect(checkout(1)).to.equal(2); });",
             recognized,
         ),
+        (
+            "verified runner fixture extension without an oracle",
+            "import { test as base } from 'vitest'; const it = base.extend({}); it('x', () => { checkout(1); });",
+            unresolved,
+        ),
         // -- established absence (control 1, 7) --
         (
             "owner call only",
@@ -594,10 +599,7 @@ fn inactive_registrations_are_not_extracted() -> Result<(), String> {
 /// An unresolved registration does not establish a running test at all.
 #[test]
 fn unknown_registration_bindings_do_not_create_assertion_admission() {
-    for source in [
-        "import { test as base } from 'vitest'; const it = base.extend({}); it('x', () => { checkout(1); });",
-        "import { it } from './fixtures'; it('x', () => { checkout(1); });",
-    ] {
+    for source in ["import { it } from './fixtures'; it('x', () => { checkout(1); });"] {
         let full = format!("{OWNER_IMPORT}{source}");
         assert!(
             extract_tests(Path::new("tests/cart.test.ts"), &full).is_empty(),

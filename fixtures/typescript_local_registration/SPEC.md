@@ -7,7 +7,9 @@ Spec: RIPR-SPEC-0243
 The changed predicate includes age 18. A local no-op `describe` discards
 one callback containing a boundary test. A genuine imported `describe`
 contains a local no-op `test` that discards another boundary assertion.
-Neither callback is registered with the runner (#8959).
+Neither callback is registered with the runner. A genuine test also contains
+an unused closure: its only owner call is inside that closure, so it does
+not reach the owner (#8959).
 
 ## When
 

@@ -112,6 +112,9 @@ pub(crate) struct TypeScriptTest {
     pub(crate) file: PathBuf,
     pub(crate) line: usize,
     pub(crate) body_text: String,
+    /// Reach-only source with proven-unused local function values masked.
+    /// The original body remains available for snippets and oracle evidence.
+    pub(crate) reach_body_text: Option<String>,
     pub(crate) assertions: Vec<TypeScriptAssertion>,
     /// Module paths referenced by syntactic `vi.mock("...")` /
     /// `jest.mock("...")` calls discovered at the top level of the
@@ -165,6 +168,18 @@ pub(crate) struct TypeScriptTest {
     /// something assertion-like RIPR cannot resolve (#5524). An empty
     /// `assertions` vector alone is never authority for "no assertion".
     pub(crate) assertion_admission: TypeScriptAssertionAdmission,
+}
+
+impl TypeScriptTest {
+    /// Relation decisions use the admitted execution surface without changing
+    /// the source/oracle object retained in a related-test candidate.
+    pub(crate) fn reach_view(&self) -> Option<Self> {
+        let body = self.reach_body_text.as_ref()?;
+        let mut view = self.clone();
+        view.body_text = body.clone();
+        view.reach_body_text = None;
+        Some(view)
+    }
 }
 
 /// One name an enclosing test scope binds, resolved to its innermost scope.

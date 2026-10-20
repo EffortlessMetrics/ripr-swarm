@@ -124,6 +124,7 @@ fn weak_direct_test_for(owner_name: &str) -> TypeScriptTest {
         describe_names: Vec::new(),
         file: PathBuf::from("tests/lib.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: format!("const result = {owner_name}(50, 100);\nexpect(result).toBeTruthy();"),
         assertions: vec![smoke_assertion()],
         mocks_in_file: Vec::new(),
@@ -169,6 +170,7 @@ fn mock_interaction_test_for(owner_name: &str) -> TypeScriptTest {
         describe_names: Vec::new(),
         file: PathBuf::from("tests/lib.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: format!(
             "const sink = {{ record: vi.fn() }};\n{owner_name}(status, sink);\nexpect(sink.record).toHaveBeenCalledWith(status);"
         ),
@@ -208,6 +210,7 @@ fn mock_interaction_test_for(owner_name: &str) -> TypeScriptTest {
 fn direct_test_with_assertion(
     test_name: &str,
     owner_name: &str,
+    reach_body_text: None,
     body_text: impl Into<String>,
     matcher: &str,
     argument_count: usize,
@@ -220,6 +223,7 @@ fn direct_test_with_assertion(
         describe_names: Vec::new(),
         file: PathBuf::from("tests/lib.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: body_text.into(),
         assertions: vec![TypeScriptAssertion {
             matcher: matcher.to_string(),
@@ -263,6 +267,7 @@ fn heuristic_name_test_for(owner_name: &str) -> TypeScriptTest {
         line: 1,
         // References the owner without a recognized call shape: a heuristic
         // link requires a reference (RIPR-SPEC-0027).
+        reach_body_text: None,
         body_text: format!("const subject = {owner_name};\nexpect(90).toBe(90);"),
         assertions: vec![TypeScriptAssertion {
             matcher: "toBe".to_string(),
@@ -1800,6 +1805,7 @@ fn find_related_tests_matches_by_call_name() {
             describe_names: Vec::new(),
             file: PathBuf::from("tests/lib.test.ts"),
             line: 1,
+            reach_body_text: None,
             body_text: r#"test("alpha", () => { expect(applyDiscount(50, 100)).toBe(50); });"#
                 .to_string(),
             assertions: Vec::new(),
@@ -1818,6 +1824,7 @@ fn find_related_tests_matches_by_call_name() {
             describe_names: Vec::new(),
             file: PathBuf::from("tests/other.test.ts"),
             line: 1,
+            reach_body_text: None,
             body_text: r#"test("unrelated", () => { expect(otherHelper()).toBe(true); });"#
                 .to_string(),
             assertions: Vec::new(),
@@ -1862,6 +1869,7 @@ fn find_related_tests_ignores_object_method_calls_for_function_owners() {
         describe_names: Vec::new(),
         file: PathBuf::from("tests/cart.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "expect(order.applyDiscount(50)).toBe(40);".to_string(),
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
@@ -3375,6 +3383,7 @@ fn find_related_tests_ignores_call_shaped_string_mentions() {
         describe_names: Vec::new(),
         file: PathBuf::from("tests/docs.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: r#"expect("applyDiscount(").toContain("applyDiscount(");"#.to_string(),
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
@@ -3419,6 +3428,7 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
             describe_names: Vec::new(),
             file: PathBuf::from("tests/docs.test.ts"),
             line: 1,
+            reach_body_text: None,
             body_text: "// applyDiscount(\nexpect(total).toBe(40);".to_string(),
             assertions: Vec::new(),
             mocks_in_file: Vec::new(),
@@ -3436,6 +3446,7 @@ fn find_related_tests_ignores_call_shaped_comment_mentions() {
             describe_names: Vec::new(),
             file: PathBuf::from("tests/docs.test.ts"),
             line: 4,
+            reach_body_text: None,
             body_text: "/* applyDiscount(\n */\nexpect(total).toBe(40);".to_string(),
             assertions: Vec::new(),
             mocks_in_file: Vec::new(),
@@ -3652,6 +3663,7 @@ fn classify_change_returns_weakly_exposed_when_related_test_exists() -> Result<(
         describe_names: Vec::new(),
         file: PathBuf::from("tests/lib.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "applyDiscount(50, 100)".to_string(),
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
@@ -3996,6 +4008,7 @@ fn classify_change_labels_javascript_sources_separately() -> Result<(), String> 
         describe_names: Vec::new(),
         file: PathBuf::from("tests/lib.test.js"),
         line: 1,
+        reach_body_text: None,
         body_text: "applyDiscount(50, 100)".to_string(),
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
@@ -4072,6 +4085,7 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             describe_names: Vec::new(),
             file: PathBuf::from("tests/a.test.ts"),
             line: 1,
+            reach_body_text: None,
             body_text: "expect(alphaScore(12)).toBe(13);".to_string(),
             assertions: Vec::new(),
             mocks_in_file: Vec::new(),
@@ -4089,6 +4103,7 @@ fn classify_change_matches_owner_file_before_line_range() -> Result<(), String> 
             describe_names: Vec::new(),
             file: PathBuf::from("tests/b.test.ts"),
             line: 1,
+            reach_body_text: None,
             body_text: "expect(betaScore(12)).toBe(13);".to_string(),
             assertions: Vec::new(),
             mocks_in_file: Vec::new(),
@@ -4897,6 +4912,7 @@ fn classify_change_returns_exposed_when_related_test_has_strong_oracle() -> Resu
         line: 1,
         // RIPR-SPEC-0027: the observed call sits at the changed boundary
         // (`amount == threshold`), so the strong oracle witnesses it.
+        reach_body_text: None,
         body_text: "expect(applyDiscount(100, 100)).toBe(90)".to_string(),
         assertions: vec![TypeScriptAssertion {
             matcher: "toBe".to_string(),
@@ -4984,6 +5000,7 @@ fn classify_change_exposed_t_assertion_uses_execution_context_label() -> Result<
         file: PathBuf::from("tests/lib.test.ts"),
         line: 1,
         // RIPR-SPEC-0027: the observed call sits at the changed boundary.
+        reach_body_text: None,
         body_text: "t.is(applyDiscount(100, 100), 90);".to_string(),
         assertions: vec![TypeScriptAssertion {
             matcher: "is".to_string(),
@@ -6917,6 +6934,7 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
             describe_names: Vec::new(),
             file: PathBuf::from("tests/lib.test.ts"),
             line: 1,
+            reach_body_text: None,
             body_text: "applyDiscount(1, 2)".to_string(),
             assertions: Vec::new(),
             mocks_in_file: vec!["./api".to_string()],
@@ -6939,6 +6957,7 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
             describe_names: Vec::new(),
             file: PathBuf::from("tests/lib.test.ts"),
             line: 2,
+            reach_body_text: None,
             body_text: "applyDiscount(3, 4)".to_string(),
             assertions: Vec::new(),
             mocks_in_file: vec!["./api".to_string()],
@@ -6986,6 +7005,7 @@ fn collect_related_mock_paths_ignores_unrelated_tests() {
         describe_names: Vec::new(),
         file: PathBuf::from("tests/other.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "otherHelper()".to_string(),
         assertions: Vec::new(),
         mocks_in_file: vec!["./api".to_string()],
@@ -7027,6 +7047,7 @@ fn collect_related_mock_paths_ignores_object_method_mentions() {
         describe_names: Vec::new(),
         file: PathBuf::from("tests/cart.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "expect(order.applyDiscount(50)).toBe(40);".to_string(),
         assertions: Vec::new(),
         mocks_in_file: vec!["./api".to_string()],
@@ -7069,6 +7090,7 @@ fn classify_change_surfaces_mocked_module_static_limit_in_missing_and_evidence()
         describe_names: Vec::new(),
         file: PathBuf::from("tests/lib.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "applyDiscount(50, 100)".to_string(),
         assertions: Vec::new(),
         mocks_in_file: vec!["./api".to_string()],
@@ -7159,6 +7181,7 @@ fn classify_change_cross_package_mock_does_not_surface_mocked_module_limit() -> 
         describe_names: Vec::new(),
         file: pkg_b.join("tests").join("work.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "doWork();".to_string(),
         assertions: Vec::new(),
         mocks_in_file: vec!["./work".to_string()],
@@ -7277,6 +7300,7 @@ fn named_limitation_mock_only_observer_emitted_for_mocked_module_static_limit() 
         describe_names: Vec::new(),
         file: PathBuf::from("tests/lib.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "applyDiscount(50, 100)".to_string(),
         assertions: vec![TypeScriptAssertion {
             matcher: "toBe".to_string(),
@@ -7378,6 +7402,7 @@ fn named_limitation_import_graph_unresolved_emitted_for_missing_import_graph() -
         describe_names: Vec::new(),
         file: PathBuf::from("tests/label.test.jsx"),
         line: 1,
+        reach_body_text: None,
         body_text: "LabelView({ label: ' Ready ' });".to_string(),
         assertions: vec![TypeScriptAssertion {
             matcher: "toBeTruthy".to_string(),
@@ -7635,6 +7660,7 @@ fn named_limitation_oracle_based_not_emitted_for_heuristic_only_relation() -> Re
         file: PathBuf::from("tests/signals.test.ts"),
         line: 1,
         // No call to renderSummary( in body_text → heuristic-only name relation
+        reach_body_text: None,
         body_text: "expect(getOutput()).toMatchSnapshot();".to_string(),
         assertions: vec![TypeScriptAssertion {
             matcher: "toMatchSnapshot".to_string(),
@@ -8138,6 +8164,7 @@ fn named_limitation_dynamic_assertion_emitted_for_dynamic_matcher_arg() -> Resul
         describe_names: Vec::new(),
         file: PathBuf::from("tests/clamp.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "const expected = computeExpected(0);\nclamp(-5, 0, 10);\nexpect(clamp(-5, 0, 10)).toBe(expected);".to_string(),
         assertions: vec![TypeScriptAssertion {
             matcher: "toBe".to_string(),
@@ -8214,6 +8241,7 @@ fn named_limitation_table_case_emitted_for_table_dynamic_matcher_arg() -> Result
         describe_names: Vec::new(),
         file: PathBuf::from("tests/clamp.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "test.each([[ -5, 0 ]])(\"clamps table %#\", (value, expected) => {\nclamp(value, 0, 10);\nexpect(clamp(value, 0, 10)).toBe(expected);\n});".to_string(),
         assertions: vec![TypeScriptAssertion {
             matcher: "toBe".to_string(),
@@ -8291,6 +8319,7 @@ fn named_limitation_dynamic_assertion_not_emitted_for_heuristic_only_relation() 
         describe_names: Vec::new(),
         file: PathBuf::from("tests/clamp.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "const expected = computeExpected(0);\nexpect(result).toBe(expected);"
             .to_string(),
         assertions: vec![TypeScriptAssertion {
@@ -8489,6 +8518,7 @@ fn package_local_filter_selects_same_package_test() {
         describe_names: Vec::new(),
         file: pkg_a.join("tests").join("work.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "doWork();".to_string(),
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
@@ -8569,6 +8599,7 @@ fn package_local_filter_rejects_cross_package_test() {
         describe_names: Vec::new(),
         file: pkg_b.join("tests").join("work.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "doWork();".to_string(),
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
@@ -8614,6 +8645,7 @@ fn package_local_filter_admits_cross_package_test_importing_owner_file() -> Resu
         describe_names: Vec::new(),
         file: "test/unit/test/utils.spec.ts".into(),
         line: 4,
+        reach_body_text: None,
         body_text: "expect(toArray(1)).toEqual([1])".into(),
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
@@ -8678,6 +8710,7 @@ fn cross_package_constructor_requires_owner_class_import() -> Result<(), String>
         describe_names: Vec::new(),
         file: "packages/b/tests/cart.test.ts".into(),
         line: 4,
+        reach_body_text: None,
         body_text: "expect(new Cart(1).total).toBe(1)".into(),
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
@@ -8858,6 +8891,7 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         describe_names: Vec::new(),
         file: pkg_b.join("tests").join("pricing.test.ts"),
         line: 5,
+        reach_body_text: None,
         body_text: "const result = applyDiscount(100, 20);\nexpect(result).toBe(80);".to_string(),
         assertions: vec![TypeScriptAssertion {
             matcher: "toBe".to_string(),
@@ -8892,6 +8926,7 @@ fn named_limitation_target_unresolved_emitted_for_cross_package_reference() -> R
         describe_names: Vec::new(),
         file: pkg_a.join("tests").join("discount.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "applyDiscount(100, 20);".to_string(),
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
@@ -8967,6 +9002,7 @@ fn unresolved_ownership_import_branch_with_relative_paths() -> Result<(), String
         describe_names: Vec::new(),
         file: "packages/b/tests/cart.test.ts".into(),
         line: 3,
+        reach_body_text: None,
         body_text: "renamed();".into(),
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
@@ -9070,6 +9106,7 @@ fn named_limitation_target_unresolved_not_emitted_for_same_package() -> Result<(
         describe_names: Vec::new(),
         file: PathBuf::from("tests/discount.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "applyDiscount(100, 20);".to_string(),
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
@@ -9138,6 +9175,7 @@ fn ts_swallowed_console_log_exposed_downgrade() -> Result<(), String> {
         describe_names: Vec::new(),
         file: PathBuf::from("tests/discount.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "applyDiscount(100, 10);\nexpect(applyDiscount(100, 10)).toBe(90);\nexpect(applyDiscount(50, 10)).toBe(45);".to_string(),
         assertions: vec![
             TypeScriptAssertion {
@@ -9260,6 +9298,7 @@ fn ts_returnvalue_genuinely_observed_control() -> Result<(), String> {
         describe_names: Vec::new(),
         file: PathBuf::from("tests/discount.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "expect(applyDiscount(100, 100)).toBe(90);".to_string(),
         assertions: vec![TypeScriptAssertion {
             matcher: "toBe".to_string(),
@@ -9354,6 +9393,7 @@ fn ts_returnvalue_unrelated_strong_assertion_downgrades() -> Result<(), String> 
         describe_names: Vec::new(),
         file: PathBuf::from("tests/discount.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "applyDiscount(100, 10);\nexpect(formatDate(now)).toBe('2024-01-01');"
             .to_string(),
         assertions: vec![TypeScriptAssertion {
@@ -9450,6 +9490,7 @@ fn ts_returnvalue_owner_call_observation_stays_exposed() -> Result<(), String> {
         describe_names: Vec::new(),
         file: PathBuf::from("tests/discount.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "expect(applyDiscount(100, 10)).toBe(88);".to_string(),
         assertions: vec![TypeScriptAssertion {
             matcher: "toBe".to_string(),
@@ -9542,6 +9583,7 @@ fn ts_returnvalue_owner_aliased_local_observation_stays_exposed() -> Result<(), 
         describe_names: Vec::new(),
         file: PathBuf::from("tests/discount.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "const result = applyDiscount(100, 10);\nexpect(result).toBe(88);".to_string(),
         assertions: vec![TypeScriptAssertion {
             matcher: "toBe".to_string(),
@@ -9634,6 +9676,7 @@ fn ts_returnvalue_unrelated_aliased_local_observation_downgrades() -> Result<(),
         describe_names: Vec::new(),
         file: PathBuf::from("tests/discount.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "applyDiscount(100, 10);\nconst other = formatDate(now);\nexpect(other).toBe('2024-01-01');"
             .to_string(),
         assertions: vec![TypeScriptAssertion {
@@ -9730,6 +9773,7 @@ fn ts_sibling_assertion_non_owner_prevents_downgrade() -> Result<(), String> {
         describe_names: Vec::new(),
         file: PathBuf::from("tests/discount.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "const discount = applyDiscount(100, 10);\nconsole.log(discount);\nexpect(applyDiscount(100, 10)).toBe(90);\nexpect(sideEffectLog).toBe(true);".to_string(),
         assertions: vec![
             TypeScriptAssertion {
@@ -9838,6 +9882,7 @@ fn ts_field_construction_observed_control() -> Result<(), String> {
         describe_names: Vec::new(),
         file: PathBuf::from("tests/config.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "expect(buildConfig()).toEqual({ timeout: 5000 });".to_string(),
         assertions: vec![TypeScriptAssertion {
             matcher: "toEqual".to_string(),
@@ -9932,6 +9977,7 @@ fn ts_fieldconstruction_unrelated_strong_assertion_downgrades() -> Result<(), St
         describe_names: Vec::new(),
         file: PathBuf::from("tests/config.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "buildConfig();\nexpect(formatDate(now)).toBe('2024-01-01');".to_string(),
         assertions: vec![TypeScriptAssertion {
             matcher: "toBe".to_string(),
@@ -10096,6 +10142,7 @@ fn ts_side_effect_observed_by_mock_expectation_stays_exposed() -> Result<(), Str
         describe_names: Vec::new(),
         file: PathBuf::from("tests/discount.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "applyDiscount(100, 10);\nexpect(logSpy).toHaveBeenCalledWith(\"audit\", 900);"
             .to_string(),
         assertions: vec![TypeScriptAssertion {
@@ -10192,6 +10239,7 @@ fn ts_side_effect_includes_template_word_does_not_confirm() -> Result<(), String
         describe_names: Vec::new(),
         file: PathBuf::from("tests/tracker.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "expect(trackLogin(\"login\").includes(payload)).toBe(true);".to_string(),
         assertions: vec![TypeScriptAssertion {
             matcher: "toBe".to_string(),
@@ -10334,6 +10382,7 @@ fn tsconfig_alias_resolution_flag_on_credits_test_as_exposed() -> Result<(), Str
         // Use a relative path so import_source_matches_owner's relative walk works.
         file: PathBuf::from("src/owner.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "const result = applyDiscount(100, 10);\nexpect(result).toBe(90);".to_string(),
         assertions: vec![strong_be_assertion()],
         mocks_in_file: Vec::new(),
@@ -10414,6 +10463,7 @@ fn tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure() -> 
         describe_names: Vec::new(),
         file: PathBuf::from("src/owner.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "const result = applyDiscount(100, 10);\nexpect(result).toBe(90);".to_string(),
         assertions: vec![strong_be_assertion()],
         mocks_in_file: Vec::new(),
@@ -10496,6 +10546,7 @@ fn unresolved_alias_import_names_the_import_in_no_reach_text() -> Result<(), Str
         describe_names: Vec::new(),
         file: PathBuf::from("src/owner.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: body.to_string(),
         assertions: vec![strong_be_assertion()],
         mocks_in_file: Vec::new(),
@@ -10649,6 +10700,7 @@ fn tsconfig_alias_resolution_multi_entry_value_fails_closed() -> Result<(), Stri
         describe_names: Vec::new(),
         file: PathBuf::from("src/owner.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "const result = applyDiscount();\nexpect(result).toBe(90);".to_string(),
         assertions: vec![strong_be_assertion()],
         mocks_in_file: Vec::new(),
@@ -10725,6 +10777,7 @@ fn tsconfig_alias_non_owner_import_emits_no_limitation() -> Result<(), String> {
         describe_names: Vec::new(),
         file: PathBuf::from("src/other.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "const _ = cloneDeep({});\nexpect(_.x).toBe(1);".to_string(),
         assertions: vec![strong_be_assertion()],
         mocks_in_file: Vec::new(),
@@ -10794,6 +10847,7 @@ fn tsconfig_alias_default_import_local_name_mismatch_emits_no_limitation() -> Re
         describe_names: Vec::new(),
         file: PathBuf::from("src/app.test.tsx"),
         line: 1,
+        reach_body_text: None,
         body_text: "const view = renderApp();\nexpect(view).toBeTruthy();".to_string(),
         assertions: vec![strong_be_assertion()],
         mocks_in_file: Vec::new(),
@@ -10860,6 +10914,7 @@ fn tsconfig_alias_default_import_local_name_match_emits_limitation() -> Result<(
         describe_names: Vec::new(),
         file: PathBuf::from("src/owner.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "const result = applyDiscount(100);\nexpect(result).toBe(90);".to_string(),
         assertions: vec![strong_be_assertion()],
         mocks_in_file: Vec::new(),
@@ -10927,6 +10982,7 @@ fn tsconfig_alias_advice_names_map_unavailable_cause() -> Result<(), String> {
         describe_names: Vec::new(),
         file: PathBuf::from("src/owner.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "const result = applyDiscount();\nexpect(result).toBe(90);".to_string(),
         assertions: vec![strong_be_assertion()],
         mocks_in_file: Vec::new(),
@@ -11010,6 +11066,7 @@ fn tsconfig_alias_advice_names_unmatched_pattern_cause() -> Result<(), String> {
         describe_names: Vec::new(),
         file: PathBuf::from("src/owner.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "const result = applyDiscount();\nexpect(result).toBe(90);".to_string(),
         assertions: vec![strong_be_assertion()],
         mocks_in_file: Vec::new(),
@@ -11094,6 +11151,7 @@ fn tsconfig_alias_advice_names_unresolved_candidate_cause() -> Result<(), String
         describe_names: Vec::new(),
         file: PathBuf::from("src/owner.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "const result = applyDiscount();\nexpect(result).toBe(90);".to_string(),
         assertions: vec![strong_be_assertion()],
         mocks_in_file: Vec::new(),
@@ -11187,6 +11245,7 @@ fn tsconfig_alias_advice_names_absolute_base_url_cause() -> Result<(), String> {
         describe_names: Vec::new(),
         file: PathBuf::from("src/owner.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "const result = applyDiscount();\nexpect(result).toBe(90);".to_string(),
         assertions: vec![strong_be_assertion()],
         mocks_in_file: Vec::new(),
@@ -11268,6 +11327,7 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
         describe_names: Vec::new(),
         file: PathBuf::from("tests/discount.test.ts"),
         line: 10,
+        reach_body_text: None,
         body_text: "expect(() => applyDiscount(-1, 'gold')).toThrow(DiscountError);".to_string(),
         assertions: vec![TypeScriptAssertion {
             matcher: "toThrow".to_string(),
@@ -11308,6 +11368,7 @@ fn spec_0104_repro_cross_family_error_oracle_does_not_promote_return_value_seam(
         describe_names: Vec::new(),
         file: PathBuf::from("tests/discount.test.ts"),
         line: 15,
+        reach_body_text: None,
         body_text: "expect(applyDiscount(100, 'gold')).toBeGreaterThan(0);".to_string(),
         assertions: vec![TypeScriptAssertion {
             matcher: "toBeGreaterThan".to_string(),
@@ -11404,6 +11465,7 @@ fn spec_0104_no_over_correct_return_value_with_exact_value_stays_exposed() -> Re
         describe_names: Vec::new(),
         file: PathBuf::from("tests/discount.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "expect(applyDiscount(100, 'gold')).toBe(90);".to_string(),
         assertions: vec![TypeScriptAssertion {
             matcher: "toBe".to_string(),
@@ -11489,6 +11551,7 @@ fn spec_0104_no_over_correct_error_path_with_exact_error_variant_stays_exposed()
         describe_names: Vec::new(),
         file: PathBuf::from("tests/discount.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: "expect(() => applyDiscount(-1, 'gold')).toThrow('Invalid amount');".to_string(),
         assertions: vec![TypeScriptAssertion {
             matcher: "toThrow".to_string(),
@@ -11593,6 +11656,7 @@ fn spec_0104_single_test_both_assertions_retains_matching_family_assertion_stays
         describe_names: Vec::new(),
         file: PathBuf::from("tests/discount.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: concat!(
             "expect(() => applyDiscount(-1, 'gold')).toThrow(DiscountError);\n",
             "expect(applyDiscount(100, 'gold')).toBe(90);"
@@ -12504,6 +12568,7 @@ fn parse_limit_owner_and_exact_value_test() -> (TypeScriptOwner, TypeScriptTest)
         describe_names: Vec::new(),
         file: PathBuf::from("tests/limiter.test.ts"),
         line: 3,
+        reach_body_text: None,
         body_text: "expect(parseLimit('10')).toBe(10);".to_string(),
         assertions: vec![TypeScriptAssertion {
             matcher: "toBe".to_string(),
@@ -12611,6 +12676,7 @@ fn exact_value_test(owner_name: &str, observed: &str, expected: &str) -> TypeScr
         describe_names: Vec::new(),
         file: PathBuf::from("tests/lib.test.ts"),
         line: 1,
+        reach_body_text: None,
         body_text: format!("expect({observed}).toBe({expected});"),
         assertions: vec![TypeScriptAssertion {
             matcher: "toBe".to_string(),
@@ -17174,6 +17240,7 @@ fn unresolved_workspace_package_import_names_the_manifest() -> Result<(), String
         describe_names: Vec::new(),
         file: "tests/build.test.ts".into(),
         line: 3,
+        reach_body_text: None,
         body_text: "expect(build()).toBe(1)".into(),
         assertions: Vec::new(),
         mocks_in_file: Vec::new(),
