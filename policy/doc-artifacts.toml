@@ -1684,6 +1684,14 @@ owner = "test-infra"
 standalone_reason = "States how the advisory ranking scoreboard compares the pooled refuted counts (pick_growth_allowance: a count may rise by the picks admitted, per repository, zero margin at flat or smaller pick counts, legacy evidence strict) so the gate sits inside the spec-test-code chain; RIPR-SPEC-0237 governs only the pilot ranking order."
 
 [[artifact]]
+id = "RIPR-SPEC-0282"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0282-repair-attempt-after-refusal-retry-budget.md"
+status = "proposed"
+owner = "agent-loop"
+standalone_reason = "States the repair attempt after-refusal history and 5-refusal retry budget (#8726): capped history with an uncapped count, the typed exit-3 stop that is not recorded as a refusal, and status and repair not offering a refused after command, so the behavior sits inside the spec-test-code chain; RIPR-SPEC-0011 governs only the LLM work loop."
+
+[[artifact]]
 id = "RIPR-SPEC-0285"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0285-python-framework-scan-bounded-deterministic-string-aware.md"
