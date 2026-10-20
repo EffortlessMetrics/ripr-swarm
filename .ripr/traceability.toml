@@ -16787,3 +16787,30 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0280"
+name = "covered_by enumeration instrument-failure contract"
+spec = "docs/specs/RIPR-SPEC-0280-covered-by-instrument-failure-contract.md"
+tests = [
+  "xtask/src/policy/file_policy.rs::tests::test_covered_by_lock_wait_attempts_are_all_recorded_with_their_durations",
+  "xtask/src/policy/file_policy.rs::tests::test_covered_by_lock_wait_does_not_consume_the_budget_but_stays_bounded",
+  "xtask/src/policy/file_policy.rs::tests::test_covered_by_lock_wait_ceiling_stops_retrying_and_names_the_ceiling",
+  "xtask/src/policy/file_policy.rs::tests::test_covered_by_instrument_timeout_is_not_an_unresolved_pointer",
+  "xtask/src/precommit_v2.rs::tests::deferred_instrument_failure_is_infrastructure_alone_and_never_hides_a_real_failure",
+  "xtask/src/precommit_v2.rs::tests::composition_with_deferred_instrument_failure_is_infrastructure_after_remaining_stages",
+  "xtask/src/precommit_v2.rs::tests::composition_with_real_policy_failure_and_instrument_failure_is_not_infrastructure",
+]
+fixtures = []
+code = [
+  "xtask/src/policy/file_policy.rs",
+  "xtask/src/policy/mod.rs",
+  "xtask/src/main.rs",
+  "xtask/src/precommit_v2.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0280-covered-by-instrument-failure-contract.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
