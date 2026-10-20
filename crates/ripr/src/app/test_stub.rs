@@ -936,6 +936,50 @@ pub(crate) fn write_test_stub(
     Ok(relative.to_path_buf())
 }
 
+/// The revalidated disposition of a stub that resolved as `already_present`
+/// when `--write` would otherwise skip the file edit (#8990 review X3).
+#[derive(Debug)]
+pub(crate) enum AlreadyPresentRevalidation {
+    /// Current bytes still hold the identical stub: the write stays a no-op.
+    Current,
+    /// The placement no longer holds the stub: this fresh resolution's stub
+    /// is not `already_present`, so the caller writes it through the normal
+    /// guarded path instead of reporting success from bytes the resolver
+    /// read before a concurrent edit.
+    Rewrite(TestStubResolution),
+}
+
+/// Re-resolve a seam whose stub resolved as `already_present`, immediately
+/// before the CLI skips the write on that strength (#8990 review X3). The
+/// first resolution read the placement file before this moment; a concurrent
+/// editor can add or remove the stub in between, and the idempotent report
+/// must never claim "already written" from bytes that were not re-read. A
+/// seam that no longer resolves is a changed workspace, not a vanished
+/// claim: the caller refuses with the rerun message, the same shape
+/// `write_test_stub` uses for an owner file that changed after resolution.
+pub(crate) fn revalidate_already_present_stub(
+    root: &Path,
+    config: &RiprConfig,
+    selector: &TestStubSelector,
+) -> Result<AlreadyPresentRevalidation, String> {
+    let fresh = resolve_test_stub(root, config, selector).map_err(|error| match error {
+        TestStubError::Operational(message)
+        | TestStubError::NotFound(message)
+        | TestStubError::Ambiguous(message) => {
+            format!("{message}; the workspace changed after the stub was computed, so rerun `ripr agent stub`")
+        }
+    })?;
+    match &fresh.outcome {
+        Ok(stub) if stub.already_present => Ok(AlreadyPresentRevalidation::Current),
+        Ok(_) => Ok(AlreadyPresentRevalidation::Rewrite(fresh)),
+        Err(refusal) => Err(format!(
+            "the workspace changed after the stub was computed ({}: {}); rerun `ripr agent stub`",
+            refusal.as_str(),
+            refusal.reason()
+        )),
+    }
+}
+
 /// The stub is produced with `\n` line breaks. Splice it into a file that
 /// is predominantly CRLF with CRLF breaks so the write does not leave mixed
 /// line endings behind.

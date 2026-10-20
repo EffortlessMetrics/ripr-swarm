@@ -10,8 +10,9 @@ use crate::analysis::seams::SeamGripClass;
 use crate::analysis::test_stub::TestStubPlacement;
 use crate::app::agent_brief::AgentBriefPolicy;
 use crate::app::test_stub::{
-    TargetLookup, TestStubError, TestStubSelector, integration_target_lookup, line_of_offset,
-    package_manifest_for, resolve_test_stub, run_command, write_test_stub,
+    AlreadyPresentRevalidation, TargetLookup, TestStubError, TestStubSelector,
+    integration_target_lookup, line_of_offset, package_manifest_for, resolve_test_stub,
+    revalidate_already_present_stub, run_command, write_test_stub,
 };
 use crate::cli::CommandError;
 use crate::cli::agent::AgentStubOptions;
@@ -31,7 +32,7 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
     }
     ensure_command_root(&options.root, "agent stub")?;
     let config = load_for_root(&options.root).map_err(CommandError::Failure)?;
-    let resolution = match resolve_test_stub(&options.root, &config, &options.selector) {
+    let mut resolution = match resolve_test_stub(&options.root, &config, &options.selector) {
         Ok(resolution) => resolution,
         Err(error) => {
             let (refusal_kind, message) = match error {
@@ -60,6 +61,26 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
             )));
         }
     };
+    // #8990 review X3: `already_present` was read from the placement file
+    // before this moment; a concurrent edit can add or remove the stub in
+    // between. Re-resolve from current bytes before the write gate trusts
+    // the skip: a stub that vanished falls through to the normal guarded
+    // write, and a workspace that no longer resolves the seam refuses with
+    // the rerun message instead of reporting success from stale bytes.
+    if options.write
+        && resolution
+            .outcome
+            .as_ref()
+            .is_ok_and(|stub| stub.already_present)
+    {
+        match revalidate_already_present_stub(&options.root, &config, &options.selector) {
+            Ok(AlreadyPresentRevalidation::Current) => {}
+            Ok(AlreadyPresentRevalidation::Rewrite(fresh)) => {
+                resolution = fresh;
+            }
+            Err(message) => return Err(CommandError::Failure(message)),
+        }
+    }
     let mut disclosure = stub_grip_disclosure(&resolution.seam_id, resolution.grip_class, &config);
     if let Some(note) = &resolution.at_note {
         disclosure.warnings.insert(0, note.clone());
@@ -615,6 +636,83 @@ weakly_gripped = "off"
         {
             return Err(format!(
                 "second write must not append a `_2` duplicate:\n{rewritten}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #8990 review X3: `already_present` is read before the CLI reports the
+    /// idempotent write. When the placement file changes after resolution so
+    /// the stub is gone, the revalidation hands back a fresh not-present
+    /// stub and the write proceeds; when nothing changed, the write stays a
+    /// no-op.
+    #[test]
+    fn already_present_write_revalidates_the_placement_file() -> Result<(), String> {
+        const OPEN_GAP: &str =
+            "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n";
+        let root = scratch_crate("rewrite-stale", OPEN_GAP)?;
+        stub_write_at(&root, "src/lib.rs:2", "predicate")
+            .map_err(|error| format!("first write must succeed: {error:?}"))?;
+        let selector = TestStubSelector::parse_at("src/lib.rs:2")
+            .and_then(|selector| selector.with_kind("predicate"))
+            .map_err(|error| error)?;
+        // Resolve while the stub is on disk: already_present.
+        let resolution = resolve_test_stub(&root, &RiprConfig::default(), &selector)
+            .map_err(|error| format!("{error:?}"))?;
+        let present = resolution
+            .outcome
+            .as_ref()
+            .map_err(|refusal| format!("the stub on disk must resolve as ready: {refusal:?}"))?;
+        if !present.already_present {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err("fixture: the stub on disk must resolve as already present".to_string());
+        }
+        // Unchanged bytes: the skip survives the re-read.
+        match revalidate_already_present_stub(&root, &RiprConfig::default(), &selector) {
+            Ok(AlreadyPresentRevalidation::Current) => {}
+            other => {
+                let _ = std::fs::remove_dir_all(&root);
+                return Err(format!(
+                    "an unchanged placement file must revalidate as current: {other:?}"
+                ));
+            }
+        }
+        // A concurrent edit removes the stub after resolution: the
+        // revalidation must not report success from the stale read; it
+        // returns a fresh resolution whose stub writes through the guarded
+        // path.
+        std::fs::write(root.join("src/lib.rs"), OPEN_GAP).map_err(|error| error.to_string())?;
+        let outcome = revalidate_already_present_stub(&root, &RiprConfig::default(), &selector);
+        let AlreadyPresentRevalidation::Rewrite(fresh) = outcome.map_err(|message| {
+            let _ = std::fs::remove_dir_all(&root);
+            message
+        })?
+        else {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err("a removed stub must not revalidate as current".to_string());
+        };
+        let stub = fresh.outcome.as_ref().map_err(|refusal| {
+            let _ = std::fs::remove_dir_all(&root);
+            format!("the fresh resolution must stay ready: {refusal:?}")
+        })?;
+        if stub.already_present {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err("the fresh stub after removal must not flag already_present".to_string());
+        }
+        write_test_stub(&root, &fresh, stub).map_err(|error| {
+            let _ = std::fs::remove_dir_all(&root);
+            error
+        })?;
+        let rewritten =
+            std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
+        let _ = std::fs::remove_dir_all(&root);
+        if rewritten
+            .matches("fn clamp_to_boundary_discriminator(")
+            .count()
+            != 1
+        {
+            return Err(format!(
+                "the rewritten stub must be back in the file:\n{rewritten}"
             ));
         }
         Ok(())
