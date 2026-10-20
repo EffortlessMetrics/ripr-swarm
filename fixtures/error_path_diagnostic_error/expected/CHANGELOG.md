@@ -1,5 +1,4 @@
 # Golden Output Changes
-
 ## Pending — error_path_diagnostic_error (1)
 
 Reason:
@@ -242,7 +241,57 @@ Updated:
 ## Pending — error_path_diagnostic_error (19)
 
 Reason:
+RIPR-SPEC-0268: human evidence window glosses the unknown-sink row with its meaning (#8744)
+
+Command:
+`cargo xtask goldens bless error_path_diagnostic_error --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+## Pending — error_path_diagnostic_error (20)
+
+Reason:
 RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless error_path_diagnostic_error --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+## Pending — error_path_diagnostic_error (21)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless error_path_diagnostic_error --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_path_diagnostic_error (20)
+
+Reason:
+RIPR-SPEC-0224: ungraded oracle reads '<kind> oracle, not graded against this probe' (#8388)
+
+Command:
+`cargo xtask goldens bless error_path_diagnostic_error --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_path_diagnostic_error (22)
+
+Reason:
+RIPR-SPEC-0284: unknown-sink row gloss from the context-packet clarity lane lands on this golden after merging main
 
 Command:
 `cargo xtask goldens bless error_path_diagnostic_error --reason "..."`

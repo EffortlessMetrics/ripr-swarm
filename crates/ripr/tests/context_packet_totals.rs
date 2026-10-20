@@ -1,3 +1,4 @@
+use ripr::config::RiprConfig;
 use ripr::domain::context_packet::ContextPacket;
 use ripr::domain::{
     ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, OracleKind, OracleStrength,
@@ -9,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 #[test]
 fn context_packet_related_test_totals_distinguish_identical_bounded_rows() -> Result<(), String> {
+    let config = RiprConfig::default();
     let mut finding = sample_finding();
     finding.related_tests = (0..8)
         .map(|index| related(&format!("retained_{index}")))
@@ -17,7 +19,7 @@ fn context_packet_related_test_totals_distinguish_identical_bounded_rows() -> Re
     let mut packets = Vec::new();
     for total in [12, 13] {
         finding.related_tests_matched_total = Some(total);
-        let rendered = render_context_packet(&finding, 8, Path::new("."));
+        let rendered = render_context_packet(&finding, 8, &config, Path::new("."));
         let packet: serde_json::Value =
             serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
         assert_eq!(packet["related_tests"].as_array().map(Vec::len), Some(8));
@@ -41,6 +43,7 @@ fn context_packet_related_test_totals_distinguish_identical_bounded_rows() -> Re
 
 #[test]
 fn context_packet_related_test_totals_preserve_floors_and_display_windows() -> Result<(), String> {
+    let config = RiprConfig::default();
     for (metadata, retained_count, limit, expected_total, expected_shown) in [
         (Some(12), 8, 8, 12, 8),
         (Some(13), 8, 8, 13, 8),
@@ -64,9 +67,13 @@ fn context_packet_related_test_totals_preserve_floors_and_display_windows() -> R
             packet.related_tests,
             original.related_tests[..expected_shown]
         );
-        let rendered: serde_json::Value =
-            serde_json::from_str(&render_context_packet(&finding, limit, Path::new(".")))
-                .map_err(|error| error.to_string())?;
+        let rendered: serde_json::Value = serde_json::from_str(&render_context_packet(
+            &finding,
+            limit,
+            &config,
+            Path::new("."),
+        ))
+        .map_err(|error| error.to_string())?;
         assert_eq!(rendered["related_tests_total"], expected_total);
         assert_eq!(
             rendered["related_tests"].as_array().map(Vec::len),
@@ -83,12 +90,13 @@ fn context_packet_related_test_totals_preserve_floors_and_display_windows() -> R
 #[test]
 fn context_packet_related_test_totals_accept_legacy_omitted_and_null_metadata() -> Result<(), String>
 {
+    let config = RiprConfig::default();
     let mut finding = sample_finding();
     finding.related_tests = (0..8)
         .map(|index| related(&format!("retained_{index}")))
         .collect();
     finding.related_tests_matched_total = Some(8);
-    let explicit = render_context_packet(&finding, 3, Path::new("."));
+    let explicit = render_context_packet(&finding, 3, &config, Path::new("."));
     for metadata in [None, Some(serde_json::Value::Null)] {
         let mut raw = serde_json::to_value(&finding).map_err(|error| error.to_string())?;
         let fields = raw.as_object_mut().ok_or("finding must be an object")?;
@@ -101,7 +109,10 @@ fn context_packet_related_test_totals_accept_legacy_omitted_and_null_metadata() 
         let packet = ContextPacket::from_finding(&legacy, 3, Vec::new(), Path::new("."));
         assert_eq!(packet.related_tests_total, 8);
         assert_eq!(packet.related_tests.len(), 3);
-        assert_eq!(render_context_packet(&legacy, 3, Path::new(".")), explicit);
+        assert_eq!(
+            render_context_packet(&legacy, 3, &config, Path::new(".")),
+            explicit
+        );
     }
     Ok(())
 }

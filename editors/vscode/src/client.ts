@@ -1657,6 +1657,17 @@ export class RiprClientController {
       this.runtime.showInformationMessage('ripr diagnostics refresh requires a running server.');
       return;
     }
+    // #8733: the server answers `ripr.refresh` only after the accepted
+    // refresh finishes, which can sit pending for the rest of a long
+    // analysis; tie immediate feedback to the gesture so the recovery
+    // command never appears dead while work is already in flight. Gate
+    // on the typed analysis-status signal (written only by real ripr
+    // notifications and reset on start) so the startup placeholder
+    // 'analysisQueued' status from startOnce cannot toast while idle.
+    if (this.receivedTypedAnalysisStatus
+      && (this.typedAnalysisStatusState === 'running' || this.typedAnalysisStatusState === 'queued')) {
+      this.runtime.showInformationMessage('ripr refresh queued: analysis is in progress.');
+    }
     try {
       await client.sendRequest('workspace/executeCommand', {
         command: 'ripr.refresh',

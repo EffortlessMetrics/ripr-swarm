@@ -359,6 +359,8 @@ fn durable_attempt_document(
     });
     let mut limitations = manifest.limitations.clone();
     limitations.extend(route_limitations);
+    // #8766: a restart the shared repair gate refuses is named as by-hand work.
+    limitations.extend(selected.restart_withheld.clone());
     json!({
         "schema_version": REPAIR_ATTEMPT_SCHEMA_VERSION,
         "attempt_id": manifest.repair_attempt_id.as_str(),

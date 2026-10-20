@@ -788,11 +788,36 @@ impl AnalysisPendingRecovery {
 /// normal serving resumes automatically. The recovery route is the one the
 /// current blocking state actually honors.
 pub(super) fn analysis_pending_diagnostic(recovery: AnalysisPendingRecovery) -> Diagnostic {
-    let message = format!(
-        "ripr has not analyzed this workspace yet, so no findings are reported — \
-         this is not evidence of a clean workspace. {}",
-        recovery.route_text()
-    );
+    analysis_pending_diagnostic_for(recovery, false)
+}
+
+/// The withdrawal marker payload for a blocking failure latched after a
+/// snapshot committed (#8731): a retained snapshot exists, so tagging the
+/// state `no_snapshot` would be a false claim. The marker names the pause
+/// and the withdrawal instead, and still refuses the clean-workspace claim.
+pub(super) fn analysis_pending_withdrawal_diagnostics(
+    recovery: AnalysisPendingRecovery,
+) -> Vec<Diagnostic> {
+    vec![analysis_pending_diagnostic_for(recovery, true)]
+}
+
+fn analysis_pending_diagnostic_for(
+    recovery: AnalysisPendingRecovery,
+    withdrawn: bool,
+) -> Diagnostic {
+    let message = if withdrawn {
+        format!(
+            "ripr analysis is paused and previously reported findings are withdrawn — \
+             this is not evidence of a clean workspace. {}",
+            recovery.route_text()
+        )
+    } else {
+        format!(
+            "ripr has not analyzed this workspace yet, so no findings are reported — \
+             this is not evidence of a clean workspace. {}",
+            recovery.route_text()
+        )
+    };
     Diagnostic {
         severity: Some(DiagnosticSeverity::INFORMATION),
         code: Some(NumberOrString::String(
@@ -802,7 +827,11 @@ pub(super) fn analysis_pending_diagnostic(recovery: AnalysisPendingRecovery) -> 
         message,
         data: Some(serde_json::json!({
             "kind": "delivery_limitation",
-            "state": "no_snapshot",
+            "state": if withdrawn {
+                "withdrawn_configuration_failure"
+            } else {
+                "no_snapshot"
+            },
             "recovery": recovery.recovery_id(),
         })),
         ..Default::default()

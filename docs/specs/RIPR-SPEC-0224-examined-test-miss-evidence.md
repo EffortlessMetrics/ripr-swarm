@@ -87,6 +87,14 @@ developer who disagreed had to re-derive the analysis.
   the reason: `unconfirmed` for `observation_unconfirmed`, `misses` otherwise.
   Human-full, `ripr explain`, LSP hover and LSP related information use it;
   JSON, MCP and the context packet carry no label.
+- `output::related_test_miss::oracle_projection` owns the oracle phrase of a
+  related-test row, after "uses" (#8388): `<strength> <kind> oracle` for a
+  graded row; `<kind> oracle, not graded against this probe` when the
+  strength is `unknown` (the probe family has no typed oracle relationships,
+  so the assertion is not graded, not of unknown quality); `an unclassified
+  oracle, not graded against this probe` when the kind is also `unknown` and
+  an assertion was selected; and `no oracle` when no assertion was selected.
+  Pinned by `oracle_projection_separates_ungraded_assertions_from_absent_ones`.
 - `ripr explain` adds a "Why this verdict" section: every retained examined
   test with its verdict and checked assertion, what a test would need to change
   the verdict (gap classes only), and the meaning of each stop reason.
