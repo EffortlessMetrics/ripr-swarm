@@ -604,11 +604,10 @@ fn inactive_registrations_are_not_extracted() -> Result<(), String> {
 /// An unresolved registration does not establish a running test at all.
 #[test]
 fn unknown_registration_bindings_do_not_create_assertion_admission() {
-    for source in ["import { it } from './fixtures'; it('x', () => { checkout(1); });"] {
-        let full = format!("{OWNER_IMPORT}{source}");
-        assert!(
-            extract_tests(Path::new("tests/cart.test.ts"), &full).is_empty(),
-            "{source}"
-        );
-    }
+    let source = "import { it } from './fixtures'; it('x', () => { checkout(1); });";
+    let full = format!("{OWNER_IMPORT}{source}");
+    assert!(
+        extract_tests(Path::new("tests/cart.test.ts"), &full).is_empty(),
+        "{source}"
+    );
 }
