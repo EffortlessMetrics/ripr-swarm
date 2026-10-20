@@ -14369,6 +14369,12 @@ tests = [
   "crates/ripr/src/mcp/gaps.rs::tests::perl_packet_backed_rows_agree_in_gap_evidence",
   "crates/ripr/src/output/human/explain.rs::tests::an_unconfirmed_observation_is_not_labelled_a_miss",
   "crates/ripr/src/lsp/tests.rs::hover_keeps_oracle_kind_on_a_matched_row_that_still_misses",
+  "crates/ripr/src/lsp/tests.rs::finding_hover_oracle_wording_distinguishes_ungraded_assertions",
+  "crates/ripr/src/lsp/tests.rs::finding_diagnostic_oracle_wording_preserves_selected_row",
+  "crates/ripr/src/lsp/tests.rs::absent_assertion_oracle_wording_keeps_reason_only_hover",
+  "crates/ripr/src/lsp/tests.rs::diagnostic_oracle_wording_follows_producer_selection_over_a_stronger_row",
+  "crates/ripr/src/lsp/diagnostics.rs::seam_diagnostic_tests::seam_diagnostic_oracle_wording_distinguishes_ungraded_assertions",
+  "crates/ripr/src/output/agent_seam_packets.rs::tests::targeted_test_brief_oracle_wording_distinguishes_ungraded_assertions",
   "crates/ripr/src/analysis/language/python/python_tests.rs::assertion_admission_separates_no_assertion_from_unresolved_assertion_like_forms",
   "crates/ripr/src/analysis/language/typescript/admission_tests.rs::assertion_admission_separates_no_assertion_from_unresolved_assertion_like_forms",
   "crates/ripr/src/analysis/language/python/assertion_selection_tests.rs::family_relevant_assertion_selection_controls",
@@ -14476,6 +14482,9 @@ code = [
   "crates/ripr/src/output/related_test_miss.rs",
   "crates/ripr/src/output/human/explain.rs",
   "crates/ripr/src/lsp/hover.rs",
+  "crates/ripr/src/lsp/diagnostics.rs",
+  "crates/ripr/src/domain/diagnostic_witness.rs",
+  "crates/ripr/src/output/agent_seam_packets.rs",
 ]
 outputs = []
 metrics = [
