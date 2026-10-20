@@ -889,6 +889,7 @@ fn observed_value_facts_for_test(
             // Direct literal first (matches pre-v2 behavior).
             for value in scalar_values(&arg) {
                 observed.push(ValueFact {
+                    file: None,
                     line: call.line,
                     text: call.text.to_string(),
                     value,
@@ -904,6 +905,7 @@ fn observed_value_facts_for_test(
             // same-file const / Some/Ok/Err).
             for (value, context) in env.resolve_at_call(&arg, call.line, &call.name, &call.text) {
                 observed.push(ValueFact {
+                    file: None,
                     line: call.line,
                     text: call.text.to_string(),
                     value,
@@ -918,6 +920,9 @@ fn observed_value_facts_for_test(
     // count when method names align with seam tokens; the env enforces
     // that filter.
     observed.extend(env.builder_facts());
+    for fact in &mut observed {
+        fact.file = Some(indexed.test.file.clone());
+    }
     observed
 }
 
@@ -3100,7 +3105,10 @@ fn sort_value_facts(values: &mut Vec<ValueFact>) {
             .cmp(&b.line)
             .then(a.value.cmp(&b.value))
             .then(a.text.cmp(&b.text))
+            .then(a.file.cmp(&b.file))
     });
+    // Cross-file collisions still collapse (first file in path order), as before
+    // #8389, so JSON observed values and totals do not move.
     values.dedup_by(|a, b| a.line == b.line && a.value == b.value && a.text == b.text);
 }
 

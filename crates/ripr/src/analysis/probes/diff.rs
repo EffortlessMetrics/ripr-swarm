@@ -113,6 +113,16 @@ pub(crate) fn probes_for_file_with_relations(
             skip_removed[removed_index] = true;
         }
     }
+    // A line that is byte-identical on both sides of one replacement run
+    // (unchanged or moved inside a rewritten block) is not an edit (#8389).
+    for (new_side_line, old_line) in changed.identical_replacement_lines() {
+        if let (Some(&added_index), Some(&removed_index)) =
+            (added_at.get(&new_side_line), removed_at.get(&old_line))
+        {
+            skip_added[added_index] = true;
+            skip_removed[removed_index] = true;
+        }
+    }
     for (new_side_lines, removed) in changed.uneven_replacement_blocks() {
         let added_indexes = new_side_lines
             .iter()
@@ -2182,6 +2192,148 @@ mod tests {
             "{probes:?}"
         );
         assert!(!probes.is_empty(), "the changed pair keeps its probe");
+    }
+
+    fn replacement(removed: &[(usize, &str)], added: &[(usize, &str)]) -> ChangedFile {
+        let start = added.first().map_or(1, |(line, _)| *line);
+        let line = |(line, text): &(usize, &str), new_side_line: usize| ChangedLine {
+            line: *line,
+            new_side_line,
+            text: (*text).to_string(),
+        };
+        ChangedFile {
+            path: PathBuf::from("src/lib.rs"),
+            added_lines: added.iter().map(|l| line(l, l.0)).collect(),
+            removed_lines: removed.iter().map(|l| line(l, start)).collect(),
+        }
+    }
+
+    /// #8389 (syn 96801f7): a line identical on both sides of an uneven
+    /// replacement block is unchanged, so it seeds no probe, while the real
+    /// edit beside it still does.
+    #[test]
+    fn an_identical_line_inside_a_replacement_block_seeds_no_probe() {
+        let same = "end: span.end.prev_span(),";
+        let changed = replacement(
+            &[(10, "start: old_start.offset(1),"), (11, same)],
+            &[
+                (20, same),
+                (21, "start: new_start.offset(1),"),
+                (22, "extra: span.len(),"),
+            ],
+        );
+        let probes = probes_for_file(Path::new("workspace"), &changed, &RustIndex::default());
+        assert!(
+            probes.iter().all(|probe| probe.expression != same),
+            "the unchanged line must not seed a probe: {probes:?}"
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.expression == "start: new_start.offset(1),"),
+            "the real edit keeps its probe: {probes:?}"
+        );
+    }
+
+    /// Fail-closed: a repeated identical line pairs by guess, so it keeps
+    /// its probes; a line edited by one character is still a change.
+    #[test]
+    fn identical_line_suppression_is_fail_closed() {
+        let same = "end: span.end.prev_span(),";
+        let twice = replacement(
+            &[(10, same), (11, same)],
+            &[(20, same), (21, same), (22, "extra: span.len(),")],
+        );
+        assert!(twice.identical_replacement_lines().is_empty());
+        let probes = probes_for_file(Path::new("workspace"), &twice, &RustIndex::default());
+        assert!(
+            probes.iter().any(|probe| probe.expression == same),
+            "{probes:?}"
+        );
+        let edited = replacement(
+            &[(10, "end: span.start.prev_span(),"), (11, "let z = 1;")],
+            &[(20, same), (21, "let y = 2;"), (22, "let w = 3;")],
+        );
+        assert!(edited.identical_replacement_lines().is_empty());
+        let probes = probes_for_file(Path::new("workspace"), &edited, &RustIndex::default());
+        assert!(
+            probes.iter().any(|probe| probe.expression == same),
+            "{probes:?}"
+        );
+    }
+
+    /// Review of #8913: pairing must not hide a reorder, an argument swap, or a
+    /// line hoisted across a block boundary; each is an edit.
+    #[test]
+    fn identical_line_pairing_never_hides_reorders_or_block_moves() {
+        let reordered = replacement(
+            &[(10, "validate(x);"), (11, "commit(x);")],
+            &[(20, "commit(x);"), (21, "validate(x);")],
+        );
+        assert!(reordered.identical_replacement_lines().is_empty());
+        let swapped_args = replacement(
+            &[(10, "f("), (11, "a,"), (12, "b,"), (13, ")")],
+            &[(20, "f("), (21, "b,"), (22, "a,"), (23, ")")],
+        );
+        assert!(swapped_args.identical_replacement_lines().is_empty());
+        let hoisted = replacement(
+            &[(10, "if a {"), (11, "x"), (12, "}")],
+            &[(20, "if a {"), (21, "}"), (22, "x")],
+        );
+        assert!(hoisted.identical_replacement_lines().is_empty());
+        let closed_early = replacement(&[(10, "x")], &[(20, "}"), (21, "x")]);
+        assert!(closed_early.identical_replacement_lines().is_empty());
+        let in_order = replacement(
+            &[(10, "let a = 1;"), (11, "end: span.end.prev_span(),")],
+            &[(20, "let b = 2;"), (21, "end: span.end.prev_span(),")],
+        );
+        assert_eq!(in_order.identical_replacement_lines().len(), 1);
+        let moved_continuation = replacement(
+            &[
+                (10, "let a = load();"),
+                (11, "let b = load2()"),
+                (12, ".unwrap_or_default();"),
+            ],
+            &[
+                (20, "let a = load()"),
+                (21, ".unwrap_or_default();"),
+                (22, "let b = load2();"),
+            ],
+        );
+        assert!(moved_continuation.identical_replacement_lines().is_empty());
+        let crossed_edit = replacement(
+            &[(10, "report_state();"), (11, "update_state(2);")],
+            &[(20, "update_state(1);"), (21, "report_state();")],
+        );
+        assert!(crossed_edit.identical_replacement_lines().is_empty());
+        let commented_out = replacement(
+            &[(10, "deploy();")],
+            &[(20, "/*"), (21, "deploy();"), (22, "*/")],
+        );
+        assert!(commented_out.identical_replacement_lines().is_empty());
+        let revived = replacement(
+            &[(10, "/*"), (11, "deploy();"), (12, "*/")],
+            &[(20, "deploy();")],
+        );
+        assert!(revived.identical_replacement_lines().is_empty());
+        let trailing_space = replacement(&[(10, "Usage: foo ")], &[(20, "Usage: foo")]);
+        assert!(trailing_space.identical_replacement_lines().is_empty());
+        let arm_order = replacement(
+            &[(10, "first(),"), (11, "second(),")],
+            &[(20, "second(),"), (21, "third(),")],
+        );
+        assert!(arm_order.identical_replacement_lines().is_empty());
+        let non_ascii = replacement(
+            &[(10, "é: x,"), (11, "a();")],
+            &[(20, "b();"), (21, "é: x,")],
+        );
+        let _ = non_ascii.identical_replacement_lines();
+        let reindented_string_line = replacement(&[(10, "payload")], &[(20, "    payload")]);
+        assert!(
+            reindented_string_line
+                .identical_replacement_lines()
+                .is_empty()
+        );
     }
 
     /// Probes for `source` (the new file) with the given added

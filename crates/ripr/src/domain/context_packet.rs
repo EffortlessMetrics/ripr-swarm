@@ -152,6 +152,7 @@ mod tests {
         let mut finding = sample_finding();
         finding.related_tests = vec![related("t1"), related("t2"), related("t3")];
         finding.activation.observed_values.push(ValueFact {
+            file: None,
             line: 11,
             text: "assert_eq!(x, 1)".to_string(),
             value: "1".to_string(),

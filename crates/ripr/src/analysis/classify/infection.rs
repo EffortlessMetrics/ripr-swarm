@@ -865,6 +865,7 @@ mod tests {
             observed_values: facts
                 .iter()
                 .map(|(value, context)| ValueFact {
+                    file: None,
                     line: 1,
                     text: String::new(),
                     value: (*value).to_string(),
