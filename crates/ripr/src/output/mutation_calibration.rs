@@ -8,7 +8,7 @@
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(crate) const MUTATION_CALIBRATION_SCHEMA_VERSION: &str = "0.2";
+pub(crate) const MUTATION_CALIBRATION_SCHEMA_VERSION: &str = "0.3";
 
 const STATIC_WITHOUT_RUNTIME_SAMPLE_LIMIT: usize = 50;
 const AGREEMENT_SAMPLE_LIMIT: usize = 50;
@@ -175,6 +175,64 @@ pub(crate) struct MutationCalibrationReport {
     ambiguous_span_overlap: Vec<AmbiguousMutationCalibrationMatch>,
     unmatched_mutants: Vec<UnmatchedMutation>,
     static_without_runtime: Vec<StaticSeamRecord>,
+    /// Artifact identity carried in-band so an `--out` report stays
+    /// self-describing after the stderr disclosure is gone (#8753).
+    provenance: CalibrationProvenance,
+}
+
+/// Which repository head each input artifact reports, when it reports one.
+///
+/// cargo-mutants `outcomes.json` usually carries no head at all, so the
+/// common case is a repo-exposure snapshot head with `mutants_head: None`.
+/// The verdict string is rendered in both md and JSON so a saved report
+/// never silently inherits a foreign subject's authority (#7449, #8753).
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct CalibrationProvenance {
+    repo_exposure_head: Option<String>,
+    mutants_head: Option<String>,
+}
+
+impl CalibrationProvenance {
+    fn verdict(&self) -> &'static str {
+        match (&self.repo_exposure_head, &self.mutants_head) {
+            (Some(snapshot), Some(mutants)) if snapshot == mutants => "same_head",
+            (Some(_), Some(_)) => "different_heads",
+            (Some(_), None) => "only_repo_exposure_head",
+            (None, Some(_)) => "only_mutants_head",
+            (None, None) => "no_head_recorded",
+        }
+    }
+
+    fn json(&self) -> Value {
+        serde_json::json!({
+            "repo_exposure_head": self.repo_exposure_head,
+            "mutants_head": self.mutants_head,
+            "verdict": self.verdict(),
+        })
+    }
+
+    /// One honest sentence per verdict, mirroring the stderr disclosure so
+    /// the interactive and archived surfaces never drift apart.
+    fn disclosure_sentence(&self) -> String {
+        match (&self.repo_exposure_head, &self.mutants_head) {
+            (Some(snapshot), Some(mutants)) if snapshot == mutants => format!(
+                "Both artifacts report repository head {snapshot}, so they are from the same commit (the working tree may still differ between them)."
+            ),
+            (Some(snapshot), Some(mutants)) => format!(
+                "The artifacts report different repository heads (repo-exposure {snapshot}, cargo-mutants {mutants}), so matched rows may describe a different subject than the static snapshot."
+            ),
+            (Some(snapshot), None) => format!(
+                "The repo-exposure snapshot reports repository head {snapshot}; the cargo-mutants JSON does not carry a head SHA, so ensure the mutants were produced from the same repository and adjacent commits."
+            ),
+            (None, Some(mutants)) => format!(
+                "The cargo-mutants JSON reports repository head {mutants}, but the repo-exposure snapshot does not carry a head SHA, so ensure both artifacts are from the same repository and adjacent commits."
+            ),
+            (None, None) => {
+                "Neither artifact carries a repository head SHA, so ensure both artifacts are from the same repository and adjacent commits."
+                    .to_string()
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -230,10 +288,12 @@ pub(crate) fn mutation_calibration_report_from_json(
     let static_seams = parse_repo_exposure_static_seams(repo_exposure_json)?;
     let runtime_mutants =
         require_imported_runtime_mutants(parse_mutation_outcomes_json(mutants_json)?)?;
-    Ok(build_mutation_calibration_report(
-        static_seams,
-        runtime_mutants,
-    ))
+    let mut report = build_mutation_calibration_report(static_seams, runtime_mutants);
+    report.provenance = CalibrationProvenance {
+        repo_exposure_head: crate::output::outcome::snapshot_repository_head(repo_exposure_json),
+        mutants_head: crate::output::outcome::snapshot_repository_head(mutants_json),
+    };
+    Ok(report)
 }
 
 /// The stderr disclosure `ripr calibrate cargo-mutants` prints beside a join.
@@ -299,6 +359,8 @@ pub(crate) fn render_mutation_calibration_json(
         "schema_version": MUTATION_CALIBRATION_SCHEMA_VERSION,
         "scope": "repo",
         "status": "advisory",
+        "provenance": report.provenance.json(),
+        "how_to_read": agreement_how_to_read_json(),
         "metrics": {
             "static_seams_total": report.static_seams_total,
             "mutants_total": report.mutants_total,
@@ -362,6 +424,9 @@ pub(crate) fn render_mutation_calibration_md(report: &MutationCalibrationReport)
          Runtime outcome vocabulary in this report comes from that runtime data; static \
          ripr reports continue to use audit vocabulary only.\n\n",
     );
+    out.push_str("## Provenance\n\n");
+    out.push_str(&report.provenance.disclosure_sentence());
+    out.push_str(" The join itself matches by seam_id, span containment, or file/line in every case.\n\n");
     out.push_str("## Summary\n\n");
     out.push_str("| Metric | Count |\n| --- | ---: |\n");
     out.push_str(&format!(
@@ -393,7 +458,15 @@ pub(crate) fn render_mutation_calibration_md(report: &MutationCalibrationReport)
     }
 
     out.push_str("\n## Static/runtime agreement\n\n");
-    out.push_str("| Agreement bucket | Count |\n| --- | ---: |\n");
+    out.push_str("How to read this table: a **static gap** is a static seam whose grip class is outside the \
+                  strong set `strongly_gripped` / `intentional` / `suppressed` (for example `ungripped` or \
+                  `weakly_gripped`). A **runtime gap signal** is an imported cargo-mutants outcome the runtime \
+                  failed to catch (`missed`, `survived`, `not_caught`, `uncaught`); a **runtime clean signal** \
+                  is one it caught (`caught`, `timeout`).\n\n");
+    for (bucket, guide) in agreement_how_to_read() {
+        out.push_str(&format!("- `{bucket}`: {guide}\n"));
+    }
+    out.push_str("\n| Agreement bucket | Count |\n| --- | ---: |\n");
     out.push_str(&format!(
         "| static_gap_and_runtime_signal | {} |\n",
         report.agreement.static_gap_and_runtime_signal
@@ -768,6 +841,7 @@ fn build_mutation_calibration_report(
         ambiguous_span_overlap,
         unmatched_mutants,
         static_without_runtime,
+        provenance: CalibrationProvenance::default(),
     };
     if let Some(note) = no_observed_runtime_outcome_note(&report) {
         report.precision_notes.push(note);
@@ -1060,6 +1134,45 @@ fn push_agreement_sample_note(out: &mut String, shown: usize, total: usize) {
     if total > shown {
         out.push_str(&format!("Sample only; showing {shown} of {total}.\n\n"));
     }
+}
+
+/// One-line reading guide for the agreement table, shared verbatim by the md
+/// and JSON renderers so a saved artifact defines the vocabulary it uses
+/// (#8750). `static_gap` here means a seam whose grip class is outside the
+/// strong set `strongly_gripped` / `intentional` / `suppressed`.
+fn agreement_how_to_read() -> BTreeMap<&'static str, &'static str> {
+    BTreeMap::from([
+        (
+            "static_gap_and_runtime_signal",
+            "ripr flags a static gap (a seam outside the strongly_gripped / intentional / suppressed set) and a runtime mutant went uncaught at that seam: the two sources agree, which supports the static classification.",
+        ),
+        (
+            "static_gap_without_runtime_signal",
+            "ripr flags a static gap but this import produced no runtime gap signal (missed / survived / not_caught / uncaught) for it: unexercised by this import, not contradicted; see the Static gaps without runtime signals table.",
+        ),
+        (
+            "runtime_signal_without_static_gap",
+            "a runtime mutant went uncaught where ripr reports no static gap: the sources disagree, so these rows are the first ones to investigate; see the Runtime signals without static gaps table.",
+        ),
+        (
+            "static_clean_and_runtime_clean",
+            "ripr reports no static gap (the seam is strongly_gripped, intentional, or suppressed) and the runtime caught the mutant: the two sources agree.",
+        ),
+        (
+            "runtime_inconclusive",
+            "ambiguous joins (several seams on one line, or crossing spans) or unobserved runtime outcomes: counted separately as evidence neither for nor against the static verdict until a seam_id or unambiguous location is available.",
+        ),
+    ])
+}
+
+fn agreement_how_to_read_json() -> Value {
+    let guide = agreement_how_to_read();
+    serde_json::json!({
+        "static_gap": "a static seam whose grip class is outside the strong set: anything other than strongly_gripped, intentional, or suppressed (for example ungripped or weakly_gripped)",
+        "runtime_gap_signal": "an imported cargo-mutants outcome the runtime failed to catch: missed, survived, not_caught, or uncaught",
+        "runtime_clean_signal": "an imported cargo-mutants outcome the runtime caught: caught or timeout",
+        "buckets": guide,
+    })
 }
 
 fn mutation_calibration_precision_notes() -> Vec<String> {
