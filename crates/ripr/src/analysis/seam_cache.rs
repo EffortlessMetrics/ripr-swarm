@@ -472,7 +472,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.85`: a related test line at the call-fact budget withholds a seam's
 /// absence claims under `rust_call_fact_budget` (#8600). Old entries can keep
 /// an actionable gap beside a line that dropped a call.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.85";
+/// `1.86`: the cache body carries each observed value's test file, which is
+/// `serde(skip)` on the public `ValueFact` (#8948). Old entries load files as
+/// absent and would render a bare `at line N` that a cold run does not.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.86";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -603,7 +606,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.85";
 /// `0.89`: same direct-record field selectors as full `1.83`.
 /// `0.90`: same check-helper argument pins as full `1.84`.
 /// `0.91`: same call-fact budget withholding as full `1.85` (#8600).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.91";
+/// `0.92`: same cached observed-value test file as full `1.86` (#8948).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.92";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -736,7 +740,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.91";
 /// `0.89`: same direct-record field selectors as full `1.83`.
 /// `0.90`: same check-helper argument pins as full `1.84`.
 /// `0.91`: same call-fact budget withholding as full `1.85` (#8600).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.91";
+/// `0.92`: same cached observed-value test file as full `1.86` (#8948).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.92";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4596,7 +4601,8 @@ mod tests {
         // 1.82 -> 1.83: canonical direct-record field match selection (#5500).
         // 1.83 -> 1.84: check-helper argument pins (RIPR-SPEC-0197).
         // 1.84 -> 1.85: call-fact budget withholding (#8600).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.85");
+        // 1.85 -> 1.86: cached observed-value test file (#8948).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.86");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4670,8 +4676,8 @@ mod tests {
         // 0.84 -> 0.85: same early error-variant pins as full 1.79 (#7063).
         // 0.85 -> 0.86: same composed golden-file, early error-variant and
         // returned-element field pins as full 1.80.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.91");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.91");
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.92");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.92");
     }
 
     #[test]
