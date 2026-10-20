@@ -17148,6 +17148,7 @@ mod reexport_chain_tests;
 mod scope_receiver_tests;
 mod spec0243_owner_tests;
 mod spy_module_object_tests;
+mod suite_factory_tests;
 mod table_case_tests;
 mod typed_loose_equality_tests;
 

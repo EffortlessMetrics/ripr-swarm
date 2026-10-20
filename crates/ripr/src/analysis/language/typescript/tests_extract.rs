@@ -83,13 +83,29 @@ pub(crate) fn extract_tests_and_conditional_credit_gap(
     file: &Path,
     source: &str,
 ) -> (Vec<TypeScriptTest>, Option<TypeScriptConditionalCreditGap>) {
+    extract_tests_expanding_suite_factories(file, source, true)
+}
+
+/// `expand` is off for the rerun on an already-expanded source, whose
+/// factory calls are still present.
+fn extract_tests_expanding_suite_factories(
+    file: &Path,
+    source: &str,
+    expand: bool,
+) -> (Vec<TypeScriptTest>, Option<TypeScriptConditionalCreditGap>) {
     // Same guard as owner extraction (#4101): a file under the nesting
     // budget can still overflow the caller stack, so the parse must
     // not run on the main thread.
-    let Ok(out) = parse_on_worker(file, source, |file, source, allocator| {
+    let Ok(out) = parse_on_worker(file, source, move |file, source, allocator| {
         let ret = Parser::new(allocator, source, source_type_for(file)).parse();
         if !ret.errors.is_empty() {
-            return (Vec::new(), None);
+            return (Vec::new(), None, None);
+        }
+        if expand
+            && let Some(expansion) =
+                super::suite_factory::expand_suite_factories(&ret.program.body, source)
+        {
+            return (Vec::new(), None, Some(expansion));
         }
         let imports = extract_imports_for_test_file(&ret.program.body);
         let mocks = extract_mocks_from_statements(&ret.program.body, &imports);
@@ -167,11 +183,34 @@ pub(crate) fn extract_tests_and_conditional_credit_gap(
         } else {
             None
         };
-        (tests, conditional_credit_gap)
+        (tests, conditional_credit_gap, None)
     }) else {
         return (Vec::new(), None);
     };
-    out
+    let (tests, gap, expansion) = out;
+    let Some(expansion) = expansion else {
+        return (tests, gap);
+    };
+    // Rerun on the source with the factory calls expanded; a test found in
+    // an appended expansion reports its call's line.
+    let (mut tests, gap) = extract_tests_expanding_suite_factories(file, &expansion.source, false);
+    // A substitution that lands inside a string can leave the expanded source
+    // unparsable, which would drop every test the file yielded before
+    // expansion; fall back to the unexpanded extraction then.
+    if tests.is_empty() {
+        return extract_tests_expanding_suite_factories(file, source, false);
+    }
+    for test in &mut tests {
+        // Assertion lines stay offsets from the test line: the classifier
+        // indexes `body_text` by `assertion.line - test.line`.
+        let expanded_start = test.line;
+        let reported_start = expansion.reported_line(expanded_start);
+        test.line = reported_start;
+        for assertion in &mut test.assertions {
+            assertion.line = reported_start + assertion.line.saturating_sub(expanded_start);
+        }
+    }
+    (tests, gap)
 }
 
 /// Walk a list of statements and collect every syntactic owner-module mock
@@ -1659,7 +1698,10 @@ fn returns_only(
 }
 
 /// Byte offsets of `identifier` as a whole word, member names included.
-fn word_occurrences<'a>(code: &'a str, identifier: &'a str) -> impl Iterator<Item = usize> + 'a {
+pub(super) fn word_occurrences<'a>(
+    code: &'a str,
+    identifier: &'a str,
+) -> impl Iterator<Item = usize> + 'a {
     let word =
         |ch: Option<char>| ch.is_some_and(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric());
     code.match_indices(identifier).filter_map(move |(at, _)| {
@@ -1681,7 +1723,7 @@ fn is_direct_call(code: &str, at: usize, name: &str) -> bool {
 }
 
 /// Byte offsets of `identifier` as a whole word, not a member name.
-fn identifier_occurrences<'a>(
+pub(super) fn identifier_occurrences<'a>(
     code: &'a str,
     identifier: &'a str,
 ) -> impl Iterator<Item = usize> + 'a {
