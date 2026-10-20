@@ -16963,3 +16963,23 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0290"
+name = "Pilot repair start root display preserves literal backslashes"
+spec = "docs/specs/RIPR-SPEC-0290-pilot-repair-root-display.md"
+tests = [
+  "crates/ripr/src/output/pilot/tests.rs::pilot_repair_start_preserves_a_literal_backslash_unix_root",
+  "crates/ripr/src/output/pilot/tests.rs::pilot_repair_line_follows_the_canonical_pilot_decision",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/output/pilot/commands.rs",
+  "crates/ripr/src/agent/loop_commands.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0290-pilot-repair-root-display.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

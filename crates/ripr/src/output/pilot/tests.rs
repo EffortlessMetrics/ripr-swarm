@@ -2017,6 +2017,31 @@ fn pilot_repair_line_follows_the_canonical_pilot_decision() -> Result<(), String
     Ok(())
 }
 
+/// #8992: the offered repair start route renders the root through
+/// `root_path_display` before `bound_root`, so a Unix checkout whose path
+/// contains a literal backslash still names the user's checkout; `display_path`
+/// would have rewritten the backslash into a separator and the pasted command
+/// would target a different directory. On Windows `\` is a separator and the
+/// rendered root keeps stable `/` separators, exactly as before.
+#[test]
+fn pilot_repair_start_preserves_a_literal_backslash_unix_root() {
+    let entry = route_ready_entry(&["tests/pricing.rs"]);
+    let root = Path::new("/tmp/team\\repo");
+    let route = commands::repair_start_command(root, &entry)
+        .unwrap_or_else(|| panic!("eligible seam must offer a repair start"));
+    if cfg!(unix) {
+        assert!(
+            route.contains("--root '/tmp/team\\repo'"),
+            "route must keep the literal backslash: {route}"
+        );
+    } else {
+        assert!(
+            route.contains("tmp/team/repo"),
+            "route must render stable separators on Windows: {route}"
+        );
+    }
+}
+
 fn discovered_files(
     entries: &[(crate::domain::LanguageId, &str)],
 ) -> Vec<(crate::domain::LanguageId, PathBuf)> {

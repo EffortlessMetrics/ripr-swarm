@@ -32,9 +32,15 @@ fn offered_repair_start_route(root: &Path, entry: &ClassifiedSeam) -> Option<Str
     if !recommended_test_is_repair_edit_target(entry) {
         return None;
     }
+    // `root_path_display` before `bound_root`, like the CLI recovery route:
+    // `display_path` would turn a literal backslash in a Unix path into a
+    // separator, so the pasted command would target a different directory
+    // (#4287, #8992).
     Some(format!(
         "ripr agent repair --root {} --seam-id {} --phase before",
-        loop_commands::shell_arg(&loop_commands::bound_root(&display_path(root))),
+        loop_commands::shell_arg(&loop_commands::bound_root(
+            &loop_commands::root_path_display(root)
+        )),
         loop_commands::shell_arg(entry.seam.id().as_str()),
     ))
 }
@@ -128,9 +134,13 @@ pub(super) fn repair_edit_scope(entry: &ClassifiedSeam) -> String {
 /// run before the test edit, because once the edit closes the gap first-pr no
 /// longer selects it.
 pub(super) fn python_card_first_pr_command(root: &Path) -> String {
+    // Same root rule as [`offered_repair_start_route`] (#8992): keep the
+    // root's literal characters so the pasted command names this checkout.
     format!(
         "ripr first-pr --root {}",
-        loop_commands::shell_arg(&loop_commands::bound_root(&display_path(root)))
+        loop_commands::shell_arg(&loop_commands::bound_root(
+            &loop_commands::root_path_display(root)
+        ))
     )
 }
 
@@ -177,7 +187,11 @@ impl PilotCommands {
                 .unwrap_or_else(|| Path::new(".")),
         );
         let after_path = out_dir.join("after.repo-exposure.json");
-        let command_root = loop_commands::bound_root(&display_path(context.root));
+        // `--root` binds the same way the repair start and first-pr routes do
+        // (#8992): the root keeps its literal characters before `bound_root`,
+        // so a pasted retry or snapshot command names this checkout.
+        let command_root =
+            loop_commands::bound_root(&loop_commands::root_path_display(context.root));
         let after_snapshot = loop_commands::check_repo_exposure_command(
             &command_root,
             context.mode.as_str(),

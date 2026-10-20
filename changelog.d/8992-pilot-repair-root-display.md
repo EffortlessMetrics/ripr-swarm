@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- The pilot's offered repair start command, the Python repair card's `ripr first-pr` start command, and the pilot retry/snapshot command root now render the workspace root with `root_path_display` before `bound_root`, so a Unix checkout whose path contains a literal backslash (e.g. `/tmp/team\repo`) gets a paste-ready command that targets the user's checkout instead of a backslash-rewritten sibling directory. Ordinary roots and all Windows rendering are unchanged (#8992, #4287).
