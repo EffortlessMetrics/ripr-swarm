@@ -22150,6 +22150,68 @@ fn receipt_check_orphan_exits_nonzero() -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
+/// #8932: a present but invalid `canonical_gap_id` (null, numeric, empty,
+/// blank) must be rejected by `ripr receipt check --json` before any success
+/// output, while the same file recovers after replacing only that identity.
+#[test]
+fn receipt_check_rejects_present_invalid_canonical_gap_id() -> Result<(), Box<dyn std::error::Error>>
+{
+    let out_dir = unique_temp_workspace("receipt-check-invalid-gap-id");
+    std::fs::create_dir_all(&out_dir)?;
+    let receipt_path = out_dir.join("receipt.json");
+    let receipt_arg = receipt_path.to_str().ok_or("receipt path not UTF-8")?;
+    let write = |identity: serde_json::Value| -> Result<(), Box<dyn std::error::Error>> {
+        let receipt = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "kind": "receipt",
+            "canonical_gap_id": identity,
+            "verify_command": "cargo test",
+            "verify_status": "passed",
+            "current_head": "0123456789abcdef0123456789abcdef01234567",
+            "written_at": "2026-06-14T00:00:00Z"
+        });
+        std::fs::write(&receipt_path, receipt.to_string())?;
+        Ok(())
+    };
+
+    // Control: an exact nonblank identity still succeeds with not_available.
+    write(serde_json::json!("gap:test:json-identity"))?;
+    let ok = run_ripr(&["receipt", "check", "--path", receipt_arg, "--json"]);
+    assert_success(&ok);
+    let ok_json: serde_json::Value = serde_json::from_slice(&ok.stdout)?;
+    assert_eq!(ok_json["ok"], true, "{ok_json:#}");
+
+    for (label, identity) in [
+        ("null", serde_json::Value::Null),
+        ("number", serde_json::json!(7)),
+        ("empty", serde_json::json!("")),
+        ("whitespace", serde_json::json!("   ")),
+    ] {
+        write(identity)?;
+        let bad = run_ripr(&["receipt", "check", "--path", receipt_arg, "--json"]);
+        assert_eq!(bad.status.code(), Some(2), "{label}: should exit 2");
+        assert!(
+            bad.stdout.is_empty(),
+            "{label}: stdout must be empty, got {}",
+            String::from_utf8_lossy(&bad.stdout)
+        );
+        let stderr = String::from_utf8_lossy(&bad.stderr);
+        assert!(
+            stderr.contains("`canonical_gap_id`"),
+            "{label}: stderr should name the field; got {stderr}"
+        );
+    }
+
+    // Recovery: replacing only the identity makes the same file succeed.
+    write(serde_json::json!("gap:test:json-identity"))?;
+    let recovered = run_ripr(&["receipt", "check", "--path", receipt_arg, "--json"]);
+    assert_success(&recovered);
+
+    ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
 /// Smoke: `ripr agent receipt` (legacy alias) still exits non-zero with a
 /// parse error rather than panicking or silently succeeding with no args —
 /// which confirms the alias is still wired.
