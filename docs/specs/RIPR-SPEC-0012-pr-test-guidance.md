@@ -375,13 +375,15 @@ The JSON report uses schema version `0.1`:
   severity, suppression, caps, or missing guidance.
 - `summary.unchanged_tests` - `true` when the pull request did not change a
   nearby test for the selected recommendations. Diff-backed disclosure includes
-  removals in test-shaped files and edits inside Rust test/helper function spans,
-  including inline tests. Added lines use head-source spans; removed lines use
+  removals in test-shaped files and edits inside locally resolved direct/inline
+  Rust test/helper function spans. Added lines use head-source spans; removed lines use
   reconstructed old-source spans and old coordinates. These disclosure paths
   never become current-line placement targets or evidence of discrimination.
-  Unavailable source or unresolved test-role attribution withholds `true` and
+  Unavailable source, exhausted disclosure budget, or unresolved attribution
+  within this bounded classifier withholds `true` and
   emits a warning; it does not alter the causal analysis status or hide an open
-  recommendation.
+  recommendation. External module composition and broader test-role resolution
+  remain separate work (#3213).
 - `comments[].id` - stable report-local ID.
 - `comments[].dedupe_key` - stable key based on seam ID, path, and seam line.
 - `comments[].placement` - GitHub-compatible changed-line placement.
@@ -549,6 +551,9 @@ replacement, shifted old coordinates, production-only controls, and unchanged
 recommendation classification/placement. The renderer test
 `unresolved_test_edits_do_not_claim_unchanged_or_hide_recommendations` pins the
 conservative unavailable-attribution warning without hiding the card.
+`review_comments_disclosure_bounds_head_blobs_beyond_dirty_worktree` uses real
+Git history and a smaller dirty worktree to pin byte/file disclosure budgets,
+the affirmative production-only control, and unchanged cards/causal receipts.
 
 Initial implementation should add tests for:
 

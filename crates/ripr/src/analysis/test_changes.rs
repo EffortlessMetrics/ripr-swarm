@@ -14,7 +14,8 @@ pub(crate) struct DiffTestChanges {
     pub(crate) unresolved: bool,
 }
 
-/// Read only admitted changed Rust files, at the requested head. Reconstruct
+/// Read changed Rust files within the remaining admission budget, at the
+/// requested head. Reconstruct
 /// their old source from the actual diff so removed coordinates never resolve
 /// against a different function in the current source. Keep uncertainty out of
 /// the affirmative `unchanged_tests` claim without changing analysis status.
@@ -23,6 +24,8 @@ pub(crate) fn diff_test_changes(
     head: &str,
     diff_text: &str,
     config: &RiprConfig,
+    mut remaining_files: usize,
+    mut remaining_bytes: u64,
 ) -> DiffTestChanges {
     let mut changes = DiffTestChanges::default();
     for file in super::diff::parse_unified_diff(diff_text) {
@@ -52,15 +55,39 @@ pub(crate) fn diff_test_changes(
             changes.unresolved = true;
             continue;
         }
-        let object = format!("{head}:{}", file.path.to_string_lossy().replace('\\', "/"));
+        let Some(path) = file.path.to_str() else {
+            changes.unresolved = true;
+            continue;
+        };
+        // Git paths are already slash-separated. A literal Unix backslash
+        // belongs to the object name and must not be rewritten for display.
+        let object = format!("{head}:{path}");
+        if remaining_files == 0 {
+            changes.unresolved = true;
+            continue;
+        }
+        remaining_files -= 1;
+        let Some(size) = blob_size(root, &object) else {
+            changes.unresolved = true;
+            continue;
+        };
+        let Ok(output_limit) = usize::try_from(size.max(1)) else {
+            changes.unresolved = true;
+            continue;
+        };
+        if size > remaining_bytes {
+            changes.unresolved = true;
+            continue;
+        }
+        remaining_bytes -= size;
         let source = crate::git::run_git_output_with_deadline_and_limit(
             root,
             &["show", "--no-textconv", &object],
             Duration::from_secs(60),
-            256 * 1024 * 1024,
+            output_limit,
         )
         .ok()
-        .filter(|output| output.status.success())
+        .filter(|output| output.status.success() && output.stdout.len() as u64 == size)
         .and_then(|output| String::from_utf8(output.stdout).ok());
         let Some(source) = source else {
             changes.unresolved = true;
@@ -82,6 +109,30 @@ pub(crate) fn diff_test_changes(
     changes.files.sort();
     changes.files.dedup();
     changes
+}
+
+fn blob_size(root: &Path, object: &str) -> Option<u64> {
+    let kind = crate::git::run_git_output_with_deadline_and_limit(
+        root,
+        &["cat-file", "-t", object],
+        Duration::from_secs(60),
+        128,
+    )
+    .ok()?;
+    if !kind.status.success() || kind.stdout != b"blob\n" {
+        return None;
+    }
+    let size = crate::git::run_git_output_with_deadline_and_limit(
+        root,
+        &["cat-file", "-s", object],
+        Duration::from_secs(60),
+        128,
+    )
+    .ok()?;
+    if !size.status.success() {
+        return None;
+    }
+    std::str::from_utf8(&size.stdout).ok()?.trim().parse().ok()
 }
 
 fn touches_test(

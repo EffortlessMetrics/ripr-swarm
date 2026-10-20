@@ -1113,7 +1113,7 @@ fn placement_for(
     let production_lines = working_set
         .changed_lines
         .iter()
-        .filter(|line| !is_test_like_path(&line.file))
+        .filter(|line| !crate::analysis::test_like_path(&line.file))
         .collect::<Vec<_>>();
 
     if production_lines.iter().any(|line| {
@@ -1131,7 +1131,7 @@ fn placement_for(
         .iter()
         .filter(|owner| normalize_path_text(&owner.file) == seam_file)
         .filter(|owner| owner.owner == seam.owner())
-        .filter(|owner| !is_test_like_path(&owner.file))
+        .filter(|owner| !crate::analysis::test_like_path(&owner.file))
         .min_by(|left, right| nearest_line_ordering(left.line, right.line, seam.display_line()));
     if let Some(owner) = owner_line {
         return Some(ReviewPlacement {
@@ -1153,7 +1153,7 @@ fn placement_for(
         .iter()
         .filter(|owner| normalize_path_text(&owner.file) == seam_file)
         .filter(|owner| owner.owner == seam.owner())
-        .filter(|owner| !is_test_like_path(&owner.file))
+        .filter(|owner| !crate::analysis::test_like_path(&owner.file))
         .filter(|owner| {
             production_lines
                 .iter()

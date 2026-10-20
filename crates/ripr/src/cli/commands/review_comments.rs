@@ -660,8 +660,25 @@ fn review_comments_with_admission(
         ));
     }
     let changed_tests = analysis::cancellation::with_token(&cancellation, || {
-        analysis::diff_test_changes(&input.root, &options.head, &diff_text, &config)
+        analysis::diff_test_changes(
+            &input.root,
+            &options.head,
+            &diff_text,
+            &config,
+            ceiling
+                .max_index_files
+                .saturating_sub(corpus_payload.file_count),
+            ceiling.max_payload_bytes.saturating_sub(payload_bytes),
+        )
     });
+    enforce_review_comments_deadline(
+        &mut receipt,
+        &receipt_path,
+        started,
+        now(),
+        options.timeout_ms,
+        "language_facts",
+    )?;
     let (changed_owners, enclosing_owners) = attribute_owners(&input.root, &changed_lines);
     enforce_review_comments_deadline(
         &mut receipt,
@@ -2885,6 +2902,93 @@ mod tests {
         assert_eq!(receipt["status"], "complete");
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove fixture: {err}"))?;
         Ok(())
+    }
+
+    #[test]
+    fn review_comments_disclosure_bounds_head_blobs_beyond_dirty_worktree() -> Result<(), String> {
+        use crate::testing::fixture_git::{fixture_git_ok, remove_fixture_tree};
+        let root = unique_command_test_dir("review-test-disclosure-head-budget");
+        std::fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname=\"head_budget\"\nversion=\"0.1.0\"\nedition=\"2024\"\n[workspace]\n",
+        )
+        .map_err(|err| err.to_string())?;
+        fixture_git_ok(&root, &["init", "-q"])?;
+        for (key, value) in [
+            ("user.name", "Review fixture"),
+            ("user.email", "review@example.invalid"),
+            ("commit.gpgsign", "false"),
+        ] {
+            fixture_git_ok(&root, &["config", "--local", key, value])?;
+        }
+        let before = "pub fn price(points: u32) -> u32 {\n    if points > 10 { 20 } else { 10 }\n}\n#[cfg(test)]\nmod tests {\n    use super::price;\n    #[test]\n    fn above_threshold() { assert_eq!(price(11), 20); }\n}\n";
+        let padding = format!("// {}\n", "large head blob ".repeat(1024));
+        let lib = root.join("src/lib.rs");
+        std::fs::write(&lib, format!("{before}{padding}")).map_err(|err| err.to_string())?;
+        fixture_git_ok(&root, &["add", "."])?;
+        fixture_git_ok(&root, &["commit", "-qm", "before"])?;
+        let after = before.replace("points > 10", "points >= 10");
+        let head_source = format!("{after}{padding}");
+        std::fs::write(&lib, &head_source).map_err(|err| err.to_string())?;
+        fixture_git_ok(&root, &["commit", "-qam", "after"])?;
+        // Admission sees the current worktree; disclosure must separately
+        // bound the larger requested-head source rather than trust that stat.
+        std::fs::write(&lib, &after).map_err(|err| err.to_string())?;
+        let config = crate::config::RiprConfig::default();
+        let census = analysis::analyzable_corpus_payload_size(&root, &config, &[])?;
+        assert_eq!(census.file_count, 1);
+        let diff = load_review_comments_diff(&root, "HEAD^", "HEAD")?;
+        let payload = census.total_bytes + diff.len() as u64;
+        let mut control = None;
+        for (label, files, bytes, unchanged) in [
+            ("admitted", 2, payload + head_source.len() as u64, true),
+            ("bytes", 2, payload + head_source.len() as u64 - 1, false),
+            ("files", 1, u64::MAX, false),
+        ] {
+            let out = root.join(format!("target/{label}/review.json"));
+            review_comments_with_diff_loader_at_with_ceiling(
+                &args(&[
+                    "--root",
+                    &root.display().to_string(),
+                    "--base",
+                    "HEAD^",
+                    "--head",
+                    "HEAD",
+                    "--out",
+                    &out.display().to_string(),
+                ]),
+                load_review_comments_diff,
+                Instant::now,
+                GuidancePayloadCeiling {
+                    max_index_files: files,
+                    max_payload_bytes: bytes,
+                },
+            )?;
+            let report: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&out).map_err(|err| err.to_string())?)
+                    .map_err(|err| err.to_string())?;
+            assert_eq!(report["summary"]["unchanged_tests"], unchanged, "{label}");
+            assert_eq!(read_receipt(&out)?["status"], "complete", "{label}");
+            let cards = report["comments"].as_array().ok_or("missing comments")?;
+            assert_eq!(cards.len(), 1, "fixture must retain its unresolved card");
+            if unchanged {
+                control = Some(report["comments"].clone());
+            } else {
+                assert_eq!(Some(&report["comments"]), control.as_ref(), "{label}");
+                assert!(
+                    report["warnings"].as_array().is_some_and(|warnings| {
+                        warnings.iter().any(|warning| {
+                            warning.as_str().is_some_and(|text| {
+                                text.contains("Test-edit attribution is unresolved")
+                            })
+                        })
+                    }),
+                    "{label}: {report}"
+                );
+            }
+        }
+        remove_fixture_tree(&root)
     }
 
     /// #4586: review-comments must name a changed production file that
