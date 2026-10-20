@@ -91,6 +91,12 @@ The command should:
 - include verification commands that help the agent capture before/after
   static evidence;
 - remain advisory and static;
+- refuse `--diff` and `--base` input when the shared diff parser reports
+  combined hunks, unresolved conflict regions, or malformed hunks, including
+  mixed ordinary/refused input; exit `2` through the JSON refusal envelope
+  with identity `diff_input_unsupported` before selecting any seams;
+- retain successful empty selection and the documented repository fallback
+  for a valid empty patch; neither is a test-adequacy claim;
 - avoid automatic edits, generated tests, runtime mutation execution, cache
   policy changes, LSP refresh changes, and editor protocol changes.
 
@@ -545,6 +551,9 @@ but does not write source files or generated tests.
 
 Planned tests:
 
+- `brief_empty_and_ordinary_patches_keep_successful_selection`
+- `brief_parser_refusals_cannot_become_empty_or_fallback_successes`
+- `brief_base_uses_the_same_parser_refusal_before_inventory`
 - `agent_brief_ranks_changed_line_intersection_first`
 - `agent_brief_ranks_explicit_seam_id_first`
 - `agent_brief_selector_routes_changed_owner_function_to_seam`

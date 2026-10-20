@@ -3738,3 +3738,6 @@ fn member_explain_replay_anchor_shadowed_by_a_root_directory_is_refused() -> Res
     );
     Ok(())
 }
+
+#[path = "task_first_facade/brief_diff_status.rs"]
+mod brief_diff_status;

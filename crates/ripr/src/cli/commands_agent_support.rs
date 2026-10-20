@@ -243,7 +243,7 @@ pub(super) fn resolve_agent_brief_working_set(
         crate::cli::agent::AgentBriefWorkingSet::Diff(path) => {
             let diff_path = validate_agent_brief_diff_path(root, path)?;
             let diff_text = analysis::load_diff_core(root, None, Some(&diff_path), None)?;
-            let changed_lines = agent_brief_lines_from_diff(root, &diff_text);
+            let changed_lines = agent_brief_checked_lines_from_diff(root, &diff_text)?;
             let changed_owners = agent_brief_owners_for_lines(root, &changed_lines);
             Ok(AgentBriefResolvedWorkingSet::diff(
                 path.clone(),
@@ -253,7 +253,7 @@ pub(super) fn resolve_agent_brief_working_set(
         }
         crate::cli::agent::AgentBriefWorkingSet::Base(base) => {
             let diff_text = analysis::load_diff_core(root, Some(base.as_str()), None, None)?;
-            let changed_lines = agent_brief_lines_from_diff(root, &diff_text);
+            let changed_lines = agent_brief_checked_lines_from_diff(root, &diff_text)?;
             let changed_owners = agent_brief_owners_for_lines(root, &changed_lines);
             Ok(AgentBriefResolvedWorkingSet::base(
                 base.clone(),
@@ -299,6 +299,35 @@ fn validate_agent_brief_diff_path(root: &Path, path: &Path) -> Result<PathBuf, S
         ));
     }
     Ok(candidate)
+}
+
+/// Refuse parser-limited input before owner lookup or repository fallback can
+/// turn unexamined changed lines into a successful brief. The compatibility
+/// projection below remains available to the separate review-comments route.
+fn agent_brief_checked_lines_from_diff(
+    root: &Path,
+    diff_text: &str,
+) -> Result<Vec<AgentBriefLine>, crate::core_error::CoreError> {
+    let parsed = analysis::parse_unified_diff_bounded_with_metadata(diff_text)?;
+    if let Some(limitation) = parsed.limitations.first() {
+        return Err(crate::core_error::CoreError::diff_input_unsupported(
+            format!(
+                "agent brief cannot select a working set from this diff: {}. {}",
+                limitation.kind.as_str(),
+                limitation.recovery.detail,
+            ),
+        ));
+    }
+    Ok(parsed
+        .changed_files
+        .into_iter()
+        .flat_map(|file| {
+            let path = normalize_agent_brief_path(root, &file.path);
+            file.added_lines
+                .into_iter()
+                .map(move |line| AgentBriefLine::new(path.clone(), line.line))
+        })
+        .collect())
 }
 
 pub(super) fn agent_brief_lines_from_diff(root: &Path, diff_text: &str) -> Vec<AgentBriefLine> {
