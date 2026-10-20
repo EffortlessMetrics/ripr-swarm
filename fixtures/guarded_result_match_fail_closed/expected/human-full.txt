@@ -43,7 +43,7 @@ Evidence
   - source assertion argument value "42" at line 28
   - source function argument value raw = "42" at line 36
   - source assertion argument value "42" at line 37
-  - source values (showing 8 of 14; full list in --format json)
+  - source values (showing 8 of 14 read from related tests; full list in --format json)
 
 Weakness
   - No exact error variant discriminator was detected
@@ -91,7 +91,7 @@ Evidence
   - source assertion argument value "42" at line 28
   - source function argument value raw = "42" at line 36
   - source assertion argument value "42" at line 37
-  - source values (showing 8 of 14; full list in --format json)
+  - source values (showing 8 of 14 read from related tests; full list in --format json)
 
 Weakness
   - No strong discriminator was detected
