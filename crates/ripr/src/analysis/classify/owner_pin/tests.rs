@@ -8940,6 +8940,25 @@ fn an_expected_value_a_macro_or_a_static_rebinds_from_the_owner_is_not_a_pin() {
             "",
             "let EXPECTED = 0;\n        {\n            static EXPECTED: AtomicU32 = AtomicU32::new(0);\n            same(crate::weight(4), &EXPECTED);\n            assert_eq!(crate::weight(4), EXPECTED.load(Ordering::SeqCst));\n        }",
         ),
+        // #8795 Part B negative controls: a `mut` plain binding, a plain
+        // binding shadowed by a `mut` rebinding, and an assignment to an
+        // immutable plain binding still refuse.
+        (
+            "",
+            "let mut expected = [0, 0];\n        expected.swap(0, crate::weight(4) as usize);\n        assert_eq!(crate::weight(4), expected[0]);",
+        ),
+        (
+            "",
+            "let expected = [0; 2];\n        let mut expected = expected;\n        expected.fill(crate::weight(4));\n        assert_eq!(crate::weight(4), expected[0]);",
+        ),
+        (
+            "",
+            "let expected = (0, 0);\n        expected.0 = crate::weight(4);\n        assert_eq!(crate::weight(4), expected.0);",
+        ),
+        (
+            "",
+            "let expected = \"12\";\n        let expected = std::cell::Cell::new(0);\n        expected.replace(crate::weight(4));\n        assert_eq!(crate::weight(4), expected.get());",
+        ),
         // #8795 negative controls: a non-plain value still refuses a shared
         // borrow, the one-argument `replace` and the argument-free `take`
         // still write, and a pattern is not an annotation.
@@ -9017,6 +9036,16 @@ fn an_expected_value_a_macro_or_a_static_rebinds_from_the_owner_is_not_a_pin() {
         (
             "",
             "let expected = 12;\n        let _ = Some(&expected);\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        // #8795 Part B: a method call on an immutable `let` of a literal
+        // reads it, whatever the method is called.
+        (
+            "",
+            "let _w = crate::weight(4);\n        let expected = 12;\n        let _r = expected.replace(1, 2);\n        assert_eq!(crate::weight(4), expected);",
+        ),
+        (
+            "",
+            "let _w = crate::weight(4);\n        let expected = [12; 2];\n        let _t = expected.take(1);\n        let _l = expected.lock();\n        assert_eq!(crate::weight(4), expected[0]);",
         ),
         // #8795: the name only indexes another place.
         (
@@ -9125,7 +9154,10 @@ fn written_by_test_refuses_grouped_pathed_ref_mut_and_addr_of_mut_writes() {
         "foo(EXPECTED).await?.x = 1;",
         "*foo(EXPECTED)? = 1;",
     ] {
-        assert!(super::written_by_test(write, "EXPECTED", false), "{write}");
+        assert!(
+            super::written_by_test(write, "EXPECTED", false, false),
+            "{write}"
+        );
     }
     for read in [
         "let r = &(EXPECTED);",
@@ -9158,7 +9190,10 @@ fn written_by_test_refuses_grouped_pathed_ref_mut_and_addr_of_mut_writes() {
         "let x = foo(EXPECTED).await;",
         "bar(foo(EXPECTED)?);",
     ] {
-        assert!(!super::written_by_test(read, "EXPECTED", false), "{read}");
+        assert!(
+            !super::written_by_test(read, "EXPECTED", false, false),
+            "{read}"
+        );
     }
 }
 
@@ -9211,7 +9246,10 @@ fn written_by_test_refuses_raw_deref_tuple_and_generic_path_aliases() {
         "let ref mut r: [u8; 3] = EXPECTED;",
         "let other = 1; let ref mut r = EXPECTED;",
     ] {
-        assert!(super::written_by_test(write, "EXPECTED", false), "{write}");
+        assert!(
+            super::written_by_test(write, "EXPECTED", false, false),
+            "{write}"
+        );
     }
     for read in [
         "let r: Vec<u8>= EXPECTED;",
@@ -9241,7 +9279,10 @@ fn written_by_test_refuses_raw_deref_tuple_and_generic_path_aliases() {
         "foo(&mut x, (EXPECTED, 1));",
         "if x >= EXPECTED {}",
     ] {
-        assert!(!super::written_by_test(read, "EXPECTED", false), "{read}");
+        assert!(
+            !super::written_by_test(read, "EXPECTED", false, false),
+            "{read}"
+        );
     }
 }
 
@@ -9273,7 +9314,10 @@ fn written_by_test_refuses_scrutinee_brace_raw_segment_and_generic_head_aliases(
         "let r = &mut <fn() -> u8>::EXPECTED;",
         "let r = &mut <T as Tr<{ N > 1 }>>::EXPECTED;",
     ] {
-        assert!(super::written_by_test(write, "EXPECTED", false), "{write}");
+        assert!(
+            super::written_by_test(write, "EXPECTED", false, false),
+            "{write}"
+        );
     }
     for read in [
         "match (EXPECTED, S { a: 1 }) { (r, _) => {} }",
@@ -9290,7 +9334,10 @@ fn written_by_test_refuses_scrutinee_brace_raw_segment_and_generic_head_aliases(
         "let r = &<fn() -> u8>::EXPECTED;",
         "let r = &<T as Tr<{ N > 1 }>>::EXPECTED;",
     ] {
-        assert!(!super::written_by_test(read, "EXPECTED", false), "{read}");
+        assert!(
+            !super::written_by_test(read, "EXPECTED", false, false),
+            "{read}"
+        );
     }
 }
 
@@ -9328,7 +9375,10 @@ fn written_by_test_reads_operators_and_let_boundaries() {
         "foo(EXPECTED);",
         "f(a)[EXPECTED] = 1;",
     ] {
-        assert!(!super::written_by_test(read, "EXPECTED", false), "{read}");
+        assert!(
+            !super::written_by_test(read, "EXPECTED", false, false),
+            "{read}"
+        );
     }
     for write in [
         "EXPECTED = 1;",
@@ -9392,7 +9442,10 @@ fn written_by_test_reads_operators_and_let_boundaries() {
         "EXPECTED.replace(1, 2);",
         "EXPECTED.take(2);",
     ] {
-        assert!(super::written_by_test(write, "EXPECTED", false), "{write}");
+        assert!(
+            super::written_by_test(write, "EXPECTED", false, false),
+            "{write}"
+        );
     }
     // #8795: on a plain `let` value a shared borrow is a read; every
     // `replace`, `take`, `lock`, assignment and `&mut` stays a write (a
@@ -9402,7 +9455,10 @@ fn written_by_test_reads_operators_and_let_boundaries() {
         "Ok(&EXPECTED);",
         "helper(f(4), &EXPECTED);",
     ] {
-        assert!(!super::written_by_test(read, "EXPECTED", true), "{read}");
+        assert!(
+            !super::written_by_test(read, "EXPECTED", true, false),
+            "{read}"
+        );
     }
     for write in [
         "EXPECTED.replace(f(4));",
@@ -9413,7 +9469,47 @@ fn written_by_test_reads_operators_and_let_boundaries() {
         "EXPECTED = 1;",
         "EXPECTED.lock();",
     ] {
-        assert!(super::written_by_test(write, "EXPECTED", true), "{write}");
+        assert!(
+            super::written_by_test(write, "EXPECTED", true, false),
+            "{write}"
+        );
+    }
+    // #8795 Part B: on an immutable plain `let` a method call is a read;
+    // assignments, `&mut` and a `mut` (non read-only) binding stay writes.
+    for read in [
+        "EXPECTED.replace(f(4));",
+        "EXPECTED.take(2);",
+        "EXPECTED.lock();",
+        "EXPECTED.0.swap(1);",
+        "Some(&EXPECTED);",
+    ] {
+        assert!(
+            !super::written_by_test(read, "EXPECTED", true, true),
+            "{read}"
+        );
+    }
+    for write in [
+        "EXPECTED = 1;",
+        "EXPECTED.0 = 1;",
+        "EXPECTED[0] += 1;",
+        "g(&mut EXPECTED);",
+        "EXPECTED?;",
+    ] {
+        assert!(
+            super::written_by_test(write, "EXPECTED", true, true),
+            "{write}"
+        );
+    }
+    // Which bindings are never declared `mut`.
+    assert!(super::never_declared_mut("let e = 1; e.take();", "e"));
+    for mutable in [
+        "let mut e = 1;",
+        "let (a, mut e) = p;",
+        "|mut e| e.take()",
+        "let ref mut e = p;",
+        "let mut r#e = 1;",
+    ] {
+        assert!(!super::never_declared_mut(mutable, "e"), "{mutable}");
     }
     // Which bindings are plain: literals and values built only of them.
     for init in [
