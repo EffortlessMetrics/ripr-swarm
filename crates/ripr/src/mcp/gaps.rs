@@ -598,8 +598,17 @@ mod tests {
     /// path (the MCP server's root spelling), which previously leaked the
     /// raw `//?/` producer join no other surface produced and no editor
     /// resolves.
+    ///
+    /// #8743 scope note: the packet here is rendered with the default
+    /// configuration, and this test claims parity only for fields that are
+    /// configuration-independent — the location strings above. `severity`
+    /// is config-resolved on the packet since 1.1, so the production MCP
+    /// route (which renders with the session's repo config) may legitimately
+    /// carry a different `severity` value under a user override; full-packet
+    /// parity is only claimed when the effective configurations match.
     #[test]
-    fn one_finding_renders_one_location_string_on_every_surface() -> Result<(), String> {
+    fn one_finding_renders_one_location_string_on_every_surface_under_default_config()
+    -> Result<(), String> {
         // check-local-context forbids drive-letter path literals; assemble
         // the verbatim root from parts (the `//?/` text lives in the owner's
         // own unit tests).

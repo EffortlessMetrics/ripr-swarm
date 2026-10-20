@@ -14320,6 +14320,8 @@ name = "Examined-test miss evidence"
 spec = "docs/specs/RIPR-SPEC-0224-examined-test-miss-evidence.md"
 tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::reveal_evidence_lists_a_test_whose_assertions_do_not_match_as_a_miss",
+  "crates/ripr/src/output/human/explain.rs::tests::unrecorded_assertion_row_names_the_retention_limit",
+  "crates/ripr/src/output/human/explain.rs::tests::bare_fallback_suppressed_when_sibling_row_printed_an_assertion",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::a_matched_test_ranks_ahead_of_an_examined_miss_and_keeps_its_window_slot",
   "crates/ripr/src/output/related_test_miss.rs::tests",
   "crates/ripr/src/analysis/language/perl/tests.rs::perl_direct_strong_row_without_sink_alignment_is_observation_unconfirmed",
@@ -16671,6 +16673,10 @@ tests = [
   "crates/ripr/src/output/flow_sink_line.rs::tests::distinct_text_keeps_label_text_tail",
   "crates/ripr/src/output/flow_sink_line.rs::tests::text_restating_label_collapses_duplication",
   "crates/ripr/src/output/json/report.rs::tests::unknown_sink_text_restating_label_renders_once",
+  "crates/ripr/src/output/flow_sink_line.rs::tests::unknown_kind_carries_a_meaning_gloss",
+  "crates/ripr/src/output/human.rs::tests::render_finding_glosses_the_unknown_sink_row",
+  "crates/ripr/src/output/human/explain.rs::tests::unknown_sink_only_recipe_is_qualified_as_provisional",
+  "crates/ripr/src/output/human/explain.rs::tests::classified_sink_recipe_is_not_qualified",
 ]
 fixtures = []
 code = [
@@ -16712,3 +16718,33 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0281"
+name = "Agent context packet clarity contract"
+spec = "docs/specs/RIPR-SPEC-0281-agent-context-packet-clarity.md"
+tests = [
+  "crates/ripr/src/output/json/context_packet.rs::tests::context_packet_states_verdict_fields_for_packet_consumers",
+  "crates/ripr/src/output/json/context_packet.rs::tests::context_packet_severity_follows_caller_config_override",
+  "crates/ripr/src/domain/context_packet.rs::tests::context_packet_from_finding_carries_probe_and_ripr_shape",
+  "crates/ripr/src/lsp/tests.rs::execute_command_collect_context_returns_packet_for_known_finding",
+  "crates/ripr/tests/cli_smoke.rs::check_explain_and_context_replay_from_a_checkout_path_with_space_and_apostrophe",
+  "crates/ripr/tests/cli_smoke.rs::context_json_missing_artifact_emits_refusal_envelope",
+  "crates/ripr/src/mcp/gaps.rs::tests::one_finding_renders_one_location_string_on_every_surface_under_default_config",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/domain/context_packet.rs",
+  "crates/ripr/src/output/json/context_packet.rs",
+  "crates/ripr/src/app/context.rs",
+  "crates/ripr/src/lsp/backend.rs",
+  "crates/ripr/src/output/human/evidence_lines.rs",
+  "crates/ripr/src/output/human/explain.rs",
+  "crates/ripr/src/output/flow_sink_line.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0281-agent-context-packet-clarity.md",
+  "docs/OUTPUT_SCHEMA.md",
+  "policy/output_contracts.txt",
+]
+metrics = ["unit_test_pass_rate"]
