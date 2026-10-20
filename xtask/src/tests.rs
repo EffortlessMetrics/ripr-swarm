@@ -1356,6 +1356,12 @@ fn evidence_promotion_human_oracle_line_accepts_kind_ungraded_wording() {
         "smoke_only",
         "unknown"
     ));
+    let stale = "- related test tests/a.rs:3 t uses unknown exact value oracle: assert_eq!(f(), 1)";
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        stale,
+        "exact_value",
+        "unknown"
+    ));
 }
 
 #[test]

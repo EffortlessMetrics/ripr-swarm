@@ -3049,8 +3049,11 @@ pub(crate) fn evidence_promotion_human_oracle_line_matches(
                     expected_kind.replace('_', " ")
                 )
             };
-            return phrase.starts_with(projection.as_str())
-                || (expected_strength == "unknown" && phrase.starts_with(ungraded.as_str()));
+            return if expected_strength == "unknown" {
+                phrase.starts_with(ungraded.as_str())
+            } else {
+                phrase.starts_with(projection.as_str())
+            };
         }
         return false;
     }
