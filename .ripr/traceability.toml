@@ -16233,6 +16233,7 @@ tests = [
   "crates/ripr/src/output/perl_composition_tests.rs::perl_composition_test_name_whitespace_is_identity",
   "crates/ripr/src/output/perl_composition_tests.rs::perl_composition_real_sparse_packet_stays_advisory",
   "crates/ripr/src/analysis/language/perl/tests.rs::h2_aligned_sink_on_another_tests_oracle_does_not_promote",
+  "crates/ripr/src/analysis/language/perl/tests.rs::perl_isnt_is_a_smoke_oracle_not_an_exact_one",
 ]
 fixtures = [
   "fixtures/perl_cpan_alpha/recommendation-controls",
