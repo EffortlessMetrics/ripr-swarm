@@ -2766,7 +2766,7 @@ fn pick_growth_allowance_is_limited_to_lower_is_better_ingested_metrics() -> Res
         parse_config(&flagged).is_err_and(|err| err.contains("pick_growth_allowance")),
         "a higher-is-better metric must not take a growth margin"
     );
-    assert!(parse_config(&text).is_ok());
+    parse_config(&text)?;
     Ok(())
 }
 
