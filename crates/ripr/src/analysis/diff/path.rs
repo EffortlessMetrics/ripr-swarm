@@ -536,25 +536,6 @@ pub(crate) fn artifact_root_pathspec(root: &Path) -> String {
         .join("/")
 }
 
-/// The git-probe form of [`artifact_root_pathspec`]: every git pathspec
-/// glob metacharacter (`*`, `?`, `[`, `]`, `\`) is backslash-escaped, so a
-/// configured root such as `build/cache*` probes the LITERAL path and never
-/// wildcard-matches `build/cache1` (PR #8901 review, owner P1). Doctor and
-/// diff/worktree intake agree on literal component semantics; `git
-/// check-ignore` does not support the `literal` pathspec magic, so explicit
-/// escaping — not `--literal-pathspecs` — is the one form both probed
-/// commands accept. Escaping is only for the git argument: the filesystem
-/// and the rendered `.gitignore` advice keep the plain spelling.
-pub(crate) fn literal_artifact_root_pathspec(root: &Path) -> String {
-    artifact_root_pathspec(root)
-        .chars()
-        .flat_map(|ch| match ch {
-            '*' | '?' | '[' | ']' | '\\' => vec!['\\', ch],
-            other => vec![other],
-        })
-        .collect()
-}
-
 /// Whether a repository-relative diff path names content under one of
 /// ripr's own artifact roots (#7663, relocated bases #8751). Python
 /// `.gitignore` templates do not cover `target/`, so a routine `git add -A`
@@ -784,27 +765,6 @@ mod tests {
         assert_eq!(
             artifact_root_pathspec(&PathBuf::from(".ripr-cache")),
             ".ripr-cache"
-        );
-    }
-
-    #[test]
-    fn literal_artifact_root_pathspec_escapes_glob_magic() {
-        // Ordinary roots pass through unchanged...
-        assert_eq!(
-            literal_artifact_root_pathspec(&PathBuf::from("target").join("ripr")),
-            "target/ripr"
-        );
-        // ...so the common probe form is byte-identical to the display form.
-        assert_eq!(
-            literal_artifact_root_pathspec(&PathBuf::from(".ripr-cache").join("repo-seam-facts")),
-            artifact_root_pathspec(&PathBuf::from(".ripr-cache").join("repo-seam-facts"))
-        );
-        // ...while every git pathspec glob metacharacter is backslash-escaped
-        // (owner P1, PR #8901: `build/cache*` must probe the literal path).
-        // Host-independent: `*?[]` are filename characters on every host.
-        assert_eq!(
-            literal_artifact_root_pathspec(Path::new("build/cache*[x]?")),
-            "build/cache\\*\\[x\\]\\?"
         );
     }
 

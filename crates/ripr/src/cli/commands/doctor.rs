@@ -2569,12 +2569,17 @@ fn ripr_artifact_ignore(
     let mut uncovered: Vec<String> = Vec::new();
     for relative in &present {
         let pathspec = analysis::artifact_root_pathspec(relative);
-        // The probe uses the escaped literal form: a configured root like
-        // `build/cache*` is a literal directory name, never a git pathspec
-        // glob that could wildcard-match `build/cache1` (PR #8901 review,
-        // owner P1; `git check-ignore` does not accept the `literal`
-        // pathspec magic, so explicit escaping is the form both probed
-        // commands accept). `--no-index` asks only whether ignore RULES
+        // The probe passes the PLAIN root: check-ignore takes pathnames,
+        // not pathspecs — its ignore-rule globs match against the literal
+        // characters of the pathname, so a rule like `/build/cache*/`
+        // covers a directory literally named `build/cache*` only when the
+        // pathname keeps its literal star. The earlier escaped form made
+        // the rule miss and doctor demand an ignore that already existed
+        // (PR #8901 review, coderabbit; verified against git 2.47:
+        // `git check-ignore -- 'build/cache\*'` answers "not ignored"
+        // while `-- 'build/cache*'` is covered). A root without glob
+        // characters is byte-identical in both forms, so ordinary configs
+        // are unaffected. `--no-index` asks only whether ignore RULES
         // cover the path: without it, a tracked descendant (the exact
         // state #7663 addresses: ripr reports already committed into
         // history) makes check-ignore answer "not ignored" even when
@@ -2588,13 +2593,7 @@ fn ripr_artifact_ignore(
         // follow-up).
         let probe = match crate::git::run_git_output_with_deadline(
             root,
-            &[
-                "check-ignore",
-                "--no-index",
-                "-q",
-                "--",
-                &analysis::literal_artifact_root_pathspec(relative),
-            ],
+            &["check-ignore", "--no-index", "-q", "--", &pathspec],
             Some(std::time::Duration::from_secs(5)),
         ) {
             Ok(probe) => probe,
@@ -2639,20 +2638,28 @@ fn ripr_artifact_tracking(
     use output::doctor::DoctorArtifactTracking;
     // The index can name tracked files whose directory was deleted from the
     // worktree, so this probe does not depend on any artifact root existing.
+    // Configured roots are literal paths, never git pathspec globs: a root
+    // like `build/cache*` must not wildcard-match `build/cache1` (PR #8901
+    // review, owner P1). The probe therefore passes the PLAIN root under
+    // the global `--literal-pathspecs` switch, which disables all pathspec
+    // magic for every following argument. The earlier escaped form
+    // (`build/cache\*`) does not work: pathspec unescaping leaves a literal
+    // star that ls-files matches against the literal directory name only
+    // on some forms — verified against git 2.47, where neither
+    // `git ls-files --cached -- 'build/cache\*'` nor
+    // `git --literal-pathspecs ls-files --cached -- 'build/cache\*'`
+    // matches an indexed `build/cache*/a.json`, while the plain root under
+    // `--literal-pathspecs` matches both the literal-star directory and a
+    // glob-free root such as `target/ripr` (PR #8901 review, coderabbit).
     let mut args: Vec<String> = vec![
+        "--literal-pathspecs".into(),
         "ls-files".into(),
         "--cached".into(),
         "-z".into(),
         "--".into(),
     ];
     for relative in artifact_roots {
-        // Configured roots are literal paths, never git pathspec globs: a
-        // root like `build/cache*` must not wildcard-match `build/cache1`
-        // (PR #8901 review, owner P1). Diff and worktree intake agree —
-        // they match literal path components. The escaped literal form is
-        // used rather than `--literal-pathspecs` so the ignore and tracking
-        // probes keep one mechanism (check-ignore rejects that magic).
-        args.push(analysis::literal_artifact_root_pathspec(relative));
+        args.push(analysis::artifact_root_pathspec(relative));
     }
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let probe = match crate::git::run_git_output_with_deadline_and_limit(
@@ -2719,25 +2726,27 @@ fn artifact_roots_display(roots: &[String]) -> String {
 /// The untrack command doctor prints, bound to the selected root: pasted from
 /// another directory, a bare `git rm --cached` would untrack files in whatever
 /// repository the shell happens to be in (#8301 review). The default `.` root
-/// keeps the short form. Every pathspec uses the literal (glob-escaped) form:
-/// shell quoting only protects the argument from the shell, while git
-/// pathspec magic (`*`, `?`, `[`) would still wildcard-match a configured
-/// root like `build/cache*` against `build/cache1` (PR #8901 review,
-/// graphite finding); single-quoted `\*` reaches git as `\*`, which
-/// pathspec unescaping reads as one literal star.
+/// keeps the short form. The command pins the global `--literal-pathspecs`
+/// switch and passes each root PLAIN: shell quoting only protects the
+/// argument from the shell, while git pathspec magic (`*`, `?`, `[`)
+/// would otherwise wildcard-match a configured root like `build/cache*`
+/// against `build/cache1` (PR #8901 review, graphite finding) — and the
+/// earlier glob-escaped form (`build/cache\*`) does not match the
+/// literal-star directory's indexed descendants at all (verified against
+/// git 2.47; the escaped form fails both with and without
+/// `--literal-pathspecs`). Plain roots under `--literal-pathspecs` match
+/// literal-star directories and glob-free roots alike.
 fn untrack_artifacts_command(root: &Path, artifact_roots: &[PathBuf]) -> String {
     let pathspecs = artifact_roots
         .iter()
-        .map(|root| {
-            crate::agent::loop_commands::shell_arg(&analysis::literal_artifact_root_pathspec(root))
-        })
+        .map(|root| crate::agent::loop_commands::shell_arg(&analysis::artifact_root_pathspec(root)))
         .collect::<Vec<_>>()
         .join(" ");
     if root == Path::new(".") {
-        format!("git rm --cached -r -- {pathspecs}")
+        format!("git --literal-pathspecs rm --cached -r -- {pathspecs}")
     } else {
         format!(
-            "git -C {} rm --cached -r -- {pathspecs}",
+            "git -C {} --literal-pathspecs rm --cached -r -- {pathspecs}",
             crate::agent::loop_commands::shell_arg(&output::path::human_path(root))
         )
     }
@@ -4346,12 +4355,12 @@ mod tests {
         // to confuse it with.
         assert_eq!(
             untrack_artifacts_command(Path::new("."), &default_roots),
-            "git rm --cached -r -- target/ripr"
+            "git --literal-pathspecs rm --cached -r -- target/ripr"
         );
         // Any other root is named, so the command cannot act elsewhere.
         assert_eq!(
             untrack_artifacts_command(Path::new("other-repo"), &default_roots),
-            "git -C other-repo rm --cached -r -- target/ripr"
+            "git -C other-repo --literal-pathspecs rm --cached -r -- target/ripr"
         );
         // A root with spaces must stay one shell word.
         let spaced = untrack_artifacts_command(Path::new("my repo"), &default_roots);
@@ -4360,7 +4369,7 @@ mod tests {
             "{spaced}"
         );
         assert!(
-            spaced.ends_with(" rm --cached -r -- target/ripr"),
+            spaced.ends_with(" --literal-pathspecs rm --cached -r -- target/ripr"),
             "{spaced}"
         );
         // A relocated root joins the pathspec list (#8751).
@@ -4370,7 +4379,7 @@ mod tests {
         ];
         assert_eq!(
             untrack_artifacts_command(Path::new("."), &relocated),
-            "git rm --cached -r -- target/ripr .ripr-cache"
+            "git --literal-pathspecs rm --cached -r -- target/ripr .ripr-cache"
         );
         // PR #8901 security review (devin #9): shell metacharacters in a
         // configured root must stay inside one quoted shell word, so pasting
@@ -4437,6 +4446,58 @@ mod tests {
             DoctorArtifactTracking::Untracked,
             "a tracked build/cache1 file must not match the literal build/cache* root"
         );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ripr_artifact_tracking_matches_literal_star_directory_descendants() -> Result<(), String> {
+        // PR #8901 review (coderabbit): the POSITIVE side of the literal
+        // root contract — a tracked file beneath a directory literally
+        // named `build/cache*` must match the configured `build/cache*`
+        // root. The earlier glob-escaped pathspec (`build/cache\*`) failed
+        // this on git 2.47 (no match at all), silently dropping real
+        // artifacts from the tracking warning; plain roots under the
+        // global `--literal-pathspecs` switch match both literal-star
+        // directories and glob-free roots. Windows cannot create a `*`
+        // directory name at all, so the positive case is unix-only (the
+        // negative case above runs everywhere).
+        use output::doctor::DoctorArtifactTracking;
+        let root = unique_command_test_dir("artifact-literal-star-positive");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let empty_excludes = root.join("empty-excludes");
+        std::fs::write(&empty_excludes, "").map_err(|error| error.to_string())?;
+        for args in [
+            ["init"].as_slice(),
+            ["config", "user.email", "ripr@example.invalid"].as_slice(),
+            ["config", "user.name", "ripr tests"].as_slice(),
+            [
+                "config",
+                "core.excludesFile",
+                empty_excludes.to_str().ok_or("non-utf8 excludes path")?,
+            ]
+            .as_slice(),
+        ] {
+            crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
+        }
+        std::fs::create_dir_all(root.join("build").join("cache*"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("build").join("cache*").join("a.json"), "{}\n")
+            .map_err(|error| error.to_string())?;
+        crate::git::run_git(&root, ["add", "--", "build/cache*/a.json"].as_slice())
+            .map_err(|error| error.to_string())?;
+        let literal_roots = vec![PathBuf::from("build").join("cache*")];
+        match ripr_artifact_tracking(&root, &literal_roots) {
+            DoctorArtifactTracking::Tracked { warning } => {
+                assert!(
+                    warning.contains("rm --cached -r -- 'build/cache*'")
+                        || warning.contains("rm --cached -r -- build/cache*"),
+                    "the remedy must name the literal-star root: {warning}"
+                );
+            }
+            other => return Err(format!("expected Tracked, got {other:?}")),
+        }
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }

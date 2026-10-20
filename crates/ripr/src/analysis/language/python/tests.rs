@@ -658,6 +658,51 @@ fn detect_python_test_frameworks_ignores_comment_and_string_quote_delimiters() -
 }
 
 #[test]
+fn detect_python_test_frameworks_pins_backslash_continuation_limitation() -> Result<(), String> {
+    // PR #8901 review (coderabbit): an ordinary single-line string ending in
+    // a backslash continuation is treated as closed at end of line — line
+    // continuations are a documented non-goal of this bounded heuristic
+    // (RIPR-SPEC-0285), and carrying string state across lines would move
+    // the scan toward full tokenization. This test pins the known
+    // limitation so an accidental "fix" must update the contract instead of
+    // silently widening the parser: the `'''` on the line after a
+    // backslash-continued string opens a phantom triple-quoted string, so
+    // the real import on the following line is hidden. A file that relies
+    // on line continuations inside string literals near evidence markers
+    // is adversarial for every bounded scan; the honest answer is the
+    // documented gap, not a silent reclassification.
+    let root = unique_test_root("backslash-continuation-limitation");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test_continuation.py"),
+        "x = \"abc \\\n'''\nimport unittest\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        Vec::<&str>::new(),
+        "the backslash-continuation limitation is pinned: the phantom triple string hides the import"
+    );
+    // Positive control: the identical import counts when the string line
+    // does not end in a continuation backslash — the limitation is the
+    // continuation, not the parser's ordinary string handling.
+    let root = unique_test_root("backslash-continuation-control");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test_control.py"),
+        "x = \"abc\"\nimport unittest\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"],
+        "without the continuation backslash the line-1 string closes and the import is code"
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
 fn detect_python_test_frameworks_test_named_directories_do_not_starve_the_scan()
 -> Result<(), String> {
     // PR #8901 review (devin #6): directories named `test_*.py` pass the

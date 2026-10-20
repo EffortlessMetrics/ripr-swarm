@@ -16831,6 +16831,7 @@ tests = [
   "crates/ripr/src/analysis/language/python/tests.rs::detect_python_test_frameworks_test_named_directories_do_not_starve_the_scan",
   "crates/ripr/src/analysis/language/python/tests.rs::detect_python_test_frameworks_ignores_imports_inside_string_literals",
   "crates/ripr/src/analysis/language/python/tests.rs::detect_python_test_frameworks_ignores_comment_and_string_quote_delimiters",
+  "crates/ripr/src/analysis/language/python/tests.rs::detect_python_test_frameworks_pins_backslash_continuation_limitation",
 ]
 fixtures = []
 code = [

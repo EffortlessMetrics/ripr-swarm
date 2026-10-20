@@ -171,7 +171,15 @@ pub(crate) fn detect_python_test_frameworks(root: &Path) -> Vec<&'static str> {
                     .and_then(|name| name.to_str())
                     .is_some_and(|name| name.ends_with(".py") && is_test_file(path))
             })
-            .filter(|path| path.is_file())
+            .filter(|path| {
+                // Only regular files count toward the cap (RIPR-SPEC-0285):
+                // `is_file` follows symlinks, and a symlinked `.py` entry
+                // would consume one of the 64 candidate slots before the
+                // evidence read rejects it, starving a real test file
+                // (PR #8901 review, coderabbit). `symlink_metadata` never
+                // follows the final component.
+                std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_file())
+            })
             .collect();
         candidates.sort();
         for path in candidates.iter().take(PYTHON_FRAMEWORK_SCAN_DIR_ENTRY_CAP) {
