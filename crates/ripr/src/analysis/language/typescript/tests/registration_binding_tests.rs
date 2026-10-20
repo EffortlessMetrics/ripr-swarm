@@ -428,3 +428,51 @@ fn registration_bindings_callback_strictness_is_local() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn registration_bindings_line_comments_end_at_every_js_terminator() -> Result<(), String> {
+    for end in ["\n", "\r", "\u{2028}", "\u{2029}"] {
+        for (source, expected) in [
+            (
+                format!(
+                    "test('sum', () => {{ const run = () => sumAll([2, 3, 4]); // comment{end}run(); }});"
+                ),
+                ExposureClass::WeaklyExposed,
+            ),
+            (
+                format!(
+                    "test('sum', () => {{ const run = () => sumAll([2, 3, 4]); // comment{end} }});"
+                ),
+                ExposureClass::NoStaticPath,
+            ),
+            (
+                format!(
+                    "import {{ test as base, expect }} from 'vitest'; // comment{end}base.extend = () => () => {{}};\nconst test = base.extend({{}}); {TEST}"
+                ),
+                ExposureClass::NoStaticPath,
+            ),
+            (
+                format!(
+                    "import {{ test as base, expect }} from 'vitest'; // comment{end}const test = base.extend({{}}); {TEST}"
+                ),
+                ExposureClass::Exposed,
+            ),
+        ] {
+            let finding = registration_finding("comment-terminator", &source)?;
+            assert_eq!(finding.class, expected, "{source:?}");
+            if expected == ExposureClass::NoStaticPath {
+                assert!(finding.related_tests.is_empty(), "{finding:?}");
+            } else {
+                assert_eq!(finding.related_tests.len(), 1, "{finding:?}");
+                if expected == ExposureClass::Exposed {
+                    assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::ExactValue);
+                    assert_eq!(
+                        finding.related_tests[0].oracle_strength,
+                        OracleStrength::Strong
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
