@@ -19743,7 +19743,7 @@ fn calibration_span_containment_atuin_fixture_matches_checked_reports() -> Resul
     let fixture = root.join("fixtures/boundary_gap/calibration/span-containment-atuin");
     let value = assert_calibration_fixture_matches_checked_reports(&fixture)?;
 
-    assert_eq!(value["schema_version"], "0.2");
+    assert_eq!(value["schema_version"], "0.3");
     assert_eq!(value["metrics"]["mutants_total"], 27);
     assert_eq!(
         value["metrics"]["join_method_counts"]["span_containment"],
