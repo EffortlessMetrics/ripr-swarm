@@ -2905,6 +2905,44 @@ mod tests {
     }
 
     #[test]
+    fn review_comments_disclosure_keeps_test_named_production_source_in_its_role()
+    -> Result<(), String> {
+        use crate::testing::fixture_git::{fixture_git_ok, remove_fixture_tree};
+        let root = over_ceiling_fixture("review-disclosure-production-role")?;
+        let path = root.join("src/unit_tests.rs");
+        std::fs::rename(root.join("src/unit_1.rs"), &path).map_err(|err| err.to_string())?;
+        fixture_git_ok(&root, &["init", "-q"])?;
+        for (key, value) in [
+            ("user.name", "Review fixture"),
+            ("user.email", "review@example.invalid"),
+            ("commit.gpgsign", "false"),
+        ] {
+            fixture_git_ok(&root, &["config", "--local", key, value])?;
+        }
+        fixture_git_ok(&root, &["add", "."])?;
+        fixture_git_ok(&root, &["commit", "-qm", "before"])?;
+        let before = std::fs::read_to_string(&path).map_err(|err| err.to_string())?;
+        std::fs::write(&path, before.replace("amount >= 10", "amount > 10"))
+            .map_err(|err| err.to_string())?;
+        fixture_git_ok(&root, &["commit", "-qam", "after"])?;
+        let diff = load_review_comments_diff(&root, "HEAD^", "HEAD")?;
+        let changes = analysis::diff_test_changes(
+            &root,
+            "HEAD",
+            &diff,
+            &crate::config::RiprConfig::default(),
+            1,
+            u64::MAX,
+        );
+        assert!(!changes.unresolved, "production source must be resolved");
+        assert!(
+            changes.files.is_empty(),
+            "a filename alone cannot create test-role evidence: {changes:?}"
+        );
+        remove_fixture_tree(&root)
+    }
+
+    #[test]
     fn review_comments_disclosure_bounds_head_blobs_beyond_dirty_worktree() -> Result<(), String> {
         use crate::testing::fixture_git::{fixture_git_ok, remove_fixture_tree};
         let root = unique_command_test_dir("review-test-disclosure-head-budget");

@@ -4,6 +4,7 @@
 use super::diff::{ChangedFile, reconstruct_old_source};
 use super::facts::{RustIndex, normalize_reconstructed_source_roles};
 use super::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+use super::workspace::{SourceRole, SourceRoleContext, classify_with};
 use crate::config::RiprConfig;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
@@ -28,6 +29,7 @@ pub(crate) fn diff_test_changes(
     mut remaining_bytes: u64,
 ) -> DiffTestChanges {
     let mut changes = DiffTestChanges::default();
+    let layout = SourceRoleContext::empty();
     for file in super::diff::parse_unified_diff(diff_text) {
         if super::cancellation::checkpoint().is_err() {
             changes.unresolved = true;
@@ -36,7 +38,7 @@ pub(crate) fn diff_test_changes(
         if file.added_lines.is_empty() && file.removed_lines.is_empty() {
             continue;
         }
-        if test_like_path(&file.path) {
+        if classify_with(&file.path, &layout) == SourceRole::TestEvidence {
             changes.files.push(file.path);
             continue;
         }
@@ -167,13 +169,4 @@ fn touches_test(
                 && line.line <= function.end_line
         })
     }))
-}
-
-pub(crate) fn test_like_path(path: &Path) -> bool {
-    let text = path.to_string_lossy().replace('\\', "/");
-    let text = text.trim_start_matches("./");
-    text.starts_with("tests/")
-        || text.contains("/tests/")
-        || text.ends_with("_test.rs")
-        || text.ends_with("_tests.rs")
 }

@@ -375,7 +375,7 @@ The JSON report uses schema version `0.1`:
   severity, suppression, caps, or missing guidance.
 - `summary.unchanged_tests` - `true` when the pull request did not change a
   nearby test for the selected recommendations. Diff-backed disclosure includes
-  removals in test-shaped files and edits inside locally resolved direct/inline
+  removals in default Cargo test layouts and edits inside locally resolved direct/inline
   Rust test/helper function spans. Added lines use head-source spans; removed lines use
   reconstructed old-source spans and old coordinates. These disclosure paths
   never become current-line placement targets or evidence of discrimination.
@@ -554,6 +554,8 @@ conservative unavailable-attribution warning without hiding the card.
 `review_comments_disclosure_bounds_head_blobs_beyond_dirty_worktree` uses real
 Git history and a smaller dirty worktree to pin byte/file disclosure budgets,
 the affirmative production-only control, and unchanged cards/causal receipts.
+`review_comments_disclosure_keeps_test_named_production_source_in_its_role`
+pins that a production file's test-shaped name does not establish a test role.
 
 Initial implementation should add tests for:
 

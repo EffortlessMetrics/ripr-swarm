@@ -37,7 +37,7 @@ mod summary;
 mod sync_memo;
 mod syntax;
 mod test_changes;
-pub(crate) use test_changes::{DiffTestChanges, diff_test_changes, test_like_path};
+pub(crate) use test_changes::{DiffTestChanges, diff_test_changes};
 pub(crate) mod test_grip_evidence;
 pub(crate) mod test_stub;
 mod value_resolution;
