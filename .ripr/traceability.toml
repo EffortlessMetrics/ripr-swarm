@@ -14316,10 +14316,14 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::agent_status_attempt_never_reconstructs_a_tampered_result",
   "crates/ripr/tests/cli_smoke.rs::agent_status_attempt_reports_legacy_manifest_at_compatibility_strength",
   "crates/ripr/tests/cli_help_hierarchy.rs::agent_status_help_names_the_selected_store_and_exact_attempt_selection",
+  "crates/ripr/tests/task_first_facade.rs::status_and_continue_do_not_offer_a_start_the_repair_gate_refuses",
+  "crates/ripr/tests/task_first_facade.rs::status_keeps_the_restart_when_the_repair_gate_admits_the_seam",
 ]
 fixtures = [
 ]
 code = [
+  "crates/ripr/src/app/task_first.rs",
+  "crates/ripr/src/cli/commands/task_first.rs",
   "crates/ripr/src/app/agent_status.rs",
   "crates/ripr/src/cli/agent.rs",
   "crates/ripr/src/cli/commands/agent.rs",

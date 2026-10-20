@@ -508,8 +508,16 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
                 &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
             );
             Err(CommandError::Decision(format!(
-                "ripr: repair attempt `{}` ended {} without a receipt; no completion is claimed. Inspect: `ripr status --attempt {} --root {root}`; start fresh: `ripr repair --root {root}`",
-                report.attempt.attempt_id, report.attempt.status_class, report.attempt.attempt_id
+                "ripr: repair attempt `{}` ended {} without a receipt; no completion is claimed. Inspect: `ripr status --attempt {} --root {root}`; {}",
+                report.attempt.attempt_id,
+                report.attempt.status_class,
+                report.attempt.attempt_id,
+                start_fresh_clause(
+                    &options.root,
+                    &root,
+                    report.attempt.seam_id.as_deref(),
+                    &format!("start fresh: `ripr repair --root {root}`")
+                )
             )))
         }
         ContinueSelection::EndedUnconfirmed { report } => {
@@ -528,8 +536,16 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
                 &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
             );
             Err(CommandError::Decision(format!(
-                "ripr: repair attempt `{}` ended `{}` without confirming completion; no completion is claimed. Inspect: `ripr status --attempt {} --root {root}`; start fresh when appropriate: `ripr repair --root {root}`",
-                report.attempt.attempt_id, report.attempt.status_class, report.attempt.attempt_id
+                "ripr: repair attempt `{}` ended `{}` without confirming completion; no completion is claimed. Inspect: `ripr status --attempt {} --root {root}`; {}",
+                report.attempt.attempt_id,
+                report.attempt.status_class,
+                report.attempt.attempt_id,
+                start_fresh_clause(
+                    &options.root,
+                    &root,
+                    report.attempt.seam_id.as_deref(),
+                    &format!("start fresh when appropriate: `ripr repair --root {root}`")
+                )
             )))
         }
         ContinueSelection::NoneAvailable {
@@ -541,8 +557,9 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
                 &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
             );
             Err(CommandError::Decision(format!(
-                "no current attempt to continue under {root}: {}. Next: `ripr status --root {root}`; start with `ripr repair --root {root}`",
-                none_available_detail(prepared, terminal, trust_bound, &root)
+                "no current attempt to continue under {root}: {}. Next: `ripr status --root {root}`; {}",
+                none_available_detail(prepared, terminal, trust_bound, &root),
+                start_with_repair_clause(&options.root, &root)
             )))
         }
         ContinueSelection::Ambiguous { candidates } => {
@@ -568,6 +585,67 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
                 "continue selected no attempt; rerun with --attempt".to_string(),
             ))
         }
+    }
+}
+
+/// The "start fresh" tail of a `continue` refusal for a known seam (#8766):
+/// the recorded start command only when the shared repair gate admits the
+/// seam, otherwise the by-hand remaining work.
+fn start_fresh_clause(
+    root: &std::path::Path,
+    root_arg: &str,
+    seam_id: Option<&str>,
+    start: &str,
+) -> String {
+    // An attempt that names no seam cannot be checked against the gate, so
+    // the start is whatever the auto selector would actually do.
+    let Some(seam_id) = seam_id else {
+        return start_with_repair_clause(root, root_arg);
+    };
+    match crate::app::task_first::repair_start_refusal(root, seam_id) {
+        Some(refusal) => crate::app::task_first::repair_start_withheld_note(
+            &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
+            seam_id,
+            &refusal,
+        ),
+        None => start.to_string(),
+    }
+}
+
+/// The "start with `ripr repair`" tail when `continue` has no attempt (#8766):
+/// consults the same auto selector `ripr repair` runs, so a start the build
+/// would refuse is not offered.
+fn start_with_repair_clause(root: &std::path::Path, root_arg: &str) -> String {
+    match resolve_repair_start(root) {
+        Ok(RepairStartDecision::NoEligible {
+            total_seams,
+            reasons,
+            reasons_total,
+        }) => format!(
+            "`ripr repair` starts nothing right now: {}",
+            no_eligible_seam_message(root, total_seams, &reasons, reasons_total)
+        ),
+        // The auto selector uses only the packet-eligibility gate; the start
+        // itself also applies the edit-target and held-inline checks, so the
+        // picked seam goes through the same shared gate before it is offered.
+        Ok(RepairStartDecision::Start { seam_id }) => {
+            match crate::app::task_first::repair_start_refusal(root, &seam_id) {
+                Some(refusal) => crate::app::task_first::repair_start_withheld_note(
+                    &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
+                    &seam_id,
+                    &refusal,
+                ),
+                None => format!("start with `ripr repair --root {root_arg}`"),
+            }
+        }
+        // The auto selector needs a named seam: `ripr repair` alone would
+        // not start one, so it is not printed as the start.
+        Ok(RepairStartDecision::Action(_)) => format!(
+            "`ripr repair` cannot choose a start by itself right now; run `ripr pilot --root {root_arg}` to list current seam IDs and name one"
+        ),
+        Err(error) => format!(
+            "could not verify a repair start ({error}); rerun `ripr check --root {root_arg}` to re-read the current seams"
+        ),
     }
 }
 
