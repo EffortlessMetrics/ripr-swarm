@@ -418,8 +418,10 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                     "after" => AgentRepairPhase::After,
                     "verify" => AgentRepairPhase::Verify,
                     other => {
-                        return Err(format!(
-                            "unknown --phase {other:?}; expected `before`, `after`, or `verify`"
+                        return Err(unknown_value(
+                            "--phase",
+                            other,
+                            &["before", "after", "verify"],
                         ));
                     }
                 });
@@ -1349,6 +1351,23 @@ mod tests {
                     .to_string()
             )
         );
+    }
+
+    #[test]
+    fn agent_repair_phase_values_keep_their_exact_meaning() -> Result<(), String> {
+        for (value, selector, phase) in [
+            ("before", "--seam-id", AgentRepairPhase::Before),
+            ("after", "--attempt", AgentRepairPhase::After),
+            ("verify", "--attempt", AgentRepairPhase::Verify),
+        ] {
+            let parsed =
+                parse_agent_args(&args(&["repair", selector, "sample", "--phase", value]))?;
+            let AgentCommand::Repair(options) = parsed else {
+                return Err(format!("phase {value:?} selected {parsed:?}"));
+            };
+            assert_eq!(options.phase, phase, "phase {value:?}");
+        }
+        Ok(())
     }
 
     #[test]
