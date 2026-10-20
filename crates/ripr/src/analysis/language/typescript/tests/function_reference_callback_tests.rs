@@ -103,6 +103,7 @@ fn a_reference_that_could_name_another_function_credits_nothing() -> Result<(), 
             "function sumsEveryValue() {\n  return 1;\n}\n",
         ),
         ("exported", "export { sumsEveryValue };\n"),
+        ("escaped-reassignment", "\\u0073umsEveryValue = () => {};\n"),
         (
             "same-name-parameter",
             "function other(x, sumsEveryValue) {\n  return x;\n}\n",

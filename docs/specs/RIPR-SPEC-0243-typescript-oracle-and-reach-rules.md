@@ -161,7 +161,9 @@ a title with an escape or a template substitution is not read). A call, a
 reassignment, a same-named parameter or variable, an export, a second
 declaration or the name inside a title leaves the reference unresolved, as
 does any `.each` or `.skip` form, or an options object between the title
-and the name (`test(title, { timeout }, name)`). The runner shadow checks of rule 3 read
+and the name (`test(title, { timeout }, name)`). Any unicode escape (`\u`) in the
+file leaves every reference unresolved, because an escaped spelling of the
+name would be invisible to the mention scan. The runner shadow checks of rule 3 read
 the function body. Arrow and function-expression bindings (`const name =
 ...`) are not resolved.
 

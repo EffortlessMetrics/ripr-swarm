@@ -2310,6 +2310,12 @@ fn referenced_callback_function<'s, 'a>(
 }
 
 fn function_used_only_as_test_callback(source: &str, name: &str) -> bool {
+    // A unicode-escaped identifier (`\u0063hecks = ...`) spells a mention the
+    // word scan below cannot see, so any escape leaves the reference
+    // unresolved.
+    if source.contains("\\u") {
+        return false;
+    }
     let word = |ch: char| ch == '_' || ch == '$' || ch.is_alphanumeric();
     let mut declarations = 0;
     for at in word_occurrences(source, name) {
