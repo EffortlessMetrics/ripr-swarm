@@ -795,6 +795,7 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
         }
     }
     scope.levels.push(level);
+    scope.callables.push(local_callable_names(statements));
     scope.iterables.push(iterables);
     let unshadowed_undefined = !scope
         .levels
@@ -831,6 +832,24 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
                             .map(|name| (name.clone(), scope.levels.len() == 1)),
                     ),
             )
+        {
+            continue;
+        }
+        // A bare registration is recognized by name, so a callee the file or an
+        // enclosing scope declares as its own function (`const describe = () =>
+        // {}`) would donate assertions that function never runs (#8959).
+        if let Some(call) = statement_call(stmt).filter(|_| {
+            !matches!(
+                stmt,
+                Statement::ExpressionStatement(statement)
+                    if matches!(statement.expression, Expression::AwaitExpression(_))
+            )
+        }) && (call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
+            || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Describe)
+            || call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
+            || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test))
+            && callee_root_name(&call.callee)
+                .is_some_and(|root| scope.callables.iter().flatten().any(|name| name == root))
         {
             continue;
         }
@@ -917,6 +936,40 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
     }
     scope.iterables.pop();
     scope.levels.pop();
+    scope.callables.pop();
+}
+
+/// Names a statement list declares as a function: a function declaration, or
+/// a `const` / `let` / `var` bound to an arrow or function expression.
+fn local_callable_names(statements: &[Statement<'_>]) -> Vec<String> {
+    let mut names = Vec::new();
+    for statement in statements {
+        match statement {
+            Statement::FunctionDeclaration(function) if !function.declare => {
+                if let Some(identifier) = &function.id {
+                    names.push(identifier.name.to_string());
+                }
+            }
+            Statement::VariableDeclaration(declaration) => {
+                for declarator in &declaration.declarations {
+                    if let oxc_ast::ast::BindingPattern::BindingIdentifier(identifier) =
+                        &declarator.id
+                        && matches!(
+                            declarator.init,
+                            Some(
+                                Expression::ArrowFunctionExpression(_)
+                                    | Expression::FunctionExpression(_)
+                            )
+                        )
+                    {
+                        names.push(identifier.name.to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    names
 }
 
 /// Modules whose `beforeEach`/`beforeAll` run before every test in scope.
@@ -933,6 +986,11 @@ pub(crate) struct TestScope {
     /// non-empty array or object literal, so a loop over one of them is
     /// known to register its tests at least once.
     iterables: Vec<Vec<(String, IterableLiteral)>>,
+    /// Per entry of `levels`: the names that level declares as a function
+    /// (`function describe() {}`, `const test = () => {}`). A bare
+    /// registration whose callee is one of these is that function's call,
+    /// not the runner's (#8959).
+    callables: Vec<Vec<String>>,
     /// Source offsets of every declaration and hook write the walk recorded.
     sites: Vec<usize>,
     /// Spans of string literals passed first to a call statement: describe

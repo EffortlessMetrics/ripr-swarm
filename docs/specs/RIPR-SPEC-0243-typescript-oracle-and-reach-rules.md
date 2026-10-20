@@ -148,6 +148,17 @@ assertion is `weakly_exposed`, not `reachable_unrevealed`.
 - A registration is an expression statement whose expression is the root
   call. `const x = test(...)` registers nothing.
 
+**Rule 14. A bare registration whose callee the file declares itself is not
+the runner's (2026-10-20).** `describe(...)`, `test(...)` and their
+`.each` / modifier forms are recognized by name, so a callee that this file
+or an enclosing `describe` body declares as a function (`function describe()
+{}`, `const test = () => {}`, `const it = function () {}`) is a call of that
+function, whose callback may never run. The registration then registers no
+test and donates no assertion, so a changed owner reached only through it
+reads `no_static_path`. A callee bound any other way (an import, a
+`require`, `test.extend(...)`, a call result) keeps its prior reading, and
+an awaited registration keeps its own registration gate.
+
 **Rule 13. A called suite factory is its expansion (2026-10-20).** A
 top-level `function factory(a, b) { describe(a, () => { ... b(x) ... }); }`
 registers nothing until it is called, and its assertions name the owner only
@@ -790,6 +801,16 @@ rejected alternative. Any can be reversed later without touching the rest.
     export or alias, argument expressions (`sumAll.bind(null)`, arrows,
     members), and parameters used as values or in templates; each needs
     data flow the adapter does not have.
+18. **Locally declared registration functions (2026-10-20).** Adopted: rule
+    14, for #8959: a file that rebinds `describe` or `test` to a no-op
+    otherwise earns the suite's assertions as if the runner executed them,
+    a false `exposed` (corpus cases `jest-mined-local-noop-describe` and
+    `jest-mined-local-noop-test`, whose mutants survive under jest).
+    Adopted over the registration-import check the awaited path uses, which
+    also drops `test.extend(...)` registrations and `require` members that
+    do run; declaring a function is the shape that cannot be the runner's.
+    Not yet taken: a local wrapper that forwards to the real runner is read
+    as a no-op, which only withholds credit.
 
 ## Required Evidence
 
@@ -1052,6 +1073,13 @@ to `amount - 20`, and `tests/lib.test.ts` has
   pins rule 13 and decision 17: calls that read like the written-out suite
   against every factory shape, extra mention and argument form that must stay
   unexpanded. The corpus case `jest-mined-suite-factory` reads `credited`.
+- `crates/ripr/src/analysis/language/typescript/tests/registration_binding_tests.rs`
+  pins rule 14 and decision 18: each locally declared `describe` / `test`
+  (arrow, function expression, declaration, inside a genuine `describe`)
+  against the genuine registration, the uncalled-closure control, and the
+  sibling functions that must not withhold credit. The corpus cases
+  `jest-mined-local-noop-describe` and `jest-mined-local-noop-test` read
+  `limited` (they read `credited` before the rule).
 - Existing: `crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs`
   and the `tests/` modules beside it: `mock_form_tests.rs`,
   `scope_receiver_tests.rs`, `reexport_chain_tests.rs`.
@@ -1077,7 +1105,9 @@ to `amount - 20`, and `tests/lib.test.ts` has
 - `crates/ripr/src/analysis/language/typescript/suite_factory.rs`
   (`expand_suite_factories`, rule 13) and the rerun in `tests_extract.rs`
   (`extract_tests_expanding_suite_factories`).
-- `crates/ripr/src/analysis/language/typescript/tests_extract.rs`: rule 12
+- `crates/ripr/src/analysis/language/typescript/tests_extract.rs`: rule 14
+  (`local_callable_names`, the bare-registration gate in
+  `collect_tests_from_statements`); rule 12
   (`referenced_callback_function`, `function_used_only_as_test_callback`);
   rule 1 (`test_from_statement`, `describe_body_from_statement`) and the
   `expect` binding facts rule 3 reads.
