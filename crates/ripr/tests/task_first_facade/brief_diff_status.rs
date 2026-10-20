@@ -1,4 +1,4 @@
-use super::{Fixture, assert_exit, run_git, run_ripr, weaken_boundary_predicate};
+use super::{Fixture, assert_exit, git_commit, run_git, run_ripr, weaken_boundary_predicate};
 use serde_json::Value;
 use std::process::Output;
 
@@ -138,6 +138,13 @@ fn brief_base_uses_the_same_parser_refusal_before_inventory() -> Result<(), Stri
         "<<<<<<< ours\nleft\n=======\nright\n>>>>>>> theirs\n",
     )
     .map_err(|e| e.to_string())?;
+    run_git(&fixture.root, &["add", "src/lib.rs"])?;
+    git_commit(&fixture.root, "committed conflict input")?;
+    let diff = run_git(&fixture.root, &["diff", "HEAD^...HEAD", "--", "src/lib.rs"])?;
+    assert!(
+        diff.contains("+<<<<<<< ours") && diff.contains("+>>>>>>> theirs"),
+        "base control must supply actual committed conflict lines: {diff}"
+    );
     let output = run_ripr(
         &fixture.root,
         &[
@@ -146,11 +153,11 @@ fn brief_base_uses_the_same_parser_refusal_before_inventory() -> Result<(), Stri
             "--root",
             &fixture.root.to_string_lossy(),
             "--base",
-            "HEAD",
+            "HEAD^",
             "--json",
         ],
     )?;
     assert_refusal(&output, "unresolved_conflict_markers")?;
-    assert_eq!(document(&output)?["base"], "HEAD");
+    assert_eq!(document(&output)?["base"], "HEAD^");
     Ok(())
 }
