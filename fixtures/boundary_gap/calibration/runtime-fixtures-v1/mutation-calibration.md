@@ -24,11 +24,11 @@ Neither artifact carries a repository head SHA, so ensure both artifacts are fro
 
 How to read this table: a **static gap** is a static seam whose grip class is outside the strong set `strongly_gripped` / `intentional` / `suppressed` (for example `ungripped` or `weakly_gripped`). A **runtime gap signal** is an imported cargo-mutants outcome the runtime failed to catch (`missed`, `survived`, `not_caught`, `uncaught`); a **runtime clean signal** is one it caught (`caught`, `timeout`).
 
-- `runtime_inconclusive`: ambiguous joins (several seams on one line, or crossing spans) or unobserved runtime outcomes: counted separately as evidence neither for nor against the static verdict until a seam_id or unambiguous location is available.
-- `runtime_signal_without_static_gap`: a runtime mutant went uncaught where ripr reports no static gap: the sources disagree, so these rows are the first ones to investigate; see the Runtime signals without static gaps table.
-- `static_clean_and_runtime_clean`: ripr reports no static gap (the seam is strongly_gripped, intentional, or suppressed) and the runtime caught the mutant: the two sources agree.
 - `static_gap_and_runtime_signal`: ripr flags a static gap (a seam outside the strongly_gripped / intentional / suppressed set) and a runtime mutant went uncaught at that seam: the two sources agree, which supports the static classification.
-- `static_gap_without_runtime_signal`: ripr flags a static gap but this import produced no runtime gap signal (missed / survived / not_caught / uncaught) for it: unexercised by this import, not contradicted; see the Static gaps without runtime signals table.
+- `static_gap_without_runtime_signal`: ripr flags a static gap but this import produced no runtime gap signal (missed / survived / not_caught / uncaught) for it, so the bucket only says the static gap lacks runtime corroboration — not that it went unexercised: `contradicts_static_gap` rows caught the mutant (the runtime disagrees with the static gap), `no_runtime_data` rows matched only inconclusive or unobserved outcomes, and seams with no matched runtime record were not exercised by this import; see the Static gaps without runtime signals table.
+- `runtime_signal_without_static_gap`: a runtime mutant went uncaught where ripr reports no static gap. Joined rows (`contradicts_static_clean`) genuinely disagree with a static-clean seam and are the first ones to investigate; unmatched rows (`runtime_only_signal`) had no static seam to contradict, so they are runtime-only evidence, not a disagreement; see the Runtime signals without static gaps table.
+- `static_clean_and_runtime_clean`: ripr reports no static gap (the seam is strongly_gripped, intentional, or suppressed) and the runtime caught the mutant: the two sources agree.
+- `runtime_inconclusive`: ambiguous joins (several seams on one line, or crossing spans) or unobserved runtime outcomes: counted separately as evidence neither for nor against the static verdict until a seam_id or unambiguous location is available.
 
 | Agreement bucket | Count |
 | --- | ---: |

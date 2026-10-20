@@ -184,16 +184,26 @@ pub(crate) struct MutationCalibrationReport {
 ///
 /// cargo-mutants `outcomes.json` usually carries no head at all, so the
 /// common case is a repo-exposure snapshot head with `mutants_head: None`.
-/// The verdict string is rendered in both md and JSON so a saved report
-/// never silently inherits a foreign subject's authority (#7449, #8753).
+/// A directory import combines `outcomes.json` and `mutants.json` before
+/// joining; when those members record more than one distinct head, no
+/// single mutants subject can be named and the heads are kept in
+/// `mutants_head_conflict` instead. The verdict string is rendered in both
+/// md and JSON so a saved report never silently inherits a foreign
+/// subject's authority (#7449, #8753).
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct CalibrationProvenance {
     repo_exposure_head: Option<String>,
     mutants_head: Option<String>,
+    /// Every distinct head the cargo-mutants inputs recorded when they
+    /// disagree with each other; empty when they agree (or record no head).
+    mutants_head_conflict: Vec<String>,
 }
 
 impl CalibrationProvenance {
     fn verdict(&self) -> &'static str {
+        if !self.mutants_head_conflict.is_empty() {
+            return "conflicting_mutants_heads";
+        }
         match (&self.repo_exposure_head, &self.mutants_head) {
             (Some(snapshot), Some(mutants)) if snapshot == mutants => "same_head",
             (Some(_), Some(_)) => "different_heads",
@@ -204,16 +214,29 @@ impl CalibrationProvenance {
     }
 
     fn json(&self) -> Value {
-        serde_json::json!({
+        let mut value = serde_json::json!({
             "repo_exposure_head": self.repo_exposure_head,
             "mutants_head": self.mutants_head,
             "verdict": self.verdict(),
-        })
+        });
+        // The key appears only when the inputs actually disagree, so the
+        // common shapes stay byte-stable for existing saved artifacts.
+        if !self.mutants_head_conflict.is_empty() {
+            value["mutants_head_conflict"] =
+                serde_json::Value::from(self.mutants_head_conflict.clone());
+        }
+        value
     }
 
     /// One honest sentence per verdict, mirroring the stderr disclosure so
     /// the interactive and archived surfaces never drift apart.
     fn disclosure_sentence(&self) -> String {
+        if !self.mutants_head_conflict.is_empty() {
+            return format!(
+                "The cargo-mutants inputs report conflicting repository heads ({}), so this import does not establish a single mutants subject; ensure both artifacts are from the same repository and adjacent commits.",
+                self.mutants_head_conflict.join(", ")
+            );
+        }
         match (&self.repo_exposure_head, &self.mutants_head) {
             (Some(snapshot), Some(mutants)) if snapshot == mutants => format!(
                 "Both artifacts report repository head {snapshot}, so they are from the same commit (the working tree may still differ between them)."
@@ -289,11 +312,31 @@ pub(crate) fn mutation_calibration_report_from_json(
     let runtime_mutants =
         require_imported_runtime_mutants(parse_mutation_outcomes_json(mutants_json)?)?;
     let mut report = build_mutation_calibration_report(static_seams, runtime_mutants);
-    report.provenance = CalibrationProvenance {
-        repo_exposure_head: crate::output::outcome::snapshot_repository_head(repo_exposure_json),
-        mutants_head: crate::output::outcome::snapshot_repository_head(mutants_json),
-    };
+    report.provenance = calibration_provenance(repo_exposure_json, mutants_json);
     Ok(report)
+}
+
+/// Provenance from the two input artifacts. The mutants side is read with
+/// the array-aware detail reader because a directory import arrives as the
+/// combined `outcomes.json` + `mutants.json` array: the member heads decide
+/// the verdict, and disagreeing members are disclosed as a conflict rather
+/// than misread as "no head recorded".
+fn calibration_provenance(repo_exposure_json: &str, mutants_json: &str) -> CalibrationProvenance {
+    let mutants_head = crate::output::outcome::snapshot_repository_head_detail(mutants_json);
+    let mut provenance = CalibrationProvenance {
+        repo_exposure_head: crate::output::outcome::snapshot_repository_head(repo_exposure_json),
+        ..CalibrationProvenance::default()
+    };
+    match mutants_head {
+        crate::output::outcome::SnapshotRepositoryHead::Absent => {}
+        crate::output::outcome::SnapshotRepositoryHead::Unique(head) => {
+            provenance.mutants_head = Some(head);
+        }
+        crate::output::outcome::SnapshotRepositoryHead::Conflicting(heads) => {
+            provenance.mutants_head_conflict = heads;
+        }
+    }
+    provenance
 }
 
 /// The stderr disclosure `ripr calibrate cargo-mutants` prints beside a join.
@@ -301,39 +344,49 @@ pub(crate) fn mutation_calibration_report_from_json(
 /// The join itself matches by `seam_id`, span containment, or file/line in
 /// every case; what changes is what can be said about artifact identity.
 /// cargo-mutants `outcomes.json` does not carry a head, so the usual case is
-/// a snapshot that may or may not name one. A disclosure that stays silent
-/// lets a foreign `file:line` inherit the static seam's authority (#7449).
-/// Reuses the outcome snapshot head reader so "full SHA" means the same thing
-/// on both surfaces.
+/// a snapshot that may or may not name one. A directory import combines
+/// `outcomes.json` and `mutants.json` into an array; the array-aware head
+/// reader keeps a head the member files recorded (and names a member
+/// disagreement as a conflict instead of as a missing head). A disclosure
+/// that stays silent lets a foreign `file:line` inherit the static seam's
+/// authority (#7449). Reuses the outcome snapshot head reader so "full SHA"
+/// means the same thing on both surfaces.
 pub(crate) fn calibrate_head_provenance_disclosure(
     repo_exposure_json: &str,
     mutants_json: &str,
 ) -> String {
-    match (
-        crate::output::outcome::snapshot_repository_head(repo_exposure_json),
-        crate::output::outcome::snapshot_repository_head(mutants_json),
-    ) {
-        (Some(snapshot_head), Some(mutants_head)) if snapshot_head == mutants_head => {
+    let snapshot_head = crate::output::outcome::snapshot_repository_head(repo_exposure_json);
+    let mutants_head = crate::output::outcome::snapshot_repository_head_detail(mutants_json);
+    match (snapshot_head, mutants_head) {
+        (_, crate::output::outcome::SnapshotRepositoryHead::Conflicting(heads)) => {
+            format!(
+                "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; the cargo-mutants directory members report conflicting repository heads ({}), so this import does not establish a single mutants subject; ensure both artifacts are from the same repository and adjacent commits.",
+                heads.join(", ")
+            )
+        }
+        (Some(snapshot_head), crate::output::outcome::SnapshotRepositoryHead::Unique(mutants_head))
+            if snapshot_head == mutants_head =>
+        {
             format!(
                 "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; both artifacts report repository head {snapshot_head}, so they are from the same commit (the working tree may still differ between them)."
             )
         }
-        (Some(snapshot_head), Some(mutants_head)) => {
+        (Some(snapshot_head), crate::output::outcome::SnapshotRepositoryHead::Unique(mutants_head)) => {
             format!(
                 "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; the artifacts report different repository heads (repo-exposure {snapshot_head}, cargo-mutants {mutants_head}), so matched rows may describe a different subject than the static snapshot."
             )
         }
-        (Some(snapshot_head), None) => {
+        (Some(snapshot_head), crate::output::outcome::SnapshotRepositoryHead::Absent) => {
             format!(
                 "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; the repo-exposure snapshot reports repository head {snapshot_head}, so the join assumes that subject. The cargo-mutants JSON does not carry a head SHA, so ensure the mutants were produced from the same repository and adjacent commits."
             )
         }
-        (None, Some(mutants_head)) => {
+        (None, crate::output::outcome::SnapshotRepositoryHead::Unique(mutants_head)) => {
             format!(
                 "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; the cargo-mutants JSON reports repository head {mutants_head}, but the repo-exposure snapshot does not carry a head SHA, so ensure both artifacts are from the same repository and adjacent commits."
             )
         }
-        (None, None) => {
+        (None, crate::output::outcome::SnapshotRepositoryHead::Absent) => {
             "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; at least one of the repo-exposure / cargo-mutants artifacts does not carry a head SHA, so ensure both artifacts are from the same repository and adjacent commits.".to_string()
         }
     }
@@ -465,8 +518,11 @@ pub(crate) fn render_mutation_calibration_md(report: &MutationCalibrationReport)
                   `weakly_gripped`). A **runtime gap signal** is an imported cargo-mutants outcome the runtime \
                   failed to catch (`missed`, `survived`, `not_caught`, `uncaught`); a **runtime clean signal** \
                   is one it caught (`caught`, `timeout`).\n\n");
-    for (bucket, guide) in agreement_how_to_read() {
-        out.push_str(&format!("- `{bucket}`: {guide}\n"));
+    let guide = agreement_how_to_read();
+    for bucket in AGREEMENT_GUIDE_ORDER {
+        if let Some(text) = guide.get(bucket) {
+            out.push_str(&format!("- `{bucket}`: {text}\n"));
+        }
     }
     out.push_str("\n| Agreement bucket | Count |\n| --- | ---: |\n");
     out.push_str(&format!(
@@ -1150,11 +1206,11 @@ fn agreement_how_to_read() -> BTreeMap<&'static str, &'static str> {
         ),
         (
             "static_gap_without_runtime_signal",
-            "ripr flags a static gap but this import produced no runtime gap signal (missed / survived / not_caught / uncaught) for it: unexercised by this import, not contradicted; see the Static gaps without runtime signals table.",
+            "ripr flags a static gap but this import produced no runtime gap signal (missed / survived / not_caught / uncaught) for it, so the bucket only says the static gap lacks runtime corroboration — not that it went unexercised: `contradicts_static_gap` rows caught the mutant (the runtime disagrees with the static gap), `no_runtime_data` rows matched only inconclusive or unobserved outcomes, and seams with no matched runtime record were not exercised by this import; see the Static gaps without runtime signals table.",
         ),
         (
             "runtime_signal_without_static_gap",
-            "a runtime mutant went uncaught where ripr reports no static gap: the sources disagree, so these rows are the first ones to investigate; see the Runtime signals without static gaps table.",
+            "a runtime mutant went uncaught where ripr reports no static gap. Joined rows (`contradicts_static_clean`) genuinely disagree with a static-clean seam and are the first ones to investigate; unmatched rows (`runtime_only_signal`) had no static seam to contradict, so they are runtime-only evidence, not a disagreement; see the Runtime signals without static gaps table.",
         ),
         (
             "static_clean_and_runtime_clean",
@@ -1166,6 +1222,17 @@ fn agreement_how_to_read() -> BTreeMap<&'static str, &'static str> {
         ),
     ])
 }
+
+/// Logical bucket order for the md guide bullets, matching the agreement
+/// table below them. (`agreement_how_to_read()` stays a `BTreeMap` so the
+/// JSON surface keeps its stable sorted-key serialization.)
+const AGREEMENT_GUIDE_ORDER: [&str; 5] = [
+    "static_gap_and_runtime_signal",
+    "static_gap_without_runtime_signal",
+    "runtime_signal_without_static_gap",
+    "static_clean_and_runtime_clean",
+    "runtime_inconclusive",
+];
 
 fn agreement_how_to_read_json() -> Value {
     let guide = agreement_how_to_read();
@@ -2038,12 +2105,9 @@ mod tests {
         );
     }
 
-    /// Placeholders and short SHAs are absent heads, using the same
-    /// `is_full_sha` rule as `ripr outcome`. A reader coupled to one
-    /// spelling of "unavailable" would miss the rest.
-    /// Directory input combines outcomes.json + mutants.json into a JSON
-    /// array. That shape has no artifact envelope, so it must not be read
-    /// as a headed cargo-mutants file.
+    /// A combined directory array whose members record no head at all still
+    /// reads as no mutants head. Directory input combines outcomes.json +
+    /// mutants.json into a JSON array; a headless array must not invent one.
     #[test]
     fn calibrate_disclosure_treats_combined_directory_array_as_no_mutants_head() {
         let head = "2bd22c0b0718157870e2e78c9a70b9da1c9c1b21";
@@ -2051,7 +2115,7 @@ mod tests {
         let line = calibrate_head_provenance_disclosure(&snapshot_with_head(Some(head)), combined);
         assert!(
             line.contains(head) && line.contains("does not carry a head SHA"),
-            "a combined directory array is not a headed mutants file: {line}"
+            "a headless combined directory array is not a headed mutants file: {line}"
         );
         assert!(
             !line.contains("different repository heads"),
@@ -2059,6 +2123,108 @@ mod tests {
         );
     }
 
+    /// #8753 review: a headed cargo-mutants directory must keep its head
+    /// identity when the CLI combines outcomes.json + mutants.json into an
+    /// array. The combined array is what `read_calibration_mutants_json`
+    /// produces, so the disclosure must read the member head instead of
+    /// reporting "no head SHA".
+    #[test]
+    fn calibrate_disclosure_reads_agreeing_directory_member_heads() {
+        let head = "2bd22c0b0718157870e2e78c9a70b9da1c9c1b21";
+        let combined = format!(
+            r#"[{{"artifact":{{"repository":{{"head":"{head}"}}}},"outcomes":[{{"id":"m1","file":"src/lib.rs","line":2,"outcome":"missed"}}]}},{{"mutants":[]}}]"#
+        );
+        let line = calibrate_head_provenance_disclosure(&snapshot_with_head(Some(head)), &combined);
+        assert!(
+            line.contains(head) && line.contains("same commit"),
+            "agreeing directory members must surface the shared head: {line}"
+        );
+        assert!(
+            !line.contains("does not carry a head SHA"),
+            "a head recorded in a member file must not be reported as absent: {line}"
+        );
+    }
+
+    /// Disagreeing directory members are a conflict, not a missing head:
+    /// the disclosure must name both heads instead of falling into the
+    /// "does not carry a head SHA" arm.
+    #[test]
+    fn calibrate_disclosure_names_conflicting_directory_member_heads() {
+        let first = "1111111111111111111111111111111111111140";
+        let second = "2222222222222222222222222222222222222241";
+        let combined = format!(
+            r#"[{{"artifact":{{"repository":{{"head":"{first}"}}}},"outcomes":[{{"id":"m1","file":"src/lib.rs","line":2,"outcome":"missed"}}]}},{{"artifact":{{"repository":{{"head":"{second}"}}}},"mutants":[]}}]"#
+        );
+        let line = calibrate_head_provenance_disclosure(&snapshot_with_head(None), &combined);
+        assert!(
+            line.contains(first) && line.contains(second),
+            "both member heads must be named: {line}"
+        );
+        assert!(
+            line.contains("conflicting repository heads"),
+            "disagreement must be disclosed as a conflict: {line}"
+        );
+        assert!(
+            !line.contains("does not carry a head SHA"),
+            "a disagreement must not be reported as an absent head: {line}"
+        );
+    }
+
+    /// The report provenance (md and JSON) must reflect the same directory
+    /// member heads as the stderr disclosure: agreeing members give
+    /// `same_head`, disagreeing members give `conflicting_mutants_heads`
+    /// with every head named.
+    #[test]
+    fn calibration_report_provenance_tracks_directory_member_heads() -> Result<(), String> {
+        let head = "1111111111111111111111111111111111111140";
+        let other = "2222222222222222222222222222222222222241";
+        let exposure = format!(
+            r#"{{"artifact":{{"repository":{{"head":"{head}"}}}},"seams":[
+            {{"seam_id":"seam-a","kind":"predicate_boundary","file":"src/lib.rs","line":2,"grip_class":"ungripped"}}
+        ]}}"#
+        );
+        let agreeing = format!(
+            r#"[{{"artifact":{{"repository":{{"head":"{head}"}}}},"outcomes":[{{"id":"m1","seam_id":"seam-a","operator":"replace","outcome":"missed"}}]}},{{"mutants":[{{"id":"m1","seam_id":"seam-a","operator":"replace"}}]}}]"#
+        );
+        let report = mutation_calibration_report_from_json(exposure, &agreeing)?;
+        assert_eq!(report.provenance.mutants_head.as_deref(), Some(head));
+        assert_eq!(report.provenance.verdict(), "same_head");
+        let markdown = render_mutation_calibration_md(&report);
+        assert!(
+            markdown.contains(&format!("repository head {head}")),
+            "the md Provenance section must name the shared head:\n{markdown}"
+        );
+
+        let conflicting = format!(
+            r#"[{{"artifact":{{"repository":{{"head":"{head}"}}}},"outcomes":[{{"id":"m1","seam_id":"seam-a","operator":"replace","outcome":"missed"}}]}},{{"artifact":{{"repository":{{"head":"{other}"}}}},"mutants":[{{"id":"m1","seam_id":"seam-a","operator":"replace"}}]}}]"#
+        );
+        let report = mutation_calibration_report_from_json(exposure, &conflicting)?;
+        assert_eq!(report.provenance.verdict(), "conflicting_mutants_heads");
+        assert!(
+            report.provenance.mutants_head.is_none(),
+            "a conflict must not pick one member head: {:?}",
+            report.provenance
+        );
+        let json = render_mutation_calibration_json(&report)?;
+        let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(value["provenance"]["verdict"], "conflicting_mutants_heads");
+        assert_eq!(
+            value["provenance"]["mutants_head_conflict"],
+            serde_json::json!([head, other])
+        );
+        let markdown = render_mutation_calibration_md(&report);
+        assert!(
+            markdown.contains("conflicting repository heads")
+                && markdown.contains(head)
+                && markdown.contains(other),
+            "the md Provenance section must disclose the conflict and name both heads:\n{markdown}"
+        );
+        Ok(())
+    }
+
+    /// Placeholders and short SHAs are absent heads, using the same
+    /// `is_full_sha` rule as `ripr outcome`. A reader coupled to one
+    /// spelling of "unavailable" would miss the rest.
     #[test]
     fn calibrate_disclosure_treats_a_placeholder_as_no_head() {
         for placeholder in [
@@ -2097,6 +2263,7 @@ mod tests {
             let provenance = CalibrationProvenance {
                 repo_exposure_head: repo_exposure_head.map(str::to_string),
                 mutants_head: mutants_head.map(str::to_string),
+                mutants_head_conflict: Vec::new(),
             };
             assert_eq!(
                 provenance.verdict(),
@@ -2120,6 +2287,7 @@ mod tests {
             let provenance = CalibrationProvenance {
                 repo_exposure_head,
                 mutants_head,
+                mutants_head_conflict: Vec::new(),
             };
             let sentence = provenance.disclosure_sentence();
             assert!(
@@ -2146,6 +2314,7 @@ mod tests {
         let provenance = CalibrationProvenance {
             repo_exposure_head: Some("2bd22c0b0718157870e2e78c9a70b9da1c9c1b21".to_string()),
             mutants_head: None,
+            mutants_head_conflict: Vec::new(),
         };
         let value = provenance.json();
         assert_eq!(
@@ -2154,10 +2323,41 @@ mod tests {
         );
         assert_eq!(value["mutants_head"], serde_json::Value::Null);
         assert_eq!(value["verdict"], "only_repo_exposure_head");
+        assert!(
+            value.get("mutants_head_conflict").is_none(),
+            "agreeing inputs must keep the common shape byte-stable: {value}"
+        );
         let empty = CalibrationProvenance::default().json();
         assert_eq!(empty["repo_exposure_head"], serde_json::Value::Null);
         assert_eq!(empty["mutants_head"], serde_json::Value::Null);
         assert_eq!(empty["verdict"], "no_head_recorded");
+        let conflicting = CalibrationProvenance {
+            repo_exposure_head: None,
+            mutants_head: None,
+            mutants_head_conflict: vec![
+                "2bd22c0b0718157870e2e78c9a70b9da1c9c1b21".to_string(),
+                "3333333333333333333333333333333333333333".to_string(),
+            ],
+        };
+        let value = conflicting.json();
+        assert_eq!(value["verdict"], "conflicting_mutants_heads");
+        assert_eq!(
+            value["mutants_head_conflict"],
+            serde_json::json!([
+                "2bd22c0b0718157870e2e78c9a70b9da1c9c1b21",
+                "3333333333333333333333333333333333333333"
+            ])
+        );
+        assert!(
+            conflicting
+                .disclosure_sentence()
+                .contains("conflicting repository heads")
+                && conflicting
+                    .disclosure_sentence()
+                    .contains("2bd22c0b0718157870e2e78c9a70b9da1c9c1b21"),
+            "the conflict sentence must name the disagreement: {}",
+            conflicting.disclosure_sentence()
+        );
     }
 
     /// #8750/#8753: a saved `--out` artifact must define the vocabulary it
@@ -2236,6 +2436,140 @@ mod tests {
         assert_eq!(
             value["provenance"]["verdict"], "no_head_recorded",
             "a report built without artifact inputs must disclose that no head was recorded:\n{json}"
+        );
+        Ok(())
+    }
+
+    /// The md guide bullets must render in the same logical order as the
+    /// agreement table rows, not the BTreeMap's alphabetical key order.
+    #[test]
+    fn agreement_guide_bullets_follow_table_order() -> Result<(), String> {
+        let report = build_mutation_calibration_report(
+            vec![static_seam(
+                "seam-a",
+                "weakly_gripped",
+                "src/pricing.rs",
+                42,
+            )],
+            vec![runtime("m1", Some("seam-a"), None, None, "missed")],
+        );
+        let markdown = render_mutation_calibration_md(&report);
+        let table_at = markdown
+            .find("| Agreement bucket | Count |")
+            .ok_or("agreement table must render")?;
+        let mut previous = 0usize;
+        for bucket in AGREEMENT_GUIDE_ORDER {
+            let needle = format!("- `{bucket}`:");
+            let at = markdown
+                .find(&needle)
+                .ok_or_else(|| format!("md must render a guide line for {bucket}"))?;
+            assert!(
+                at > previous,
+                "guide bullet {bucket} must follow the previous bullet:\n{markdown}"
+            );
+            assert!(
+                at < table_at,
+                "guide bullet {bucket} must render before the agreement table:\n{markdown}"
+            );
+            previous = at;
+        }
+        Ok(())
+    }
+
+    /// #8750 review: when the only contributor to
+    /// `runtime_signal_without_static_gap` is an unmatched mutant, the
+    /// bucket contains no static verdict at all, so the guide must not call
+    /// it a disagreement; it must point at the `runtime_only_signal`
+    /// detail rows instead.
+    #[test]
+    fn agreement_guide_distinguishes_unmatched_runtime_only_signals() -> Result<(), String> {
+        let report = build_mutation_calibration_report(
+            vec![static_seam(
+                "seam-a",
+                "strongly_gripped",
+                "src/pricing.rs",
+                42,
+            )],
+            vec![runtime("m1", None, Some("src/other.rs"), Some(9), "missed")],
+        );
+        assert_eq!(report.agreement.runtime_signal_without_static_gap, 1);
+        assert!(
+            report.missed_runtime_signals[0].confidence_label == "runtime_only_signal",
+            "the only row is unmatched and must keep its runtime-only label: {:?}",
+            report.missed_runtime_signals
+        );
+        let markdown = render_mutation_calibration_md(&report);
+        let guide_line = markdown
+            .lines()
+            .find(|line| line.starts_with("- `runtime_signal_without_static_gap`:"))
+            .ok_or("missing runtime_signal_without_static_gap guide line")?;
+        assert!(
+            guide_line.contains("`runtime_only_signal`")
+                && guide_line.contains("not a disagreement"),
+            "the guide must separate unmatched runtime-only evidence from real disagreements: {guide_line}"
+        );
+        assert!(
+            !guide_line.contains("the sources disagree, so these rows"),
+            "the guide must not blanket-call the bucket a disagreement: {guide_line}"
+        );
+        assert!(
+            markdown.contains("`runtime_only_signal`"),
+            "the detail table must keep the runtime_only_signal distinction:\n{markdown}"
+        );
+        let json = render_mutation_calibration_json(&report)?;
+        let value: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert_eq!(
+            value["how_to_read"]["buckets"]["runtime_signal_without_static_gap"]
+                .as_str()
+                .map(str::to_string),
+            agreement_how_to_read()
+                .get("runtime_signal_without_static_gap")
+                .map(str::to_string),
+            "the JSON guide must carry the same corrected text"
+        );
+        Ok(())
+    }
+
+    /// #8750 review: a static gap matched only by caught mutants lands in
+    /// `static_gap_without_runtime_signal`, but the runtime did exercise
+    /// and catch the mutant. The guide must describe the bucket as lacking
+    /// a runtime gap signal and must not call it unexercised.
+    #[test]
+    fn agreement_guide_does_not_call_caught_static_gaps_unexercised() -> Result<(), String> {
+        let report = build_mutation_calibration_report(
+            vec![static_seam(
+                "seam-a",
+                "weakly_gripped",
+                "src/pricing.rs",
+                42,
+            )],
+            vec![runtime("m1", Some("seam-a"), None, None, "caught")],
+        );
+        assert_eq!(report.agreement.static_gap_without_runtime_signal, 1);
+        assert_eq!(
+            report.static_only_findings[0].confidence_label,
+            "contradicts_static_gap"
+        );
+        let markdown = render_mutation_calibration_md(&report);
+        let guide_line = markdown
+            .lines()
+            .find(|line| line.starts_with("- `static_gap_without_runtime_signal`:"))
+            .ok_or("missing static_gap_without_runtime_signal guide line")?;
+        assert!(
+            guide_line.contains("not that it went unexercised"),
+            "the guide must stop calling the whole bucket unexercised: {guide_line}"
+        );
+        assert!(
+            guide_line.contains("`contradicts_static_gap`"),
+            "the guide must point caught rows at the contradicts_static_gap label: {guide_line}"
+        );
+        assert!(
+            !guide_line.contains("unexercised by this import, not contradicted"),
+            "the old over-claim must be gone: {guide_line}"
+        );
+        assert!(
+            markdown.contains("`contradicts_static_gap`"),
+            "the detail table must keep the contradicts_static_gap distinction:\n{markdown}"
         );
         Ok(())
     }

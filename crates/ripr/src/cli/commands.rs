@@ -7501,6 +7501,76 @@ language = "rust"
         Ok(())
     }
 
+    /// A headed cargo-mutants directory keeps its head identity through the
+    /// CLI combine: agreeing members surface the shared head, and
+    /// disagreeing members are disclosed as a conflict instead of a
+    /// missing head.
+    #[test]
+    fn calibrate_directory_preserves_member_head_identity() -> Result<(), String> {
+        let dir = unique_command_test_dir("calibrate-dir-heads");
+        let mutants_dir = dir.join("cargo-mutants");
+        std::fs::create_dir_all(&mutants_dir)
+            .map_err(|err| format!("create mutants dir: {err}"))?;
+        let head = "1111111111111111111111111111111111111140";
+        std::fs::write(
+            mutants_dir.join("outcomes.json"),
+            format!(
+                r#"{{"artifact":{{"repository":{{"head":"{head}"}}}},"outcomes":[{{"id":"m1","outcome":"missed"}}]}}"#
+            ),
+        )
+        .map_err(|err| format!("write outcomes.json: {err}"))?;
+        std::fs::write(
+            mutants_dir.join("mutants.json"),
+            r#"{"mutants":[{"id":"m1","operator":"replace"}]}"#,
+        )
+        .map_err(|err| format!("write mutants.json: {err}"))?;
+
+        let combined = read_calibration_mutants_json(&mutants_dir)?;
+        let disclosure = output::mutation_calibration::calibrate_head_provenance_disclosure(
+            &snapshot_with_head(head),
+            &combined,
+        );
+        assert!(
+            disclosure.contains(head) && disclosure.contains("same commit"),
+            "agreeing directory members must surface the shared head: {disclosure}"
+        );
+
+        // Disagreeing members: rewrite mutants.json with a different head.
+        let other = "2222222222222222222222222222222222222241";
+        std::fs::write(
+            mutants_dir.join("mutants.json"),
+            format!(
+                r#"{{"artifact":{{"repository":{{"head":"{other}"}}}},"mutants":[{{"id":"m1","operator":"replace"}}]}}"#
+            ),
+        )
+        .map_err(|err| format!("rewrite mutants.json: {err}"))?;
+        let combined = read_calibration_mutants_json(&mutants_dir)?;
+        let disclosure = output::mutation_calibration::calibrate_head_provenance_disclosure(
+            &snapshot_with_head(head),
+            &combined,
+        );
+        assert!(
+            disclosure.contains("conflicting repository heads")
+                && disclosure.contains(head)
+                && disclosure.contains(other),
+            "disagreeing directory members must be disclosed as a conflict: {disclosure}"
+        );
+        assert!(
+            !disclosure.contains("does not carry a head SHA"),
+            "a disagreement must not be reported as an absent head: {disclosure}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    fn snapshot_with_head(head: &str) -> String {
+        serde_json::json!({
+            "schema_version": "0.3",
+            "artifact": { "repository": { "root": "/w", "head": head } },
+        })
+        .to_string()
+    }
+
     #[test]
     fn init_requires_root_value() {
         assert_eq!(
