@@ -319,6 +319,16 @@ fn agent_brief_checked_lines_from_diff(
             ),
         ));
     }
+    if parsed.truncated_file_sections > 0 {
+        return Err(crate::core_error::CoreError::diff_input_unsupported(
+            format!(
+                "agent brief cannot select a working set from this diff: malformed_diff: \
+                 {} file section(s) parsed a header but no hunk body; the diff appears \
+                 truncated. Re-run with the complete diff stream.",
+                parsed.truncated_file_sections,
+            ),
+        ));
+    }
     Ok(parsed
         .changed_files
         .into_iter()

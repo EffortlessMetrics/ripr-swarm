@@ -92,12 +92,16 @@ The command should:
   static evidence;
 - remain advisory and static;
 - refuse `--diff` and `--base` input when the shared diff parser reports
-  combined hunks, unresolved conflict regions, or malformed hunks, including
+  combined hunks, unresolved conflict regions, malformed hunks, or truncated
+  textual file sections, including
   mixed ordinary/refused input; exit `2` through the JSON refusal envelope
   with identity `diff_input_unsupported` before selecting any seams;
 - use that same brief refusal identity for shared-parser admission errors,
   including changed-file-count and path-depth bounds, without changing the
   parser's limits or the existing `check` budget-refusal contract;
+- apply path-depth admission to actual path headers after hunk-boundary
+  decisions; added or removed source text that resembles a path header
+  remains hunk payload, including slash-heavy raw-string content;
 - retain successful empty selection and the documented repository fallback
   for a valid empty patch; neither is a test-adequacy claim;
 - avoid automatic edits, generated tests, runtime mutation execution, cache
@@ -558,6 +562,10 @@ Planned tests:
 - `brief_parser_refusals_cannot_become_empty_or_fallback_successes`
 - `brief_base_uses_the_same_parser_refusal_before_inventory`
 - `brief_parser_errors_keep_diff_input_identity_and_budget_guards`
+- `brief_truncated_sections_cannot_become_empty_or_partial_successes`
+- `brief_path_like_hunk_payload_keeps_real_changed_line_selection`
+- `path_like_added_and_removed_lines_stay_hunk_payload`
+- `actual_deep_headers_still_refuse_after_hunk_payload`
 - `agent_brief_ranks_changed_line_intersection_first`
 - `agent_brief_ranks_explicit_seam_id_first`
 - `agent_brief_selector_routes_changed_owner_function_to_seam`

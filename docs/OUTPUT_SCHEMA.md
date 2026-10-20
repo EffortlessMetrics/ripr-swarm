@@ -875,7 +875,7 @@ zeroed `summary`, same empty `findings`, same
 | `check_artifact_unusable` | `analysis/check-artifact` | A named `ripr context --from` check artifact is unreadable, malformed, foreign, or identity-mismatched (#7331). |
 | `gap_ledger_unusable` | `analysis/gap-ledger` | A named `ripr rerun --gap-ledger` file cannot be read or parsed (#7331). |
 | `seam_id_unknown` | `analysis/seam-inventory` | A named `ripr agent packet --seam-id` matches no current seam (#7331). |
-| `diff_input_unsupported` | `analysis/diff-input` | The shared diff parser refused a region of an `agent brief --diff` or `--base` input; no brief selection ran. |
+| `diff_input_unsupported` | `analysis/diff-input` | The shared diff parser refused a region, admission, or truncated textual section of an `agent brief --diff` or `--base` input; no brief selection ran. |
 | `git_invocation_timeout` | `analysis/git-timeout` | A git invocation exceeded its cooperative deadline and was terminated. |
 | `analysis_timeout` | `analysis/timeout` | The `ripr check` wall-clock budget (`--timeout SECS`, `RIPR_CHECK_TIMEOUT`) ran out before analysis finished; no findings were produced (#5369). |
 | `analysis_failed` | `analysis/failure` | Honest fallback for any other failure: the run produced no findings, with no claim about which stage stopped. |
@@ -15945,16 +15945,20 @@ small working-set summary that selects the top seams relevant to the files,
 lines, diff, base ref, or explicit seam ID an agent is touching.
 
 For `--diff` and `--base`, shared-parser limitations (combined hunks,
-unresolved conflict regions, or malformed hunks) refuse the invocation before
+unresolved conflict regions, or malformed hunks) and independently recorded
+truncated textual sections refuse the invocation before
 selection. The command exits `2` with the refusal envelope above, identity
 `diff_input_unsupported`, `downstream_consumable: false`, and the parser's
 reason and recovery in the diagnostic. This also applies when ordinary hunks
 are present and to parser admission errors such as changed-file-count and
 path-depth bounds. The brief keeps `diff_input_unsupported` for these errors;
-`check` retains its existing budget-refusal identities. A valid empty patch
+`check` retains its existing budget-refusal identities. Path-depth admission
+follows hunk-boundary decisions, so slash-heavy source lines beginning with
+`++ ` or `-- ` are payload rather than path headers. A valid empty patch
 still succeeds: an empty inventory returns
 empty `top_seams`; a nonempty inventory retains the disclosed repository
-fallback. Successful emptiness does not establish test adequacy.
+fallback. Valid mode-only input retains its existing fallback too. Successful
+emptiness does not establish test adequacy.
 
 Command forms:
 
