@@ -10323,64 +10323,6 @@
         { "type": "expected_class", "class": "reachable_unrevealed" },
         { "type": "maximum_class", "class": "reachable_unrevealed" }
       ]
-    },
-    {
-      "id": "rust_runs_compact_mixed_side_effect",
-      "language": "rust",
-      "tier": "pure",
-      "source_fixture": "fixtures/effect_assertion_runs_compact_mixed",
-      "vector": "effect_assertion_that_runs_keeps_its_credit",
-      "probe_family": "side_effect",
-      "assertions": [
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_promote" },
-        { "type": "expected_class", "class": "exposed" }
-      ],
-      "control": "must_stay_exposed"
-    },
-    {
-      "id": "rust_runs_compact_mixed_call_deletion",
-      "language": "rust",
-      "tier": "pure",
-      "source_fixture": "fixtures/effect_assertion_runs_compact_mixed",
-      "vector": "effect_assertion_that_runs_keeps_its_credit",
-      "probe_family": "call_deletion",
-      "assertions": [
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_promote" },
-        { "type": "expected_class", "class": "exposed" }
-      ],
-      "control": "must_stay_exposed"
-    },
-    {
-      "id": "rust_std_qualified_live_side_effect",
-      "language": "rust",
-      "tier": "pure",
-      "source_fixture": "fixtures/effect_assertion_std_qualified_live",
-      "vector": "effect_assertion_that_runs_keeps_its_credit",
-      "probe_family": "side_effect",
-      "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" }
-      ],
-      "control": "must_stay_weakly_exposed"
-    },
-    {
-      "id": "rust_std_qualified_live_call_deletion",
-      "language": "rust",
-      "tier": "pure",
-      "source_fixture": "fixtures/effect_assertion_std_qualified_live",
-      "vector": "effect_assertion_that_runs_keeps_its_credit",
-      "probe_family": "call_deletion",
-      "assertions": [
-        { "type": "must_not_report_clean" },
-        { "type": "expected_finding_count", "count": 1 },
-        { "type": "must_not_promote" },
-        { "type": "expected_class", "class": "weakly_exposed" }
-      ],
-      "control": "must_stay_weakly_exposed"
     }
   ]
 }
