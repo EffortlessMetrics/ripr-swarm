@@ -91,10 +91,10 @@
     }
    },
    "variant-enum-computed-initializer": {
-    "commit": "d6e30b12609ece564d179065238ee27ccf9fd1f9",
-    "tree": "d802fbd63d7d3aee5c7ab07fae27a400646d85cc",
+    "commit": "2fd1a00878787939e27eb818f4222693485990f3",
+    "tree": "90973247aaf7739fa2b5a222a5fc382a129ae39f",
     "files": {
-     "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
+     "package-lock.json": "a93951553edc81a4be8db16f3e7012d3bb06a84cddf746bcf7c4af88192f3b51",
      "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
      "src/pricing.ts": "e0c5ef9ad991eeb14f09b3a5048274c17a9d04823a19ae78353a6aa6c17fa8e4",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"

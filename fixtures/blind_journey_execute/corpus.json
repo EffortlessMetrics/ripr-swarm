@@ -8319,8 +8319,8 @@
     "candidate": {
      "repository": "fixtures/blind_journey_installed_typescript/repository",
      "base": "7634ae2d3c1ce78b8c2eae627a57b2c898360c2d",
-     "head": "d6e30b12609ece564d179065238ee27ccf9fd1f9",
-     "tree": "d802fbd63d7d3aee5c7ab07fae27a400646d85cc",
+     "head": "2fd1a00878787939e27eb818f4222693485990f3",
+     "tree": "90973247aaf7739fa2b5a222a5fc382a129ae39f",
      "root": "/srv/installed typescript journey/pricing-fixture-境界",
      "package": "ripr",
      "binary": "ripr",
