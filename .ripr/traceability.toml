@@ -473,6 +473,10 @@ id = "RIPR-SPEC-0005"
 name = "repo seam inventory and test grip"
 spec = "docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md"
 tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/tests/module_extraction.rs::module_extraction_controls",
+  "crates/ripr/src/analysis/test_grip_evidence/tests/module_extraction.rs::module_extraction_repair_card_keeps_indexed_unit_target",
+  "crates/ripr/src/analysis/test_grip_evidence/related_tests/visibility.rs::tests::module_extraction_visibility_requires_ordinary_module_placement",
+  "crates/ripr/src/analysis/facts/member_crates.rs::tests::unit_target_discovery_flags_do_not_change_shared_root_authority",
   "crates/ripr/tests/match_arm_geometry.rs::attributed_and_comma_less_arms_keep_complete_body_spans",
   "crates/ripr/src/analysis/syntax/ra/probe_shape_walk_tests.rs::arm_geometry_refuses_macro_arrows_and_invalid_source",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::given_match_and_predicate_shapes_when_repo_inventory_runs_then_arms_have_full_spans",
@@ -847,6 +851,11 @@ code = [
   "crates/ripr/src/analysis/test_grip_evidence.rs",
   "crates/ripr/src/analysis/test_grip_evidence/owner_result_binding.rs",
   "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
+  "crates/ripr/src/analysis/test_grip_evidence/related_tests.rs",
+  "crates/ripr/src/analysis/test_grip_evidence/related_tests/visibility.rs",
+  "crates/ripr/src/analysis/facts/member_crates.rs",
+  "crates/ripr/src/analysis/seam_cache.rs",
+  "crates/ripr/src/app/repair_card.rs",
   "crates/ripr/src/analysis/value_resolution.rs",
   "crates/ripr/src/analysis/seam_classification.rs",
   "crates/ripr/src/output/repo_seams.rs",
