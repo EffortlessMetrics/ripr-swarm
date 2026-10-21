@@ -17102,9 +17102,9 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0286"
+id = "RIPR-SPEC-0293"
 name = "Comparison assertions reach a changed user PartialEq"
-spec = "docs/specs/RIPR-SPEC-0286-partialeq-assert-dispatch.md"
+spec = "docs/specs/RIPR-SPEC-0293-partialeq-assert-dispatch.md"
 tests = [
   "crates/ripr/tests/partialeq_assert_dispatch.rs::an_assert_eq_over_two_keys_reaches_the_changed_eq",
   "crates/ripr/tests/partialeq_assert_dispatch.rs::comparisons_that_do_not_establish_the_key_type_stay_unrelated",
@@ -17149,9 +17149,12 @@ code = [
   "crates/ripr/src/analysis/classifier/finding.rs",
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0286-partialeq-assert-dispatch.md",
+  "docs/specs/RIPR-SPEC-0293-partialeq-assert-dispatch.md",
 ]
 metrics = ["unit_test_pass_rate"]
+
+[[behavior]]
+id = "RIPR-SPEC-0286"
 name = "empty-diff base candidate must be analyzable"
 spec = "docs/specs/RIPR-SPEC-0286-empty-diff-base-candidate.md"
 tests = [

@@ -1,4 +1,4 @@
-# RIPR-SPEC-0286: Comparison assertions reach a changed user PartialEq
+# RIPR-SPEC-0293: Comparison assertions reach a changed user PartialEq
 
 Status: proposed
 
