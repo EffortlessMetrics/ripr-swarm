@@ -327,7 +327,6 @@ fn shared_owner_test_seams_keep_receiver_attribution() -> Result<(), String> {
     Ok(())
 }
 
-
 #[test]
 fn repeated_runs_return_the_complete_inventory_unchanged() -> Result<(), String> {
     let fixture = Fixture::create()?;
@@ -342,7 +341,6 @@ fn repeated_runs_return_the_complete_inventory_unchanged() -> Result<(), String>
     }
     Ok(())
 }
-
 
 #[test]
 fn full_and_compact_reporting_agree_on_grip_counts() -> Result<(), String> {
