@@ -94,9 +94,11 @@ pub(crate) fn oracle_projection(
             kind.as_str().replace('_', " ")
         ),
         (strength, kind) => format!(
-            "{} {} oracle",
-            strength.as_str(),
-            kind.as_str().replace('_', " ")
+            "{} oracle",
+            crate::output::oracle_phrase::oracle_phrase(
+                strength.as_str(),
+                &kind.as_str().replace('_', " ")
+            )
         ),
     }
 }
@@ -155,6 +157,11 @@ mod tests {
         assert_eq!(
             oracle_projection(&OracleStrength::None, &OracleKind::ExactValue, false),
             "no oracle"
+        );
+        // A kind that already leads with its strength word is not doubled.
+        assert_eq!(
+            oracle_projection(&OracleStrength::Smoke, &OracleKind::SmokeOnly, true),
+            "smoke only oracle"
         );
         // A graded pair keeps the "<strength> <kind> oracle" spelling.
         assert_eq!(

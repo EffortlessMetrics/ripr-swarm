@@ -55,12 +55,10 @@ Updated:
 ## Pending — field_match_macro_option_shadow (5)
 
 Reason:
-RIPR-SPEC-0224: human output words a test with no assertion 'uses no oracle' (#8747)
+RIPR-SPEC-0152: base-side findings render at note severity in human output (#9004)
 
 Command:
 `cargo xtask goldens bless field_match_macro_option_shadow --reason "..."`
 
 Updated:
-- `expected/check.json`
-- `expected/human.txt`
 - `expected/human-full.txt`
