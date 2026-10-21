@@ -482,7 +482,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// (#4680). Old entries preserve the wrong target kind or oracle credit.
 /// `1.88`: a `debug_assert_eq!` owner pin withholds the gap under
 /// `rust_debug_assertion_profile_unresolved` (#8051). Old entries keep it.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.88";
+/// `1.89`: a mockall `times(N)` on the one method a first-statement guard's
+/// block calls, with test inputs on both sides of the edge, discriminates
+/// the guard (RIPR-SPEC-0305). Old entries keep it weakly exposed.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.89";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -617,7 +620,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.88";
 /// `0.93`: same module-motion target and private relation evidence as full `1.87`.
 /// `0.94`: the cache body carries `statically_contradicted_related_tests`.
 /// `0.95`: same `debug_` assertion limit as full `1.88` (#8051).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.95";
+/// `0.96`: same mock call-count evidence as full `1.89`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.96";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -754,7 +758,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.95";
 /// `0.93`: same module-motion target and private relation evidence as full `1.87`.
 /// `0.94`: the cache body carries `statically_contradicted_related_tests`.
 /// `0.95`: same `debug_` assertion limit as full `1.88` (#8051).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.95";
+/// `0.96`: same mock call-count evidence as full `1.89`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.96";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4643,7 +4648,8 @@ mod tests {
         // 1.85 -> 1.86: cached observed-value test file (#8948).
         // 1.86 -> 1.87: module-motion target identity and private relation evidence (#4680).
         // 1.87 -> 1.88: the `debug_assert_eq!` profile limit (#8051).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.88");
+        // 1.88 -> 1.89: mock call counts observe a guard's side flip (RIPR-SPEC-0305).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.89");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4720,8 +4726,9 @@ mod tests {
         // 0.92 -> 0.93: same module-motion evidence as full 1.87 (#4680).
         // 0.93 -> 0.94: the cache body carries `statically_contradicted_related_tests`.
         // 0.94 -> 0.95: same `debug_` assertion limit as full 1.88 (#8051).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.95");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.95");
+        // 0.95 -> 0.96: same mock call-count evidence as full 1.89.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.96");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.96");
     }
 
     #[test]

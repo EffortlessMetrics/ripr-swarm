@@ -1,4 +1,4 @@
-# RIPR-SPEC-0305: Check can analyze a named subset of an oversized diff
+# RIPR-SPEC-0309: Check can analyze a named subset of an oversized diff
 
 Status: proposed
 
