@@ -195,4 +195,3 @@ crates/ripr/tests/call_budget_repo_exposure.rs|Command::new|1|call-budget-repo-e
 crates/ripr/tests/call_budget_repo_exposure.rs|use std::process::Command|1|call-budget-repo-exposure|#8600: imports Command only for the bounded binary invocation described above.
 crates/ripr/tests/call_budget_slice_positive.rs|Command::new|1|call-budget-slice-positive|#8600: runs the built ripr binary over a temp workspace to pin the saturated-table reading; no network or credential operation.
 crates/ripr/tests/call_budget_slice_positive.rs|use std::process::Command|1|call-budget-slice-positive|#8600: imports Command only for the bounded binary invocation described above.
-crates/ripr/src/workspace_status.rs|Command::new|1|workspace-status-git-marker-test|#9075: Unix-only test creates a FIFO `.git` marker with `mkfifo` in an exclusively owned temp directory to prove the git-marker probe never opens a non-regular marker; no production spawn, network, or user-repository mutation.

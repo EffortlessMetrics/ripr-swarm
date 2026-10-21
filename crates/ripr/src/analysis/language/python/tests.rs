@@ -2802,16 +2802,10 @@ fn src_layout_same_named_function_from_other_module_does_not_credit_exposed() ->
             ExposureClass::Exposed,
             "`{import_line}` is not the owner module and must not credit exposed"
         );
-        // The test imports a different module's `bulk_discount`, so it is not
-        // related to the owner at all (#8759).
-        assert_eq!(
-            finding.class,
-            ExposureClass::NoStaticPath,
-            "`{import_line}` must not relate the test to the owner"
-        );
         assert_eq!(
             finding.alignment_reason.as_deref(),
-            Some("no_strong_oracle")
+            Some("strong_oracle_observes_different_sink"),
+            "`{import_line}` must stay on the fail-closed orthogonal branch"
         );
     }
     Ok(())
@@ -2830,10 +2824,9 @@ fn src_directory_below_repo_root_is_not_stripped_for_non_src_owner() -> Result<(
         "0.15",
     )?;
     assert_ne!(finding.class, ExposureClass::Exposed);
-    assert_eq!(finding.class, ExposureClass::NoStaticPath);
     assert_eq!(
         finding.alignment_reason.as_deref(),
-        Some("no_strong_oracle")
+        Some("strong_oracle_observes_different_sink")
     );
     Ok(())
 }

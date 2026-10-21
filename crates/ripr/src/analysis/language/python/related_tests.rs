@@ -519,16 +519,20 @@ pub(super) fn related_test_relation(
     None
 }
 
-/// Whether the test imports the free-function owner's bare name (under any
-/// alias) from a different
-/// module and has no import that reaches the owner's module (#8759). In a flat
-/// package two modules each define `quote`; a test that does
-/// `from pkg.a import quote` and calls `quote(...)` exercises `pkg.a`, so the
-/// call text must not relate it to `pkg/b.py::quote`. Only affirmative
-/// evidence withholds the relation: a test with no import of the name (local
-/// definition, star import from elsewhere, in-file use) keeps the name-based
-/// relation, and so does a test that also imports the owner's module or a
-/// package re-exporting it. The owner's own file never withholds.
+/// Whether the test imports the free-function owner's name (under any alias)
+/// from a workspace module that defines its own function of that name, and no
+/// import reaches the owner's module (#8759). In a flat package two modules
+/// each define `quote`; a test that does `from pkg.a import quote` exercises
+/// `pkg.a`, so a matching call must not relate it to `pkg/b.py::quote`.
+///
+/// Only affirmative evidence withholds the relation: the import's source must
+/// be exactly the module path of another workspace file that defines the same
+/// name ([`apply_rival_definition_modules`]). A facade or package that
+/// re-exports the name, an unresolved or third-party source, a source the
+/// owner's path could also be spelled as under an unknown import root
+/// (`pricing.discounts` for `app/pricing/discounts.py`), an ambiguous src-layout
+/// name, a test with no import of the name, a star import, and the owner's own
+/// file all keep the name-based relation.
 fn bare_name_bound_to_other_module(test: &PythonTest, owner: &PythonOwner) -> bool {
     if owner.is_module_owner()
         || owner.qualified_name != owner.name
@@ -536,24 +540,71 @@ fn bare_name_bound_to_other_module(test: &PythonTest, owner: &PythonOwner) -> bo
             owner.owner_kind,
             Some(OwnerKind::Method | OwnerKind::ClassMethod)
         )
+        || owner.rival_definition_modules.is_empty()
         || test.file == owner.file
     {
         return false;
     }
-    let binds_name =
-        |import: &PythonImport| import.imported != "*" && import.imported == owner.name;
-    if !test.imports.iter().any(binds_name) {
-        return false;
+    let owner_paths = owner_module_paths(&owner.file);
+    let may_be_owners_module = |module: &str| {
+        owner_paths.iter().any(|path| {
+            path == module
+                || path.ends_with(&format!(".{module}"))
+                || module.ends_with(&format!(".{path}"))
+        }) || owner
+            .ambiguous_src_modules
+            .iter()
+            .any(|ambiguous| ambiguous.module == module)
+    };
+    let imports_name_from_rival = test.imports.iter().any(|import| {
+        import.imported == owner.name
+            && owner
+                .rival_definition_modules
+                .contains(&import.source_module)
+            && !may_be_owners_module(&import.source_module)
+    });
+    imports_name_from_rival
+        && !test.imports.iter().any(|import| {
+            import_source_module_matches_owner(import, owner, &test.file)
+                || imported_module_matches_owner(import, owner, &test.file)
+                || imports_owner_module(import, owner)
+                || !submodule_receivers(import, owner, &test.file).is_empty()
+        })
+}
+
+/// Records on each free-function owner the module paths of other workspace
+/// files defining a free function of the same name (#8759), the affirmative
+/// evidence [`bare_name_bound_to_other_module`] needs.
+pub(super) fn apply_rival_definition_modules(owners: &mut [PythonOwner]) {
+    let mut modules_by_name: BTreeMap<String, Vec<(PathBuf, Vec<String>)>> = BTreeMap::new();
+    for owner in owners.iter() {
+        if owner.is_module_owner()
+            || owner.qualified_name != owner.name
+            || matches!(
+                owner.owner_kind,
+                Some(OwnerKind::Method | OwnerKind::ClassMethod)
+            )
+        {
+            continue;
+        }
+        let defs = modules_by_name.entry(owner.name.clone()).or_default();
+        if !defs.iter().any(|(file, _)| *file == owner.file) {
+            defs.push((owner.file.clone(), owner_module_paths(&owner.file)));
+        }
     }
-    !test.imports.iter().any(|import| {
-        import_source_module_matches_owner(import, owner, &test.file)
-            || imported_module_matches_owner(import, owner, &test.file)
-            || imports_owner_module(import, owner)
-            || !submodule_receivers(import, owner, &test.file).is_empty()
-            // A relative or unresolved source cannot be told from the
-            // owner's module: fail closed on the relation.
-            || (import.source_module.starts_with('.') && binds_name(import))
-    })
+    for owner in owners.iter_mut() {
+        let Some(defs) = modules_by_name.get(&owner.name) else {
+            continue;
+        };
+        if owner.qualified_name != owner.name {
+            continue;
+        }
+        owner.rival_definition_modules = defs
+            .iter()
+            .filter(|(file, _)| *file != owner.file)
+            .flat_map(|(_, paths)| paths.iter().cloned())
+            .collect();
+    }
 }
 
 /// Whether a fixture the test names calls the owner by the rules a test body
