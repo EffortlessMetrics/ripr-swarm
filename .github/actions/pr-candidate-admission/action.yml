@@ -106,8 +106,17 @@ runs:
         rc_cut=0
         candidate_allowed="admitted,refused,self_test_pass,not_applicable"
 
+        sanitize_output_value() {
+          local value="$1"
+          value="${value//$'\n'/ }"
+          value="${value//$'\r'/ }"
+          printf '%s' "$value" | tr -d '\001-\010\013\014\016-\037\177'
+        }
+
         refuse_early() {
-          local reason="$1" detail="$2"
+          local reason detail
+          reason="$(sanitize_output_value "$1")"
+          detail="$(sanitize_output_value "$2")"
           echo "::error::candidate admission refused ($reason): $detail"
           if [ -n "${GITHUB_OUTPUT:-}" ]; then
             {
@@ -275,6 +284,19 @@ runs:
         cut_status="$(jq -r '.status' "$cut_result")"
         cut_reason="$(jq -r '.reason' "$cut_result")"
         cut_detail="$(jq -r '.detail // ""' "$cut_result")"
+        status="$(sanitize_output_value "$status")"
+        reason="$(sanitize_output_value "$reason")"
+        detail="$(sanitize_output_value "$detail")"
+        claim="$(sanitize_output_value "$claim")"
+        acceptance_delta="$(sanitize_output_value "$acceptance_delta")"
+        competing_prs="$(sanitize_output_value "$competing_prs")"
+        changed_files="$(sanitize_output_value "$changed_files")"
+        changed_lines="$(sanitize_output_value "$changed_lines")"
+        max_files="$(sanitize_output_value "$max_files")"
+        max_lines="$(sanitize_output_value "$max_lines")"
+        cut_status="$(sanitize_output_value "$cut_status")"
+        cut_reason="$(sanitize_output_value "$cut_reason")"
+        cut_detail="$(sanitize_output_value "$cut_detail")"
         {
           echo "status=$status"
           echo "reason=$reason"
@@ -293,13 +315,15 @@ runs:
           echo ""
           echo "- status: \`$status\`"
           echo "- reason: \`$reason\`"
-          if [ "$status" = "refused" ]; then
-            echo "- refusal reason: \`$reason\` — ${detail:-refresh the exact PR/head evidence and retry}"
-          fi
           echo "- hard-cut status: \`$cut_status\`"
           echo "- hard-cut reason: \`$cut_reason\`"
-          if [ "$cut_status" = "refused" ]; then
-            echo "- hard-cut refusal reason: \`$cut_reason\` — ${cut_detail:-the active cut is frozen; only a packet-only #5114/#2766 control update may qualify before #1609}"
+          if [ "$status" = "refused" ] && [ "$cut_status" = "refused" ]; then
+            echo "- refusal reason: \`$reason\` — ${detail:-refresh the exact PR/head evidence and retry}"
+            echo "- also refused (subordinate): hard-cut \`$cut_reason\`"
+          elif [ "$status" = "refused" ]; then
+            echo "- refusal reason: \`$reason\` — ${detail:-refresh the exact PR/head evidence and retry}"
+          elif [ "$cut_status" = "refused" ]; then
+            echo "- refusal reason: \`$cut_reason\` — ${cut_detail:-the active cut is frozen; only a packet-only #5114/#2766 control update may qualify before #1609}"
           fi
           echo "- claim: \`$claim\`"
           echo "- acceptance delta: \`$acceptance_delta\`"

@@ -229,7 +229,7 @@ def decide(
         return refuse(
             "competing_candidate",
             peers,
-            detail=f"trusted competing PR(s) {listed} share the same governing claim and acceptance delta; reconcile them and record the accepted winner/losing disposition in both PR bodies before qualification",
+            detail=f"trusted competing PR(s) {listed} share the same governing claim and acceptance delta; reconcile them and record the accepted winner/losing disposition naming the winning PR in one of the competing PR bodies (or name a listed peer as the proposed replacement in the winning PR body) before qualification",
         )
 
     changed_files = int(current.get("changed_files") or 0)
@@ -428,6 +428,9 @@ def self_test() -> None:
     assert "161 files" in run(oversized, [oversized])["detail"]
     assert "160 files" in run(oversized, [oversized])["detail"]
     assert "#11" in run(current, [current, duplicate])["detail"]
+    competing_detail = run(current, [current, duplicate])["detail"]
+    assert "one of the competing PR bodies" in competing_detail
+    assert "both PR bodies" not in competing_detail
     assert run(oversized, [oversized], docs=True)["status"] == "admitted"
     assert run(current, [current], "b" * 40)["reason"] == "candidate_head_moved"
     assert (

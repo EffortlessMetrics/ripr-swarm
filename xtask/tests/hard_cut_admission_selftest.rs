@@ -76,7 +76,13 @@ fn run_scenario(
     initial_absent: bool,
     active: Option<(&str, &str)>,
 ) -> Result<(i32, String, String), String> {
-    run_scenario_body(second_ref_packet_state, initial_absent, active, false)
+    run_scenario_body(
+        second_ref_packet_state,
+        initial_absent,
+        active,
+        false,
+        false,
+    )
 }
 
 fn run_scenario_body(
@@ -84,6 +90,7 @@ fn run_scenario_body(
     initial_absent: bool,
     active: Option<(&str, &str)>,
     missing_body: bool,
+    hostile_head: bool,
 ) -> Result<(i32, String, String), String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     let action_dir = root.join(".github/actions/pr-candidate-admission");
@@ -123,6 +130,9 @@ fn run_scenario_body(
     }
     if missing_body {
         std::fs::write(tmp.join("missing_body"), "1").map_err(|e| e.to_string())?;
+    }
+    if hostile_head {
+        std::fs::write(tmp.join("hostile_head"), "1").map_err(|e| e.to_string())?;
     }
     if let Some((files_json, base_parent)) = active {
         let packet = serde_json::json!({
@@ -167,7 +177,7 @@ case "$url" in
     base64 "$CONTROL_TMP/inactive.json" | tr -d '\r\n' | jq -R '{content: .}' ;;
   */files?*) if [ -e "$CONTROL_TMP/files.json" ]; then cat "$CONTROL_TMP/files.json"; else echo '[{"filename":"src/lib.rs","status":"modified"}]'; fi ;;
   */pulls\?state*) echo '[]' ;;
-  *) if [ -e "$CONTROL_TMP/missing_body" ]; then echo '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"o/r"}},"base":{"ref":"main"},"changed_files":1,"additions":1,"deletions":0,"body":""}'; else echo '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"o/r"}},"base":{"ref":"main"},"changed_files":1,"additions":1,"deletions":0,"body":"Governing issue or accepted claim: #5391\nAcceptance delta (one sentence): race control"}'; fi ;;
+  *) if [ -e "$CONTROL_TMP/hostile_head" ]; then printf '%s\n' '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaa\nstatus=admitted","repo":{"full_name":"o/r"}},"base":{"ref":"main"},"changed_files":1,"additions":1,"deletions":0,"body":"Governing issue or accepted claim: #5391\nAcceptance delta (one sentence): race control"}'; elif [ -e "$CONTROL_TMP/missing_body" ]; then echo '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"o/r"}},"base":{"ref":"main"},"changed_files":1,"additions":1,"deletions":0,"body":""}'; else echo '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"o/r"}},"base":{"ref":"main"},"changed_files":1,"additions":1,"deletions":0,"body":"Governing issue or accepted claim: #5391\nAcceptance delta (one sentence): race control"}'; fi ;;
 esac
 "#;
     std::fs::write(tmp.join("gh"), gh).map_err(|e| e.to_string())?;
@@ -290,7 +300,7 @@ fn wrapper_refuses_ordinary_pr_while_the_packet_is_active() -> Result<(), String
 
 #[test]
 fn wrapper_summary_names_the_missing_template_lines() -> Result<(), String> {
-    let (code, outputs, summary) = run_scenario_body("inactive", false, None, true)?;
+    let (code, outputs, summary) = run_scenario_body("inactive", false, None, true, false)?;
     if code != 1 {
         return Err(format!(
             "a PR body missing the template lines must be refused, got exit {code}: {outputs}"
@@ -322,11 +332,76 @@ fn wrapper_summary_names_the_concrete_hard_cut_refusal_reason() -> Result<(), St
             "ordinary PR must be refused as cut_frozen, got exit {code} reason {reason:?}"
         ));
     }
-    if !summary.contains("- hard-cut refusal reason: `cut_frozen`")
+    if !summary.contains("- refusal reason: `cut_frozen`")
         || !summary.contains("hard-cut freeze")
+        || summary.contains("- hard-cut refusal reason:")
     {
         return Err(format!(
             "step summary must name the single concrete refusal reason, got: {summary}"
+        ));
+    }
+    if summary.matches("- refusal reason:").count() != 1 {
+        return Err(format!(
+            "step summary must present exactly one primary refusal reason, got: {summary}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn wrapper_summary_names_one_primary_reason_when_both_admissions_refuse() -> Result<(), String> {
+    let (code, outputs, summary) = run_scenario_body(
+        "active",
+        false,
+        Some((PRODUCT_ONLY, &"b".repeat(40))),
+        true,
+        false,
+    )?;
+    if code != 1
+        || !outputs.contains("reason=claim_identity_missing")
+        || !outputs.contains("cut_reason=cut_frozen")
+    {
+        return Err(format!(
+            "both-refused fixture must refuse as candidate and hard-cut, got exit {code}: {outputs}"
+        ));
+    }
+    if summary.matches("- refusal reason:").count() != 1
+        || !summary.contains("- refusal reason: `claim_identity_missing`")
+        || !summary.contains("- also refused (subordinate): hard-cut `cut_frozen`")
+        || summary.contains("- hard-cut refusal reason:")
+    {
+        return Err(format!(
+            "step summary must present the candidate refusal as primary and the hard-cut refusal as subordinate, got: {summary}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn wrapper_sanitizes_newline_bearing_head_in_outputs() -> Result<(), String> {
+    let (code, outputs, summary) = run_scenario_body("inactive", false, None, false, true)?;
+    if code != 1 || !outputs.contains("reason=candidate_head_moved") {
+        return Err(format!(
+            "newline-bearing head must be refused as candidate_head_moved, got exit {code}: {outputs}"
+        ));
+    }
+    if outputs.lines().any(|line| line == "status=admitted") {
+        return Err(format!(
+            "newline-bearing head must not forge an extra GITHUB_OUTPUT line, got: {outputs}"
+        ));
+    }
+    if outputs.lines().count() != 11
+        || !outputs
+            .lines()
+            .any(|line| line.starts_with("detail=") && line.contains("status=admitted"))
+    {
+        return Err(format!(
+            "sanitized detail must stay on its single detail line, got: {outputs}"
+        ));
+    }
+    if summary.lines().any(|line| line == "status=admitted") {
+        return Err(format!(
+            "newline-bearing head must not forge a step-summary line, got: {summary}"
         ));
     }
     Ok(())
