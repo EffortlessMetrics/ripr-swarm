@@ -30550,3 +30550,57 @@ fn first_pr_unresolvable_refs_warn_once_per_ref_with_uniform_spellings()
     std::fs::remove_dir_all(&root)?;
     Ok(())
 }
+
+/// #9033: `ripr repair` on a seam whose inline test target is a production
+/// file with uncommitted changes refuses before writing any workflow artifact,
+/// and `ripr status` then says no repair attempt started instead of reporting
+/// an in-progress repair awaiting an after snapshot.
+#[test]
+fn repair_refuses_uncommitted_inline_target_before_writing_artifacts_and_status_says_so()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unbuilt_repair_fixture("repair-uncommitted-inline-no-writes")?;
+    let tests = std::fs::read_to_string(root.join("tests/pricing.rs"))?.replace(
+        "use boundary_gap_fixture::discounted_total;",
+        "use super::discounted_total;",
+    );
+    let mut source = std::fs::read_to_string(root.join("src/lib.rs"))?;
+    source.push_str(&format!("\n#[cfg(test)]\nmod tests {{\n{tests}\n}}\n"));
+    std::fs::write(root.join("src/lib.rs"), &source)?;
+    std::fs::remove_file(root.join("tests/pricing.rs"))?;
+    run_git(&root, &["add", "src/lib.rs", "tests/pricing.rs"])?;
+    commit_repair_fixture(&root, &["-qm", "inline tests"])?;
+    // The uncommitted edit to the production file that holds the test module.
+    source.push_str("\n// uncommitted edit\n");
+    std::fs::write(root.join("src/lib.rs"), source)?;
+
+    let root_arg = root.display().to_string();
+    let repair = run_ripr(&["repair", BOUNDARY_GAP_SEAM_ID, "--root", &root_arg]);
+    assert_failure(&repair);
+    let stderr = String::from_utf8_lossy(&repair.stderr);
+    assert!(
+        stderr.contains(
+            "No repair attempt started. Commit or stash `src/lib.rs`, then run `ripr repair`."
+        ),
+        "{stderr}"
+    );
+    for artifact in ["workflow.json", "agent-packet.json", "agent-brief.json"] {
+        assert!(
+            !root.join("target/ripr/workflow").join(artifact).exists(),
+            "a refused start must write no {artifact}; stderr:\n{stderr}"
+        );
+    }
+
+    let status = run_ripr(&["status", "--root", &root_arg]);
+    let status_out = String::from_utf8_lossy(&status.stdout);
+    let status_err = String::from_utf8_lossy(&status.stderr);
+    assert!(
+        !status_out.contains("after snapshot artifact is missing"),
+        "status must not claim a repair is in progress:\n{status_out}\n{status_err}"
+    );
+    assert!(
+        status_out.contains("Seam: unknown") && !status_out.contains("agent_packet"),
+        "status must report no repair in progress:\n{status_out}\n{status_err}"
+    );
+    std::fs::remove_dir_all(&root)?;
+    Ok(())
+}

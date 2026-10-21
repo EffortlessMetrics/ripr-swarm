@@ -202,6 +202,14 @@ pub(in crate::cli) fn drive_before_phase_deferring_stdout(
             &seam_id,
         )?);
     }
+    // #9033: a start held by an uncommitted production target refuses here,
+    // before the lock, the workflow artifacts and any attempt exist, so
+    // `ripr status` is not left reading a half-prepared repair.
+    if let Some(seam_id) = options.seam_id.as_deref()
+        && let Some(file) = crate::app::task_first::held_inline_start_file(&options.root, seam_id)
+    {
+        return Err(crate::app::task_first::uncommitted_start_refusal_message(&file).into());
+    }
     let _before_lock = lock_before_repair_attempt(&options.root)?;
     let seam_id = options
         .seam_id

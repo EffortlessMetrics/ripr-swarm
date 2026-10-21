@@ -627,6 +627,30 @@ pub(crate) fn repair_start_refusal(root: &Path, seam_id: &str) -> Option<RepairS
     RepairStartGate::new(root).check(seam_id)
 }
 
+/// The production file whose uncommitted changes make the before phase refuse
+/// `seam_id` (#9033), read from the same held-inline-target predicate the
+/// edit cage applies after the workflow artifacts are written. Asked first, it
+/// lets a start refuse before any artifact exists. `None` when the seam's
+/// target is committed, or when the inventory cannot say (the later phases
+/// still apply their own checks).
+pub(crate) fn held_inline_start_file(root: &Path, seam_id: &str) -> Option<String> {
+    let GateState::Loaded { classified, .. } = load_gate_state(root) else {
+        return None;
+    };
+    let entry = classified
+        .iter()
+        .find(|entry| entry.seam.id().as_str() == seam_id)?;
+    held_inline_target(root, &repair_packet_eligibility(entry).readiness)
+}
+
+/// The refusal for a start held by an uncommitted production target: states
+/// that no attempt started and what to do about it (#9033).
+pub(crate) fn uncommitted_start_refusal_message(file: &str) -> String {
+    format!(
+        "No repair attempt started. Commit or stash `{file}`, then run `ripr repair`. A repair confined to its inline `#[cfg(test)]` module starts only from the committed file; no workflow artifact was written"
+    )
+}
+
 /// The gate applied to one classified seam: [`repair_refusal_reason`], the
 /// edit-target predicate and the held inline target, plus the related test
 /// the by-hand work targets.
