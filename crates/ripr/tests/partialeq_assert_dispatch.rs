@@ -12,10 +12,6 @@ use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, check_workspa
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-const EXPECTED_CLASSES: [&str; 2] = [
-    "Predicate:InfectionUnknown",
-    "ReturnValue:PropagationUnknown",
-];
 const OLD_EQ: &str = "        self.name == other.name\n";
 const NEW_EQ: &str = "        self.name == other.name && self.id == other.id\n";
 
@@ -95,6 +91,13 @@ index 1111111..2222222 100644
         Ok(Self { root, eq_line })
     }
 
+    /// Writes an extra workspace file next to `src/lib.rs`.
+    fn with_file(self, name: &str, content: &str) -> Result<Self, String> {
+        std::fs::write(self.root.join("src").join(name), content)
+            .map_err(|error| format!("write {name} failed: {error}"))?;
+        Ok(self)
+    }
+
     /// Every finding the changed `eq` line produced.
     fn findings(&self) -> Result<Vec<Finding>, String> {
         let output = check_workspace(CheckInput {
@@ -140,6 +143,19 @@ fn direct_tests(findings: &[Finding]) -> Vec<String> {
         .iter()
         .flat_map(|finding| &finding.related_tests)
         .filter(|test| test.relation_reason == Some(RelationReason::DirectOwnerCall))
+        .map(|test| test.name.clone())
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Names of tests some finding relates to the owner by a non-direct reason.
+fn indirect_tests(findings: &[Finding]) -> Vec<String> {
+    let mut names: Vec<String> = findings
+        .iter()
+        .flat_map(|finding| &finding.related_tests)
+        .filter(|test| test.relation_reason != Some(RelationReason::DirectOwnerCall))
         .map(|test| test.name.clone())
         .collect();
     names.sort();
@@ -397,7 +413,16 @@ fn reaching_eq_through_assert_eq_moves_no_class_beyond_an_explicit_eq_call() -> 
     .findings()?;
     assert_eq!(direct_tests(&by_call), ["keys_equal_by_name"]);
     assert_eq!(classes(&by_macro), classes(&by_call), "{by_macro:?}");
-    assert_eq!(classes(&by_macro), EXPECTED_CLASSES, "{by_macro:?}");
+    // Hand-derived: the changed `&&` predicate is an infection question and
+    // its value is returned, so exactly these two probe families appear.
+    assert_eq!(
+        classes(&by_macro),
+        [
+            "Predicate:InfectionUnknown",
+            "ReturnValue:PropagationUnknown"
+        ],
+        "{by_macro:?}"
+    );
     Ok(())
 }
 
@@ -599,7 +624,7 @@ mod tests {
 }
 
 #[test]
-fn a_crate_root_import_may_bind_a_different_key_than_the_nested_owner() -> Result<(), String> {
+fn a_file_declaring_two_keys_is_ambiguous_for_the_nested_owner() -> Result<(), String> {
     let repo = custom(
         "#[derive(Debug, PartialEq)]
 pub struct Key {
@@ -725,4 +750,155 @@ fn an_assert_eq_inside_an_opaque_property_macro_is_not_credited() -> Result<(), 
     let findings = repo.findings()?;
     assert_eq!(direct_tests(&findings), ["plain_control"], "{findings:?}");
     Ok(())
+}
+
+/// Asserts the same two-Key comparison reaches the owner with a plain
+/// preamble (control) and not with `preamble` or the varied `tests`.
+fn assert_withheld(preamble: &str, tests: &str) -> Result<(), String> {
+    let control =
+        TempRepo::create(|body| source("impl PartialEq for Key", "", "", THREE_KEY_TESTS, body))?
+            .findings()?;
+    assert_eq!(direct_tests(&control), ["keys_equal_by_name"], "control");
+    let repo =
+        TempRepo::create(|body| source("impl PartialEq for Key", "", preamble, tests, body))?;
+    let findings = repo.findings()?;
+    assert_eq!(
+        direct_tests(&findings),
+        Vec::<String>::new(),
+        "{findings:?}"
+    );
+    assert_eq!(
+        indirect_tests(&findings),
+        ["keys_equal_by_name"],
+        "the test stays related by a non-direct reason: {findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_non_std_partial_eq_import_or_glob_is_not_credited() -> Result<(), String> {
+    assert_withheld("    use other::PartialEq;\n", THREE_KEY_TESTS)?;
+    assert_withheld("    use other::*;\n", THREE_KEY_TESTS)
+}
+
+#[test]
+fn an_imported_assert_eq_macro_is_not_credited() -> Result<(), String> {
+    assert_withheld("    use helpers::assert_eq;\n", THREE_KEY_TESTS)
+}
+
+#[test]
+fn a_macro_use_attribute_is_not_credited() -> Result<(), String> {
+    assert_withheld(
+        "    #[macro_use]\n    extern crate helpers;\n",
+        THREE_KEY_TESTS,
+    )
+}
+
+#[test]
+fn a_macro_use_in_another_workspace_file_is_not_credited() -> Result<(), String> {
+    let repo =
+        TempRepo::create(|body| source("impl PartialEq for Key", "", "", THREE_KEY_TESTS, body))?
+            .with_file("macros.rs", "#[macro_use]\nextern crate helpers;\n")?;
+    let findings = repo.findings()?;
+    assert_eq!(
+        direct_tests(&findings),
+        Vec::<String>::new(),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_user_assert_eq_in_another_workspace_file_is_not_credited() -> Result<(), String> {
+    let repo =
+        TempRepo::create(|body| source("impl PartialEq for Key", "", "", THREE_KEY_TESTS, body))?
+            .with_file(
+            "macros.rs",
+            "macro_rules! assert_eq {\n    ($a:expr, $b:expr) => {};\n}\n",
+        )?;
+    let findings = repo.findings()?;
+    assert_eq!(
+        direct_tests(&findings),
+        Vec::<String>::new(),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn qualified_std_assert_eq_is_the_std_comparison() -> Result<(), String> {
+    let std_path = plain(
+        "    #[test]
+    fn keys_equal_by_name() {
+        let a = Key::new(\"a\", 1);
+        let b = Key::new(\"a\", 2);
+        std::assert_eq!(a, b);
+    }
+",
+    )?
+    .findings()?;
+    assert_eq!(direct_tests(&std_path), ["keys_equal_by_name"]);
+    // A path whose root is only suffixed `_std` is some other crate's macro.
+    assert_withheld(
+        "",
+        "    #[test]
+    fn keys_equal_by_name() {
+        let a = Key::new(\"a\", 1);
+        let b = Key::new(\"a\", 2);
+        foo_std::assert_eq!(a, b);
+    }
+",
+    )
+}
+
+#[test]
+fn closure_if_let_and_match_rebinding_are_not_credited() -> Result<(), String> {
+    for (label, rebind) in [
+        ("closure", "let f = |a: u32| a + 1;\n        let _ = f(1);"),
+        (
+            "if_let",
+            "if let Some(a) = Some(1u32) {\n            let _ = a;\n        }",
+        ),
+        (
+            "match_arm",
+            "match Some(1u32) {\n            Some(a) => {\n                let _ = a;\n            }\n            None => {}\n        }",
+        ),
+    ] {
+        let tests = format!(
+            "    #[test]
+    fn keys_equal_by_name() {{
+        let a = Key::new(\"a\", 1);
+        let b = Key::new(\"a\", 2);
+        {rebind}
+        assert_eq!(a, b);
+    }}
+"
+        );
+        let repo = plain(&tests)?;
+        let findings = repo.findings()?;
+        assert_eq!(
+            direct_tests(&findings),
+            Vec::<String>::new(),
+            "{label}: {findings:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_shadowing_let_in_a_nested_block_leaves_the_binding_ambiguous() -> Result<(), String> {
+    assert_withheld(
+        "",
+        "    #[test]
+    fn keys_equal_by_name() {
+        let a = Key::new(\"a\", 1);
+        let b = Key::new(\"a\", 2);
+        {
+            let a = 5u32;
+            let _ = a;
+        }
+        assert_eq!(a, b);
+    }
+",
+    )
 }

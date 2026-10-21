@@ -91,7 +91,10 @@ for every other owner, every related test is read as before.
 
 ### Limits (fail closed)
 
-Not read: match-arm patterns rebinding an operand, `cfg`-gated impls,
+A match-arm pattern or guard naming an operand, and more than one `let` of
+it before the assertion, make the binding ambiguous and are refused. Not
+read: `cfg`-gated impls, a comma inside generic angle brackets in an
+operand (the split fails to resolve),
 constructor return types beyond a `Self`/`T` signature, generic impls, and
 operands typed through any other expression. Any such case yields no relation.
 
@@ -99,8 +102,10 @@ operands typed through any other expression. Any such case yields no relation.
 
 - Positive: two typed operands, a literal operand, `assert_ne!`, `debug_assert_eq!`.
 - Negatives: unresolved operand, another type returned by `new`, local
-  `trait PartialEq`, test-module shadow, `crate::T` binding a different `T`,
-  `use` of another `T`, user `assert_eq` macro, pattern rebinding, assertion
+  `trait PartialEq`, test-module shadow, two `T` declarations in one file,
+  `use` of another `T`, user `assert_eq` macro, pattern, closure, `if let` and match-arm rebinding, ambiguous
+  shadowing `let`, imported or `#[macro_use]` assert macros (any workspace
+  file), `use other::PartialEq` or glob, `foo_std::` paths, assertion
   inside a property macro, generic impl, custom `ne`.
 - Mixed: a name-only `eq` call beside a macro dispatch keeps the direct relation.
 - Classes equal those of an explicit `a.eq(&b)` call.
@@ -126,7 +131,9 @@ assert_eq!(a, b); // related to the changed `impl PartialEq for Key::eq`
 
 - No new exposure class, relation reason, oracle vocabulary or output field.
 - No type inference beyond the syntactic and declared-return forms above.
-- No reading of match-arm patterns, `cfg`-gated impls or generic impls.
+- Operands containing a top-level comma inside generic angle brackets
+  (`Vec<u8, A>`) split wrongly and fail to resolve: deliberate fail-closed.
+- No reading of `cfg`-gated impls or generic impls.
 
 ## Implementation Mapping
 

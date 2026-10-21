@@ -280,7 +280,12 @@ pub(super) fn test_asserts_equality_through_owner(
                 .iter()
                 .any(|name| defines_macro(&mask_comments_and_strings(other), name))
     });
-    !(imported || masked_source.contains("macro_use") || defined_anywhere)
+    // `#[macro_use] extern crate` in a crate-root file reaches every module.
+    let macro_use_anywhere = index
+        .files()
+        .values()
+        .any(|facts| facts.data().source.contains("macro_use"));
+    !(imported || masked_source.contains("macro_use") || macro_use_anywhere || defined_anywhere)
 }
 
 /// Whether the file may bring a different `T` into scope. The owner id
@@ -345,7 +350,9 @@ fn use_paths(masked: &str) -> Vec<&str> {
 /// before `before` ends: a `for`/`if let`/`while let`/`let` pattern holding
 /// it with other tokens (tuple or variant patterns), or a closure parameter.
 /// Binding resolution is flow-insensitive, so any such rebinding makes the
-/// last plain `let` unreliable. Match-arm patterns are not read.
+/// last plain `let` unreliable. A match-arm pattern is read as any later
+/// `=>` before the next `;`, `{` or `}`; that over-refuses (a name used in an
+/// arm body before another arm) and only withholds the relation.
 fn rebound_by_pattern(before: &str, name: &str) -> bool {
     let bytes = before.as_bytes();
     let mut from = 0usize;
@@ -355,7 +362,7 @@ fn rebound_by_pattern(before: &str, name: &str) -> bool {
         if !ident_boundary(bytes, at, at + name.len()) {
             continue;
         }
-        if in_struct_pattern(before, at) {
+        if in_struct_pattern(before, at) || in_match_arm_pattern(before, at + name.len()) {
             return true;
         }
         let line_start = before[..at].rfind([';', '{', '}']).map_or(0, |i| i + 1);
@@ -378,6 +385,22 @@ fn rebound_by_pattern(before: &str, name: &str) -> bool {
         {
             return true;
         }
+    }
+    false
+}
+
+/// Whether a `=>` follows `from` before any `;`, `{` or `}`: the name is
+/// (part of) a match-arm pattern or guard.
+fn in_match_arm_pattern(before: &str, from: usize) -> bool {
+    let bytes = before.as_bytes();
+    let mut i = from;
+    while i < bytes.len() {
+        match bytes[i] {
+            b';' | b'{' | b'}' => return false,
+            b'=' if bytes.get(i + 1) == Some(&b'>') => return true,
+            _ => {}
+        }
+        i += 1;
     }
     false
 }
@@ -563,10 +586,35 @@ fn operand_has_type(
         // A unit struct is its own value; any other bare name is a binding.
         return operand == impl_type
             || (!rebound_by_pattern(before, operand)
+                && count_lets(before, operand) == 1
                 && last_let_statement(before, operand)
                     .is_some_and(|stmt| statement_has_type(stmt, impl_type, returns_self)));
     }
     expression_has_type(operand, impl_type, returns_self)
+}
+
+/// How many `let [mut] name` statements bind `name` before the assertion.
+/// More than one makes the in-scope binding ambiguous (shadowing in a nested
+/// block), so the type is not resolved.
+fn count_lets(before: &str, name: &str) -> usize {
+    let bytes = before.as_bytes();
+    let mut count = 0;
+    let mut search = 0usize;
+    while let Some(relative) = before[search..].find("let ") {
+        let let_at = search + relative;
+        search = let_at + 1;
+        if let_at > 0 && is_ident_byte(bytes[let_at - 1]) {
+            continue;
+        }
+        let mut rest = before[let_at + 4..].trim_start();
+        if let Some(after) = rest.strip_prefix("mut ") {
+            rest = after.trim_start();
+        }
+        if rest.starts_with(name) && !rest[name.len()..].bytes().next().is_some_and(is_ident_byte) {
+            count += 1;
+        }
+    }
+    count
 }
 
 fn statement_has_type(stmt: &str, impl_type: &str, returns_self: &dyn Fn(&str) -> bool) -> bool {
@@ -829,5 +877,19 @@ mod tests {
         ] {
             assert!(!rebound_by_pattern(plain, "a"), "{plain}");
         }
+    }
+
+    #[test]
+    fn match_arm_patterns_and_repeated_lets_are_ambiguous() {
+        assert!(rebound_by_pattern(
+            "match x { Some(a) => 1, None => 2 }; ",
+            "a"
+        ));
+        assert!(!rebound_by_pattern("let a = K::new(); foo(a); ", "a"));
+        assert_eq!(
+            count_lets("let a = 1; { let mut a = 2; } let ab = 3;", "a"),
+            2
+        );
+        assert_eq!(count_lets("let a = 1;", "a"), 1);
     }
 }
