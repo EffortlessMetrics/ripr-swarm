@@ -163,7 +163,7 @@ fn public_repo_analysis_preserves_include_token_boundaries() -> Result<(), Box<d
         "include // ! comment\n !(\"parser_fragment.rs\");",
         "include![r###\"parser_fragment.rs\"###];",
         "include!{r###\"parser_fragment.rs\"###}",
-        "#[allow(dead_code)] r#include!(/* path */ \"parser_fragment.rs\");",
+        "#[doc = \"included fragment\"] r#include!(/* path */ \"parser_fragment.rs\");",
     ] {
         assert_literal_include_compilation_unit(invocation)?;
     }
