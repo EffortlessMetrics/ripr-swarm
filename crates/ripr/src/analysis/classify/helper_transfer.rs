@@ -2049,6 +2049,37 @@ mod tests {
         Ok(())
     }
 
+    // #9086: the memoized import answer is keyed by the name and the package
+    // names as well as the source, so one source asked under two names or two
+    // package sets inside a run scope gets each its own answer.
+    #[test]
+    fn scoped_import_answers_are_keyed_by_name_and_package_names() {
+        let source = "use serde::parse;\nfn t() { parse(); other(); }\n";
+        let mut foreign = index_with_tests(vec![], vec![]);
+        foreign.package_names = std::collections::BTreeSet::new();
+        let mut own = index_with_tests(vec![], vec![]);
+        own.package_names = ["serde".to_string()].into_iter().collect();
+        let ask = |index: &RustIndex, name: &str| source_imports_foreign_entry(index, source, name);
+        let unscoped = [
+            ask(&foreign, "parse"),
+            ask(&foreign, "other"),
+            ask(&own, "parse"),
+            ask(&own, "other"),
+        ];
+        assert_eq!(unscoped, [true, false, false, false]);
+        let _scope = crate::analysis::syntax::run_memo::enter();
+        // Two passes: the second is served from the scope.
+        for _ in 0..2 {
+            let scoped = [
+                ask(&foreign, "parse"),
+                ask(&foreign, "other"),
+                ask(&own, "parse"),
+                ask(&own, "other"),
+            ];
+            assert_eq!(scoped, unscoped);
+        }
+    }
+
     // #7080: tests that call the ambiguous name enter the refused chain;
     // tests that only call a unique wrapper of it do not.
     #[test]
