@@ -74,8 +74,10 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
             .is_ok_and(|stub| stub.already_present)
     {
         match revalidate_already_present_stub(&options.root, &config, &options.selector) {
-            Ok(AlreadyPresentRevalidation::Current) => {}
-            Ok(AlreadyPresentRevalidation::Rewrite(fresh)) => {
+            Ok(
+                AlreadyPresentRevalidation::Current(fresh)
+                | AlreadyPresentRevalidation::Rewrite(fresh),
+            ) => {
                 resolution = *fresh;
             }
             Err(message) => return Err(CommandError::Failure(message)),
@@ -667,7 +669,18 @@ weakly_gripped = "off"
         }
         // Unchanged bytes: the skip survives the re-read.
         match revalidate_already_present_stub(&root, &RiprConfig::default(), &selector) {
-            Ok(AlreadyPresentRevalidation::Current) => {}
+            Ok(AlreadyPresentRevalidation::Current(fresh)) => {
+                assert_eq!(fresh.source, resolution.source);
+                assert_eq!(
+                    fresh
+                        .outcome
+                        .as_ref()
+                        .map_err(|error| format!("{error:?}"))?
+                        .placement
+                        .offset(),
+                    present.placement.offset()
+                );
+            }
             other => {
                 let _ = std::fs::remove_dir_all(&root);
                 return Err(format!(
@@ -675,6 +688,41 @@ weakly_gripped = "off"
                 ));
             }
         }
+        // A concurrent edit moves the module without removing the stub.
+        // Current must retain fresh source/placement for the CLI report;
+        // keeping the original resolution would report the old line.
+        let moved = resolution.source.replace(
+            "#[cfg(test)]",
+            "// concurrent editor moved the test module\n\n#[cfg(test)]",
+        );
+        let file = root.join("src/lib.rs");
+        std::fs::write(&file, &moved).map_err(|error| error.to_string())?;
+        let AlreadyPresentRevalidation::Current(fresh) =
+            revalidate_already_present_stub(&root, &RiprConfig::default(), &selector)?
+        else {
+            return Err("a moved stub must still be current".to_string());
+        };
+        let fresh_stub = fresh
+            .outcome
+            .as_ref()
+            .map_err(|error| format!("{error:?}"))?;
+        assert!(fresh_stub.already_present);
+        assert_eq!(fresh_stub.test_name, present.test_name);
+        assert_eq!(fresh.source, moved);
+        let old_offset = present.placement.offset().ok_or("old placement offset")?;
+        let fresh_offset = fresh_stub
+            .placement
+            .offset()
+            .ok_or("fresh placement offset")?;
+        assert!(fresh_offset > old_offset);
+        assert_eq!(
+            line_of_offset(&fresh.source, fresh_offset),
+            line_of_offset(&resolution.source, old_offset) + 2
+        );
+        assert_eq!(
+            std::fs::read(&file).map_err(|error| error.to_string())?,
+            moved.as_bytes()
+        );
         // A concurrent edit removes the stub after resolution: the
         // revalidation must not report success from the stale read; it
         // returns a fresh resolution whose stub writes through the guarded

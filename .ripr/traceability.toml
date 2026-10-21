@@ -16956,9 +16956,11 @@ tests = [
   "crates/ripr/src/analysis/test_stub/tests.rs::recomputed_stub_for_the_same_seam_is_flagged_already_present",
   "crates/ripr/src/analysis/test_stub/tests.rs::same_named_but_different_test_still_suffixes",
   "crates/ripr/src/cli/commands/agent_stub.rs::tests::second_write_for_the_same_seam_reports_already_written",
+  "crates/ripr/src/cli/commands/agent_stub.rs::tests::already_present_write_revalidates_the_placement_file",
   "crates/ripr/src/cli/commands/agent_stub.rs::tests::strongly_gripped_stub_names_the_real_reason",
   "crates/ripr/src/cli/commands/agent_stub.rs::tests::config_disabled_class_stub_keeps_the_configured_off_wording",
   "crates/ripr/tests/agent_stub_at_disclosure.rs::second_write_reports_already_written_instead_of_a_duplicate",
+  "crates/ripr/tests/agent_stub_at_disclosure.rs::repeated_writes_preserve_source_bytes_and_metadata_with_name_collisions",
   "crates/ripr/tests/agent_stub_compiles.rs::at_kind_stub_discloses_strongly_gripped_classification",
   "crates/ripr/tests/agent_stub_at_disclosure.rs::off_line_predicate_note_precedes_the_grip_class_warning",
 ]

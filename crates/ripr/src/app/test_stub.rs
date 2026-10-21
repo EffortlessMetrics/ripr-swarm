@@ -940,8 +940,9 @@ pub(crate) fn write_test_stub(
 /// when `--write` would otherwise skip the file edit (#8990 review X3).
 #[derive(Debug)]
 pub(crate) enum AlreadyPresentRevalidation {
-    /// Current bytes still hold the identical stub: the write stays a no-op.
-    Current,
+    /// Current bytes still hold the identical stub: the write stays a no-op,
+    /// but output must use this fresh source and placement after an edit.
+    Current(Box<TestStubResolution>),
     /// The placement no longer holds the stub: this fresh resolution's stub
     /// is not `already_present`, so the caller writes it through the normal
     /// guarded path instead of reporting success from bytes the resolver
@@ -970,7 +971,9 @@ pub(crate) fn revalidate_already_present_stub(
         }
     })?;
     match &fresh.outcome {
-        Ok(stub) if stub.already_present => Ok(AlreadyPresentRevalidation::Current),
+        Ok(stub) if stub.already_present => {
+            Ok(AlreadyPresentRevalidation::Current(Box::new(fresh)))
+        }
         Ok(_) => Ok(AlreadyPresentRevalidation::Rewrite(Box::new(fresh))),
         Err(refusal) => Err(format!(
             "the workspace changed after the stub was computed ({}: {}); rerun `ripr agent stub`",
