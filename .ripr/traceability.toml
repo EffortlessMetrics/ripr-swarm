@@ -17243,6 +17243,10 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0297-display-debug-fmt-dispatch-reach.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
 
 [[behavior]]
 id = "RIPR-SPEC-0294"
