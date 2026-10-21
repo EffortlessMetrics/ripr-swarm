@@ -719,7 +719,9 @@ fn error_review_comments_packet(
         "warnings": [
             {
                 "kind": "tool_error",
-                "message": named_guard_line(error).unwrap_or_else(|| first_line(error)),
+                "message": named_guard_line(error)
+                    .or_else(|| bounded_check_document_line(error))
+                    .unwrap_or_else(|| first_line(error)),
                 "path": null
             }
         ],
@@ -1055,11 +1057,20 @@ fn render_error_review_comments_markdown(packet: &Value) -> String {
             .and_then(Value::as_str)
             .unwrap_or(DEFAULT_HEAD)
     );
+    let bounded_document = packet
+        .get("analysis_outcome")
+        .and_then(|outcome| outcome.get("document_complete"))
+        .is_some_and(|complete| complete == &Value::Bool(false));
+    if bounded_document {
+        markdown.push_str(&bounded_document_markdown(packet));
+    }
     if let Some(fallback) = packet.get("static_gap_fallback") {
         markdown.push_str("\n## Static seam fallback\n\n");
-        markdown.push_str(
-            "LLM review guidance failed, but the static check artifact still identified these gap locations:\n\n",
-        );
+        markdown.push_str(if bounded_document {
+            "Review guidance was refused for a findings-bounded check document, but the static check artifact still identified these gap locations:\n\n"
+        } else {
+            "LLM review guidance failed, but the static check artifact still identified these gap locations:\n\n"
+        });
         if let Some(seams) = fallback.get("seams").and_then(Value::as_array) {
             if seams.is_empty() {
                 markdown.push_str(
@@ -1110,6 +1121,25 @@ fn render_error_review_comments_markdown(packet: &Value) -> String {
     markdown
 }
 
+/// #9010: the producer's bounded-document disclosure, kept visible on the
+/// error packet. The producer analysis verdict is not rewritten; only the
+/// document-completeness fact and its recovery lever are named.
+fn bounded_document_markdown(packet: &Value) -> String {
+    let outcome = packet.get("analysis_outcome");
+    let count = |key: &str| {
+        outcome
+            .and_then(|outcome| outcome.get(key))
+            .and_then(Value::as_u64)
+    };
+    let counts = match (count("findings_rendered"), count("findings_total")) {
+        (Some(rendered), Some(total)) => format!(" ({rendered} of {total} findings rendered)"),
+        _ => String::new(),
+    };
+    format!(
+        "\n## Document completeness\n\n- Document Complete: false{counts}\n- The check document was cut by the findings byte budget, so it is a prefix and no review guidance was derived from it.\n- recovery: re-run `ripr check` with `RIPR_CHECK_FINDINGS_BYTES=0` (or a larger byte budget) for the complete document.\n"
+    )
+}
+
 fn render_empty_review_comments_markdown(packet: &Value) -> String {
     format!(
         "# RIPR PR Guidance\n\n- status: advisory\n- base: `{}`\n- head: `{}`\n- line annotations: 0\n- summary-only recommendations: 0\n- suppressed recommendations: 0\n\nNo changed paths were detected.\n",
@@ -1156,6 +1186,19 @@ fn named_guard_line(producer_error: &str) -> Option<String> {
             .strip_prefix(REVIEW_GUIDANCE_OVERSIZED_PREFIX)
             .filter(|suffix| suffix.starts_with(':'))
             .map(|_| without_reporter.to_string())
+    })
+}
+
+/// The producer's findings-bounded refusal line, when its stderr carried one
+/// (#9010). Like the oversized guard it names the reason and the recovery
+/// lever, which the wrapper's generic first line would otherwise hide.
+fn bounded_check_document_line(producer_error: &str) -> Option<String> {
+    producer_error.lines().find_map(|line| {
+        let trimmed = line.trim();
+        let without_reporter = trimmed.strip_prefix("ripr: ").unwrap_or(trimmed);
+        without_reporter
+            .contains("findings-bounded check document")
+            .then(|| without_reporter.to_string())
     })
 }
 
@@ -2220,6 +2263,43 @@ mod tests {
         })))?;
         assert_eq!(bounded["analysis_outcome"]["document_complete"], false);
         assert_schema_valid(&bounded, "bounded disclosure packet")?;
+        let markdown = render_error_review_comments_markdown(&bounded);
+        for needle in [
+            "Document Complete: false (1 of 4 findings rendered)",
+            "RIPR_CHECK_FINDINGS_BYTES=0",
+        ] {
+            if !markdown.contains(needle) {
+                return Err(format!(
+                    "bounded error Markdown lacks {needle:?}:\n{markdown}"
+                ));
+            }
+        }
+        if markdown.contains("LLM review guidance failed") {
+            return Err("a bounded refusal must not read as an LLM failure".to_string());
+        }
+        let wrapped = "ripr review-comments failed\nripr: review-comments --check-output \
+            target/c.json is invalid: findings-bounded check document (document_complete is not \
+            true or run_limitations names limited_findings_bound); re-run with \
+            RIPR_CHECK_FINDINGS_BYTES=0";
+        let receipt = review_comments_receipt(&repo, &options, "limited_timeout", Some("x"));
+        let refused = error_review_comments_packet(&repo, &options, wrapped, &receipt);
+        let message = refused["warnings"][0]["message"]
+            .as_str()
+            .unwrap_or_default();
+        if !message.contains("findings-bounded check document")
+            || !message.contains("RIPR_CHECK_FINDINGS_BYTES=0")
+        {
+            return Err(format!(
+                "the refusal reason must reach the warning: {message:?}"
+            ));
+        }
+        assert_schema_valid(&refused, "wrapped bounded refusal packet")?;
+        let plain =
+            error_review_comments_packet(&repo, &options, "ripr review-comments failed", &receipt);
+        assert_eq!(
+            plain["warnings"][0]["message"],
+            "ripr review-comments failed"
+        );
         assert_schema_valid(
             &packet_with(outcome(json!({})))?,
             "unbounded control packet",
