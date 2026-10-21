@@ -3432,6 +3432,19 @@ pub(super) fn drill_in_scope_conflict(
 }
 
 pub(super) fn lsp(args: &[String]) -> Result<(), String> {
+    lsp_with_serve(args, crate::lsp::serve)
+}
+
+/// Argument dispatch for `ripr lsp`, separated from the blocking stdio
+/// transport so unit tests can prove accepted-argument/dispatch semantics
+/// without entering the real server (issue #1387: the server owns tokio
+/// stdin/stdout and waits indefinitely while stdin stays open, so a test
+/// that calls `lsp(&["--stdio"])` hangs). Production always passes
+/// `crate::lsp::serve`; tests inject a nonblocking stub.
+fn lsp_with_serve(
+    args: &[String],
+    serve: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
     for arg in args {
         match arg.as_str() {
             "--stdio" => {}
@@ -3446,7 +3459,7 @@ pub(super) fn lsp(args: &[String]) -> Result<(), String> {
             other => return Err(unknown_argument("lsp", other)),
         }
     }
-    crate::lsp::serve()
+    serve()
 }
 
 /// `ripr pr-summary` — binary-first PR readiness summary (Campaign 31 item 8).
@@ -8664,8 +8677,46 @@ language = "rust"
 
     #[test]
     fn lsp_accepts_stdio_flag() {
-        // lsp function doesn't reject --stdio, it just processes it
-        assert_eq!(lsp(&args(&["--stdio"])), Ok(()));
+        // Must not enter the real blocking stdio server (issue #1387: it
+        // owns tokio stdin/stdout and waits indefinitely while stdin stays
+        // open). The injected stub proves `--stdio` is accepted and
+        // dispatches to the transport.
+        let entered = std::cell::Cell::new(false);
+        assert_eq!(
+            lsp_with_serve(&args(&["--stdio"]), || {
+                entered.set(true);
+                Ok(())
+            }),
+            Ok(())
+        );
+        assert!(
+            entered.get(),
+            "expected --stdio to dispatch to the transport"
+        );
+    }
+
+    #[test]
+    fn lsp_default_args_enter_transport() {
+        let entered = std::cell::Cell::new(false);
+        assert_eq!(
+            lsp_with_serve(&args(&[]), || {
+                entered.set(true);
+                Ok(())
+            }),
+            Ok(())
+        );
+        assert!(
+            entered.get(),
+            "expected default args to dispatch to the transport"
+        );
+    }
+
+    #[test]
+    fn lsp_propagates_transport_errors() {
+        assert_eq!(
+            lsp_with_serve(&args(&["--stdio"]), || Err("transport down".to_string())),
+            Err("transport down".to_string())
+        );
     }
 
     #[test]
