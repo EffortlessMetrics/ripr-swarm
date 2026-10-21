@@ -101,10 +101,10 @@
     }
    },
    "variant-nonliteral-arithmetic": {
-    "commit": "61f0ceaf86882f53bca2176e48ae2d1d9f6b64a9",
-    "tree": "b0432c297b291cef884299389f9baae6493e5eca",
+    "commit": "2f1c00e828509a7ac15db0ab259219a101f9ea14",
+    "tree": "aeb385e3ac25504ad13cd7bf38325248657b5461",
     "files": {
-     "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
+     "package-lock.json": "a93951553edc81a4be8db16f3e7012d3bb06a84cddf746bcf7c4af88192f3b51",
      "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
      "src/pricing.ts": "b8f7c3436adb6d0d6fc3839330b4b48e0a74d692d55a5a701875bc2f1327aa11",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
