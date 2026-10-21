@@ -509,9 +509,12 @@ fn portable_root_arg(value: &str, selected_root: &Path) -> Option<String> {
         // A parent-directory segment would walk out of the selected root, so
         // a traversing relative value fails closed like a substituted
         // absolute root.
+        // Recovery keeps backslashes literal, so a Windows-shaped `..\x` is one
+        // component on Unix; split on both separators.
         let escapes = value_path
             .components()
-            .any(|part| matches!(part, std::path::Component::ParentDir));
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+            || value.split(['/', '\\']).any(|part| part == "..");
         return (!escapes).then(|| value.to_string());
     }
     (clean_bound_path(value_path) == selected_root).then(|| PORTABLE_ROOT.to_string())
@@ -1205,14 +1208,16 @@ mod tests {
         receipt.validate().map_err(|err| err.to_string())
     }
 
-    /// #3948/#3999 controls 11, 12 and 15: two equivalent checkouts render
-    /// different concrete displays but recover the same typed route and the
-    /// same digest, while a display whose root was swapped for another
-    /// absolute directory loses typed authority.
     #[test]
     fn traversing_relative_root_display_keeps_no_typed_authority() -> Result<(), String> {
         let selected = std::path::Path::new(".");
-        for root in ["../victim", "sub/../../victim", ".."] {
+        for root in [
+            "../victim",
+            "sub/../../victim",
+            "..",
+            "..\\victim",
+            "a\\..\\b",
+        ] {
             let display =
                 format!("ripr agent verify --root {root} --before a.json --after b.json --json");
             if agent_command_spec_from_display(&display, selected).is_some() {
@@ -1225,6 +1230,10 @@ mod tests {
         Ok(())
     }
 
+    /// #3948/#3999 controls 11, 12 and 15: two equivalent checkouts render
+    /// different concrete displays but recover the same typed route and the
+    /// same digest, while a display whose root was swapped for another
+    /// absolute directory loses typed authority.
     #[test]
     fn relocated_checkouts_share_identity_and_substituted_roots_fail_closed() -> Result<(), String>
     {
