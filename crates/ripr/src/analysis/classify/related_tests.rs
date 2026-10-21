@@ -21,6 +21,10 @@ use crate::domain::{Probe, RelationConfidence, RelationReason};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+mod equality_dispatch;
+
+pub(in crate::analysis) use equality_dispatch::is_partial_eq_method;
+
 /// Per-pass workspace dependency context for the #2972 cross-crate admit.
 /// Built once per classification pass in the Rust adapter and shared by
 /// every probe; `None` (no workspace root, narrower diff passes) disables
@@ -89,6 +93,10 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     by_path_trigram: BTreeMap<[u8; RELATION_TRIGRAM_WIDTH], Vec<usize>>,
     by_test_stem: BTreeMap<String, Vec<usize>>,
     by_function_name: BTreeMap<String, Vec<usize>>,
+    /// Tests whose body spells `assert_eq!`/`assert_ne!` (or a `debug_`
+    /// twin): candidates for an owner a comparison macro runs without
+    /// naming it (`PartialEq::eq`, #8999).
+    by_equality_assert: Vec<usize>,
     common_tokens: CommonTestTokens,
     // Deny-only, per-pass memo. No-property suites leave it empty, so probes
     // do not rescan ordinary bodies or property token trees.
@@ -128,6 +136,9 @@ impl RelatedTestCandidateIndex {
 
         for (test_index, test) in index.tests().iter().enumerate() {
             candidates.all_tests.push(test_index);
+            if test.body.contains("assert_eq!") || test.body.contains("assert_ne!") {
+                candidates.by_equality_assert.push(test_index);
+            }
             let refused =
                 crate::analysis::extract::property_macros::property_only_call_names(&test.body);
             if !refused.is_empty() {
@@ -281,6 +292,10 @@ impl RelatedTestCandidateIndex {
             {
                 scan_all = true;
             }
+        }
+
+        if owner_fn.is_some_and(equality_dispatch::has_partial_eq_shape) {
+            extend_bucket(&mut selected, Some(self.by_equality_assert.as_slice()));
         }
 
         if owner_fn.is_none() {
@@ -742,6 +757,8 @@ fn find_related_tests_with_candidates<'a>(
         }
     }
     let owner_name_is_unique = workspace_complete && same_name_function_count == 1;
+    // #8999: a user `PartialEq::eq`/`ne` a comparison macro runs unnamed.
+    let equality_owner = owner_fn.and_then(|owner| equality_dispatch::equality_owner(owner, index));
     // Same-crate trait impls share a method name (`size_hint` on WhileSome
     // and Combinations). The uniqueness bypass above only gates *cross-crate*
     // package-prefix filtering; this count is the receiver-identity gate
@@ -876,6 +893,28 @@ fn find_related_tests_with_candidates<'a>(
             && !property_only_owner_call
             && (test.calls.iter().any(|call| call.name == owner_name)
                 || body_contains_owner_call(&test.body, owner_name));
+        // #8999: `assert_eq!(a, b)` over two values of the owner's type runs
+        // the owner's `PartialEq::eq` with no call fact naming it. A distinct
+        // signal from `calls_owner`: it bypasses none of the cross-package
+        // guards below, so only an in-package, same-file test can use it.
+        // Evaluated independently of `calls_owner`: a name-only `Other::eq`
+        // call elsewhere in the test must not hide a real macro dispatch.
+        let equality_asserts_owner = !property_only_owner_call
+            && match (owner_fn, equality_owner.as_ref()) {
+                (Some(owner), Some(equality)) => {
+                    equality_dispatch::test_asserts_equality_through_owner(
+                        test,
+                        owner,
+                        equality,
+                        index
+                            .files()
+                            .get(&test.file)
+                            .map(|facts| facts.data().source.as_ref()),
+                        index,
+                    )
+                }
+                _ => false,
+            };
         // #3714: captured `calls` facts only — the same authority as
         // `calls_owner`. Never overrides owner attribution. A same-named
         // local definition or binding in the test body defeats the admit
@@ -972,6 +1011,7 @@ fn find_related_tests_with_candidates<'a>(
         });
 
         if calls_owner
+            && !equality_asserts_owner
             && !calls_helper_entry
             && call_identity.as_ref().is_some_and(|identity| {
                 identity.resolve_test(test, index) == super::CallTarget::Other
@@ -1081,6 +1121,7 @@ fn find_related_tests_with_candidates<'a>(
             !calls_owner && !assertions_reference_owner && calls_helper_entry;
 
         if !calls_owner
+            && !equality_asserts_owner
             && !assertions_reference_owner
             && !same_file_or_named
             && !helper_chain_reaches
@@ -1100,7 +1141,9 @@ fn find_related_tests_with_candidates<'a>(
         // Determine the single highest-priority reason for the match so the
         // emitted `RelatedTest` can carry `relation_reason` /
         // `relation_confidence` tags for consumer filtering.
-        let reason = if calls_owner {
+        let reason = if equality_asserts_owner {
+            RelationReason::DirectOwnerCall
+        } else if calls_owner {
             // A unique owner name, or a receiver resolved to this impl, is a
             // direct call. An impl method whose name has other workspace
             // definitions cannot be `direct_owner_call` until the receiver
@@ -5175,6 +5218,49 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             .into_iter()
             .map(|(_, reason)| reason)
             .collect()
+    }
+
+    /// Related-test relation for the free `kb` owner when the test's call
+    /// facts come from the real extractor (not hand-built facts).
+    fn free_kb_relation_from_extracted_calls(body: &str) -> Vec<RelationReason> {
+        let owner = free_function("src/lib.rs", "kb");
+        let mut test = test_with_call("tests/units.rs", "test_comparison", body, "kb");
+        test.calls = crate::analysis::extract::extract_call_facts(body, 1);
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "size.into() * KB");
+        find_related_tests(&probe, Some(&owner), &index, true, None, None)
+            .into_iter()
+            .map(|(_, reason)| reason)
+            .collect()
+    }
+
+    /// #8999: a test that calls the free function only through a local alias
+    /// of its module path is a direct owner call; an alias of a same-named
+    /// associated function, a local closure, or a quoted token is not.
+    #[test]
+    fn given_free_fn_when_test_calls_it_through_a_local_alias_then_direct_owner_call() {
+        assert_eq!(
+            free_kb_relation_from_extracted_calls("let f = units::kb;\nassert_eq!(f(1), 1000);"),
+            vec![RelationReason::DirectOwnerCall]
+        );
+        for body in [
+            // associated function of a type, not the free function
+            "let f = ByteSize::kb;\nassert_eq!(f(1), 1000);",
+            // local closure named like the owner
+            "let kb = |x: u64| x * 1000;\nlet f = kb;\nassert_eq!(f(1), 1000);",
+            // alias never called; the owner name only appears quoted
+            "let f = units::kb;\nassert_eq!(g(1), \"kb(1)\");",
+        ] {
+            assert_ne!(
+                free_kb_relation_from_extracted_calls(body),
+                vec![RelationReason::DirectOwnerCall],
+                "{body}"
+            );
+        }
     }
 
     /// #6713: `ByteSize::kb(1000)` calls the associated function, never the
