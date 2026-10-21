@@ -171,7 +171,7 @@ labels, and join behavior are unchanged.
   (schema version pin, now `0.3`)
 - `crates/ripr/src/output/mutation_calibration.rs::tests::span_join_reads_cargo_mutants_columns_end_to_end`
   (schema version pin, now `0.3`)
-- `crates/ripr/tests/cli_smoke.rs::calibration_runtime_fixture_v1_matches_checked_reports`
+- `crates/ripr/tests/cli_smoke.rs::calibration_runtime_fixture_matches_checked_reports`
 - `crates/ripr/tests/cli_smoke.rs::calibration_runtime_fixture_v2_matches_checked_reports`
 - `crates/ripr/tests/cli_smoke.rs::calibration_runtime_fixture_v3_matches_checked_reports`
 - `crates/ripr/tests/cli_smoke.rs::calibration_span_containment_atuin_fixture_matches_checked_reports`
