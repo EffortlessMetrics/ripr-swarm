@@ -285,9 +285,14 @@ non-ignored related test matches one of these shapes:
   with its block, and a binding made only after the assertion do not reach it.
   A test that defines a `macro_rules!` or `macro` before the assertion, or
   hands the local to any macro other than the argument-reading standard and
-  snapshot macros (`assert*`, `debug_assert*`, `format!`, `print*`, `matches!`,
-  `vec!`, `dbg!`, `with_settings!`, ..), gets no credit: a macro defined
-  elsewhere can bind or rewrite any name it is handed (an over-withhold). Residuals, kept as gaps: mutation
+  snapshot macros (an exact list: `assert`, `assert_eq`, `assert_ne`,
+  `debug_assert*`, the insta `assert_*_snapshot` family, `format!`, `print*`,
+  `matches!`, `vec!`, `dbg!`, `with_settings!`, .., spelled bare or rooted at
+  `std`, `core`, `insta` or `expect_test`; any other path, a raw identifier or
+  a body-level `use .. as <that name>` is a user macro), gets no credit: a macro defined
+  elsewhere can bind or rewrite any name it is handed (an over-withhold). A bare allowlisted name shadowed by a module-level
+  `macro_rules!` or `use` outside the test body is not detected (inherent
+  residual). Residuals, kept as gaps: mutation
   through a method on a `let mut` binding (`x.push(..)`) is not tracked; the
   strict snapshot grader names the owner by its identifier, so a different
   receiver's `other.own(..)` or a shadowed `own` is read as the owner; aliasing

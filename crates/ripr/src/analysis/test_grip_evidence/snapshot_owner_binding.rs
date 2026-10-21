@@ -150,20 +150,28 @@ pub(crate) fn local_is_owner_result_before(
 /// its arguments and is not one of the macros that only read them.
 fn macro_argument_names(code: &str, name: &str) -> bool {
     let bytes = code.as_bytes();
+    // `use foo::bump as dbg;` renames a user macro to an allowlisted name.
+    let words: Vec<&str> = code
+        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .filter(|word| !word.is_empty())
+        .collect();
+    let reads_only = !words
+        .windows(2)
+        .any(|pair| pair[0] == "as" && macro_only_reads_name(pair[1]));
     for (bang, _) in code.match_indices('!') {
         if bytes.get(bang + 1) == Some(&b'=') {
             continue;
         }
         let head = code[..bang].trim_end();
-        let macro_name: String = head
+        let macro_path: String = head
             .chars()
             .rev()
-            .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
+            .take_while(|ch| ch.is_alphanumeric() || matches!(ch, '_' | ':' | '#'))
             .collect::<Vec<_>>()
             .into_iter()
             .rev()
             .collect();
-        if macro_name.is_empty() {
+        if macro_path.is_empty() {
             continue;
         }
         let after = &code[bang + 1..];
@@ -191,7 +199,7 @@ fn macro_argument_names(code: &str, name: &str) -> bool {
             }
         }
         let _ = opener;
-        if contains_word(&after[..end], name) && !macro_only_reads(&macro_name) {
+        if contains_word(&after[..end], name) && !(reads_only && macro_only_reads(&macro_path)) {
             return true;
         }
     }
@@ -199,30 +207,63 @@ fn macro_argument_names(code: &str, name: &str) -> bool {
 }
 
 /// Standard and snapshot macros that evaluate their arguments without
-/// binding or rewriting a name in the caller.
-fn macro_only_reads(name: &str) -> bool {
-    name.starts_with("assert")
-        || name.starts_with("debug_assert")
-        || matches!(
-            name,
-            "format"
-                | "format_args"
-                | "print"
-                | "println"
-                | "eprint"
-                | "eprintln"
-                | "matches"
-                | "vec"
-                | "dbg"
-                | "concat"
-                | "stringify"
-                | "with_settings"
-                | "panic"
-                | "todo"
-                | "unimplemented"
-                | "unreachable"
-                | "expect"
-        )
+/// binding or rewriting a name in the caller, by exact name.
+fn macro_only_reads_name(name: &str) -> bool {
+    matches!(
+        name,
+        "assert"
+            | "assert_eq"
+            | "assert_ne"
+            | "assert_matches"
+            | "debug_assert"
+            | "debug_assert_eq"
+            | "debug_assert_ne"
+            | "assert_snapshot"
+            | "assert_debug_snapshot"
+            | "assert_display_snapshot"
+            | "assert_yaml_snapshot"
+            | "assert_json_snapshot"
+            | "assert_toml_snapshot"
+            | "assert_ron_snapshot"
+            | "assert_csv_snapshot"
+            | "assert_compact_debug_snapshot"
+            | "assert_compact_json_snapshot"
+            | "assert_binary_snapshot"
+            | "format"
+            | "format_args"
+            | "print"
+            | "println"
+            | "eprint"
+            | "eprintln"
+            | "matches"
+            | "vec"
+            | "dbg"
+            | "concat"
+            | "stringify"
+            | "with_settings"
+            | "panic"
+            | "todo"
+            | "unimplemented"
+            | "unreachable"
+    )
+}
+
+/// The macro at `path` (`dbg`, `std::dbg`, `insta::assert_snapshot`) is one
+/// of those, spelled bare or rooted at `std`, `core`, `insta` or
+/// `expect_test`; any other qualification or a raw identifier is a user
+/// macro. A bare name shadowed by a module-level macro is not detected.
+fn macro_only_reads(path: &str) -> bool {
+    if path.contains('#') {
+        return false;
+    }
+    let path = path.strip_prefix("::").unwrap_or(path);
+    let segments: Vec<&str> = path.split("::").collect();
+    let Some(last) = segments.last() else {
+        return false;
+    };
+    let rooted = segments.len() == 1
+        || (segments.len() == 2 && matches!(segments[0], "std" | "core" | "insta" | "expect_test"));
+    rooted && macro_only_reads_name(last)
 }
 
 /// `text` with every whitespace run replaced by one space, and a space after
@@ -1531,6 +1572,13 @@ mod tests {
             "mylib::set!({n}, 5);\n",
             "foo(rebind!({n}));\n",
             "rebind ! ({n});\n",
+            "assert_rebind!({n});\n",
+            "my::assert_reset!({n});\n",
+            "my::dbg!({n});\n",
+            "r#dbg!({n});\n",
+            "use foo::bump as dbg;\ndbg!({n});\n",
+            "expect!({n});\n",
+            "crate::assert_eq!({n}, 1);\n",
             "for({n}) in v {\n",
             "for({n})in v {\n",
             "for(a, {n}) in v {\n",
@@ -1742,6 +1790,9 @@ mod tests {
         assert!(!strict_same_line("let x = own(2);", "fn f(x: u8) { "));
         // A macro defined elsewhere can rebind the local it is handed.
         assert!(!strict("let x = own(2);\nrebind!(x);"));
+        assert!(!strict("let x = own(2);\nassert_rebind!(x);"));
+        assert!(!strict("let x = own(2);\nmy::dbg!(x);"));
+        assert!(strict("let x = own(2);\nassert_yaml_snapshot!(x);"));
         assert!(!strict("let x = own(2);\ncrate::rebind!{x}"));
         assert!(strict("let x = own(2);\nassert_eq!(x.len(), 1);"));
         assert!(strict("let x = own(2);\nrebind!(y);"));
@@ -1770,6 +1821,13 @@ mod tests {
                 reach
             ));
             for read in [
+                "let x = own(2);\ninsta::assert_snapshot!(x);\n",
+                "let x = own(2);\nassert_yaml_snapshot!(x);\n",
+                "let x = own(2);\nassert_debug_snapshot!(x);\n",
+                "let x = own(2);\nstd::println!(\"{}\", x);\n",
+                "let x = own(2);\n::std::dbg!(x);\n",
+                "let x = own(2);\nexpect![[\"1\"]].assert_eq(&x);\n",
+                "let x = own(2);\ninsta::with_settings!({description => \"d\"}, { let y = 1; });\n",
                 "let x = own(2);\nassert_eq!(x, 1);\n",
                 "let x = own(2);\nprintln!(\"{}\", x);\n",
                 "let x = own(2);\nlet n = format!(\"{}\", x.len());\n",
@@ -1784,6 +1842,14 @@ mod tests {
                 );
             }
             for rebind in [
+                "let x = own(2);\nassert_rebind!(x);\n",
+                "let x = own(2);\nmy::assert_reset!(x);\n",
+                "let x = own(2);\nmy::dbg!(x);\n",
+                "let x = own(2);\nr#dbg!(x);\n",
+                "let x = own(2);\nuse foo::bump as dbg;\ndbg!(x);\n",
+                "let x = own(2);\nexpect!(x);\n",
+                "let x = own(2);\ncrate::assert_eq!(x, 1);\n",
+                "let x = own(2);\nassert_yaml_snapshotx!(x);\n",
                 "let x = own(2);\nrebind!(x);\n",
                 "let x = own(2);\ncrate::rebind!(x);\n",
                 "let x = own(2);\nrebind!{x}\n",
