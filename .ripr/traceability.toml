@@ -17428,6 +17428,28 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0296"
+name = "First-run over-budget steps count step occurrences"
+spec = "docs/specs/RIPR-SPEC-0296-first-run-over-budget-step-occurrences.md"
+tests = [
+  "xtask/src/reports/dx_scoreboard/tests.rs::first_run_rows_count_a_dual_budget_breach_once_per_step_occurrence",
+  "xtask/src/reports/dx_scoreboard/tests.rs::first_run_rows_count_repeated_step_occurrences_separately",
+  "xtask/src/reports/dx_scoreboard/tests.rs::first_run_rows_single_budget_and_missing_rows_have_no_phantom_count",
+  "xtask/src/reports/dx_scoreboard/tests.rs::first_run_rows_missing_first_stdout_row_does_not_merge_occurrences",
+  "xtask/src/reports/dx_scoreboard/tests.rs::first_run_over_budget_baseline_from_breached_row_grain_is_not_compared",
+]
+fixtures = []
+code = [
+  "xtask/src/reports/dx_scoreboard.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0296-first-run-over-budget-step-occurrences.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0295"
 name = "Doctor suppresses PATH-mismatch warning for Cargo build outputs"
 spec = "docs/specs/RIPR-SPEC-0295-doctor-cargo-build-path-warning.md"
