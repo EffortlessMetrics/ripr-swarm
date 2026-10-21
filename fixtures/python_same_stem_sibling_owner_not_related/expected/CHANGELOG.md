@@ -301,15 +301,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — python_same_stem_sibling_owner_not_related (26)
-
-Reason:
-RIPR-SPEC-0224 / #5491: Python related-test rows now carry truthful typed miss and why (explanation only; class, stages, order unchanged)
-
-Command:
-`cargo xtask goldens bless python_same_stem_sibling_owner_not_related --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

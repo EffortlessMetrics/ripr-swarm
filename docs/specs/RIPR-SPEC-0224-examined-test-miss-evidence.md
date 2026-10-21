@@ -128,7 +128,7 @@ unsupported state as unknown and fabricates no reason conforms.
 | `assertion_not_observing` | yes | no (credit-only alignment; `is_unmatched` coupling) | pending #5495 | no (#3223) |
 | `assertion_not_credited` | yes, unsplit until #5446 | no (#5446) | no (#5446) | no |
 | `weak_assertion` | yes | yes (weak and smoke only) | pending #5495 | no |
-| `missing_input` | yes | yes (predicate boundary, row-owned) | pending #5495 | no (#4061, perl-lsp-swarm#17237, #5562) |
+| `missing_input` | yes | pending follow-up (#5491) | pending #5495 | no (#4061, perl-lsp-swarm#17237, #5562) |
 | `missing_exact_assertion` | yes | no (no row-owned fact) | pending #5495 | no |
 | `observation_unconfirmed` | yes | yes (strong assertion not credited by its own row) | pending #5495 | yes |
 
@@ -150,15 +150,6 @@ static limit, one row at a time, in `python/row_miss.rs`:
   activation-limited rows.
 - `weak_assertion`: the family-selected assertion is weak or smoke. A medium
   assertion (a mock that may pin the changed call) keeps no miss.
-- `missing_input`: a strong family-selected assertion on a predicate change
-  whose own owner calls all bind, resolve both compared operands and place
-  neither on the boundary. The row-owned part is the omission computed in
-  `boundary.rs` from that row's own calls; the boundary quoted in the "why"
-  text is the finding-wide changed boundary. A free-function call counts as an
-  owner call only when the row's import resolves the name to the owner's
-  module; a same-named function of another module is not one. An unresolved
-  operand or an unreadable call is unknown, and another row's input never
-  counts.
 - `observation_unconfirmed`: a strong family-selected assertion that the row,
   evaluated alone, does not credit as observing the changed sink. Python's
   alignment only credits; no credit never becomes an affirmative mismatch.
@@ -168,6 +159,10 @@ static limit, one row at a time, in `python/row_miss.rs`:
 
 Python does not yet write:
 
+- `missing_input`: pending follow-up (#5491). It needs a row-owned
+  boundary omission over import-resolved owner calls; until then a strong
+  row that observes nothing keeps only `observation_unconfirmed`, which
+  claims less.
 - `no_assertion`: `extraction_complete_no_assertion` is not an established
   absence while the cross-file blind spots of #6657 (conftest autouse
   fixtures, plugins, ini `filterwarnings`, bare sibling imports) are

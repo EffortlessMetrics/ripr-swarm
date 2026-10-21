@@ -90,9 +90,7 @@
           "line": 4,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
-          "oracle": "assert is_large(500) == True",
-          "miss": "missing_input",
-          "why": "no test input reaches `total == 100`"
+          "oracle": "assert is_large(500) == True"
         }
       ],
       "repair_placement": {

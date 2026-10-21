@@ -333,68 +333,6 @@ pub(super) fn python_boundary_evidence(
     })
 }
 
-/// Whether ONE related row's own calls provably leave the changed predicate
-/// boundary unexercised (#5491, RIPR-SPEC-0224 row-owned support). Unlike
-/// [`python_boundary_evidence`], which reads every strong row and is allowed
-/// to leave an operand unresolved, this holds only when every owner call of
-/// `candidate` binds, both compared operands resolve for every call, and no
-/// call places them on the boundary (new, or old for `==` -> `==`). Another
-/// row's input never counts, and an unreadable call, an unresolved operand or
-/// a computed comparison is unknown, not an omission. `all_candidates` only
-/// decides which module constants a related test rebinds.
-pub(super) fn python_row_boundary_omission(
-    line_text: &str,
-    old_line_text: Option<&str>,
-    owner: &PythonOwner,
-    candidate: &PythonRelatedCandidate<'_>,
-    all_candidates: &[PythonRelatedCandidate<'_>],
-    focus: &PythonAssertionFocus,
-) -> bool {
-    let condition = predicate_condition(line_text);
-    let relational = relational_operators(&condition);
-    let (operators, old_equality_operands) = if relational.is_empty() {
-        let Some(gate) = equality_predicate_gate(&condition, old_line_text) else {
-            return false;
-        };
-        (gate.operators, gate.old_operands)
-    } else {
-        (relational, None)
-    };
-    let [(start, len)] = operators.as_slice() else {
-        return false;
-    };
-    let Some((left, right)) = simple_comparison_operands(&condition, *start, *len) else {
-        return false;
-    };
-    // A free function's bare-name call is the owner's only when this test's
-    // import resolves the name to the owner's module; a same-named function of
-    // another module is not an owner call.
-    if matches!(owner.owner_kind, Some(OwnerKind::Function))
-        && owner_module_callees(candidate.test, owner).is_empty()
-    {
-        return false;
-    }
-    let constants = unrebound_constants(owner, all_candidates);
-    let (rows, gaps) =
-        strong_owner_call_rows_with_gaps(owner, &constants, std::slice::from_ref(candidate), focus);
-    if gaps || rows.is_empty() {
-        return false;
-    }
-    let off_boundary = |left_operand: &str, right_operand: &str, row: &CallRow| match (
-        resolve_operand(left_operand, row, &constants),
-        resolve_operand(right_operand, row, &constants),
-    ) {
-        (Some(left_value), Some(right_value)) => !literals_equal(&left_value, &right_value),
-        _ => false,
-    };
-    rows.iter().all(|row| {
-        off_boundary(&left, &right, row)
-            && old_equality_operands
-                .as_ref()
-                .is_none_or(|(old_left, old_right)| off_boundary(old_left, old_right, row))
-    })
-}
-
 fn operand_provenance(operand: &str, value: &str, constants: &[PythonModuleConstant]) -> String {
     if literal_value(operand).is_some() {
         format!("literal operand {operand}")

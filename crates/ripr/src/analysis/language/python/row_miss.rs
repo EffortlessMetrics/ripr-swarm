@@ -14,8 +14,6 @@
 //!   the test builds the owner's class and reaches the method through an
 //!   implicit protocol call, so "no call to the changed code" would be false.
 //! - `weak_assertion`: the family-selected assertion (#5572) is weak or smoke.
-//! - `missing_input`: a strong family-selected assertion on a predicate change
-//!   whose own owner calls all resolve both compared operands off the boundary.
 //! - `observation_unconfirmed`: a strong family-selected assertion that this
 //!   row alone does not credit as observing the changed sink. Python's
 //!   alignment is a credit-only model, so no credit is an unresolved
@@ -36,24 +34,23 @@
 //! - a local stand-in row (`fee = Mock(...)` shadowing the imported owner) keeps
 //!   its `observation_unconfirmed`: stand-in detection is textual and errs
 //!   toward withholding credit, so it cannot support an affirmative no-call claim.
+//! - `missing_input`: pending follow-up (#5491). The row-owned omission needs
+//!   import-resolved owner calls and per-row operand resolution; until that
+//!   lands a strong row that observes nothing falls to
+//!   `observation_unconfirmed`, which claims less.
 //! - `missing_exact_assertion`: no row-owned exact-discriminator fact exists;
 //!   `missing_discriminators` is finding-wide.
 
-use super::assertion_selection::PythonAssertionFocus;
-use super::boundary::python_row_boundary_omission;
 use super::related_tests::{PythonRelatedCandidate, PythonRelationKind};
 use super::sink_alignment::classify_sink_alignment_with_old;
 use super::{PythonOwner, PythonTest};
-use crate::domain::{
-    ExposureClass, OracleStrength, OwnerKind, ProbeFamily, RelatedTest, RelatedTestMiss,
-};
+use crate::domain::{ExposureClass, OracleStrength, OwnerKind, RelatedTest, RelatedTestMiss};
 
 /// The changed line, as the classifier saw it.
 pub(super) struct RowMissChange<'a> {
     pub(super) owner: &'a PythonOwner,
     pub(super) line_text: &'a str,
     pub(super) old_line_text: Option<&'a str>,
-    pub(super) focus: &'a PythonAssertionFocus,
 }
 
 /// Annotate `rows` (one per `candidates` entry, in order) in place.
@@ -82,14 +79,13 @@ pub(super) fn annotate_row_misses(
         return;
     }
     for (row, candidate) in rows.iter_mut().zip(candidates) {
-        row.miss = row_miss(row, candidate, candidates, change, all_tests);
+        row.miss = row_miss(row, candidate, change, all_tests);
     }
 }
 
 fn row_miss(
     row: &RelatedTest,
     candidate: &PythonRelatedCandidate<'_>,
-    candidates: &[PythonRelatedCandidate<'_>],
     change: &RowMissChange<'_>,
     all_tests: &[PythonTest],
 ) -> Option<RelatedTestMiss> {
@@ -111,30 +107,16 @@ fn row_miss(
     row.oracle.as_ref()?;
     match row.oracle_strength {
         OracleStrength::Weak | OracleStrength::Smoke => Some(RelatedTestMiss::WeakAssertion),
-        OracleStrength::Strong => strong_row_miss(row, candidate, candidates, change, all_tests),
+        OracleStrength::Strong => strong_row_miss(row, change, all_tests),
         _ => None,
     }
 }
 
 fn strong_row_miss(
     row: &RelatedTest,
-    candidate: &PythonRelatedCandidate<'_>,
-    candidates: &[PythonRelatedCandidate<'_>],
     change: &RowMissChange<'_>,
     all_tests: &[PythonTest],
 ) -> Option<RelatedTestMiss> {
-    if matches!(change.focus.family(), ProbeFamily::Predicate)
-        && python_row_boundary_omission(
-            change.line_text,
-            change.old_line_text,
-            change.owner,
-            candidate,
-            candidates,
-            change.focus,
-        )
-    {
-        return Some(RelatedTestMiss::MissingInput);
-    }
     let alignment = classify_sink_alignment_with_old(
         change.owner,
         change.line_text,

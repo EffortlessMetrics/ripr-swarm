@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/pricing/discounts.py:bulk_discount:predicate_boundary:predicate:quantity>100
   Changed behavior: if quantity > 100:
   Missing discriminator (1 of 2): A strong Python oracle reaches `bulk_discount`, but static evidence does not place a related test input at the changed predicate boundary `quantity == 100`. No strong related test…
-  Related test: tests/test_discounts.py:4 test_bulk_discount_large_order (no test input reaches `quantity == 100`)
+  Related test: tests/test_discounts.py:4 test_bulk_discount_large_order
   Suggested test file: tests/test_discounts.py
   Suggested test: test_bulk_discount_large_order
   Test node: tests/test_discounts.py::test_bulk_discount_large_order

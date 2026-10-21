@@ -1030,7 +1030,6 @@ pub(super) fn classify_change_for_owner(
             owner,
             line_text,
             old_line_text,
-            focus: &focus,
         },
         all_tests,
     );
