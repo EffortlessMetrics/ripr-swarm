@@ -86,6 +86,18 @@ fn unknown_language_is_refused_with_a_nonzero_exit() {
 }
 
 #[test]
+fn language_flag_without_a_value_is_refused() {
+    for args in [
+        &["capabilities", "--language"][..],
+        &["capabilities", "--language", "--json"][..],
+    ] {
+        let (ok, _stdout, stderr) = run(args);
+        assert!(!ok, "{args:?}");
+        assert!(stderr.contains("--language"), "{args:?}: {stderr}");
+    }
+}
+
+#[test]
 fn human_output_and_help_route() {
     let (ok, stdout, _) = run(&["capabilities"]);
     assert!(ok);
