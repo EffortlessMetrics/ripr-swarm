@@ -124,6 +124,17 @@ impl Drop for Fixture {
     }
 }
 
+fn assert_resolved_test_attribution(report: &Value) -> Result<(), Box<dyn std::error::Error>> {
+    let warnings = report["warnings"].as_array().ok_or("missing warnings")?;
+    assert!(
+        !warnings.iter().any(|warning| warning["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("Test-edit attribution is unresolved"))),
+        "fully readable Git fixtures must resolve test-edit attribution: {report}"
+    );
+    Ok(())
+}
+
 #[test]
 fn review_comments_discloses_removed_and_inline_test_edits()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -157,6 +168,7 @@ fn review_comments_discloses_removed_and_inline_test_edits()
             output.display().to_string(),
         ])?;
         let report: Value = serde_json::from_slice(&std::fs::read(output)?)?;
+        assert_resolved_test_attribution(&report)?;
         let comments = report["comments"].as_array().ok_or("missing comments")?;
         if comments.len() != 1 {
             return Err(format!("fixture must reach one unresolved recommendation: inline={inline}, edit={edit}: {report}").into());
@@ -232,6 +244,7 @@ fn review_comments_preserves_unchanged_tests_for_test_named_production()
             output.display().to_string(),
         ])?;
         let report: Value = serde_json::from_slice(&std::fs::read(output)?)?;
+        assert_resolved_test_attribution(&report)?;
         assert_eq!(report["summary"]["suppressed"], 0, "{report}");
         assert_eq!(
             report["summary"]["comments"], 0,
