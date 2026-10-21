@@ -58,7 +58,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testmore-discount-imported-boundary.json",
-    "sha256": "4d8b5faf9dfedb7036a3a243465633fdcd54bd8a7c5f7c8dc00d5870b9e9e553",
+    "sha256": "4de36993a8ce224346e682116b8aedbf1a4de978f900228e1dca99ea349cc7c2",
     "provenance": "producer"
   }
 }

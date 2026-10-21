@@ -24,7 +24,7 @@ Static exposure
   weakly_exposed (warning, confidence 0.92)
 
 Evidence
-  - reach yes: Related tests appear to reach mean_latency: mean_lies_between_min_and_max, average_of_nothing_is_zero, initial_table
+  - reach yes: Related tests appear to reach mean_latency: mean_lies_between_min_and_max
   - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
   - propagation yes: Changed behavior appears to influence returned value: 0
   - observation yes: A related test observes a value or effect near the changed behavior
@@ -33,7 +33,7 @@ Evidence
   - related test src/lib.rs:43 average_of_nothing_is_zero uses strong exact value oracle: assert_eq!(average(&[]), 0); misses: no test input reaches `samples.len() == 0`
   - related test src/lib.rs:43 average_of_nothing_is_zero uses strong exact value oracle: assert_eq!(average(&[2, 4]), 3); misses: no test input reaches `samples.len() == 0`
   - related test src/lib.rs:49 initial_table uses strong exact value oracle: assert_eq!(initial(name), want, "{name:?}"); misses: no test input reaches `samples.len() == 0`
-  - related test src/lib.rs:77 ratio_smoke uses none unknown oracle; misses: has no assertion
+  - related test src/lib.rs:77 ratio_smoke uses no oracle; misses: has no assertion
   - related test src/lib.rs:71 small_orders_get_no_discount uses strong exact value oracle: assert_eq!(discount(total), want, "total {total}"); misses: no test input reaches `samples.len() == 0`
   - related tests (showing 5 of 6; more in --format json)
   - source assertion argument value 0 at line 44
@@ -44,7 +44,7 @@ Evidence
   - source table row value "Bob" at line 50
   - source table row value "ada" at line 50
   - source table row value '?' at line 50
-  - source values (showing 8 of 14; full list in --format json)
+  - source values (showing 8 of 14 read from related tests; full list in --format json)
 
 Weakness
   - missing discriminator samples.len() == 0: No related test call uses samples.len() equal to 0; observed samples.len() values: 1, 2, 3; target 0 value: 0

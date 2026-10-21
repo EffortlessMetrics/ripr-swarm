@@ -19,13 +19,14 @@ Start here:
   Related test (1 of 3 matched rows): src/lib.rs:12 calls_owner_without_observing_effect (has no assertion)
   Next step: Strengthen the related assertion so it discriminates the changed behavior
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
-    - reach yes: Related tests appear to reach analyze_diff: calls_owner_without_observing_effect, unrelated_exact_oracle
+    - reach yes: Related tests appear to reach analyze_diff: calls_owner_without_observing_effect
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 8 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/oracle_confirmation_mixed/input --diff <cwd>/fixtures/oracle_confirmation_mixed/diff.patch --mode fast probe:src_lib.rs:call_deletion:ed1574df
   ripr context --root <cwd>/fixtures/oracle_confirmation_mixed/input --diff <cwd>/fixtures/oracle_confirmation_mixed/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:ed1574df
+  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:call_deletion:ed1574df --root <cwd>/fixtures/oracle_confirmation_mixed/input` for the full gate's answer
 No test stub here: the change shows up as a side effect or call, which needs an observer or mock ripr cannot write
 
 More:

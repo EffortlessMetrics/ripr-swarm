@@ -56,7 +56,9 @@ pub(super) fn execute(command: CliCommand) -> Result<(), CommandError> {
         CliCommand::Check(args) => commands::check(&args).map_err(CommandError::from),
         CliCommand::Explain(args) => commands::explain(&args).map_err(CommandError::from),
         CliCommand::Context(args) => commands::context(&args).map_err(CommandError::from),
-        CliCommand::Doctor(args) => commands::doctor(&args).map_err(CommandError::from),
+        // Doctor completed-with-findings carries the Decision variant (exit 3, #5102).
+        CliCommand::Doctor(args) => commands::doctor(&args),
+        CliCommand::Capabilities(args) => commands::capabilities(&args).map_err(CommandError::from),
         CliCommand::Lsp(args) => commands::lsp(&args).map_err(CommandError::from),
         CliCommand::PrSummary(args) => commands::pr_summary(&args).map_err(CommandError::from),
         CliCommand::Annotations(args) => commands::annotations(&args).map_err(CommandError::from),
@@ -250,7 +252,7 @@ mod tests {
         assert_eq!(
             execute(CliCommand::Agent(args(&["unknown"]))),
             Err(CommandError::Failure(
-                "unknown agent subcommand \"unknown\"; expected `start`, `brief`, `packet`, `card`, `stub`, `verify`, `verify-execute`, `receipt`, `status`, `review-summary`, or `repair`"
+                "unknown agent subcommand \"unknown\". Accepted: start, brief, packet, card, stub, verify, verify-execute, receipt, status, review-summary, repair."
                     .to_string()
             ))
         );

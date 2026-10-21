@@ -114,13 +114,17 @@ impl Case {
             &format!("root: {relative}/input"),
             1,
         )?;
-        for suffix in ["input", "diff.patch"] {
+        // The #8729 refusal advisory embeds the root once more through the
+        // same repair-command owner (`run \`ripr repair <item> --root
+        // <cwd>/fixtures/.../input\`...`), so the input binding occurs three
+        // times in the authored human.txt; the patch binding is untouched.
+        for (suffix, count) in [("input", 3), ("diff.patch", 2)] {
             case.rebind(
                 repo,
                 "expected/human.txt",
                 &format!("<cwd>/{SOURCE}/{suffix}"),
                 &format!("<cwd>/{relative}/{suffix}"),
-                2,
+                count,
             )?;
         }
         Ok(case)

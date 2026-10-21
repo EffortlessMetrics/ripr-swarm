@@ -30,6 +30,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_conditional_assertion_credit/input --diff <cwd>/fixtures/typescript_conditional_assertion_credit/diff.patch --mode fast probe:src_lib.ts:typescript_preview:c712a282
   ripr context --root <cwd>/fixtures/typescript_conditional_assertion_credit/input --diff <cwd>/fixtures/typescript_conditional_assertion_credit/diff.patch --mode fast --at probe:src_lib.ts:typescript_preview:c712a282
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.ts:typescript_preview:c712a282 --root <cwd>/fixtures/typescript_conditional_assertion_credit/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

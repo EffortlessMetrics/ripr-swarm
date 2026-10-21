@@ -1,0 +1,292 @@
+//! RIPR-SPEC-0243 rule 13: a suite factory called with its arguments.
+//!
+//! `function runAverageSuite(name, impl) { describe(name, () => { ... impl(x)
+//! ... }) }` registers nothing until `runAverageSuite("average", average)`
+//! runs it, and the assertions reach the owner only through the parameter.
+//! Rather than model parameter binding in the extractor, each eligible call
+//! is expanded: the factory's statements, with each parameter replaced by the
+//! argument text, are appended to the source as ordinary top-level
+//! statements, and the unchanged extractor runs on that source. The
+//! conditions below keep the replacement a plain renaming; anything else
+//! leaves the call unexpanded, and its tests stay unextracted as before.
+
+use super::tests_extract::{identifier_occurrences, word_occurrences};
+use super::*;
+use oxc_ast::ast::{Argument, Expression, Function, Statement};
+
+/// Calls expanded per file, so a file of many calls cannot multiply its test
+/// index without bound.
+const MAX_EXPANSIONS: usize = 8;
+
+/// The source with the expansions appended, and where each expansion starts.
+pub(crate) struct SuiteFactoryExpansion {
+    pub(crate) source: String,
+    /// `(first line of an appended expansion, line of the call it came from)`,
+    /// ascending. A test found on an appended line reports the call's line.
+    pub(crate) call_lines: Vec<(usize, usize)>,
+    /// Byte spans of the factory declarations every one of whose calls was
+    /// expanded. Their own registrations read `impl(...)` and are never
+    /// extracted; the appended copies stand for them.
+    pub(crate) covered: Vec<std::ops::Range<usize>>,
+}
+
+impl SuiteFactoryExpansion {
+    /// The line a test found at `line` of the expanded source reports.
+    pub(crate) fn reported_line(&self, line: usize) -> usize {
+        self.call_line_of(line).unwrap_or(line)
+    }
+
+    /// The line of the call a test starting at `line` of the expanded source
+    /// was expanded from, or `None` for a test written out in the file.
+    pub(crate) fn call_line_of(&self, line: usize) -> Option<usize> {
+        call_line_in(&self.call_lines, line)
+    }
+
+    /// The expanded source with each covered factory declaration blanked, so
+    /// a count of the calls the file's tests contain finds each factory call
+    /// once per expansion and the declaration's own text not at all.
+    pub(crate) fn snapshot_source(&self) -> String {
+        super::tests_extract::blank_ranges(&self.source, &self.covered)
+    }
+}
+
+/// The call line of the last expansion starting at or before `line`.
+pub(crate) fn call_line_in(call_lines: &[(usize, usize)], line: usize) -> Option<usize> {
+    call_lines
+        .iter()
+        .rev()
+        .find(|(start, _)| *start <= line)
+        .map(|(_, call_line)| *call_line)
+}
+
+struct Factory<'a> {
+    name: &'a str,
+    params: Vec<&'a str>,
+    /// The body statements' source text, one statement per line.
+    body: String,
+}
+
+/// Expand every eligible suite-factory call of a top-level function
+/// declaration. `None` when nothing expands, which leaves extraction as is.
+pub(crate) fn expand_suite_factories(
+    program: &[Statement<'_>],
+    source: &str,
+) -> Option<SuiteFactoryExpansion> {
+    // An escaped spelling of a name is invisible to the mention count below.
+    if source.contains("\\u") {
+        return None;
+    }
+    let lines = SourceText::new(source);
+    let mut expanded = source.to_string();
+    let mut call_lines = Vec::new();
+    let mut covered = Vec::new();
+    for stmt in program {
+        let Statement::FunctionDeclaration(function) = stmt else {
+            continue;
+        };
+        let Some(factory) = factory_of(function, source) else {
+            continue;
+        };
+        let calls: Vec<&oxc_ast::ast::CallExpression<'_>> = program
+            .iter()
+            .filter_map(|stmt| factory_call(stmt, factory.name))
+            .collect();
+        // Every mention is the declaration or one of the calls: no
+        // reassignment, export, alias or call from inside another function.
+        if calls.is_empty() || word_occurrences(source, factory.name).count() != 1 + calls.len() {
+            continue;
+        }
+        let mut expanded_calls = 0;
+        for call in &calls {
+            if call_lines.len() >= MAX_EXPANSIONS {
+                break;
+            }
+            let Some(text) = substituted_body(&factory, call, source) else {
+                continue;
+            };
+            expanded.push('\n');
+            let start = expanded.matches('\n').count() + 1;
+            expanded.push_str(&text);
+            call_lines.push((start, lines.line_for_offset(call.span.start as usize)));
+            expanded_calls += 1;
+        }
+        if expanded_calls == calls.len() {
+            covered.push(function.span.start as usize..function.span.end as usize);
+        }
+    }
+    (!call_lines.is_empty()).then_some(SuiteFactoryExpansion {
+        source: expanded,
+        call_lines,
+        covered,
+    })
+}
+
+/// A function whose parameters are plain names and whose body is only call
+/// statements (registrations and hooks): no declaration, return or control
+/// flow, so splicing the statements out of it changes nothing else.
+fn factory_of<'a>(function: &'a Function<'_>, source: &str) -> Option<Factory<'a>> {
+    let name = function.id.as_ref()?.name.as_str();
+    let body = function.body.as_ref()?;
+    if function.generator
+        || function.r#async
+        || function.params.rest.is_some()
+        || !body.directives.is_empty()
+        || body.statements.is_empty()
+    {
+        return None;
+    }
+    let params = function
+        .params
+        .items
+        .iter()
+        .map(|param| {
+            // A default value is not a plain parameter: its pattern is still the
+            // bare name.
+            if param.initializer.is_some() {
+                return None;
+            }
+            super::owners::binding_identifier_name(&param.pattern)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    if params
+        .iter()
+        .enumerate()
+        .any(|(at, param)| params[..at].contains(param))
+    {
+        return None;
+    }
+    let mut text = Vec::new();
+    for stmt in &body.statements {
+        let Statement::ExpressionStatement(statement) = stmt else {
+            return None;
+        };
+        if !matches!(statement.expression, Expression::CallExpression(_)) {
+            return None;
+        }
+        text.push(source.get(statement.span.start as usize..statement.span.end as usize)?);
+    }
+    Some(Factory {
+        name,
+        params,
+        body: text.join("\n"),
+    })
+}
+
+/// `name(...)` as a top-level expression statement, without type arguments
+/// or spread.
+fn factory_call<'s, 'a>(
+    stmt: &'s Statement<'a>,
+    name: &str,
+) -> Option<&'s oxc_ast::ast::CallExpression<'a>> {
+    let Statement::ExpressionStatement(statement) = stmt else {
+        return None;
+    };
+    let Expression::CallExpression(call) = &statement.expression else {
+        return None;
+    };
+    let Expression::Identifier(callee) = &call.callee else {
+        return None;
+    };
+    (callee.name == name && call.type_arguments.is_none()).then_some(&**call)
+}
+
+/// The factory body with each parameter replaced by its argument, or `None`
+/// when any parameter use is not a plain reference to that argument.
+///
+/// A parameter bound to an identifier must be used only as a callee
+/// (`impl(...)`); one bound to a string or number literal only as an
+/// argument (`describe(name, ...)`). The body may not rebind the parameter or
+/// already mention the argument's name, so the renaming captures nothing.
+fn substituted_body(
+    factory: &Factory<'_>,
+    call: &oxc_ast::ast::CallExpression<'_>,
+    source: &str,
+) -> Option<String> {
+    if call.arguments.len() != factory.params.len() {
+        return None;
+    }
+    let body = &factory.body;
+    let code = code_bytes(body)?;
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    for (param, argument) in factory.params.iter().zip(&call.arguments) {
+        let (replacement, as_callee) = match argument {
+            Argument::Identifier(identifier) => (identifier.name.to_string(), true),
+            Argument::StringLiteral(literal) => (span_text(source, literal.span)?, false),
+            Argument::NumericLiteral(literal) => (span_text(source, literal.span)?, false),
+            _ => return None,
+        };
+        if as_callee && word_occurrences(body, &replacement).next().is_some() {
+            return None;
+        }
+        if super::related_tests::local_identifier_declared_in_test_body(body, param) {
+            return None;
+        }
+        let hits: Vec<usize> = word_occurrences(body, param).collect();
+        if hits.len() != identifier_occurrences(body, param).count()
+            || hits.iter().any(|at| !code[*at])
+        {
+            return None;
+        }
+        for at in hits {
+            let before = body[..at].trim_end();
+            let after = body[at + param.len()..].trim_start();
+            let plain = if as_callee {
+                after.starts_with('(') && !before.ends_with(['"', '\'', '`'])
+            } else {
+                before.ends_with(['(', ',']) && after.starts_with([',', ')'])
+            };
+            if !plain {
+                return None;
+            }
+            edits.push((at, at + param.len(), replacement.clone()));
+        }
+    }
+    edits.sort_by_key(|(at, _, _)| std::cmp::Reverse(*at));
+    let mut text = body.clone();
+    for (start, end, replacement) in edits {
+        text.replace_range(start..end, &replacement);
+    }
+    Some(text)
+}
+
+fn span_text(source: &str, span: oxc_span::Span) -> Option<String> {
+    source
+        .get(span.start as usize..span.end as usize)
+        .map(str::to_string)
+}
+
+/// Per byte of `body`: `true` outside string, template and comment text.
+/// `None` for a bare `/` (a regex or a division), which this scan does not
+/// classify; a parameter spelled inside text the runner reads as data must
+/// not be renamed, because that would change an expected value or title.
+fn code_bytes(body: &str) -> Option<Vec<bool>> {
+    let bytes = body.as_bytes();
+    let mut code = vec![true; bytes.len()];
+    let mut at = 0;
+    while at < bytes.len() {
+        let end = match bytes[at] {
+            quote @ (b'\'' | b'"' | b'`') => {
+                let mut end = at + 1;
+                while end < bytes.len() && bytes[end] != quote {
+                    end += if bytes[end] == b'\\' { 2 } else { 1 };
+                }
+                end + 1
+            }
+            b'/' if bytes.get(at + 1) == Some(&b'/') => {
+                body[at..].find('\n').map_or(bytes.len(), |n| at + n)
+            }
+            b'/' if bytes.get(at + 1) == Some(&b'*') => body[at + 2..]
+                .find("*/")
+                .map_or(bytes.len(), |n| at + n + 4),
+            b'/' => return None,
+            _ => {
+                at += 1;
+                continue;
+            }
+        };
+        let end = end.min(bytes.len());
+        code[at..end].fill(false);
+        at = end;
+    }
+    Some(code)
+}

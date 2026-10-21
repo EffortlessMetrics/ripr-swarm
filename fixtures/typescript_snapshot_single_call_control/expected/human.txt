@@ -1,0 +1,39 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/typescript_snapshot_single_call_control/input
+config: <cwd>/fixtures/typescript_snapshot_single_call_control/input/ripr.toml
+
+Summary: 1 probe (1 exposed, 0 weak, 0 unrevealed, 0 no path); 1 of 1 finding unsuppressed
+
+Changed file(s) by language: typescript = 1
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+Start here:
+  State: preview language, advisory only
+  Safe next action: preview-language evidence is advisory; a related test appears to observe this change, so there is no repair to make; verify independently before relying on it
+  File: src/lib.ts:3
+  Language: typescript
+  Language status: preview
+  Static exposure: exposed (severity: info, confidence 0.60)
+  Changed behavior: return amount - 20;
+  Discriminator (observed, advisory): Related test reaches `price` with a `snapshot` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator
+  Related test: tests/lib.test.ts:3 price
+  Next step — TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value
+  Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator yes
+    - reach yes: 1 related test(s) found for owner `price`
+    - infection unknown: TypeScript preview adapter does not yet model infection
+    - 5 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/typescript_snapshot_single_call_control/input --diff <cwd>/fixtures/typescript_snapshot_single_call_control/diff.patch --mode fast probe:src_lib.ts:typescript_preview:c712a282
+  ripr context --root <cwd>/fixtures/typescript_snapshot_single_call_control/input --diff <cwd>/fixtures/typescript_snapshot_single_call_control/diff.patch --mode fast --at probe:src_lib.ts:typescript_preview:c712a282
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.ts:typescript_preview:c712a282 --root <cwd>/fixtures/typescript_snapshot_single_call_control/input` for the full gate's answer
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

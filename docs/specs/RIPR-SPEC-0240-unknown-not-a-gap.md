@@ -203,10 +203,182 @@ A panicking macro inside a nested `fn`, closure or `macro_rules!` in the
 owner still counts; that over-reads toward `static_unknown`, never toward a
 gap or credit.
 
+### Profile-dependent `debug_assert_eq!`
+
+`debug_assert_eq!` runs under the default `cargo test` profile and is
+compiled out under `--release` (unless the profile turns debug assertions
+back on). A test that pins the owner's result only with it discriminates in
+the first profile and never in the second. The parser does not collect the
+`debug_` forms as assertion facts, so such a test reads as having no
+assertion and the finding as a certain gap.
+
+The decision belongs to the owner-return pin (RIPR-SPEC-0197). The owner-pin
+syntax pass records the assertion context of bare `debug_assert_eq!` calls
+beside `assert_eq!` and `assert!`, and
+`OwnerReturnPin::admits_debug_assert_eq` runs every gate `admits` applies to
+`assert_eq!` (owner-side return paths, operand shape, expected value, eager
+statement path, earlier returns, `#[should_panic]`, macro bindings) with the
+macro spelled `debug_assert_eq`. The classifier records each related
+`direct_owner_call` test without `#[ignore]` that it admits
+(`ClassifiedProbeEvidence::debug_assert_eq_pins`) and hands them to the
+post-pass as an evidence marker. `gap_admission::withhold_debug_assertion_gap`
+consumes the marker and withholds a `weakly_exposed` or
+`reachable_unrevealed` finding with no `static_limit_kind` under
+`rust_debug_assertion_profile_unresolved`, naming those tests. It runs after
+the `#[should_panic]` limit and before `withhold_unsupported_gap`. The
+admission never credits: the `debug_` facts never enter a test's assertions.
+
+Decision (#8051, reversible): withhold rather than credit. Crediting would
+claim a discriminator that a `--release` test run never executes, and ripr
+does not read the CI command or the profile settings; keeping the gap would
+claim a missing test the default run does have. This matches the corpus
+precedent for a production `debug_assert!` (`mined-debug-assert-only-oracle`,
+RIPR-SPEC-0219), which scores `static_unknown` as `abstained`.
+
+Two earlier cuts were rejected in review. Collecting `debug_` forms as
+parser oracles let predicate, match-arm and field-projection paths credit
+them as `exposed` and filled the empty assertion list the `#[should_panic]`
+rule requires. A hand-written mirror of the pin's gates read the test body
+and kept diverging from it (an `Ok(1)` pin of a changed early `Err` exit,
+checks after an earlier `return`, `#[should_panic]` tests, `Some(..)` tails,
+`async` owners), withholding gaps the `assert_eq!` twin keeps. The
+`debug_assertion_limit` tests pin the twin contract: for each body, the
+`debug_assert_eq!` spelling reads as a profile limit exactly where the
+`assert_eq!` twin is credited, and keeps a gap otherwise, with one declared
+exception: a `std::`/`core::`-qualified `debug_assert_eq!` is not recognized,
+because the `std`-root proof (#7857) is spelled for `assert_eq` only, so it
+keeps its gap (#8637). `debug_assert_ne!` and `debug_assert!` in any form are
+not read.
+
+### Call-fact budget of a related test line (#8600)
+
+`extract_call_facts` keeps at most 256 distinct callees per source line. A
+related test with a line at that budget may have had a call dropped, and the
+dropped call may be the test's assertion helper or a second owner call, so a
+negative claim over that test's calls is not established. The shared owner
+`withhold_call_budget_gap` reads the existing saturation predicate
+(`has_saturated_line`); no facts or cache field carries a flag. A
+`reachable_unrevealed` or `weakly_exposed` finding with a saturated related
+test becomes `static_unknown` under `rust_call_fact_budget` and drops its
+absence claims. An `infection_unknown`, `propagation_unknown` or
+`static_unknown` finding keeps its class and gains the reason. `exposed`,
+`no_static_path`, a finding with a producer-named limit, and a finding whose
+related tests have no saturated line are untouched. Exactly 256 is
+conservatively limited: it does not prove a call was dropped. Saturation is read over every matched related test before the eight-row render cap trims the rows, and a saturated test's `no_call_path`, `no_assertion`, `missing_input` and `assertion_not_observing` row misses read as `observation_unconfirmed` (`weak_assertion` and `missing_exact_assertion` describe an assertion ripr read and stay). An already-unknown finding drops its call-derived absence lines (no oracle, no discriminator, no exact variant, no boundary input, missing-discriminator values), clears its missing discriminators and replaces its next step, as a withheld gap does. The reason never
+raises a class. Scope: the finding surfaces (`check`, JSON, human, SARIF, LSP).
+
+The `repo-exposure-json` seam reading is a separate producer
+(`test_grip_evidence`), so it applies the same decision to its stage
+evidence through `test_grip_evidence::call_budget`, over the same shared
+predicate and the same typed `rust_call_fact_budget` kind. Saturation is read
+over every ranked related test before the compact twelve-test cap. A stage
+that read `no` or `weak` (activation, propagation, observation,
+discrimination) becomes `unknown` and names the reason, and the seam's
+missing boundary values are dropped, so a `reachable_unrevealed` or
+`weakly_gripped` seam reads as an unknown class (`discrimination_unknown`,
+`propagation_unknown`, ...) and its evidence record is `static_limitation`
+with a `limitation` canonical item, no repair command, and a
+`static_limitations[]` row whose `category` is `rust_call_fact_budget`. An
+already-unknown stage keeps its class and gains the reason in its summary.
+A strongly gripped seam (every stage `yes`, no missing value), an `ungripped`
+seam and a seam whose reach is not `yes` or `weak` are untouched. The compact
+reading behind `repo-exposure-summary-json` applies the same function, and the
+classified-seam cache generation moved to `1.85` so a warm cache cannot serve
+the pre-limit actionable record.
+
+Decision (#8600): an independent empty-slice assertion beside a saturated
+slice table stays `infection_unknown`, and ripr does not credit it. The
+unsaturated twin with the same independent assertion is also
+`infection_unknown`, because a literal-slice call is outside the eager
+slice-table family that resolves the boundary; the call-fact budget adds only
+the typed reason. Crediting the assertion would be a new table-family rule
+that also changes unsaturated inputs, and it would move a finding toward
+`exposed` (a clean claim), not toward a repair signal, so it needs its own
+corpus and decision. `call_budget_slice_positive.rs` pins the three readings.
+### Framework oracles ripr does not evaluate
+
+Four test idioms check a changed value through machinery ripr reads only at
+the surface, and each used to leave a certain `weakly_exposed` claim.
+`framework_oracle::withhold_framework_oracle_gap` withholds a
+`weakly_exposed` or `reachable_unrevealed` finding with no
+`static_limit_kind` under `rust_framework_oracle_unresolved` when a
+non-ignored related test matches one of these shapes:
+
+- **environment**: a `match_arm`, `predicate` or `error_path` probe, a
+  `direct_owner_call` test with a strong assertion that calls
+  `set_var("NAME", ..)` or `remove_var("NAME")`, and an owner body that calls
+  `env::var("NAME")` or `env::var_os("NAME")` with the same literal name,
+  with the owner called after the first such write. A different variable, a
+  non-literal name, a write after the call or a relational-only test keeps the
+  gap (`lib-serial-test-batch-default-relational`).
+- **mock closure**: a test with a strong assertion and an `expect_<m>()` call
+  whose `.returning(|..|)` closure uses one of its named (non-`_`) parameters,
+  where the changed line calls `.<m>(`. A closure that ignores its arguments,
+  or a changed line that does not call the mocked method (the grace predicate
+  of `lib-mockall-grace-boundary-times`), keeps the gap.
+- **expect-test**: a `direct_owner_call` test comparing a non-empty
+  `expect![[..]]` literal with `.assert_debug_eq(..)`, where the asserted
+  operand is a call to the owner or a local whose live binding where the
+  assertion runs was made by `let [mut] x = ..owner(..)`. A later `let`
+  (even on the same line, in a closure or callback body the assertion sits in,
+  behind an attribute, or any binder of the same name whose scope holds the
+  assertion: a nested `fn` parameter, a closure parameter, an `if let` / `while let` / let-chain / `for`
+  pattern, a match-arm pattern or guard, a struct or tuple pattern), an
+  assignment (destructuring, indexed place, one inside another `let`'s
+  initializer, or a later one in the same statement such as `y = x = 5` or
+  `foo(y = 2, x = 5)` included) or `&mut x` / `&raw mut x` / `addr_of_mut!(x)` borrow (any bracket), keywords read the same across
+  newlines, tabs and comments, a
+  binder inside the assertion's own arguments, a macro-brace `let`, a binding closed
+  with its block, and a binding made only after the assertion do not reach it.
+  A test that defines a `macro_rules!` or `macro` before the assertion, or
+  hands the local to any macro other than the argument-reading standard and
+  snapshot macros (an exact list: `assert`, `assert_eq`, `assert_ne`,
+  `debug_assert*`, the insta `assert_*_snapshot` family, `format!`, `print*`,
+  `matches!`, `vec!`, `dbg!`, `with_settings!`, .., spelled bare or rooted at
+  `std`, `core`, `insta` or `expect_test`; any other path, a raw identifier or
+  a user macro), gets no credit. Any `use` or `extern crate` item in the test
+  body turns the allowlist off for that body (it can rename, glob-import or
+  re-root a macro; an over-withhold). Whitespace or comments around `::` in a
+  macro path are ignored, so `my ::dbg!(x)` is the qualified `my::dbg`: a macro defined
+  elsewhere can bind or rewrite any name it is handed (an over-withhold). A bare allowlisted name shadowed by a module-level
+  `macro_rules!` or `use` outside the test body is not detected (inherent
+  residual). Residuals, kept as gaps: mutation
+  through a method on a `let mut` binding (`x.push(..)`) is not tracked; the
+  strict snapshot grader names the owner by its identifier, so a different
+  receiver's `other.own(..)` or a shadowed `own` is read as the owner; aliasing
+  and escape are not followed.
+- **insta**: a `direct_owner_call` test with a snapshot macro that has no
+  inline `@` literal, whose snapshotted value (after an optional literal name)
+  derives from the owner as above (a live binding at the assertion), and no `add_redaction`, `with_settings` or `Settings`,
+  on a changed `field:` initializer that no redaction selector (a literal
+  keyed by `=>`, such as `".id"` or `"[].id"`) names. Any other changed line
+  keeps the gap (the `snapshot_oracle` fixture's changed predicate), and so
+  does a redacted field (`lib-insta-json-redacted-id`).
+
+Any one matching related test withholds the finding: a weaker sibling test
+reads as evidence ripr gathered, not as the oracle that decides, and the
+matching test is the strongest oracle ripr cannot evaluate. The shapes read
+the test text, as code only: a write, binding or assertion that appears only
+in a comment, a nested comment or a string (raw strings included) is not
+there, while a real literal name or expectation is read from the original at
+the same offsets. A macro that does not qualify is skipped, so a later one that
+does still counts. Two limits are accepted: the mocked-method match reads the
+method name, not the receiver, and only related tests (the first eight per
+finding) are judged; either can withhold a gap, which only costs an advisory.
+
+It runs after the should-panic rule and before `withhold_unsupported_gap`,
+and writes the finding the same way. Nothing is credited. Corpus effect:
+`lib-serial-test-retries-default-arm`, `lib-mockall-recipient-predicate`,
+`lib-expect-test-assert-debug-eq-variant-payload` and
+`lib-insta-json-unredacted-sibling-field` move from `false_actionable` to
+`abstained`, which their cases accept.
+
 ## Scope boundary
 
 - Rust check findings only. The pilot seam rule is RIPR-SPEC-0230 (#5569).
-- `weakly_exposed` findings are out of scope: a credited weak oracle is read
+- `weakly_exposed` findings are out of scope except for the framework
+  oracles above and the profile-dependent `debug_assert_eq!` above (which the
+  owner pin would credit as `assert_eq!`): a credited weak oracle is read
   evidence even when a stronger assertion was refused.
 - Two broader rules were built and dropped. Withholding every refused-context
   gap hid the runtime-controlled gaps above. Withholding `weakly_exposed` when
@@ -279,6 +451,14 @@ Tests in `crates/ripr/src/analysis/classify/gap_admission.rs`:
 - `a_panic_macro_is_read_by_its_own_name`
 - `a_should_panic_test_expects_the_owner_panic_only_when_the_message_matches`
 
+Tests in `crates/ripr/src/analysis/classify/framework_oracle.rs` and
+`crates/ripr/tests/framework_oracle_limit.rs`:
+
+- `a_mock_closure_counts_only_when_it_reads_a_named_argument`
+- `an_arm_chosen_by_the_environment_is_withheld` and its keeps-the-gap control
+- `an_expect_debug_literal_is_withheld` and its keeps-the-gap control
+- `an_unredacted_insta_field_is_withheld` and its keeps-the-gap control
+
 Tests in `crates/ripr/src/analysis/classify/owner_pin/tests.rs`:
 
 - `analyzer_limit_refusals_are_limits_of_ripr_reading`
@@ -292,7 +472,14 @@ Integration: `crates/ripr/tests/owner_pin_execution.rs`
 `macro_use_module_admission_matches_runtime`) and
 `crates/ripr/tests/should_panic_limit.rs`
 (`a_should_panic_test_on_a_changed_panic_guard_reads_as_static_unknown`,
-`a_panic_outcome_the_rule_does_not_cover_keeps_the_gap`).
+`a_panic_outcome_the_rule_does_not_cover_keeps_the_gap`) and
+`crates/ripr/tests/call_budget_limit.rs`
+(`a_saturated_related_test_line_withholds_the_gap_under_the_budget_reason`,
+`saturation_that_does_not_limit_the_proof_keeps_the_finding`,
+`an_independently_established_positive_keeps_its_class`,
+`a_saturated_test_past_the_related_row_cap_still_withholds_the_gap`,
+`an_already_unknown_finding_names_the_budget_and_drops_call_derived_absence`), plus the unit test
+`gap_admission.rs::tests::a_related_test_line_at_the_call_budget_withholds_a_gap_and_names_an_unknown`.
 
 Fixtures: `gap_withheld_feature_gated_test`, `gap_kept_ignored_test`.
 

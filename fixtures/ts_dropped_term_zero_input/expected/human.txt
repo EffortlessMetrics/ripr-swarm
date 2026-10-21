@@ -32,6 +32,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_dropped_term_zero_input/input --diff <cwd>/fixtures/ts_dropped_term_zero_input/diff.patch --mode fast probe:src_price.ts:typescript_preview:c7c58a6d
   ripr context --root <cwd>/fixtures/ts_dropped_term_zero_input/input --diff <cwd>/fixtures/ts_dropped_term_zero_input/diff.patch --mode fast --at probe:src_price.ts:typescript_preview:c7c58a6d
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_price.ts:typescript_preview:c7c58a6d --root <cwd>/fixtures/ts_dropped_term_zero_input/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

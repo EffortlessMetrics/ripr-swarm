@@ -514,7 +514,7 @@ fn doctor_says_when_the_cache_cannot_be_written() -> Result<(), String> {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        stdout.contains("! Cache not writable") && stdout.contains("RIPR_CACHE_DIR"),
+        stdout.contains("~ Cache not writable") && stdout.contains("RIPR_CACHE_DIR"),
         "doctor must name the unwritable cache and the remedy: {stdout}"
     );
     Ok(())
@@ -1357,7 +1357,7 @@ exit 66
                 .map_err(|e| e.to_string())
         }
 
-        fn assert_sigint(mode: &str) -> Result<(), String> {
+        fn assert_sigint(mode: &str, cli_only: bool) -> Result<(), String> {
             let _serial = SUBREAPER.lock().map_err(|e| e.to_string())?;
             let mut reaper = Reaper::new()?;
             let fixture = setup(&format!("sigint-{mode}"))?;
@@ -1401,7 +1401,14 @@ exit 66
                 return Err("exporter escaped the owned CLI process group".to_string());
             }
             let signalled = Instant::now();
-            killpg(pid(running.child.id())?, Signal::SIGINT).map_err(|e| e.to_string())?;
+            if cli_only {
+                // Leave the exporter live so only the CLI's cancellation
+                // owner can stop and reap it. The existing group-signal
+                // cases separately cover terminal-style SIGINT delivery.
+                kill(pid(running.child.id())?, Signal::SIGINT).map_err(|e| e.to_string())?;
+            } else {
+                killpg(pid(running.child.id())?, Signal::SIGINT).map_err(|e| e.to_string())?;
+            }
             let status = loop {
                 if let Some(status) = running.child.try_wait().map_err(|e| e.to_string())? {
                     break status;
@@ -1422,7 +1429,8 @@ exit 66
             let stderr = fs::read_to_string(running.marker.with_extension("stderr"))
                 .map_err(|e| e.to_string())?;
             eprintln!(
-                "SIGINT receipt mode={mode} cli={} producer={producer} status={status:?} producer_exists={producer_exists} elapsed_ms={} tmp={} fixture={}",
+                "SIGINT receipt mode={mode} target={} cli={} producer={producer} status={status:?} producer_exists={producer_exists} elapsed_ms={} tmp={} fixture={}",
+                if cli_only { "cli" } else { "group" },
                 running.child.id(),
                 signalled.elapsed().as_millis(),
                 tmp.display(),
@@ -1511,15 +1519,50 @@ exit 66
 
         #[test]
         fn managed_sigint_reaps_partial_and_repeats() -> Result<(), String> {
-            assert_sigint("partial")
+            assert_sigint("partial", false)
         }
         #[test]
         fn managed_sigint_reaps_ignoring_exporter() -> Result<(), String> {
-            assert_sigint("ignore")
+            assert_sigint("ignore", false)
         }
         #[test]
         fn managed_sigint_names_retained_directory() -> Result<(), String> {
-            assert_sigint("directory")
+            assert_sigint("directory", false)
+        }
+        #[test]
+        fn cli_sigint_reaps_ignoring_exporter() -> Result<(), String> {
+            assert_sigint("ignore", true)
+        }
+        #[test]
+        fn cli_sigint_names_retained_directory() -> Result<(), String> {
+            assert_sigint("directory", true)
+        }
+
+        /// Kernel wait channel of every thread of `pid`. A thread that exits
+        /// between the directory listing and the read (NotFound or ESRCH) is skipped; an
+        /// unreadable instrument is an error, not an empty observation.
+        fn task_wchans(pid: u32) -> Result<Vec<String>, String> {
+            let mut waits = Vec::new();
+            for entry in fs::read_dir(format!("/proc/{pid}/task"))
+                .map_err(|e| format!("observe Linux blocked-I/O instrument: {e}"))?
+            {
+                let entry = entry.map_err(|e| e.to_string())?;
+                match fs::read_to_string(entry.path().join("wchan")) {
+                    Ok(wait) => waits.push(wait),
+                    // A thread can exit after the listing (NotFound) or between
+                    // open and read (ESRCH).
+                    Err(e)
+                        if e.kind() == std::io::ErrorKind::NotFound
+                            || e.raw_os_error() == Some(nix::errno::Errno::ESRCH as i32) => {}
+                    Err(e) => return Err(format!("observe Linux blocked-I/O instrument: {e}")),
+                }
+            }
+            if waits.is_empty() {
+                return Err(
+                    "observe Linux blocked-I/O instrument: no thread wchan readable".to_string(),
+                );
+            }
+            Ok(waits)
         }
 
         fn wait_blocked(
@@ -1531,13 +1574,17 @@ exit 66
                 if child.try_wait().map_err(|e| e.to_string())?.is_some() {
                     return Err("CLI exited before blocked-I/O observation".to_string());
                 }
-                let wait = fs::read_to_string(format!("/proc/{}/wchan", child.id()))
-                    .map_err(|e| format!("observe Linux blocked-I/O instrument: {e}"))?;
-                if wait.contains(operation) {
+                // The budgeted check runs on a worker thread (check_budget.rs), so the main
+                // thread waits on a futex while a sibling thread holds the blocking
+                // I/O. Observe every thread of the CLI, not only the leader.
+                let wait = task_wchans(child.id())?;
+                if wait.iter().any(|w| w.contains(operation)) {
                     return Ok(());
                 }
                 if started.elapsed() > Duration::from_secs(5) {
-                    return Err(format!("CLI did not reach {operation}; last wchan={wait}"));
+                    return Err(format!(
+                        "CLI did not reach {operation}; last wchan per thread={wait:?}"
+                    ));
                 }
                 std::thread::sleep(Duration::from_millis(2));
             }

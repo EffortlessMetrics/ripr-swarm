@@ -265,23 +265,27 @@ pub(crate) fn human_path(path: &Path) -> String {
 /// Human display rule for path text, pure over the host so both answers are
 /// testable anywhere (#4378).
 ///
-/// On Windows `\` is a separator: a drive-letter verbatim prefix (`\\?\`
-/// before `<drive>:`) renders as the plain path and every `\` renders as `/`,
-/// so a forward-slash argv prefix and a joined suffix never mix separators in
-/// one path. Other verbatim forms (`\\?\UNC\..`, `\\?\Volume{..}`) render
-/// exactly as given, like `app::verification_execution`'s normalizer. On
-/// Unix `\` is an ordinary filename character, so the text is returned
-/// unchanged; rewriting it would name a different file.
+/// On Windows `\` is a separator: every `\` renders as `/` and a verbatim
+/// prefix renders as its plain spelling, so a forward-slash argv prefix and a
+/// joined suffix never mix separators in one path. Both reducible verbatim
+/// forms fold here at the shared owner (#8754): `\\?\` before `<drive>:` and
+/// `\\?\UNC\server\share`, whose plain spellings (`C:...` and
+/// `\\server\share`) every shell accepts. Other verbatim forms
+/// (`\\?\Volume{..}`, unknown device prefixes) have no plain spelling, so
+/// they render exactly as given — one disclosed exception owned here, not a
+/// per-call-site policy. On Unix `\` is an ordinary filename character, so
+/// the text is returned unchanged; rewriting it would name a different file.
 pub(crate) fn human_path_text(text: &str, windows: bool) -> String {
     if !windows {
         return text.to_string();
     }
-    let plain = match text.strip_prefix(r"\\?\") {
-        None => text,
-        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => rest,
-        Some(_) => return text.to_string(),
-    };
-    plain.replace('\\', "/")
+    let unified = text.replace('\\', "/");
+    match strip_windows_verbatim_prefix(&unified) {
+        Some(plain) => plain,
+        // A verbatim form with no plain spelling renders exactly as given.
+        None if unified.starts_with("//?/") => text.to_string(),
+        None => unified,
+    }
 }
 
 /// A valid user-supplied alias can resolve to non-UTF-8 filesystem bytes.
@@ -335,10 +339,17 @@ mod tests {
             format!("{drive}/code/target/debug/ripr.exe")
         );
         assert_eq!(human_path_text(r".\Cargo.toml", true), "./Cargo.toml");
-        // Verbatim forms other than a drive letter are shown exactly as given.
-        for verbatim in [r"\\?\UNC\server\share\ripr.exe", r"\\?\Volume{1}\x"] {
-            assert_eq!(human_path_text(verbatim, true), verbatim);
-        }
+        // #8754: a UNC verbatim prefix has the plain spelling `\\server\share`,
+        // so it folds like the drive-letter form; a volume GUID has no plain
+        // spelling and stays exactly as given.
+        assert_eq!(
+            human_path_text(r"\\?\UNC\server\share\ripr.exe", true),
+            r"//server/share/ripr.exe"
+        );
+        assert_eq!(
+            human_path_text(r"\\?\Volume{1}\x", true),
+            r"\\?\Volume{1}\x"
+        );
     }
 
     #[test]
@@ -365,9 +376,17 @@ mod tests {
         assert_eq!(human_path_text(&verbatim, false), verbatim);
         let unix = r"/tmp/repo 100%\literal/attempt.json";
         assert_eq!(human_path_text(unix, false), unix);
-        for namespace in [r"\\?\UNC\server\share 100%", r"\\?\Volume{1}\100%"] {
-            assert_eq!(human_path_text(namespace, true), namespace);
-        }
+        // #8754: the UNC verbatim form folds to its plain spelling with the
+        // literal `%` intact (this renderer is not the percent codec); a
+        // volume GUID has no plain spelling and stays exactly as given.
+        assert_eq!(
+            human_path_text(r"\\?\UNC\server\share 100%", true),
+            "//server/share 100%"
+        );
+        assert_eq!(
+            human_path_text(r"\\?\Volume{1}\100%", true),
+            r"\\?\Volume{1}\100%"
+        );
     }
 
     #[test]
