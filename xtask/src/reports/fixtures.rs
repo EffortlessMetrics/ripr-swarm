@@ -3217,6 +3217,7 @@ mod tests {
     /// Stop at an absent fixture so this smoke never regenerates expected output.
     #[test]
     fn automation_guide_bless_example_passes_the_installed_reason_contract() -> Result<(), String> {
+        let _cwd_guard = crate::acquire_test_cwd_read_guard();
         let doc = include_str!("../../../docs/PR_AUTOMATION.md");
         let (_, section) = doc
             .split_once("### Mutating Shape Commands\n")
