@@ -160,7 +160,7 @@ keeps that range as one atomic value:
 1. **Explicit `seam_id`.** A runtime `seam_id` naming a static seam joins it.
 2. **Span containment.** When the runtime record has a complete span, every
    static seam in the same normalized file with a complete span
-   (`repo-exposure-json` 0.4 `column`, `end_line`, `end_column`) is compared,
+   (`repo-exposure-json` 0.4 and later `column`, `end_line`, `end_column`) is compared,
    whatever line the seam starts on. Positions compare lexicographically as
    `(line, column)` with exclusive ends; a seam contains the mutant when
    `seam.start <= mutant.start`, `mutant.start < seam.end` and
@@ -184,6 +184,14 @@ Candidate lists are ordered by seam line, column, end line, end column and
 seam ID, independent of snapshot order.
 
 `SeamId` generation does not change: geometry is join evidence, not identity.
+
+Repo-exposure 0.5 supplies complete parser-owned pattern-through-body spans
+for actual Rust arms (#5905), including their optional trailing comma.
+Multiline patterns use the span's start line. The `match` keyword remains
+span-less. Existing 0.4 snapshots and other span-less entries retain the
+same fallback contract; the join algorithm and mutation taxonomy do not
+change. Source-backed location controls exercise the production inventory,
+renderers and shared join without claiming cargo-mutants execution.
 
 Runtime gap signals that cannot be joined to a static seam should carry
 `runtime_only_signal`; they are calibration context only and must not create a
