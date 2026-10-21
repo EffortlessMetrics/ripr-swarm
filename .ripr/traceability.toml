@@ -7404,6 +7404,7 @@ tests = [
   # G-G derived boundary input (#4215 follow-up)
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::missed_literal_boundary_with_input_fact_derives_the_boundary_call",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::resolved_constant_boundary_with_input_fact_is_delegatable",
+  "crates/ripr/src/output/typescript_packet_projection.rs::tests::member_path_boundaries_fail_closed_while_immutable_const_resolves",
   "crates/ripr/src/output/typescript_packet_projection.rs::tests::mismatched_input_facts_keep_the_packet_closed",
   "crates/ripr/src/analysis/language/typescript/boundary_input_tests.rs::same_file_integer_const_resolves_to_the_boundary_input",
   "crates/ripr/src/analysis/language/typescript/boundary_input_tests.rs::rebindable_or_non_literal_constants_stay_unresolved",

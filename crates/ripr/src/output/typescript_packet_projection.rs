@@ -722,9 +722,10 @@ fn split_static_comparison(discriminator: &str) -> Option<(&str, StaticCompariso
 }
 
 /// A dotted member path (`pricingConfig.discountThreshold`,
-/// `DiscountTier.Volume`) that is not a `.length` probe: its value can be a
-/// mutable object property or an enum member, neither of which this
-/// projection resolves (#9107).
+/// `DiscountTier.Volume`, `config.length`): its value can be a mutable object
+/// property or an enum member, neither of which this projection resolves
+/// (#9107). Receiver `.length` probes never reach this check: they parse as
+/// comparisons or sit opposite a literal.
 fn is_unresolved_member_operand(operand: &str) -> bool {
     let operand = operand.trim();
     let mut segments = operand.split('.');
@@ -734,17 +735,27 @@ fn is_unresolved_member_operand(operand: &str) -> bool {
         rest += 1;
         is_plain_identifier(segment)
     });
-    first_ok && rest_ok && rest >= 1 && !operand.ends_with(".length")
+    first_ok && rest_ok && rest >= 1
 }
 
 /// The member-path operand of an otherwise unparseable discriminator, so the
 /// packet fails closed instead of keeping the observed shape (#9107).
 fn unresolved_member_boundary(discriminator: &str) -> Option<String> {
     let (left, _, right) = split_static_comparison(discriminator)?;
-    [right, left]
-        .into_iter()
-        .find(|side| is_unresolved_member_operand(side))
-        .map(ToString::to_string)
+    // A member path opposite a literal or constant is the receiver, not the
+    // boundary (`order.total >= 100`), so only the boundary position counts.
+    let is_boundary_side = |side: &str, other: &str| {
+        is_unresolved_member_operand(side)
+            && parse_static_literal(other).is_none()
+            && !is_constant_shaped_operand(other)
+    };
+    if is_boundary_side(right, left) {
+        Some(right.to_string())
+    } else if is_boundary_side(left, right) {
+        Some(left.to_string())
+    } else {
+        None
+    }
 }
 
 /// Parse a discriminator like `user.length == 3` into a static comparison.
@@ -2486,8 +2497,28 @@ mod tests {
                 route.assertion_shape
             );
         }
-        // `.length` probes are not member boundaries and keep their verdict.
-        assert!(!is_unresolved_member_operand("items.length"));
+        // A member receiver against a literal or constant is not a member
+        // boundary and keeps its previous verdict.
+        for discriminator in [
+            "order.total >= 100",
+            "user.profile.age > 18",
+            "this.count == 3",
+            "order.total >= LIMIT",
+        ] {
+            assert_eq!(
+                unresolved_member_boundary(discriminator),
+                None,
+                "{discriminator}"
+            );
+        }
+        // A `.length`-named member path in boundary position is still an
+        // unresolved member operand; a `.length` receiver parses upstream.
+        assert!(is_unresolved_member_operand("pricingConfig.length"));
+        assert_eq!(
+            unresolved_member_boundary("subtotal == pricingConfig.length").as_deref(),
+            Some("pricingConfig.length")
+        );
+        assert_eq!(unresolved_member_boundary("items.length == 3"), None);
         assert!(is_unresolved_member_operand("DiscountTier.Volume"));
         Ok(())
     }
