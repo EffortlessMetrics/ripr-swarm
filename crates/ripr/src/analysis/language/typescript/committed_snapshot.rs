@@ -13,24 +13,89 @@
 
 use super::*;
 
+/// Text after skipping whitespace, `/* */` comments and `//` line comments.
+fn skip_trivia(mut text: &str) -> &str {
+    loop {
+        text = text.trim_start();
+        if let Some(inner) = text.strip_prefix("//") {
+            // A line comment ends at any JS line terminator: LF, CR, U+2028
+            // or U+2029 (#8895); a CRLF pair ends at its CR and the LF is
+            // whitespace.
+            text = inner
+                .split_once(['\n', '\r', '\u{2028}', '\u{2029}'])
+                .map_or("", |(_, after)| after);
+        } else if let Some((_, after)) = text
+            .strip_prefix("/*")
+            .and_then(|inner| inner.split_once("*/"))
+        {
+            text = after;
+        } else {
+            return text;
+        }
+    }
+}
+
+fn is_identifier_char(c: char) -> bool {
+    c.is_alphanumeric() || matches!(c, '_' | '$')
+}
+
+/// `true` when the identifier ending at `index` (just before `Snapshot`) is
+/// matcher-shaped: it starts with `toMatch` or `toThrowErrorMatching`, as
+/// `toMatchSnapshot`, `toMatchInlineSnapshot`, `toThrowErrorMatchingSnapshot`
+/// and `toThrowErrorMatchingInlineSnapshot` do.
+fn matcher_shaped_prefix(text: &str, index: usize) -> bool {
+    text.get(..index).is_some_and(|before| {
+        let word = &before[before.trim_end_matches(is_identifier_char).len()..];
+        word.starts_with("toMatch") || word.starts_with("toThrowErrorMatching")
+    })
+}
+
 /// Snapshot matcher calls in `text`: `Snapshot` followed, after optional
-/// whitespace, by `(`, by a type-argument list (`<`), by a bracket-access
-/// close (`"]`, `']`, `` `] ``) or by `.call` / `.apply` / `.bind` (#8031).
-/// Each such call advances the runner's per-title counter, so it is counted
-/// whether or not it writes to the committed file; comments and strings only
-/// over-count, which refuses.
-fn snapshot_calls(text: &str) -> usize {
+/// whitespace, block comments and line comments, by `(`, `?.`, `!`, a
+/// type-argument list (`<`), a bracket-access close (`"]`, `']`, `` `] ``,
+/// with optional whitespace or comments before the `]`) or by `.call` /
+/// `.apply` (#8031). Each such call advances the runner's per-title counter,
+/// so it is counted whether or not it writes to the committed file. A
+/// matcher-shaped name (`toMatch*Snapshot`, `toThrowErrorMatching*Snapshot`)
+/// used as a value instead of called in place, and `.bind`, which stores the
+/// callable for any number of later calls, counts as two: the parenthesised
+/// `(a.toMatchSnapshot)()`, a cast `as` / `satisfies`, an alias
+/// `const f = a.toMatchSnapshot`, an argument, a destructuring, an
+/// `import { toMatchSnapshot }` and a comment or string that names the
+/// matcher are never credited as the one call and refuse (#8895). The count
+/// doubles as the refusal marker (refuse-on-presence, RIPR-SPEC-0258 rule 1),
+/// not a call tracker. A word that merely begins with `Snapshot`, a standalone
+/// `Snapshot` and other `...Snapshot` names (`getSnapshot`, `type
+/// FooSnapshot`) count zero unless called.
+pub(super) fn snapshot_calls(text: &str) -> usize {
     text.match_indices("Snapshot")
-        .filter(|(index, matched)| {
-            text.get(index + matched.len()..).is_some_and(|rest| {
-                let rest = rest.trim_start();
-                rest.starts_with(['(', '<'])
-                    || ["\"]", "']", "`]", ".call", ".apply", ".bind"]
-                        .iter()
-                        .any(|tail| rest.starts_with(tail))
-            })
+        .map(|(index, matched)| {
+            let Some(raw) = text.get(index + matched.len()..) else {
+                return 0;
+            };
+            if raw.starts_with(is_identifier_char) {
+                return 0;
+            }
+            let rest = skip_trivia(raw);
+            if rest.starts_with(".bind") {
+                return 2;
+            }
+            let called = rest.starts_with(['(', '<', '!'])
+                || [".call", ".apply", "?."]
+                    .iter()
+                    .any(|tail| rest.starts_with(tail))
+                || rest
+                    .strip_prefix(['"', '\'', '`'])
+                    .is_some_and(|after| skip_trivia(after).starts_with(']'));
+            if called {
+                1
+            } else if matcher_shaped_prefix(text, index) {
+                2
+            } else {
+                0
+            }
         })
-        .count()
+        .sum()
 }
 
 /// The hint of the body's one `toMatchSnapshot("<hint>")` call, when it is a
@@ -209,29 +274,59 @@ pub(super) struct RunnerConfigs {
     pub(super) mentions_vitest: bool,
 }
 
-/// Text that moves snapshot files away from the default location or makes
-/// every run rewrite them, so a committed entry no longer fails a changed
-/// value.
+/// Text that moves snapshot files away from the default location, changes
+/// how they are serialized, or makes every run rewrite them, so a committed
+/// entry no longer fails a changed value. The short `-u` flag is matched
+/// separately so any whitespace may precede it, not only a space.
 const SNAPSHOT_OVERRIDES: [&str; 7] = [
     "snapshotResolver",
     "resolveSnapshotPath",
     "snapshotEnvironment",
     "updateSnapshot",
     "--update",
-    " -u",
     "\"-u\"",
+    "snapshotFormat",
 ];
+
+/// `true` when `text` holds `key` as an object key (`key:`, `key :`,
+/// `"key":`, `'key':`, or JS shorthand `{ key }` / `{ key, ... }`). A
+/// longer identifier (`rootDir`, `roots`) does not match `root`.
+fn mentions_named_key(text: &str, key: &str) -> bool {
+    text.match_indices(key).any(|(index, matched)| {
+        let preceded_by_ident = text
+            .get(..index)
+            .and_then(|before| before.chars().next_back())
+            .is_some_and(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$'));
+        !preceded_by_ident
+            && text.get(index + matched.len()..).is_some_and(|rest| {
+                let rest = rest.strip_prefix(['"', '\'']).unwrap_or(rest).trim_start();
+                rest.starts_with(':') || rest.starts_with([',', '}'])
+            })
+    })
+}
 
 /// `true` when `text` holds an `update` key (`update: true`, `update : x`,
 /// `"update": x`), Vitest's option to rewrite every changed snapshot.
 fn mentions_update_key(text: &str) -> bool {
-    text.match_indices("update").any(|(index, matched)| {
-        text.get(index + matched.len()..).is_some_and(|rest| {
-            rest.strip_prefix(['"', '\''])
-                .unwrap_or(rest)
-                .trim_start()
-                .starts_with(':')
-        })
+    mentions_named_key(text, "update")
+}
+
+/// `true` when a runner config names another config this walk does not read:
+/// Jest `projects`, Vitest `workspace`, or a Vitest/Vite `root` key. Jest's
+/// `rootDir` and a `<rootDir>` mapper token do not match `root`.
+fn delegates_to_other_config(text: &str) -> bool {
+    ["projects", "workspace", "root"]
+        .into_iter()
+        .any(|key| mentions_named_key(text, key))
+}
+
+/// `true` when `text` holds the short update flag after any whitespace
+/// (`jest -u`, `jest\t-u`). `"-u"` is in [`SNAPSHOT_OVERRIDES`].
+fn mentions_short_update_flag(text: &str) -> bool {
+    text.match_indices("-u").any(|(index, _)| {
+        text.get(..index)
+            .and_then(|before| before.chars().next_back())
+            .is_some_and(char::is_whitespace)
     })
 }
 
@@ -268,7 +363,8 @@ fn passes_config_by_path(text: &str) -> bool {
 
 /// Read every runner config and `package.json` directly in `directory` into
 /// `configs`, or `None` when one mentions a snapshot override, passes a
-/// config by path, cannot be read, or sits in a symlinked directory.
+/// config by path, delegates to another config this walk does not read,
+/// cannot be read, or sits in a symlinked directory.
 /// `allow_symlink` is `true` only for the analysis root itself, whose path is
 /// the user's own checkout path and may be a link.
 fn scan_config_directory(
@@ -302,10 +398,13 @@ fn scan_config_directory(
         if SNAPSHOT_OVERRIDES
             .iter()
             .any(|override_text| text.contains(override_text))
+            || mentions_short_update_flag(&text)
             // Vitest reads `update` from its own config only; a
             // `package.json` script may be named `update`.
             || (file_name != "package.json" && mentions_update_key(&text))
             || (file_name == "package.json" && passes_config_by_path(&text))
+            // A Jest/Vitest config that names other configs is not walked.
+            || (file_name != "package.json" && delegates_to_other_config(&text))
         {
             return None;
         }
@@ -354,8 +453,9 @@ pub(super) fn directories_above_root(root: &Path, limit: usize) -> Option<Vec<Pa
 /// every ancestor up to `root`, then above `root` up to the repository
 /// boundary (the first directory holding `.git`, or the filesystem root), or
 /// `None` when one mentions a snapshot override, passes a config by path,
-/// cannot be read, (in a committed-history run) differs from `HEAD`, or the
-/// boundary is not found within reach.
+/// delegates to another config this walk does not read, cannot be read, (in
+/// a committed-history run) differs from `HEAD`, or the boundary is not
+/// found within reach.
 fn runner_configs(root: &Path, directory: &Path) -> Option<RunnerConfigs> {
     runner_configs_within(root, directory, ABOVE_ROOT_LIMIT)
 }

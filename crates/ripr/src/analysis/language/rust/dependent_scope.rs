@@ -417,14 +417,17 @@ impl AdmissionQuery {
 
 /// The admission query for one diff run: the changed packages' index
 /// (`core_files`, which holds every changed probe file) evaluated at the
-/// changed lines. Reads are recorded in `consumed`.
+/// changed lines. Reads are recorded in `consumed`. The built core index
+/// is returned with the query (#8547): the main build reuses it instead
+/// of decoding the fact cache and re-running post-processing a second
+/// time over the same files.
 pub(super) fn admission_query(
     root: &Path,
     core_files: &[PathBuf],
     changed_files: &[&crate::analysis::diff::ChangedFile],
     test_harnesses: &[crate::config::TestHarnessRegistration],
     consumed: &mut ConsumedRustSources,
-) -> Result<AdmissionQuery, String> {
+) -> Result<(AdmissionQuery, crate::analysis::facts::CachedRustIndex), String> {
     let changed_lines = changed_files
         .iter()
         .map(|changed| {
@@ -443,8 +446,9 @@ pub(super) fn admission_query(
             (changed.path.clone(), lines)
         })
         .collect::<Vec<_>>();
-    let index = build_index(root, core_files, test_harnesses, consumed)?;
-    Ok(AdmissionQuery::from_core_index(&index, &changed_lines))
+    let cached = build_index(root, core_files, test_harnesses, consumed)?;
+    let query = AdmissionQuery::from_core_index(&cached.index, &changed_lines);
+    Ok((query, cached))
 }
 
 /// The witness search for this finding's owner would need more files than
@@ -906,7 +910,7 @@ impl NarrowedScope {
             &mut self.reach_index,
             REACH_INDEX_CAPACITY,
             files,
-            |files| build_index(root, files, harnesses, consumed),
+            |files| build_index(root, files, harnesses, consumed).map(|cached| cached.index),
         )?;
         Ok(ReachIndex::Widened(index))
     }
@@ -1167,14 +1171,13 @@ fn build_index(
     files: &[PathBuf],
     test_harnesses: &[crate::config::TestHarnessRegistration],
     consumed: &mut ConsumedRustSources,
-) -> Result<RustIndex, String> {
+) -> Result<crate::analysis::facts::CachedRustIndex, String> {
     let loaded = load(root, files, consumed)?;
-    let cached = crate::analysis::rust_index::build_analysis_index_from_loaded_files(
+    crate::analysis::rust_index::build_analysis_index_from_loaded_files(
         root,
         &loaded,
         test_harnesses,
-    )?;
-    Ok(cached.index)
+    )
 }
 
 /// The same bytes the index loads: committed content for a committed-history

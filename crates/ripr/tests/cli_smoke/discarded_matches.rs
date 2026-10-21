@@ -184,7 +184,10 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                 // producing directory (#3948); the canonical reports were
                 // captured from the workspace root, so that prefix projects
                 // back to their relative spelling on those lines only, and
-                // a host path anywhere else still fails. JSON analysis stays
+                // a host path anywhere else still fails. The #8729 refusal
+                // advisory is a drill-in line in the same family — it embeds
+                // the bound root through the same repair-command owner — so
+                // it projects under the same convention. JSON analysis stays
                 // byte-exact after stripping the check-JSON canonical
                 // next-action member (#7258); dedicated CLI/schema tests own
                 // that field, and these reports are not corpus.json.
@@ -196,7 +199,9 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                     String::from_utf8_lossy(bytes)
                         .split_inclusive('\n')
                         .map(|line| {
-                            if line.starts_with("  ripr ") {
+                            if line.starts_with("  ripr ")
+                                || line.starts_with("  no repair start offered:")
+                            {
                                 line.replace(&bound_prefix, "")
                             } else {
                                 line.to_string()
@@ -341,7 +346,7 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                             "{id}: full human output must retain the exact no-observer class"
                         );
                         let no_assertion_row =
-                            format!("{projection}none unknown oracle; misses: has no assertion");
+                            format!("{projection}no oracle; misses: has no assertion");
                         assert!(
                             human_full_text
                                 .lines()

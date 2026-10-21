@@ -30,6 +30,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_async_owner/input --diff <cwd>/fixtures/python_async_owner/diff.patch --mode fast probe:src_loading.py:python_preview:f9419b36
   ripr context --root <cwd>/fixtures/python_async_owner/input --diff <cwd>/fixtures/python_async_owner/diff.patch --mode fast --at probe:src_loading.py:python_preview:f9419b36
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_loading.py:python_preview:f9419b36 --root <cwd>/fixtures/python_async_owner/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

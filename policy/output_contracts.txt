@@ -17,7 +17,7 @@ confidence|high|Confidence value.
 confidence|low|Confidence value.
 confidence|medium|Confidence value.
 confidence|unknown|Confidence value.
-context_version|1.0|Current agent context packet version.
+context_version|1.1|Current agent context packet version.
 delta|control|Delta kind value.
 delta|effect|Delta kind value.
 delta|unknown|Delta kind value.
@@ -86,7 +86,7 @@ probe_family|predicate|Probe family value.
 probe_family|return_value|Probe family value.
 probe_family|side_effect|Probe family value.
 probe_family|static_unknown|Probe family value.
-related_test_miss|assertion_not_credited|Related test has an assertion ripr could not establish runs as the standard macro.
+related_test_miss|assertion_not_credited|Related test has an assertion ripr could not establish counts here (a local macro, a feature cfg or another limit).
 related_test_miss|assertion_not_observing|Related test asserts, but no assertion observes the changed value.
 related_test_miss|missing_exact_assertion|Related test observes the behavior, but no assertion pins the exact error variant or field value.
 related_test_miss|missing_input|Related test observes the behavior, but no input reaches the predicate boundary value.
@@ -122,6 +122,9 @@ static_limit_kind|python_transitive_reach_unresolved|Typed static limitation val
 static_limit_kind|rust_assertion_context_unresolved|Typed static limitation value.
 static_limit_kind|rust_log_capture_unresolved|Typed static limitation value.
 static_limit_kind|rust_panic_outcome_unresolved|Typed static limitation value.
+static_limit_kind|rust_debug_assertion_profile_unresolved|Typed static limitation value.
+static_limit_kind|rust_call_fact_budget|Typed static limitation value.
+static_limit_kind|rust_framework_oracle_unresolved|Typed static limitation value.
 static_limit_kind|rust_integration_public_api_path_unresolved|Typed static limitation value.
 static_limit_kind|rust_macro_reach_unresolved|Typed static limitation value.
 static_limit_kind|rust_macro_wrapped_assertion_unresolved|Typed static limitation value.

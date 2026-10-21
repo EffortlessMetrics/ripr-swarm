@@ -95,6 +95,7 @@ fn cli_snapshot_verify_absolute_inputs_retain_literal_unix_root() -> Result<(), 
     std::fs::copy(&after, decoy_snapshots.join("after.json")).map_err(|error| error.to_string())?;
     let verify = render_agent_verify(&AgentVerifyOptions {
         root: root.clone(),
+        root_explicit: true,
         before: before.clone(),
         after: after.clone(),
         json: true,
@@ -118,6 +119,7 @@ fn cli_snapshot_verify_absolute_inputs_retain_literal_unix_root() -> Result<(), 
     assert!(foreign_refusal.contains("must stay under root"));
     let relative = render_agent_verify(&AgentVerifyOptions {
         root: root.clone(),
+        root_explicit: true,
         before: PathBuf::from("target/identity/before.json"),
         after: PathBuf::from("target/identity/after.json"),
         json: true,
@@ -238,6 +240,7 @@ fn cli_receipt_first_action_reopens_literal_unix_root_and_refuses_decoy() -> Res
     let verify_path = root.join("target/ripr/workflow/agent-verify.json");
     let verify_text = render_agent_verify(&AgentVerifyOptions {
         root: root.clone(),
+        root_explicit: true,
         before: before.clone(),
         after: after.clone(),
         json: true,
@@ -270,6 +273,7 @@ fn cli_receipt_first_action_reopens_literal_unix_root_and_refuses_decoy() -> Res
     let receipt_path = root.join("target/ripr/workflow/agent-receipt.json");
     run_agent_receipt(AgentReceiptOptions {
         root: root.clone(),
+        root_explicit: true,
         verify_json: verify_path.clone(),
         seam_id,
         attempt_id: None,
@@ -471,6 +475,7 @@ fn boundary_patch_root(label: &str) -> Result<OwnedRoot, String> {
 fn patch_brief(root: &Path) -> Result<serde_json::Value, String> {
     let rendered = render_agent_brief(&AgentBriefOptions {
         root: root.to_path_buf(),
+        root_explicit: true,
         working_set: crate::cli::agent::AgentBriefWorkingSet::Diff(PathBuf::from("diff.patch")),
         json: true,
         max_seams: 3,
@@ -484,6 +489,7 @@ fn started_brief(root: &Path, brief: &serde_json::Value) -> Result<serde_json::V
         .ok_or("patch brief has no selected seam")?;
     let written = write_agent_start(AgentStartOptions {
         root: root.to_path_buf(),
+        root_explicit: true,
         seam_id: seam_id.to_string(),
         out_dir: PathBuf::from("target/started"),
         json: true,
@@ -619,6 +625,7 @@ fn cli_non_git_patch_snapshots_refuse_missing_git_revision_provenance() -> Resul
     }
     let refusal = render_agent_verify(&AgentVerifyOptions {
         root: root.to_path_buf(),
+        root_explicit: true,
         before,
         after,
         json: true,
@@ -669,6 +676,7 @@ fn cli_git_patch_brief_without_base_verifies_real_boundary_edit() -> Result<(), 
     assert_eq!(crate::agent::artifact::current_git_head(root)?, head);
     let verify = render_agent_verify(&AgentVerifyOptions {
         root: root.to_path_buf(),
+        root_explicit: true,
         before,
         after,
         json: true,

@@ -1,6 +1,7 @@
 mod adapter;
 pub(crate) mod fn_signature;
 pub(crate) mod lexical;
+mod local_assertion_macros;
 mod local_test_macros;
 mod module_tree;
 mod name_scope;
@@ -8,16 +9,18 @@ mod nesting;
 mod owner_pin;
 mod pattern_pin;
 pub(crate) mod run_memo;
+pub(crate) use owner_pin::debug_assert_eq_calls;
 pub(crate) use owner_pin::macro_binding_candidates;
 pub(crate) use owner_pin::{
     AssertionContextRefusal, HelperLoan, MacroBindingCandidates, MacroBindingKind,
     MacroBindingSite, OwnerPinAssertions, TRUSTED_MACRO_NAMES, attribute_settles_test_outcome,
     constant_table_call_column, constant_table_column, constant_table_column_around,
-    empty_local_macro_invocation_ranges, empty_macro_binding_ambiguities, err_return_guard_key,
-    local_empty_macro_names, macro_binding_scan, macro_call_is_statement, owner_pin_assertions,
-    owner_reference_count, returns_leave_the_function, source_binds_value_name,
-    source_declares_value_name, supported_targeted_item_context, trusted_macro_binding_site_sets,
-    trusted_macro_binding_sites, use_rebinds_crate_name,
+    direct_literal_call_column, empty_local_macro_invocation_ranges,
+    empty_macro_binding_ambiguities, err_return_guard_key, local_empty_macro_names,
+    macro_binding_scan, macro_call_is_statement, owner_pin_assertions, owner_reference_count,
+    returns_leave_the_function, source_binds_value_name, source_declares_value_name,
+    supported_targeted_item_context, trusted_macro_binding_site_sets, trusted_macro_binding_sites,
+    use_rebinds_crate_name,
 };
 pub(crate) use owner_pin::{decimal_u8, literal_check_syntax, literal_owner_syntax};
 pub(crate) use pattern_pin::{PatternPins, pattern_pins};
@@ -26,6 +29,7 @@ pub(crate) mod ra;
 pub use adapter::{
     LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange,
 };
+pub(crate) use local_assertion_macros::{LocalMacroCall, MacroArm, local_macro_calls};
 pub(crate) use local_test_macros::{
     GeneratedTestPins, expand_local_test_macros, generated_test_pins,
 };

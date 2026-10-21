@@ -46,6 +46,19 @@ closes a block opened outside its run (a lone inserted or removed
 moves existing code between branches, so it keeps its probe and the change
 never reads as "no behavioral candidates" (#4216 row 5).
 
+A line that Git reports as both removed and added inside one replacement block
+seeds no probe on either side when its text is byte-identical (leading
+whitespace included, since it is content inside a multiline string), occurs
+exactly once on each side of the block, contains an alphanumeric character,
+does not begin as a continuation (`.call()`, `&&`, `?`), and sits under the
+same nearest opener on both sides (#8389). The whole block keeps its probes
+when paired lines change relative order, when an unpaired line opens or closes
+a block, when a paired line crosses an edited line (unpaired removed lines
+before it and unpaired added lines after it, or the reverse), or when any line
+of the block carries a comment delimiter (`/*`, `*/`) or an odd number of `"`.
+Only `name: value,` field lines may cross an edited line, since they may move
+within their literal. Text is compared exactly apart from a trailing `\r`.
+
 An equal-sized replacement with no retained long identifier token does not
 seed a second historical finding when an emitted candidate probe of the same
 family already represents that exact old line (#7807). Pairing uses the Git
@@ -66,6 +79,12 @@ probes. An inline bound may use its enclosing struct, impl or type-alias item
 as declaration authority only when the whole changed line is contained by that
 item and the item has no expression or macro descendants. Const expressions
 and macro types retain existing fallback evidence.
+A named field declared inside an enum variant, or a whole one-line variant with
+named fields, is likewise a type declaration (#8999): it stays one
+`static_unknown` probe, while a variant constructed in a body keeps
+`field_construction`. A discriminant, macro syntax or expression inside the
+variant, or a shared line, withholds that authority. Deleted-only struct and
+enum field declarations keep their removed-side lexical probe.
 Real expressions on a shared line
 keep their existing parser-owned runtime probes. Comments, strings and macro
 token trees cannot establish declaration authority. Removed bounds require
@@ -77,6 +96,23 @@ harness registrations; external parent edges, configuration and Cargo manifests
 are not reconstructed.
 Unavailable or malformed source retains existing uncertainty rather than
 borrowing a candidate line.
+
+Finding IDs remain content-addressed by path, probe family, owner and normalized
+expression. Line movement, checkout root, diff/discovery order and unrelated
+files do not change those inputs. Formatting whitespace outside Rust literals
+collapses; whitespace inside ordinary/raw string, byte, C-string and character
+literals remains data. The terminator of an actual line comment remains one LF:
+moving that boundary can change which tokens are active. CRLF, trailing comment
+whitespace and following indentation normalize to that same boundary. Comment
+text otherwise retains its existing contribution to source identity; this is
+not comment elision or general semantic equivalence. A material change to an
+identity input invalidates the
+ID so an earlier suppression cannot silently select a different value. Genuine
+repeated expressions retain distinct ordinal-suffixed IDs. The public-path
+metamorphic and stale-suppression controls are in
+`crates/ripr/tests/finding_identity_contract.rs` (#8832). The distinct-payload
+fp8 collision witnesses in #8838 remain unmet acceptance; duplicate-expression
+ordinal tests do not establish collision stability or waive this requirement.
 
 Each finding should carry:
 
@@ -168,6 +204,16 @@ dataflow across bindings.
 Lexical projection is bounded to 16 nested matcher/block steps and omits
 oracle credit on exhaustion; parser-rejected deep source cannot recreate an
 unbounded recursive fallback.
+
+A setup statement that only unwraps a value (`let d = f().unwrap();`) is not
+the test's oracle. When the same test also has an asserting row, the bare
+`unwrap`/`expect` row is not listed beside it, whether the statement is written
+on one line or as a multi-line method chain whose continuation lines each begin
+with `.` (a builder chain, #9122). Fail-closed: the row is dropped only
+beside another matched oracle, so a test whose sole oracle is the unwrap stays
+listed as smoke, and a chain that ends in another call, contains an assertion,
+or is several statements stays listed. The remaining row keeps its own
+assertion-kind grade; nothing is promoted.
 Unrecognized compound computations with a surviving matcher and no supported
 asserting wrapper receive no oracle credit. Existing terminal Err-return and
 guarded Result failure authorities retain consumed matcher evidence.
@@ -357,6 +403,17 @@ parameter it could not read. A test input literal that merely equals a
 literal in the comparison does not credit such a boundary; only an exact
 observed equality does. Exact inputs that all sit off the boundary keep
 the missing equality discriminator.
+
+A second bounded source for the same family is direct literal slice arguments:
+every related test calls the owner only inside its standard assertion macros,
+straight-line, with a literal `&[..]` at the measured parameter (array-repeat
+forms excluded). The call result must reach the assertion unchanged, as the
+whole compared operand or one side of a top-level comparison; arithmetic,
+branches, short-circuit operands, message arguments, bound or computed inputs,
+early returns and any extra owner reference leave the input set unresolved. The
+literal's length is its element count, the call's source and line are the
+witness, and the table gates above (unique free owner, eager path, admitted
+assertion context) still apply.
 
 One bounded cardinality family reads a direct immutable slice parameter's
 `.len()` compared with a plain decimal integer. Every reach-bearing related
@@ -561,6 +618,11 @@ Fixture coverage:
 - `probes_for_file_keeps_lone_structural_line_hunks`
 - `probes_for_file_keeps_structural_line_closing_outside_block_in_mixed_run`
 - `lone_else_split_hunk_is_not_no_behavioral_candidates`
+- `an_identical_line_inside_a_replacement_block_seeds_no_probe`
+- `identical_line_suppression_is_fail_closed`
+- `identical_line_pairing_never_hides_reorders_or_block_moves`
+- `multiline_builder_chain_setup_row_is_dropped_beside_the_assertion`
+- `multiline_setup_row_stays_unless_it_is_a_bare_unwrap_chain_beside_an_assertion`
 
 ## Implementation Mapping
 

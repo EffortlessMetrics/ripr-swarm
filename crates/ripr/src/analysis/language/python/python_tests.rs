@@ -821,7 +821,7 @@ class CheckoutTests(unittest.TestCase):
 
     assert_eq!(pytest_test.qualified_name, "TestCheckout.test_pytest_route");
     assert_eq!(
-        verify_command_for_test(pytest_test).as_deref(),
+        verify_command_for_test_on(pytest_test, false).as_deref(),
         Some("python -m pytest tests/test_checkout.py::TestCheckout::test_pytest_route")
     );
     assert_eq!(
@@ -829,7 +829,7 @@ class CheckoutTests(unittest.TestCase):
         "CheckoutTests.test_unittest_route"
     );
     assert_eq!(
-        verify_command_for_test(unittest_test).as_deref(),
+        verify_command_for_test_on(unittest_test, false).as_deref(),
         Some("python -m unittest tests.test_checkout.CheckoutTests.test_unittest_route")
     );
     Ok(())
@@ -845,15 +845,16 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
         .find(|test| test.name == "test_ok")
         .ok_or_else(|| "missing hostile pytest".to_string())?;
     assert_eq!(
-        verify_command_for_test(hostile_test).as_deref(),
+        verify_command_for_test_on(hostile_test, false).as_deref(),
         Some("python -m pytest 'tests/foo$(id).py'::test_ok")
     );
-    let placement = python_repair_placement(
+    let placement = python_repair_placement_on(
         &ExposureClass::WeaklyExposed,
         &[PythonRelatedCandidate {
             test: hostile_test,
             relation: PythonRelationKind::SyntacticCall,
         }],
+        false,
     )
     .ok_or_else(|| "weak pytest relation should still place a repair".to_string())?;
     assert_eq!(
@@ -876,7 +877,7 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
         .find(|test| test.name == "test_ok")
         .ok_or_else(|| "missing spaced pytest".to_string())?;
     assert_eq!(
-        verify_command_for_test(spaced_test).as_deref(),
+        verify_command_for_test_on(spaced_test, false).as_deref(),
         Some("python -m pytest 'tests/my file.py'::test_ok")
     );
 
@@ -886,7 +887,7 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
         .find(|test| test.name == "test_ok")
         .ok_or_else(|| "missing quoted pytest".to_string())?;
     assert_eq!(
-        verify_command_for_test(quoted_test).as_deref(),
+        verify_command_for_test_on(quoted_test, false).as_deref(),
         Some("python -m pytest 'tests/o'\\''brien.py'::test_ok")
     );
 
@@ -896,7 +897,7 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
         .find(|test| test.name == "test_ok")
         .ok_or_else(|| "missing plain pytest".to_string())?;
     assert_eq!(
-        verify_command_for_test(plain_test).as_deref(),
+        verify_command_for_test_on(plain_test, false).as_deref(),
         Some("python -m pytest tests/test_checkout.py::test_ok"),
         "a plain relative path must stay unquoted"
     );
@@ -907,15 +908,16 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
         .find(|test| test.name == "test_ok")
         .ok_or_else(|| "missing hostile unittest".to_string())?;
     assert_eq!(
-        verify_command_for_test(hostile_unit_test).as_deref(),
+        verify_command_for_test_on(hostile_unit_test, false).as_deref(),
         Some("python -m unittest 'tests.foo$(id)'.T.test_ok")
     );
-    let unit_placement = python_repair_placement(
+    let unit_placement = python_repair_placement_on(
         &ExposureClass::WeaklyExposed,
         &[PythonRelatedCandidate {
             test: hostile_unit_test,
             relation: PythonRelationKind::SyntacticCall,
         }],
+        false,
     )
     .ok_or_else(|| "weak unittest relation should still place a repair".to_string())?;
     assert_eq!(unit_placement.suggested_test_node_id, None);
@@ -1133,9 +1135,11 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
+        rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
@@ -1585,9 +1589,11 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
+        rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
@@ -1642,9 +1648,11 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
+        rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
@@ -1721,9 +1729,11 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
+        rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
@@ -1767,9 +1777,11 @@ fn same_stem_related_handles_missing_stems() {
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
+        rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
@@ -1778,6 +1790,7 @@ fn same_stem_related_handles_missing_stems() {
     };
     let test = PythonTest {
         fixture_defs: Vec::new(),
+        direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_x".to_string(),
         qualified_name: "test_x".to_string(),
@@ -3299,6 +3312,7 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
 fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     let mocked = PythonTest {
         fixture_defs: Vec::new(),
+        direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_x".to_string(),
         qualified_name: "test_x".to_string(),
@@ -3321,6 +3335,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     assert!(test_has_mocked_module(&mocked));
     let bare = PythonTest {
         fixture_defs: Vec::new(),
+        direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_y".to_string(),
         qualified_name: "test_y".to_string(),
@@ -3341,6 +3356,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     assert!(test_has_mocked_module(&bare));
     let clean = PythonTest {
         fixture_defs: Vec::new(),
+        direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_z".to_string(),
         qualified_name: "test_z".to_string(),
@@ -3753,9 +3769,11 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
+        rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
@@ -3825,9 +3843,11 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
+        rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
@@ -3852,6 +3872,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
     // With `apply_tax as taxed`, the oracle's `taxed(...)` observes the owner.
     let alias_test = PythonTest {
         fixture_defs: Vec::new(),
+        direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_alias".to_string(),
         qualified_name: "test_alias".to_string(),
@@ -3895,9 +3916,11 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         cli_receiver_names: Vec::new(),
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
+        rival_definition_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
@@ -3928,6 +3951,7 @@ fn align_importing_test(imported: &str, module: &str) -> PythonTest {
     PythonTest {
         activation_controls: Vec::new(),
         fixture_defs: Vec::new(),
+        direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),
         name: "t".to_string(),
         qualified_name: "t".to_string(),
@@ -3973,6 +3997,7 @@ fn sink_alignment_is_alias_when_oracle_uses_import_alias() {
     let related = [align_strong("assert taxed(10) == 12")];
     let alias_test = PythonTest {
         fixture_defs: Vec::new(),
+        direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_alias".to_string(),
         qualified_name: "test_alias".to_string(),
@@ -4240,4 +4265,227 @@ fn python_structural_lines_are_recognized() {
     ] {
         assert!(!is_python_structural_line(behavioral), "{behavioral:?}");
     }
+}
+
+#[test]
+fn same_named_function_in_unimported_module_is_not_related() -> Result<(), String> {
+    let source = "def quote(total):\n    return round(total * 1.07, 2)\n";
+    let owners_for = |files: &[&str]| -> Result<Vec<PythonOwner>, String> {
+        let mut owners = Vec::new();
+        for file in files {
+            owners.extend(
+                extract_owners(Path::new(file), source)
+                    .into_iter()
+                    .filter(|owner| owner.name == "quote"),
+            );
+        }
+        super::related_tests::apply_rival_definition_modules(&mut owners);
+        Ok(owners)
+    };
+    let related = |owner: &PythonOwner, source: &str| -> Result<usize, String> {
+        let tests = extract_tests(Path::new("tests/test_a.py"), source);
+        if tests.len() != 1 {
+            return Err(format!("expected one test, got {}", tests.len()));
+        }
+        Ok(related_test_candidates(owner, &tests).len())
+    };
+    let call = "\n\ndef test_a():\n    assert quote(100.0) == 107.0\n";
+
+    let owners = owners_for(&["pkg/a.py", "pkg/b.py"])?;
+    let [owner_a, owner_b] = owners.as_slice() else {
+        return Err(format!("expected two owners, got {}", owners.len()));
+    };
+    let imports_a = format!("from pkg.a import quote{call}");
+    // Positive control: the module the test imports.
+    assert_eq!(related(owner_a, &imports_a)?, 1);
+    // The same-named function in a module the test never imports.
+    assert_eq!(related(owner_b, &imports_a)?, 0);
+    // An aliased import of the other module is still the other module.
+    let aliased = "from pkg.a import quote as q\n\ndef test_a():\n    assert q(100.0) == 107.0\n";
+    assert_eq!(related(owner_b, aliased)?, 0);
+    // Calling the owner through its imported module keeps the relation.
+    let both = "from pkg.a import quote\nimport pkg.b\n\ndef test_a():\n    assert quote(100.0) == 107.0\n    assert pkg.b.quote(100.0) == 107.0\n";
+    assert_eq!(related(owner_b, both)?, 1);
+    // No import of the name (local definition) and a star import stay
+    // name-related: only affirmative evidence withholds the relation.
+    assert_eq!(related(owner_b, call.trim_start())?, 1);
+    assert_eq!(related(owner_b, &format!("from pkg.a import *{call}"))?, 1);
+    // An unused import of the owner's module, or of another name from it, is
+    // no evidence the test exercises the owner.
+    assert_eq!(
+        related(
+            owner_b,
+            &format!("from pkg.a import quote\nfrom pkg.b import helper{call}")
+        )?,
+        0
+    );
+    assert_eq!(
+        related(
+            owner_b,
+            &format!("from pkg.a import quote\nimport pkg.b{call}")
+        )?,
+        0
+    );
+    // A star import from the owner's module can bind the owner's name even
+    // when the foreign function is imported under another alias.
+    assert_eq!(
+        related(
+            owner_b,
+            &format!("from pkg.b import *\nfrom pkg.a import quote as q{call}")
+        )?,
+        1
+    );
+    // Calling the owner through other module spellings keeps the relation.
+    for reaches in [
+        "from pkg.a import quote\nfrom pkg import b\n\ndef test_a():\n    assert quote(1.0) == b.quote(1.0)\n",
+        "from pkg.a import quote\nimport pkg.b as m\n\ndef test_a():\n    assert quote(1.0) == m.quote(1.0)\n",
+    ] {
+        assert_eq!(related(owner_b, reaches)?, 1, "{reaches}");
+    }
+    // A package or facade that is not itself a defining module cannot be told
+    // from the owner's module: the relation stays.
+    assert_eq!(
+        related(owner_b, &format!("from pkg import quote{call}"))?,
+        1
+    );
+    assert_eq!(
+        related(owner_b, &format!("from pkg.api import quote{call}"))?,
+        1
+    );
+
+    // An import root the adapter cannot see (`app/` on sys.path) spells the
+    // owner `pricing.discounts`; that is not a different module.
+    let owners = owners_for(&["app/pricing/discounts.py", "pricing/discounts.py"])?;
+    let [rooted, _] = owners.as_slice() else {
+        return Err("expected two owners".to_string());
+    };
+    assert_eq!(
+        related(
+            rooted,
+            &format!("from pricing.discounts import quote{call}")
+        )?,
+        1
+    );
+    // A single definition has no rival to be confused with.
+    let owners = owners_for(&["pkg/b.py"])?;
+    let [only] = owners.as_slice() else {
+        return Err("expected one owner".to_string());
+    };
+    assert_eq!(related(only, &format!("from pkg.a import quote{call}"))?, 1);
+    Ok(())
+}
+
+#[test]
+fn workspace_pass_withholds_relation_for_same_named_function_in_unimported_module()
+-> Result<(), String> {
+    // The production path (#8759): the workspace pass records the rival
+    // definition, so a test importing `pkg.a.quote` is not related to
+    // `pkg/b.py::quote` when that line changes.
+    let root = unique_tempdir("analyze-same-named-function")?;
+    write_file(
+        &root.join("pkg/a.py"),
+        "def quote(total):\n    return round(total * 1.07, 2)\n",
+    )?;
+    write_file(
+        &root.join("pkg/b.py"),
+        "def quote(total):\n    return round(total * 1.07, 2)\n",
+    )?;
+    write_file(
+        &root.join("tests/test_a.py"),
+        "from pkg.a import quote\n\ndef test_a():\n    assert quote(100.0) == 107.0\n",
+    )?;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        perl_producer_failure: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
+    };
+    let changed = |path: &str| ChangedFile {
+        path: PathBuf::from(path),
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            new_side_line: 2,
+            text: "    return round(total * 1.07, 2)".to_string(),
+        }],
+        removed_lines: Vec::new(),
+    };
+    let analyze = |path: &str| {
+        PythonAdapter.analyze_diff(&options, &OraclePolicy::default(), &[changed(path)])
+    };
+    let rival = analyze("pkg/b.py");
+    let imported = analyze("pkg/a.py");
+    let cleanup = std::fs::remove_dir_all(&root);
+    let (rival, imported) = (rival?, imported?);
+    cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+
+    let [rival_finding] = rival.findings.as_slice() else {
+        return Err(format!(
+            "expected one rival finding, got {}",
+            rival.findings.len()
+        ));
+    };
+    assert_eq!(rival_finding.class, ExposureClass::NoStaticPath);
+    assert!(rival_finding.related_tests.is_empty());
+    let [imported_finding] = imported.findings.as_slice() else {
+        return Err(format!(
+            "expected one finding, got {}",
+            imported.findings.len()
+        ));
+    };
+    assert_eq!(imported_finding.related_tests.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn same_name_import_gate_keeps_independent_route_relation() -> Result<(), String> {
+    let route = "api = object()\n\n@api.post(\"/checkout\")\ndef quote(payload):\n    return {\"detail\": \"coupon expired\"}\n";
+    let rival = "def quote(payload):\n    return payload\n";
+    let mut owners: Vec<PythonOwner> = extract_owners(Path::new("app/checkout.py"), route)
+        .into_iter()
+        .chain(extract_owners(Path::new("pkg/a.py"), rival))
+        .filter(|owner| owner.name == "quote")
+        .collect();
+    super::related_tests::apply_rival_definition_modules(&mut owners);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.file == Path::new("app/checkout.py"))
+        .ok_or_else(|| "expected route owner".to_string())?;
+    let tests = extract_tests(
+        Path::new("tests/test_checkout.py"),
+        "from pkg.a import quote\n\ndef test_expired(client):\n    assert quote({}) == {}\n    response = client.post(\"/checkout\", json={})\n    assert response\n",
+    );
+    let relation = related_test_candidates(owner, &tests)
+        .first()
+        .map(|candidate| candidate.relation);
+    assert_eq!(relation, Some(PythonRelationKind::ApiClientRouteCall));
+    Ok(())
+}
+
+#[test]
+fn same_name_import_gate_leaves_class_owners_alone() -> Result<(), String> {
+    // Only free functions are gated: a subclass can run the other module's
+    // class under the same name.
+    let source = "class Base:\n    pass\n";
+    let mut owners: Vec<PythonOwner> = extract_owners(Path::new("pkg/b.py"), source)
+        .into_iter()
+        .chain(extract_owners(Path::new("pkg/a.py"), source))
+        .filter(|owner| owner.name == "Base")
+        .collect();
+    super::related_tests::apply_rival_definition_modules(&mut owners);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.file == Path::new("pkg/b.py"))
+        .ok_or_else(|| "expected class owner".to_string())?;
+    assert!(owner.rival_definition_modules.is_empty());
+    Ok(())
 }

@@ -1,0 +1,80 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_fallthrough_return_early_exit/input
+config: <cwd>/fixtures/python_fallthrough_return_early_exit/input/ripr.toml
+
+Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+WARNING src/quote.py:4
+  id: probe:src_quote.py:python_preview:ca5fb9df
+
+Changed
+  after:      return round(total * 1.10, 2)
+
+Probe
+  family: return_value
+  delta:  value
+  owner:  python:src/quote.py::quote
+  canonical gap: gap:python:src/quote.py:quote:return_value:return_value:round_total*1.10_2
+
+Language
+  language: python
+  status: preview
+  owner kind: function
+
+Static exposure
+  weakly_exposed (warning, confidence 0.40)
+
+Evidence
+  - reach yes: 1 related Python test(s) found for owner `quote`
+  - infection weak: Related tests reach the changed owner, but every strong related test call provably fails the guarding arm, so the changed line never executes under an observed input
+  - propagation yes: Changed Python return value is already at the owner output boundary
+  - observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)
+  - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
+  - local flow reaches returned value: return round(total * 1.10, 2) (line 4)
+  - related test tests/test_quote.py:4 test_bulk_order_uses_flat_quote uses strong exact value oracle: assert quote(2000.0) == 0
+  - source function argument value total = 2000.0 at line 5
+
+Weakness
+  - A strong Python oracle reaches `quote`, but static evidence does not place a related test input inside the guarding arm `not (total > 1000)`; every observed input leaves the changed line unexecuted (observation_unverified). Add a test input that satisfies the guarding condition
+  - missing discriminator not (total > 1000): each strong related test input satisfies at least one preceding early-exit condition (`total > 1000`) and exits the owner before the changed line; observed total = 2000.0; the changed line never executes under an observed input
+
+Python repair card (preview/advisory)
+  card version: python_repair_card.v1
+  canonical gap: gap:python:src/quote.py:quote:return_value:return_value:round_total*1.10_2
+  authority: preview_advisory_only (python/preview)
+  repair action: strengthen_existing_test
+  changed owner: quote
+  changed behavior: return_value changed at src/quote.py:4: `return round(total * 1.10, 2)`
+  current test evidence: tests/test_quote.py:4 test_bulk_order_uses_flat_quote currently has oracle_strength=strong, oracle_kind=exact_value: assert quote(2000.0) == 0
+  missing discriminator: not (total > 1000)
+  recommended test shape: Strengthen the existing pytest exact return-value assertion for `not (total > 1000)`.
+  suggested assertion: Assert the returned value equals the expected value for the changed inputs.
+  suggested file: tests/test_quote.py
+  suggested test: test_bulk_order_uses_flat_quote
+  pytest node: tests/test_quote.py::test_bulk_order_uses_flat_quote
+  verify: python -m pytest tests/test_quote.py::test_bulk_order_uses_flat_quote (high)
+  receipt: unavailable_until_python_gap_ledger
+  receipt guidance: Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command.
+  stop conditions:
+    - Stop if imports, fixtures, or test setup cannot call the changed owner.
+    - Stop if the expected value for the missing discriminator is ambiguous.
+    - Stop if adding the test appears to require a production-code edit.
+  limits:
+    - Syntax-first Python preview evidence only.
+    - No source edits, generated tests, mutation execution, provider calls, or gate authority.
+    - Verify success alone is not a gap-closure receipt.
+
+Next step
+  Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `not (total > 1000)`
+Drill in:
+  ripr explain --root <cwd>/fixtures/python_fallthrough_return_early_exit/input --diff <cwd>/fixtures/python_fallthrough_return_early_exit/diff.patch --mode fast probe:src_quote.py:python_preview:ca5fb9df
+  ripr context --root <cwd>/fixtures/python_fallthrough_return_early_exit/input --diff <cwd>/fixtures/python_fallthrough_return_early_exit/diff.patch --mode fast --at probe:src_quote.py:python_preview:ca5fb9df
+
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

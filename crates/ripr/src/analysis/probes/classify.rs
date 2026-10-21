@@ -21,6 +21,19 @@ pub(super) fn added_type_bound_lines(
         .unwrap_or_else(|| vec![false; changed.added_lines.len()])
 }
 
+/// Added lines that touch a type bound anywhere on the line (see
+/// [`declarations::header_bound_lines`]); fails closed to `true` per line when
+/// no clean syntax is available.
+pub(super) fn added_header_bound_lines(
+    index: &RustIndex,
+    changed: &crate::analysis::diff::ChangedFile,
+) -> Vec<bool> {
+    file_facts(index, &changed.path)
+        .filter(|facts| !facts.used_lexical_fallback)
+        .map(|facts| declarations::header_bound_lines(&facts.source, &changed.added_lines))
+        .unwrap_or_else(|| vec![true; changed.added_lines.len()])
+}
+
 /// Removed declarations must be admitted using reconstructed old-side syntax,
 /// never a line coincidence in the candidate index. A refused reconstruction
 /// or parse leaves the existing lexical/unknown evidence intact.
@@ -511,6 +524,78 @@ pub fn should_ignore_changed_line(text: &str) -> bool {
         || text.starts_with("pub use ")
         || text.starts_with("mod ")
         || text.starts_with("#")
+        || is_visible_module_declaration(text)
+}
+
+/// A visibility-qualified out-of-line `mod name;` declaration
+/// (`pub mod new;`, `pub(crate) mod x;`) names a module and holds no behavior
+/// to check. Visibility-qualified `use` lines are deliberately not covered: a
+/// retargeted re-export (`pub(crate) use fast::selected;` to
+/// `pub(crate) use slow::selected;`) changes which implementation existing call
+/// sites use. Only the `;`-terminated form qualifies, so an inline module body
+/// or any trailing code stays probed.
+fn is_visible_module_declaration(text: &str) -> bool {
+    let rest = super::diff::strip_visibility(text);
+    if rest.len() == text.len() {
+        return false;
+    }
+    let Some(body) = rest.strip_suffix(';') else {
+        return false;
+    };
+    if body.contains(['{', '}', ';', '=']) {
+        return false;
+    }
+    body.strip_prefix("mod")
+        .filter(|tail| tail.starts_with(char::is_whitespace))
+        .map(str::trim)
+        .is_some_and(|name| {
+            let name = name.strip_prefix("r#").unwrap_or(name);
+            !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
+}
+
+/// An `impl` header (`impl Tr for K where Self: Sized {`; other item headers
+/// such as `trait` or `struct` are not covered) holds no expression:
+/// its `Self: Sized` text only looks like a field `name: Type`, so a
+/// constructed-field probe on it reports a gap that does not exist (#8389).
+/// The header itself stays probed as `static_unknown`, so a changed bound is
+/// never silently dropped. A one-line `impl` whose body holds a `fn` is not a
+/// header.
+pub(crate) fn is_item_header(text: &str) -> bool {
+    // A trailing comment (`// fn go`) must not read as a body.
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let text = masked.trim();
+    let text = text
+        .strip_prefix("unsafe")
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+        .map_or(text, str::trim_start);
+    let word_after = |word: &str| {
+        text.strip_prefix(word).is_some_and(|rest| {
+            rest.is_empty() || rest.starts_with('<') || rest.starts_with(char::is_whitespace)
+        })
+    };
+    // A `;` inside brackets (`where [u8; 4]: Copy`) is an array type, not a body.
+    let mut depth = 0usize;
+    let body_semicolon = text.chars().any(|c| match c {
+        '[' | '(' => {
+            depth += 1;
+            false
+        }
+        ']' | ')' => {
+            depth = depth.saturating_sub(1);
+            false
+        }
+        ';' => depth == 0,
+        _ => false,
+    });
+    if text.contains("fn ") || body_semicolon {
+        return false;
+    }
+    // Text after the opening `{` is a one-line body, not a header.
+    if text.contains('{') && !text.ends_with('{') {
+        return false;
+    }
+    word_after("impl") && (text.ends_with('{') || text.contains(" where"))
 }
 
 /// A line that only opens or closes a block (`}`, `});`, `} else {`,
@@ -535,6 +620,123 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+
+    /// #8389: an `impl` header is not a behavior line, but a one-line `impl`,
+    /// a `fn` signature, an expression that merely contains the word and a
+    /// function `where` bound stay probed.
+    #[test]
+    fn impl_headers_are_item_headers_but_behavior_is_not() {
+        for header in [
+            "impl Tr for K {",
+            "impl<T: Debug> Tr for K<T> where Self: Sized {",
+            "impl Tr for K where Self: Sized",
+            "impl Tr for K where Self: Sized { // fn go",
+            "impl Tr for K where Self: Sized { // x;",
+            "impl<T: Fn(u8)> Tr for K<T> where Self: Sized {",
+            "impl\tTr for K where Self: Sized {",
+            "unsafe\timpl Tr for K where [u8; 4]: Copy {",
+            "unsafe impl Send for K {",
+            "impl<T: Iterator<Item = u32>> Tr for K<T> {",
+        ] {
+            assert!(is_item_header(header), "`{header}`");
+            assert_eq!(
+                super::super::lexical::classify_changed_line(header),
+                vec![ProbeFamily::StaticUnknown],
+                "`{header}` must not classify as a field"
+            );
+        }
+        for behavior in [
+            "impl K { fn go(&self) -> u32 { 1 } }",
+            "fn go() -> impl Iterator<Item = u32> {",
+            "implement(x);",
+            "let impl_len = 3;",
+            "where T: Debug,",
+            "impl Tr for K where Self: Sized;",
+            "impl_len += 1",
+            // A multi-line header's generic bound stays probed as
+            // `static_unknown` (`inline_impl_bound_added_stays_unknown`).
+            "impl<T: Debug> Tr for K<T>",
+            "impl K { const A: u32 = 1; }",
+            "impl K where Self: Sized { const A: u32 = 1; }",
+            "impl K where Self: Sized { Foo { a: 1 } }",
+            "T: Debug + Clone,",
+        ] {
+            assert!(!is_item_header(behavior), "`{behavior}`");
+        }
+    }
+
+    /// #9033: a visibility-qualified `mod name;` declaration has no behavior;
+    /// inline module bodies, trailing code, and every visibility-qualified
+    /// `use` (a retargeted re-export changes behavior) stay probed.
+    #[test]
+    fn visible_module_declarations_are_ignored_but_behavior_is_not() {
+        for ignored in [
+            "pub mod new;",
+            "pub(crate) mod x;",
+            "pub(in crate::a) mod y;",
+            "pub ( super ) mod r#raw;",
+            "mod new;",
+        ] {
+            assert!(should_ignore_changed_line(ignored), "`{ignored}`");
+        }
+        for kept in [
+            "pub mod new { fn go() {} }",
+            "pub mod new { pub fn go() { 1 } }",
+            "pub mod new; fn go() {}",
+            "pub fn mod_new() {}",
+            "pub const MODE: u8 = 1;",
+            "pub modx;",
+            "pub mod ;",
+            "pub(crate) mod",
+            "pub( mod x;",
+            "pub(crate) static X: u8 = 1;",
+            "pub(crate) use a::b;",
+            "pub(crate) use fast::selected;",
+            "pub(in crate::a) use slow::selected;",
+        ] {
+            assert!(!is_visible_module_declaration(kept), "`{kept}`");
+        }
+        // `pub use` keeps its pre-existing ignore; the new helper must not
+        // be what claims it.
+        assert!(!is_visible_module_declaration("pub use a::b;"));
+    }
+
+    /// Producer level: an added `pub mod new;` yields no probe, while a
+    /// retargeted `pub(crate) use` re-export still yields one.
+    #[test]
+    fn diff_producer_ignores_visible_mod_but_probes_retargeted_use() -> Result<(), String> {
+        use crate::analysis::diff::{ChangedFile, ChangedLine};
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let source = "pub mod new;\npub(crate) use slow::selected;\n";
+        let path = PathBuf::from("src/lib.rs");
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: BTreeMap::from([(path.clone(), facts)]),
+            ..Default::default()
+        });
+        let probes_for = |line: usize| {
+            let text = source.lines().nth(line - 1).unwrap_or_default().to_string();
+            let changed = ChangedFile {
+                path: path.clone(),
+                added_lines: vec![ChangedLine {
+                    line,
+                    new_side_line: line,
+                    text,
+                }],
+                removed_lines: Vec::new(),
+            };
+            super::super::diff::probes_for_file(std::path::Path::new("."), &changed, &index)
+        };
+        assert!(
+            probes_for(1).is_empty(),
+            "`pub mod new;` must yield no probe"
+        );
+        assert!(
+            !probes_for(2).is_empty(),
+            "a retargeted `pub(crate) use` must still be probed"
+        );
+        Ok(())
+    }
 
     #[test]
     fn classify_functions_are_callable() {

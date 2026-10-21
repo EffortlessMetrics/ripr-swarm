@@ -12,7 +12,7 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 134
+floor = 138
 
 # Oracle-accuracy gate. Cases with `expected_oracle` label the related-test
 # oracle kind and strength a spec adopts; `verdict-corpus check` fails when
@@ -758,3 +758,51 @@ reason = "explain/context packet drill-in projection of an observed signature; n
 id = "RIPR-SPEC-0268"
 scope = "out"
 reason = "render-only collapse of a duplicated evidence row; not an analyzer verdict"
+
+# Covered-by instrument-failure contract
+[[spec]]
+id = "RIPR-SPEC-0280"
+scope = "out"
+reason = "repository precommit and xtask instrument contract; not an analyzer verdict, so no corpus case can label it"
+
+# Pilot ranking refuted-count growth allowance
+[[spec]]
+id = "RIPR-SPEC-0281"
+scope = "out"
+reason = "advisory ranking-scoreboard gate rule in xtask; not an analyzer verdict, so no corpus case can label it"
+
+# Repair attempt after-refusal retry budget
+[[spec]]
+id = "RIPR-SPEC-0282"
+scope = "out"
+reason = "agent repair-loop retry bound and status routing; not an analyzer verdict, so no corpus case can label it"
+[[unmeasured]]
+id = "RIPR-SPEC-0283"
+reason = "acceptance examples are bullet prose, not numbered; no corpus case cites an example number"
+[[spec]]
+id = "RIPR-SPEC-0285"
+scope = "out"
+reason = "doctor/repo-input framework-scan admission, ordering, and string-awareness hygiene; not an exposure-verdict example a corpus case labels"
+[[spec]]
+id = "RIPR-SPEC-0290"
+scope = "out"
+reason = "pilot start-command root rendering; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0292"
+scope = "out"
+reason = "xtask spot-check admission by report schema version; not an exposure-verdict example a corpus case labels"
+[[spec]]
+id = "RIPR-SPEC-0297"
+scope = "out"
+reason = "static related-test admission for Display/Debug fmt dispatch; not an exposure-verdict example a corpus case labels"
+[[spec]]
+id = "RIPR-SPEC-0296"
+scope = "out"
+reason = "xtask dx-scoreboard first-run budget counting grain; not an exposure-verdict example a corpus case labels"
+
+
+[[spec]]
+id = "RIPR-SPEC-0300"
+scope = "out"
+reason = "probe-seeding hygiene for wrapped Rust signatures; not an exposure-verdict example a corpus case labels"

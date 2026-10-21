@@ -42,6 +42,19 @@ export function validateRunOutcome({
   return undefined;
 }
 
+/**
+ * Tests that actually ran to a verdict. mocha's `stats.tests` also counts
+ * skipped (`this.skip()`) tests, so a lane whose every test skips would
+ * otherwise read as executed and pass; only passes and failures count.
+ */
+export function executedFromStats(
+  stats?: { passes?: number; failures?: number },
+  hookFailures = 0
+): number {
+  // mocha counts a failed hook in `stats.failures`; a hook is not a test.
+  return Math.max(0, (stats?.passes ?? 0) + (stats?.failures ?? 0) - hookFailures);
+}
+
 function beforeHookTitle(runnable: { title?: string; type?: string }): string | undefined {
   if (
     runnable.type === 'hook' &&
@@ -70,8 +83,9 @@ export function run(): Promise<void> {
 
   return new Promise((resolve, reject) => {
     const failedBeforeHooks: string[] = [];
+    let hookFailures = 0;
     const runner = mocha.run((failures: number) => {
-      const executed = runner.stats?.tests ?? 0;
+      const executed = executedFromStats(runner.stats, hookFailures);
       const reason = validateRunOutcome({ executed, failures, failedBeforeHooks });
       if (reason !== undefined) {
         reject(new Error(reason));
@@ -83,6 +97,9 @@ export function run(): Promise<void> {
     // listener attached here observes every failure, including a before-all
     // hook death that precedes the first executed test.
     runner.on('fail', (runnable: { title?: string; type?: string }) => {
+      if (runnable.type === 'hook') {
+        hookFailures += 1;
+      }
       const title = beforeHookTitle(runnable);
       if (title !== undefined) {
         failedBeforeHooks.push(title);

@@ -1096,7 +1096,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0202-agent-card-typed-refusals.md"
 status = "proposed"
 owner = "product-agent"
-standalone_reason = "Issue #5007 records the agent card typed refusal envelope: every deliberate named refusal of the ripr agent card default handoff â€” seam_not_found, policy_omitted, witness_unavailable, identity_unnameable, budget_overflow â€” maps to exit code 3 and renders one versioned agent_card_refusal envelope (schema_version 0.1) on stderr under --json with the typed error.kind, the asked-for seam_id, the verbatim human prose as the non-authority message, and one typed remedy_route, reusing the existing 2/3 exit-code contract and the verify/verify-execute/repair typed-refusal precedent; operational failures stay exit 2, stdout stays empty on refusals, the no-witness card render stays a success path per RIPR-SPEC-0194 acceptance, and the closed kind set is pinned three ways by check-output-contracts. Renumbered from RIPR-SPEC-0201 after main landed the Python same-class transitive-reach limitation spec under that number first."
+standalone_reason = "Issue #5007 records the agent card typed refusal envelope: every deliberate named refusal of the ripr agent card default handoff â€” seam_not_found, policy_omitted, witness_unavailable, identity_unnameable, budget_overflow â€” maps to exit code 3 and renders one versioned agent_card_refusal envelope (schema_version 0.1) on stdout under --json (the prose rendering stays on stderr) with the typed error.kind, the asked-for seam_id, the verbatim human prose as the non-authority message, and one typed remedy_route, reusing the existing 2/3 exit-code contract and the verify/verify-execute/repair typed-refusal precedent; operational failures stay exit 2, without --json stdout stays empty on refusals, the no-witness card render stays a success path per RIPR-SPEC-0194 acceptance, and the closed kind set is pinned three ways by check-output-contracts. Renumbered from RIPR-SPEC-0201 after main landed the Python same-class transitive-reach limitation spec under that number first."
 [[artifact]]
 id = "RIPR-SPEC-0203"
 kind = "spec"
@@ -1666,3 +1666,123 @@ path = "docs/specs/RIPR-SPEC-0278-issue-lifecycle-real-closeout-rows.md"
 status = "proposed"
 owner = "test-infra"
 standalone_reason = "Issue #4932 records the first real issue-lifecycle rows admitted through the frozen RIPR-SPEC-0218 counting law: exactly two REAL (synthetic: false) issue_lifecycle_attempt.v1 rows bind existing landed GitHub evidence - Row A is one complete issue-to-merge closeout journey (issue #7795 -> PR #8285 -> green checks on head 1b4a5f65 -> squash merge f3fa41d265 -> issue CLOSED -> compare-verified current head at main b03865009 with behind_by 0 -> burn-down closed with five covered acceptance predicates -> closeout completed) and Row B is the live negative control (PR #8325 squash-merged as 70d053fb7 on 2026-10-17 while parent issue #1706 stays OPEN with ten uncovered acceptance rows and no current-head receipt, keeping merged_pending_closeout no matter what the producer claims). Every identity is verified with read-only gh commands recorded in provenance.json; snapshot digests recompute fail-closed over LF-normalized bytes in check-fixture-contracts; gaps GitHub does not record (no formal claim, no #4925 base orchestration attempt receipt, no human review on Row A) stay recorded as limitations instead of being invented; no claimed disposition is ever upgraded; adapter tests pin wrong-head/wrong-merge identity rejection on the retained digest binding, zero-subject verification demotion, stale current-main downgrade, uncovered-acceptance partial landing, duplicate-import deduplication by observation_key, and the thirteen synthetic mechanics fixtures staying outside every real denominator; no new real PR, issue closure, merge, portfolio architecture or policy ratification is executed or claimed."
+
+[[artifact]]
+id = "RIPR-SPEC-0280"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0280-covered-by-instrument-failure-contract.md"
+status = "proposed"
+owner = "test-infra"
+standalone_reason = "States the check-file-policy covered_by enumeration instrument-failure contract implemented by #8905 and #8941 (bounded lock-wait retry, 90-minute summed-duration ceiling, covered_by_lock_wait_timeout versus covered_by_instrument_timeout classification anchored to the validator's first line, precommit-v2 deferral to infrastructure_failure after the remaining stages run, and the fail-closed rule that a real failure always wins) so the behavior sits inside the spec-test-code chain; RIPR-SPEC-0191 governs only host-scoped selection."
+
+[[artifact]]
+id = "RIPR-SPEC-0281"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0281-pilot-ranking-refuted-count-growth-allowance.md"
+status = "proposed"
+owner = "test-infra"
+standalone_reason = "States how the advisory ranking scoreboard compares the pooled refuted counts (pick_growth_allowance: a count may rise by the picks admitted, per repository, zero margin at flat or smaller pick counts, legacy evidence strict) so the gate sits inside the spec-test-code chain; RIPR-SPEC-0237 governs only the pilot ranking order."
+
+[[artifact]]
+id = "RIPR-SPEC-0282"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0282-repair-attempt-after-refusal-retry-budget.md"
+status = "proposed"
+owner = "agent-loop"
+standalone_reason = "States the repair attempt after-refusal history and 5-refusal retry budget (#8726): capped history with an uncapped count, the typed exit-3 stop that is not recorded as a refusal, and status and repair not offering a refused after command, so the behavior sits inside the spec-test-code chain; RIPR-SPEC-0011 governs only the LLM work loop."
+
+[[artifact]]
+id = "RIPR-SPEC-0283"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0283-mcp-adapter-clarity-contracts.md"
+status = "proposed"
+owner = "mcp"
+standalone_reason = "Issues #8734, #8735, #8736 and #8737 record the MCP adapter clarity contracts: the ripr://gap/{canonical_id} and ripr://repair-card/{canonical_id} routes percent-decode the captured id segment once when the raw capture misses (raw capture first, so legacy raw URIs and literal-% ids keep working) and fail closed with the typed id_ambiguous code when both the raw spelling and its decoded form name two distinct items, naming the plain-JSON-string tool route as recovery; the typed page echoes the effective inventory limit and the declared input cap is enforced at the dispatch edge; the status resource carries the same restart recovery as the status tool on an unavailable root; and the two same-shaped per-item tool descriptions disambiguate each other."
+
+[[artifact]]
+id = "RIPR-SPEC-0284"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0284-agent-context-packet-clarity.md"
+status = "proposed"
+owner = "product-output"
+standalone_reason = "Issues #8743, #8744 and #8746 record the agent context packet clarity contract: the ripr context packet contract is 1.1 and states the exposure verdict outright (classification, severity resolved through the caller severity config, and confidence, wire-identical to the ripr check --json finding fields) so packet consumers never derive the class from the underdetermined stage states, and the context refusal envelope is keyed with the packet version; the human evidence window glosses the unknown sink row with the same contract."
+
+[[artifact]]
+id = "RIPR-SPEC-0286"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0286-empty-diff-base-candidate.md"
+status = "proposed"
+owner = "product-cli"
+standalone_reason = "Issue #9013 records the empty-diff base-candidate contract: a branch is advised as --base only when its root-scoped diff survives the changed-Rust-line and changed-file guards (rename destinations counted, submodule parity with the loader), ranking Rust-bearing then smallest diffs, so ripr never recommends a command it would refuse."
+
+[[artifact]]
+id = "RIPR-SPEC-0285"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0285-python-framework-scan-bounded-deterministic-string-aware.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issues #8706, #8707 and #8751 record the Python framework scan contract: per scanned directory only sorted regular .py test files count toward the 64-candidate cap so non-test entries and test-named directories cannot starve the scan or make it depend on filesystem order; each candidate is read for at most a 4096-byte prefix with a cut final line dropped; and evidence is matched only against code lines (scanning stops at an unquoted #, skips single-line string contents, and only the matching delimiter closes a triple-quoted string) so docstring examples, commented delimiters, and string-literal delimiters neither credit nor hide a real import pytest / import unittest."
+
+[[artifact]]
+id = "RIPR-SPEC-0297"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0297-display-debug-fmt-dispatch-reach.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #8999 records the Display/Debug fmt dispatch contract: a test that formats a value built as the impl's self type through a matching placeholder or to_string is related to the changed fmt as a direct owner call, fail-closed on ambiguity."
+
+[[artifact]]
+id = "RIPR-SPEC-0293"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0293-partialeq-assert-dispatch.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #8999 records the comparison-assertion contract: a same-file assert_eq!/assert_ne! over two values syntactically typed as the standard-trait impl PartialEq for T relates to the changed eq/ne as direct_owner_call, failing closed on shadowed traits, user and property macros, ambiguous imports and rebinding, and the fixture_opaque scan for such owners reads reaching and fixture-affinity tests only."
+
+[[artifact]]
+id = "RIPR-SPEC-0290"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0290-pilot-repair-root-display.md"
+status = "proposed"
+owner = "product-output"
+standalone_reason = "Issue #8992 records pilot command-root and artifact-path native spelling: start, first-pr, retry, snapshot and outcome commands target the selected checkout and packet from another working directory. Bound artifact paths keep literal Unix backslashes through root_path_display before shell quoting. Paths without literal backslashes and all Windows rendering are unchanged, following the shared CLI recovery path rule (#4287)."
+
+[[artifact]]
+id = "RIPR-SPEC-0292"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0292-spot-check-schema-admission.md"
+status = "proposed"
+owner = "product-xtask"
+standalone_reason = "Issue #8996 records the mutation spot check calibration-schema admission contract: the spot check classifies calibration documents at schema 0.2 and 0.3 (0.3 adds provenance and how_to_read without changing the joined-record shape), keeping the gate working both before and after the calibrate schema 0.3 work lands; any other version fails closed with an actionable refusal naming the found version, the supported versions, and the renderer's owning MUTATION_CALIBRATION_SCHEMA_VERSION constant."
+
+[[artifact]]
+id = "RIPR-SPEC-0295"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0295-doctor-cargo-build-path-warning.md"
+status = "proposed"
+owner = "product-output"
+standalone_reason = "Issue #9097 records the doctor PATH-warning contract: the PATH-mismatch warning is suppressed when the running binary is a Cargo build output (the already-computed executable_is_cargo_build_output), because that is the normal contributor setup, while a genuinely different installed ripr on PATH still warns and identity fields stay truthful about both paths; no schema or exit-code change."
+
+[[artifact]]
+id = "RIPR-SPEC-0294"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0294-mutation-calibration-clarity.md"
+status = "proposed"
+owner = "product-output"
+standalone_reason = "Issues #8750 and #8753 record the mutation calibration output clarity contract: the calibration report (schema 0.2 to 0.3) carries in-band provenance (repo-exposure and cargo-mutants head identities with a same/different/missing verdict and disclosure sentence) on both md and JSON surfaces so a report saved with --out keeps the same-subject caveat, and the agreement section gains a how-to-read block defining static/runtime gaps, clean signals, and per-bucket interpretation from one shared map; RIPR-SPEC-0006 governs only the calibration report and its join."
+
+[[artifact]]
+id = "RIPR-SPEC-0296"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0296-first-run-over-budget-step-occurrences.md"
+status = "proposed"
+owner = "product-xtask"
+standalone_reason = "Issue #8921 records the first-run over-budget step-occurrence contract: dx-scoreboard ingestion counts first_run.over_budget_steps per step occurrence instead of per breached metric row, aligning with the public-proof renderer and the declared steps unit, retaining both evidence entries per occurrence and keeping workflow_lines breaches separate."
+
+[[artifact]]
+id = "RIPR-SPEC-0300"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0300-wrapped-signature-one-probe.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #8999 records the wrapped-signature contract: the signature of a new function seeds no probe on its parameter, return or brace lines, several changed lines of one existing signature seed one probe on the first changed line, type-bound declarations keep their own probe, and any ambiguous header fails closed to per-line probes."
