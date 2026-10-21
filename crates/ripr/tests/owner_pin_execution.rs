@@ -2685,7 +2685,7 @@ fn spawned_thread_assertion_matched_static_and_runtime_controls() -> Result<(), 
     let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn weight(input: u32) -> u32 {\n-    input * 3\n+    3 * input\n }\n";
     let assertion = "assert_eq!(weight(4), 12)";
     let fake_thread = "mod thread {\n        pub struct Handle;\n        impl Handle {\n            pub fn join(self) -> Result<(), ()> {\n                Ok(())\n            }\n        }\n        pub fn spawn<F: FnOnce()>(_f: F) -> Handle {\n            Handle\n        }\n    }\n";
-    let fake_module = "pub mod thread {\n    pub struct Handle;\n    impl Handle {\n        pub fn join(self) -> Result<(), ()> {\n            Ok(())\n        }\n    }\n    pub fn spawn<F: FnOnce()>(_f: F) -> Handle {\n        Handle\n    }\n}\npub mod std {\n    pub use super::thread;\n}\n#[allow(unused_macros)]\nmacro_rules! setup {\n    () => {\n        use crate::fake::*;\n    };\n}\n";
+    let fake_module = "pub mod thread {\n    pub struct Handle;\n    impl Handle {\n        pub fn join(self) -> Result<(), ()> {\n            Ok(())\n        }\n    }\n    pub fn spawn<F: FnOnce()>(_f: F) -> Handle {\n        Handle\n    }\n}\npub mod std {\n    pub use super::thread;\n}\npub fn scope<F: FnOnce(&())>(_f: F) {}\n#[allow(unused_macros)]\nmacro_rules! setup {\n    () => {\n        use crate::fake::*;\n    };\n}\n";
     for (case, prelude, items, body, exposed, kills) in [
         (
             "joined_unwrap",
@@ -2856,6 +2856,64 @@ fn spawned_thread_assertion_matched_static_and_runtime_controls() -> Result<(), 
             format!(
                 "std::thread::scope(|ref s| {{\n            s.spawn(|| {assertion});\n        }});"
             ),
+            false,
+            true,
+        ),
+        (
+            // #8999: `use std::thread::scope;` binds the same std function the
+            // qualified spelling names, so the bare call runs its closure.
+            "bare_scope_import",
+            "",
+            "use std::thread::scope;",
+            format!("scope(|_s| {{\n            {assertion};\n        }});"),
+            true,
+            true,
+        ),
+        (
+            "bare_spawn_import_joined",
+            "",
+            "use std::thread::spawn;",
+            format!("spawn(|| {assertion}).join().unwrap();"),
+            true,
+            true,
+        ),
+        (
+            "bare_scope_local_fn",
+            "",
+            "fn scope<F: FnOnce(&())>(_f: F) {}",
+            format!("scope(|_s| {{\n            {assertion};\n        }});"),
+            false,
+            false,
+        ),
+        (
+            "bare_scope_other_import",
+            "mod fake;\n",
+            "use crate::fake::scope;",
+            format!("scope(|_s| {{\n            {assertion};\n        }});"),
+            false,
+            false,
+        ),
+        (
+            "bare_scope_import_list_with_other",
+            "",
+            "use std::thread::{spawn, scope};",
+            format!("scope(|_s| {{\n            {assertion};\n        }});"),
+            false,
+            true,
+        ),
+        (
+            "bare_scope_renamed_import",
+            "",
+            "use std::thread::scope as run;",
+            format!("run(|_s| {{\n            {assertion};\n        }});"),
+            false,
+            true,
+        ),
+        (
+            "bare_scope_import_in_other_module",
+            "use std::thread::scope;\n",
+            "",
+            format!("scope(|_s| {{\n            {assertion};\n        }});"),
             false,
             true,
         ),

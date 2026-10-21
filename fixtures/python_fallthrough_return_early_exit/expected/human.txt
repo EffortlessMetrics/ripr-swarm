@@ -1,0 +1,45 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_fallthrough_return_early_exit/input
+config: <cwd>/fixtures/python_fallthrough_return_early_exit/input/ripr.toml
+
+Summary: 1 probe (0 exposed, 1 weak, 0 unrevealed, 0 no path); 1 of 1 finding unsuppressed
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+Start here:
+  State: preview language, advisory only
+  Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it
+  File: src/quote.py:4
+  Language: python
+  Language status: preview
+  Static exposure: weak (severity: warning, confidence 0.40)
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:python:src/quote.py:quote:return_value:return_value:round_total*1.10_2
+  Changed behavior: return round(total * 1.10, 2)
+  Missing discriminator (1 of 2): A strong Python oracle reaches `quote`, but static evidence does not place a related test input inside the guarding arm `not (total > 1000)`; every observed input leaves the…
+  Related test: tests/test_quote.py:4 test_bulk_order_uses_flat_quote
+  Suggested test file: tests/test_quote.py
+  Suggested test: test_bulk_order_uses_flat_quote
+  Test node: tests/test_quote.py::test_bulk_order_uses_flat_quote
+  Verify command: python -m pytest tests/test_quote.py::test_bulk_order_uses_flat_quote (high)
+  Next step — Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `not (total > 1000)`
+  Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator weak
+    - reach yes: 1 related Python test(s) found for owner `quote`
+    - infection weak: Related tests reach the changed owner, but every strong related test call provably fails the guarding arm, so the changed line never executes under an observed…
+    - 6 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/python_fallthrough_return_early_exit/input --diff <cwd>/fixtures/python_fallthrough_return_early_exit/diff.patch --mode fast probe:src_quote.py:python_preview:ca5fb9df
+  ripr context --root <cwd>/fixtures/python_fallthrough_return_early_exit/input --diff <cwd>/fixtures/python_fallthrough_return_early_exit/diff.patch --mode fast --at probe:src_quote.py:python_preview:ca5fb9df
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_quote.py:python_preview:ca5fb9df --root <cwd>/fixtures/python_fallthrough_return_early_exit/input` for the full gate's answer
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.
