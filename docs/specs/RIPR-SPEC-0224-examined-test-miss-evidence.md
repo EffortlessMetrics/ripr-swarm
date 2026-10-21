@@ -120,7 +120,7 @@ unsupported state as unknown and fabricates no reason conforms.
 | `no_call_path` | yes | pending #5491 | pending #5495 | no |
 | `no_assertion` | yes | pending #5491 | pending #5495 | no |
 | `assertion_not_observing` | yes | pending #5491 | pending #5495 | no (#3223) |
-| `assertion_not_credited` | yes | no (#5446) | no (#5446) | no |
+| `assertion_not_credited` | yes, unsplit until #5446 | no (#5446) | no (#5446) | no |
 | `weak_assertion` | yes | pending #5491 | pending #5495 | no |
 | `missing_input` | yes | pending #5491 | pending #5495 | no (#4061, perl-lsp-swarm#17237, #5562) |
 | `missing_exact_assertion` | yes | pending #5491 | pending #5495 | no |
