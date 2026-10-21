@@ -396,3 +396,48 @@ fn comments_before_an_if_keep_the_real_condition() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn bracket_calls_and_loaders_keep_exposed() -> Result<(), String> {
+    let head =
+        "import { price } from \"../src/price\";\nimport * as pricing from \"../src/price\";\n";
+    for (label, body) in [
+        (
+            "guard-bracket-literal",
+            "test(\"p\", () => {\n  expect(pricing.price(2)).toBe(20);\n  expect(pricing['price'](3, 'HALF')).toBe(15);\n});\n",
+        ),
+        (
+            "guard-bracket-key",
+            "test(\"p\", () => {\n  const k = 'price';\n  expect(price(2)).toBe(20);\n  expect(pricing[k](3, 'HALF')).toBe(15);\n});\n",
+        ),
+        (
+            "guard-require-actual",
+            "test(\"p\", () => {\n  expect(price(2)).toBe(20);\n  expect(jest.requireActual('../src/checkout').half()).toBe(15);\n});\n",
+        ),
+    ] {
+        let finding = then_arm(label, &format!("{head}{body}"))?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
+    // A method shorthand's own parameter is not the owner's.
+    let source = "export function price(qty: number, coupon?: string): number {\n  let total = qty * 10;\n  const o = {\n    run(coupon: string) {\n      if (coupon === 'HALF') {\n        total = total / 2;\n      }\n    },\n  };\n  o.run('HALF');\n  return total;\n}\n";
+    let finding = finding_at(
+        "guard-shadow",
+        source,
+        6,
+        "        total = total / 3;",
+        "        total = total / 2;",
+        &test_with(&[("price(2)", "15")]),
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "{:?}",
+        finding.missing
+    );
+    Ok(())
+}

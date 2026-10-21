@@ -1112,6 +1112,14 @@ to `amount - 20`, and `tests/lib.test.ts` has
   reads `weakly_exposed`, and every unreadable shape (spread, defaulted or
   rebound parameter, helper or member call, file-level call, CRLF, deleted
   line) keeps the ladder verdict.
+  The `guard_entry_guard.rs` unit tests (`reads_then_else_if_and_else_arms`,
+  `comments_before_if_do_not_shift_the_condition_text`,
+  `mock_module_loaders_and_call_result_chains_are_unreadable`,
+  `indexed_and_parenthesized_receivers_are_not_readable`,
+  `bracket_indexed_calls_are_unreadable`, `deeply_nested_conditions_give_up`
+  and `nested_methods_and_comments_inside_conditions`) pin the reader, and
+  `bracket_calls_and_loaders_keep_exposed` is the production-path negative
+  for bracket-indexed calls and `jest.requireActual(..)` chains.
 - Planned: one unit test per changed example (5, 6, 7, 8, 13, 14, 16, 18,
   19, 22, 23, 24, 31, 32, 33, 34, 35), and a verdict corpus holding all
   35 examples, each with

@@ -87,6 +87,9 @@ pub(crate) fn enclosing_conditions(
         .filter(|at| lines.get(*at).is_some_and(|line| line.trim() == wanted))?;
     let line_start: usize = lines[..index].iter().map(|line| line.len() + 1).sum();
 
+    if body_declares_methods(owner_source) {
+        return None;
+    }
     let masked = ts_mask_literals_and_comments(owner_source);
     let original: Vec<char> = owner_source.chars().collect();
     let masked_chars: Vec<char> = masked.chars().collect();
@@ -204,7 +207,7 @@ fn block_conditions(
     let Some(close) = close.filter(|close| m[close + 1..].trim().is_empty()) else {
         return none;
     };
-    let condition = o[1..close].trim().to_string();
+    let condition = strip_comments(o[1..close].trim()).trim().to_string();
     if condition.is_empty() {
         return none;
     }
@@ -223,6 +226,115 @@ fn block_conditions(
 
 fn is_identifier_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '$'
+}
+
+/// Remove `//` and `/* */` comments (outside quotes) from condition text.
+fn strip_comments(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::new();
+    let mut quote: Option<char> = None;
+    let mut at = 0usize;
+    while at < chars.len() {
+        let c = chars[at];
+        if let Some(open) = quote {
+            out.push(c);
+            if c == '\\' && at + 1 < chars.len() {
+                out.push(chars[at + 1]);
+                at += 1;
+            } else if c == open {
+                quote = None;
+            }
+        } else if matches!(c, '\'' | '"' | '`') {
+            quote = Some(c);
+            out.push(c);
+        } else if c == '/' && chars.get(at + 1) == Some(&'/') {
+            while at < chars.len() && chars[at] != '\n' {
+                at += 1;
+            }
+            continue;
+        } else if c == '/' && chars.get(at + 1) == Some(&'*') {
+            at += 2;
+            while at + 1 < chars.len() && !(chars[at] == '*' && chars[at + 1] == '/') {
+                at += 1;
+            }
+            at += 2;
+            out.push(' ');
+            continue;
+        } else {
+            out.push(c);
+        }
+        at += 1;
+    }
+    out
+}
+
+/// Whether the owner's body declares a method, getter or nested function
+/// (`run(coupon) { .. }`): its parameters can shadow the owner's, so a guard
+/// condition naming one is not about the owner's parameter.
+fn body_declares_methods(owner_source: &str) -> bool {
+    let masked = ts_mask_literals_and_comments(owner_source);
+    let chars: Vec<char> = masked.chars().collect();
+    // Skip the owner's own header: the first `{` at paren depth 0.
+    let mut parens = 0usize;
+    let mut start = None;
+    for (at, c) in chars.iter().enumerate() {
+        match c {
+            '(' => parens += 1,
+            ')' => parens = parens.saturating_sub(1),
+            '{' if parens == 0 => {
+                start = Some(at + 1);
+                break;
+            }
+            _ => {}
+        }
+    }
+    let Some(start) = start else {
+        return true;
+    };
+    let mut at = start;
+    while at < chars.len() {
+        if chars[at] == ')' {
+            let mut next = at + 1;
+            while next < chars.len() && chars[next].is_whitespace() {
+                next += 1;
+            }
+            if chars.get(next) == Some(&'{') {
+                // Walk back to the matching `(` and the word before it.
+                let mut depth = 0usize;
+                let mut open = None;
+                for k in (start..=at).rev() {
+                    match chars[k] {
+                        ')' => depth += 1,
+                        '(' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                open = Some(k);
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                let Some(open) = open else {
+                    return true;
+                };
+                let mut k = open;
+                while k > start && chars[k - 1].is_whitespace() {
+                    k -= 1;
+                }
+                let stop = k;
+                while k > start && is_identifier_char(chars[k - 1]) {
+                    k -= 1;
+                }
+                let word: String = chars[k..stop].iter().collect();
+                if !matches!(word.as_str(), "if" | "for" | "while" | "switch" | "catch") {
+                    return true;
+                }
+            }
+        }
+        at += 1;
+    }
+    false
 }
 
 /// What the owner's parameter list shows: per parameter, whether it has a
@@ -420,6 +532,13 @@ fn has_top_level_comparison(text: &str) -> bool {
 pub(crate) fn calls_only_allowed(test_text: &str, allowed: &[&str], receivers: &[String]) -> bool {
     let masked = ts_mask_literals_and_comments(test_text);
     let chars: Vec<char> = masked.chars().collect();
+    // `ns['owner'](..)` / `ns[key](..)`: a bracket-indexed call hides its
+    // callee from the identifier scan below.
+    for (at, c) in chars.iter().enumerate() {
+        if *c == ']' && chars[at + 1..].iter().find(|c| !c.is_whitespace()) == Some(&'(') {
+            return false;
+        }
+    }
     let mut at = 0usize;
     while at < chars.len() {
         if is_identifier_char(chars[at]) && (at == 0 || !is_identifier_char(chars[at - 1])) {
@@ -465,12 +584,12 @@ pub(crate) fn calls_only_allowed(test_text: &str, allowed: &[&str], receivers: &
     true
 }
 
-/// Harmless `jest` / `vi` members: they build or configure mocks and timers
-/// but never load a module or run its code (`requireActual`, `requireMock`
-/// and `createMockFromModule` do).
 /// Deepest nesting the condition reader follows before it gives up.
 const MAX_DEPTH: usize = 32;
 
+/// Harmless `jest` / `vi` members: they build or configure mocks and timers
+/// but never load a module or run its code (`requireActual`, `requireMock`
+/// and `createMockFromModule` do).
 const HARMLESS_MOCK_MEMBERS: [&str; 16] = [
     "fn",
     "spyOn",
@@ -1160,5 +1279,42 @@ mod tests {
                 want: true
             }]
         ));
+    }
+
+    #[test]
+    fn bracket_indexed_calls_are_unreadable() {
+        let allowed = ["price", "expect"];
+        let ns = vec!["pricing".to_string()];
+        for refused in [
+            "expect(pricing['price'](3, 'HALF')).toBe(15);",
+            "const k = 'price'; pricing[k](3, 'HALF');",
+            "pricing [ 'price' ] (3);",
+        ] {
+            assert!(!calls_only_allowed(refused, &allowed, &ns), "{refused}");
+        }
+        assert!(calls_only_allowed(
+            "expect([1, 2]).toEqual([1, 2]);",
+            &allowed,
+            &ns
+        ));
+    }
+
+    #[test]
+    fn nested_methods_and_comments_inside_conditions() {
+        // An object-method shorthand has its own `coupon` parameter.
+        let shadow = "function price(qty, coupon) {\n  const o = {\n    run(coupon) {\n      if (coupon === 'HALF') {\n        qty = 1;\n      }\n    },\n  };\n  return qty;\n}\n";
+        assert_eq!(enclosing_conditions(shadow, 1, 5, "qty = 1;"), None);
+        // `if` / `for` / `while` headers are not methods.
+        assert!(!body_declares_methods(SOURCE));
+        // Comments inside the parentheses do not reach the condition text.
+        let source = "function f(x) {\n  if (x === 1 /* one */ || // two\n      x === 2) {\n    x = 0;\n  }\n}\n";
+        let arms = enclosing_conditions(source, 1, 4, "x = 0;").unwrap_or_default();
+        assert_eq!(arms.len(), 1);
+        assert!(
+            !arms[0].text.contains("/*") && !arms[0].text.contains("//"),
+            "{}",
+            arms[0].text
+        );
+        assert!(arms[0].text.contains("x === 1") && arms[0].text.contains("x === 2"));
     }
 }

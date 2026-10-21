@@ -5806,7 +5806,7 @@ fn ts_unentered_guard(context: &TsPostLadderContext<'_>) -> Option<TsUnenteredGu
         let root = context.workspace_root?;
         for import in &test.imports_in_file {
             if import.namespace {
-                if !receivers.contains(&import.local) {
+                if !receivers.contains(&import.local) && !is_test_framework_source(&import.source) {
                     return None;
                 }
             } else if import.imported.as_deref() == Some(owner.name.as_str())
