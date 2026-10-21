@@ -18296,9 +18296,27 @@ JSON shape:
 
 ```jsonc
 {
-  "schema_version": "0.2",
+  "schema_version": "0.3",
   "scope": "repo",
   "status": "advisory",
+  "provenance": {
+    "repo_exposure_head": "2bd22c0b0718157870e2e78c9a70b9da1c9c1b21",
+    "mutants_head": null,
+    "verdict": "only_repo_exposure_head",
+    "disclosure": "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; the repo-exposure snapshot reports repository head 2bd22c0b0718157870e2e78c9a70b9da1c9c1b21, so the join assumes that subject. The cargo-mutants JSON does not carry a head SHA, so ensure the mutants were produced from the same repository and adjacent commits."
+  },
+  "how_to_read": {
+    "static_gap": "a static seam whose grip class is outside the strong set: anything other than strongly_gripped, intentional, or suppressed (for example ungripped or weakly_gripped)",
+    "runtime_gap_signal": "an imported cargo-mutants outcome the runtime failed to catch: missed, survived, not_caught, or uncaught",
+    "runtime_clean_signal": "an imported cargo-mutants outcome the runtime caught: caught or timeout",
+    "buckets": {
+      "static_gap_and_runtime_signal": "ripr flags a static gap (a seam outside the strongly_gripped / intentional / suppressed set) and a runtime mutant went uncaught at that seam: the two sources agree, which supports the static classification.",
+      "static_gap_without_runtime_signal": "ripr flags a static gap but this import produced no runtime gap signal (missed / survived / not_caught / uncaught) for it, so the bucket only says the static gap lacks runtime corroboration — not that it went unexercised: `contradicts_static_gap` rows caught the mutant (the runtime disagrees with the static gap), `no_runtime_data` rows matched only inconclusive or unobserved outcomes, and seams with no matched runtime record were not exercised by this import; see the Static gaps without runtime signals table.",
+      "runtime_signal_without_static_gap": "a runtime mutant went uncaught where ripr reports no static gap. Joined rows (`contradicts_static_clean`) genuinely disagree with a static-clean seam and are the first ones to investigate; unmatched rows (`runtime_only_signal`) had no static seam to contradict, so they are runtime-only evidence, not a disagreement; see the Runtime signals without static gaps table.",
+      "static_clean_and_runtime_clean": "ripr reports no static gap (the seam is strongly_gripped, intentional, or suppressed) and the runtime caught the mutant: the two sources agree.",
+      "runtime_inconclusive": "ambiguous joins (several seams on one line, or crossing spans) or unobserved runtime outcomes: counted separately as evidence neither for nor against the static verdict until a seam_id or unambiguous location is available."
+    }
+  },
   "metrics": {
     "static_seams_total": 120,
     "mutants_total": 8,
@@ -18480,9 +18498,46 @@ JSON shape:
 
 Field contract:
 
-- `schema_version` — currently `"0.2"`. 0.2 added `span_containment`,
+- `schema_version` — currently `"0.3"`. 0.3 added the top-level
+  `provenance` and `how_to_read` keys. 0.2 added `span_containment`,
   `ambiguous_span_overlap_*`, `unmatched_reason` and runtime span fields.
 - `status` — always `"advisory"`; this report does not block CI by default.
+- `provenance.repo_exposure_head` — the repo-exposure snapshot's repository
+  head, or `null` when the snapshot does not carry one (or carries a
+  placeholder/short SHA; the same `is_full_sha` rule as `ripr outcome`
+  decides what counts as a head).
+- `provenance.mutants_head` — the cargo-mutants artifact's repository head,
+  or `null` — the common case, since `outcomes.json` does not carry a head
+  SHA. When `--mutants-json` names a cargo-mutants directory, the member
+  files (`outcomes.json` and `mutants.json`) are read before they are
+  combined: a head recorded by either member surfaces here, so a headed
+  directory import does not read as headless.
+- `provenance.mutants_head_conflict` — present only when the directory
+  member files record more than one distinct head. It lists every distinct
+  head and no single mutants subject is named; a disagreement is disclosed
+  as a conflict, never misreported as a missing head.
+- `provenance.disclosure` — the full join qualification, identical to stderr
+  and the Markdown Provenance section. It names every known head, including
+  the snapshot head when directory members conflict. Matching heads do not
+  authenticate producers or establish identical dirty working trees.
+- `provenance.verdict` — one of `same_head`, `different_heads`,
+  `only_repo_exposure_head`, `only_mutants_head`, `no_head_recorded`, or
+  `conflicting_mutants_heads`, derived from the two optional heads (or from
+  the member conflict). The verdict is evidence about the artifacts, not
+  the join: it never refuses, rewrites, or re-labels a match. The md
+  renderer prints the same facts as a `## Provenance` section between the
+  preamble and `## Summary`.
+The spot-check consumer accepts schema 0.2 and 0.3 with unchanged record
+classification; unsupported schemas and inconsistent runtime totals remain
+errors. The canonical 0.3 head fields are `repo_exposure_head` and
+`mutants_head`, with the detailed `verdict`; no duplicate head aliases are
+part of this contract.
+
+- `how_to_read` — the vocabulary the agreement section uses:
+  `static_gap`, `runtime_gap_signal`, and `runtime_clean_signal` define the
+  terms, and `buckets` carries one interpretation line per agreement
+  bucket, verbatim the guide lines the md renderer prints under "How to
+  read this table:".
 - `metrics.static_seams_total` — count of seams imported from
   `repo-exposure.json`.
 - `metrics.mutants_total` — count of runtime mutation records imported from the
