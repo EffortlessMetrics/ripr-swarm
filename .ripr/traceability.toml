@@ -17469,6 +17469,9 @@ tests = [
   "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::crate_qualified_variant_named_like_the_type_is_not_the_type",
   "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::binders_nested_inside_formatting_macro_arguments_refuse",
   "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::comma_splits_inside_generics_and_closures_never_link",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::field_access_receiver_is_not_the_typed_binding",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::macro_paths_must_be_exactly_rooted_std_or_core",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::only_leaf_imports_rebind_a_macro_name",
 ]
 fixtures = []
 code = [

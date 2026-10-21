@@ -153,12 +153,32 @@ fn rebinds_macro(masked: &str, name: &str) -> bool {
             return false;
         };
         let path = &statement[at + "use ".len()..];
-        let names = path
-            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-            .any(|token| token == name);
+        let names = imports_leaf(path, name);
         let root = path.trim_start().split("::").next().unwrap_or("").trim();
         names && !matches!(root, "std" | "core" | "alloc")
     })
+}
+
+/// Whether a `use` path binds `name` as a leaf: the name is not followed by
+/// `::` (`use chrono::format::X;` binds `X`, not `format`), or it is the
+/// target of `as` (`use m::log as format;`).
+fn imports_leaf(path: &str, name: &str) -> bool {
+    let bytes = path.as_bytes();
+    let mut search = 0usize;
+    while let Some(at) = path[search..].find(name).map(|at| search + at) {
+        search = at + name.len();
+        let end = at + name.len();
+        let whole = (at == 0 || !is_ident_byte(bytes[at - 1]))
+            && bytes.get(end).is_none_or(|byte| !is_ident_byte(*byte));
+        if !whole {
+            continue;
+        }
+        let followed_by_path = path[end..].trim_start().starts_with("::");
+        if !followed_by_path {
+            return true;
+        }
+    }
+    false
 }
 
 /// Whether `test` formats a value of the owner's self type through the
@@ -253,6 +273,11 @@ fn receiver_before(masked: &str, dot: usize) -> &str {
     while start > 0 && (is_ident_byte(bytes[start - 1]) || bytes[start - 1] == b':') {
         start -= 1;
     }
+    // A field access or method-chain tail (`other.err.to_string()`) is not
+    // the bare binding it spells.
+    if masked[..start].trim_end().ends_with('.') {
+        return "";
+    }
     masked.get(start..dot).unwrap_or("")
 }
 
@@ -308,9 +333,7 @@ fn macro_dispatch(
         }
         // A path-qualified macro is the std one only through `std::`/`core::`.
         let qualifier = masked.get(..name_start).unwrap_or("");
-        if qualifier.ends_with("::")
-            && !(qualifier.ends_with("std::") || qualifier.ends_with("core::"))
-        {
+        if qualifier.ends_with("::") && !std_rooted(qualifier) {
             continue;
         }
         let after = masked[bang + 1..].trim_start();
@@ -332,6 +355,34 @@ fn macro_dispatch(
         }
     }
     false
+}
+
+/// Whether the path `qualifier` (ending in `::`) is exactly `std::` or
+/// `core::`, rooted at the start of the path (optionally `::std::`), not a
+/// segment of a longer path (`mystd::`, `foo::std::`).
+fn std_rooted(qualifier: &str) -> bool {
+    let Some(path) = qualifier.strip_suffix("::") else {
+        return false;
+    };
+    let segment_start = path
+        .bytes()
+        .rposition(|byte| !is_ident_byte(byte))
+        .map_or(0, |at| at + 1);
+    if !matches!(&path[segment_start..], "std" | "core") {
+        return false;
+    }
+    let before = path[..segment_start].trim_end();
+    match before.strip_suffix("::") {
+        Some(rest) => !rest
+            .trim_end()
+            .bytes()
+            .next_back()
+            .is_some_and(is_ident_byte),
+        None => !before
+            .bytes()
+            .next_back()
+            .is_some_and(|byte| is_ident_byte(byte) || byte == b':'),
+    }
 }
 
 /// `(masked, raw)` text of one macro argument.
@@ -1150,5 +1201,50 @@ mod tests {
         ] {
             assert!(reasons(&owner, 0, &[&body]).is_empty(), "{body}");
         }
+    }
+
+    #[test]
+    fn field_access_receiver_is_not_the_typed_binding() {
+        let owner = ["fmt::Display for DecodeError"];
+        for tail in [
+            "assert_eq!(other.e.to_string(), \"x\");",
+            "assert_eq!(make().e.to_string(), \"x\");",
+            "assert_eq!(other.make(1).to_string(), \"x\");",
+        ] {
+            let body = format!("{CTOR}{tail}");
+            assert!(reasons(&owner, 0, &[&body]).is_empty(), "{body}");
+        }
+        let body = format!("{CTOR}assert_eq!(e.to_string(), \"x\");");
+        assert!(direct(&reasons(&owner, 0, &[&body]), "t0"));
+    }
+
+    #[test]
+    fn macro_paths_must_be_exactly_rooted_std_or_core() {
+        let owner = ["fmt::Display for DecodeError"];
+        for path in ["mystd::", "foo::std::", "notcore::", "my::core::"] {
+            let body = format!("{CTOR}{path}format!(\"{{}}\", e);");
+            assert!(reasons(&owner, 0, &[&body]).is_empty(), "{body}");
+        }
+        for path in ["std::", "core::", "::std::"] {
+            let body = format!("{CTOR}{path}format!(\"{{}}\", e);");
+            assert!(direct(&reasons(&owner, 0, &[&body]), "t0"), "{body}");
+        }
+    }
+
+    #[test]
+    fn only_leaf_imports_rebind_a_macro_name() {
+        let owner = ["fmt::Display for DecodeError"];
+        let body = format!("{CTOR}format!(\"{{}}\", e);");
+        let kept = reasons_with(
+            &owner,
+            0,
+            &[&body],
+            &["use chrono::format::strftime::StrftimeItems;\n"],
+        );
+        assert!(direct(&kept, "t0"), "{kept:?}");
+        let braced = reasons_with(&owner, 0, &[&body], &["use mylog::{format, other};\n"]);
+        assert!(braced.is_empty(), "{braced:?}");
+        let renamed = reasons_with(&owner, 0, &[&body], &["use mylog::log as format;\n"]);
+        assert!(renamed.is_empty(), "{renamed:?}");
     }
 }
