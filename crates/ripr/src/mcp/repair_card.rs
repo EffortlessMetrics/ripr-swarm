@@ -33,8 +33,8 @@ use crate::analysis::ClassifiedSeam;
 use crate::analysis::inventory_diff_scoped_classified_seams_at_with_config;
 use crate::analysis::repair_route::repair_packet_eligibility;
 use crate::app::repair_card_handoff::{
-    AgentCardError, SeamCardFacts, assemble_repair_card, card_packet_json, finding_for_seam,
-    latest_attempt_for_seam, witness_from_findings, workspace_identity_for,
+    AgentCardError, SeamCardFacts, assemble_repair_card, bound_finding_gap_id, card_packet_json,
+    finding_for_seam, latest_attempt_for_seam, witness_from_findings, workspace_identity_for,
 };
 use crate::config::RiprConfig;
 use crate::domain::{AgentCardRefusalKind, Finding, RepairCardSnapshotCurrentness};
@@ -416,6 +416,12 @@ impl WorkspaceSession {
             Some((finding_id, witness)) => (Some(finding_id), Some(witness)),
             None => (None, None),
         };
+        let finding_gap_id = bound_finding_gap_id(
+            &snapshot.findings,
+            entry,
+            readiness.canonical_gap_id.as_deref(),
+            &producers.candidate_seams,
+        );
         let workspace_identity = workspace_identity_for(entry, &readiness).map_err(|message| {
             AttemptFailure::new(
                 CODE_IDENTITY_UNNAMEABLE,
@@ -444,6 +450,7 @@ impl WorkspaceSession {
             entry,
             witness: witness.as_ref(),
             finding_id: finding_id.as_deref(),
+            finding_gap_id: finding_gap_id.as_deref(),
             attempt: attempt.as_ref(),
             packet_json: &packet_json,
             repository_head: &producers.repository_head,
@@ -638,6 +645,7 @@ mod tests {
             workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            desired_base: None,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -662,6 +670,7 @@ mod tests {
             workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            desired_base: None,
             superseded_order: std::collections::VecDeque::new(),
         })
     }

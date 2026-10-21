@@ -261,6 +261,26 @@ can only hint that a caller "may lead here" without changing anything.
   return when the body is simple single-line `let` statements plus a
   bare-binding tail expression evaluated through the #3295 families.
   Anything else fails closed.
+- The test-to-entry edge is a direct free-function call. One qualified
+  spelling also counts (#8999): an integration test under `tests/` of the
+  root package calling a crate-root item of that package's `src/lib.rs`
+  as `<lib>::entry(..)` with no `use`, where `<lib>` is the root manifest's
+  `[lib] name`, else its package name with hyphens folded to underscores
+  (the package name is not a second spelling when `[lib] name` differs; a
+  moved `[lib] path` admits nothing). It is refused for a longer path,
+  another crate name, a test file that declares any item, `let`, closure
+  or typed parameter named like the crate, aliases anything to that name
+  (`use x as <lib>`), imports a path ending in it (raw `r#` spellings
+  included), or has any glob import or `include!`; a unit test inside
+  `src/`; a test module child (only `tests/<name>.rs` and
+  `tests/<name>/main.rs` roots qualify); a call spelled only in a string
+  or comment on the line; a workspace member's entry; a
+  `src/main.rs` entry, and an entry inside an inline `mod`. The edge
+  carries relation only: argument rows and entry pairing still read a
+  direct call site, so the qualified spelling adds no new value-credit
+  path of its own (the argument reader may still read a qualified
+  literal on its own terms). (A path-form guard for absolute paths exists in code as defense in
+  depth; no test exercises it.)
 - Every unsupported edge is named, never silently dropped: non-unique
   callee, incomplete workspace index, recursion, multiple callers,
   multiple call sites, computed (non-literal, non-parameter)
@@ -378,7 +398,9 @@ propagation stop, rebinding stop);
 `crates/ripr/tests/method_helper_reach.rs` (#5352 method hops: public
 entry credit, smoke/wrong-owner/variable-receiver controls, the
 wrong-receiver tail-forwarding control, and the
-unselected `match_arm` control).
+unselected `match_arm` control);
+`crates/ripr/tests/crate_qualified_entry_reach.rs` (own-crate qualified
+entry call, `[lib] name` and hyphen spellings, and each refusal above).
 
 ## Non-Goals
 

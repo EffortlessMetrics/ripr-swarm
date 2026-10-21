@@ -40,14 +40,14 @@ fn release_cut_admission_self_test_passes() -> Result<(), String> {
 /// Executes the real action shell with a stubbed read-only `gh` so the
 /// wrapper boundary (live-ref re-read) is exercised, not only the pure scripts.
 fn run_wrapper(second_ref_packet_state: &str, initial_absent: bool) -> Result<i32, String> {
-    run_scenario(second_ref_packet_state, initial_absent, None).map(|(code, _)| code)
+    run_scenario(second_ref_packet_state, initial_absent, None).map(|(code, _, _)| code)
 }
 
 /// The base carries an `active` packet bound to the product cut `b…b`; the
 /// live ref does not move. `base_parent` is the first parent of the base commit.
 /// Returns the exit code and the `cut_reason` the action published.
 fn run_active_wrapper(files_json: &str, base_parent: &str) -> Result<(i32, String), String> {
-    let (code, outputs) = run_scenario("active", false, Some((files_json, base_parent)))?;
+    let (code, outputs, _) = run_scenario("active", false, Some((files_json, base_parent)))?;
     let reason = outputs
         .lines()
         .find_map(|line| line.strip_prefix("cut_reason="))
@@ -56,13 +56,42 @@ fn run_active_wrapper(files_json: &str, base_parent: &str) -> Result<(i32, Strin
     Ok((code, reason))
 }
 
+fn run_active_wrapper_summary(
+    files_json: &str,
+    base_parent: &str,
+) -> Result<(i32, String, String), String> {
+    let (code, outputs, summary) = run_scenario("active", false, Some((files_json, base_parent)))?;
+    let reason = outputs
+        .lines()
+        .find_map(|line| line.strip_prefix("cut_reason="))
+        .unwrap_or("")
+        .to_string();
+    Ok((code, reason, summary))
+}
+
 static NEXT_SCENARIO: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 fn run_scenario(
     second_ref_packet_state: &str,
     initial_absent: bool,
     active: Option<(&str, &str)>,
-) -> Result<(i32, String), String> {
+) -> Result<(i32, String, String), String> {
+    run_scenario_body(
+        second_ref_packet_state,
+        initial_absent,
+        active,
+        false,
+        false,
+    )
+}
+
+fn run_scenario_body(
+    second_ref_packet_state: &str,
+    initial_absent: bool,
+    active: Option<(&str, &str)>,
+    missing_body: bool,
+    hostile_head: bool,
+) -> Result<(i32, String, String), String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     let action_dir = root.join(".github/actions/pr-candidate-admission");
     let yaml = std::fs::read_to_string(action_dir.join("action.yml")).map_err(|e| e.to_string())?;
@@ -98,6 +127,12 @@ fn run_scenario(
     std::fs::write(tmp.join("moved_packet.b64"), moved).map_err(|e| e.to_string())?;
     if initial_absent {
         std::fs::write(tmp.join("initial_absent"), "1").map_err(|e| e.to_string())?;
+    }
+    if missing_body {
+        std::fs::write(tmp.join("missing_body"), "1").map_err(|e| e.to_string())?;
+    }
+    if hostile_head {
+        std::fs::write(tmp.join("hostile_head"), "1").map_err(|e| e.to_string())?;
     }
     if let Some((files_json, base_parent)) = active {
         let packet = serde_json::json!({
@@ -142,7 +177,7 @@ case "$url" in
     base64 "$CONTROL_TMP/inactive.json" | tr -d '\r\n' | jq -R '{content: .}' ;;
   */files?*) if [ -e "$CONTROL_TMP/files.json" ]; then cat "$CONTROL_TMP/files.json"; else echo '[{"filename":"src/lib.rs","status":"modified"}]'; fi ;;
   */pulls\?state*) echo '[]' ;;
-  *) echo '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"o/r"}},"base":{"ref":"main"},"changed_files":1,"additions":1,"deletions":0,"body":"Governing issue or accepted claim: #5391\nAcceptance delta (one sentence): race control"}' ;;
+  *) if [ -e "$CONTROL_TMP/hostile_head" ]; then printf '%s\n' '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaa\nstatus=admitted","repo":{"full_name":"o/r"}},"base":{"ref":"main"},"changed_files":1,"additions":1,"deletions":0,"body":"Governing issue or accepted claim: #5391\nAcceptance delta (one sentence): race control"}'; elif [ -e "$CONTROL_TMP/missing_body" ]; then echo '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"o/r"}},"base":{"ref":"main"},"changed_files":1,"additions":1,"deletions":0,"body":""}'; else echo '{"number":10,"state":"open","draft":false,"head":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","repo":{"full_name":"o/r"}},"base":{"ref":"main"},"changed_files":1,"additions":1,"deletions":0,"body":"Governing issue or accepted claim: #5391\nAcceptance delta (one sentence): race control"}'; fi ;;
 esac
 "#;
     std::fs::write(tmp.join("gh"), gh).map_err(|e| e.to_string())?;
@@ -173,13 +208,14 @@ esac
         .status()
         .map_err(|e| e.to_string())?;
     let outputs = std::fs::read_to_string(tmp.join("outputs")).unwrap_or_default();
+    let summary = std::fs::read_to_string(tmp.join("summary")).unwrap_or_default();
     if std::env::var_os("KEEP_WRAPPER_TMP").is_none() {
         let _ = std::fs::remove_dir_all(&tmp);
     }
     let code = status
         .code()
         .ok_or_else(|| "wrapper ended by signal".to_string())?;
-    Ok((code, outputs))
+    Ok((code, outputs, summary))
 }
 
 fn base64_encode(bytes: &[u8]) -> String {
@@ -258,6 +294,115 @@ fn wrapper_refuses_ordinary_pr_while_the_packet_is_active() -> Result<(), String
                 "ordinary PR (base parent {parent}) must be refused as {expected}, got exit {code} reason {reason:?}"
             ));
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn wrapper_summary_names_the_missing_template_lines() -> Result<(), String> {
+    let (code, outputs, summary) = run_scenario_body("inactive", false, None, true, false)?;
+    if code != 1 {
+        return Err(format!(
+            "a PR body missing the template lines must be refused, got exit {code}: {outputs}"
+        ));
+    }
+    if !outputs.contains("reason=claim_identity_missing")
+        || !outputs.contains("Governing issue or accepted claim:")
+    {
+        return Err(format!(
+            "action outputs must carry the concrete refusal detail, got: {outputs}"
+        ));
+    }
+    if !summary.contains("- refusal reason: `claim_identity_missing`")
+        || !summary.contains("Governing issue or accepted claim:")
+        || !summary.contains("Acceptance delta (one sentence):")
+    {
+        return Err(format!(
+            "step summary must name the missing template lines, got: {summary}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn wrapper_summary_names_the_concrete_hard_cut_refusal_reason() -> Result<(), String> {
+    let (code, reason, summary) = run_active_wrapper_summary(PRODUCT_ONLY, &"b".repeat(40))?;
+    if code != 1 || reason != "cut_frozen" {
+        return Err(format!(
+            "ordinary PR must be refused as cut_frozen, got exit {code} reason {reason:?}"
+        ));
+    }
+    if !summary.contains("- refusal reason: `cut_frozen`")
+        || !summary.contains("hard-cut freeze")
+        || summary.contains("- hard-cut refusal reason:")
+    {
+        return Err(format!(
+            "step summary must name the single concrete refusal reason, got: {summary}"
+        ));
+    }
+    if summary.matches("- refusal reason:").count() != 1 {
+        return Err(format!(
+            "step summary must present exactly one primary refusal reason, got: {summary}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn wrapper_summary_names_one_primary_reason_when_both_admissions_refuse() -> Result<(), String> {
+    let (code, outputs, summary) = run_scenario_body(
+        "active",
+        false,
+        Some((PRODUCT_ONLY, &"b".repeat(40))),
+        true,
+        false,
+    )?;
+    if code != 1
+        || !outputs.contains("reason=claim_identity_missing")
+        || !outputs.contains("cut_reason=cut_frozen")
+    {
+        return Err(format!(
+            "both-refused fixture must refuse as candidate and hard-cut, got exit {code}: {outputs}"
+        ));
+    }
+    if summary.matches("- refusal reason:").count() != 1
+        || !summary.contains("- refusal reason: `claim_identity_missing`")
+        || !summary.contains("- also refused (subordinate): hard-cut `cut_frozen`")
+        || summary.contains("- hard-cut refusal reason:")
+    {
+        return Err(format!(
+            "step summary must present the candidate refusal as primary and the hard-cut refusal as subordinate, got: {summary}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn wrapper_sanitizes_newline_bearing_head_in_outputs() -> Result<(), String> {
+    let (code, outputs, summary) = run_scenario_body("inactive", false, None, false, true)?;
+    if code != 1 || !outputs.contains("reason=candidate_head_moved") {
+        return Err(format!(
+            "newline-bearing head must be refused as candidate_head_moved, got exit {code}: {outputs}"
+        ));
+    }
+    if outputs.lines().any(|line| line == "status=admitted") {
+        return Err(format!(
+            "newline-bearing head must not forge an extra GITHUB_OUTPUT line, got: {outputs}"
+        ));
+    }
+    if outputs.lines().count() != 11
+        || !outputs
+            .lines()
+            .any(|line| line.starts_with("detail=") && line.contains("status=admitted"))
+    {
+        return Err(format!(
+            "sanitized detail must stay on its single detail line, got: {outputs}"
+        ));
+    }
+    if summary.lines().any(|line| line == "status=admitted") {
+        return Err(format!(
+            "newline-bearing head must not forge a step-summary line, got: {summary}"
+        ));
     }
     Ok(())
 }
