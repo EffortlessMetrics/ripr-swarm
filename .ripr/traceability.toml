@@ -1518,6 +1518,14 @@ id = "RIPR-SPEC-0010"
 name = "agent working-set brief"
 spec = "docs/specs/RIPR-SPEC-0010-agent-working-set-brief.md"
 tests = [
+  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_empty_and_ordinary_patches_keep_successful_selection",
+  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_refusals_cannot_become_empty_or_fallback_successes",
+  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_base_uses_the_same_parser_refusal_before_inventory",
+  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_errors_keep_diff_input_identity_and_budget_guards",
+  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_truncated_sections_cannot_become_empty_or_partial_successes",
+  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_path_like_hunk_payload_keeps_real_changed_line_selection",
+  "crates/ripr/src/analysis/diff/parse/stream/path_admission_tests.rs::path_like_added_and_removed_lines_stay_hunk_payload",
+  "crates/ripr/src/analysis/diff/parse/stream/path_admission_tests.rs::actual_deep_headers_still_refuse_after_hunk_payload",
   "crates/ripr/src/app/agent_brief.rs::tests::agent_brief_selector_ranks_explicit_seam_id_first",
   "crates/ripr/src/app/agent_brief.rs::tests::changed_scope_that_fills_the_slots_selects_the_same_seams_as_the_full_scope",
   "crates/ripr/src/app/agent_brief.rs::tests::changed_scope_does_not_fill_the_slots_with_hidden_or_too_few_seams",
@@ -1555,6 +1563,10 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/app/agent_brief.rs",
+  "crates/ripr/src/cli/commands_agent_support.rs",
+  "crates/ripr/src/analysis/diff/parse.rs",
+  "crates/ripr/src/analysis/diff/parse/stream.rs",
+  "crates/ripr/src/core_error.rs",
   "crates/ripr/src/cli/agent.rs",
   "crates/ripr/src/cli/commands.rs",
   "crates/ripr/src/output/agent_brief.rs",
@@ -16453,6 +16465,12 @@ id = "RIPR-SPEC-0241"
 name = "check --json refusal envelope"
 spec = "docs/specs/RIPR-SPEC-0241-check-json-refusal-envelope.md"
 tests = [
+  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_empty_and_ordinary_patches_keep_successful_selection",
+  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_refusals_cannot_become_empty_or_fallback_successes",
+  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_base_uses_the_same_parser_refusal_before_inventory",
+  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_errors_keep_diff_input_identity_and_budget_guards",
+  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_truncated_sections_cannot_become_empty_or_partial_successes",
+  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_path_like_hunk_payload_keeps_real_changed_line_selection",
   "crates/ripr/tests/cli_smoke/sample_output.rs::retained_oracles_reject_wrong_contract_shape_count_and_refusal",
   "crates/ripr/tests/cli_smoke.rs::check_json_unresolvable_base_emits_refusal_envelope",
   "crates/ripr/tests/cli_smoke.rs::check_json_unusable_root_emits_repository_root_unusable",

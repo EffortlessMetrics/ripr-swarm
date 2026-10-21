@@ -42,6 +42,8 @@ mod value_resolution;
 mod witness;
 mod workspace;
 
+pub(crate) use diff::parse_unified_diff_bounded_with_metadata;
+
 /// Shared pinned PR-evidence diff assembly (#3930, #4004): the one named
 /// owner for packet diff presentation, consumed by the product route and the
 /// xtask route alike. Neither route may rebuild its argv inline.
