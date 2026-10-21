@@ -125,14 +125,14 @@ impl CommittedSourceOverlay {
             .ignored
             .files
             .iter()
-            .filter(|path| !is_cargo_build_output(path))
+            .filter(|path| !is_cargo_build_output(&self.root, path))
             .cloned()
             .collect();
         let directories: Vec<String> = self
             .ignored
             .directories
             .iter()
-            .filter(|path| !is_cargo_build_output(path))
+            .filter(|path| !is_cargo_build_output(&self.root, path))
             .cloned()
             .collect();
         out.extend(expand_ignored_directories(
@@ -512,14 +512,14 @@ pub(crate) fn untracked_and_ignored_routed_paths(
     let untracked = below_root(records.untracked).into_iter().collect();
     let mut ignored: BTreeSet<String> = below_root(records.ignored_files)
         .into_iter()
-        .filter(|path| !is_cargo_build_output(path))
+        .filter(|path| !is_cargo_build_output(root, path))
         .collect();
     // Tracked force-added files inside ignored directories keep their
     // working-tree reads; resolve them the same way [`probe`] does so they
     // stay out of the disclosed set.
     let directories = below_root(records.ignored_directories)
         .into_iter()
-        .filter(|path| !is_cargo_build_output(path))
+        .filter(|path| !is_cargo_build_output(root, path))
         .collect::<Vec<_>>();
     let mut tracked_within = BTreeSet::new();
     for chunk in directories.chunks(LS_TREE_CHUNK) {
@@ -543,10 +543,12 @@ pub(crate) fn untracked_and_ignored_routed_paths(
 /// (for example `target/release/build/*/out/lib.rs`) is never a source file a
 /// developer could stage, so the gitignored-files disclosure leaves it out
 /// rather than naming paths the suggested `git add -f` repair should not apply
-/// to. Genuine ignored sources elsewhere, including a nested `target/` name
-/// inside a crate, stay disclosed.
-fn is_cargo_build_output(path: &str) -> bool {
-    path == "target" || path.starts_with("target/")
+/// to. Cargo marks the directory it generates with `CACHEDIR.TAG`; a `target/`
+/// without that marker is authored content and stays disclosed, as do genuine
+/// ignored sources elsewhere, including a nested `target/` inside a crate.
+fn is_cargo_build_output(root: &Path, path: &str) -> bool {
+    (path == "target" || path.starts_with("target/"))
+        && root.join("target").join("CACHEDIR.TAG").is_file()
 }
 
 const MAX_IGNORED_WALK_ENTRIES: usize = 200_000;

@@ -23132,6 +23132,11 @@ fn check_gitignored_files_are_disclosed_not_silent() -> Result<(), String> {
     std::fs::create_dir_all(root.join("target/release/build/crunchy-x/out"))
         .map_err(|err| format!("create root target out: {err}"))?;
     std::fs::write(
+        root.join("target/CACHEDIR.TAG"),
+        "Signature: 8a477f597d28d172789f06886806bc55\n",
+    )
+    .map_err(|err| format!("write CACHEDIR.TAG: {err}"))?;
+    std::fs::write(
         root.join("target/release/build/crunchy-x/out/lib.rs"),
         "pub fn out() {}\n",
     )

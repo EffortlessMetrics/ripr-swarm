@@ -552,7 +552,17 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
         // Init in the current directory needs no `--root`; otherwise name the
         // directory without the `/.` that joining onto the cwd leaves behind.
         let in_cwd = match (root.canonicalize(), std::env::current_dir()) {
-            (Ok(selected), Ok(cwd)) => cwd.canonicalize().is_ok_and(|cwd| cwd == selected),
+            (Ok(selected), Ok(cwd)) => {
+                cwd.canonicalize().is_ok_and(|cwd| cwd == selected)
+                    // An implicit `ripr check` widens from a workspace member
+                    // to its workspace root and would skip the config just
+                    // written here, so keep `--root` unless it resolves to cwd.
+                    && match super::check::resolve_project_root(Path::new(".")) {
+                        Ok(Some((resolved, _))) => resolved == selected,
+                        Ok(None) => true,
+                        Err(_) => false,
+                    }
+            }
             _ => false,
         };
         let root_flag = if in_cwd {
