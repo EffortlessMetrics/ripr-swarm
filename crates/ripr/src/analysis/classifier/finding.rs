@@ -23,7 +23,22 @@ pub(in crate::analysis) fn build_finding(
         &evidence.discriminate,
         &evidence.activation,
     );
-    let test_summaries = context.related_test_summaries();
+    // #8999: a fixture/builder word in a test that only shares a file or a
+    // name token with the owner says nothing about the inputs that reach it.
+    // When some related test establishes reach, only those tests can make the
+    // fixture opaque; with none, every related test is read as before.
+    let owner_is_function = context.owner_fn.is_some();
+    let reaching_summaries: Vec<&TestSummary> = context
+        .related_tests
+        .iter()
+        .filter(|(_, reason)| reason.establishes_reach(owner_is_function))
+        .map(|(test, _)| *test)
+        .collect();
+    let test_summaries = if reaching_summaries.is_empty() {
+        context.related_test_summaries()
+    } else {
+        reaching_summaries
+    };
     let mut stop_reasons = stop_reasons(context.probe, context.owner_fn, &test_summaries);
     ensure_unknown_stop_reason(&class, &mut stop_reasons);
     let exact_oracle_covers_direct_sink = evidence.discriminate.state == StageState::Yes
