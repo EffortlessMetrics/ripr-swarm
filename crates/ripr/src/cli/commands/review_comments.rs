@@ -2060,14 +2060,13 @@ mod tests {
         std::fs::metadata(&fixture.unreadable).map_err(|error| {
             format!("census uses metadata; unreadable fixture must still be stattable: {error}")
         })?;
-        if std::fs::read(&fixture.unreadable).is_ok() {
-            // Mode 000 that remains readable (typically euid 0) cannot
-            // produce the builder error. Passing here would be a
-            // zero-subject green for the receipt assertions below.
-            return Err(
-                "chmod 000 remained readable; this host cannot produce the ordinary-failure stimulus"
-                    .to_string(),
-            );
+        // Mode 000 that remains readable (typically euid 0) cannot produce
+        // the builder error. The skip prints, so it is not a silent green.
+        if crate::testing::access_denial::skip_unless_denied(
+            "review_comments_ordinary_canonical_analysis_failure_records_failed",
+            crate::testing::access_denial::file_read_denied(&fixture.unreadable)?,
+        ) {
+            return Ok(());
         }
 
         // The changed file stays readable so language_facts census and
