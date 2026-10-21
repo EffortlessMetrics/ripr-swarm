@@ -17141,6 +17141,8 @@ tests = [
   "crates/ripr/src/analysis/classify/related_tests/equality_dispatch.rs::tests::a_format_message_with_commas_never_changes_the_operands",
   "crates/ripr/src/analysis/classify/related_tests/equality_dispatch.rs::tests::imports_that_may_name_another_key_are_refused",
   "crates/ripr/src/analysis/classify/related_tests/equality_dispatch.rs::tests::pattern_and_closure_rebindings_make_a_let_unreliable",
+  "crates/ripr/src/analysis/classify/related_tests/equality_dispatch.rs::tests::match_arm_patterns_and_repeated_lets_are_ambiguous",
+  "crates/ripr/src/analysis/classify/related_tests/equality_dispatch.rs::tests::an_impl_nested_in_another_impl_names_no_single_type",
 ]
 fixtures = []
 code = [

@@ -35,7 +35,7 @@ use crate::analysis::classify::owner_pin::{
 };
 
 /// Which comparison macros reach the owner.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct EqualityOwner<'a> {
     /// Self type of the `PartialEq` impl (`Key`).
     impl_type: &'a str,
@@ -43,6 +43,10 @@ pub(super) struct EqualityOwner<'a> {
     via_eq: bool,
     /// `assert_ne!` runs the owner.
     via_ne: bool,
+    /// File-level refusals (imports, user macros, `macro_use`) are the same
+    /// for every test of the owner's file, so they are computed once per
+    /// owner on first use: `true` when none of them applies.
+    file_level_clear: std::cell::OnceCell<bool>,
 }
 
 /// The equality reading of `owner`, or `None` when it is not `eq`/`ne` of a
@@ -69,6 +73,7 @@ pub(super) fn equality_owner<'a>(
         impl_type,
         via_eq,
         via_ne,
+        file_level_clear: std::cell::OnceCell::new(),
     })
 }
 
@@ -78,6 +83,11 @@ fn partial_eq_impl_type(owner: &FunctionSummary) -> Option<&str> {
     if !matches!(owner.name.as_str(), "eq" | "ne") {
         return None;
     }
+    // A second `::impl ` segment means the impl is nested in another impl or
+    // a fn body; the id no longer names one type unambiguously.
+    if owner.id.0.matches("::impl ").count() != 1 {
+        return None;
+    }
     let rest = owner.id.0.split("::impl ").nth(1)?;
     let head = rest.rsplit_once("::")?.0;
     let (trait_ty, self_ty) = head.rsplit_once(" for ")?;
@@ -85,11 +95,6 @@ fn partial_eq_impl_type(owner: &FunctionSummary) -> Option<&str> {
         trait_ty.trim(),
         "PartialEq" | "cmp::PartialEq" | "std::cmp::PartialEq" | "core::cmp::PartialEq"
     ) {
-        return None;
-    }
-    // A second `::impl ` segment means the impl is nested in another impl or
-    // a fn body; the id no longer names one type unambiguously.
-    if rest.contains("::impl ") {
         return None;
     }
     plain_type_name(self_ty.trim())
@@ -207,7 +212,7 @@ fn plain_type_name(ty: &str) -> Option<&str> {
 pub(super) fn test_asserts_equality_through_owner(
     test: &TestSummary,
     owner: &FunctionSummary,
-    equality: EqualityOwner<'_>,
+    equality: &EqualityOwner<'_>,
     test_source: Option<&str>,
     index: &RustIndex,
 ) -> bool {
@@ -256,36 +261,38 @@ pub(super) fn test_asserts_equality_through_owner(
     {
         return false;
     }
-    let masked_source = mask_comments_and_strings(source);
-    if imports_other_type(&masked_source, impl_type, &owner.file) {
-        return false;
-    }
-    const NAMES: [&str; 4] = [
-        "assert_eq",
-        "assert_ne",
-        "debug_assert_eq",
-        "debug_assert_ne",
-    ];
-    // A user macro of the same name may be defined here, imported by `use`,
-    // brought in by `#[macro_use]`, or defined in any workspace file.
-    let imported = use_paths(&masked_source).into_iter().any(|path| {
-        let words = path_words(path);
-        !matches!(words.first(), Some(&("std" | "core" | "alloc")))
-            && words.iter().any(|word| NAMES.contains(word))
-    });
-    let defined_anywhere = index.files().values().any(|facts| {
-        let other = facts.data().source.as_ref();
-        other.contains("macro_rules!")
-            && NAMES
-                .iter()
-                .any(|name| defines_macro(&mask_comments_and_strings(other), name))
-    });
-    // `#[macro_use] extern crate` in a crate-root file reaches every module.
-    let macro_use_anywhere = index
-        .files()
-        .values()
-        .any(|facts| facts.data().source.contains("macro_use"));
-    !(imported || masked_source.contains("macro_use") || macro_use_anywhere || defined_anywhere)
+    *equality.file_level_clear.get_or_init(|| {
+        let masked_source = mask_comments_and_strings(source);
+        if imports_other_type(&masked_source, impl_type, &owner.file) {
+            return false;
+        }
+        const NAMES: [&str; 4] = [
+            "assert_eq",
+            "assert_ne",
+            "debug_assert_eq",
+            "debug_assert_ne",
+        ];
+        // A user macro of the same name may be defined here, imported by `use`,
+        // brought in by `#[macro_use]`, or defined in any workspace file.
+        let imported = use_paths(&masked_source).into_iter().any(|path| {
+            let words = path_words(path);
+            !matches!(words.first(), Some(&("std" | "core" | "alloc")))
+                && words.iter().any(|word| NAMES.contains(word))
+        });
+        let defined_anywhere = index.files().values().any(|facts| {
+            let other = facts.data().source.as_ref();
+            other.contains("macro_rules!")
+                && NAMES
+                    .iter()
+                    .any(|name| defines_macro(&mask_comments_and_strings(other), name))
+        });
+        // `#[macro_use] extern crate` in a crate-root file reaches every module.
+        let macro_use_anywhere = index
+            .files()
+            .values()
+            .any(|facts| facts.data().source.contains("macro_use"));
+        !(imported || masked_source.contains("macro_use") || macro_use_anywhere || defined_anywhere)
+    })
 }
 
 /// Whether the file may bring a different `T` into scope. The owner id
@@ -786,6 +793,40 @@ mod tests {
             "assert_eq"
         ));
         assert!(!defines_macro("fn assert_eq() {}", "assert_eq"));
+    }
+
+    fn eq_owner(id: &str) -> FunctionSummary {
+        use crate::analysis::facts::FunctionSourceRole;
+        FunctionSummary {
+            id: crate::domain::SymbolId(id.to_string()),
+            name: "eq".to_string(),
+            file: std::path::PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            end_line: 3,
+            body: String::new().into(),
+            calls: Vec::new(),
+            returns: Vec::new(),
+            literals: Vec::new(),
+            source_role: FunctionSourceRole::Production,
+            attrs: Vec::new(),
+            impl_attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
+        }
+    }
+
+    #[test]
+    fn an_impl_nested_in_another_impl_names_no_single_type() {
+        let single = eq_owner("src/lib.rs::impl PartialEq for Key::eq");
+        assert_eq!(partial_eq_impl_type(&single), Some("Key"));
+        // Two `::impl ` segments: the id cannot say which impl owns `eq`.
+        let nested =
+            eq_owner("src/lib.rs::impl PartialEq for Outer::eq::impl PartialEq for Key::eq");
+        assert_eq!(partial_eq_impl_type(&nested), None);
+        let nested_other = eq_owner("src/lib.rs::impl Outer::run::impl PartialEq for Key::eq");
+        assert_eq!(partial_eq_impl_type(&nested_other), None);
     }
 
     #[test]

@@ -900,7 +900,7 @@ fn find_related_tests_with_candidates<'a>(
         // Evaluated independently of `calls_owner`: a name-only `Other::eq`
         // call elsewhere in the test must not hide a real macro dispatch.
         let equality_asserts_owner = !property_only_owner_call
-            && match (owner_fn, equality_owner) {
+            && match (owner_fn, equality_owner.as_ref()) {
                 (Some(owner), Some(equality)) => {
                     equality_dispatch::test_asserts_equality_through_owner(
                         test,
