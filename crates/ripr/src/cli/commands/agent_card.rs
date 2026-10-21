@@ -361,15 +361,21 @@ pub(crate) fn agent_card_prose_lines(
         }
     }
     // The canonical next-action block above already prints a `limitations:`
-    // line; repeating the identical list a few lines later reads as a second,
-    // different set of caveats (#9033), so the closing copy is kept only when
-    // it adds something the block did not say.
-    let limitations_already_shown = card
+    // line; repeating its entries a few lines later reads as a second,
+    // different set of caveats (#9033), so the closing line carries only the
+    // card entries the block did not already say.
+    let already_shown: &[String] = card
         .canonical_next_action
         .as_ref()
-        .is_some_and(|action| action.limitations() == card.limitations.as_slice());
-    if !card.limitations.is_empty() && !limitations_already_shown {
-        lines.push(format!("  limitations: {}", card.limitations.join("; ")));
+        .map_or(&[], |action| action.limitations());
+    let card_only: Vec<&str> = card
+        .limitations
+        .iter()
+        .filter(|limitation| !already_shown.contains(limitation))
+        .map(String::as_str)
+        .collect();
+    if !card_only.is_empty() {
+        lines.push(format!("  limitations: {}", card_only.join("; ")));
     }
     if let Some(attempt) = &card.attempt {
         lines.push(format!(
@@ -730,30 +736,42 @@ mod tests {
         Ok(())
     }
 
-    /// #9033: the canonical block already prints the limitation list, so the
-    /// closing copy appears only when the card carries something different.
+    /// #9033: the canonical block already prints its limitations, so the
+    /// closing line carries only the card entries the block did not say.
     #[test]
-    fn prose_prints_limitations_once_when_block_already_shows_them() -> Result<(), String> {
-        let count = |card: &RepairCardV1| {
-            agent_card_prose_lines(card, "ripr agent packet --seam-id seam:demo --json", None)
-                .iter()
+    fn prose_prints_each_limitation_once() -> Result<(), String> {
+        let limitation_lines = |card: &RepairCardV1, root: Option<&std::path::Path>| {
+            agent_card_prose_lines(card, "ripr agent packet --seam-id seam:demo --json", root)
+                .into_iter()
                 .filter(|line| line.starts_with("  limitations: "))
-                .count()
+                .collect::<Vec<_>>()
         };
-        let shared = vec!["no exact assertion location".to_string()];
+        let a = "no exact assertion location".to_string();
+        let b = "card-only caveat".to_string();
         let mut card = prose_test_card();
-        card.limitations = shared.clone();
-        card.canonical_next_action = Some(prose_test_decision_with_limitations(shared)?);
-        if count(&card) != 1 {
-            return Err("identical limitations must print exactly once".to_string());
+        card.canonical_next_action = Some(prose_test_decision_with_limitations(vec![a.clone()])?);
+        for root in [None, Some(std::path::Path::new("/repo/checkout"))] {
+            // Identical lists: only the block's line.
+            card.limitations = vec![a.clone()];
+            let lines = limitation_lines(&card, root);
+            if lines != [format!("  limitations: {a}")] {
+                return Err(format!("identical lists must print once: {lines:?}"));
+            }
+            // Overlap: the footer repeats nothing the block said.
+            card.limitations = vec![b.clone(), a.clone()];
+            let lines = limitation_lines(&card, root);
+            if lines != [format!("  limitations: {a}"), format!("  limitations: {b}")] {
+                return Err(format!(
+                    "overlap must not repeat the shared entry: {lines:?}"
+                ));
+            }
         }
-        card.limitations = vec!["card-only caveat".to_string()];
-        if count(&card) != 2 {
-            return Err("a card-only limitation list must still print".to_string());
-        }
+        // Without a canonical block the card prints its own list.
         card.canonical_next_action = None;
-        if count(&card) != 1 {
-            return Err("without a canonical block the card prints its own list".to_string());
+        card.limitations = vec![a.clone(), b.clone()];
+        let lines = limitation_lines(&card, None);
+        if lines != [format!("  limitations: {a}; {b}")] {
+            return Err(format!("no block: the card prints its own list: {lines:?}"));
         }
         Ok(())
     }
