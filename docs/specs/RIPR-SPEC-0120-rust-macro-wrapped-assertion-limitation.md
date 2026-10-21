@@ -103,6 +103,19 @@ The class stays `weakly_exposed`; the finding names the limit instead of
 reporting a gap. An owner value that reaches the macro only through a binding,
 or a direct test that also holds a recognized oracle, keeps the gap.
 
+### Same-file macro whose arms show a recognized assertion (#9122)
+
+A macro defined in the test's own file is not unresolved when every arm of its
+unique, un-gated, in-scope `macro_rules!` definition itself contains an
+assertion the ordinary extractor recognizes (`assert_eq!`, `assert!`, ...) and
+the test calls it as a plain statement of its own body. The call then earns one
+oracle of kind `unknown` and strength no stronger than `weak`, so the finding
+reads from that weak oracle instead of this limit. A hand-rolled
+`if bad { panic!() }` body, a macro that only logs, a macro with one arm that
+shows no assertion, a duplicate, imported or cfg-gated definition, a macro
+from another file or crate, and a call in a closure, branch or `use`-bearing
+test keep this limit.
+
 ## Fail-Closed Boundaries
 
 - Never promote the finding because a custom assertion macro exists.

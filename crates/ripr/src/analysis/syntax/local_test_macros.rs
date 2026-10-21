@@ -192,13 +192,13 @@ fn local_test_macro_definitions(
     (candidates, counts.into_keys().collect())
 }
 
-fn is_item_position(node: &SyntaxNode) -> bool {
+pub(super) fn is_item_position(node: &SyntaxNode) -> bool {
     node.parent().is_some_and(|parent| {
         ast::SourceFile::can_cast(parent.kind()) || ast::ItemList::can_cast(parent.kind())
     })
 }
 
-fn in_definition_scope(call: &ast::MacroCall, definition: &ast::MacroRules) -> bool {
+pub(super) fn in_definition_scope(call: &ast::MacroCall, definition: &ast::MacroRules) -> bool {
     let Some(scope) = definition.syntax().parent() else {
         return false;
     };
@@ -224,7 +224,7 @@ fn code_tokens(node: &SyntaxNode) -> Vec<SyntaxToken> {
 }
 
 /// A token tree's direct children without its delimiters or trivia.
-fn inner_elements(tree: &SyntaxNode) -> Vec<NodeOrToken<SyntaxNode, SyntaxToken>> {
+pub(super) fn inner_elements(tree: &SyntaxNode) -> Vec<NodeOrToken<SyntaxNode, SyntaxToken>> {
     let mut elements: Vec<_> = tree
         .children_with_tokens()
         .filter(|element| !element.kind().is_trivia())
@@ -470,6 +470,21 @@ fn text_has_conditional_attribute(text: &str) -> bool {
 /// Names a `use` item in the file brings into scope. A named import of a
 /// generator's name makes the invocation ambiguous for rustc (E0659), so
 /// the expander does not guess which macro runs.
+/// How many macros of each name a file defines, and the names a `use`
+/// brings into scope.
+pub(super) fn local_macro_names(root: &SyntaxNode) -> (BTreeMap<String, usize>, BTreeSet<String>) {
+    let mut counts = BTreeMap::<String, usize>::new();
+    for node in root.descendants() {
+        let name = ast::MacroRules::cast(node.clone())
+            .and_then(|item| item.name())
+            .or_else(|| ast::MacroDef::cast(node).and_then(|item| item.name()));
+        if let Some(name) = name {
+            *counts.entry(name.text().to_string()).or_default() += 1;
+        }
+    }
+    (counts, imported_names(root))
+}
+
 fn imported_names(root: &SyntaxNode) -> BTreeSet<String> {
     root.descendants()
         .filter_map(ast::UseTree::cast)
