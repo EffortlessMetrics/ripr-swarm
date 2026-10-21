@@ -82,6 +82,61 @@ fn build_index_from_loaded_files_with_cache_and_adapters(
     )
 }
 
+/// Extend an existing cached-parse index with more loaded files (#8547):
+/// parses only `files` through the same file-fact cache and inserts their
+/// facts into `index`, then recomputes the root-level index metadata exactly
+/// as a fresh whole build does. The caller re-runs the shared post-parse
+/// phases, so the result equals a fresh build over the union file set
+/// without re-decoding or re-parsing the files already indexed.
+pub(crate) fn extend_index_from_loaded_files_with_cache(
+    index: &mut RustIndex,
+    root: &Path,
+    files: &[(PathBuf, Vec<u8>)],
+) -> Result<FileFactCacheStats, String> {
+    let extra = build_index_from_loaded_files_with_cache(root, files, MissAttribution::Skipped)?;
+    let stats = extra.file_fact_cache;
+    let extra_index = extra.index;
+    let paths: Vec<PathBuf> = extra_index
+        .files()
+        .iter()
+        .map(|(path, _)| path.clone())
+        .collect();
+    for path in paths {
+        if let Some(facts) = extra_index.owned_file(&path) {
+            index.remove_file(&path);
+            index.insert_file(path, facts, true);
+        }
+    }
+    index
+        .non_utf8_sources
+        .extend(extra_index.non_utf8_sources.iter().cloned());
+    index.include_parents.extend(
+        extra_index
+            .include_parents
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone())),
+    );
+    index
+        .include_limitations
+        .extend(extra_index.include_limitations.iter().cloned());
+    index
+        .include_targets
+        .extend(extra_index.include_targets.iter().cloned());
+    super::includes::resolve_repository_local_includes(root, index);
+    index.workspace_authority = Some(WorkspaceRootAuthority::from_sources(
+        root,
+        index
+            .files()
+            .iter()
+            .map(|(path, facts)| (path, facts.data().source.as_ref())),
+    ));
+    index.package_names = manifest_package_names(root);
+    index.macro_owned_crates = macro_owned_crates(root, index);
+    index.drop_in_manifests = super::drop_in::DropInManifests::new(root);
+    index.member_crates = super::member_crates::MemberCrates::new(root);
+    Ok(stats)
+}
+
 /// Streaming variant of [`build_index_from_loaded_files_with_cache`]
 /// (issue #4996): builds the same index from on-demand per-file reads
 /// instead of a caller-retained `&[(PathBuf, Vec<u8>)]` corpus.
