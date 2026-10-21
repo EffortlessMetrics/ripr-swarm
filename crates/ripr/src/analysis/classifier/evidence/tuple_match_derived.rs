@@ -690,7 +690,7 @@ mod tests {
         for source in [
             // Negated, inequality, or lookup keyed by some other binding.
             "!requests.iter().any(|id| records.get(&receipt.id).is_some_and(|set| set.contains(id)))",
-            "requests.iter().any(|id| records.get(&receipt.id).is_some_and(|set| id != set))",
+            "requests.iter().any(|id| records.get(&receipt.id).is_some_and(|set| set.contains(id) && id != other))",
             "requests.iter().any(|id| records.get(&other.id).is_some_and(|set| set.contains(id)))",
             "records.get(&receipt.id).is_some_and(|set| set.contains(id))",
         ] {
