@@ -4773,6 +4773,49 @@ mod tests {
         assert_eq!(equality(31), Some(PathBuf::from("tests/b.rs")));
     }
 
+    /// The equality / helper / constant rows are pushed before the shared
+    /// `sort_value_facts` in `activation_evidence`, so two test files calling
+    /// the owner at the same line with the same arguments still yield exactly
+    /// one equality fact (the first path), in either input order.
+    #[test]
+    fn same_line_equality_from_two_files_collapses_through_activation_evidence() {
+        let owner = function(
+            "pub fn score(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}",
+        );
+        let in_file = |file: &str| {
+            let mut test = test_with_call("score_uses_boundary", "score(100, 100);");
+            test.file = PathBuf::from(file);
+            test.start_line = 10;
+            test.end_line = 12;
+            test.calls[0].line = 11;
+            test
+        };
+        let a = in_file("tests/a.rs");
+        let b = in_file("tests/b.rs");
+        let probe = probe(ProbeFamily::Predicate, "amount >= threshold");
+        for order in [[&a, &b], [&b, &a]] {
+            let activation = activation_evidence(
+                &probe,
+                Some(&owner),
+                &order,
+                &[],
+                None,
+                &crate::analysis::rust_index::RustIndex::default(),
+                false,
+            );
+            let equalities = activation
+                .observed_values
+                .iter()
+                .filter(|fact| fact.value == "amount == threshold")
+                .collect::<Vec<_>>();
+            assert_eq!(equalities.len(), 1, "{equalities:?}");
+            assert_eq!(
+                equalities[0].file.as_deref(),
+                Some(std::path::Path::new("tests/a.rs"))
+            );
+        }
+    }
+
     #[test]
     fn sort_value_facts_collapses_same_fact_across_files_to_first_path() {
         let fact = |file: &str| ValueFact {
