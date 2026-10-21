@@ -1253,9 +1253,9 @@ fn b2_mcp_happy_path_journey() -> Result<(), String> {
 /// producer's canonical gap (`causal_attribution`, language `rust`) with
 /// nothing missing in `discriminator_availability`, `ripr_prepare_repair`
 /// binds a session attempt, and the attempt/receipt reads replay it. The
-/// sibling B2 journey fixture (boundary NOT pinned) must still refuse with
-/// the producer-named `missing_discriminator`: populating the canonical gap
-/// must not weaken the typed refusal.
+/// sibling B2 journey fixture (boundary NOT pinned) names the missing
+/// discriminator on a weakly exposed finding, which is the repair target
+/// (#8717), so it also binds a packet once the shared validator admits it.
 #[test]
 fn b4_mcp_rust_canonical_gap_reaches_the_repair_transaction() -> Result<(), String> {
     let fixture = install_b4_fixture("b4")?;
@@ -1442,10 +1442,8 @@ fn b4_mcp_rust_canonical_gap_reaches_the_repair_transaction() -> Result<(), Stri
     }
     drop(fixture);
 
-    // The typed refusal survives population: on the B2 journey fixture the
-    // boundary is NOT pinned, the producer names the missing discriminator,
-    // and prepare_repair must keep refusing with that reason (never a
-    // successful packet, never a language-gap mislabel).
+    // On the B2 journey fixture the boundary is NOT pinned and the producer
+    // names the missing discriminator on a weakly exposed finding.
     let fixture = install_fixture("b4-nodisc")?;
     let mut session = McpSession::spawn(&fixture.root)?;
     session.initialize()?;
@@ -1477,20 +1475,24 @@ fn b4_mcp_rust_canonical_gap_reaches_the_repair_transaction() -> Result<(), Stri
         "ripr_prepare_repair",
         json!({ "canonical_id": canonical }),
     )?;
-    let refused = tool_success(&reply, "b4b prepare_repair")?.clone();
-    if as_bool(&refused, "/repair_packet_ready", "b4b prepare_repair")? {
+    let prepared = tool_success(&reply, "b4b prepare_repair")?.clone();
+    // #8717: an unpinned boundary whose producer names the missing value is
+    // the repair target, not a refusal. The packet binds because the shared
+    // `ripr repair` seam validator admits the seam; the named value no longer
+    // refuses by itself, and the edit surface stays the existing test file.
+    if !as_bool(&prepared, "/repair_packet_ready", "b4b prepare_repair")? {
         return Err(format!(
-            "b4b prepare_repair: an unpinned boundary must not bind a packet: {refused}"
+            "b4b prepare_repair: an unpinned boundary naming its missing discriminator is the repair target: {prepared}"
         ));
     }
-    if as_str(&refused, "/ineligibility/reason", "b4b prepare_repair")? != "missing_discriminator" {
+    if prepared.pointer("/ineligibility").is_some() {
         return Err(format!(
-            "b4b prepare_repair: wrong typed refusal: {refused}"
+            "b4b prepare_repair: a ready packet carries a refusal: {prepared}"
         ));
     }
-    if at(&refused, "/attempt", "b4b prepare_repair")? != &Value::Null {
+    if as_str(&prepared, "/attempt/state", "b4b prepare_repair")? != "awaiting_edit" {
         return Err(format!(
-            "b4b prepare_repair: unready packet carries an attempt: {refused}"
+            "b4b prepare_repair: ready packet lost its awaiting_edit attempt: {prepared}"
         ));
     }
     session.finish(128 * 1024)?;
@@ -1548,7 +1550,7 @@ fn b3a_mcp_negative_authority_pre_refresh() -> Result<(), String> {
     // Dispatch edge: unknown tools and unknown arguments are protocol
     // errors, never silent nulls.
     let reply = session.call("b3a-unknown-tool", "ripr_everything", json!({}))?;
-    if protocol_error_code(&reply, "b3a unknown tool")? != -32601 {
+    if protocol_error_code(&reply, "b3a unknown tool")? != -32602 {
         return Err(format!("b3a unknown tool: wrong protocol code: {reply}"));
     }
     let reply = session.call(
