@@ -155,7 +155,7 @@ mapping specifies successor proof; it does not claim that it has run.
 | Legacy resource miss | Official-client and public wire rejection controls; SDK maps resource-not-found code by negotiated version |
 | Discovery ping with older selected version | SDK lifecycle owner; public discovery ping rejection control |
 | Discovery exposes read-only surfaces | Official client exactly-one-tool/resource, status equality and authority-none controls |
-| Unknown tool | Official-client and public stdio Method Not Found with same request ID and available-tool data |
+| Unknown tool | Official-client and public stdio Invalid Params (-32602) with same request ID and available-tool data |
 | Nonempty status arguments | Official-client and public stdio Invalid Params |
 | Current resource miss | Same real-client/wire rejection; SDK performs version-dependent error mapping |
 | Initialize after discovery | SDK lifecycle owner; custom lifecycle-switch gate retired |

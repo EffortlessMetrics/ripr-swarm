@@ -193,8 +193,11 @@ impl McpServer {
                 .iter()
                 .map(crate::domain::LanguageId::as_str)
                 .collect();
+            // Echo only a short value: a huge one would push the error past
+            // the response cap and replace -32602 with a generic -32603.
+            let shown: String = language.chars().take(32).collect();
             return Err(ErrorData::invalid_params(
-                format!("unknown language {language:?}; allowed: {allowed:?}"),
+                format!("unknown language {shown:?}; allowed: {allowed:?}"),
                 Some(serde_json::json!({ "allowed": allowed })),
             ));
         }
