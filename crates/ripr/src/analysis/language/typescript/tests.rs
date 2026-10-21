@@ -12418,6 +12418,15 @@ fn spec_0027_ambiguous_fallback_is_never_exposed_and_punctuation_is_ignored() ->
     assert!(!classify_probe_shape_detail("  n.value").specific);
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     assert!(finding.activation.missing_discriminators.is_empty());
+    let discriminate = &finding.ripr.reveal.discriminate.summary;
+    assert!(
+        discriminate.contains("does not recognise the shape of the changed line"),
+        "the discrimination summary must not claim a predicate boundary: {discriminate}"
+    );
+    assert!(
+        !discriminate.contains("predicate boundary"),
+        "the discrimination summary must not claim a predicate boundary: {discriminate}"
+    );
     let limitation = ts_predicate_boundary_limitation(
         &classify_probe_shape_detail("  n.value"),
         "  n.value",
