@@ -688,7 +688,7 @@ fn a_commented_environment_write_activates_nothing() -> Result<(), String> {
 fn a_shadow_inside_a_callback_reaches_an_assertion_inside_it() -> Result<(), String> {
     // Each case is the setup, then what closes the open block after the
     // assertion (nothing when the shadow is not in a block).
-    let cases: [(&str, &str); 50] = [
+    let cases: [(&str, &str); 54] = [
         // The assertion sits in the callback block that rebinds the local.
         (
             "let tokens = tokenize(\"7\");\n        apply(|| {\n            let tokens = vec![1u32];",
@@ -890,6 +890,22 @@ fn a_shadow_inside_a_callback_reaches_an_assertion_inside_it() -> Result<(), Str
             "",
         ),
         (
+            "let tokens = tokenize(\"7\");\n        rebind!(tokens);",
+            "",
+        ),
+        (
+            "let tokens = tokenize(\"7\");\n        crate::rebind!(tokens);",
+            "",
+        ),
+        (
+            "let tokens = tokenize(\"7\");\n        rebind![tokens];",
+            "",
+        ),
+        (
+            "let tokens = tokenize(\"7\");\n        mylib::set!(tokens, 5);",
+            "",
+        ),
+        (
             "let tokens = tokenize(\"7\");\n        for(a, tokens) in v {",
             "\n        }",
         ),
@@ -917,6 +933,7 @@ fn a_closed_callback_shadow_leaves_the_owner_binding() -> Result<(), String> {
         "let tokens = tokenize(\"7\");\n        run(a | b, |other| {\n            foo();\n        });",
         // An unfinished `let tokens =` has not rebound the name where its initializer runs.
         "let tokens = tokenize(\"7\");\n        let tokens =",
+        "let tokens = tokenize(\"7\");\n        assert_eq!(tokens.len(), 1);\n        rebind!(other);",
         "let tokens = tokenize(\"7\");\n        #[inline]\n        let tokens =",
         "let tokens = tokenize(\"7\");\n        let tokens = |Foo::<u8> { y }| {\n            foo();",
         "let tokens = tokenize(\"7\");\n        match p {\n            (y, z) => {\n                foo();\n            }\n        }",

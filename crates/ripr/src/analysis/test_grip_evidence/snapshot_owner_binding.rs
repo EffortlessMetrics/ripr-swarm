@@ -117,7 +117,7 @@ fn name_is_direct_owner_result(
             }
             match line.rfind(macro_name).filter(|_| !macro_name.is_empty()) {
                 Some(at) => strip_comments_and_strings(&line[..at]),
-                None => String::new(),
+                None => strip_comments_and_strings(line),
             }
         })
         .collect();
@@ -143,6 +143,86 @@ pub(crate) fn local_is_owner_result_before(
     reach: BindingReach,
 ) -> bool {
     walk_bindings(code, name, owner_name, reach, true)
+}
+
+/// Some macro invocation in `code` (`m!(..)`, `m!{..}`, `m![..]`, path
+/// qualified, an unclosed one runs to the end) has `name` as a whole word in
+/// its arguments and is not one of the macros that only read them.
+fn macro_argument_names(code: &str, name: &str) -> bool {
+    let bytes = code.as_bytes();
+    for (bang, _) in code.match_indices('!') {
+        if bytes.get(bang + 1) == Some(&b'=') {
+            continue;
+        }
+        let head = code[..bang].trim_end();
+        let macro_name: String = head
+            .chars()
+            .rev()
+            .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        if macro_name.is_empty() {
+            continue;
+        }
+        let after = &code[bang + 1..];
+        let after = after.trim_start();
+        let Some(opener) = after
+            .chars()
+            .next()
+            .filter(|ch| matches!(ch, '(' | '[' | '{'))
+        else {
+            continue;
+        };
+        let mut depth = 0usize;
+        let mut end = after.len();
+        for (at, ch) in after.char_indices() {
+            match ch {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        end = at;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let _ = opener;
+        if contains_word(&after[..end], name) && !macro_only_reads(&macro_name) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Standard and snapshot macros that evaluate their arguments without
+/// binding or rewriting a name in the caller.
+fn macro_only_reads(name: &str) -> bool {
+    name.starts_with("assert")
+        || name.starts_with("debug_assert")
+        || matches!(
+            name,
+            "format"
+                | "format_args"
+                | "print"
+                | "println"
+                | "eprint"
+                | "eprintln"
+                | "matches"
+                | "vec"
+                | "dbg"
+                | "concat"
+                | "stringify"
+                | "with_settings"
+                | "panic"
+                | "todo"
+                | "unimplemented"
+                | "unreachable"
+                | "expect"
+        )
 }
 
 /// `text` with every whitespace run replaced by one space, and a space after
@@ -253,7 +333,13 @@ fn walk_bindings(
     let code = squashed.as_str();
     // A macro defined in the test can bind any name it is handed
     // (`macro_rules! m { ($n:ident) => { let $n = 5; } }`): not tracked.
-    if contains_word(code, "macro_rules") {
+    if contains_word(code, "macro_rules") || contains_word(code, "macro") {
+        return false;
+    }
+    // A macro defined elsewhere (module level, imported) can rebind the
+    // local it is handed too: the name inside the arguments of any macro that
+    // is not known to only read its arguments withholds.
+    if macro_argument_names(code, name) {
         return false;
     }
     let mut scope: Vec<(usize, bool)> = Vec::new();
@@ -1438,6 +1524,13 @@ mod tests {
             "'a: for {n} in v {\n",
             "for (a, {n}) in v {\n",
             "let c = &mut {n};\n",
+            "rebind!({n});\n",
+            "crate::rebind!({n});\n",
+            "rebind!{{n}}\n",
+            "rebind![{n}];\n",
+            "mylib::set!({n}, 5);\n",
+            "foo(rebind!({n}));\n",
+            "rebind ! ({n});\n",
             "for({n}) in v {\n",
             "for({n})in v {\n",
             "for(a, {n}) in v {\n",
@@ -1647,6 +1740,11 @@ mod tests {
             "insta::assert_snapshot!(x); let y = 7; "
         ));
         assert!(!strict_same_line("let x = own(2);", "fn f(x: u8) { "));
+        // A macro defined elsewhere can rebind the local it is handed.
+        assert!(!strict("let x = own(2);\nrebind!(x);"));
+        assert!(!strict("let x = own(2);\ncrate::rebind!{x}"));
+        assert!(strict("let x = own(2);\nassert_eq!(x.len(), 1);"));
+        assert!(strict("let x = own(2);\nrebind!(y);"));
     }
 
     #[test]
@@ -1665,12 +1763,41 @@ mod tests {
             assert!(!super::local_is_owner_result_before(
                 code, "x", "own", reach
             ));
-            assert!(super::local_is_owner_result_before(
+            assert!(!super::local_is_owner_result_before(
                 "let x = own(2);\nm!(x);\n",
                 "x",
                 "own",
                 reach
             ));
+            for read in [
+                "let x = own(2);\nassert_eq!(x, 1);\n",
+                "let x = own(2);\nprintln!(\"{}\", x);\n",
+                "let x = own(2);\nlet n = format!(\"{}\", x.len());\n",
+                "let x = own(2);\nassert!(matches!(x, 1));\n",
+                "let x = own(2);\ninsta::with_settings!({description => \"d\"}, {\n",
+                "let x = own(2);\nrebind!(y);\n",
+                "let x = own(2);\nlet ok = x != 3;\n",
+            ] {
+                assert!(
+                    super::local_is_owner_result_before(read, "x", "own", reach),
+                    "{read:?}"
+                );
+            }
+            for rebind in [
+                "let x = own(2);\nrebind!(x);\n",
+                "let x = own(2);\ncrate::rebind!(x);\n",
+                "let x = own(2);\nrebind!{x}\n",
+                "let x = own(2);\nrebind![x];\n",
+                "let x = own(2);\nmylib::set!(x, 5);\n",
+                "let x = own(2);\nfoo(rebind!(x));\n",
+                "let x = own(2);\nrebind ! (x);\n",
+                "let x = own(2);\nmacro m($n:ident) { let $n = 5; }\n",
+            ] {
+                assert!(
+                    !super::local_is_owner_result_before(rebind, "x", "own", reach),
+                    "{rebind:?}"
+                );
+            }
         }
     }
 
