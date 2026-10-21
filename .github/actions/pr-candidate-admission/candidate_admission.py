@@ -47,6 +47,17 @@ LABELS = {
         "accepted winner and losing candidate disposition",
     ),
 }
+# Generated files are declared once, in the base commit's .gitattributes, with
+# `linguist-generated`. Their lines are verified by the tool that wrote them
+# (package manager, blessing command, drift check), not by reading the diff, so
+# they do not count toward the ordinary size envelope. Three guards keep the
+# label from hiding hand-written code: rules come from the base commit so a PR
+# cannot label its own files; only data extensions are ever exempt; and the
+# exempt lines have their own cap.
+GENERATED_ATTRIBUTE = "linguist-generated"
+GENERATED_DATA_EXTENSIONS = {".json", ".jsonl", ".lock", ".md", ".txt", ".stdout"}
+GENERATED_EXEMPT_NEVER = {".gitattributes"}
+DEFAULT_MAX_GENERATED_LINES = 40000
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 TEMPLATE_LINES = {
     "claim": "Governing issue or accepted claim:",
@@ -175,6 +186,109 @@ def effective_fields(pr: dict[str, Any]) -> dict[str, str]:
     return fields
 
 
+def _glob_regex(pattern: str) -> re.Pattern[str]:
+    """Translate a gitattributes glob: `*` and `?` stay inside one path
+    segment, `**/` spans directories, a trailing `/**` spans everything below."""
+    anchored = "/" in pattern.rstrip("/")
+    pattern = pattern.lstrip("/")
+    out = []
+    i = 0
+    while i < len(pattern):
+        char = pattern[i]
+        if pattern.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+        elif pattern.startswith("/**", i) and i + 3 == len(pattern):
+            out.append("/.+")
+            i += 3
+        elif char == "*":
+            out.append("[^/]*")
+            i += 1
+        elif char == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append(re.escape(char))
+            i += 1
+    body = "".join(out)
+    return re.compile(("^" if anchored else "^(?:.*/)?") + body + "$")
+
+
+def parse_generated_rules(text: str) -> list[tuple[re.Pattern[str], bool]]:
+    """Ordered (pattern, generated) rules; the last matching rule wins."""
+    rules: list[tuple[re.Pattern[str], bool]] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        pattern, *attributes = line.split()
+        for attribute in attributes:
+            if attribute in (GENERATED_ATTRIBUTE, f"{GENERATED_ATTRIBUTE}=true"):
+                rules.append((_glob_regex(pattern), True))
+            elif attribute in (f"-{GENERATED_ATTRIBUTE}", f"{GENERATED_ATTRIBUTE}=false"):
+                rules.append((_glob_regex(pattern), False))
+    return rules
+
+
+def check_generated_declarations(text: str) -> list[str]:
+    """Problems with the declared generated paths. Every declaration must name
+    a data file type, so a broad glob cannot be aimed at source."""
+    problems = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        pattern, *attributes = line.split()
+        if not any(a.split("=")[0] == GENERATED_ATTRIBUTE for a in attributes):
+            continue
+        if any(a in (f"-{GENERATED_ATTRIBUTE}", f"{GENERATED_ATTRIBUTE}=false") for a in attributes):
+            continue
+        leaf = pattern.rsplit("/", 1)[-1]
+        if leaf in ("*", "**"):
+            # A directory-wide declaration is bounded per file by the data
+            # extension filter and in total by the generated line cap.
+            if "/" not in pattern.strip("/") or pattern.startswith(("*", "/*")):
+                problems.append(f"{pattern}: declare a specific directory, not the whole tree")
+            continue
+        suffix = ("." + leaf.rsplit(".", 1)[-1]).lower() if "." in leaf else ""
+        if suffix not in GENERATED_DATA_EXTENSIONS:
+            problems.append(f"{pattern}: generated declarations must end in a data extension ({', '.join(sorted(GENERATED_DATA_EXTENSIONS))})")
+    return problems
+
+
+def is_generated(path: str, rules: list[tuple[re.Pattern[str], bool]]) -> bool:
+    name = path.rsplit("/", 1)[-1]
+    suffix = ("." + name.rsplit(".", 1)[-1]).lower() if "." in name else ""
+    if name in GENERATED_EXEMPT_NEVER or suffix not in GENERATED_DATA_EXTENSIONS:
+        return False
+    declared = False
+    for pattern, generated in rules:
+        if pattern.match(path):
+            declared = generated
+    return declared
+
+
+def generated_totals(
+    pr_files: list[dict[str, Any]],
+    rules: list[tuple[re.Pattern[str], bool]],
+    changed_files: int,
+) -> tuple[int, int]:
+    """(generated files, generated lines). A truncated file listing cannot
+    prove which lines are generated, so it exempts nothing."""
+    if len(pr_files) < changed_files:
+        return 0, 0
+    files = lines = 0
+    for entry in pr_files:
+        paths = [str(entry.get("filename") or "")]
+        if entry.get("previous_filename"):
+            paths.append(str(entry["previous_filename"]))
+        # A rename counts as generated only if both ends are.
+        if all(is_generated(path, rules) for path in paths):
+            files += 1
+            lines += int(entry.get("additions") or 0) + int(entry.get("deletions") or 0)
+    return files, lines
+
+
 def identity_detail(fields: dict[str, str]) -> str:
     missing = [
         TEMPLATE_LINES[key]
@@ -224,6 +338,9 @@ def decide(
     docs_only: bool,
     max_files: int,
     max_lines: int,
+    generated_files: int = 0,
+    generated_lines: int = 0,
+    max_generated_lines: int = DEFAULT_MAX_GENERATED_LINES,
 ) -> dict[str, Any]:
     fields = effective_fields(current)
     actual_head = ((current.get("head") or {}).get("sha") or "")
@@ -273,14 +390,22 @@ def decide(
             detail=f"trusted competing PR(s) {listed} share the same governing claim and acceptance delta; reconcile them and record the accepted winner/losing disposition naming the winning PR in one of the competing PR bodies (or name a listed peer as the proposed replacement in the winning PR body) before qualification",
         )
 
-    changed_files = int(current.get("changed_files") or 0)
-    changed_lines = int(current.get("additions") or 0) + int(
-        current.get("deletions") or 0
+    if not docs_only and generated_lines > max_generated_lines:
+        return refuse(
+            "generated_scope_oversized",
+            detail=f"candidate changes {generated_lines} generated lines, exceeding the limit of {max_generated_lines}; split the regeneration from the hand-written change",
+        )
+    changed_files = max(0, int(current.get("changed_files") or 0) - generated_files)
+    changed_lines = max(
+        0,
+        int(current.get("additions") or 0)
+        + int(current.get("deletions") or 0)
+        - generated_lines,
     )
     if not docs_only and (changed_files > max_files or changed_lines > max_lines):
         return refuse(
             "qualification_scope_oversized",
-            detail=f"candidate changes {changed_files} files / {changed_lines} changed lines, exceeding the ordinary limit of {max_files} files / {max_lines} changed lines; split or recompose the candidate before ordinary qualification",
+            detail=f"candidate changes {changed_files} files / {changed_lines} changed lines outside declared generated paths, exceeding the ordinary limit of {max_files} files / {max_lines} changed lines; split or recompose the candidate before ordinary qualification",
         )
 
     return {
@@ -477,6 +602,67 @@ def self_test() -> None:
     assert "one of the competing PR bodies" in competing_detail
     assert "both PR bodies" not in competing_detail
     assert run(oversized, [oversized], docs=True)["status"] == "admitted"
+    rules = parse_generated_rules(
+        "package-lock.json linguist-generated\n"
+        "Cargo.lock linguist-generated=true\n"
+        "fixtures/**/expected/** linguist-generated\n"
+        "fixtures/**/expected/hand-written.json -linguist-generated\n"
+        "crates/** linguist-generated\n"
+        "docs/*.md linguist-generated\n"
+        "# comment linguist-generated\n"
+        "* text=auto\n"
+    )
+    for path, expected in (
+        ("package-lock.json", True),
+        ("fixtures/a/package-lock.json", True),
+        ("Cargo.lock", True),
+        ("editors/zed/Cargo.lock", True),
+        ("src/not-package-lock.json", False),
+        ("fixtures/a/expected/rows/x.json", True),
+        ("fixtures/a/b/expected/out.txt", True),
+        ("fixtures/a/expected/hand-written.json", False),
+        ("fixtures/a/input/expected.json", False),
+        ("fixtures/expected/x.json", True),
+        ("crates/ripr/src/lib.rs", False),
+        ("crates/ripr/data.json", True),
+        ("docs/CI.md", True),
+        ("docs/sub/CI.md", False),
+        (".gitattributes", False),
+    ):
+        assert is_generated(path, rules) is expected, path
+    listed = [
+        {"filename": "fixtures/a/package-lock.json", "additions": 900, "deletions": 800},
+        {"filename": "Cargo.lock", "additions": 40, "deletions": 10},
+        {"filename": "fixtures/a/expected/rows/x.json", "additions": 100, "deletions": 0},
+        {"filename": "fixtures/a/expected/run.sh", "additions": 70, "deletions": 0},
+        {"filename": "crates/ripr/src/lib.rs", "additions": 3, "deletions": 0},
+        {"filename": "new.json", "previous_filename": "Cargo.lock", "additions": 1, "deletions": 1},
+    ]
+    assert generated_totals(listed, rules, 6) == (3, 1850)
+    assert generated_totals(listed, rules, 7) == (0, 0), "a truncated listing exempts nothing"
+    big = fixture(body=fixture_body(), head=head, additions=3000, deletions=100, changed_files=170)
+    assert run(big, [big])["reason"] == "qualification_scope_oversized"
+    admitted_big = decide(big, [big], head, False, max_files, max_lines, 20, 1750)
+    assert admitted_big["status"] == "admitted"
+    assert admitted_big["changed_files"] == 150 and admitted_big["changed_lines"] == 1350
+    assert (
+        decide(big, [big], head, False, max_files, max_lines, 0, 50)["reason"]
+        == "qualification_scope_oversized"
+    )
+    huge = fixture(body=fixture_body(), head=head, additions=90000, deletions=0)
+    assert (
+        decide(huge, [huge], head, False, max_files, max_lines, 2, 90000)["reason"]
+        == "generated_scope_oversized"
+    )
+    assert decide(huge, [huge], head, False, max_files, max_lines, 2, 30000)["reason"] == (
+        "qualification_scope_oversized"
+    )
+    assert check_generated_declarations(
+        "package-lock.json linguist-generated\nfixtures/**/expected/** linguist-generated\n"
+        "crates/x/*.rs -linguist-generated\n"
+    ) == []
+    for bad in ("**/*.rs", "*", "**", "src/lib.rs", "xtask/**/*.py", "scripts/run.sh"):
+        assert check_generated_declarations(f"{bad} linguist-generated\n"), bad
     assert run(current, [current], "b" * 40)["reason"] == "candidate_head_moved"
     assert (
         run(fixture(body=fixture_body(), head=head, draft=True), [], head)["reason"]
@@ -518,7 +704,7 @@ def self_test() -> None:
     bot = fixture(number=10, body="", head=head, **bump)
     assert run(bot, [bot, matching])["reason"] == "competing_candidate"
     assert run(matching, [bot, matching], "c" * 40)["reason"] == "competing_candidate"
-    print("candidate-admission self-test: 37 controls passed")
+    print("candidate-admission self-test: all controls passed")
 
 
 def load_json(path: Path) -> Any:
@@ -530,6 +716,14 @@ def main() -> int:
     parser.add_argument("--current", type=Path)
     parser.add_argument("--open-prs", type=Path)
     parser.add_argument("--expected-head")
+    parser.add_argument("--pr-files", type=Path)
+    parser.add_argument(
+        "--generated-attributes",
+        type=Path,
+        help=".gitattributes text from the PR's base commit; the only source of generated paths",
+    )
+    parser.add_argument("--max-generated-lines", type=int, default=DEFAULT_MAX_GENERATED_LINES)
+    parser.add_argument("--check-attributes", type=Path)
     parser.add_argument("--docs-only", action="store_true")
     parser.add_argument("--max-changed-files", type=int, default=160)
     parser.add_argument("--max-changed-lines", type=int, default=3000)
@@ -538,17 +732,37 @@ def main() -> int:
     if args.self_test:
         self_test()
         return 0
+    if args.check_attributes:
+        problems = check_generated_declarations(
+            args.check_attributes.read_text(encoding="utf-8")
+            if args.check_attributes.exists()
+            else ""
+        )
+        for problem in problems:
+            print(f"::error::{problem}")
+        return 1 if problems else 0
     if not args.current or not args.open_prs or args.expected_head is None:
         parser.error("--current, --open-prs and --expected-head are required")
     if args.max_changed_files < 1 or args.max_changed_lines < 1:
         parser.error("qualification limits must be positive")
+    current = load_json(args.current)
+    generated_files = generated_lines = 0
+    if args.pr_files and args.generated_attributes and args.generated_attributes.exists():
+        generated_files, generated_lines = generated_totals(
+            load_json(args.pr_files) or [],
+            parse_generated_rules(args.generated_attributes.read_text(encoding="utf-8")),
+            int(current.get("changed_files") or 0),
+        )
     result = decide(
-        load_json(args.current),
+        current,
         load_json(args.open_prs),
         args.expected_head,
         args.docs_only,
         args.max_changed_files,
         args.max_changed_lines,
+        generated_files,
+        generated_lines,
+        args.max_generated_lines,
     )
     print(json.dumps(result, sort_keys=True))
     return 1 if result["status"] == "refused" else 0
