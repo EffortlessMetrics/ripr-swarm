@@ -1649,6 +1649,7 @@ spec = "docs/specs/RIPR-SPEC-0011-llm-work-loop.md"
 tests = [
   "crates/ripr/src/cli/agent.rs::tests::agent_repair_phase_values_keep_their_exact_meaning",
   "crates/ripr/tests/cli_help_hierarchy.rs::agent_repair_phase_refusals_render_scoped_recovery_without_writes",
+  "crates/ripr/tests/cli_help_hierarchy.rs::agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve",
   "crates/ripr/tests/cli_smoke/retained_evidence_guidance.rs::missing_retained_evidence_names_executable_status_without_mutation",
   "crates/ripr/tests/cli_smoke/retained_evidence_guidance.rs::continue_selection_failure_names_one_status_command",
   "crates/ripr/src/app/repair_attempt/mod.rs::tests::commit_retry_refusal_rejects_embedded_messages_and_invalid_ids",
@@ -7044,7 +7045,12 @@ tests = [
   "crates/ripr/src/output/human.rs::tests::render_omits_no_scope_guidance_when_scope_provided_and_empty",
   "crates/ripr/src/output/human.rs::tests::render_no_scope_guidance_uses_conservative_static_language",
   "crates/ripr/src/output/json::tests::json_render_emits_scope_disclosures_when_no_scope_provided",
-  "crates/ripr/src/output/json::tests::json_render_omits_scope_disclosures_when_scope_provided"
+  "crates/ripr/src/output/json::tests::json_render_omits_scope_disclosures_when_scope_provided",
+  "crates/ripr/src/output/human.rs::tests::explicit_base_with_an_empty_range_explains_the_empty_result",
+  "crates/ripr/src/output/human.rs::tests::empty_range_note_is_suppressed_when_it_would_be_untrue_or_redundant",
+  "crates/ripr/tests/cli_smoke.rs::check_with_base_scope_does_not_show_no_scope_disclosure_smoke",
+  "crates/ripr/tests/cli_smoke.rs::check_diff_file_with_base_does_not_report_a_git_range_note",
+  "crates/ripr/tests/cli_smoke.rs::check_explicit_base_deletion_only_range_does_not_claim_no_behavior_changed"
 ]
 fixtures = []
 code = [
@@ -11101,6 +11107,7 @@ tests = [
   "crates/ripr/tests/cache_clear_safety.rs::classified_cache_cargo_home_fallback_and_relative_home_match_cold",
   "crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::same_line_production_and_test_fn_keeps_production_eligible",
   "crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::nested_same_line_test_fn_body_lines_stay_test_evidence",
+  "crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::helper_fn_nested_in_a_test_fn_is_test_evidence",
 ]
 fixtures = [
   "fixtures/rust_test_under_false_cfg_not_grip",
@@ -12890,6 +12897,7 @@ tests = [
   "crates/ripr/src/app/repair_card_handoff.rs::tests::producer_gap_with_sibling_owner_binds_no_witness",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::producer_finding_binds_only_the_twin_seam_at_its_line",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::producer_finding_binds_only_the_inner_seam_when_nested",
+  "crates/ripr/src/cli/commands/agent_card.rs::tests::prose_prints_each_limitation_once",
   "crates/ripr/src/cli/commands/agent_card.rs::tests::truncated_inventory_refuses_and_complete_inventory_does_not",
   "crates/ripr/src/lsp/tests.rs::seam_repair_card_binds_only_through_the_complete_raw_candidates",
   "crates/ripr/src/lsp/tests.rs::refresh_carries_repair_card_candidates_only_for_a_complete_inventory",
@@ -14294,6 +14302,9 @@ tests = [
   "crates/ripr/src/mcp/gaps.rs::tests::evaluated_admission_refuses_an_uncovered_finding",
   "crates/ripr/tests/mcp_stdio.rs::mcp_readiness_never_exceeds_the_cli_repair_gate",
   "crates/ripr/tests/mcp_stdio.rs::mcp_ready_item_is_the_item_the_cli_repair_gate_admits",
+  "crates/ripr/tests/mcp_stdio.rs::truncated_seam_inventory_refuses_repair_readiness_over_stdio",
+  "crates/ripr/src/mcp/gaps.rs::tests::truncated_inventory_refuses_before_any_resolution",
+  "crates/ripr/src/mcp/gaps.rs::tests::completeness_mirrors_the_cli_truncation_check",
   "crates/ripr/tests/mcp_stdio.rs::weak_boundary_naming_its_discriminator_is_repair_ready_only_where_the_cli_admits",
   "crates/ripr/src/mcp/repair_freshness_tests.rs::durable_currentness_keeps_ordinary_descendant_continuation",
   "crates/ripr/src/mcp/repair_freshness_tests.rs::durable_currentness_refuses_diverged_continuation_without_rewriting_attempt",
@@ -16410,6 +16421,12 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/guard_entry_tests.rs::text_outside_the_first_arrow_block_is_read",
   "crates/ripr/src/analysis/language/typescript/tests/guard_entry_tests.rs::comments_before_an_if_keep_the_real_condition",
   "crates/ripr/src/analysis/language/typescript/tests/guard_entry_tests.rs::bracket_calls_and_loaders_keep_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests/guard_entry_tests.rs::an_options_object_guard_no_test_input_enters_withdraws_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests/guard_entry_tests.rs::an_options_object_guard_some_test_input_can_enter_keeps_exposed",
+  "crates/ripr/src/analysis/language/typescript/guard_entry_guard.rs::reads_destructured_options_parameters",
+  "crates/ripr/src/analysis/language/typescript/guard_entry_guard.rs::option_defaults_and_literal_objects_decide_the_guard",
+  "crates/ripr/src/analysis/language/typescript/guard_entry_guard.rs::a_reassigned_or_shadowed_option_local_is_not_read",
+  "crates/ripr/src/analysis/language/typescript/guard_entry_guard.rs::signature_and_literal_shapes_that_misplace_the_options_position_are_refused",
   "crates/ripr/src/analysis/language/typescript/guard_entry_guard.rs::reads_then_else_if_and_else_arms",
   "crates/ripr/src/analysis/language/typescript/guard_entry_guard.rs::evaluates_literal_calls_against_guards",
   "crates/ripr/src/analysis/language/typescript/guard_entry_guard.rs::a_defaulted_parameter_is_not_assumed_undefined",
@@ -16706,6 +16723,12 @@ tests = [
   "crates/ripr/src/analysis/classify/gap_admission.rs::tests::a_should_panic_test_expects_the_owner_panic_only_when_the_message_matches",
   "crates/ripr/tests/should_panic_limit.rs::a_should_panic_test_on_a_changed_panic_guard_reads_as_static_unknown",
   "crates/ripr/tests/should_panic_limit.rs::a_panic_outcome_the_rule_does_not_cover_keeps_the_gap",
+  "crates/ripr/tests/debug_assertion_limit.rs::a_debug_assert_eq_owner_pin_reads_as_a_profile_limit",
+  "crates/ripr/tests/debug_assertion_limit.rs::a_debug_assert_eq_reads_as_its_assert_eq_twin_or_a_profile_limit",
+  "crates/ripr/tests/debug_assertion_limit.rs::other_debug_checks_keep_their_gap",
+  "crates/ripr/tests/debug_assertion_limit.rs::a_debug_check_never_earns_exposed_in_any_family",
+  "crates/ripr/tests/debug_assertion_limit.rs::an_error_path_pin_reads_as_a_profile_limit_only_when_it_names_the_variant",
+  "crates/ripr/tests/debug_assertion_limit.rs::a_should_panic_test_with_a_debug_check_keeps_its_panic_outcome_limit",
   "crates/ripr/src/analysis/classify/gap_admission.rs::tests::a_related_test_line_at_the_call_budget_withholds_a_gap_and_names_an_unknown",
   "crates/ripr/tests/call_budget_limit.rs::a_saturated_related_test_line_withholds_the_gap_under_the_budget_reason",
   "crates/ripr/tests/call_budget_limit.rs::saturation_that_does_not_limit_the_proof_keeps_the_finding",
@@ -17204,6 +17227,30 @@ tests = [
 ]
 metrics = [
   "mcp_resource_id_ambiguity_fail_closed",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0300"
+name = "A wrapped function signature seeds one probe, not one per physical line"
+spec = "docs/specs/RIPR-SPEC-0300-wrapped-signature-one-probe.md"
+tests = [
+  "crates/ripr/src/analysis/probes/diff.rs::tests::probes_for_file_skips_wrapped_signature_lines_of_new_function_but_keeps_bound",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::probes_for_file_groups_changed_wrapped_signature_lines_into_one_probe",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::probes_for_file_keeps_body_probe_beside_changed_wrapped_signature",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::probes_for_file_keeps_parameter_inserted_into_existing_wrapped_signature",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::probes_for_file_keeps_probe_when_earlier_signature_line_emitted_none",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::signature_open_line_fails_closed_on_ambiguous_headers",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::new_function_diff_keeps_bounds_unknown_and_body_executable",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/probes/diff.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0300-wrapped-signature-one-probe.md",
+]
+metrics = [
+  "unit_test_pass_rate",
 ]
 
 [[behavior]]

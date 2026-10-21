@@ -30,7 +30,6 @@ use super::workspace::{
 use crate::agent::artifact::git_output;
 use crate::agent::command_specs::{AgentArtifactRoute, agent_inspection_command_spec};
 use crate::analysis::ClassifiedSeam;
-use crate::analysis::inventory_diff_scoped_classified_seams_at_with_config;
 use crate::analysis::repair_route::repair_packet_eligibility;
 use crate::app::repair_card_handoff::{
     AgentCardError, SeamCardFacts, assemble_repair_card, bound_finding_gap_id, card_packet_json,
@@ -135,6 +134,9 @@ fn inventory_changed_files(root: &Path, findings: &[Finding]) -> Vec<PathBuf> {
 pub(crate) struct SeamInventory {
     pub(crate) repository_head: String,
     pub(crate) candidate_seams: Vec<ClassifiedSeam>,
+    /// Whether the repo-wide inventory `ripr repair` consults is complete
+    /// (#9108); the diff-scoped `candidate_seams` carry no seam-limit fact.
+    pub(crate) completeness: super::repair_admission::InventoryCompleteness,
 }
 
 /// Gather the refresh's seam inventory. This runs inside the refresh attempt
@@ -163,13 +165,20 @@ pub(crate) fn gather_seam_inventory(
         .trim()
         .to_string();
     let mut candidate_seams = Vec::new();
+    let mut completeness = super::repair_admission::InventoryCompleteness::Complete;
     if !findings.is_empty() {
+        // The CLI resolves a repair item against the repo-wide inventory and
+        // errors when the seam limit truncated it. The diff-scoped inventory
+        // carries no such fact on its own, so it also derives the limit fact
+        // from the index it already built (a count-only seam walk, no
+        // repo-wide evidence or classification), keeping a small-diff refresh
+        // off a full-repo classification (#9108).
         let changed_files = inventory_changed_files(root, findings);
         let changed_owner_names = findings
             .iter()
             .filter_map(|finding| finding.canonical_gap.as_ref().map(|gap| gap.owner.clone()))
             .collect::<Vec<_>>();
-        candidate_seams = inventory_diff_scoped_classified_seams_at_with_config(
+        let scoped = crate::analysis::inventory_diff_scoped_with_seam_limit_at_with_config(
             root,
             config,
             &changed_files,
@@ -181,12 +190,24 @@ pub(crate) fn gather_seam_inventory(
                 format!("the seam inventory authority failed during refresh: {error}"),
                 "retry with ripr_refresh; if the failure persists, run `ripr agent packet` in the repository",
             )
-        })?
-        .classified;
+        })?;
+        completeness = match scoped.repo_seam_limit {
+            Some(limit) => {
+                super::repair_admission::InventoryCompleteness::from_inventory_limit(limit)
+            }
+            // No index was built (the no-impact fast path), so the limit fact
+            // is unknown: fall back to the repo-wide authority, fail closed.
+            None => super::repair_admission::InventoryCompleteness::from_inventory_limit(
+                crate::analysis::inventory_classified_seams_at_with_config(root, config)
+                    .map(|(_, limit_info)| limit_info),
+            ),
+        };
+        candidate_seams = scoped.classified;
     }
     Ok(SeamInventory {
         repository_head,
         candidate_seams,
+        completeness,
     })
 }
 
@@ -203,6 +224,7 @@ pub(crate) fn bind_snapshot_card_producers(
     let SeamInventory {
         repository_head,
         candidate_seams,
+        completeness: _,
     } = inventory;
     let mut bindings = Vec::new();
     let mut all_candidate_seams = Vec::new();

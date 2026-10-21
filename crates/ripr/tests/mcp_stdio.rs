@@ -1838,9 +1838,16 @@ struct SequentialStdio {
 
 impl SequentialStdio {
     fn spawn(root: &Path) -> Result<Self, String> {
-        let mut child = worktree_ripr()
-            .args(["mcp", "--stdio", "--root"])
-            .arg(root)
+        Self::spawn_with_env(root, &[])
+    }
+
+    fn spawn_with_env(root: &Path, env: &[(&str, &str)]) -> Result<Self, String> {
+        let mut command = worktree_ripr();
+        command.args(["mcp", "--stdio", "--root"]).arg(root);
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -3776,6 +3783,161 @@ fn mcp_ready_item_is_the_item_the_cli_repair_gate_admits() -> Result<(), String>
         }
     }
     Ok(())
+}
+
+/// #9108 production path: a refresh under `RIPR_REPO_EXPOSURE_SEAM_LIMIT=1`
+/// truncates the repo-wide inventory (`gather_seam_inventory` reads the same
+/// authority `ripr repair` does), so every item refuses with the typed
+/// `seam_inventory_truncated` reason and no attempt, exactly where
+/// `ripr repair` errors. The same repository without the limit is the control:
+/// the B4 item is repair-ready and not refused for truncation.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn truncated_seam_inventory_refuses_repair_readiness_over_stdio() -> Result<(), String> {
+    const REFRESH_TIMEOUT: Duration = Duration::from_mins(3);
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    const TRUNCATED: &str = "seam_inventory_truncated";
+    let root = install_b4_repair_ready_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    std::fs::write(root.join(".gitignore"), "/target\n").map_err(|error| error.to_string())?;
+    // A second seam makes `limit=1` a real truncation (analyzed 1 < total 2).
+    let mut source =
+        std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
+    source.push_str("\npub fn sign(x: i32) -> i32 {\n    if x > 0 { 1 } else { 2 }\n}\n");
+    std::fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
+    commit_fixture(&root, "add a second seam")?;
+
+    // Control: complete inventory, the B4 boundary item is repair-ready.
+    let mut control = SequentialStdio::spawn(&root)?;
+    control.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    let refresh = control.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    structured_tool_success(&refresh, "ripr_refresh")?;
+    let list = control.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    let list = structured_tool_success(&list, "ripr_list_gaps")?;
+    let items = list["items"].as_array().ok_or("list omitted items")?;
+    let ready_id = items
+        .iter()
+        .find(|item| item["repair_packet_ready"] == true)
+        .and_then(|item| item["canonical_id"].as_str())
+        .ok_or_else(|| format!("control must yield a repair-ready item: {list}"))?
+        .to_string();
+    let control_unready_items = items
+        .iter()
+        .filter(|item| item["repair_packet_ready"] != true)
+        .count();
+    if items
+        .iter()
+        .any(|item| item["repair_ineligibility"] == TRUNCATED)
+    {
+        return Err(format!(
+            "complete inventory must never refuse as truncated: {list}"
+        ));
+    }
+    let finding_id = {
+        let gap = control.call_tool(
+            "gap",
+            "ripr_get_gap",
+            json!({ "canonical_id": ready_id }),
+            REPLY_TIMEOUT,
+        )?;
+        let gap = structured_tool_success(&gap, "ripr_get_gap")?;
+        gap["item"]["finding_id"]
+            .as_str()
+            .ok_or("gap omitted finding_id")?
+            .to_string()
+    };
+    drop(control);
+    if let Some(refusal) = cli_repair_refusal(&root, &finding_id)? {
+        return Err(format!(
+            "control: the CLI must admit {finding_id}: {refusal}"
+        ));
+    }
+
+    // Truncated: same repository, seam limit 1.
+    let mut session =
+        SequentialStdio::spawn_with_env(&root, &[("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1")])?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    structured_tool_success(&refresh, "ripr_refresh")?;
+    let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    let list = structured_tool_success(&list, "ripr_list_gaps")?;
+    let items = list["items"].as_array().ok_or("list omitted items")?;
+    let item = items
+        .iter()
+        .find(|item| item["canonical_id"] == ready_id.as_str())
+        .ok_or_else(|| format!("truncated refresh lost {ready_id}: {list}"))?;
+    if item["repair_packet_ready"] != false || item["repair_ineligibility"] != TRUNCATED {
+        return Err(format!(
+            "truncated inventory must refuse {ready_id} with {TRUNCATED}: {item}"
+        ));
+    }
+    // Precedence: the truncation refusal outranks every finding-level gate
+    // (the CLI errors before resolving any item), so every item, including
+    // those that fail a finding-level gate on a complete inventory, carries it
+    // on list, get and prepare.
+    if control_unready_items == 0 {
+        return Err("control must include a finding-level-unready item".to_string());
+    }
+    for item in items {
+        let id = item["canonical_id"].as_str().ok_or("item omitted id")?;
+        if item["repair_packet_ready"] != false || item["repair_ineligibility"] != TRUNCATED {
+            return Err(format!("list must refuse {id} as {TRUNCATED}: {item}"));
+        }
+        let gap = session.call_tool(
+            &format!("gap-{id}"),
+            "ripr_get_gap",
+            json!({ "canonical_id": id }),
+            REPLY_TIMEOUT,
+        )?;
+        let gap = structured_tool_success(&gap, "ripr_get_gap")?;
+        if gap["item"]["readiness"]["repair_packet_ready"] != false
+            || !gap["item"]["readiness"]["reason"]
+                .as_str()
+                .unwrap_or("")
+                .contains("seam inventory")
+        {
+            return Err(format!("get_gap must refuse {id} as {TRUNCATED}: {gap}"));
+        }
+        let prepare = session.call_tool(
+            &format!("prepare-{id}"),
+            "ripr_prepare_repair",
+            json!({ "canonical_id": id }),
+            REPLY_TIMEOUT,
+        )?;
+        let prepare = structured_tool_success(&prepare, "ripr_prepare_repair")?;
+        if prepare["repair_packet_ready"] != false
+            || !prepare["attempt"].is_null()
+            || prepare["ineligibility"]["reason"] != TRUNCATED
+        {
+            return Err(format!(
+                "prepare must refuse {id} typed with no attempt under truncation: {prepare}"
+            ));
+        }
+    }
+    // The CLI refuses the same item for the same condition.
+    let refusal = cli_repair_refusal_with_env(&root, &finding_id, "1")?
+        .ok_or("`ripr repair` must refuse under the same seam limit")?;
+    if !refusal.contains("inventory is truncated") {
+        return Err(format!("CLI truncation refusal changed shape: {refusal}"));
+    }
+    Ok(())
+}
+
+fn cli_repair_refusal_with_env(
+    root: &Path,
+    finding_id: &str,
+    seam_limit: &str,
+) -> Result<Option<String>, String> {
+    let output = worktree_ripr()
+        .args(["repair", finding_id, "--root"])
+        .arg(root)
+        .env("RIPR_REPO_EXPOSURE_SEAM_LIMIT", seam_limit)
+        .output()
+        .map_err(|error| format!("spawn ripr repair: {error}"))?;
+    if output.status.success() {
+        return Ok(None);
+    }
+    Ok(Some(String::from_utf8_lossy(&output.stderr).into_owned()))
 }
 
 /// #8847: literal producer totals survive both gap routes and refreshes.

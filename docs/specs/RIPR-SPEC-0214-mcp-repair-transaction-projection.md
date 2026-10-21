@@ -136,11 +136,20 @@ read-only and without execution authority (ADR 0022):
   tests already grip it), `seam_gate_refused` (route not ready, unresolved
   cross-language visibility or target, policy omission), `seam_ambiguous`
   (several seams name the finding; the resolver never picks) or
-  `seam_not_found` (no classified seam names it). The verdict is projected
+  `seam_not_found` (no classified seam names it). Before any item is
+  resolved, the refresh also reads the truncation fact from the same repo-wide
+  seam inventory the CLI consults (`limit_info.analyzed < total`): when that
+  inventory is truncated by the seam limit, or cannot be established, the CLI
+  errors for every item, so the adapter refuses every item with
+  `seam_inventory_truncated` (#9108), ahead of every finding-level gate, and
+  the validator's per-seam verdicts are not consulted. The fact comes from a
+  count-only seam walk over the index the diff-scoped inventory already built
+  (no repo-wide evidence or classification); only the no-impact fast path,
+  which builds no index, falls back to the repo-wide authority. The verdict is projected
   before the snapshot identity is computed, so the list summary, the
   `ripr_get_gap` readiness block, `ripr_prepare_repair` and the snapshot
   identity carry one decision, and a finding-level refusal remains the first
-  failing gate. MCP never reads readiness from finding facts alone and keeps
+  failing gate except that `seam_inventory_truncated` outranks it. MCP never reads readiness from finding facts alone and keeps
   no parallel validator: `ripr_prepare_repair` cannot return a ready packet
   or an `awaiting_edit` attempt for an item `ripr repair` refuses.
 - When every gate is established, the tool creates one session repair

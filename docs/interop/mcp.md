@@ -323,7 +323,24 @@ identity, an empty `command_routes` list with the typed limitation (concrete
 typed `CommandSpec` routes are published only by the durable CLI before
 phase), the shared non-claims, and the resource links. An ineligible item
 returns `repair_packet_ready: false` with the typed ineligibility reason and
-`attempt: null` — no attempt is created and no field is guessed.
+`attempt: null` — no attempt is created and no field is guessed. The reasons
+the shared seam-level repair gate behind `ripr repair` contributes are
+`seam_already_gripped` (the seam's existing tests already grip it),
+`seam_gate_refused` (route not ready, cross-language limits or policy
+omission), `seam_ambiguous` (several seams name the item), `seam_not_found`
+(no classified seam names it) and `seam_inventory_truncated` (the repo-wide
+seam inventory is truncated by the seam limit, or its completeness could not
+be established, so `ripr repair` refuses every item; widen the budget with
+`RIPR_REPO_EXPOSURE_SEAM_LIMIT`).
+
+The truncation refusal covers repair readiness (`ripr_list_gaps`,
+`ripr_get_gap`, `ripr_prepare_repair`). `ripr_get_repair_card` is a read-only
+card projection of the shared card producer over the refresh's diff-scoped
+inventory and is out of scope for #9108 (tracked in #9231): it does not start an attempt, and it
+does not yet mirror `ripr agent card`'s own incomplete-inventory refusal. Read
+readiness from `repair_packet_ready` and `repair_ineligibility`, not from the
+card's `readiness.repair_ready`, when the seam limit may have truncated the
+inventory.
 
 `ripr_get_repair_attempt` (and `ripr://repair-attempt/{attempt_id}`) reads
 one transaction by identity: session transactions answer first; otherwise
