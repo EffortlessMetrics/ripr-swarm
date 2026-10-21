@@ -392,11 +392,10 @@ impl CountGate {
             ast::MacroRules::can_cast(node.kind())
                 || ast::Use::cast(node.clone()).is_some_and(|import| {
                     let text = import.syntax().text().to_string();
-                    text.contains('*')
-                        && !text
-                            .split_whitespace()
-                            .collect::<String>()
-                            .ends_with("super::*;")
+                    let normalized = text.split_whitespace().collect::<String>();
+                    let is_super_glob =
+                        normalized == "usesuper::*;" || normalized == "pubusesuper::*;";
+                    text.contains('*') && !is_super_glob
                 })
                 || ast::Name::cast(node.clone()).is_some_and(|name| name.text() == self.mock_type)
                 || ast::Use::can_cast(node.kind())
@@ -1221,6 +1220,8 @@ mod tests {
             ("an imported name", "use fakes::MockMailer;\n"),
             ("a local alias", "type MockMailer = Fake;\n"),
             ("a foreign glob", "use fakes::*;\n"),
+            ("a doubled super glob", "use super::super::*;\n"),
+            ("a glob under a super-suffixed name", "use mysuper::*;\n"),
             ("a local macro", "macro_rules! stand_in { () => {}; }\n"),
         ] {
             let owner = format!("{OWNER}{extra}");
