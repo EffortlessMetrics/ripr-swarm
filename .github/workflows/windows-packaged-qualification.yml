@@ -87,7 +87,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "candidate tag was not found on origin: $env:CANDIDATE_REF" }
           $remoteSha = ($remoteLine -split '\s+')[0].Trim()
           if ($remoteSha -ne $head) { throw "origin tag does not resolve directly to candidate_sha: $env:CANDIDATE_REF -> $remoteSha" }
-          $refSha = (git rev-parse "$env:CANDIDATE_REF^{commit}").Trim()
+          # A rehearsal branch exists only as a remote ref here; ls-remote above is its identity check.
+          $refSha = if ($env:REHEARSAL -eq 'true') { $remoteSha } else { (git rev-parse "$env:CANDIDATE_REF^{commit}").Trim() }
           if ($refSha -ne $head) { throw "local candidate ref does not resolve to candidate_sha: $env:CANDIDATE_REF -> $refSha" }
           [ordered]@{ candidate_sha = $head; candidate_ref = $env:CANDIDATE_REF; rehearsal = ($env:REHEARSAL -eq 'true'); candidate_parent = (git rev-parse "$head^"); repository = $env:GITHUB_REPOSITORY; workflow_run = $env:GITHUB_RUN_ID } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $env:QUAL_ROOT 'candidate-identity.json')
 
