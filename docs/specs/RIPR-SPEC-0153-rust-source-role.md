@@ -244,6 +244,13 @@ hashes the `ripr.toml` text, so no generation bump is required for it.
 The #3532 harness registry joined the same identity as FindingAffecting
 (2 → 3, canonical length-prefixed encoding pinned byte-for-byte).
 
+### Shared-line eligibility
+
+Function ownership is line-granular. When a production fn and an
+evidence-role fn open on one physical line, that opening line stays
+production-eligible (fail closed, no column attribution); later lines inside
+the evidence fn's body remain test evidence.
+
 ### Index normalization ownership
 
 Whole-index source-role normalization borrows its exact identity keys
