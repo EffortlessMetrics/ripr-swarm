@@ -242,11 +242,24 @@ otherwise indexes nothing for it:
   `$name:fragment` metavariables only; the selected arm is the first whose
   metavariable count matches the invocation's top-level arguments, and an
   `ident`, `literal`, `block` or `tt` argument must have that shape;
-- the selected transcriber contains `#[test]`, no repetition and no call to
-  another macro defined in the file, and no argument invokes one;
+- the selected transcriber contains `#[test]` and no call to another macro
+  defined in the file, and no argument invokes one; its only repetition is
+  the table form below;
 - no `use` in the file imports the generator's name (rustc rejects that
   invocation as ambiguous), and the expansion carries no `cfg` other than
   `cfg(test)` and no `cfg_attr`.
+
+A generator that is a table, itoa's `test! { name(value, expected) ... }`
+(#6925), is the one repetition shape: the whole matcher is
+`$( row ) sep? *` (or `+`), where a row is `$name:ident`, `literal`, `tt`
+or `block` variables, literal `,`, `;` or `:` tokens, and delimited groups of
+comma-separated metavariables (an `expr` outside a group needs a `,`, `;` or
+`:` after it, or the row separator); the transcriber is exactly one
+separator-free `$( body )*` over those variables. The invocation must split
+into rows with nothing left over, and every fragment must fit as for a plain
+arm. Each row becomes one expansion of the body, so a table of ten rows
+indexes ten tests. Any other row layout (`=>`, nested repetition, a trailing
+separator, a leftover token, a group of the wrong arity) indexes nothing.
 
 Each metavariable is replaced by its argument's source text and `$crate` by
 `crate`; an `expr` or `literal` argument of more than one element (`-1`) is
@@ -261,7 +274,8 @@ deferred or escaping assertion inside the transcriber is refused exactly as it
 would be written by hand.
 
 This is not macro expansion in general. Generators defined in another file,
-`#[macro_use]` imports, repetition and procedural macros stay unindexed, and
+`#[macro_use]` imports, repetition other than the table form, and procedural
+macros stay unindexed, and
 reach through them keeps the limitations above. A generated test whose
 transcriber calls a helper macro from another file is indexed for reach, but
 an assertion inside that helper is refused like any untrusted macro.
@@ -327,6 +341,16 @@ an assertion inside that helper is refused like any untrusted macro.
    #7549) keeps the prior evidence, and no edge forms
    for an owner named only in a string literal, a caller that binds a local
    or parameter of the owner's name, or a second invocation site.
+8. **Same-file test table** (#6925): a file defines `macro_rules! edge_table`
+   with `$($name:ident($width:expr, $limit:expr, $want:expr))*` whose
+   transcriber emits one `#[test] fn $name` asserting `fits_edge($width,
+   $limit)` per row, and invokes it with rows under, on and over the limit.
+   The owner is reached through the generated tests and the boundary row
+   discriminates it, so it reads `exposed`, exactly as the same three tests
+   written by hand. Rows that never touch the boundary read `weakly_exposed`;
+   rows that discard the result read `reachable_unrevealed`; a row layout
+   outside the table form (`name => (..)`) registers no test and keeps
+   `no_static_path`.
 
 ## Required Evidence
 
@@ -359,6 +383,14 @@ an assertion inside that helper is refused like any untrusted macro.
 - `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::expands_each_invocation_with_its_arguments_and_lines`
 - `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::repetition_shadowing_scope_and_order_refuse`
 - `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::arm_selection_follows_count_and_fragment_shape`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::a_table_invocation_expands_one_test_per_row`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::separators_groups_and_plus_repetition_expand`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::tables_the_expander_cannot_split_exactly_refuse`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::a_local_macro_in_a_table_row_or_body_refuses`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::a_table_arm_follows_simple_arms_that_do_not_fit`
+- `crates/ripr/tests/macro_generated_tests.rs::a_table_generated_test_reads_like_the_hand_written_test`
+- `crates/ripr/tests/macro_generated_tests.rs::a_table_the_expander_cannot_split_exactly_adds_no_test`
+- Verdict corpus cases `macro-table-boundary-rows`, `macro-table-semicolon-rows`, `macro-table-far-rows`, `macro-table-smoke-rows` and `macro-table-arrow-rows-refused`.
 - `crates/ripr/src/analysis/facts/macro_generated_tests.rs::tests::macro_generated_tests_are_indexed_at_their_invocations`
 - `crates/ripr/tests/macro_generated_tests.rs::a_macro_generated_test_reads_like_the_hand_written_test`
 - `crates/ripr/tests/macro_generated_tests.rs::refused_shapes_and_uninvoked_generators_add_no_test`

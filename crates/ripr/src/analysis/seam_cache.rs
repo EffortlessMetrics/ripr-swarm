@@ -480,7 +480,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.87`: default-root observers retain inline unit identity across owner
 /// extraction, and inaccessible private-child calls lose direct evidence
 /// (#4680). Old entries preserve the wrong target kind or oracle credit.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.87";
+/// `1.88`: a same-file `macro_rules!` test table indexes one generated test
+/// per row (#6925). Old entries read the table's owner as unreached.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.88";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -613,7 +615,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.87";
 /// `0.91`: same call-fact budget withholding as full `1.85` (#8600).
 /// `0.92`: same cached observed-value test file as full `1.86` (#8948).
 /// `0.93`: same module-motion target and private relation evidence as full `1.87`.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.93";
+/// `0.94`: same macro table tests as full `1.88`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.94";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -748,7 +751,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.93";
 /// `0.91`: same call-fact budget withholding as full `1.85` (#8600).
 /// `0.92`: same cached observed-value test file as full `1.86` (#8948).
 /// `0.93`: same module-motion target and private relation evidence as full `1.87`.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.93";
+/// `0.94`: same macro table tests as full `1.88`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.94";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4636,7 +4640,8 @@ mod tests {
         // 1.84 -> 1.85: call-fact budget withholding (#8600).
         // 1.85 -> 1.86: cached observed-value test file (#8948).
         // 1.86 -> 1.87: module-motion target identity and private relation evidence (#4680).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.87");
+        // 1.87 -> 1.88: macro_rules! test tables index one test per row (#6925).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.88");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4711,8 +4716,9 @@ mod tests {
         // 0.85 -> 0.86: same composed golden-file, early error-variant and
         // returned-element field pins as full 1.80.
         // 0.92 -> 0.93: same module-motion evidence as full 1.87 (#4680).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.93");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.93");
+        // 0.93 -> 0.94: same macro table tests as full 1.88 (#6925).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.94");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.94");
     }
 
     #[test]

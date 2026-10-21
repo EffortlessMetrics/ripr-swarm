@@ -1,0 +1,23 @@
+{
+  "case_id": "macro-table-boundary-rows",
+  "subject_id": "authored-macro-table",
+  "origin": "authored",
+  "anchor": "src/lib.rs:5",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "table_row_boundary",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed",
+    "propagation_unknown"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

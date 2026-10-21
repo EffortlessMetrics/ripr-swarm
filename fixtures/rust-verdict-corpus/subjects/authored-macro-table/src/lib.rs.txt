@@ -1,0 +1,22 @@
+//! Width checks tested only through `macro_rules!` tables, the way itoa's
+//! `test!` table is. Each owner has its own table in `tests/table.rs`.
+
+pub fn fits_edge(width: usize, limit: usize) -> bool {
+    width <= limit
+}
+
+pub fn fits_semicolon(width: usize, limit: usize) -> bool {
+    width <= limit
+}
+
+pub fn fits_far(width: usize, limit: usize) -> bool {
+    width <= limit
+}
+
+pub fn fits_smoke(width: usize, limit: usize) -> bool {
+    width <= limit
+}
+
+pub fn fits_arrow(width: usize, limit: usize) -> bool {
+    width <= limit
+}

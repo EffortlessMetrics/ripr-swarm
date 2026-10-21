@@ -27,9 +27,19 @@
 //!   whose metavariable count matches the invocation's top-level arguments
 //!   (an `ident`, `literal`, `block` or `tt` argument must also have that
 //!   shape);
-//! - the selected transcriber contains `#[test]` and no repetition;
+//! - the selected transcriber contains `#[test]`; its only repetition is
+//!   the table form below;
 //! - no `use` in the file imports the generator's name, and the expansion
 //!   carries no `cfg` (other than `cfg(test)`) or `cfg_attr` attribute.
+//!
+//! The table form is a whole-matcher repetition `$( row ) sep? *` (or `+`)
+//! whose row is `$name:ident`, `literal`, `tt` or `block` variables,
+//! literal `,`, `;` or `:` tokens, and delimited groups of comma-separated
+//! metavariables (an `expr` outside a group needs a `,` or `;` after it),
+//! paired with a transcriber that is exactly one separator-free
+//! `$( body )*`. The invocation must split into rows with nothing left
+//! over; the body is emitted once per row. This is itoa's
+//! `test! { name(value, expected) ... }` table (#6925).
 //!
 //! Each metavariable is replaced by its argument's source text (an `expr`
 //! argument of more than one element is wrapped in parentheses to keep its
@@ -103,13 +113,13 @@ fn expand_local_test_macros_uncached(source: &str) -> Vec<ExpandedLocalTestMacro
         {
             continue;
         }
-        let Some(arguments) = call
-            .token_tree()
-            .and_then(|tree| top_level_arguments(&tree))
-        else {
+        let Some(tree) = call.token_tree() else {
             continue;
         };
-        let Some(text) = expand(definition, &arguments, &local_macros) else {
+        // A repetition arm reads the whole token tree, so a comma layout
+        // `top_level_arguments` refuses is not yet a refusal.
+        let arguments = top_level_arguments(&tree);
+        let Some(text) = expand(definition, &tree, arguments.as_deref(), &local_macros) else {
             continue;
         };
         let range = call.syntax().text_range();
@@ -371,7 +381,8 @@ fn is_expression(text: &str) -> bool {
 /// is outside the bounded shape, then substitutes into its transcriber.
 fn expand(
     definition: &ast::MacroRules,
-    arguments: &[Argument],
+    invocation: &ast::TokenTree,
+    arguments: Option<&[Argument]>,
     local_macros: &BTreeSet<String>,
 ) -> Option<String> {
     let body = definition.token_tree()?;
@@ -392,7 +403,15 @@ fn expand(
         {
             index += 1;
         }
+        if let Some(repetition) = repetition_matcher(&matcher) {
+            // The arm is the one rustc picks only when every row fits; a
+            // row that does not could mean a later arm, which this
+            // expander does not guess.
+            let rows = match_rows(&repetition, invocation)?;
+            return expand_rows(&transcriber, &rows, local_macros);
+        }
         let variables = simple_matcher(&matcher)?;
+        let arguments = arguments?;
         if variables.len() != arguments.len() {
             continue;
         }
@@ -412,7 +431,12 @@ fn expand(
         }
         // Arguments are spliced in too, so a local macro named or passed
         // in an argument is refused the same way.
-        let text = substitute(&transcriber, &variables, arguments)?;
+        let text = substitute(&transcriber, |name| {
+            let position = variables
+                .iter()
+                .position(|(variable, _)| variable == name)?;
+            Some((variables[position].1.as_str(), arguments.get(position)?))
+        })?;
         return (!text_invokes_local_macro(&text, local_macros)
             && !text_has_conditional_attribute(&text))
         .then_some(text);
@@ -502,10 +526,12 @@ fn imported_names(root: &SyntaxNode) -> BTreeSet<String> {
         .collect()
 }
 
-fn substitute(
+/// Replaces each `$name` in a transcriber's body (its delimiters
+/// stripped) with the argument `lookup` binds it to, with that argument's
+/// fragment kind.
+fn substitute<'a>(
     transcriber: &SyntaxNode,
-    variables: &[(String, String)],
-    arguments: &[Argument],
+    lookup: impl Fn(&str) -> Option<(&'a str, &'a Argument)>,
 ) -> Option<String> {
     let mut tokens: Vec<SyntaxToken> = transcriber
         .descendants_with_tokens()
@@ -529,15 +555,10 @@ fn substitute(
         if name.text() == "crate" {
             text.push_str("crate");
         } else {
-            let position = variables
-                .iter()
-                .position(|(variable, _)| variable == name.text())?;
-            let argument = arguments.get(position)?;
+            let (fragment, argument) = lookup(name.text())?;
             // A one-token argument needs no grouping; wrapping it would
             // hide a literal from the value readers.
-            if matches!(variables[position].1.as_str(), "expr" | "literal")
-                && argument.single().is_none()
-            {
+            if matches!(fragment, "expr" | "literal") && argument.single().is_none() {
                 text.push('(');
                 text.push_str(&argument.text);
                 text.push(')');
@@ -548,6 +569,239 @@ fn substitute(
         index += 2;
     }
     Some(text)
+}
+
+/// The most rows one repetition invocation may expand to.
+const MAX_REPETITION_ROWS: usize = 512;
+
+/// One element of a repetition matcher's row.
+enum RowItem {
+    /// `$name:fragment` outside any delimiter.
+    Variable { name: String, fragment: String },
+    /// A literal `,`, `;` or `:` between row elements.
+    Separator(SyntaxKind),
+    /// A delimited group of comma-separated metavariables, as in
+    /// `name($value:expr, $want:expr)`.
+    Group {
+        open: char,
+        variables: Vec<(String, String)>,
+    },
+}
+
+/// `$( row ) sep? *` or `+` as a whole matcher, the shape of a test table.
+struct RepetitionMatcher {
+    row: Vec<RowItem>,
+    separator: Option<SyntaxKind>,
+}
+
+/// What each row binds: variable name to (fragment kind, argument).
+type RowBindings = BTreeMap<String, (String, Argument)>;
+
+fn repetition_matcher(matcher: &SyntaxNode) -> Option<RepetitionMatcher> {
+    let elements = inner_elements(matcher);
+    let [dollar, row, rest @ ..] = elements.as_slice() else {
+        return None;
+    };
+    if dollar.kind() != SyntaxKind::DOLLAR
+        || row.kind() != SyntaxKind::TOKEN_TREE
+        || !element_text(row).starts_with('(')
+    {
+        return None;
+    }
+    let (separator, repeat) = match rest {
+        [repeat] => (None, repeat),
+        [separator, repeat]
+            if matches!(separator.kind(), SyntaxKind::COMMA | SyntaxKind::SEMICOLON) =>
+        {
+            (Some(separator.kind()), repeat)
+        }
+        _ => return None,
+    };
+    if !matches!(repeat.kind(), SyntaxKind::STAR | SyntaxKind::PLUS) {
+        return None;
+    }
+    let items = row_items(row.as_node()?)?;
+    Some(RepetitionMatcher {
+        row: items,
+        separator,
+    })
+}
+
+fn row_items(row: &SyntaxNode) -> Option<Vec<RowItem>> {
+    let elements = inner_elements(row);
+    let mut items = Vec::new();
+    let mut names = BTreeSet::new();
+    let mut index = 0;
+    while index < elements.len() {
+        let element = elements.get(index)?;
+        match element.kind() {
+            SyntaxKind::DOLLAR => {
+                let name = elements.get(index + 1)?;
+                let colon = elements.get(index + 2)?;
+                let fragment = elements.get(index + 3)?;
+                if !is_identifier(name.kind())
+                    || colon.kind() != SyntaxKind::COLON
+                    || !is_identifier(fragment.kind())
+                    || !names.insert(element_text(name))
+                {
+                    return None;
+                }
+                items.push(RowItem::Variable {
+                    name: element_text(name),
+                    fragment: element_text(fragment),
+                });
+                index += 4;
+            }
+            SyntaxKind::TOKEN_TREE => {
+                let variables = simple_matcher(element.as_node()?)?;
+                if variables.is_empty()
+                    || !variables.iter().all(|(name, _)| names.insert(name.clone()))
+                {
+                    return None;
+                }
+                items.push(RowItem::Group {
+                    open: element_text(element).chars().next()?,
+                    variables,
+                });
+                index += 1;
+            }
+            kind @ (SyntaxKind::COMMA | SyntaxKind::SEMICOLON | SyntaxKind::COLON) => {
+                items.push(RowItem::Separator(kind));
+                index += 1;
+            }
+            _ => return None,
+        }
+    }
+    (!items.is_empty()).then_some(items)
+}
+
+/// Splits the invocation into the rows the matcher describes. `None` when
+/// any element is left over or any fragment is uncertain: a table that
+/// rustc might read differently registers nothing.
+fn match_rows(
+    matcher: &RepetitionMatcher,
+    invocation: &ast::TokenTree,
+) -> Option<Vec<RowBindings>> {
+    let elements = inner_elements(invocation.syntax());
+    let mut rows = Vec::new();
+    let mut position = 0;
+    while position < elements.len() {
+        if !rows.is_empty()
+            && let Some(separator) = matcher.separator
+        {
+            if elements.get(position)?.kind() != separator {
+                return None;
+            }
+            position += 1;
+            // `$(..),*` takes no trailing separator.
+            if position >= elements.len() {
+                return None;
+            }
+        }
+        if rows.len() == MAX_REPETITION_ROWS {
+            return None;
+        }
+        let mut bindings = RowBindings::new();
+        for (index, item) in matcher.row.iter().enumerate() {
+            match item {
+                RowItem::Separator(kind) => {
+                    if elements.get(position)?.kind() != *kind {
+                        return None;
+                    }
+                    position += 1;
+                }
+                RowItem::Variable { name, fragment } => {
+                    let width = match fragment.as_str() {
+                        "ident" | "tt" | "block" => 1,
+                        "literal" => {
+                            if elements.get(position)?.kind() == SyntaxKind::MINUS {
+                                2
+                            } else {
+                                1
+                            }
+                        }
+                        // An expression ends where rustc's follow set
+                        // does; only an explicit row separator after it
+                        // makes that visible.
+                        "expr" => {
+                            let end = match matcher.row.get(index + 1) {
+                                Some(RowItem::Separator(end)) => *end,
+                                None => matcher.separator?,
+                                Some(_) => return None,
+                            };
+                            elements[position..]
+                                .iter()
+                                .position(|element| element.kind() == end)
+                                .unwrap_or(elements.len() - position)
+                        }
+                        _ => return None,
+                    };
+                    let argument = argument(elements.get(position..position + width)?)?;
+                    if !argument_fits(fragment, &argument)? {
+                        return None;
+                    }
+                    bindings.insert(name.clone(), (fragment.clone(), argument));
+                    position += width;
+                }
+                RowItem::Group { open, variables } => {
+                    let element = elements.get(position)?;
+                    if element.kind() != SyntaxKind::TOKEN_TREE
+                        || !element_text(element).starts_with(*open)
+                    {
+                        return None;
+                    }
+                    let tree = ast::TokenTree::cast(element.as_node()?.clone())?;
+                    let arguments = top_level_arguments(&tree)?;
+                    if arguments.len() != variables.len() {
+                        return None;
+                    }
+                    for ((name, fragment), argument) in variables.iter().zip(arguments) {
+                        if !argument_fits(fragment, &argument)? {
+                            return None;
+                        }
+                        bindings.insert(name.clone(), (fragment.clone(), argument));
+                    }
+                    position += 1;
+                }
+            }
+        }
+        rows.push(bindings);
+    }
+    (!rows.is_empty()).then_some(rows)
+}
+
+/// A transcriber that is exactly one separator-free repetition
+/// `$( body )*` over the matcher's variables, emitted once per row.
+fn expand_rows(
+    transcriber: &SyntaxNode,
+    rows: &[RowBindings],
+    local_macros: &BTreeSet<String>,
+) -> Option<String> {
+    let elements = inner_elements(transcriber);
+    let [dollar, body, repeat] = elements.as_slice() else {
+        return None;
+    };
+    if dollar.kind() != SyntaxKind::DOLLAR
+        || body.kind() != SyntaxKind::TOKEN_TREE
+        || !element_text(body).starts_with('(')
+        || !matches!(repeat.kind(), SyntaxKind::STAR | SyntaxKind::PLUS)
+    {
+        return None;
+    }
+    let body = ast::TokenTree::cast(body.as_node()?.clone())?;
+    if !has_test_attribute(&body) || invokes_local_macro(&body, local_macros) {
+        return None;
+    }
+    let mut text = String::new();
+    for row in rows {
+        text.push_str(&substitute(body.syntax(), |name| {
+            row.get(name)
+                .map(|(fragment, argument)| (fragment.as_str(), argument))
+        })?);
+        text.push('\n');
+    }
+    (!text_invokes_local_macro(&text, local_macros) && !text_has_conditional_attribute(&text))
+        .then_some(text)
 }
 
 #[cfg(test)]
@@ -581,9 +835,6 @@ mod tests {
 
     #[test]
     fn repetition_shadowing_scope_and_order_refuse() {
-        let repetition = "macro_rules! cases {\n    ($($name:ident),*) => { $( #[test] fn $name() {} )* };\n}\ncases!(a, b);\n";
-        assert!(expand_local_test_macros(repetition).is_empty());
-
         let duplicate =
             format!("{AGE_CASES}mod other {{ macro_rules! age_case {{ () => {{}}; }} }}\n");
         assert!(expand_local_test_macros(&duplicate).is_empty());
@@ -700,5 +951,182 @@ mod tests {
             1,
             "a glob import keeps the generator"
         );
+    }
+
+    const ITOA_TABLE: &str = "macro_rules! test {\n    ($($name:ident($value:expr, $expected:expr))*) => {\n        $(\n            #[test]\n            fn $name() {\n                assert_eq!(format($value), $expected);\n            }\n        )*\n    };\n}\n\ntest! {\n    zero(0u64, \"0\")\n    max(u64::MAX, \"18446744073709551615\")\n    minus(-1i64 + 0, \"-1\")\n}\n";
+
+    #[test]
+    fn a_table_invocation_expands_one_test_per_row() {
+        let expanded = expand_local_test_macros(ITOA_TABLE);
+        assert_eq!(expanded.len(), 1, "{expanded:?}");
+        assert_eq!(expanded[0].macro_name, "test");
+        assert_eq!((expanded[0].start_line, expanded[0].end_line), (12, 16));
+        let text = &expanded[0].text;
+        for call in [
+            "fn zero() {\n                assert_eq!(format(0u64), \"0\");",
+            "fn max() {\n                assert_eq!(format((u64::MAX)), \"18446744073709551615\");",
+            "assert_eq!(format((-1i64 + 0)), \"-1\");",
+        ] {
+            assert!(text.contains(call), "{call}\n{text}");
+        }
+        assert_eq!(text.matches("#[test]").count(), 3, "{text}");
+        let facts = summarize_file_with_parser(Path::new("tests/t.rs"), text)
+            .map(|facts| facts.tests.len());
+        assert_eq!(facts, Ok(3), "premise: the expansion parses as three tests");
+    }
+
+    #[test]
+    fn separators_groups_and_plus_repetition_expand() {
+        let comma = "macro_rules! cases {\n    ($($name:ident: $input:expr, $want:expr);+) => {\n        $( #[test] fn $name() { assert_eq!(gate($input), $want); } )*\n    };\n}\ncases! { nine: 9, false; ten: 10 + 0, true }\n";
+        let expanded = expand_local_test_macros(comma);
+        assert_eq!(expanded.len(), 1, "{expanded:?}");
+        assert!(
+            expanded[0]
+                .text
+                .contains("fn nine() { assert_eq!(gate(9), false); }")
+        );
+        assert!(
+            expanded[0]
+                .text
+                .contains("fn ten() { assert_eq!(gate((10 + 0)), true); }")
+        );
+
+        let square = "macro_rules! cases {\n    ($($name:ident[$a:literal, $b:tt])*) => {\n        $( #[test] fn $name() { assert_eq!(gate($a, $b), 1); } )*\n    };\n}\ncases! { one[1, 2] two[-3, 4] }\n";
+        let expanded = expand_local_test_macros(square);
+        assert_eq!(expanded.len(), 1, "{expanded:?}");
+        assert!(
+            expanded[0].text.contains("gate((-3), 4)"),
+            "{}",
+            expanded[0].text
+        );
+    }
+
+    #[test]
+    fn tables_the_expander_cannot_split_exactly_refuse() {
+        let table = |matcher: &str, body: &str, invocation: &str| {
+            format!(
+                "macro_rules! t {{\n    ({matcher}) => {{ {body} }};\n}}\nt! {{ {invocation} }}\n"
+            )
+        };
+        let body = "$( #[test] fn $name() { assert_eq!(gate($v), $w); } )*";
+        let ok = table("$($name:ident($v:expr, $w:expr))*", body, "a(1, 2) b(3, 4)");
+        assert_eq!(expand_local_test_macros(&ok).len(), 1, "premise: {ok}");
+
+        for (label, matcher, body, invocation) in [
+            (
+                "a trailing separator",
+                "$($name:ident($v:expr, $w:expr)),*",
+                body,
+                "a(1, 2), b(3, 4),",
+            ),
+            (
+                "leftover tokens",
+                "$($name:ident($v:expr, $w:expr))*",
+                body,
+                "a(1, 2) b(3, 4) +",
+            ),
+            (
+                "a wrong group arity",
+                "$($name:ident($v:expr, $w:expr))*",
+                body,
+                "a(1, 2) b(3)",
+            ),
+            (
+                "a wrong delimiter",
+                "$($name:ident($v:expr, $w:expr))*",
+                body,
+                "a[1, 2]",
+            ),
+            (
+                "an ident that is a literal",
+                "$($name:ident($v:expr, $w:expr))*",
+                body,
+                "7(1, 2)",
+            ),
+            ("no rows", "$($name:ident($v:expr, $w:expr))*", body, ""),
+            (
+                "a nested repetition",
+                "$($name:ident($($v:expr),*))*",
+                body,
+                "a(1, 2)",
+            ),
+            (
+                "an expr with no row separator after it",
+                "$($name:ident $v:expr)*",
+                "$( #[test] fn $name() { gate($v); } )*",
+                "a 1 b 2",
+            ),
+            (
+                "an unsupported fragment",
+                "$($name:ident($v:ty, $w:expr))*",
+                body,
+                "a(u8, 2)",
+            ),
+            (
+                "a repeated variable name",
+                "$($name:ident($name:expr, $w:expr))*",
+                body,
+                "a(1, 2)",
+            ),
+            (
+                "a row item that is not a separator",
+                "$($name:ident => ($v:expr, $w:expr))*",
+                body,
+                "a => (1, 2)",
+            ),
+            (
+                "a separator inside the transcriber",
+                "$($name:ident($v:expr, $w:expr))*",
+                "$( #[test] fn $name() { assert_eq!(gate($v), $w); } ),*",
+                "a(1, 2)",
+            ),
+            (
+                "a transcriber with more than the repetition",
+                "$($name:ident($v:expr, $w:expr))*",
+                "fn helper() {} $( #[test] fn $name() { assert_eq!(gate($v), $w); } )*",
+                "a(1, 2)",
+            ),
+            (
+                "a variable the matcher never bound",
+                "$($name:ident($v:expr, $w:expr))*",
+                "$( #[test] fn $name() { assert_eq!(gate($v), $other); } )*",
+                "a(1, 2)",
+            ),
+            (
+                "a body with no test attribute",
+                "$($name:ident($v:expr, $w:expr))*",
+                "$( fn $name() { assert_eq!(gate($v), $w); } )*",
+                "a(1, 2)",
+            ),
+        ] {
+            assert!(
+                expand_local_test_macros(&table(matcher, body, invocation)).is_empty(),
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_local_macro_in_a_table_row_or_body_refuses() {
+        let skip = "macro_rules! skip {\n    ($($t:tt)*) => {};\n}\n";
+        let rows = format!(
+            "{skip}macro_rules! t {{\n    ($($name:ident($v:expr))*) => {{ $( #[test] fn $name() {{ assert!(gate($v)); }} )* }};\n}}\nt! {{ a(skip!(1)) }}\n"
+        );
+        assert!(expand_local_test_macros(&rows).is_empty());
+        let body = format!(
+            "{skip}macro_rules! t {{\n    ($($name:ident($v:expr))*) => {{ $( #[test] fn $name() {{ skip!(assert!(gate($v))); }} )* }};\n}}\nt! {{ a(1) }}\n"
+        );
+        assert!(expand_local_test_macros(&body).is_empty());
+        let conditional = "macro_rules! t {\n    ($($name:ident($v:expr))*) => { $( #[cfg(any())] #[test] fn $name() { assert!(gate($v)); } )* };\n}\nt! { a(1) }\n";
+        assert!(expand_local_test_macros(conditional).is_empty());
+    }
+
+    #[test]
+    fn a_table_arm_follows_simple_arms_that_do_not_fit() {
+        let source = "macro_rules! t {\n    ($name:ident, $v:expr) => { #[test] fn $name() { assert!(simple($v)); } };\n    ($($name:ident($v:expr))*) => { $( #[test] fn $name() { assert!(table($v)); } )* };\n}\nt! { a(1) b(2) }\nt!(c, 3);\n";
+        let expanded = expand_local_test_macros(source);
+        assert_eq!(expanded.len(), 2, "{expanded:?}");
+        assert!(expanded[0].text.contains("table(1)") && expanded[0].text.contains("table(2)"));
+        assert!(expanded[1].text.contains("simple(3)"));
     }
 }
