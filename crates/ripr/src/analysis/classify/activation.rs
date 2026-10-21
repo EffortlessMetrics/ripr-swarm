@@ -864,6 +864,15 @@ fn missing_discriminator_facts(
             &mut returned_unresolved,
         )
         && returned_unresolved.is_none()
+        && !owner_fn.is_some_and(|owner| {
+            observed_input_separates_threshold_move(
+                &view,
+                owner,
+                related_tests,
+                helper_chain,
+                index,
+            )
+        })
     {
         missing.push(fact);
     }
@@ -914,6 +923,70 @@ fn missing_discriminator_facts(
         return Vec::new();
     }
     missing
+}
+
+/// Whether an observed exact input of the compared parameter separates the old
+/// and new returned comparison when only its integer-literal threshold moved
+/// (`x > 100` to `x > 102`: `thr(101)` is true before and false after). Such an
+/// input is a discriminator even though it equals neither threshold, so the
+/// equality-boundary gap must not be borrowed (#9147). Fail-closed: any shape
+/// this cannot read exactly (a different operand, a non-parameter or reversed
+/// left side, a suffixed or computed literal, a non-integer input) declines
+/// and leaves the gap in place.
+fn observed_input_separates_threshold_move(
+    view: &Probe,
+    owner: &FunctionSummary,
+    related_tests: &[&TestSummary],
+    helper_chain: Option<&super::helper_transfer::HelperChain>,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    fn parts(expression: &str) -> Option<(&'static str, String, i128)> {
+        for operator in [">=", "<=", "==", "!=", ">", "<"] {
+            if let Some((left, right)) = expression.split_once(operator) {
+                let (left, right) = (clean_operand(left), clean_operand(right));
+                if left.is_empty() {
+                    return None;
+                }
+                return Some((operator, left, plain_integer(&right)?));
+            }
+        }
+        None
+    }
+    fn plain_integer(text: &str) -> Option<i128> {
+        let digits = text.trim().replace('_', "");
+        let unsigned = digits.strip_prefix('-').unwrap_or(&digits);
+        if unsigned.is_empty() || !unsigned.chars().all(|ch| ch.is_ascii_digit()) {
+            return None;
+        }
+        digits.parse().ok()
+    }
+    fn holds(operator: &str, value: i128, threshold: i128) -> bool {
+        match operator {
+            ">=" => value >= threshold,
+            "<=" => value <= threshold,
+            "==" => value == threshold,
+            "!=" => value != threshold,
+            ">" => value > threshold,
+            _ => value < threshold,
+        }
+    }
+    let Some(before) = view.before.as_deref() else {
+        return false;
+    };
+    let (Some((old_op, old_left, old_threshold)), Some((new_op, new_left, new_threshold))) =
+        (parts(before), parts(&view.expression))
+    else {
+        return false;
+    };
+    let parameters = function_parameters(owner);
+    if old_left != new_left || !parameters.contains(&new_left) {
+        return false;
+    }
+    call_values_for_owner(owner, &parameters, related_tests, helper_chain, index)
+        .iter()
+        .filter_map(|row| parameter_value(row, &new_left))
+        .filter_map(|cell| plain_integer(&cell.value))
+        .any(|value| holds(old_op, value, old_threshold) != holds(new_op, value, new_threshold))
 }
 
 #[allow(

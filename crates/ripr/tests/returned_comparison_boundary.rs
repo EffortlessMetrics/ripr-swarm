@@ -280,3 +280,88 @@ fn an_explicit_return_of_a_compound_value_keeps_the_return_value_reading() -> Re
     );
     Ok(())
 }
+
+const INTERMEDIATE_INPUT: &str = "use thr::thr;\n\n#[test]\nfn between() {\n    assert!(!thr(101));\n}\n\n#[test]\nfn above() {\n    assert!(thr(500));\n}\n";
+
+fn assert_gap_named(findings: &[Finding], named: bool) -> Result<(), String> {
+    let return_value = family(findings, "return_value")?;
+    assert_eq!(
+        return_value
+            .ripr
+            .infect
+            .summary
+            .contains("equality-boundary discriminator is missing"),
+        named,
+        "{return_value:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_intermediate_input_separates_a_multi_value_tail_threshold_move() -> Result<(), String> {
+    // #9147: `thr(101)` is true before (`> 100`) and false after (`> 102`), so
+    // it discriminates even though it equals neither threshold.
+    let findings = findings("    x > 102", OLD, INTERMEDIATE_INPUT)?;
+    assert_gap_named(&findings, false)?;
+    let return_value = family(&findings, "return_value")?;
+    assert_eq!(
+        return_value.class,
+        ExposureClass::Exposed,
+        "{return_value:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_intermediate_input_separates_a_multi_value_explicit_return_threshold_move()
+-> Result<(), String> {
+    let findings = findings(
+        "    return x > 102;",
+        "    return x > 100;",
+        INTERMEDIATE_INPUT,
+    )?;
+    let return_value = family(&findings, "return_value")?;
+    assert!(
+        return_value.probe.expression.contains("return"),
+        "{return_value:?}"
+    );
+    assert_gap_named(&findings, false)?;
+    assert_eq!(
+        return_value.class,
+        ExposureClass::Exposed,
+        "{return_value:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn far_only_inputs_keep_the_multi_value_threshold_gap() -> Result<(), String> {
+    // Negative control: 50 and 500 are on the same side of both thresholds.
+    for (new, old) in [
+        ("    x > 102", OLD),
+        ("    return x > 102;", "    return x > 100;"),
+    ] {
+        let findings = findings(new, old, FAR_INPUTS)?;
+        assert_gap_named(&findings, true)?;
+        let return_value = family(&findings, "return_value")?;
+        assert_ne!(
+            return_value.class,
+            ExposureClass::Exposed,
+            "{return_value:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_input_outside_the_moved_range_keeps_the_multi_value_threshold_gap() -> Result<(), String> {
+    // Negative control: 99 and 103 flank the range (100, 102] without
+    // landing inside it, so neither separates the versions.
+    let findings = findings(
+        "    x > 102",
+        OLD,
+        "use thr::thr;\n\n#[test]\nfn below() {\n    assert!(!thr(99));\n}\n\n#[test]\nfn above() {\n    assert!(thr(103));\n}\n",
+    )?;
+    assert_gap_named(&findings, true)?;
+    Ok(())
+}
