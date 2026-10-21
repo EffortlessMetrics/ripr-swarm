@@ -2,7 +2,6 @@ use super::*;
 
 /// Pin argv and redirect spelling independently of the rendering helpers.
 /// These are the default packet paths, not a backslash-free explicit --out.
-#[cfg(unix)]
 #[test]
 fn pilot_followups_preserve_native_default_artifacts() {
     for (root_text, prefix, suffix) in [

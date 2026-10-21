@@ -24,6 +24,7 @@ use crate::output::pilot::ranking::{top_actionable_seams, withheld_static_limita
 use crate::output::python_repair_card::PythonRepairCard;
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
 mod native_artifacts;
 mod spec_0237;
 mod timeout_retry;
