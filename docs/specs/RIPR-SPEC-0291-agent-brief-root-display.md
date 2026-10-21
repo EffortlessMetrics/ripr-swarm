@@ -34,6 +34,8 @@ Support-tier impact:
 - None. The agent brief JSON (schema `0.1`) keeps every field; only the
   rendered `next.*` and per-seam `verification.*` command strings change,
   and only for roots whose spelling `display_path` would rewrite.
+- Claim boundaries remain governed by
+  [support tiers](../status/SUPPORT_TIERS.md).
 
 Policy impact:
 
