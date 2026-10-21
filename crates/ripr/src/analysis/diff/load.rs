@@ -1214,6 +1214,7 @@ fn another_base_candidate_with_limits(
             &[
                 "diff",
                 "--relative",
+                "--ignore-submodules=none",
                 "--numstat",
                 &format!("{name}...HEAD"),
                 "--",
