@@ -129,6 +129,17 @@ fn a_leading_bom_does_not_change_the_module_walk() -> Result<(), String> {
             .collect::<Vec<_>>(),
         vec!["discount_applies"]
     );
+
+    // An `include!` fragment is lexed as Rust whatever its extension.
+    let fixture = Fixture::new("#[cfg(test)] mod tests;", "src/tests/data/used_tests.rs")?;
+    fixture.write("src/tests/mod.rs", "include!(\"declarations.inc\");\n")?;
+    fixture.write(
+        "src/tests/declarations.inc",
+        &format!("{bom}/* mod used_tests; */\n"),
+    )?;
+    let finding = fixture.finding()?;
+    assert_eq!(finding.class, ExposureClass::NoStaticPath, "{finding:?}");
+    assert!(finding.related_tests.is_empty(), "{finding:?}");
     Ok(())
 }
 

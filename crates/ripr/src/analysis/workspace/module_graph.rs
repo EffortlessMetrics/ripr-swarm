@@ -1199,7 +1199,9 @@ fn read_source(workspace_root: &Path, file: &Path) -> SourceRead {
     // place the stray `U+FEFF` is a parse error, the module scan came back
     // empty, and the file's `mod`/`#[path]` edges vanished from the tree.
     let mut bytes = bytes;
-    if file.extension().is_some_and(|ext| ext == "rs") && bytes.starts_with(b"\xEF\xBB\xBF") {
+    // `include!` fragments are lexed as Rust whatever their extension; only
+    // manifests are read as TOML.
+    if file.extension().is_none_or(|ext| ext != "toml") && bytes.starts_with(b"\xEF\xBB\xBF") {
         bytes.drain(..3);
     }
     match String::from_utf8(bytes) {
