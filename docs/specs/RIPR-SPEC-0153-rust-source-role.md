@@ -304,6 +304,17 @@ is not a measured throughput, peak-RSS, constant-memory, or reduced-coverage cla
 - Manifest parsing pins: explicit paths extracted, entries without
   `path` contribute nothing, malformed TOML yields no targets,
   autodiscovery flags do not drop explicit targets.
+- BOM pins: a leading UTF-8 BOM is stripped before the module-graph scan,
+  exactly as rustc drops it, so a BOM-prefixed module file walks the same
+  as the identical file without one; the strip also applies to literal
+  `include!` fragments whatever their extension, and a BOM must never turn
+  a complete walk incomplete (which would retain rather than reject an
+  uncompiled test). Pinned by the in-crate regression test
+  `a_leading_bom_does_not_change_the_module_walk` against all three BOM
+  placements (#9009); a golden-fixture or honesty-corpus graduation is
+  precluded because the repository text-encoding gate (itself an honesty
+  control: a BOM is invisible in review) forbids BOM bytes in tracked
+  files, so the runtime test is the graduated control.
 - Config pins: the opt-in parses as relative paths, joins the identity
   canonically, and absolute paths fail closed with a named error.
 - Never-compiled tests (#6293): a `#[test]` function whose own `cfg` is false
@@ -411,8 +422,11 @@ executable-test membership, layout classification, naming-lookalike
 rejection, and cfg-variant equivalence against `facts::build_index`.
 `analysis/syntax/module_tree.rs` pins the per-file edge scan and every
 construct that makes it incomplete; `analysis/workspace/module_graph.rs`
-pins the package walk and each false-orphan path the #4556 reviews
-found; `analysis/language/rust/mod.rs` pins the diff-level module-tree
+pins the package walk, each false-orphan path the #4556 reviews
+found, and the leading-BOM strip for module files and literal `include!`
+fragments (#9009); `crates/ripr/tests/rust_discovery_comments.rs`
+pins end to end that a BOM-prefixed module walk, `#[path]` rename, and
+`include!` fragment behave exactly like their BOM-free counterparts. `analysis/language/rust/mod.rs` pins the diff-level module-tree
 seeding and `lsp/diagnostics.rs` the matching editor partition.
 `cargo xtask check-rust-source-role-authority` structurally rejects
 consumer-side role re-derivation and inventories the approved
