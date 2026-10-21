@@ -671,6 +671,13 @@ fn find_related_tests_with_candidates<'a>(
     dependency_edges: Option<&DependencyEdgeContext<'_>>,
     candidates: RelatedTestCandidates<'_>,
 ) -> Vec<(&'a TestSummary, RelationReason)> {
+    // #9173: Cargo compiles and runs a build script before the package, as a
+    // separate crate, so no test of the package can call into it. Without a
+    // test file that names `build.rs` (an `include!` or `#[path]` mount) no
+    // name, stem or substring signal may relate a test to it.
+    if is_root_build_script(&probe.location.file) && !any_test_file_names_build_script(index) {
+        return Vec::new();
+    }
     let mut related: Vec<(&TestSummary, RelationReason)> = Vec::new();
     let owner_name = owner_fn.map(|f| f.name.as_str()).unwrap_or("");
     let probe_tokens = extract_identifier_tokens(&probe.expression);
@@ -2244,6 +2251,28 @@ const GENERIC_PROBE_TOKENS: &[&str] = &[
     "test",
     "tests",
 ];
+
+/// Whether `path` is a package's root `build.rs`: the file name is `build.rs`
+/// and no `src`, `tests`, `examples` or `benches` directory sits above it. A
+/// `package.build = "tools/gen.rs"` script is not recognised and keeps the
+/// ordinary relation rules.
+fn is_root_build_script(path: &Path) -> bool {
+    let text = normalize_path(path);
+    let mut parts = text.rsplit('/');
+    parts.next() == Some("build.rs")
+        && !parts.any(|part| matches!(part, "src" | "tests" | "examples" | "benches"))
+}
+
+/// Whether any indexed test file spells `build.rs`, the only way a test
+/// target could mount a build script and reach it.
+fn any_test_file_names_build_script(index: &RustIndex) -> bool {
+    index.tests().iter().any(|test| {
+        index
+            .files()
+            .get(&test.file)
+            .is_some_and(|facts| facts.data().source.contains("build.rs"))
+    })
+}
 
 /// Whether a test file is named for the probe's source stem: the stem is a
 /// whole `_` word of the test file's own stem (`tests/pricing.rs`,
@@ -10386,6 +10415,58 @@ try_parse_summary(raw).map_err(Into::into)"
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].0.name, "repo_lane_deserializes_fields_correctly");
         assert_eq!(related[0].1, RelationReason::AssertionTargetAffinity);
+    }
+
+    /// #9173: a package's root `build.rs` runs under Cargo before the package
+    /// compiles, so a test merely named for a token of the changed
+    /// expression (here from a string literal) must not relate to it.
+    #[test]
+    fn root_build_script_probe_relates_no_name_token_test() {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: vec![test(
+                "tests/test_lints.rs",
+                "test_allow_attributes",
+                "let x = 1; let _ = x;",
+            )],
+            ..Default::default()
+        });
+        let expression = ".arg(\"--cap-lints=allow\")";
+
+        for file in ["build.rs", "./build.rs", "member/build.rs"] {
+            let probe = probe(file, expression);
+            let indexed = find_related_tests_with_candidate_index(
+                &probe,
+                None,
+                &index,
+                true,
+                None,
+                None,
+                &RelatedTestCandidateIndex::new(&index),
+            );
+            let full_scan = find_related_tests_with_candidates(
+                &probe,
+                None,
+                &index,
+                true,
+                None,
+                None,
+                RelatedTestCandidates::FullScan,
+            );
+            assert!(
+                indexed.is_empty(),
+                "indexed related for {file}: {indexed:?}"
+            );
+            assert!(full_scan.is_empty(), "full scan related for {file}");
+        }
+
+        // Discriminating control: the same expression in a `src/` file keeps
+        // the name-token relation, and `src/build.rs` is an ordinary module.
+        for file in ["src/probe.rs", "src/build.rs"] {
+            let probe = probe(file, expression);
+            let related = find_related_tests(&probe, None, &index, true, None, None);
+            assert_eq!(related.len(), 1, "control for {file}");
+            assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
+        }
     }
 
     /// Another crate's common assertion token does not silence the only

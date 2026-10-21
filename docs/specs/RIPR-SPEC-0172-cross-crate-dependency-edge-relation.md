@@ -264,6 +264,17 @@ call.
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::manifests_with_unindexed_files_names_partial_packages`
 - `crates/ripr/src/analysis/syntax/ra.rs::tests::impl_context_names_the_self_type_only_for_plain_named_impls`
 
+## Root build scripts relate no test by name (#9173)
+
+Cargo compiles and runs a package's root `build.rs` before the package, as a
+separate crate; no test of the package can call into it. A probe in a root
+`build.rs` (no `src`, `tests`, `examples` or `benches` directory above it)
+therefore relates no test through a name, stem or substring token, unless some
+indexed test file spells `build.rs` (an `include!` or `#[path]` mount), in which
+case the ordinary rules apply. A `package.build = "tools/gen.rs"` script is not
+recognised and keeps the ordinary rules. Fixture:
+`fixtures/rust_build_script_no_test_reach`.
+
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/classify/related_tests.rs` —

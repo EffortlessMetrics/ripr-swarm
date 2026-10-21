@@ -1,0 +1,12 @@
+diff --git a/build.rs b/build.rs
+index 0000000..1111111 100644
+--- a/build.rs
++++ b/build.rs
+@@ -4,6 +4,7 @@ fn compile_probe() -> bool {
+     Command::new("rustc")
+         .arg("--crate-type=lib")
+         .arg("--emit=metadata")
++        .arg("--cap-lints=allow")
+         .status()
+         .is_ok()
+ }
