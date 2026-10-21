@@ -5,5 +5,6 @@
   `ripr_list_gaps` and `ripr_get_gap` use, so the id an agent passes back
   names the same gap on every surface. The seam-side content hash
   (`gap:<16 hex>`) the field used to carry is kept additively as
-  `subject.seam_content_gap_id`; the readable id is re-minted from the seam
-  by the producer's own minter, not a second one (#8638).
+  `subject.seam_content_gap_id`. The card reports the bound finding's own id
+  (null when no finding binds the seam), never an id re-minted from the seam
+  (#8638).

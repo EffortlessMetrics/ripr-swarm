@@ -265,7 +265,8 @@ pub struct RepairCardSubject {
     /// The readable canonical gap id agents receive from `ripr check`,
     /// `ripr_list_gaps` and `ripr_get_gap` and pass back
     /// (`gap:rust:{file}:{owner}:{behavior}:{probe}:{discriminator}`, #8638).
-    /// It is minted by the producer's own gap-id minter, never by the card.
+    /// It is the bound finding's own id (the shared seam-finding join), never
+    /// re-minted from the seam; null when no finding binds the seam.
     pub canonical_gap_id: Option<String>,
     /// The seam-side content-hash gap id (`gap:<16 hex>`) this field carried
     /// before #8638, kept additive under a name that says what it is. Neither

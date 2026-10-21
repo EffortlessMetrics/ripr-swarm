@@ -123,6 +123,13 @@ pub(crate) struct SeamCardFacts<'a> {
     /// The finding ID the witness was projected from (the `ripr explain`
     /// route names it).
     pub(crate) finding_id: Option<&'a str>,
+    /// The canonical gap id of the bound finding, exactly as `ripr check`,
+    /// `ripr_list_gaps` and `ripr_get_gap` print it. The card reports this id
+    /// and never re-mints one from the seam: a finding can key its id from
+    /// text the seam does not carry (a whole changed line), so only the
+    /// bound finding's own id is byte-equal across surfaces (#8638). `None`
+    /// when no finding binds the seam.
+    pub(crate) finding_gap_id: Option<&'a str>,
     /// The latest recorded repair attempt for this seam, when one exists.
     pub(crate) attempt: Option<&'a RepairAttemptManifest>,
     /// The rendered complete canonical packet envelope this card routes to.
@@ -155,6 +162,7 @@ pub(crate) fn repair_card_for_entry(
         candidate_seams,
     )
     .map_err(AgentCardError::witness_unavailable)?;
+    let (witness_pack, finding_gap_id) = witness_pack;
     let (finding_id, witness) = match witness_pack {
         Some((id, witness)) => (Some(id), Some(witness)),
         None => (None, None),
@@ -194,6 +202,7 @@ pub(crate) fn repair_card_for_entry(
         entry,
         witness: witness.as_ref(),
         finding_id: finding_id.as_deref(),
+        finding_gap_id: finding_gap_id.as_deref(),
         attempt: attempt.as_ref(),
         packet_json: &packet_json,
         repository_head: &repository_head,
@@ -569,16 +578,14 @@ pub(crate) fn assemble_repair_card(
         },
         subject: RepairCardSubject {
             seam_id,
-            // #8638: the card reports the readable id `ripr check`,
-            // `ripr_list_gaps` and `ripr_get_gap` use, minted by the
-            // producer's own minter. The seam-side content hash stays the
-            // internal join key and rides additively under its own name.
-            // Fail closed: a seam that cannot re-mint the readable id (a
-            // non-Rust path) reports no `canonical_gap_id` rather than
-            // publishing the hash as an address no gap tool accepts. The
-            // readable id comes from the seam, so a repair-ready seam with
-            // no bound finding still carries the id `ripr_list_gaps` lists.
-            canonical_gap_id: crate::analysis::canonical_gap::readable_gap_id_for_seam(entry),
+            // #8638: the card reports the bound finding's own canonical gap
+            // id, the readable id `ripr check`, `ripr_list_gaps` and
+            // `ripr_get_gap` use. It is never re-minted from the seam (a
+            // finding can key its id from a whole changed line the seam does
+            // not carry), and fails closed to null when no finding binds the
+            // seam. The seam-side content hash stays the internal join key
+            // and rides additively under its own name.
+            canonical_gap_id: facts.finding_gap_id.map(str::to_string),
             seam_content_gap_id: readiness.canonical_gap_id.clone(),
             finding_id: facts.finding_id.map(str::to_string),
         },
@@ -748,11 +755,11 @@ fn witness_for_seam(
     entry: &ClassifiedSeam,
     canonical_gap_id: Option<&str>,
     candidate_seams: &[ClassifiedSeam],
-) -> Result<Option<(String, DiagnosticWitness)>, String> {
+) -> Result<(Option<(String, DiagnosticWitness)>, Option<String>), String> {
     // The expensive workspace check only feeds the canonical-gap match; with
     // no gap id the match cannot bind, so skip the analysis entirely.
     if canonical_gap_id.is_none() {
-        return Ok(None);
+        return Ok((None, None));
     }
     let output = check_workspace_with_config(
         CheckInput {
@@ -763,11 +770,9 @@ fn witness_for_seam(
         config,
     )
     .map_err(|error| format!("agent card could not run the witness analysis: {error}"))?;
-    Ok(witness_from_findings(
-        &output.findings,
-        entry,
-        canonical_gap_id,
-        candidate_seams,
+    Ok((
+        witness_from_findings(&output.findings, entry, canonical_gap_id, candidate_seams),
+        bound_finding_gap_id(&output.findings, entry, canonical_gap_id, candidate_seams),
     ))
 }
 
@@ -824,6 +829,20 @@ pub(crate) fn finding_for_seam<'a>(
         return None;
     }
     Some(hit)
+}
+
+/// The canonical gap id of the finding the shared [`finding_for_seam`] join
+/// binds to this seam, as `ripr check` / `ripr_list_gaps` print it. Binding is
+/// not projection: this is present for a bound finding that projects no
+/// witness too.
+pub(crate) fn bound_finding_gap_id(
+    findings: &[crate::domain::Finding],
+    entry: &ClassifiedSeam,
+    canonical_gap_id: Option<&str>,
+    candidate_seams: &[ClassifiedSeam],
+) -> Option<String> {
+    finding_for_seam(findings, entry, canonical_gap_id, candidate_seams)
+        .and_then(|finding| finding.canonical_gap.as_ref().map(|gap| gap.id.clone()))
 }
 
 /// Project the witness for the finding that names this seam's canonical gap
@@ -1175,6 +1194,7 @@ mod tests {
             entry,
             witness: None,
             finding_id: None,
+            finding_gap_id: None,
             attempt: None,
             packet_json,
             repository_head: "abc123",
@@ -1246,38 +1266,35 @@ mod tests {
         entry
     }
 
-    /// #8638: the card's `subject.canonical_gap_id` is the readable producer
-    /// id (the spelling `ripr check` prints on the finding that names the
-    /// seam), and the old content hash rides additively as
+    /// #8638: the card's `subject.canonical_gap_id` is the bound finding's own
+    /// gap id (never re-minted from the seam), fails closed to null when no
+    /// finding binds, and the content hash rides additively as
     /// `seam_content_gap_id`.
     #[test]
-    fn card_subject_reports_the_readable_gap_id_and_keeps_the_hash_additive() -> Result<(), String>
-    {
+    fn card_subject_reports_the_bound_finding_gap_id_and_keeps_the_hash_additive()
+    -> Result<(), String> {
         let entry = own_file_inline_entry();
         let packet = packet_for(&entry);
-        let card = assemble_repair_card(&facts_for(&entry, &packet))?;
         let hash = crate::analysis::canonical_gap::canonical_gap_identity(&entry)
             .ok_or_else(|| "fixture seam must carry a canonical gap identity".to_string())?
             .id;
-        let readable = card
-            .subject
-            .canonical_gap_id
-            .as_deref()
-            .ok_or_else(|| "card subject lost its gap id".to_string())?;
-        if !readable.starts_with("gap:rust:") || readable == hash {
+        let finding_gap =
+            "gap:rust:src/pricing.rs:pricing::score:predicate_boundary:predicate:let_amount>=limit";
+        let mut facts = facts_for(&entry, &packet);
+        facts.finding_gap_id = Some(finding_gap);
+        let card = assemble_repair_card(&facts)?;
+        if card.subject.canonical_gap_id.as_deref() != Some(finding_gap) {
             return Err(format!(
-                "card subject gap id is not the readable form: {readable}"
+                "card did not report the bound finding's id: {:?}",
+                card.subject.canonical_gap_id
             ));
-        }
-        // Same minter as the finding side: re-minting through the producer
-        // for this seam's own shape yields the card's id.
-        if crate::analysis::canonical_gap::readable_gap_id_for_seam(&entry).as_deref()
-            != Some(readable)
-        {
-            return Err("card id diverged from the producer minter".to_string());
         }
         if card.subject.seam_content_gap_id.as_deref() != Some(hash.as_str()) {
             return Err("the content hash was not kept additively".to_string());
+        }
+        let unbound = assemble_repair_card(&facts_for(&entry, &packet))?;
+        if unbound.subject.canonical_gap_id.is_some() {
+            return Err("an unbound seam must fail closed to a null gap id".to_string());
         }
         Ok(())
     }
