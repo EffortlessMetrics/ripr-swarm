@@ -7,6 +7,7 @@ use crate::analysis::facts::FunctionImplContext;
 use std::sync::Arc;
 
 pub(super) mod context;
+mod visibility;
 
 pub(crate) use context::CompactGripContext;
 pub(super) use context::{CompactTest, call_text_contains_named_call};
@@ -29,6 +30,25 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
 
     let mut candidates: BTreeMap<usize, RelationReason> = BTreeMap::new();
     match_direct_owner_call(&mut candidates, context, prefix, &owner);
+    let inaccessible_direct: BTreeSet<usize> = context
+        .owner_function(seam.file(), seam.display_line())
+        .map(|function| {
+            candidates
+                .keys()
+                .copied()
+                .filter(|test_index| {
+                    context.tests.get(*test_index).is_some_and(|indexed| {
+                        context.private_visibility.proven_inaccessible(
+                            context,
+                            function,
+                            indexed.test,
+                        )
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    candidates.retain(|test_index, _| !inaccessible_direct.contains(test_index));
     match_helper_owner_call(&mut candidates, context, prefix, &owner);
     match_target_affinity_owner_call(
         &mut candidates,
@@ -44,6 +64,13 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
     match_owner_named_test(&mut candidates, context, prefix, &owner);
     match_import_path_affinity(&mut candidates, context, prefix, &owner);
     match_fixture_owner_affinity(&mut candidates, context, prefix, &owner);
+
+    // An inaccessible direct call cannot regain oracle credit through a
+    // proximity or import fallback. An independently matched helper can
+    // still reach a private owner from inside its own module.
+    candidates.retain(|test_index, reason| {
+        !inaccessible_direct.contains(test_index) || *reason == RelationReason::HelperOwnerCall
+    });
 
     // #6292: a test whose every call of the owner's name settles on a
     // same-named module-level rival relates through no signal of its own:

@@ -65,6 +65,7 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "continue",
     "coverage-grip frontier",
     "diff",
+    "capabilities",
     "doctor",
     "evidence-health",
     "explain",
@@ -138,6 +139,7 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         "cache export" => CACHE_EXPORT_HELP,
         "cache status" => CACHE_STATUS_HELP,
         "calibrate cargo-mutants" => CALIBRATE_HELP,
+        "capabilities" => CAPABILITIES_HELP,
         "check" => CHECK_HELP,
         "config validate" => CONFIG_HELP,
         "context" => CONTEXT_HELP,
@@ -370,6 +372,10 @@ pub(super) fn print_context_help() {
     println!("{CONTEXT_HELP}");
 }
 
+pub(super) fn print_capabilities_help() {
+    println!("{CAPABILITIES_HELP}");
+}
+
 pub(super) fn print_doctor_help() {
     println!("{DOCTOR_HELP}");
 }
@@ -410,13 +416,13 @@ mod tests {
         AGENT_BRIEF_HELP, AGENT_CARD_HELP, AGENT_HELP, AGENT_PACKET_HELP, AGENT_RECEIPT_HELP,
         AGENT_REPAIR_HELP, AGENT_REVIEW_SUMMARY_HELP, AGENT_START_HELP, AGENT_STATUS_HELP,
         AGENT_VERIFY_HELP, ANNOTATIONS_HELP, ASSISTANT_LOOP_HELP, BASELINE_HELP, CACHE_CLEAR_HELP,
-        CACHE_STATUS_HELP, CALIBRATE_HELP, CHECK_HELP, CONFIG_HELP, CONTEXT_HELP,
-        COVERAGE_GRIP_HELP, DIFF_HELP, DOCTOR_HELP, EVIDENCE_HEALTH_HELP, EXPLAIN_HELP,
-        FEEDBACK_EXPORT_HELP, FEEDBACK_RECORD_HELP, FIRST_ACTION_HELP, FIRST_PR_HELP, GATE_HELP,
-        HELP, HELP_ALL, IMPACTED_EVIDENCE_HELP, INIT_HELP, LSP_HELP, OUTCOME_HELP, PILOT_HELP,
-        PLUS_HELP, POLICY_HELP, PR_COMMENTS_HELP, PR_EVIDENCE_HELP, PR_LEDGER_HELP, PR_REVIEW_HELP,
-        PR_SUMMARY_HELP, REPORTS_HELP, RERUN_HELP, REVIEW_COMMENTS_HELP, SWARM_HELP,
-        SWARM_INGEST_HELP, SWARM_QUEUE_HELP, ZERO_HELP, print_agent_brief_help,
+        CACHE_STATUS_HELP, CALIBRATE_HELP, CAPABILITIES_HELP, CHECK_HELP, CONFIG_HELP,
+        CONTEXT_HELP, COVERAGE_GRIP_HELP, DIFF_HELP, DOCTOR_HELP, EVIDENCE_HEALTH_HELP,
+        EXPLAIN_HELP, FEEDBACK_EXPORT_HELP, FEEDBACK_RECORD_HELP, FIRST_ACTION_HELP, FIRST_PR_HELP,
+        GATE_HELP, HELP, HELP_ALL, IMPACTED_EVIDENCE_HELP, INIT_HELP, LSP_HELP, OUTCOME_HELP,
+        PILOT_HELP, PLUS_HELP, POLICY_HELP, PR_COMMENTS_HELP, PR_EVIDENCE_HELP, PR_LEDGER_HELP,
+        PR_REVIEW_HELP, PR_SUMMARY_HELP, REPORTS_HELP, RERUN_HELP, REVIEW_COMMENTS_HELP,
+        SWARM_HELP, SWARM_INGEST_HELP, SWARM_QUEUE_HELP, ZERO_HELP, print_agent_brief_help,
         print_agent_card_help, print_agent_help, print_agent_packet_help, print_agent_receipt_help,
         print_agent_repair_help, print_agent_review_summary_help, print_agent_start_help,
         print_agent_status_help, print_agent_verify_help, print_assistant_loop_help,
@@ -1171,6 +1177,7 @@ mod tests {
     const PR_COMMENTS_GITHUB_PARSER_RS: &str = include_str!("commands/pr_comments_github.rs");
     const CI_SUMMARY_PARSER_RS: &str = include_str!("commands/ci_summary.rs");
     const REVIEW_COMMENTS_PARSER_RS: &str = include_str!("commands/review_comments.rs");
+    const CAPABILITIES_PARSER_RS: &str = include_str!("commands/capabilities.rs");
     const CONTEXT_PARSER_RS: &str = include_str!("commands/context.rs");
     const CONFIG_PARSER_RS: &str = include_str!("commands/config.rs");
     const DOCTOR_PARSER_RS: &str = include_str!("commands/doctor.rs");
@@ -1292,6 +1299,7 @@ mod tests {
             CLI_COMMANDS_RS,
             &["parse_calibrate_cargo_mutants_options"],
         ),
+        ("capabilities", CAPABILITIES_PARSER_RS, &["capabilities"]),
         ("check", CHECK_PARSER_RS, &["check_inner"]),
         (
             "config validate",
@@ -1336,7 +1344,7 @@ mod tests {
             &["run_impacted_evidence", "parse_options"],
         ),
         ("init", INIT_PARSER_RS, &["parse_init_options"]),
-        ("lsp", CLI_COMMANDS_RS, &["lsp"]),
+        ("lsp", CLI_COMMANDS_RS, &["lsp_with_serve"]),
         ("mcp", MCP_PARSER_RS, &["run"]),
         ("outcome", CLI_COMMANDS_RS, &["parse_outcome_options"]),
         ("pilot", PILOT_PARSER_RS, &["parse_pilot_options"]),
@@ -2079,6 +2087,7 @@ fn parse_demo<'a>(xs: &'a str) {
             ),
             ("gate", GATE_HELP, &["--pr-guidance", "--mode"]),
             ("doctor", DOCTOR_HELP, &["--root", "--json", "--profile"]),
+            ("capabilities", CAPABILITIES_HELP, &["--language", "--json"]),
             ("config validate", CONFIG_HELP, &["--root"]),
             (
                 "pilot",

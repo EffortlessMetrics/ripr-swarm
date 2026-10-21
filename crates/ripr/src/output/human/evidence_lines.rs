@@ -127,10 +127,16 @@ fn evidence_path<T>(
     ];
 
     for sink in &finding.flow_sinks {
-        lines.push(project(
-            crate::output::flow_sink_line::flow_sink_evidence_line(sink),
-            EvidenceSource::Flow(sink),
-        ));
+        let mut line = crate::output::flow_sink_line::flow_sink_evidence_line(sink);
+        // #8744: `unknown sink` is the one unglossed internal term in the
+        // explain vocabulary; the human window states its meaning beside the
+        // row instead of leaving the consumer to guess whether it is a ripr
+        // limit, a code property, or an instruction.
+        if let Some(meaning) = crate::output::flow_sink_line::flow_sink_kind_meaning(&sink.kind) {
+            line.push_str(" — ");
+            line.push_str(meaning);
+        }
+        lines.push(project(line, EvidenceSource::Flow(sink)));
     }
 
     for test in finding.related_tests.iter().take(MAX_RELATED_TESTS_SHOWN) {
@@ -304,6 +310,7 @@ pub(super) fn weakness_lines(finding: &Finding) -> Vec<String> {
         .filter(|missing| {
             !is_duplicate_discriminator_missing(missing, &discriminator_values)
                 && !is_preview_actionability_missing_summary(missing)
+                && !restates_no_static_path_evidence(finding, missing)
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -314,6 +321,29 @@ pub(super) fn weakness_lines(finding: &Finding) -> Vec<String> {
         ));
     }
     lines
+}
+
+/// Whether a `missing` entry only restates a stage line the Evidence block
+/// already prints for this finding. A `no_static_path` finding carries three
+/// generic entries ("No static test path reaches the changed owner", "No
+/// relevant oracle was detected", "No strong discriminator was detected"),
+/// and its Evidence block says `reach no`, `observation no` and
+/// `discriminator no` in the same words, so listing them again reads one fact
+/// (no test reaches this code) as several problems (#9033). An entry is
+/// dropped only while its own stage reads `no`; any other stage state keeps
+/// the entry. The entries stay in the JSON `missing` list, and a distinct
+/// entry such as the missing boundary input is never dropped.
+pub(super) fn restates_no_static_path_evidence(finding: &Finding, missing: &str) -> bool {
+    if finding.class != crate::domain::ExposureClass::NoStaticPath {
+        return false;
+    }
+    let stage = match missing {
+        "No static test path reaches the changed owner" => &finding.ripr.reach,
+        "No relevant oracle was detected" => &finding.ripr.reveal.observe,
+        "No strong discriminator was detected" => &finding.ripr.reveal.discriminate,
+        _ => return false,
+    };
+    stage.state == crate::domain::StageState::No
 }
 
 fn is_duplicate_discriminator_missing(missing: &str, discriminator_values: &[&str]) -> bool {

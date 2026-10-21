@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_pin_written_expected_not_a_pin (3)
+
+Reason:
+RIPR-SPEC-0224: ungraded oracle reads '<kind> oracle, not graded against this probe' (#8388)
+
+Command:
+`cargo xtask goldens bless owner_pin_written_expected_not_a_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

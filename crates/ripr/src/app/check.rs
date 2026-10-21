@@ -45,6 +45,16 @@ pub fn check_workspace_with_config(
     check_with_progress(input, config, AnalysisProgressScope::Diff, None)
 }
 
+/// [`check_workspace_with_config`] keeping the failure typed, so a caller
+/// (the MCP refresh) can name the recovery route for the failure family
+/// instead of re-reading rendered text.
+pub(crate) fn check_workspace_with_config_typed(
+    input: CheckInput,
+    config: &RiprConfig,
+) -> Result<CheckOutput, CoreError> {
+    check_with_progress_core(input, config, AnalysisProgressScope::Diff, None)
+}
+
 pub fn check_workspace_worktree_with_config(
     input: CheckInput,
     config: &RiprConfig,
@@ -327,6 +337,7 @@ fn check_with_progress_and_origins_with_open_rust_paths(
             &languages,
             &config.languages().rust,
             config.languages(),
+            config.perl().cache_dir(),
         )?,
         AnalysisProgressScope::Worktree => {
             run_worktree_analysis_with_oracle_policy_and_rust_config(
@@ -335,6 +346,7 @@ fn check_with_progress_and_origins_with_open_rust_paths(
                 &languages,
                 &config.languages().rust,
                 config.languages(),
+                config.perl().cache_dir(),
                 disclosure_probes,
             )?
         }
@@ -343,6 +355,7 @@ fn check_with_progress_and_origins_with_open_rust_paths(
             config.oracles(),
             &languages,
             &config.languages().rust,
+            config.languages(),
         )?,
     };
     // #5988: the published identity block must distinguish runs whose loaded

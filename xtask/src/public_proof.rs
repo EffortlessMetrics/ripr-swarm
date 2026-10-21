@@ -603,6 +603,35 @@ fn friction_of(step: &Value) -> &[Value] {
     items(step, "friction")
 }
 
+/// Whether a step is over the asked kind of budget. The structured
+/// `budget_breaches` field the harness records wins; receipts written before
+/// that field existed fall back to the friction prose the harness used to
+/// emit, so an old receipt still renders until the next walk refresh (#8722).
+fn step_over_budget(step: &Value, workflow: bool) -> bool {
+    let structured = step.get("budget_breaches").and_then(Value::as_array);
+    match structured {
+        Some(breaches) => breaches.iter().any(|breach| {
+            field(breach, "metric").as_str().is_some_and(|metric| {
+                if workflow {
+                    metric == "workflow_lines"
+                } else {
+                    metric != "workflow_lines"
+                }
+            })
+        }),
+        None => friction_of(step).iter().any(|f| {
+            f.as_str().is_some_and(|t| {
+                if workflow {
+                    t.contains(crate::first_run::GENERATED_WORKFLOW_BUDGET_FLAG)
+                } else {
+                    t.contains("budget")
+                        && !t.contains(crate::first_run::GENERATED_WORKFLOW_BUDGET_FLAG)
+                }
+            })
+        }),
+    }
+}
+
 /// First-run bars computed from a raw `first_run.v1` receipt, so they stay
 /// comparable across the two receipts the page shows.
 fn first_run_value(id: &str, receipt: &Value, ctx: &str) -> Result<Option<f64>, String> {
@@ -623,31 +652,12 @@ fn first_run_value(id: &str, receipt: &Value, ctx: &str) -> Result<Option<f64>, 
                 .filter(|s| field(s, "exit").as_i64() != Some(0))
                 .count(),
         ),
-        "first_run.over_budget_steps" => count(
-            steps
-                .iter()
-                .filter(|s| {
-                    friction_of(s).iter().any(|f| {
-                        f.as_str().is_some_and(|t| {
-                            t.contains("budget")
-                                && !t.contains(crate::first_run::GENERATED_WORKFLOW_BUDGET_FLAG)
-                        })
-                    })
-                })
-                .count(),
-        ),
-        "first_run.over_budget_workflows" => count(
-            steps
-                .iter()
-                .filter(|s| {
-                    friction_of(s).iter().any(|f| {
-                        f.as_str().is_some_and(|t| {
-                            t.contains(crate::first_run::GENERATED_WORKFLOW_BUDGET_FLAG)
-                        })
-                    })
-                })
-                .count(),
-        ),
+        "first_run.over_budget_steps" => {
+            count(steps.iter().filter(|s| step_over_budget(s, false)).count())
+        }
+        "first_run.over_budget_workflows" => {
+            count(steps.iter().filter(|s| step_over_budget(s, true)).count())
+        }
         // A step with no numeric duration makes the walk's total unknowable, so the
         // metric is not measured rather than summed over the steps that were timed.
         "first_run.walk_secs" => cases
@@ -752,7 +762,9 @@ fn derived(id: &str, r: &Receipts) -> Result<Option<Derived>, String> {
         | "first_run.failed_steps"
         | "first_run.over_budget_steps"
         | "first_run.over_budget_workflows"
-        | "first_run.walk_secs" => Some(first_run("first-run receipts")?),
+        | "first_run.walk_secs" => Some(first_run(
+            "first-run receipts, recomputed by this page; the nightly ingest does not feed this bar",
+        )?),
         _ => None,
     })
 }
@@ -942,7 +954,14 @@ fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
         let mut basis = text(metric, "source");
         let mut is_derived = false;
         let mut status_src = metric;
-        if let Some(derived) = derived(&id, r)? {
+        // A first-run recomputation only fills in for a metric the scoreboard
+        // receipt did not measure: the day the nightly ingest lands a
+        // first-run value, the producer's reviewed number owns the bar
+        // (mirrors the workflows guard below). A failed instrument also keeps
+        // its own status instead of being masked by a recomputation. Trust
+        // bars keep their existing unconditional derivation (#8721).
+        let derive = !id.starts_with("first_run.") || metric_lacks_number(metric);
+        if derive && let Some(derived) = derived(&id, r)? {
             is_derived = true;
             value = derived.value;
             trend = derived.trend;
@@ -1025,7 +1044,10 @@ fn bars(r: &Receipts) -> Result<Vec<Bar>, String> {
     // never sees `first_run.over_budget_workflows`; derive it from the raw
     // first-run receipts rather than leaving the split half-done. Once a
     // scoreboard receipt ingests the metric, the loop owns the bar and this
-    // fallback stays out of the way. Target and wording mirror scoreboards.toml.
+    // fallback stays out of the way. The in-loop derivation of the other
+    // first-run ids is guarded the same way (metric_lacks_number), so an
+    // ingested producer value owns any of those bars too (#8721).
+    // Target and wording mirror scoreboards.toml.
     if !out
         .iter()
         .any(|bar| bar.id == "first_run.over_budget_workflows")
@@ -1092,12 +1114,12 @@ fn render(root: &Path) -> Result<String, String> {
     shortfalls(&mut page, &r, &bars)?;
     mutation_section(&mut page, &r.mutation)?;
     verdict_section(&mut page, &r.verdicts)?;
-    speed_section(&mut page, &r.dx)?;
+    speed_section(&mut page, &r)?;
     first_run_section(&mut page, &r.first_previous, &r.first_current, &r.install)?;
     agent_section(&mut page, &r.agent)?;
     corpus_section(&mut page, &r)?;
     boundaries(&mut page, &r)?;
-    reproduce(&mut page);
+    reproduce(&mut page, &r)?;
     Ok(page.0)
 }
 
@@ -1815,7 +1837,8 @@ fn verdict_section(page: &mut Page, verdicts: &Value) -> Result<(), String> {
     Ok(())
 }
 
-fn speed_section(page: &mut Page, dx: &Value) -> Result<(), String> {
+fn speed_section(page: &mut Page, r: &Receipts) -> Result<(), String> {
+    let dx = &r.dx;
     let ctx = "dx-scoreboard";
     page.line("## Speed and memory");
     page.blank();
@@ -1838,7 +1861,8 @@ fn speed_section(page: &mut Page, dx: &Value) -> Result<(), String> {
         ));
     }
     let mut rows = vec![target_row];
-    for repo in req_arr(dx, "repos", ctx)? {
+    let dx_repos = req_arr(dx, "repos", ctx)?;
+    for repo in dx_repos {
         let mut row = vec![format!("{} ({})", text(repo, "id"), text(repo, "note"))];
         for id in ids {
             let entry = items(repo, "metrics")
@@ -1861,9 +1885,31 @@ fn speed_section(page: &mut Page, dx: &Value) -> Result<(), String> {
         }
         rows.push(row);
     }
+    let manifest = items(&r.corpus, "repos");
+    let on_manifest = dx_repos
+        .iter()
+        .filter(|repo| {
+            manifest.iter().any(|entry| {
+                text(entry, "id") == text(repo, "id") && text(entry, "sha") == text(repo, "sha")
+            })
+        })
+        .count();
+    let population = if on_manifest == dx_repos.len() {
+        format!(
+            "All of them also appear in the {}-repository corpus manifest below at the same revision",
+            manifest.len()
+        )
+    } else {
+        format!(
+            "This is a different population from the {}-repository corpus manifest below: {} of these repositories appear there at the same revision; the rest were measured at a different revision or are not in that manifest",
+            manifest.len(),
+            on_manifest
+        )
+    };
     let head_refs: Vec<&str> = head.iter().map(String::as_str).collect();
     page.line(format!(
-        "Measured on the pinned corpus repositories at the revisions in the receipt, with a release build, on runner class `{}`. Bold values miss the bar. Cold is a fresh cache; warm is the second `ripr check` against the last commit. Peak memory is the process's high-water mark sampled every 10 ms on Linux, a lower bound.",
+        "Measured on the {} repositories named in this table, pinned in `benchmarks/dx_scoreboard/scoreboards.toml` at the revisions in the receipt, with a release build, on runner class `{}`. {population}. Bold values miss the bar. Cold is a fresh cache; warm is the second `ripr check` against the last commit. Peak memory is the process's high-water mark sampled every 10 ms on Linux, a lower bound.",
+        dx_repos.len(),
         text(dx, "runner_class")
     ));
     page.blank();
@@ -2131,21 +2177,83 @@ fn boundaries(page: &mut Page, r: &Receipts) -> Result<(), String> {
     Ok(())
 }
 
-fn reproduce(page: &mut Page) {
+fn reproduce(page: &mut Page, r: &Receipts) -> Result<(), String> {
     page.line("## Reproduce and refresh");
+    page.blank();
+    page.line(
+        "These commands regenerate the measured receipts; a fresh local measurement is only promoted into `metrics/public-proof/` by the `cp` steps, and `--refresh-receipts` then re-copies the canonical sources and re-renders this page.",
+    );
     page.blank();
     page.line("```bash");
     page.line(
-        "cargo xtask dx-scoreboard --clone            # speed, memory, CI size, pasted commands",
+        "cargo build --release                          # the walks below measure this binary",
     );
-    page.line("cargo xtask first-run                        # the new-developer walk");
+    page.line(
+        "cargo xtask dx-scoreboard --clone --include-heavy  # writes target/ripr/reports/dx-scoreboard.json (all four pinned repos)",
+    );
+    page.line(
+        "cp target/ripr/reports/dx-scoreboard.json metrics/dx-scoreboard/baseline.json  # promote the run to the canonical baseline",
+    );
+    page.line("cargo xtask first-run --ripr target/release/ripr  # writes target/ripr/first-run/first-run.json");
+    page.line(
+        "cp target/ripr/first-run/first-run.json metrics/public-proof/first-run-current.json  # promote the walk to its receipt",
+    );
     page.line(
         "cargo xtask public-proof --refresh-receipts  # re-copy canonical outputs, then render",
     );
     page.line("cargo xtask public-proof --check             # fail if this page is stale");
     page.line("```");
     page.blank();
+    page.line(format!(
+        "A local rerun lands in the same receipt shape but will not reproduce the committed dx-scoreboard numbers: they were measured on runner class `{}`, and wall-time and memory bars compare only against a baseline from the same runner class.",
+        text(&r.dx, "runner_class")
+    ));
+    page.blank();
+    page.line("Per-receipt regeneration:");
+    page.blank();
+    page.table(
+        &["Receipt", "Produced by", "Harness output"],
+        &[
+            vec![
+                "`dx-scoreboard.json`".to_string(),
+                "`cargo xtask dx-scoreboard --clone --include-heavy`, promoted as above".to_string(),
+                "`target/ripr/reports/dx-scoreboard.json`".to_string(),
+            ],
+            vec![
+                "`verdict-corpus.json`".to_string(),
+                "the report `fixtures/rust-verdict-corpus/expected/rows/` describes".to_string(),
+                "summarized from the row files".to_string(),
+            ],
+            vec![
+                "`corpus-manifest.json`".to_string(),
+                "the corpus pin list itself".to_string(),
+                "`benchmarks/rust_corpus/manifest.json`".to_string(),
+            ],
+            vec![
+                "`mutation-spot-check.json`".to_string(),
+                "`cargo xtask mutation-spot-check`".to_string(),
+                "`target/ripr/reports/mutation-spot-check.json`".to_string(),
+            ],
+            vec![
+                "`first-run-current.json` / `first-run-previous.json`".to_string(),
+                "`cargo xtask first-run --ripr target/release/ripr`, promoted as above".to_string(),
+                "`target/ripr/first-run/first-run.json`".to_string(),
+            ],
+            vec![
+                "`agent-as-user.json`".to_string(),
+                "no in-repo command; committed harness output, the runs `docs/AGENT_AS_USER_RUNS.md` documents".to_string(),
+                "none".to_string(),
+            ],
+            vec![
+                "`install.json`".to_string(),
+                "no in-repo command; committed manual measurement in a cloud container".to_string(),
+                "none".to_string(),
+            ],
+        ],
+    );
+    page.blank();
     page.line("Receipts live in `metrics/public-proof/`. `dx-scoreboard.json`, `verdict-corpus.json` and `corpus-manifest.json` are copies of `metrics/dx-scoreboard/baseline.json`, the report `fixtures/rust-verdict-corpus/expected/rows/` describes (its summary derived from the row files, then the rows in file-name order) and `benchmarks/rust_corpus/manifest.json`; `--check` fails when a source moves ahead of its copy, and `--refresh-receipts` re-copies them. Verdict corpus case PRs do not refresh this page, so its corpus section is a snapshot that can trail the committed rows until the next refresh. Corpus and ranking scoreboard rows are read from `metrics/dx-scoreboard/corpus-full-baseline.json` (falling back to `corpus-fast-baseline.json`) and `metrics/dx-scoreboard/pilot-ranking-baseline.json` when the copied scoreboard receipt did not ingest those boards. The mutation, first-run, agent and install receipts have no in-repo source to compare against: they are committed copies of harness output from the revisions named in their sections, and `--check` cannot detect a hand edit to them. The mutation spot-check receipt is harness output from `cargo xtask mutation-spot-check`.");
+    Ok(())
 }
 
 fn lane_revision(receipt: &Value) -> String {
@@ -2194,6 +2302,12 @@ fn scoreboard_summary(
     if from_lane {
         line.push_str(" Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them.");
     }
+    if bars
+        .iter()
+        .any(|bar| bar.basis.contains("recomputed by this page"))
+    {
+        line.push_str(" First-run bars are recomputed by this page from the raw walk receipts; an ingested scoreboard value owns its bar once one lands.");
+    }
     line
 }
 
@@ -2229,6 +2343,62 @@ mod tests {
             .find("## Mutation agreement")
             .ok_or("no mutation section")?;
         assert!(shortfalls < mutation);
+        Ok(())
+    }
+
+    #[test]
+    fn speed_section_names_its_real_population() -> Result<(), String> {
+        let rendered = render(&workspace_root())?;
+        let speed = rendered
+            .find("## Speed and memory")
+            .ok_or("no speed section")?;
+        let corpus = rendered
+            .find("## The corpus behind the numbers")
+            .ok_or("no corpus section")?;
+        let prose = &rendered[speed..corpus];
+        assert!(
+            !prose.contains("pinned corpus repositories"),
+            "speed section must not claim the corpus manifest identity it contradicts"
+        );
+        assert!(
+            prose.contains("scoreboards.toml"),
+            "speed section must name the population it actually measured"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn reproduce_section_promotes_local_runs_into_the_receipts() -> Result<(), String> {
+        let rendered = render(&workspace_root())?;
+        let start = rendered
+            .find("## Reproduce and refresh")
+            .ok_or("no reproduce section")?;
+        let end = rendered.len().min(start + 6000);
+        let section = &rendered[start..end];
+        assert!(
+            section.contains(
+                "cp target/ripr/reports/dx-scoreboard.json metrics/dx-scoreboard/baseline.json"
+            ),
+            "dx-scoreboard rerun must be promoted into the canonical baseline the receipt copies"
+        );
+        assert!(
+            section.contains(
+                "cp target/ripr/first-run/first-run.json metrics/public-proof/first-run-current.json"
+            ),
+            "first-run rerun must be promoted into the receipt the page renders"
+        );
+        assert!(
+            section.contains("target/ripr/reports/mutation-spot-check"),
+            "mutation receipt producer output path must be named"
+        );
+        assert!(
+            section.contains("dx-scoreboard --clone --include-heavy"),
+            "the reproduce commands must measure all four pinned repositories"
+        );
+        assert!(
+            section.contains("first-run --ripr target/release/ripr"),
+            "the reproduce commands must name the measured binary"
+        );
         Ok(())
     }
 
@@ -3056,6 +3226,147 @@ mod tests {
         assert!(
             !bar.basis.contains("corpus-full-baseline"),
             "basis was {}",
+            bar.basis
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ingested_first_run_value_outranks_the_renderer_recomputation() -> Result<(), String> {
+        let mut receipts = load(&workspace_root())?;
+        set_metric(&mut receipts, "first_run.unknown_verdicts", |metric| {
+            metric["value"] = serde_json::json!(2.0);
+            metric["status"] = Value::from("below_target");
+            metric["reason"] = Value::from("");
+            metric["source"] = Value::from("ingest:first-run (nightly)");
+        });
+        let bar = bar_named(&receipts, "first_run.unknown_verdicts")?;
+        assert_eq!(
+            bar.value,
+            Some(2.0),
+            "the producer's ingested value must own the bar"
+        );
+        assert!(
+            bar.basis.contains("ingest:first-run"),
+            "ingested basis was {}",
+            bar.basis
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn structured_budget_breach_counts_even_without_matching_prose() -> Result<(), String> {
+        let mut receipts = load(&workspace_root())?;
+        let before = first_run_value(
+            "first_run.over_budget_steps",
+            &receipts.first_current,
+            "first-run-current",
+        )?
+        .ok_or("no over_budget_steps before injection")?;
+        let cases = receipts
+            .first_current
+            .get_mut("cases")
+            .and_then(Value::as_array_mut)
+            .ok_or("first-run-current has no cases")?;
+        let first = cases
+            .first_mut()
+            .ok_or("first-run-current has no first case")?;
+        let steps = first
+            .get_mut("steps")
+            .and_then(Value::as_array_mut)
+            .ok_or("first case has no steps")?;
+        steps.push(serde_json::json!({
+            "step": "check",
+            "command": "ripr check",
+            "exit": 0,
+            "secs": 1.0,
+            "stdout_lines": 10,
+            "stderr_lines_beyond_progress": 0,
+            "friction": ["some non-budget friction"],
+            "budget_breaches": [{"metric": "secs", "value": 40.0, "budget": 30.0}],
+        }));
+        let after = first_run_value(
+            "first_run.over_budget_steps",
+            &receipts.first_current,
+            "first-run-current",
+        )?;
+        assert_eq!(
+            after,
+            Some(before + 1.0),
+            "a structured breach must count even when the friction prose does not say \"budget\""
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn structured_breach_field_ignores_budget_worded_prose_without_a_breach() -> Result<(), String>
+    {
+        let mut receipts = load(&workspace_root())?;
+        let before = first_run_value(
+            "first_run.over_budget_steps",
+            &receipts.first_current,
+            "first-run-current",
+        )?
+        .ok_or("no over_budget_steps before injection")?;
+        let cases = receipts
+            .first_current
+            .get_mut("cases")
+            .and_then(Value::as_array_mut)
+            .ok_or("first-run-current has no cases")?;
+        let first = cases
+            .first_mut()
+            .ok_or("first-run-current has no first case")?;
+        let steps = first
+            .get_mut("steps")
+            .and_then(Value::as_array_mut)
+            .ok_or("first case has no steps")?;
+        steps.push(serde_json::json!({
+            "step": "check",
+            "command": "ripr check",
+            "exit": 0,
+            "secs": 1.0,
+            "stdout_lines": 10,
+            "stderr_lines_beyond_progress": 0,
+            "friction": ["budget mentioned for a non-breach reason"],
+            "budget_breaches": [],
+        }));
+        let after = first_run_value(
+            "first_run.over_budget_steps",
+            &receipts.first_current,
+            "first-run-current",
+        )?;
+        assert_eq!(
+            after,
+            Some(before),
+            "with structured fields present, prose mentioning a budget must not count as a breach"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn dual_metric_breach_counts_once_per_step() {
+        // The bar's unit is steps (its title and scoreboards.toml wording), so
+        // a step over both its secs and stdout_lines budgets counts once here
+        // even though the nightly ingest lists one evidence row per metric.
+        let step = serde_json::json!({
+            "step": "check",
+            "friction": [],
+            "budget_breaches": [
+                {"metric": "secs", "value": 11.0, "budget": 10.0},
+                {"metric": "stdout_lines", "value": 61, "budget": 60},
+            ],
+        });
+        assert!(step_over_budget(&step, false));
+        assert!(!step_over_budget(&step, true));
+    }
+
+    #[test]
+    fn renderer_derived_first_run_bars_disclose_their_recomputation() -> Result<(), String> {
+        let receipts = load(&workspace_root())?;
+        let bar = bar_named(&receipts, "first_run.unknown_verdicts")?;
+        assert!(
+            bar.basis.contains("recomputed by this page"),
+            "derived basis was {}",
             bar.basis
         );
         Ok(())

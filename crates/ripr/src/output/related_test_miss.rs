@@ -83,15 +83,22 @@ pub(crate) fn oracle_projection(
 ) -> String {
     use crate::domain::{OracleKind, OracleStrength};
     match (strength, kind) {
+        (OracleStrength::None, _) => "no oracle".to_string(),
         // A row with no selected assertion has no oracle to describe.
         (OracleStrength::Unknown, OracleKind::Unknown) if !has_assertion => "no oracle".to_string(),
         (OracleStrength::Unknown, OracleKind::Unknown) => {
             "an unclassified oracle, not graded against this probe".to_string()
         }
-        (strength, kind) => format!(
-            "{} {} oracle",
-            strength.as_str(),
+        (OracleStrength::Unknown, kind) => format!(
+            "{} oracle, not graded against this probe",
             kind.as_str().replace('_', " ")
+        ),
+        (strength, kind) => format!(
+            "{} oracle",
+            crate::output::oracle_phrase::oracle_phrase(
+                strength.as_str(),
+                &kind.as_str().replace('_', " ")
+            )
         ),
     }
 }
@@ -142,11 +149,21 @@ mod tests {
             "an unclassified oracle, not graded against this probe"
         );
         assert_eq!(oracle_projection(unknown.0, unknown.1, false), "no oracle");
-        // Every other pair keeps the "<strength> <kind> oracle" spelling.
         assert_eq!(
             oracle_projection(&OracleStrength::Unknown, &OracleKind::ExactValue, true),
-            "unknown exact value oracle"
+            "exact value oracle, not graded against this probe"
         );
+        // A row with no oracle strength reads "no oracle" whatever its kind.
+        assert_eq!(
+            oracle_projection(&OracleStrength::None, &OracleKind::ExactValue, false),
+            "no oracle"
+        );
+        // A kind that already leads with its strength word is not doubled.
+        assert_eq!(
+            oracle_projection(&OracleStrength::Smoke, &OracleKind::SmokeOnly, true),
+            "smoke only oracle"
+        );
+        // A graded pair keeps the "<strength> <kind> oracle" spelling.
         assert_eq!(
             oracle_projection(&OracleStrength::Strong, &OracleKind::ExactValue, true),
             "strong exact value oracle"
@@ -392,10 +409,14 @@ mod tests {
             let json: serde_json::Value =
                 serde_json::from_str(&crate::output::json::render(&output))
                     .map_err(|error| format!("parse check JSON: {error}"))?;
-            let context: serde_json::Value = serde_json::from_str(
-                &crate::output::json::render_context_packet(&finding, 8, std::path::Path::new(".")),
-            )
-            .map_err(|error| format!("parse context packet: {error}"))?;
+            let context: serde_json::Value =
+                serde_json::from_str(&crate::output::json::render_context_packet(
+                    &finding,
+                    8,
+                    &crate::config::RiprConfig::default(),
+                    std::path::Path::new("."),
+                ))
+                .map_err(|error| format!("parse context packet: {error}"))?;
             for rows in [
                 &json["findings"][0]["related_tests"],
                 &context["related_tests"],
@@ -476,6 +497,7 @@ mod tests {
                     serde_json::from_str(&crate::output::json::render_context_packet(
                         finding,
                         8,
+                        &crate::config::RiprConfig::default(),
                         std::path::Path::new("."),
                     ))
                     .map_err(|error| format!("parse context packet: {error}"))?;
