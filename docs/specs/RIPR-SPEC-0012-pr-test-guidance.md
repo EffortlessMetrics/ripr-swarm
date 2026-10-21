@@ -549,7 +549,7 @@ PR test guidance must not:
 ## Test Mapping
 
 `review_test_changes::review_comments_discloses_removed_and_inline_test_edits`
-uses eight real Git fixtures to pin separate/inline assertion deletion and
+uses twelve real Git fixtures to pin separate/inline assertion deletion and
 replacement, shifted old coordinates, production-only controls, and unchanged
 recommendation classification/placement. The renderer test
 `unresolved_test_edits_do_not_claim_unchanged_or_hide_recommendations` pins the
