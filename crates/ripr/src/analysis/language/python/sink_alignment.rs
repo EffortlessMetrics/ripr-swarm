@@ -6,7 +6,8 @@ use super::owners_tests::collect_imports_from_statements;
 use super::probe_shape::classify_probe_shape;
 use super::related_tests::TestLookup;
 use super::related_tests::{
-    oracle_operand_calls, oracle_operand_names, owner_module_callees, owner_result_locals,
+    oracle_operand_calls, oracle_operand_names, oracle_operand_protocol_entry,
+    owner_module_callees, owner_result_locals,
 };
 use super::source_facts::parse_module_result;
 use super::wrapped_call::owner_call_only_inside_opaque_wrapper;
@@ -812,6 +813,15 @@ pub(super) fn classify_sink_alignment_with_old(
                         .any(|local| oracle_operand_names(&unit.text, local))
             })
     };
+    // Dunder owner invoked through a builtin protocol entry (`reversed(Range(0))`
+    // for `Range.__reversed__`): the entry call must take a receiver bound to the
+    // owner class and be an asserted operand, directly or under materializers.
+    let protocol_entry_observed = |unit: &AlignmentUnit<'_>| {
+        is_method_owner
+            && unit
+                .test
+                .is_some_and(|test| oracle_operand_protocol_entry(&unit.text, test, owner))
+    };
     // Receiver/value identity for an attribute-assignment changed sink. The bare
     // attribute token (`status`) is collision-prone: a same-named field on an
     // unrelated receiver (`session.status` changed, oracle `conn.status == ...`)
@@ -926,7 +936,7 @@ pub(super) fn classify_sink_alignment_with_old(
             && fstring_credit_ok(unit)
             && !assertion_calls_stand_in(unit, owner)
     };
-    let branches: [CreditBranch<'_, '_>; 6] = [
+    let branches: [CreditBranch<'_, '_>; 7] = [
         ("direct", "strong_oracle_observes_owner_name", &|unit| {
             observes_imported_owner(unit, &identity_tokens)
                 && (method_owner_identity(unit) || free_fn_module_identity(unit))
@@ -952,6 +962,11 @@ pub(super) fn classify_sink_alignment_with_old(
             observes_imported_owner(unit, own_aliases.as_deref().unwrap_or(&alias_tokens))
                 && gates_ok(unit)
         }),
+        (
+            "direct",
+            "strong_oracle_observes_owner_protocol_entry",
+            &|unit| protocol_entry_observed(unit) && method_owner_identity(unit) && gates_ok(unit),
+        ),
         (
             "direct",
             "strong_oracle_observes_owner_call_through_module",
@@ -1133,7 +1148,7 @@ fn assertion_calls_stand_in(unit: &AlignmentUnit<'_>, owner: &PythonOwner) -> bo
 /// (assignment, local `def`/`class`, loop/`as` target, or a non-owner import).
 /// Nested `def`/`class` bodies are a different scope, so a helper-local
 /// shadow does not hide an outer assertion on the imported owner.
-fn function_scope_stand_in(test: &PythonTest, name: &str, owner: &PythonOwner) -> bool {
+pub(super) fn function_scope_stand_in(test: &PythonTest, name: &str, owner: &PythonOwner) -> bool {
     if name.is_empty() {
         return false;
     }
