@@ -14,6 +14,8 @@ const EXPECTED_EVENT_DECLARATIONS: &[&str] = &[
     "on:",
     "  pull_request:",
     "    types: [labeled]",
+    "  merge_group:",
+    "    types: [checks_requested]",
     "  push:",
     "    branches: [main, master]",
     "  workflow_dispatch:",

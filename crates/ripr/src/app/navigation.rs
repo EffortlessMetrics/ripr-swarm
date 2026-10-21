@@ -102,8 +102,10 @@ impl RepairRouteRefusal {
                 gate()
             ),
             Self::SeamLimit => {
-                "no repair start offered: the seam budget left the repair candidate set unreadable or truncated; rerun with a wider seam budget"
-                    .to_string()
+                format!(
+                    "no repair start offered: the seam budget left the repair candidate set unreadable or truncated; {}",
+                    super::task_first::WIDEN_SEAM_BUDGET
+                )
             }
             Self::NoBindingSeam => format!(
                 "no repair start offered: no seam in the finding's file binds this finding; {}",
@@ -338,6 +340,10 @@ fn navigation_args(
         }
         if worktree {
             args.push("--worktree".to_string());
+        } else if input.git_candidate.is_none() {
+            // All live CLI siblings default to the dirty worktree. A command
+            // for committed input must therefore carry its explicit source.
+            args.push("--committed".to_string());
         }
     }
 
@@ -574,7 +580,7 @@ mod tests {
         assert_eq!(
             navigation.explain_command("probe:id"),
             format!(
-                "ripr explain --root {} --base origin/main --mode draft probe:id",
+                "ripr explain --root {} --base origin/main --committed --mode draft probe:id",
                 bound(".")
             )
         );

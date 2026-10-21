@@ -875,6 +875,7 @@ zeroed `summary`, same empty `findings`, same
 | `check_artifact_unusable` | `analysis/check-artifact` | A named `ripr context --from` check artifact is unreadable, malformed, foreign, or identity-mismatched (#7331). |
 | `gap_ledger_unusable` | `analysis/gap-ledger` | A named `ripr rerun --gap-ledger` file cannot be read or parsed (#7331). |
 | `seam_id_unknown` | `analysis/seam-inventory` | A named `ripr agent packet --seam-id` matches no current seam (#7331). |
+| `diff_input_unsupported` | `analysis/diff-input` | The shared diff parser refused a region, admission, or truncated textual section of an `agent brief --diff` or `--base` input; no brief selection ran. |
 | `git_invocation_timeout` | `analysis/git-timeout` | A git invocation exceeded its cooperative deadline and was terminated. |
 | `analysis_timeout` | `analysis/timeout` | The `ripr check` wall-clock budget (`--timeout SECS`, `RIPR_CHECK_TIMEOUT`) ran out before analysis finished; no findings were produced (#5369). |
 | `analysis_failed` | `analysis/failure` | Honest fallback for any other failure: the run produced no findings, with no claim about which stage stopped. |
@@ -1248,7 +1249,7 @@ Envelope (`schema_version = "ripr-check-artifact-v1"`):
 
 ## Finding
 
-The `id` field is content-addressed: `probe:<sanitized_path>:<family>:<fp8>[.<n>]` where `<fp8>` is the first 8 hex chars of SHA-256 over `path\0family\0owner\0expression\0`. This means a suppression tracks the code, not the line — the same expression moved to a new line keeps its id (suppression follows it), while changed code at a spot gets a new id (stale suppression invalidates). The `line` field in the `probe` object still gives locality for display.
+The `id` field is content-addressed: `probe:<sanitized_path>:<family>:<fp8>[.<n>]` where `<fp8>` is the first 8 hex chars of SHA-256 over `path\0family\0owner\0expression\0`. This means a suppression tracks the code, not the line — the same expression moved to a new line keeps its id (suppression follows it), while changed code at a spot gets a new id (stale suppression invalidates). The `line` field in the `probe` object still gives locality for display. For Rust expressions, formatting whitespace is collapsed outside literal contents, except that an actual line-comment terminator remains one LF; literal whitespace is part of the value. CRLF, trailing comment whitespace and following indentation normalize to that same boundary. Comment text otherwise remains part of the source identity. Older IDs that collapsed literal whitespace or a significant line-comment boundary become stale and must be reviewed rather than automatically retargeted (#8832). The existing fail-closed compatibility procedure applies: an unmatched selector remains unapplied with a visible warning; review the current finding before recording its current ID. An ambiguous old ID is never an alias for either new value. The fingerprint format and output schema are unchanged. The actual distinct-payload fp8 collision in #8838 remains a known violation of the material-input/order identity requirements, not a waiver of them.
 
 A finding contains:
 
@@ -3383,6 +3384,7 @@ Policy reports are advisory unless `--mode fail-on-new-warning` is used.
     "observe": "yes",
     "discriminate": "weak"
   },
+  "related_tests_total": 0,
   "related_tests": [],
   "observed_values": [],
   "missing_discriminators": [],
@@ -3438,7 +3440,14 @@ artifact file is printed as a resolved path, stdin stays `--diff -`, and a
 `--base` or `--worktree` scope is repeated as given.
 
 The context packet is intentionally smaller than check output. It is optimized
-for coding agents and editor commands. `witness` is additive and is omitted
+for coding agents and editor commands. Its additive `related_tests_total`
+integer carries the finding's matched related-test row count before the
+packet's display limit, including when that limit is zero. It uses the same
+retained-count fallback and floor as check findings: older findings without
+matched-total metadata supply their known retained row count, which cannot
+establish how many rows an older producer discarded. `related_tests` remains
+the selected bounded window. Identical eight-row windows with totals 12 and
+13 therefore remain distinguishable. `witness` is additive and is omitted
 when an exposed finding has no unresolved discriminator. It contains only
 producer-owned facts: `fix_site` and `oracle_location` are absent when the
 producer cannot identify them, and `suggested_assertion` remains `null` until
@@ -15977,6 +15986,22 @@ loop.
 [RIPR-SPEC-0010](specs/RIPR-SPEC-0010-agent-working-set-brief.md). It emits a
 small working-set summary that selects the top seams relevant to the files,
 lines, diff, base ref, or explicit seam ID an agent is touching.
+
+For `--diff` and `--base`, shared-parser limitations (combined hunks,
+unresolved conflict regions, or malformed hunks) and independently recorded
+truncated textual sections refuse the invocation before
+selection. The command exits `2` with the refusal envelope above, identity
+`diff_input_unsupported`, `downstream_consumable: false`, and the parser's
+reason and recovery in the diagnostic. This also applies when ordinary hunks
+are present and to parser admission errors such as changed-file-count and
+path-depth bounds. The brief keeps `diff_input_unsupported` for these errors;
+`check` retains its existing budget-refusal identities. Path-depth admission
+follows hunk-boundary decisions, so slash-heavy source lines beginning with
+`++ ` or `-- ` are payload rather than path headers. A valid empty patch
+still succeeds: an empty inventory returns
+empty `top_seams`; a nonempty inventory retains the disclosed repository
+fallback. Valid mode-only input retains its existing fallback too. Successful
+emptiness does not establish test adequacy.
 
 Command forms:
 

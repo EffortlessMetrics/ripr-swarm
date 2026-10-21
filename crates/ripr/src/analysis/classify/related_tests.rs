@@ -5220,6 +5220,49 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             .collect()
     }
 
+    /// Related-test relation for the free `kb` owner when the test's call
+    /// facts come from the real extractor (not hand-built facts).
+    fn free_kb_relation_from_extracted_calls(body: &str) -> Vec<RelationReason> {
+        let owner = free_function("src/lib.rs", "kb");
+        let mut test = test_with_call("tests/units.rs", "test_comparison", body, "kb");
+        test.calls = crate::analysis::extract::extract_call_facts(body, 1);
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "size.into() * KB");
+        find_related_tests(&probe, Some(&owner), &index, true, None, None)
+            .into_iter()
+            .map(|(_, reason)| reason)
+            .collect()
+    }
+
+    /// #8999: a test that calls the free function only through a local alias
+    /// of its module path is a direct owner call; an alias of a same-named
+    /// associated function, a local closure, or a quoted token is not.
+    #[test]
+    fn given_free_fn_when_test_calls_it_through_a_local_alias_then_direct_owner_call() {
+        assert_eq!(
+            free_kb_relation_from_extracted_calls("let f = units::kb;\nassert_eq!(f(1), 1000);"),
+            vec![RelationReason::DirectOwnerCall]
+        );
+        for body in [
+            // associated function of a type, not the free function
+            "let f = ByteSize::kb;\nassert_eq!(f(1), 1000);",
+            // local closure named like the owner
+            "let kb = |x: u64| x * 1000;\nlet f = kb;\nassert_eq!(f(1), 1000);",
+            // alias never called; the owner name only appears quoted
+            "let f = units::kb;\nassert_eq!(g(1), \"kb(1)\");",
+        ] {
+            assert_ne!(
+                free_kb_relation_from_extracted_calls(body),
+                vec![RelationReason::DirectOwnerCall],
+                "{body}"
+            );
+        }
+    }
+
     /// #6713: `ByteSize::kb(1000)` calls the associated function, never the
     /// free `kb`, so it cannot be a direct owner call of the free function.
     #[test]

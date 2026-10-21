@@ -514,7 +514,7 @@ fn doctor_says_when_the_cache_cannot_be_written() -> Result<(), String> {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        stdout.contains("! Cache not writable") && stdout.contains("RIPR_CACHE_DIR"),
+        stdout.contains("~ Cache not writable") && stdout.contains("RIPR_CACHE_DIR"),
         "doctor must name the unwritable cache and the remedy: {stdout}"
     );
     Ok(())
