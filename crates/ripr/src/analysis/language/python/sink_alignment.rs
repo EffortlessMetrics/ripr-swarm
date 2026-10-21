@@ -1146,7 +1146,7 @@ fn assertion_calls_stand_in(unit: &AlignmentUnit<'_>, owner: &PythonOwner) -> bo
 /// (assignment, local `def`/`class`, loop/`as` target, or a non-owner import).
 /// Nested `def`/`class` bodies are a different scope, so a helper-local
 /// shadow does not hide an outer assertion on the imported owner.
-fn function_scope_stand_in(test: &PythonTest, name: &str, owner: &PythonOwner) -> bool {
+pub(super) fn function_scope_stand_in(test: &PythonTest, name: &str, owner: &PythonOwner) -> bool {
     if name.is_empty() {
         return false;
     }

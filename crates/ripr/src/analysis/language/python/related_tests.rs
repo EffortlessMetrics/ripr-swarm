@@ -663,6 +663,7 @@ fn chained_or_bracketed_target(body: &str, idx: usize, before: &str, after: &str
     }
     let rest = after[1..].trim_start_matches([' ', '\t']);
     plain_assign(rest)
+        || rest.starts_with(',')
         || rest.starts_with("in ")
         || before[..before.len() - 1].trim_end().ends_with(" as")
 }
@@ -716,6 +717,12 @@ fn owner_protocol_entry_calls(
     };
     let mut calls = Vec::new();
     for local in owner_class_locals(test, owner, class) {
+        // The class spelling must still be the imported class: a module-level,
+        // tuple, annotated or walrus rebind of its head name replaces it.
+        let head = local.split('.').next().unwrap_or(&local);
+        if super::sink_alignment::function_scope_stand_in(test, head, owner) {
+            continue;
+        }
         for builtin in &builtins {
             calls.extend(protocol_entry_calls(text, &test.body_text, &local, builtin));
         }
@@ -744,14 +751,20 @@ pub(super) fn oracle_operand_protocol_entry(
     let Some(depth) = oracle_operand_depth(text) else {
         return false;
     };
+    if super::test_activation::activation_control(test).is_some() {
+        return false;
+    }
+    let calls = owner_protocol_entry_calls(text, test, owner);
+    if calls.is_empty() {
+        return false;
+    }
     let wrappers: Vec<&str> = ORDER_PRESERVING_WRAPPERS
         .into_iter()
         .filter(|wrapper| !builtin_is_shadowed(test, wrapper))
         .collect();
-    super::test_activation::activation_control(test).is_none()
-        && owner_protocol_entry_calls(text, test, owner)
-            .into_iter()
-            .any(|(start, open)| reaches_operand_depth(text, start, open, depth, &wrappers))
+    calls
+        .into_iter()
+        .any(|(start, open)| reaches_operand_depth(text, start, open, depth, &wrappers))
 }
 
 /// Relation for a dunder method owner (`__init__`, `__setitem__`, ...).

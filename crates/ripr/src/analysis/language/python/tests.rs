@@ -7402,6 +7402,15 @@ fn protocol_entry_stays_uncredited_without_a_bound_owner_receiver() -> Result<()
         "from src.nr import numeric_range\n\n\ndef test_annotated_wrapper():\n    list: Callable = f\n    assert list(reversed(numeric_range(0))) == []\n",
         // An unasserted entry does not relate the test to the dunder.
         "from src.nr import numeric_range\n\n\ndef test_unasserted_entry():\n    x = list(reversed(numeric_range(3)))\n    assert numeric_range(3).stop == 3\n",
+        // The owner class name itself is replaced.
+        "from src.nr import numeric_range\nnumeric_range = Fake\n\n\ndef test_module_class():\n    assert list(reversed(numeric_range(0))) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_tuple_class():\n    numeric_range, y = Fake, 1\n    assert list(reversed(numeric_range(0))) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_annotated_class():\n    numeric_range: type = Fake\n    assert list(reversed(numeric_range(0))) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_walrus_class():\n    (numeric_range := Fake)\n    assert list(reversed(numeric_range(0))) == []\n",
+        // A bracketed single element followed by a comma rebinds the receiver.
+        "from src.nr import numeric_range\n\n\ndef test_paren_comma():\n    r = numeric_range(0)\n    (r), x = [1], 2\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_list_comma():\n    r = numeric_range(0)\n    [r], x = [1], 2\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_for_paren_comma():\n    r = numeric_range(0)\n    for (r), x in [([1], 2)]:\n        pass\n    assert list(reversed(r)) == [1]\n",
         "from src.nr import numeric_range\n\n\ndef test_string():\n    assert \"reversed(numeric_range(0))\"\n",
     ] {
         let (finding, relations) = classify_reversed_guard(test_src)?;
