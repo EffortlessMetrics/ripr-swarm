@@ -322,6 +322,129 @@ fn line(value: Value) -> Result<Vec<u8>, String> {
     Ok(encoded)
 }
 
+/// JSON-RPC conformance of the error replies a client can otherwise only
+/// observe as a hang or an unhelpful message: every unreadable or rejected
+/// message gets exactly one correlated reply, and the session survives all of
+/// them to answer a final valid request.
+#[test]
+fn json_rpc_rejections_are_answered_with_spec_codes_and_the_session_survives() -> Result<(), String>
+{
+    let root = workspace_root()?;
+    let deep = format!(
+        "{{\"jsonrpc\":\"2.0\",\"id\":\"deep\",\"method\":\"tools/list\",\"params\":{}{}}}\n",
+        "[".repeat(5000),
+        "]".repeat(5000)
+    );
+    let oversized = format!(
+        "{{\"jsonrpc\":\"2.0\",\"id\":\"big\",\"method\":\"tools/list\",\"params\":{{\"x\":\"{}\"}}}}\n",
+        "a".repeat(300_000)
+    );
+    let initialize = line(json!({
+        "jsonrpc": "2.0", "id": "init", "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25", "capabilities": {},
+            "clientInfo": { "name": "ripr-integration-test", "version": "1" }
+        }
+    }))?;
+    let initialized = line(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))?;
+    let tool_call = |id: &str, name: &str, arguments: Value| {
+        line(json!({
+            "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": { "name": name, "arguments": arguments }
+        }))
+    };
+    let exchanges: Vec<(Vec<u8>, Value, i64)> = vec![
+        (b"{not json\n".to_vec(), Value::Null, -32700),
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":null,\"method\":\"tools/list\"}\n".to_vec(),
+            Value::Null,
+            -32600,
+        ),
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":1.5,\"method\":\"tools/list\"}\n".to_vec(),
+            Value::Null,
+            -32600,
+        ),
+        (deep.into_bytes(), Value::Null, -32700),
+        (oversized.into_bytes(), json!("big"), -32600),
+        (
+            b"{\"jsonrpc\":\"1.0\",\"id\":\"v1\",\"method\":\"tools/list\"}\n".to_vec(),
+            json!("v1"),
+            -32600,
+        ),
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":\"init-again\",\"method\":\"initialize\"}\n".to_vec(),
+            json!("init-again"),
+            -32602,
+        ),
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":\"nope\",\"method\":\"nope/never\"}\n".to_vec(),
+            json!("nope"),
+            -32601,
+        ),
+        (
+            tool_call("unknown-tool", "ripr_everything", json!({}))?,
+            json!("unknown-tool"),
+            -32602,
+        ),
+        (
+            tool_call(
+                "bad-language",
+                "ripr_list_gaps",
+                json!({"language": "cobol"}),
+            )?,
+            json!("bad-language"),
+            -32602,
+        ),
+    ];
+    let timeout = Duration::from_secs(30);
+    let mut session = SequentialStdio::spawn(&root)?;
+    let first = session.raw_exchange(&initialize, timeout)?;
+    if first.get("id") != Some(&json!("init")) || first.get("error").is_some() {
+        return Err(format!("initialize failed: {first}"));
+    }
+    session.send_raw(&initialized)?;
+    let mut messages = Vec::new();
+    for (bytes, id, code) in exchanges {
+        let response = session.raw_exchange(&bytes, timeout)?;
+        if response.get("id") != Some(&id)
+            || response.pointer("/error/code").and_then(Value::as_i64) != Some(code)
+            || response.get("jsonrpc") != Some(&json!("2.0"))
+        {
+            return Err(format!(
+                "wrong reply, expected id {id} code {code}: {response}"
+            ));
+        }
+        messages.push(
+            response
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+        );
+    }
+    // Every rejection left the session up and answering.
+    let alive = session.raw_exchange(
+        &line(json!({"jsonrpc": "2.0", "id": "alive", "method": "ping"}))?,
+        timeout,
+    )?;
+    if alive.get("id") != Some(&json!("alive")) || alive.get("result") != Some(&json!({})) {
+        return Err(format!("the session did not survive: {alive}"));
+    }
+    // Messages say what is wrong, not just which method was named.
+    if messages[0] != "Parse error"
+        || !messages[6].contains("expected `protocolVersion`")
+        || messages[7] != "Method not found: nope/never"
+        || !messages[8].starts_with("unknown tool")
+        || !messages[9].contains("unknown language \"cobol\"")
+        || !messages[9].contains("rust")
+        || !messages[9].contains("perl")
+    {
+        return Err(format!("rejection messages drifted: {messages:?}"));
+    }
+    Ok(())
+}
+
 /// Optional tool fields may be omitted, but their advertised string/integer
 /// types do not accept explicit null. Pin the schemas and dispatch separately
 /// against literal expectations, through the actual stdio process (#7314).
@@ -1008,7 +1131,7 @@ fn rejection_arms_survive_the_stdio_transport() -> Result<(), String> {
         return Err(format!("expected 6 MCP responses, got {}", responses.len()));
     }
     let expected: [(&str, i64); 3] = [
-        ("unknown-tool", -32601),
+        ("unknown-tool", -32602),
         ("with-arguments", -32602),
         ("unknown-resource", -32602),
     ];
@@ -1817,15 +1940,24 @@ impl SequentialStdio {
         }
     }
 
-    fn send_raw(&mut self, encoded: &[u8]) -> Result<(), String> {
+    fn send_raw(&mut self, bytes: &[u8]) -> Result<(), String> {
         let stdin = self
             .stdin
             .as_mut()
             .ok_or_else(|| "the session stdin was already released".to_string())?;
         stdin
-            .write_all(encoded)
+            .write_all(bytes)
             .and_then(|()| stdin.flush())
-            .map_err(|error| format!("write raw frame: {error}"))
+            .map_err(|error| format!("write raw line: {error}"))
+    }
+
+    /// Write one raw line and return the next reply, whatever its id: the
+    /// exchange for messages whose reply id is under test.
+    fn raw_exchange(&mut self, bytes: &[u8], timeout: Duration) -> Result<Value, String> {
+        self.send_raw(bytes)?;
+        self.replies
+            .recv_timeout(timeout)
+            .map_err(|error| format!("no reply to a raw line ({error}): the client would hang"))
     }
 
     fn next_reply(&mut self, timeout: Duration) -> Result<Value, String> {
@@ -2053,7 +2185,9 @@ fn empty_gap_pages_keep_structured_outcomes_at_the_response_bound() -> Result<()
         .as_str()
         .ok_or("baseline omitted snapshot ID")?;
 
-    for field in ["file", "class", "language"] {
+    // `language` is not here: an unknown language is rejected as Invalid
+    // Params before any page is built, so it can no longer carry the filler.
+    for field in ["file", "class"] {
         let fitting_filter = "\u{1}".repeat(9_500);
         let mut arguments = json!({});
         arguments[field] = json!(fitting_filter);
@@ -2287,7 +2421,9 @@ fn refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation() -> Re
             vec![],
         ),
         (json!({"class": "unknown-class"}), vec![]),
-        (json!({"language": "unknown-language"}), vec![]),
+        // An unknown language wire string is Invalid Params, pinned by
+        // `json_rpc_rejections_are_answered_with_spec_codes_and_the_session_survives`.
+        (json!({"language": "typescript"}), vec![]),
         (json!({"file": "missing.rs"}), vec![]),
     ];
     if cfg!(feature = "lang-python") {

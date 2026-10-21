@@ -1550,7 +1550,7 @@ fn b3a_mcp_negative_authority_pre_refresh() -> Result<(), String> {
     // Dispatch edge: unknown tools and unknown arguments are protocol
     // errors, never silent nulls.
     let reply = session.call("b3a-unknown-tool", "ripr_everything", json!({}))?;
-    if protocol_error_code(&reply, "b3a unknown tool")? != -32601 {
+    if protocol_error_code(&reply, "b3a unknown tool")? != -32602 {
         return Err(format!("b3a unknown tool: wrong protocol code: {reply}"));
     }
     let reply = session.call(
