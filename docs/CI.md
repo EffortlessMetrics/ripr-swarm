@@ -73,7 +73,8 @@ required `Ripr Rust Small Result` exists only for that request). ub-review, the
 Python wheel workflow and source-of-truth still follow their own triggers until
 #4984/#8082 integrate them. Agents and authors prove
 the change locally ([validation](agent-context/validation.md#local-and-hosted-proof)),
-publish a Draft, and add the `merge-ready` label last. Adding `merge-ready`
+publish a Draft, mark it Ready once review is complete, and add the `merge-ready`
+label last (admission refuses a Draft PR). Adding `merge-ready`
 starts the required Result and the non-required lanes once for the head it was applied to. A later push
 to a labeled PR does not rerun them: re-apply the label (remove it, then add it
 again) once the new head is ready to qualify. Removing the label does not cancel
@@ -2261,6 +2262,10 @@ PRs are limited to minor and patch updates. Major updates should be deliberate,
 scoped PRs because they often change toolchain, release, or runtime behavior.
 Dependabot PRs are not auto-merged; they must pass the normal CI, coverage,
 security, and `xtask` checks before merge.
+Candidate admission accepts a same-repository PR authored by `dependabot[bot]`
+on a `dependabot/` branch without the template claim lines: the claim is this
+dependency policy and the acceptance delta is the update branch. Any other PR
+still has to state its own claim.
 
 GitHub-hosted security settings are tracked in
 [Repository settings](REPO_SETTINGS.md). Dependency Graph, Dependabot alerts,

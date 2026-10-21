@@ -134,6 +134,47 @@ def trusted_peer(current: dict[str, Any], peer: dict[str, Any]) -> bool:
     )
 
 
+def dependabot_identity(current: dict[str, Any]) -> dict[str, str] | None:
+    """Policy-derived claim for a same-repository Dependabot update PR.
+
+    Dependabot writes its own PR body and cannot carry the template lines, so
+    the claim is the dependency policy in docs/CI.md. The delta names the update
+    branch. Peers are compared only on identity lines in their own bodies, so a
+    derived identity never competes with another Dependabot PR. Only the GitHub-attested
+    bot author on a dependabot/ branch of this repository qualifies; a fork or
+    a human-authored PR must still write the lines itself.
+    """
+
+    user = current.get("user") or {}
+    head = current.get("head") or {}
+    base = current.get("base") or {}
+    ref = head.get("ref") or ""
+    repository = head_repository(current)
+    if (
+        user.get("login") != "dependabot[bot]"
+        or user.get("type") != "Bot"
+        or not ref.startswith("dependabot/")
+        or repository == ""
+        or repository != ((base.get("repo") or {}).get("full_name") or "")
+    ):
+        return None
+    return {
+        "claim": "docs/CI.md dependency update policy",
+        "delta": f"dependency update {ref}",
+    }
+
+
+def effective_fields(pr: dict[str, Any]) -> dict[str, str]:
+    """Body fields, with the Dependabot policy identity filling missing lines."""
+
+    fields = extract_fields(pr.get("body") or "")
+    if invalid(fields["claim"]) or invalid(fields["delta"]):
+        derived = dependabot_identity(pr)
+        if derived is not None:
+            fields = {**fields, **derived}
+    return fields
+
+
 def identity_detail(fields: dict[str, str]) -> str:
     missing = [
         TEMPLATE_LINES[key]
@@ -184,7 +225,7 @@ def decide(
     max_files: int,
     max_lines: int,
 ) -> dict[str, Any]:
-    fields = extract_fields(current.get("body") or "")
+    fields = effective_fields(current)
     actual_head = ((current.get("head") or {}).get("sha") or "")
     refuse = lambda reason, peers=None, detail="": refusal(  # noqa: E731
         reason, current, fields, max_files, max_lines, peers, detail
@@ -213,7 +254,7 @@ def decide(
     for peer in open_candidates:
         if peer.get("number") == current.get("number") or not trusted_peer(current, peer):
             continue
-        peer_fields = extract_fields(peer.get("body") or "")
+        peer_fields = effective_fields(peer)
         if invalid(peer_fields["claim"]) or invalid(peer_fields["delta"]):
             continue
         if normalize(peer_fields["claim"]) == claim and normalize(
@@ -266,14 +307,18 @@ def fixture(
     draft: bool = False,
     repository: str = "EffortlessMetrics/ripr-swarm",
     target: str = "main",
+    login: str = "contributor",
+    user_type: str = "User",
+    ref: str = "feature",
 ) -> dict[str, Any]:
     return {
         "number": number,
         "state": "open",
         "draft": draft,
         "body": body,
-        "head": {"sha": head, "repo": {"full_name": repository}},
-        "base": {"ref": target},
+        "user": {"login": login, "type": user_type},
+        "head": {"sha": head, "ref": ref, "repo": {"full_name": repository}},
+        "base": {"ref": target, "repo": {"full_name": "EffortlessMetrics/ripr-swarm"}},
         "changed_files": changed_files,
         "additions": additions,
         "deletions": deletions,
@@ -438,7 +483,42 @@ def self_test() -> None:
         == "candidate_not_open_ready"
     )
     assert run(current, [], "short")["reason"] == "expected_head_missing"
-    print("candidate-admission self-test: 28 controls passed")
+    bump = {
+        "login": "dependabot[bot]",
+        "user_type": "Bot",
+        "ref": "dependabot/npm_and_yarn/editors/vscode/markdown-it-14.3.3",
+    }
+    admitted = run(fixture(body="Bumps markdown-it.", head=head, **bump), [])
+    assert admitted["status"] == "admitted"
+    assert admitted["claim"] == "docs/ci.md dependency update policy"
+    assert admitted["acceptance_delta"] == f"dependency update {bump['ref']}".casefold()
+    sibling = fixture(
+        number=11,
+        body="Bumps another.",
+        head="b" * 40,
+        **{**bump, "ref": "dependabot/cargo/serde-1.0.1"},
+    )
+    assert run(fixture(body="", head=head, **bump), [sibling])["status"] == "admitted"
+    for spoof in (
+        {**bump, "login": "contributor"},
+        {**bump, "user_type": "User"},
+        {**bump, "ref": "feature/dependabot/x"},
+        {**bump, "repository": "external/fork"},
+    ):
+        refused = run(fixture(body="", head=head, **spoof), [])
+        assert refused["reason"] == "claim_identity_missing", spoof
+    matching = fixture(
+        number=12,
+        body=fixture_body(
+            claim="docs/CI.md dependency update policy",
+            delta=f"dependency update {bump['ref']}",
+        ),
+        head="c" * 40,
+    )
+    bot = fixture(number=10, body="", head=head, **bump)
+    assert run(bot, [bot, matching])["reason"] == "competing_candidate"
+    assert run(matching, [bot, matching], "c" * 40)["reason"] == "competing_candidate"
+    print("candidate-admission self-test: 37 controls passed")
 
 
 def load_json(path: Path) -> Any:

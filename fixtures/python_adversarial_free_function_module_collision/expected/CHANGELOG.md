@@ -487,3 +487,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_free_function_module_collision (23)
+
+Reason:
+RIPR-SPEC-0028: #8759 a test importing validate from src.checker is no longer related to the same-named src.handler.validate; false weakly_exposed reach becomes no_static_path
+
+Command:
+`cargo xtask goldens bless python_adversarial_free_function_module_collision --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
