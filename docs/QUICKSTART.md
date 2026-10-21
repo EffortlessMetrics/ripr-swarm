@@ -351,7 +351,8 @@ unestablished. Python analysis is `preview`, with selected pytest/unittest
 repair routes at `usable alpha`. Only complete weak-evidence routes get repair
 cards; zero cards is normal for unsupported or non-repairable findings.
 
-TypeScript and JavaScript are opt-in previews. Diff analysis recognizes:
+TypeScript is enabled automatically for TypeScript-shaped repositories without a
+`ripr.toml`; JavaScript is an opt-in preview. Diff analysis recognizes:
 
 ```text
 .ts  .tsx  .mts  .cts  .js  .jsx  .mjs  .cjs

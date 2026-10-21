@@ -46,7 +46,7 @@ fn parse_unified_diff_with_metadata_and_limit(
     stream::parse_bounded_lines(input.lines(), limit)
 }
 
-fn diff_file_limit_from_env() -> usize {
+pub(crate) fn diff_file_limit_from_env() -> usize {
     std::env::var(DIFF_FILE_LIMIT_ENV)
         .ok()
         .and_then(|v| v.trim().parse::<usize>().ok())

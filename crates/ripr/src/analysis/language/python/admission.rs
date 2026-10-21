@@ -19,18 +19,32 @@
 //! the absence of the row and the file's `unsupported_syntax` limitation, not
 //! by a value here.
 //!
-//! Known blind spots: the scan sees one file. An autouse fixture in a
-//! `conftest.py`, an assertion installed by a pytest plugin, or a helper
-//! imported by bare name from a sibling module that pytest's rootdir
-//! insertion makes importable (`from utils import run_case` beside the test)
-//! can still fail a `NoAssertionLike` test (#6657). A module imported from
-//! the test file's own directory or below is treated as test support; a
-//! test file at the repository root has no such directory, so its relative
-//! imports (`from . import checks`) are not caught (#6657). A global filled
-//! through a plain-name registering decorator (`@register` whose body
-//! appends to `HANDLERS`) is not tainted either, and a `conftest.py` may
-//! override a built-in fixture such as `tmp_path` (#6657). A
-//! `no_assertion` miss must account for the rest before it is emitted.
+//! This scan sees one file. Behavior that pytest installs from outside the
+//! test file is handled by the workspace pass instead: a `conftest.py` on the
+//! test's directory chain that declares an autouse fixture, a
+//! `pytest_runtest_*` hook or `pytest_plugins` withholds
+//! `NoAssertionLike` from every test in its scope (`fixtures.rs`, #6657).
+//! `pytest_plugins` in the test file itself does the same here.
+//!
+//! Known blind spots: a helper imported by bare name from a sibling module
+//! that pytest's rootdir insertion makes importable (`from utils import
+//! run_case` beside the test), a `conftest.py` that overrides a built-in
+//! fixture such as `tmp_path`, a plugin registered dynamically
+//! (`config.pluginmanager.register`), and a plugin installed by entry point
+//! can still fail a `NoAssertionLike` test, as can pytest configuration
+//! outside any conftest (`-p` or `usefixtures` in an ini file's `addopts`)
+//! (#6657). A conftest that imports names from outside a short list of pytest
+//! and standard-library modules (they may be an autouse fixture or hook),
+//! star-imports, aliases a hook or the fixture decorator, aliases an external
+//! fixture by assignment, or builds an autouse-fixture factory is tainted.
+//! Not seen: setup installed through `globals()` or other runtime registration,
+//! `@pytest.hookimpl(specname=...)` on a differently named function, an
+//! autouse fixture imported into the test module itself, and aliases built
+//! through a tuple, `or` expression or call (`fx = getattr(pytest, "fixture")`). A module imported from
+//! the test file's own directory or below is treated as test support; for a
+//! test file at the repository root, a relative import is treated as test
+//! support by alias. A `no_assertion` miss must account for the rest before
+//! it is emitted.
 //!
 //! Test activation (skip / xfail / expected failure, #5389) is a separate
 //! fact and is not folded into this state.
@@ -38,7 +52,7 @@
 use super::expr_full_name;
 use super::{PythonAssertion, PythonImport, PythonOracleShape};
 use rustpython_parser::ast::{self, Expr, Stmt};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Assertion admission for one extracted Python test.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,6 +98,21 @@ pub(super) struct PythonAdmissionContext {
     module_dir: String,
     /// Class-base spellings known to be unittest's own test classes.
     safe_bases: BTreeSet<String>,
+    /// A `pytest_runtest_*` (or `pytest_pyfunc_call` / fixture-setup) hook,
+    /// at any depth. In a `conftest.py` it runs around every test in scope
+    /// and can assert; it only matters there (#6657).
+    has_runtest_hook: bool,
+    /// A `pytest_plugins = [...]` declaration: it loads plugin modules whose
+    /// hooks and autouse fixtures RIPR cannot read (#6657).
+    has_plugins: bool,
+    /// A conftest star import, hook-named import or autouse-fixture factory:
+    /// it may re-export implicit setup defined elsewhere. Read only for
+    /// `conftest_installs_implicit_setup`.
+    has_conftest_reexport: bool,
+    /// Aliases bound by a relative import, tracked only for a test file at
+    /// the repository root (empty `module_dir`), where the resolved source
+    /// module carries no directory prefix to recognise as test support.
+    root_relative_aliases: BTreeSet<String>,
 }
 
 impl PythonAdmissionContext {
@@ -97,6 +126,9 @@ impl PythonAdmissionContext {
             ..Self::default()
         };
         context.safe_bases = safe_base_spellings(imports);
+        if module_dir.is_empty() {
+            relative_import_aliases(statements, &mut context.root_relative_aliases);
+        }
         let mut lifecycle_bodies = Vec::new();
         context.collect(statements, &mut lifecycle_bodies);
         context.taint_module_bindings(statements, imports);
@@ -123,6 +155,19 @@ impl PythonAdmissionContext {
         let mut bindings = Vec::new();
         let mut registries = Vec::new();
         module_bindings(statements, &mut bindings, &mut registries);
+        // A plain-name decorator defined in this module can store what it
+        // decorates in a global (`def register(f): HANDLERS.append(f)`).
+        let mut functions: BTreeMap<String, Vec<&ast::StmtFunctionDef>> = BTreeMap::new();
+        module_function_defs(statements, &mut functions);
+        let mut decorators = BTreeSet::new();
+        plain_decorator_names(statements, &mut decorators);
+        for decorator in &decorators {
+            // Every same-name definition is examined: a later redefinition
+            // must not hide the one that stored the decorated callable.
+            for function in functions.get(decorator).into_iter().flatten() {
+                registering_roots(function, &mut registries);
+            }
+        }
         // `@HANDLERS.append` or `HANDLERS.append(verify)` registers a
         // same-module callable in a global without assigning it.
         self.defined_names.extend(
@@ -211,6 +256,60 @@ impl PythonAdmissionContext {
                 {
                     self.has_implicit_fixture = true;
                 }
+                Stmt::Assign(assign) if assign.targets.iter().any(is_pytest_plugins_target) => {
+                    self.has_plugins = true;
+                }
+                // `autouse_fix = pytest.fixture(autouse=True)` or a hook alias
+                // (`pytest_runtest_call = other.hook`) is a later decorator or
+                // hook the def-based scan does not see.
+                Stmt::Assign(assign)
+                    if builds_autouse_fixture(&assign.value)
+                        || is_alias_value(&assign.value)
+                        || assign.targets.iter().any(is_runtest_hook_target) =>
+                {
+                    self.has_conftest_reexport = true;
+                }
+                Stmt::ImportFrom(import)
+                    if import.level.is_some_and(|level| level.to_u32() > 0)
+                        || !import
+                            .module
+                            .as_ref()
+                            .is_some_and(|module| is_inert_import_module(module.as_str()))
+                        || import.names.iter().any(|alias| {
+                            alias.name.as_str() == "*"
+                                || is_runtest_hook_name(alias.name.as_str())
+                                || alias
+                                    .asname
+                                    .as_ref()
+                                    .is_some_and(|name| is_runtest_hook_name(name.as_str()))
+                                || (alias.asname.is_some()
+                                    && matches!(
+                                        alias.name.as_str(),
+                                        "fixture" | "yield_fixture"
+                                    ))
+                        }) =>
+                {
+                    self.has_conftest_reexport = true;
+                }
+                Stmt::AnnAssign(assign) if is_pytest_plugins_target(&assign.target) => {
+                    self.has_plugins = true;
+                }
+                Stmt::AnnAssign(assign)
+                    if is_runtest_hook_target(&assign.target)
+                        || assign.value.as_deref().is_some_and(|value| {
+                            builds_autouse_fixture(value) || is_alias_value(value)
+                        }) =>
+                {
+                    self.has_conftest_reexport = true;
+                }
+                // `pytest.fixture(autouse=True)(fn)` as a bare statement still
+                // registers `fn` on older pytest.
+                Stmt::Expr(expr) if builds_autouse_fixture(&expr.value) => {
+                    self.has_conftest_reexport = true;
+                }
+                Stmt::AugAssign(assign) if is_pytest_plugins_target(&assign.target) => {
+                    self.has_plugins = true;
+                }
                 // Definitions under a module-level `if`, `try` or `with`.
                 Stmt::If(if_stmt) => {
                     self.collect(&if_stmt.body, lifecycle);
@@ -231,6 +330,25 @@ impl PythonAdmissionContext {
                     lifecycle,
                 ),
                 Stmt::With(with_stmt) => self.collect(&with_stmt.body, lifecycle),
+                Stmt::AsyncWith(with_stmt) => self.collect(&with_stmt.body, lifecycle),
+                // Definitions under a module-level loop or `match` (#6657).
+                Stmt::For(for_stmt) => {
+                    self.collect(&for_stmt.body, lifecycle);
+                    self.collect(&for_stmt.orelse, lifecycle);
+                }
+                Stmt::AsyncFor(for_stmt) => {
+                    self.collect(&for_stmt.body, lifecycle);
+                    self.collect(&for_stmt.orelse, lifecycle);
+                }
+                Stmt::While(while_stmt) => {
+                    self.collect(&while_stmt.body, lifecycle);
+                    self.collect(&while_stmt.orelse, lifecycle);
+                }
+                Stmt::Match(match_stmt) => {
+                    for case in &match_stmt.cases {
+                        self.collect(&case.body, lifecycle);
+                    }
+                }
                 _ => {}
             }
         }
@@ -257,8 +375,279 @@ impl PythonAdmissionContext {
         if decorators.iter().any(is_autouse_fixture) {
             self.has_implicit_fixture = true;
         }
+        if is_runtest_hook_name(name) {
+            self.has_runtest_hook = true;
+        }
         self.defined_names.insert(name.to_string());
     }
+}
+
+/// Whether a `conftest.py` can run assertion-like code around every test in
+/// its scope without the test naming it (#6657): an `autouse` fixture (it may
+/// assert in teardown), a `pytest_runtest_*` hook, or `pytest_plugins`.
+pub(super) fn conftest_installs_implicit_setup(statements: &[Stmt]) -> bool {
+    let mut context = PythonAdmissionContext::default();
+    context.collect(statements, &mut Vec::new());
+    context.has_implicit_fixture
+        || context.has_runtest_hook
+        || context.has_plugins
+        || context.has_conftest_reexport
+}
+
+fn is_runtest_hook_name(name: &str) -> bool {
+    name.starts_with("pytest_runtest")
+        || matches!(
+            name,
+            "pytest_pyfunc_call"
+                | "pytest_fixture_setup"
+                | "pytest_fixture_post_finalizer"
+                // Item-mutating hooks can attach marks or fixtures to tests.
+                | "pytest_collection_modifyitems"
+                | "pytest_itemcollected"
+                | "pytest_pycollect_makeitem"
+        )
+}
+
+/// Modules a conftest may import names from without re-exporting a fixture or
+/// hook defined elsewhere. Any other `from X import name` (project or
+/// third-party) may bring an autouse fixture or plugin hook into scope.
+fn is_inert_import_module(module: &str) -> bool {
+    let root = module.split('.').next().unwrap_or(module);
+    matches!(
+        root,
+        "__future__"
+            | "pytest"
+            | "typing"
+            | "typing_extensions"
+            | "os"
+            | "sys"
+            | "pathlib"
+            | "collections"
+            | "dataclasses"
+            | "json"
+            | "re"
+            | "functools"
+            | "itertools"
+            | "tempfile"
+            | "shutil"
+            | "contextlib"
+            | "datetime"
+    )
+}
+
+fn is_runtest_hook_target(target: &Expr) -> bool {
+    match target {
+        Expr::Name(name) => is_runtest_hook_name(name.id.as_str()),
+        Expr::Tuple(tuple) => tuple.elts.iter().any(is_runtest_hook_target),
+        Expr::List(list) => list.elts.iter().any(is_runtest_hook_target),
+        _ => false,
+    }
+}
+
+/// A bare name or attribute on the right-hand side
+/// (`leak_check = fixtures_lib.leak_check`, `fx = pytest.fixture`): pytest
+/// collects fixtures by module attribute, so the alias may register a fixture
+/// or decorator defined elsewhere.
+fn is_alias_value(value: &Expr) -> bool {
+    matches!(value, Expr::Name(_) | Expr::Attribute(_))
+}
+
+/// A value that builds an autouse fixture decorator for later use:
+/// `pytest.fixture(autouse=True)` or `functools.partial(pytest.fixture,
+/// autouse=True)`.
+fn builds_autouse_fixture(value: &Expr) -> bool {
+    let Expr::Call(call) = value else {
+        return false;
+    };
+    if is_autouse_fixture(value) {
+        return true;
+    }
+    // `pytest.fixture(autouse=True)(fn)` applies the decorator immediately.
+    if builds_autouse_fixture(call.func.as_ref()) {
+        return true;
+    }
+    let is_partial =
+        expr_full_name(call.func.as_ref()).is_some_and(|name| name.ends_with("partial"));
+    is_partial
+        && call
+            .args
+            .iter()
+            .any(|arg| expr_full_name(arg).is_some_and(|name| name.ends_with("fixture")))
+        && call
+            .keywords
+            .iter()
+            .any(|keyword| keyword.arg.as_ref().is_none_or(|arg| arg == "autouse"))
+}
+
+fn is_pytest_plugins_target(target: &Expr) -> bool {
+    matches!(target, Expr::Name(name) if name.id.as_str() == "pytest_plugins")
+}
+
+/// Every statement block nested directly inside a compound statement.
+fn nested_blocks(stmt: &Stmt) -> Vec<&[Stmt]> {
+    match stmt {
+        Stmt::FunctionDef(function) => vec![&function.body],
+        Stmt::AsyncFunctionDef(function) => vec![&function.body],
+        Stmt::ClassDef(class) => vec![&class.body],
+        Stmt::If(if_stmt) => vec![&if_stmt.body, &if_stmt.orelse],
+        Stmt::For(for_stmt) => vec![&for_stmt.body, &for_stmt.orelse],
+        Stmt::AsyncFor(for_stmt) => vec![&for_stmt.body, &for_stmt.orelse],
+        Stmt::While(while_stmt) => vec![&while_stmt.body, &while_stmt.orelse],
+        Stmt::With(with_stmt) => vec![&with_stmt.body],
+        Stmt::AsyncWith(with_stmt) => vec![&with_stmt.body],
+        Stmt::Try(try_stmt) => try_blocks(
+            &try_stmt.body,
+            &try_stmt.handlers,
+            &try_stmt.orelse,
+            &try_stmt.finalbody,
+        ),
+        Stmt::TryStar(try_stmt) => try_blocks(
+            &try_stmt.body,
+            &try_stmt.handlers,
+            &try_stmt.orelse,
+            &try_stmt.finalbody,
+        ),
+        Stmt::Match(match_stmt) => match_stmt
+            .cases
+            .iter()
+            .map(|case| case.body.as_slice())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn try_blocks<'s>(
+    body: &'s [Stmt],
+    handlers: &'s [ast::ExceptHandler],
+    orelse: &'s [Stmt],
+    finalbody: &'s [Stmt],
+) -> Vec<&'s [Stmt]> {
+    let mut blocks = vec![body, orelse, finalbody];
+    for handler in handlers {
+        let ast::ExceptHandler::ExceptHandler(handler) = handler;
+        blocks.push(&handler.body);
+    }
+    blocks
+}
+
+/// Names bound by `from . import x` / `from .m import y` at any depth.
+fn relative_import_aliases(statements: &[Stmt], out: &mut BTreeSet<String>) {
+    for stmt in statements {
+        if let Stmt::ImportFrom(import) = stmt
+            && import
+                .level
+                .as_ref()
+                .is_some_and(|level| level.to_usize() > 0)
+        {
+            for alias in &import.names {
+                out.insert(alias.asname.as_ref().unwrap_or(&alias.name).to_string());
+            }
+        }
+        for block in nested_blocks(stmt) {
+            relative_import_aliases(block, out);
+        }
+    }
+}
+
+/// Module-level functions by name (every definition of a name), at any
+/// module-level nesting.
+fn module_function_defs<'s>(
+    statements: &'s [Stmt],
+    out: &mut BTreeMap<String, Vec<&'s ast::StmtFunctionDef>>,
+) {
+    for stmt in statements {
+        match stmt {
+            Stmt::FunctionDef(function) => {
+                out.entry(function.name.to_string())
+                    .or_default()
+                    .push(function);
+            }
+            Stmt::ClassDef(_) | Stmt::AsyncFunctionDef(_) => {}
+            other => {
+                for block in nested_blocks(other) {
+                    module_function_defs(block, out);
+                }
+            }
+        }
+    }
+}
+
+/// Plain names that decorate a definition, directly or as the callee of a
+/// decorator call (`@register`, `@register("k")`), at module or class level.
+fn plain_decorator_names(statements: &[Stmt], out: &mut BTreeSet<String>) {
+    for stmt in statements {
+        let decorators: &[Expr] = match stmt {
+            Stmt::FunctionDef(function) => &function.decorator_list,
+            Stmt::AsyncFunctionDef(function) => &function.decorator_list,
+            Stmt::ClassDef(class) => &class.decorator_list,
+            _ => &[],
+        };
+        for decorator in decorators {
+            let callee = match decorator {
+                Expr::Call(call) => call.func.as_ref(),
+                other => other,
+            };
+            if let Expr::Name(name) = callee {
+                out.insert(name.id.to_string());
+            }
+        }
+        if !matches!(stmt, Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_)) {
+            for block in nested_blocks(stmt) {
+                plain_decorator_names(block, out);
+            }
+        }
+    }
+}
+
+/// Global names a same-module decorator writes to when it runs
+/// (`def register(f): HANDLERS.append(f); return f`), including through an
+/// inner decorator factory. Its own parameters are not globals.
+fn registering_roots(function: &ast::StmtFunctionDef, out: &mut Vec<String>) {
+    let mut params = BTreeSet::new();
+    parameter_names(&function.args, &mut params);
+    registering_block_roots(&function.body, &params, out);
+}
+
+/// Roots written in `statements`, minus the parameters in scope at the write.
+/// A nested function's parameters shadow only that function's own body.
+fn registering_block_roots(statements: &[Stmt], params: &BTreeSet<String>, out: &mut Vec<String>) {
+    for stmt in statements {
+        match stmt {
+            Stmt::FunctionDef(function) => {
+                let mut inner = params.clone();
+                parameter_names(&function.args, &mut inner);
+                registering_block_roots(&function.body, &inner, out);
+            }
+            Stmt::AsyncFunctionDef(function) => {
+                let mut inner = params.clone();
+                parameter_names(&function.args, &mut inner);
+                registering_block_roots(&function.body, &inner, out);
+            }
+            other => {
+                let mut roots = Vec::new();
+                let mut bindings = Vec::new();
+                module_bindings(std::slice::from_ref(other), &mut bindings, &mut roots);
+                roots.extend(bindings.into_iter().flat_map(|(names, _)| names));
+                out.extend(roots.into_iter().filter(|root| !params.contains(root)));
+                // A nested def under `if`, `try`, `with` or a loop still runs.
+                for block in nested_blocks(other) {
+                    registering_block_roots(block, params, out);
+                }
+            }
+        }
+    }
+}
+
+fn parameter_names(args: &ast::Arguments, out: &mut BTreeSet<String>) {
+    out.extend(
+        args.posonlyargs
+            .iter()
+            .chain(args.args.iter())
+            .chain(args.kwonlyargs.iter())
+            .map(|arg| arg.def.arg.to_string()),
+    );
+    out.extend(args.vararg.iter().map(|arg| arg.arg.to_string()));
+    out.extend(args.kwarg.iter().map(|arg| arg.arg.to_string()));
 }
 
 /// unittest classes a test class may inherit without inheriting hooks RIPR
@@ -484,12 +873,45 @@ fn module_bindings<'s>(
                 module_bindings(&if_stmt.orelse, out, registries);
             }
             Stmt::Try(try_stmt) => {
-                module_bindings(&try_stmt.body, out, registries);
-                module_bindings(&try_stmt.orelse, out, registries);
-                module_bindings(&try_stmt.finalbody, out, registries);
+                for block in try_blocks(
+                    &try_stmt.body,
+                    &try_stmt.handlers,
+                    &try_stmt.orelse,
+                    &try_stmt.finalbody,
+                ) {
+                    module_bindings(block, out, registries);
+                }
+            }
+            Stmt::TryStar(try_stmt) => {
+                for block in try_blocks(
+                    &try_stmt.body,
+                    &try_stmt.handlers,
+                    &try_stmt.orelse,
+                    &try_stmt.finalbody,
+                ) {
+                    module_bindings(block, out, registries);
+                }
             }
             Stmt::With(with_stmt) => module_bindings(&with_stmt.body, out, registries),
+            Stmt::AsyncWith(with_stmt) => module_bindings(&with_stmt.body, out, registries),
+            // A registry filled in a module-level `while` or `match` (#6657).
+            Stmt::While(while_stmt) => {
+                module_bindings(&while_stmt.body, out, registries);
+                module_bindings(&while_stmt.orelse, out, registries);
+            }
+            Stmt::Match(match_stmt) => {
+                for case in &match_stmt.cases {
+                    module_bindings(&case.body, out, registries);
+                }
+            }
             // `for f in (verify_a, verify_b): HANDLERS.append(f)`.
+            Stmt::AsyncFor(for_stmt) => {
+                let mut names = Vec::new();
+                binding_roots(&for_stmt.target, &mut names);
+                out.push((names, for_stmt.iter.as_ref()));
+                module_bindings(&for_stmt.body, out, registries);
+                module_bindings(&for_stmt.orelse, out, registries);
+            }
             Stmt::For(for_stmt) => {
                 let mut names = Vec::new();
                 binding_roots(&for_stmt.target, &mut names);
@@ -617,6 +1039,7 @@ pub(super) fn assertion_admission(
     });
     if !assertions.is_empty()
         || context.has_implicit_fixture
+        || context.has_plugins
         || context.has_assertion_like_lifecycle
         || opaque_class
     {
@@ -666,12 +1089,14 @@ fn is_autouse_fixture(decorator: &Expr) -> bool {
     // A non-literal `autouse=` value cannot be ruled out, so it counts.
     is_fixture
         && call.keywords.iter().any(|keyword| {
-            keyword.arg.as_ref().is_some_and(|arg| arg == "autouse")
-                && !matches!(
-                    &keyword.value,
-                    Expr::Constant(constant)
-                        if matches!(constant.value, ast::Constant::Bool(false))
-                )
+            // `**options` may carry `autouse=True`.
+            keyword.arg.is_none()
+                || keyword.arg.as_ref().is_some_and(|arg| arg == "autouse")
+                    && !matches!(
+                        &keyword.value,
+                        Expr::Constant(constant)
+                            if matches!(constant.value, ast::Constant::Bool(false))
+                    )
         })
 }
 
@@ -1185,6 +1610,10 @@ impl BodyScan<'_> {
         if self.scope.builtin_fixtures.contains(root) {
             return matches!(last, "getfixturevalue" | "getfuncargvalue");
         }
+        if self.context.root_relative_aliases.contains(root) {
+            // `from . import checks` in a root-level test file (#6657).
+            return true;
+        }
         if let Some(qualified) = self.imported_name(name) {
             return self.import_is_assertion_like(&qualified);
         }
@@ -1229,6 +1658,10 @@ impl BodyScan<'_> {
         if self.scope.argnames.contains(root) {
             // Calling a parameter runs whatever the case supplies.
             return segments.len() == 1;
+        }
+        if self.context.root_relative_aliases.contains(root) {
+            // `from . import checks` in a root-level test file (#6657).
+            return true;
         }
         if let Some(qualified) = self.imported_name(name) {
             return self.import_is_assertion_like(&qualified);

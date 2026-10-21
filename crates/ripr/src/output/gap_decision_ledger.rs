@@ -762,6 +762,12 @@ pub(crate) fn render_gap_decision_ledger_markdown(report: &GapDecisionLedgerRepo
             md_inline(&complete),
             md_inline(kind)
         ));
+        // #9010: a budget-bounded check document says so beside the verdict.
+        if outcome.get("document_complete").and_then(Value::as_bool) == Some(false) {
+            out.push_str(
+                "Document complete: `false` (findings array bounded by the byte budget)\n\n",
+            );
+        }
     }
     // #5203: a ledger derived from a bounded run says so in the human
     // surface too, naming each propagated run state.
@@ -3642,6 +3648,30 @@ mod tests {
     }
 
     #[test]
+    fn records_source_renders_document_complete_line_only_when_bounded() {
+        // #9010: the bounded check document says so beside the verdict; the
+        // unbounded control carries no such line.
+        let render = |outcome: serde_json::Value| {
+            render_gap_decision_ledger_markdown(&report_from_json(serde_json::json!({
+                "analysis_outcome": outcome,
+                "records": []
+            })))
+        };
+        let bounded = render(serde_json::json!({
+            "analysis_complete": true,
+            "document_complete": false,
+            "outcome": {"kind": "complete_with_findings"}
+        }));
+        assert!(bounded.contains("Analysis complete: `true`"), "{bounded}");
+        assert!(bounded.contains("Document complete: `false`"), "{bounded}");
+        let control = render(serde_json::json!({
+            "analysis_complete": true,
+            "outcome": {"kind": "complete_with_findings"}
+        }));
+        assert!(!control.contains("Document complete"), "{control}");
+    }
+
+    #[test]
     fn records_source_preserves_incomplete_outcome_in_json_and_markdown() -> Result<(), String> {
         let report = report_from_json(serde_json::json!({
             "analysis_outcome": {
@@ -4828,7 +4858,16 @@ mod tests {
         // `python_wrong_receiver_assertion` each withhold owner credit from an
         // assertion on a different object and add one orthogonal card; the
         // two controls stay exposed and carry no card.
-        if (direct, no_strong, orthogonal, family_selection) != (5, 27, 16, 1) {
+        // #9002: `python_fallthrough_return_early_exit` downgrades a changed
+        // fallthrough return to `weakly_exposed` because every strong call
+        // takes the preceding early exit (RIPR-SPEC-0260); the card names the
+        // missing `not (total > 1000)` discriminator and stays direct-aligned
+        // and packet-eligible.
+        // #8759: a test importing the name from another defining module is no
+        // longer related, so `python_adversarial_free_function_module_collision`
+        // and the `legacy.py` finding of `python_src_layout_package_import`
+        // read `no_static_path` and drop their two orthogonal cards.
+        if (direct, no_strong, orthogonal, family_selection) != (6, 27, 14, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

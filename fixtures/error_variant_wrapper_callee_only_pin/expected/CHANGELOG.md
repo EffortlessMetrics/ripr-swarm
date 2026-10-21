@@ -303,3 +303,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_variant_wrapper_callee_only_pin (24)
+
+Reason:
+RIPR-SPEC-0122: no_static_path Weakness list no longer restates the Evidence block (#9033)
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_callee_only_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_variant_wrapper_callee_only_pin (25)
+
+Reason:
+RIPR-SPEC-0122: the digest names an entry the Weakness list still shows, not a no_static_path restatement (#9033)
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_callee_only_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

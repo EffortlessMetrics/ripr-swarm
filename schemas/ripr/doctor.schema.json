@@ -413,7 +413,7 @@
     },
     "perl_exporter_state": {
       "description": "Compatibility is a capability probe, not an end-to-end proof: only `ripr check` validates an actual packet.",
-      "enum": ["compatible", "incompatible", "not_found"]
+      "enum": ["compatible", "incompatible", "not_found", "refused"]
     },
     "perl_exporter": {
       "type": "object",

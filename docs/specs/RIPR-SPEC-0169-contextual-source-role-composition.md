@@ -79,6 +79,24 @@ file occurrence under a closed rule set:
   declarations. The single-identity index marks children from distinct
   anchors `rust_module_ambiguous_parent`, even if only one layout is indexed;
   it does not choose an anchor or mint an evidence role from partial context.
+- **Exclusive cfg alternatives are one owner.** Exactly two `mod name;`
+  declarations in one parent file that resolve to the same child, have the same
+  declared name and test requirement, and carry complementary simple guards
+  (`#[cfg(X)]` versus `#[cfg(not(X))]`, `X` a bare identifier or
+  `name = "value"`; punctuation inside the quoted value is data) are
+  alternatives of one module: at most one compiles, so they are not competing
+  parents (`rust-lang/log` `src/kv/mod.rs`). Any other shape stays ambiguous:
+  different or same-polarity predicates, compound `all`/`any`, extra or
+  `cfg_attr` cfg attributes, an unguarded sibling, different names, or more
+  than two claimants. A `cfg(test)` / `cfg(not(test))` pair stays ambiguous
+  because the test requirements differ and merging would grant a test-only
+  role to a child that also compiles in production. Tests:
+  `complementary_cfg_module_declarations_are_one_owner`,
+  `quoted_cfg_value_punctuation_is_not_a_compound_predicate`,
+  `non_complementary_cfg_module_declarations_stay_ambiguous`,
+  `cfg_test_pair_stays_ambiguous` and
+  `other_attributes_do_not_merge_distinct_module_identities` in
+  `facts/role_composition.rs`.
 - **Unknown fails closed.** Ambiguous module ownership (two claiming
   parents, or both default layouts present), cyclic or depth-bounded chains,
   conflicting module/include contexts, dynamic or conditionally introduced
