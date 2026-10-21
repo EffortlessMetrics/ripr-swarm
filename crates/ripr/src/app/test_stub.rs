@@ -123,7 +123,9 @@ pub(crate) fn resolve_test_stub(
             Ok(resolution_for(root, entry, source))
         }
         TestStubSelector::At { file, line, kind } => {
-            let mut resolution = resolve_at_location(root, config, file, *line, kind.as_deref())?;
+            let mut seam_index = None;
+            let mut resolution =
+                resolve_at_location(root, config, file, *line, kind.as_deref(), &mut seam_index)?;
             if resolution.grip_class.is_none() {
                 resolution.grip_class =
                     inventory_grip_class(root, config, file, &resolution.seam_id);
@@ -168,15 +170,15 @@ fn resolve_at_location(
     file: &str,
     line: usize,
     kind: Option<&str>,
+    seam_index: &mut Option<analysis::FileSeamIndex>,
 ) -> Result<TestStubResolution, TestStubError> {
     let kind = kind.and_then(|family| {
         analysis::seam_kind_for_probe_family(family).map(|seam_kind| AtKind { family, seam_kind })
     });
     match (scoped_file(root, file), kind) {
         (Some(relative), Some(_)) => {
-            let seams =
-                analysis::file_seams_without_evidence_at_with_config(root, config, &relative)
-                    .map_err(TestStubError::Operational)?;
+            let seams = analysis::scoped_file_seams(root, config, &relative, seam_index)
+                .map_err(TestStubError::Operational)?;
             let candidates = seams.iter().map(AtCandidate::Shape).collect::<Vec<_>>();
             resolve_at(root, candidates, file, line, kind)
         }
@@ -317,16 +319,17 @@ pub(crate) fn stub_route_for_finding(
     root: &Path,
     config: &RiprConfig,
     finding: &Finding,
+    seam_index: &mut Option<analysis::FileSeamIndex>,
 ) -> Option<StubRoute> {
     let (file, line, kind) = stub_route_location(finding, root)?;
     if let Some(name) = finding.probe.changed_const_name() {
-        let decision = const_consumer_route(root, config, &file, line, name)?;
+        let decision = const_consumer_route(root, config, &file, line, name, seam_index)?;
         return Some(StubRoute {
             finding_id: finding.id.clone(),
             decision,
         });
     }
-    let resolution = resolve_at_location(root, config, &file, line, Some(kind)).ok()?;
+    let resolution = resolve_at_location(root, config, &file, line, Some(kind), seam_index).ok()?;
     let decision = match resolution.outcome {
         Ok(_) => StubRouteDecision::Stub { file, line, kind },
         Err(refusal) => StubRouteDecision::Refused {
@@ -356,6 +359,7 @@ fn const_consumer_route(
     file: &str,
     const_line: usize,
     name: &str,
+    seam_index: &mut Option<analysis::FileSeamIndex>,
 ) -> Option<StubRouteDecision> {
     let source = std::fs::read_to_string(root.join(file)).ok()?;
     let lines = source.lines().collect::<Vec<_>>();
@@ -408,7 +412,9 @@ fn const_consumer_route(
             break;
         }
         for kind in CONSUMER_KINDS {
-            let Ok(resolution) = resolve_at_location(root, config, file, line, Some(kind)) else {
+            let Ok(resolution) =
+                resolve_at_location(root, config, file, line, Some(kind), seam_index)
+            else {
                 continue;
             };
             match resolution.outcome {
@@ -611,6 +617,7 @@ pub(crate) fn check_stub_route(
     root: &Path,
     check_config: &RiprConfig,
     output: &CheckOutput,
+    seam_index: &mut Option<analysis::FileSeamIndex>,
 ) -> Option<StubRoute> {
     let finding = crate::output::human::selected_triage_finding(output, check_config)?;
     let (file, line, _) = stub_route_location(finding, root)?;
@@ -618,7 +625,7 @@ pub(crate) fn check_stub_route(
         return None;
     }
     let config = crate::config::load_for_root(root).ok()?;
-    stub_route_for_finding(root, &config, finding)
+    stub_route_for_finding(root, &config, finding, seam_index)
 }
 
 /// Whether the finding's expression is still on disk in the function the
@@ -1750,13 +1757,10 @@ mod tests {
         .map_err(|error| error.to_string())?;
         let config = RiprConfig::default();
         let kind_of = |kind: Option<&str>| -> Result<(String, bool), String> {
-            let resolution = resolve_at_location(&root, &config, "src/lib.rs", 2, kind)
+            let resolution = resolve_at_location(&root, &config, "src/lib.rs", 2, kind, &mut None)
                 .map_err(|error| format!("{error:?}"))?;
-            let seams = analysis::file_seams_without_evidence_at_with_config(
-                &root,
-                &config,
-                Path::new("src/lib.rs"),
-            )?;
+            let seams =
+                analysis::scoped_file_seams(&root, &config, Path::new("src/lib.rs"), &mut None)?;
             let seam = seams
                 .iter()
                 .find(|seam| seam.id().as_str() == resolution.seam_id)

@@ -5,6 +5,8 @@ mod expectations;
 mod family;
 mod ids;
 mod lexical;
+mod macro_definition;
+mod path_only_argument;
 mod propagation_boundary;
 mod repo;
 

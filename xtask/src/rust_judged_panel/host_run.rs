@@ -800,9 +800,7 @@ fn classify_successful_stdout(stdout: &[u8]) -> Envelope {
         Ok(value) => value,
         Err(error) => return envelope("malformed_output", None, Some(error.to_string())),
     };
-    let complete = value
-        .pointer("/analysis_outcome/analysis_complete")
-        .and_then(Value::as_bool);
+    let complete = crate::check_document_analysis_complete(&value);
     let input_identity = value
         .pointer("/analysis_outcome/outcome/identity/input_identity")
         .and_then(Value::as_str)
@@ -1840,6 +1838,24 @@ mod tests {
         let incomplete = classify_successful_stdout(
             br#"{"analysis_outcome":{"analysis_complete":false,"outcome":{"identity":{"input_identity":"sha256:fixture"},"limitations":[]}}}"#,
         );
+        let bounded = classify_successful_stdout(
+            br#"{"analysis_outcome":{"analysis_complete":true,"document_complete":false,"outcome":{"identity":{"input_identity":"sha256:fixture"},"limitations":[]}}}"#,
+        );
+        let legacy = classify_successful_stdout(
+            br#"{"run_limitations":[{"category":"limited_findings_bound"}],"analysis_outcome":{"analysis_complete":true,"outcome":{"identity":{"input_identity":"sha256:fixture"},"limitations":[]}}}"#,
+        );
+        if legacy.disposition != "incomplete_output" {
+            return Err(format!(
+                "legacy bounded document must be incomplete_output, got {}",
+                legacy.disposition
+            ));
+        }
+        if bounded.disposition != "incomplete_output" {
+            return Err(format!(
+                "bounded document must be incomplete_output, got {}",
+                bounded.disposition
+            ));
+        }
         let limited = classify_successful_stdout(
             br#"{"analysis_outcome":{"analysis_complete":true,"outcome":{"identity":{"input_identity":"sha256:fixture"},"limitations":[{"kind":"macro"}]}}}"#,
         );

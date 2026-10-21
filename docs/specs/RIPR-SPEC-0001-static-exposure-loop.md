@@ -198,6 +198,16 @@ dataflow across bindings.
 Lexical projection is bounded to 16 nested matcher/block steps and omits
 oracle credit on exhaustion; parser-rejected deep source cannot recreate an
 unbounded recursive fallback.
+
+A setup statement that only unwraps a value (`let d = f().unwrap();`) is not
+the test's oracle. When the same test also has an asserting row, the bare
+`unwrap`/`expect` row is not listed beside it, whether the statement is written
+on one line or as a multi-line method chain whose continuation lines each begin
+with `.` (a builder chain, #9122). Fail-closed: the row is dropped only
+beside another matched oracle, so a test whose sole oracle is the unwrap stays
+listed as smoke, and a chain that ends in another call, contains an assertion,
+or is several statements stays listed. The remaining row keeps its own
+assertion-kind grade; nothing is promoted.
 Unrecognized compound computations with a surviving matcher and no supported
 asserting wrapper receive no oracle credit. Existing terminal Err-return and
 guarded Result failure authorities retain consumed matcher evidence.
@@ -594,6 +604,8 @@ Fixture coverage:
 - `an_identical_line_inside_a_replacement_block_seeds_no_probe`
 - `identical_line_suppression_is_fail_closed`
 - `identical_line_pairing_never_hides_reorders_or_block_moves`
+- `multiline_builder_chain_setup_row_is_dropped_beside_the_assertion`
+- `multiline_setup_row_stays_unless_it_is_a_bare_unwrap_chain_beside_an_assertion`
 
 ## Implementation Mapping
 
