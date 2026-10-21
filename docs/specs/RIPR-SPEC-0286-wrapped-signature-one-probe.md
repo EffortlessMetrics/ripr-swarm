@@ -80,6 +80,18 @@ Comment and string text is masked before this reading.
 - Grouping removed-only signature lines.
 - Changing type-bound declaration probes.
 
+## Acceptance Examples
+
+1. A new `pub fn price(\n amount: u64,\n years: u32,\n) -> u64\nwhere\n u64: Copy,\n{ ... }`
+   with an added body: no probe on the parameter, return-type or brace lines;
+   the `where` clause, its bound and the body keep theirs.
+2. An existing wrapped signature with two parameter types changed: one probe,
+   on the first changed line.
+3. An existing wrapped signature with one parameter line inserted: that line
+   keeps its probe.
+4. `pub fn f(a: u8) -> u8 { a + 1 }` and a trait `fn f(\n a: u8,\n) -> u8;`
+   keep per-line probes (no claimed extent).
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/probes/diff.rs` tests:
