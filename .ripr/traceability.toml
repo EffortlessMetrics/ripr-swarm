@@ -16992,6 +16992,12 @@ tests = [
   "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::associated_consts_and_factories_are_not_typed_as_self",
   "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::inherent_to_string_wins_over_display",
   "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::placeholders_must_account_for_every_argument",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::ambiguous_fmt_impls_for_one_type_fail_closed",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::sibling_impl_of_another_type_is_not_linked",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::placeholder_and_macro_forms_are_parsed",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::unrelated_fmt_call_does_not_hide_a_valid_dispatch",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::variant_named_like_the_type_is_not_the_type",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::rebinding_after_the_typed_let_refuses",
 ]
 fixtures = []
 code = [

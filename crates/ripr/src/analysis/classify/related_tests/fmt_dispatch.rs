@@ -500,13 +500,60 @@ fn constructs_self(expr: &str, self_type: &str) -> bool {
     };
     let opens = matches!(next, Some(b'(' | b'{'));
     match segments.as_slice() {
-        [.., last] if opens && *last == self_type => true,
+        // `Site(..)` / `m::Site { .. }`: only module (lowercase) prefixes may
+        // precede the type, so `Error::Site(..)` (a variant named like the
+        // type) is not a `Site`.
+        [prefix @ .., last]
+            if opens
+                && *last == self_type
+                && prefix
+                    .iter()
+                    .all(|segment| segment.starts_with(|c: char| c.is_ascii_lowercase())) =>
+        {
+            true
+        }
         [.., ty, variant] => *ty == self_type && is_variant_name(variant),
         _ => false,
     }
 }
 
+/// Occurrences of `binding` in a binding position (`let`, `for`, `if let`,
+/// `while let`, closure parameters, match arms). More than one means a later
+/// rebinding may change the type, so the binding stays untyped.
+fn binder_count(lets: &str, binding: &str) -> usize {
+    let bytes = lets.as_bytes();
+    let mut count = 0usize;
+    let mut search = 0usize;
+    while let Some(at) = lets[search..].find(binding).map(|at| search + at) {
+        search = at + binding.len();
+        let after = at + binding.len();
+        let whole = (at == 0 || !is_ident_byte(bytes[at - 1]))
+            && bytes.get(after).is_none_or(|byte| !is_ident_byte(*byte));
+        if !whole {
+            continue;
+        }
+        let line_start = lets[..at].rfind([';', '{', '}']).map_or(0, |i| i + 1);
+        let before = &lets[line_start..at];
+        // Pattern side only: after `let`/`for` and before `=`/`in`.
+        let after_keyword = |keyword: &str, end: &[&str]| {
+            before
+                .rfind(keyword)
+                .is_some_and(|at| !end.iter().any(|stop| before[at..].contains(stop)))
+        };
+        let is_binder = after_keyword("let ", &["="])
+            || after_keyword("for ", &[" in "])
+            || before.matches('|').count() % 2 == 1;
+        if is_binder {
+            count += 1;
+        }
+    }
+    count
+}
+
 fn binding_has_type(lets: &str, binding: &str, self_type: &str) -> bool {
+    if binder_count(lets, binding) != 1 {
+        return false;
+    }
     let Some(statement) = last_let_statement(lets, binding) else {
         return false;
     };
@@ -952,6 +999,41 @@ mod tests {
             format!("{CTOR}format!(\"{{}}\", e, unused = 1);"),
             format!("{CTOR}format!(\"{{}} {{}}\", e);"),
         ] {
+            assert!(reasons(&owner, 0, &[&body]).is_empty(), "{body}");
+        }
+    }
+
+    #[test]
+    fn variant_named_like_the_type_is_not_the_type() {
+        let owner = ["fmt::Debug for DecodeError"];
+        for body in [
+            "format!(\"{:?}\", Error::DecodeError(inner));".to_string(),
+            "let e = Error::DecodeError(inner);\nformat!(\"{:?}\", e);".to_string(),
+        ] {
+            assert!(reasons(&owner, 0, &[&body]).is_empty(), "{body}");
+        }
+        for body in [
+            "format!(\"{:?}\", DecodeError(inner));",
+            "format!(\"{:?}\", m::DecodeError(inner));",
+            "let e = crate::m::DecodeError(inner);\nformat!(\"{:?}\", e);",
+        ] {
+            assert!(direct(&reasons(&owner, 0, &[body]), "t0"), "{body}");
+        }
+    }
+
+    #[test]
+    fn rebinding_after_the_typed_let_refuses() {
+        let owner = ["fmt::Debug for DecodeError"];
+        for tail in [
+            "let e = other();",
+            "for e in items {}",
+            "if let Some(e) = found {}",
+            "let f = |e| e;",
+        ] {
+            let body =
+                format!("let e = DecodeError::InvalidByte(0, 1);\n{tail}\nformat!(\"{{:?}}\", e);");
+            // `;` ends statements; make the tail one so `lets` includes it.
+            let body = body.replace("{}\nformat", "{};\nformat");
             assert!(reasons(&owner, 0, &[&body]).is_empty(), "{body}");
         }
     }
