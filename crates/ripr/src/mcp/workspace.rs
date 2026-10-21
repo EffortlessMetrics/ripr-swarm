@@ -374,9 +374,10 @@ impl Snapshot {
     /// outcomes (`unsupported_input`, `analysis_failed`) stay failures and
     /// never become snapshots; partial outcomes commit with their typed
     /// limitations so complete-zero and incomplete-zero stay distinct.
-    pub(crate) fn from_output(
+    pub(crate) fn from_output_admitted(
         output: &crate::app::CheckOutput,
         root_identity: Option<&str>,
+        admission: &super::repair_admission::SeamAdmission,
     ) -> Result<Self, AttemptFailure> {
         let outcome = output
             .analysis_outcome
@@ -418,7 +419,7 @@ impl Snapshot {
         let mut items = output
             .findings
             .iter()
-            .map(|finding| GapItem::from_finding(finding, &output.root))
+            .map(|finding| GapItem::from_finding_admitted(finding, &output.root, admission))
             .collect::<Result<Vec<_>, String>>()
             .map_err(|error| {
                 AttemptFailure::new(
@@ -466,6 +467,21 @@ impl Snapshot {
             scope,
             base: None,
         })
+    }
+
+    /// Finding-level projection with no seam evaluation: unit tests build
+    /// snapshots over fabricated outputs that carry no seam inventory.
+    /// Production refresh always binds [`Self::from_output_admitted`].
+    #[cfg(test)]
+    pub(crate) fn from_output(
+        output: &crate::app::CheckOutput,
+        root_identity: Option<&str>,
+    ) -> Result<Self, AttemptFailure> {
+        Self::from_output_admitted(
+            output,
+            root_identity,
+            &super::repair_admission::SeamAdmission::unevaluated(),
+        )
     }
 
     pub(crate) fn item(&self, id: &str) -> Option<&GapItem> {
@@ -1348,7 +1364,18 @@ pub(crate) fn run_check(
     };
     let output = crate::app::check_workspace_with_config_typed(input, &config)
         .map_err(|error| check_failure(&error, base))?;
-    let mut snapshot = Snapshot::from_output(&output, root_identity)?;
+    // The seam inventory is gathered once inside this bounded attempt and
+    // feeds both consumers: the shared repair validator that decides each
+    // item's repair readiness (#8717) and the repair-card seam bindings
+    // (RIPR-SPEC-0215). Readiness is projected before the snapshot identity
+    // is computed, so the identity binds the admission decision.
+    let inventory = super::repair_card::gather_seam_inventory(root, &config, &output.findings)?;
+    let admission = super::repair_admission::SeamAdmission::evaluate(
+        &output.findings,
+        &inventory.candidate_seams,
+        crate::app::agent_brief::AgentBriefPolicy::from_config(&config),
+    );
+    let mut snapshot = Snapshot::from_output_admitted(&output, root_identity, &admission)?;
     snapshot.base = base.map(str::to_string);
     // Bind the repair-card producers inside the same bounded attempt, after
     // the shared check authority completed: the snapshot commits complete —
@@ -1356,7 +1383,7 @@ pub(crate) fn run_check(
     // The card producers consume the same resolved workspace configuration
     // as the findings (#6825 review), so one committed snapshot cannot
     // disagree with itself across the two producers.
-    super::repair_card::bind_snapshot_card_producers(root, &config, &mut snapshot)?;
+    super::repair_card::bind_snapshot_card_producers(root, inventory, &mut snapshot)?;
     Ok(snapshot)
 }
 

@@ -71,3 +71,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_json_shadowed_constructor (7)
+
+Reason:
+RIPR-SPEC-0224: JSON evidence_path words a test with no assertion 'uses no oracle' (#8747)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_shadowed_constructor --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -490,11 +490,12 @@ answered and a fixed reserve for the JSON-RPC frame fields and the
 `resultType` field a `2026-07-28` peer keeps, so an over-bound response
 fails closed with `result_too_large` before the wire cap is reached for
 any legal request id, however much client-controlled id escaping adds
-(#7768). A request id so large that even the typed `result_too_large`
-refusal cannot fit its ID falls back to the correlated generic error; if
-even a correlated fallback cannot fit its readable ID, the service
-terminates with the bounded stderr reason `MCP output limit`, without
-substituting an ID.
+(#7768). Request ids are correlation tokens: a request whose JSON-serialized
+id exceeds 16384 bytes is refused at receive with a bounded `-32600` frame
+carrying `"id": null` (the id is never echoed) and the session stays alive,
+so an id can never grow a reply past the response cap. The terminal
+`MCP output limit` stderr reason remains the fail-closed backstop for any
+response that still cannot be encoded.
 Partial reads and writes retain their state across cancellation. EOF closes
 the SDK service, so scripted clients must await replies before closing stdin.
 Stdout carries only protocol messages; operational errors go to stderr, and

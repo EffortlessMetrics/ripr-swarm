@@ -252,10 +252,10 @@ official SDK transport:
   request id and the fixed JSON-RPC/`resultType` overhead, #7768) before
   it is sent (#6021), so neither the document-level guard nor a legal
   request id can downgrade a success into a response without
-  `structuredContent`. A request id so large that even the
-  typed refusal cannot fit keeps the documented correlated generic
-  fallback, and a fallback that also cannot fit still terminates with
-  `MCP output limit`.
+  `structuredContent`. Request ids whose serialized form exceeds 16384
+  bytes are refused at receive with `-32600` and `"id": null` before
+  dispatch, so the typed refusal always has room for its id; `MCP output
+  limit` remains the fail-closed backstop.
   Reserved vocabulary
   (`config_invalid`, `workspace_ambiguous`, `static_limitation`,
   `cancelled`, `superseded`) is named on the wire for the slices that own
@@ -418,23 +418,14 @@ is not evidence that a resource with a particular identity exists.
   empty pages, independently sized structured-envelope overflow below the
   raw-document ceiling, raw-document overflow, all three string filters,
   typed refusals bound to the current snapshot, and same-session recovery.
-- `crates/ripr/tests/mcp_stdio.rs::long_request_ids_refuse_typed_before_the_wire_cap`
-  — the #7768 outer-response control: one legal escaping-heavy request id
-  sized from the actually measured empty-page envelope so the id-aware
-  budget excludes every page (typed `result_too_large` on the real stdio
-  wire where the envelope-only bound shipped a correlated `-32603`
-  fallback), a second id one notch smaller whose call still ships a
-  structured page, the same refusal/fit pair for the status resource read,
-  and same-session recovery after all of them.
-- `crates/ripr/tests/mcp_stdio.rs::window_sized_envelope_refuses_typed_instead_of_dropping_structured_content`
-  — the #7768 silent-drop control at the raw stdio wire: a legal request
-  id sized from the actually measured `ripr_workspace_status` envelope
-  puts the id-aware budget inside the refusal window (structured envelope
-  over it, compact text under it) and must be answered with the typed
-  `result_too_large` refusal carrying structured failure content — where
-  the text-only fallback shipped a success without `structuredContent` —
-  and a shorter id one notch below keeps the structured status as an
-  over-reservation control.
+- `crates/ripr/tests/mcp_stdio.rs::oversized_request_id_is_rejected_with_null_id_and_the_session_survives`
+  — a request id whose serialized form exceeds 16384 bytes (including one
+  that fits the input cap but not the output cap) is answered with a
+  bounded `-32600` frame carrying `"id": null`, an id exactly at the bound
+  and a following ping are still answered, and the process stays alive.
+  The #7768 id-aware envelope budget remains pinned by the in-crate unit
+  tests below; its wire stimulus (ids near the response cap) is no longer
+  admitted.
 - `crates/ripr/src/mcp/server_tests.rs::window_sized_gap_item_refuses_typed_instead_of_dropping_structured_content`
   — the same window at the real `ripr_get_gap` dispatch with a
   document-guard-approved item, asserting the serialized wire shape

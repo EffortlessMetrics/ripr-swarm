@@ -37,7 +37,7 @@ use crate::app::repair_card_handoff::{
     latest_attempt_for_seam, witness_from_findings, workspace_identity_for,
 };
 use crate::config::RiprConfig;
-use crate::domain::{AgentCardRefusalKind, RepairCardSnapshotCurrentness};
+use crate::domain::{AgentCardRefusalKind, Finding, RepairCardSnapshotCurrentness};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
@@ -116,34 +116,42 @@ pub(crate) fn repair_card_resource_id(uri: &str) -> Option<&str> {
 /// is decoded, and the changed-file intersection matches. Joining the root
 /// would absolutize them and lose every changed seam; an out-of-root item
 /// keeps its absolute fallback spelling and simply matches nothing.
-fn inventory_changed_files(items: &[GapItem]) -> Vec<PathBuf> {
-    items
+fn inventory_changed_files(root: &Path, findings: &[Finding]) -> Vec<PathBuf> {
+    findings
         .iter()
-        .map(|item| {
+        .map(|finding| {
+            let file = crate::analysis::finding_location_text(root, &finding.probe.location.file);
             crate::analysis::decode_stable_path_text(
-                item.file
-                    .as_str()
-                    .strip_prefix("./")
-                    .unwrap_or(item.file.as_str()),
+                file.strip_prefix("./").unwrap_or(file.as_str()),
             )
         })
         .collect()
 }
 
-/// Bind the repair-card producers into one committing snapshot. This runs
-/// inside the refresh attempt (the adapter's single allowed analysis), after
-/// the shared check authority completed: the diff-scoped seam inventory over
-/// the snapshot's own item files supplies the same classified seams the CLI
-/// card producer consumes, the analyzed head is resolved once, and each
-/// owner-discriminated binding records its evidence-scope currentness probe.
-/// Any failure fails the attempt: the snapshot commits complete or not at
-/// all, so the card surface can never silently vanish under a served
-/// snapshot identity.
-pub(crate) fn bind_snapshot_card_producers(
+/// The seam inventory one refresh gathers once for every seam-level
+/// consumer: the analyzed head and the diff-scoped classified seams over the
+/// committed findings' files and owners.
+#[derive(Clone, Debug)]
+pub(crate) struct SeamInventory {
+    pub(crate) repository_head: String,
+    pub(crate) candidate_seams: Vec<ClassifiedSeam>,
+}
+
+/// Gather the refresh's seam inventory. This runs inside the refresh attempt
+/// (the adapter's single allowed analysis), after the shared check authority
+/// completed: the diff-scoped seam inventory over the findings' own files
+/// supplies the same classified seams the CLI card producer and the shared
+/// repair validator consume, and the analyzed head is resolved once. The
+/// inventory runs under the same resolved workspace configuration as the
+/// snapshot's findings (#6825 review): a configured oracle strength or
+/// harness registration must not classify seams differently from the
+/// committed items. Any failure fails the attempt: the snapshot commits
+/// complete or not at all.
+pub(crate) fn gather_seam_inventory(
     root: &Path,
     config: &RiprConfig,
-    snapshot: &mut Snapshot,
-) -> Result<(), AttemptFailure> {
+    findings: &[Finding],
+) -> Result<SeamInventory, AttemptFailure> {
     let repository_head = git_output(root, &["rev-parse", "HEAD"])
         .map_err(|error| {
             AttemptFailure::new(
@@ -154,27 +162,14 @@ pub(crate) fn bind_snapshot_card_producers(
         })?
         .trim()
         .to_string();
-    let mut bindings = Vec::new();
-    let mut all_candidate_seams = Vec::new();
-    if !snapshot.items.is_empty() {
-        // The card producers run under the same resolved workspace
-        // configuration as the snapshot's findings (#6825 review): a
-        // configured oracle strength or harness registration must not
-        // classify the card's seams differently from the committed items.
-        // Item files are root-relative on the wire (#5254 item 6) with the
-        // shared owner's `./` prefix (#5996); the inventory corpus is bare
-        // (`discover` strips the root), so the prefix is normalized away
-        // and the changed-file scope matches. Joining the root here would
-        // make them absolute and lose every changed seam. An out-of-root
-        // item keeps its absolute fallback spelling and simply matches
-        // nothing.
-        let changed_files = inventory_changed_files(&snapshot.items);
-        let changed_owner_names = snapshot
-            .findings
+    let mut candidate_seams = Vec::new();
+    if !findings.is_empty() {
+        let changed_files = inventory_changed_files(root, findings);
+        let changed_owner_names = findings
             .iter()
             .filter_map(|finding| finding.canonical_gap.as_ref().map(|gap| gap.owner.clone()))
             .collect::<Vec<_>>();
-        let inventory = inventory_diff_scoped_classified_seams_at_with_config(
+        candidate_seams = inventory_diff_scoped_classified_seams_at_with_config(
             root,
             config,
             &changed_files,
@@ -186,8 +181,32 @@ pub(crate) fn bind_snapshot_card_producers(
                 format!("the seam inventory authority failed during refresh: {error}"),
                 "retry with ripr_refresh; if the failure persists, run `ripr agent packet` in the repository",
             )
-        })?;
-        let candidate_seams = inventory.classified;
+        })?
+        .classified;
+    }
+    Ok(SeamInventory {
+        repository_head,
+        candidate_seams,
+    })
+}
+
+/// Bind the repair-card producers into one committing snapshot from the
+/// refresh's seam inventory: each owner-discriminated binding records its
+/// evidence-scope currentness probe. Any failure fails the attempt: the
+/// snapshot commits complete or not at all, so the card surface can never
+/// silently vanish under a served snapshot identity.
+pub(crate) fn bind_snapshot_card_producers(
+    root: &Path,
+    inventory: SeamInventory,
+    snapshot: &mut Snapshot,
+) -> Result<(), AttemptFailure> {
+    let SeamInventory {
+        repository_head,
+        candidate_seams,
+    } = inventory;
+    let mut bindings = Vec::new();
+    let mut all_candidate_seams = Vec::new();
+    if !snapshot.items.is_empty() {
         // #7292: the currentness probe used to run per bound seam inside the
         // refresh, one `git status` child each; ce154a67c made the bindings
         // actually match and turned that dead per-seam cost live on the
@@ -675,12 +694,10 @@ mod tests {
         let root = temp_root()?;
         let mut inside = super::super::gaps::test_finding()?;
         inside.probe.location.file = root.join("src/lib.rs");
-        let inside_item = GapItem::from_finding(&inside, &root)?;
         let mut outside = super::super::gaps::test_finding()?;
         outside.probe.location.file = std::env::temp_dir().join("ripr-card-scope-elsewhere/lib.rs");
-        let outside_item = GapItem::from_finding(&outside, &root)?;
 
-        let changed = inventory_changed_files(&[inside_item, outside_item]);
+        let changed = inventory_changed_files(&root, &[inside, outside]);
         if changed.first().map(PathBuf::as_path) != Some(Path::new("src/lib.rs")) {
             return Err(format!("in-root scope must stay relative: {changed:?}"));
         }
@@ -703,7 +720,7 @@ mod tests {
         if item.file != "./pricing_%25FF.rs" {
             return Err(format!("wire spelling must stay encoded: {}", item.file));
         }
-        let changed = inventory_changed_files(std::slice::from_ref(&item));
+        let changed = inventory_changed_files(&root, std::slice::from_ref(&finding));
         if changed.first().map(PathBuf::as_path) != Some(Path::new("pricing_%FF.rs")) {
             return Err(format!(
                 "scope must decode to the corpus spelling: {changed:?}"

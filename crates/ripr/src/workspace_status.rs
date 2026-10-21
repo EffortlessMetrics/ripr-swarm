@@ -89,6 +89,11 @@ fn git_work_tree_for(root: &Path) -> GitWorkTree {
         if metadata.is_dir() {
             return GitWorkTree::Detected;
         }
+        // Only a regular file can be a gitfile; opening a FIFO or device
+        // would block or misread, and Git refuses it either way.
+        if !metadata.is_file() {
+            return GitWorkTree::MarkerInvalid;
+        }
         let mut head = Vec::new();
         let read = std::fs::File::open(&marker)
             .and_then(|file| file.take(GITFILE_PROBE_BYTES).read_to_end(&mut head));
@@ -98,7 +103,7 @@ fn git_work_tree_for(root: &Path) -> GitWorkTree {
         let text = String::from_utf8_lossy(&head);
         let first = text.lines().next().unwrap_or_default();
         let valid = first
-            .strip_prefix("gitdir:")
+            .strip_prefix("gitdir: ")
             .is_some_and(|path| !path.trim().is_empty());
         return if valid {
             GitWorkTree::Detected
@@ -526,6 +531,7 @@ mod tests {
             ("gitfile-empty", ""),
             ("gitfile-garbage", "not a gitfile\n"),
             ("gitfile-nopath", "gitdir:   \n"),
+            ("gitfile-no-space", "gitdir:../main/.git/worktrees/w\n"),
             ("gitfile-second-line", "\ngitdir: x\n"),
         ] {
             let probed = git_marker_probe(label, |root| {
@@ -533,6 +539,32 @@ mod tests {
             })?;
             assert_eq!(probed, GitWorkTree::MarkerInvalid, "{label}");
         }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn git_marker_probe_rejects_a_non_regular_marker_without_opening_it() -> Result<(), String> {
+        // A FIFO `.git` would block File::open forever if it were opened.
+        let probed = git_marker_probe("gitfile-fifo", |root| {
+            let _ = std::process::Command::new("mkfifo")
+                .arg(root.join(".git"))
+                .status();
+        })?;
+        assert_eq!(probed, GitWorkTree::MarkerInvalid);
+        Ok(())
+    }
+
+    #[test]
+    fn git_marker_probe_requires_the_space_after_gitdir() -> Result<(), String> {
+        let no_space = git_marker_probe("gitfile-nospace-only", |root| {
+            let _ = std::fs::write(root.join(".git"), "gitdir:/elsewhere\n");
+        })?;
+        assert_eq!(no_space, GitWorkTree::MarkerInvalid);
+        let spaced = git_marker_probe("gitfile-spaced", |root| {
+            let _ = std::fs::write(root.join(".git"), "gitdir: /elsewhere\n");
+        })?;
+        assert_eq!(spaced, GitWorkTree::Detected);
         Ok(())
     }
 
