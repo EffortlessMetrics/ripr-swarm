@@ -27,6 +27,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_transitive_reach_test_helper_chain/input --diff <cwd>/fixtures/rust_transitive_reach_test_helper_chain/diff.patch --mode fast probe:src_eval.rs:predicate:f66d616d
   ripr context --root <cwd>/fixtures/rust_transitive_reach_test_helper_chain/input --diff <cwd>/fixtures/rust_transitive_reach_test_helper_chain/diff.patch --mode fast --at probe:src_eval.rs:predicate:f66d616d
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_eval.rs:predicate:f66d616d --root <cwd>/fixtures/rust_transitive_reach_test_helper_chain/input` for the full gate's answer
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

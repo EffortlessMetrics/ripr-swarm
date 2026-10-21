@@ -285,3 +285,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — assertion_form_parity_err_guard (21)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless assertion_form_parity_err_guard --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — assertion_form_parity_err_guard (22)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless assertion_form_parity_err_guard --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — assertion_form_parity_err_guard (23)
+
+Reason:
+RIPR-SPEC-0224: ungraded oracle reads '<kind> oracle, not graded against this probe' (#8388)
+
+Command:
+`cargo xtask goldens bless assertion_form_parity_err_guard --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

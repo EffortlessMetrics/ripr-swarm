@@ -345,6 +345,86 @@ async fn sdk_syntax_ignore_and_typed_shape_error_recover_next_request() -> Resul
 }
 
 #[tokio::test]
+async fn typed_shape_error_keeps_a_recoverable_request_id() -> Result<(), String> {
+    // JSON-RPC: the error id is the request id when it can be detected. A
+    // request whose `params` is the wrong shape still names its id; frames
+    // with no readable request id keep the explicit null.
+    let cases: [(&[u8], Value); 9] = [
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/list\",\"params\":[]}\n",
+            json!(5),
+        ),
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":\"req-a\",\"method\":\"tools/list\",\"params\":[]}\n",
+            json!("req-a"),
+        ),
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":1.5,\"method\":\"tools/list\",\"params\":[]}\n",
+            Value::Null,
+        ),
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":{\"a\":1},\"method\":\"tools/list\",\"params\":[]}\n",
+            Value::Null,
+        ),
+        (b"{\"jsonrpc\":\"2.0\",\"id\":7}\n", Value::Null),
+        // A notification (method, no id) has no request to correlate.
+        (
+            b"{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"params\":[]}\n",
+            Value::Null,
+        ),
+        // An explicit null id names no request.
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":null,\"method\":\"tools/list\",\"params\":[]}\n",
+            Value::Null,
+        ),
+        // A boolean is not a JSON-RPC id.
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":true,\"method\":\"tools/list\",\"params\":[]}\n",
+            Value::Null,
+        ),
+        // A u64 above i64::MAX is a valid JSON integer id the client sent but
+        // outside the SDK's i64 `RequestId`; the transport echoes the client's
+        // own id verbatim rather than leaving the reply unmatchable.
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":18446744073709551615,\"method\":\"tools/list\",\"params\":[]}\n",
+            json!(18446744073709551615_u64),
+        ),
+    ];
+    for (input, expected_id) in cases {
+        let writer = Arc::new(Mutex::new(FrameWriter::new(Vec::<u8>::new())));
+        let mut transport = BoundedTransport {
+            reader: Arc::new(Mutex::new(FrameReader::new(input))),
+            writer: writer.clone(),
+            failure: Arc::new(TransportFailure::default()),
+            admission: Arc::new(Admission::default()),
+            pending_protocol_error: None,
+            writer_needs_drain: false,
+        };
+        if transport.receive().await.is_some() {
+            return Err("an invalid typed shape must not yield a message".into());
+        }
+        let guard = writer.lock().await;
+        let frames: Vec<_> = guard
+            .output()
+            .split(|byte| *byte == b'\n')
+            .filter(|frame| !frame.is_empty())
+            .collect();
+        let [frame] = frames.as_slice() else {
+            return Err(format!("expected exactly one error frame for {input:?}"));
+        };
+        let error: Value = serde_json::from_slice(frame).map_err(|error| error.to_string())?;
+        if error.get("id") != Some(&expected_id)
+            || error.pointer("/error/code").and_then(Value::as_i64) != Some(-32600)
+        {
+            return Err(format!(
+                "wrong id/code for {input:?}: expected id {expected_id}, got {error}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn framing_delivers_valid_undelimited_eof_and_then_closes() -> Result<(), String> {
     let mut reader = FrameReader::new(b"{\"eof\":true}".as_slice());
     match read_frame(&mut reader).await? {

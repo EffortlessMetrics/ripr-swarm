@@ -103,6 +103,55 @@ pub(super) fn parametrize_cases(
     (any && !product.is_empty()).then_some(PythonParametrizeCases { cases: product })
 }
 
+/// Argnames a pytest parametrize decorator supplies directly to the test,
+/// read syntactically and independent of the literal-cases parser (which
+/// gives up on variable argvalues, `pytest.param(marks=...)`, large products
+/// and any `indirect=`). An argname is excluded only when `indirect=` is the
+/// literal `True` or a literal list naming it; any other `indirect` value is
+/// treated as not routing to a fixture, so the name is not resolved as one.
+pub(super) fn direct_argnames(decorators: &[Expr]) -> Vec<String> {
+    let mut direct = Vec::new();
+    for decorator in decorators {
+        let Expr::Call(call) = decorator else {
+            continue;
+        };
+        if !expr_full_name(&call.func).is_some_and(|name| is_parametrize_name(&name)) {
+            continue;
+        }
+        let mut argnames = call.args.first();
+        let mut indirect = None;
+        for keyword in &call.keywords {
+            match keyword.arg.as_ref().map(|arg| arg.as_str()) {
+                Some("argnames") => argnames = Some(&keyword.value),
+                Some("indirect") => indirect = Some(&keyword.value),
+                _ => {}
+            }
+        }
+        let Some((names, _)) = argnames.and_then(argnames_list) else {
+            continue;
+        };
+        for name in names {
+            if !indirect.is_some_and(|value| indirect_routes(value, &name)) {
+                direct.push(name);
+            }
+        }
+    }
+    direct
+}
+
+/// Whether a literal `indirect=` value routes `name` to its fixture.
+fn indirect_routes(value: &Expr, name: &str) -> bool {
+    let listed = |elements: &[Expr]| {
+        string_elements(elements).is_some_and(|names| names.iter().any(|listed| listed == name))
+    };
+    match value {
+        Expr::Constant(constant) => matches!(constant.value, ast::Constant::Bool(true)),
+        Expr::List(list) => listed(&list.elts),
+        Expr::Tuple(tuple) => listed(&tuple.elts),
+        _ => false,
+    }
+}
+
 /// pytest's own decorator only (`@pytest.mark.parametrize`, or
 /// `@mark.parametrize` after `from pytest import mark`). Another
 /// `.parametrize` (a plugin or project helper) may supply other values, so

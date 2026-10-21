@@ -5,6 +5,7 @@ use crate::analysis::facts::FileData;
 use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter, parse_clean_source_file};
 use crate::domain::ProbeFamily;
 use ra_ap_syntax::{AstNode, ast};
+use std::collections::{BTreeMap, HashSet};
 use std::ops::Range;
 use std::path::Path;
 
@@ -117,26 +118,38 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
     changed_text: &str,
     removed_text: Option<&str>,
 ) -> Vec<ParserProbeShape<'a>> {
-    let selection_key = |family: &ProbeFamily, shape_text: &str| {
-        shape_match_rank(shape_text, changed_text).map(|(category, distance)| {
-            // Unchanged only when the old line holds every occurrence the new
-            // line has: with two literals on one line, an edited field whose
-            // new text matches the *other* literal's old field is new.
-            let needle = shape_text.trim();
-            let unchanged = removed_text.is_some_and(|removed| {
-                // Only a record field is bounded by `,`/`}`; other families
-                // (calls, predicates) sit inside larger expressions by design.
-                let whole_unit = *family == ProbeFamily::FieldConstruction;
-                let before = token_run_count(removed, needle, whole_unit);
-                before > 0 && before >= token_run_count(changed_text, needle, whole_unit)
-            });
-            (category, unchanged, distance)
-        })
-    };
     let Some(facts) = file_facts(index, file) else {
         return Vec::new();
     };
-    let mut selected = Vec::<ParserProbeShape<'a>>::new();
+    // One window scan of the changed line, keyed by needle length, answers
+    // `changed.contains(shape)` for every overlapping shape. Per-shape
+    // `str::contains` is quadratic on one long generated line (#8647).
+    let ranker = ChangedLineRank::build(
+        changed_text,
+        facts.probe_shapes.iter().filter_map(|shape| {
+            (shape.start_line <= line && line <= shape.end_line).then_some(shape.text.as_str())
+        }),
+    );
+    let selection_key = |family: &ProbeFamily, shape_text: &str| {
+        ranker
+            .as_ref()
+            .and_then(|ranker| ranker.rank(shape_text))
+            .map(|(category, distance)| {
+                // Unchanged only when the old line holds every occurrence the new
+                // line has: with two literals on one line, an edited field whose
+                // new text matches the *other* literal's old field is new.
+                let needle = shape_text.trim();
+                let unchanged = removed_text.is_some_and(|removed| {
+                    // Only a record field is bounded by `,`/`}`; other families
+                    // (calls, predicates) sit inside larger expressions by design.
+                    let whole_unit = *family == ProbeFamily::FieldConstruction;
+                    let before = token_run_count(removed, needle, whole_unit);
+                    before > 0 && before >= token_run_count(changed_text, needle, whole_unit)
+                });
+                (category, unchanged, distance)
+            })
+    };
+    let mut selected = Vec::<(ParserProbeShape<'a>, Option<(u8, bool, usize)>)>::new();
     for shape in &facts.probe_shapes {
         if shape.start_line > line || line > shape.end_line {
             continue;
@@ -146,7 +159,8 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
         if unsafe_boundary && !unsafe_boundary_owns_changed_line(facts, shape, line) {
             continue;
         }
-        if !unsafe_boundary && shape_match_rank(&shape.text, changed_text).is_none() {
+        let candidate_key = selection_key(&family, shape.text.as_str());
+        if !unsafe_boundary && candidate_key.is_none() {
             continue;
         }
         let candidate = ParserProbeShape {
@@ -161,47 +175,45 @@ pub(crate) fn parser_probe_shapes_for_changed_line_against<'a>(
                 shape.start_line
             },
             start_byte: shape.start_byte,
-            text: &shape.text,
+            text: shape.text.as_str(),
             standalone_call: parser_call_shape_is_standalone(facts, shape),
             unsafe_boundary,
         };
         if let Some(position) = selected
             .iter()
-            .position(|current| current.family == candidate.family)
+            .position(|(current, _)| current.family == candidate.family)
         {
-            if candidate.unsafe_boundary && selected[position].unsafe_boundary {
-                if candidate.start_byte > selected[position].start_byte {
-                    selected[position] = candidate;
+            if candidate.unsafe_boundary && selected[position].0.unsafe_boundary {
+                if candidate.start_byte > selected[position].0.start_byte {
+                    selected[position] = (candidate, candidate_key);
                 }
                 continue;
             }
-            let current = &selected[position];
-            let candidate_key = selection_key(&candidate.family, candidate.text);
-            let current_key = selection_key(&current.family, current.text);
+            let current_key = selected[position].1;
             if candidate_key < current_key
-                || (candidate_key == current_key && candidate.text < current.text)
+                || (candidate_key == current_key && candidate.text < selected[position].0.text)
             {
-                selected[position] = candidate;
+                selected[position] = (candidate, candidate_key);
             }
         } else {
-            selected.push(candidate);
+            selected.push((candidate, candidate_key));
         }
     }
-    if selected.iter().all(|shape| shape.unsafe_boundary)
+    if selected.iter().all(|(shape, _)| shape.unsafe_boundary)
         && let Some(declaration) = declarations::declaration_shape(facts, line, changed_text)
     {
         // Keep the enclosing unsafe obligation as well as the exact declaration.
         // They share a family, but their source identities are not interchangeable.
-        selected.push(declaration);
+        selected.push((declaration, None));
     }
-    selected.sort_by(|left, right| {
+    selected.sort_by(|(left, _), (right, _)| {
         left.family
             .as_str()
             .cmp(right.family.as_str())
             .then(left.start_byte.cmp(&right.start_byte))
             .then(left.text.cmp(right.text))
     });
-    selected
+    selected.into_iter().map(|(shape, _)| shape).collect()
 }
 
 /// A line-only diff cannot identify which bytes changed when code outside an
@@ -383,7 +395,96 @@ fn token_run_count(haystack: &str, needle: &str, whole_unit: bool) -> usize {
         .count()
 }
 
-fn shape_match_rank(shape_text: &str, changed_text: &str) -> Option<(u8, usize)> {
+/// Trim and rank rules of the former per-shape `str::contains` helper.
+/// Category 0 is exact, 1 is shape-contains-changed, 2 is changed-contains-shape.
+struct ChangedLineRank<'a> {
+    trimmed: &'a str,
+    contained: HashSet<&'a str>,
+}
+
+impl<'a> ChangedLineRank<'a> {
+    fn build(changed_text: &'a str, shape_texts: impl Iterator<Item = &'a str>) -> Option<Self> {
+        let trimmed = changed_text
+            .trim()
+            .trim_end_matches(';')
+            .trim_end_matches(',');
+        if trimmed.is_empty() {
+            return None;
+        }
+        let mut by_len = BTreeMap::<usize, HashSet<&'a str>>::new();
+        for shape_text in shape_texts {
+            let shape = shape_text.trim();
+            if shape.len() >= trimmed.len() {
+                continue;
+            }
+            by_len.entry(shape.len()).or_default().insert(shape);
+        }
+        Some(Self {
+            contained: needles_in_haystack(trimmed, &by_len),
+            trimmed,
+        })
+    }
+
+    fn rank(&self, shape_text: &str) -> Option<(u8, usize)> {
+        let shape = shape_text.trim();
+        if shape == self.trimmed {
+            Some((0, 0))
+        } else if shape.len() > self.trimmed.len() {
+            shape
+                .contains(self.trimmed)
+                .then_some((1, shape.len() - self.trimmed.len()))
+        } else if shape.len() < self.trimmed.len()
+            && (shape.is_empty() || self.contained.contains(shape))
+        {
+            Some((2, self.trimmed.len() - shape.len()))
+        } else {
+            None
+        }
+    }
+}
+
+/// Answer `haystack.contains(needle)` for every needle, in work linear in
+/// `haystack.len() * distinct_needle_lengths` rather than `needles * haystack`.
+fn needles_in_haystack<'a>(
+    haystack: &'a str,
+    by_len: &BTreeMap<usize, HashSet<&'a str>>,
+) -> HashSet<&'a str> {
+    let mut found = HashSet::new();
+    let hay_len = haystack.len();
+    for (&needle_len, needles) in by_len {
+        if needle_len == 0 || needle_len > hay_len || needles.is_empty() {
+            continue;
+        }
+        #[cfg(test)]
+        RANK_WINDOW_BYTES.with(|bytes| bytes.set(bytes.get().saturating_add(hay_len)));
+        let last = hay_len - needle_len;
+        let mut start = 0usize;
+        let mut remaining = needles.clone();
+        while start <= last && !remaining.is_empty() {
+            if haystack.is_char_boundary(start)
+                && haystack.is_char_boundary(start + needle_len)
+                && let Some(hit) = remaining.take(&haystack[start..start + needle_len])
+            {
+                found.insert(hit);
+            }
+            start = match haystack.get(start..).and_then(|rest| rest.chars().next()) {
+                Some(ch) => start.saturating_add(ch.len_utf8()),
+                None => break,
+            };
+        }
+    }
+    found
+}
+
+#[cfg(test)]
+thread_local! {
+    static RANK_WINDOW_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How `shape_match_rank` decided before #8647. Kept as the equivalence
+/// oracle so a faster scan cannot quietly change category or distance.
+#[cfg(test)]
+fn legacy_shape_match_rank(shape_text: &str, changed_text: &str) -> Option<(u8, usize)> {
     let changed = changed_text
         .trim()
         .trim_end_matches(';')
@@ -412,6 +513,50 @@ pub fn should_ignore_changed_line(text: &str) -> bool {
         || text.starts_with("#")
 }
 
+/// An `impl` header (`impl Tr for K where Self: Sized {`; other item headers
+/// such as `trait` or `struct` are not covered) holds no expression:
+/// its `Self: Sized` text only looks like a field `name: Type`, so a
+/// constructed-field probe on it reports a gap that does not exist (#8389).
+/// The header itself stays probed as `static_unknown`, so a changed bound is
+/// never silently dropped. A one-line `impl` whose body holds a `fn` is not a
+/// header.
+pub(crate) fn is_item_header(text: &str) -> bool {
+    // A trailing comment (`// fn go`) must not read as a body.
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let text = masked.trim();
+    let text = text
+        .strip_prefix("unsafe")
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+        .map_or(text, str::trim_start);
+    let word_after = |word: &str| {
+        text.strip_prefix(word).is_some_and(|rest| {
+            rest.is_empty() || rest.starts_with('<') || rest.starts_with(char::is_whitespace)
+        })
+    };
+    // A `;` inside brackets (`where [u8; 4]: Copy`) is an array type, not a body.
+    let mut depth = 0usize;
+    let body_semicolon = text.chars().any(|c| match c {
+        '[' | '(' => {
+            depth += 1;
+            false
+        }
+        ']' | ')' => {
+            depth = depth.saturating_sub(1);
+            false
+        }
+        ';' => depth == 0,
+        _ => false,
+    });
+    if text.contains("fn ") || body_semicolon {
+        return false;
+    }
+    // Text after the opening `{` is a one-line body, not a header.
+    if text.contains('{') && !text.ends_with('{') {
+        return false;
+    }
+    word_after("impl") && (text.ends_with('{') || text.contains(" where"))
+}
+
 /// A line that only opens or closes a block (`}`, `});`, `} else {`,
 /// `else {`) carries no expression of its own (#4216 row 5). Opening `(`
 /// and `[` are not delimiters here, so a unit `()` or empty `[]` value is
@@ -434,6 +579,50 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+
+    /// #8389: an `impl` header is not a behavior line, but a one-line `impl`,
+    /// a `fn` signature, an expression that merely contains the word and a
+    /// function `where` bound stay probed.
+    #[test]
+    fn impl_headers_are_item_headers_but_behavior_is_not() {
+        for header in [
+            "impl Tr for K {",
+            "impl<T: Debug> Tr for K<T> where Self: Sized {",
+            "impl Tr for K where Self: Sized",
+            "impl Tr for K where Self: Sized { // fn go",
+            "impl Tr for K where Self: Sized { // x;",
+            "impl<T: Fn(u8)> Tr for K<T> where Self: Sized {",
+            "impl\tTr for K where Self: Sized {",
+            "unsafe\timpl Tr for K where [u8; 4]: Copy {",
+            "unsafe impl Send for K {",
+            "impl<T: Iterator<Item = u32>> Tr for K<T> {",
+        ] {
+            assert!(is_item_header(header), "`{header}`");
+            assert_eq!(
+                super::super::lexical::classify_changed_line(header),
+                vec![ProbeFamily::StaticUnknown],
+                "`{header}` must not classify as a field"
+            );
+        }
+        for behavior in [
+            "impl K { fn go(&self) -> u32 { 1 } }",
+            "fn go() -> impl Iterator<Item = u32> {",
+            "implement(x);",
+            "let impl_len = 3;",
+            "where T: Debug,",
+            "impl Tr for K where Self: Sized;",
+            "impl_len += 1",
+            // A multi-line header's generic bound stays probed as
+            // `static_unknown` (`inline_impl_bound_added_stays_unknown`).
+            "impl<T: Debug> Tr for K<T>",
+            "impl K { const A: u32 = 1; }",
+            "impl K where Self: Sized { const A: u32 = 1; }",
+            "impl K where Self: Sized { Foo { a: 1 } }",
+            "T: Debug + Clone,",
+        ] {
+            assert!(!is_item_header(behavior), "`{behavior}`");
+        }
+    }
 
     #[test]
     fn classify_functions_are_callable() {
@@ -808,6 +997,158 @@ mod tests {
         .ok_or_else(|| "expected outer parser expression".to_string())?;
         if outer != "with_reason(watchdog_reason(\"run-missing\", receipt))" {
             return Err(format!("nested shape replaced exact outer call: {outer}"));
+        }
+        Ok(())
+    }
+
+    fn shape_fact(
+        kind: ProbeShapeKind,
+        start_byte: usize,
+        text: impl Into<crate::analysis::facts::SourceText>,
+    ) -> ProbeShapeFact {
+        let text = text.into();
+        let end_byte = start_byte.saturating_add(text.len());
+        ProbeShapeFact {
+            start_line: 1,
+            end_line: 1,
+            start_byte,
+            end_byte,
+            kind,
+            text,
+            value_consumed: false,
+            source_lines: None,
+        }
+    }
+
+    fn long_match_line_and_shapes(arms: usize) -> Result<(String, Vec<ProbeShapeFact>), String> {
+        let mut inner = String::from("match x {");
+        let mut shapes = Vec::with_capacity(arms.saturating_add(4));
+        for index in 0..arms {
+            let arm = format!("{index}=>{index}");
+            let start_byte = inner.len();
+            inner.push_str(&arm);
+            inner.push(',');
+            shapes.push(shape_fact(ProbeShapeKind::MatchArm, start_byte, arm));
+        }
+        let tail_start = inner.len();
+        inner.push_str("_=>0}");
+        shapes.push(shape_fact(ProbeShapeKind::MatchArm, tail_start, "_=>0"));
+        let prefix = "Id { a: 1, b: 2, x: ";
+        let shift = prefix.len();
+        for shape in &mut shapes {
+            shape.start_byte = shape.start_byte.saturating_add(shift);
+            shape.end_byte = shape.end_byte.saturating_add(shift);
+        }
+        let line = format!("{prefix}{inner} }}");
+        let a_at = line
+            .find("a: 1")
+            .ok_or_else(|| "fixture lost field a: 1".to_string())?;
+        let b_at = line
+            .find("b: 2")
+            .ok_or_else(|| "fixture lost field b: 2".to_string())?;
+        shapes.push(shape_fact(ProbeShapeKind::FieldConstruction, a_at, "a: 1"));
+        shapes.push(shape_fact(ProbeShapeKind::FieldConstruction, b_at, "b: 2"));
+        shapes.push(shape_fact(ProbeShapeKind::MatchArm, 0, line.clone()));
+        Ok((line, shapes))
+    }
+
+    fn index_with_shapes(path: PathBuf, source: String, shapes: Vec<ProbeShapeFact>) -> RustIndex {
+        RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: BTreeMap::from([(
+                path.clone(),
+                FileFacts {
+                    path,
+                    source: source.into(),
+                    probe_shapes: shapes,
+                    ..FileFacts::default()
+                },
+            )]),
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn shape_match_rank_matches_legacy_contains_categories() -> Result<(), String> {
+        let changed = "  Id { a: 1, b: 2 }; ";
+        let shapes = [
+            "Id { a: 1, b: 2 }",
+            "a: 1",
+            "b: 2",
+            "Id { a: 1, b: 2, c: 3 }",
+            "nope",
+            "",
+            "  a: 1  ",
+        ];
+        let ranker = ChangedLineRank::build(changed, shapes.into_iter())
+            .ok_or_else(|| "changed text should rank".to_string())?;
+        for shape in shapes {
+            if ranker.rank(shape) != legacy_shape_match_rank(shape, changed) {
+                return Err(format!("rank drifted for {shape:?}"));
+            }
+        }
+        if legacy_shape_match_rank("x", "   ;").is_some() {
+            return Err("empty trimmed changed must not rank".to_string());
+        }
+        if ChangedLineRank::build("   ;", std::iter::empty()).is_some() {
+            return Err("empty trimmed changed must not build a ranker".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn long_changed_line_ranking_is_equivalent_and_scans_by_length_not_shape_count()
+    -> Result<(), String> {
+        const ARMS: usize = 2_500;
+        let (line, shapes) = long_match_line_and_shapes(ARMS)?;
+        let ranker = ChangedLineRank::build(&line, shapes.iter().map(|shape| shape.text.as_str()))
+            .ok_or_else(|| "changed text should rank".to_string())?;
+        for shape in &shapes {
+            if ranker.rank(shape.text.as_str())
+                != legacy_shape_match_rank(shape.text.as_str(), &line)
+            {
+                return Err(format!("rank drifted for {}", shape.text.as_str()));
+            }
+        }
+        RANK_WINDOW_BYTES.with(|bytes| bytes.set(0));
+        let path = PathBuf::from("src/lib.rs");
+        let index = index_with_shapes(path.clone(), line.clone(), shapes.clone());
+        let selected = parser_probe_shapes_for_changed_line_against(
+            &index,
+            &path,
+            1,
+            &line,
+            Some("Id { a: 1, b: 3, x: old }"),
+        );
+        let window_bytes = RANK_WINDOW_BYTES.with(std::cell::Cell::get);
+        let naive_bytes = shapes.len().saturating_mul(line.len());
+        if window_bytes == 0 {
+            return Err("the length-class scan must examine the changed line".to_string());
+        }
+        if window_bytes.saturating_mul(20) >= naive_bytes {
+            return Err(format!(
+                "window scan {window_bytes} bytes is not bounded vs naive {naive_bytes} for {ARMS} shapes on a {}-byte line",
+                line.len()
+            ));
+        }
+        let match_arm = selected
+            .iter()
+            .find(|shape| shape.family == ProbeFamily::MatchArm)
+            .ok_or_else(|| "missing match arm".to_string())?;
+        if match_arm.text != line.as_str() {
+            return Err(format!(
+                "exact whole-line shape must win, got {}",
+                match_arm.text
+            ));
+        }
+        let fields: Vec<&str> = selected
+            .iter()
+            .filter(|shape| shape.family == ProbeFamily::FieldConstruction)
+            .map(|shape| shape.text)
+            .collect();
+        if fields != ["b: 2"] {
+            return Err(format!(
+                "the #6731 unchanged-field tie-break must still pick the edited field: {selected:?}"
+            ));
         }
         Ok(())
     }

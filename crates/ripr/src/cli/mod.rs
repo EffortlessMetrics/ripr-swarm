@@ -256,9 +256,12 @@ fn before_repair_attempt(args: &[String]) -> Result<Option<agent::AgentRepairOpt
         return Ok(None);
     }
     match agent::parse_agent_args(&args[2..])? {
-        agent::AgentCommand::Repair(options)
+        agent::AgentCommand::Repair(mut options)
             if options.phase == agent::AgentRepairPhase::Before =>
         {
+            // #8872: this route bypasses the `agent` dispatch, so it resolves
+            // the implicit workspace root here; `--root .` opts out.
+            commands::resolve_agent_repair_root(&mut options)?;
             Ok(Some(options))
         }
         _ => Ok(None),

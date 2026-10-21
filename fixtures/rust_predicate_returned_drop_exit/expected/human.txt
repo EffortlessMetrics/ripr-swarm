@@ -26,6 +26,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_predicate_returned_drop_exit/input --diff <cwd>/fixtures/rust_predicate_returned_drop_exit/diff.patch --mode fast probe:src_lib.rs:predicate:bca747dd
   ripr context --root <cwd>/fixtures/rust_predicate_returned_drop_exit/input --diff <cwd>/fixtures/rust_predicate_returned_drop_exit/diff.patch --mode fast --at probe:src_lib.rs:predicate:bca747dd
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:predicate:bca747dd --root <cwd>/fixtures/rust_predicate_returned_drop_exit/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_predicate_returned_drop_exit/input --at src/lib.rs:15 --kind predicate
 

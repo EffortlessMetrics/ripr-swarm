@@ -30,20 +30,20 @@ Evidence
   - observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - local flow reaches error variant: Ok(build_response(id.trim(), method)?) (line 62)
-  - related test tests/protocol.rs:43 message_only_error_predicate_never_pins uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
-  - related test tests/protocol.rs:34 shadowed_callee_never_credits_the_seam uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
-  - related test tests/protocol.rs:55 swallowed_error_arm_never_credits uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
-  - related test tests/protocol.rs:25 variable_binding_scrutinee_keeps_existing_weaker_meaning uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
+  - related test tests/protocol.rs:43 message_only_error_predicate_never_pins uses none unknown oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
+  - related test tests/protocol.rs:34 shadowed_callee_never_credits_the_seam uses none unknown oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
+  - related test tests/protocol.rs:55 swallowed_error_arm_never_credits uses none unknown oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
+  - related test tests/protocol.rs:25 variable_binding_scrutinee_keeps_existing_weaker_meaning uses none unknown oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
   - related test tests/protocol.rs:4 direct_owner_call_keeps_the_file_related misses: asserts, but not on the changed value; checked `expect_response("42|workspace/refresh", "42").unwrap()`
-  - source function argument value "42" at line 5
-  - source function argument value "42|workspace/refresh" at line 5
+  - source function argument value expected_id = "42" at line 5
+  - source function argument value raw = "42|workspace/refresh" at line 5
   - source assertion argument value "42" at line 6
-  - source function argument value "42" at line 26
-  - source function argument value "42|workspace/refresh" at line 26
+  - source function argument value expected_id = "42" at line 26
+  - source function argument value raw = "42|workspace/refresh" at line 26
   - source assertion argument value "42" at line 28
-  - source function argument value "42" at line 36
+  - source function argument value raw = "42" at line 36
   - source assertion argument value "42" at line 37
-  - source values (showing 8 of 14; full list in --format json)
+  - source values (showing 8 of 14 read from related tests; full list in --format json)
 
 Weakness
   - No exact error variant discriminator was detected
@@ -79,19 +79,19 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
   - local flow reaches returned value: Ok(build_response(id, method)?) (line 62)
   - related test tests/protocol.rs:4 direct_owner_call_keeps_the_file_related uses strong exact value oracle: assert_eq!(response.id, "42"); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - related test tests/protocol.rs:43 message_only_error_predicate_never_pins uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
-  - related test tests/protocol.rs:34 shadowed_callee_never_credits_the_seam uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
-  - related test tests/protocol.rs:55 swallowed_error_arm_never_credits uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
-  - related test tests/protocol.rs:25 variable_binding_scrutinee_keeps_existing_weaker_meaning uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
-  - source function argument value "42" at line 5
-  - source function argument value "42|workspace/refresh" at line 5
+  - related test tests/protocol.rs:43 message_only_error_predicate_never_pins uses none unknown oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
+  - related test tests/protocol.rs:34 shadowed_callee_never_credits_the_seam uses none unknown oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
+  - related test tests/protocol.rs:55 swallowed_error_arm_never_credits uses none unknown oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
+  - related test tests/protocol.rs:25 variable_binding_scrutinee_keeps_existing_weaker_meaning uses none unknown oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
+  - source function argument value expected_id = "42" at line 5
+  - source function argument value raw = "42|workspace/refresh" at line 5
   - source assertion argument value "42" at line 6
-  - source function argument value "42" at line 26
-  - source function argument value "42|workspace/refresh" at line 26
+  - source function argument value expected_id = "42" at line 26
+  - source function argument value raw = "42|workspace/refresh" at line 26
   - source assertion argument value "42" at line 28
-  - source function argument value "42" at line 36
+  - source function argument value raw = "42" at line 36
   - source assertion argument value "42" at line 37
-  - source values (showing 8 of 14; full list in --format json)
+  - source values (showing 8 of 14 read from related tests; full list in --format json)
 
 Weakness
   - No strong discriminator was detected

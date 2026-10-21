@@ -326,17 +326,17 @@ fn perl_projection_keeps_producer_and_edited_contributions_separate() -> Result<
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/perl-verdict-corpus");
     let records = population::Records::load(&dir)?;
     // Independently counted committed rows: producer 27 (15 discriminated,
-    // 12 not fully), edited 9. Do not derive these expectations via summarize.
+    // 12 not fully), edited 33. Do not derive these expectations via summarize.
     for (rate, expected) in [
-        ("false_verdict_rate", (8, 27)),
-        ("false_actionable_rate", (5, 15)),
-        ("false_exposed_rate", (3, 12)),
+        ("false_verdict_rate", (2, 27)),
+        ("false_actionable_rate", (1, 15)),
+        ("false_exposed_rate", (1, 12)),
         ("false_silent_rate", (0, 12)),
-        ("abstention_rate", (8, 27)),
+        ("abstention_rate", (15, 27)),
     ] {
         let selected = records.population(&format!("by_packet_provenance.producer.{rate}"))?;
         assert_eq!(selected.totals()?, expected);
-        assert_eq!(selected.cases.len(), 36);
+        assert_eq!(selected.cases.len(), 60);
         assert_eq!(
             selected
                 .cases
@@ -344,20 +344,20 @@ fn perl_projection_keeps_producer_and_edited_contributions_separate() -> Result<
                 .filter(|case| case.denominator == 0)
                 .count(),
             if rate == "false_actionable_rate" {
-                21
+                45
             } else if rate == "false_exposed_rate" || rate == "false_silent_rate" {
-                24
+                48
             } else {
-                9
+                33
             }
         );
     }
-    assert_eq!(records.population("abstention_rate")?.totals()?, (11, 36));
+    assert_eq!(records.population("abstention_rate")?.totals()?, (20, 60));
     assert_eq!(
         records
             .population("by_packet_provenance.edited_producer.abstention_rate")?
             .totals()?,
-        (3, 9)
+        (5, 33)
     );
     for invalid in [
         "by_packet_provenance.producer",
@@ -538,11 +538,11 @@ fn perl_scoreboard_measures_without_blessing_an_absent_baseline() -> Result<(), 
     assert_eq!(current["gate"]["status"], "no_baseline");
     assert_eq!(current["gate"]["failed_instruments"], json!([]));
     for (metric, n, d, status) in [
-        ("false_verdict", 8_u32, 27_u32, "below_target"),
-        ("false_actionable", 5, 15, "below_target"),
-        ("false_exposed", 3, 12, "below_target"),
+        ("false_verdict", 2_u32, 27_u32, "below_target"),
+        ("false_actionable", 1, 15, "below_target"),
+        ("false_exposed", 1, 12, "below_target"),
         ("false_silent", 0, 12, "meets_target"),
-        ("abstention", 8, 27, "below_target"),
+        ("abstention", 15, 27, "below_target"),
     ] {
         let id = format!("trust.perl_verdict_corpus_{metric}");
         let row = current["metrics"]

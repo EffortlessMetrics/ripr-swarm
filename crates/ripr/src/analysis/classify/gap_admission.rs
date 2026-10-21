@@ -63,7 +63,7 @@ pub(in crate::analysis) fn withhold_unsupported_gap(finding: &mut Finding) -> bo
 /// Rewrite a gap finding to `static_unknown` under the named `limit`:
 /// rescore, record the stop reason and the limitation edges, and drop the
 /// absence claims that would feed repair routes.
-fn withhold_gap(
+pub(super) fn withhold_gap(
     finding: &mut Finding,
     limit: StaticLimitKind,
     first_unresolved_edge: &str,
@@ -706,6 +706,171 @@ fn names(text: &str, ident: &str) -> bool {
     })
 }
 
+/// Classifier-to-post-pass marker (#8600): some matched related test has a
+/// line at the call-fact budget, seen before the render cap trims the rows.
+/// The post-pass consumes it.
+pub(in crate::analysis) const CALL_BUDGET_SATURATED: &str =
+    "gap_admission: a related test line is at the call-fact budget";
+
+/// Absence lines `missing_evidence` derives from a test's calls and inputs.
+const BUDGET_ABSENCE_LINES: [&str; 4] = [
+    "No relevant oracle was detected",
+    "No strong discriminator was detected",
+    "No exact error variant discriminator was detected",
+    "No detected boundary input for the changed predicate",
+];
+
+const BUDGET_LIMIT: StaticLimitKind = StaticLimitKind::RustCallFactBudget;
+const BUDGET_FIRST_UNRESOLVED_EDGE: &str =
+    "whether a related test line holds more calls than the per-line call-fact budget kept";
+
+/// #8600: `extract_call_facts` keeps at most `MAX_CALL_FACTS_PER_LINE`
+/// distinct callees per source line and drops the rest without a marker. A
+/// finding's negative claim (no assertion, no helper, one owner call) reads
+/// the related test's calls, so a related test with a saturated line cannot
+/// establish it: the dropped call may be the oracle. This is the one shared
+/// owner of that decision, derived from the shared saturation predicate, so
+/// no consumer re-derives it and no facts or cache schema carries a flag.
+///
+/// A gap class (`reachable_unrevealed`, `weakly_exposed`) becomes
+/// `static_unknown`. An already-unknown class keeps its class and gains the
+/// named reason. A positive (`exposed`) or `no_static_path` finding is left
+/// alone: a dropped call can only remove reach, never invent a gap. Never
+/// upgrades a class. Returns `true` when the finding was changed.
+pub(in crate::analysis) fn withhold_call_budget_gap(
+    finding: &mut Finding,
+    index: &RustIndex,
+) -> bool {
+    // The classifier saw every matched test before the render cap trimmed the
+    // rows; the marker carries that, and is always consumed.
+    let before = finding.evidence.len();
+    finding
+        .evidence
+        .retain(|line| line != CALL_BUDGET_SATURATED);
+    let marked = finding.evidence.len() != before;
+    if finding.static_limit_kind.is_some() {
+        return false;
+    }
+    let is_gap = matches!(
+        finding.class,
+        ExposureClass::ReachableUnrevealed | ExposureClass::WeaklyExposed
+    );
+    let is_unknown = matches!(
+        finding.class,
+        ExposureClass::InfectionUnknown
+            | ExposureClass::PropagationUnknown
+            | ExposureClass::StaticUnknown
+    );
+    if !(is_gap || is_unknown) {
+        return false;
+    }
+    let saturated: Vec<String> = finding
+        .related_tests
+        .iter()
+        .filter(|related| {
+            index.tests().iter().any(|test| {
+                test.name == related.name
+                    && test.file == related.file
+                    && test.start_line == related.line
+                    && crate::analysis::extract::has_saturated_line(test.calls.iter())
+            })
+        })
+        .map(|related| {
+            format!(
+                "`{}` ({}:{})",
+                related.name,
+                related.file.display().to_string().replace('\\', "/"),
+                related.line
+            )
+        })
+        .collect();
+    if saturated.is_empty() && !marked {
+        return false;
+    }
+    // A saturated test's absence rows (no call path, no assertion, no input
+    // reaching the value, no observing assertion) are claims over its calls
+    // or assertion helpers. `weak_assertion` and `missing_exact_assertion`
+    // describe an assertion ripr did read, so they stay. Absence rows are
+    // claims over its calls; a dropped call may be the owner call or the
+    // assertion helper, so they read as unconfirmed, not as established.
+    for related in &mut finding.related_tests {
+        let is_saturated = index.tests().iter().any(|test| {
+            test.name == related.name
+                && test.file == related.file
+                && test.start_line == related.line
+                && crate::analysis::extract::has_saturated_line(test.calls.iter())
+        });
+        if is_saturated
+            && matches!(
+                related.miss,
+                Some(
+                    RelatedTestMiss::NoCallPath
+                        | RelatedTestMiss::NoAssertion
+                        | RelatedTestMiss::MissingInput
+                        | RelatedTestMiss::AssertionNotObserving
+                )
+            )
+        {
+            related.miss = Some(RelatedTestMiss::ObservationUnconfirmed);
+        }
+    }
+    let subject = if saturated.is_empty() {
+        "A related test".to_string()
+    } else {
+        saturated.join(", ")
+    };
+    if is_gap {
+        let next_step = format!(
+            "{subject} has a line with {} distinct calls, the per-line call budget, so ripr may not see every call there and does not report a gap. Split that line or check the test's assertions directly; add a test only if none checks the change.",
+            crate::analysis::extract::MAX_CALL_FACTS_PER_LINE
+        );
+        withhold_gap(
+            finding,
+            BUDGET_LIMIT,
+            BUDGET_FIRST_UNRESOLVED_EDGE,
+            next_step,
+            &saturated,
+        );
+        return true;
+    }
+    finding.static_limit_kind = Some(BUDGET_LIMIT);
+    // Drop the absence claims over the test's calls, as `withhold_gap` does
+    // for a gap: no oracle, no discriminator, no exact variant, no boundary
+    // input (a dropped call such as `row(99)` could be the input), and the
+    // missing-discriminator values and prescription built from them. The
+    // finding's other missing evidence stays; the limit takes their place.
+    let before_missing = finding.missing.len();
+    finding.missing.retain(|line| {
+        !BUDGET_ABSENCE_LINES.contains(&line.as_str())
+            && !line.starts_with(MISSING_DISCRIMINATOR_VALUE_PREFIX)
+    });
+    let had_discriminators = !finding.activation.missing_discriminators.is_empty();
+    finding.activation.missing_discriminators.clear();
+    if finding.missing.len() != before_missing || had_discriminators {
+        finding.missing.push(
+            BUDGET_LIMIT
+                .describe_for_family(&finding.probe.family)
+                .into_owned(),
+        );
+        finding.recommended_next_step = Some(format!(
+            "{subject} has a line with {} distinct calls, the per-line call budget, so ripr may not see every call or input there. Split that line or check the test directly; add a test only if none checks the change.",
+            crate::analysis::extract::MAX_CALL_FACTS_PER_LINE
+        ));
+    }
+    finding.evidence.extend([
+        format!(
+            "{LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX}{}",
+            last_established_edge(finding, &saturated)
+        ),
+        format!("{LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX}{BUDGET_FIRST_UNRESOLVED_EDGE}"),
+        format!("{LIMITATION_ANALYZER_ROUTE_PREFIX}analysis/classify/gap-admission"),
+        format!(
+            "{LIMITATION_NON_CLAIM_PREFIX}no missing test, no weak oracle, and no test adequacy is established"
+        ),
+    ]);
+    true
+}
+
 const PANIC_LIMIT: StaticLimitKind = StaticLimitKind::RustPanicOutcomeUnresolved;
 const PANIC_FIRST_UNRESOLVED_EDGE: &str =
     "whether the changed code decides the panic the `#[should_panic]` test expects";
@@ -851,7 +1016,7 @@ fn panic_macro_arguments(masked: &str, from: usize) -> Vec<std::ops::Range<usize
 }
 
 /// Whether `test` carries `#[ignore]`, so a default run never executes it.
-fn is_ignored(test: &TestFact) -> bool {
+pub(super) fn is_ignored(test: &TestFact) -> bool {
     test.attrs.iter().any(|attr| {
         let compact: String = attr.chars().filter(|ch| !ch.is_whitespace()).collect();
         compact == "#[ignore]" || compact.starts_with("#[ignore=")
@@ -1871,5 +2036,165 @@ fn plain() { row(100); }
         assert_eq!(expects("foreign_message"), Some(false));
         assert_eq!(expects("empty_message"), Some(true));
         assert_eq!(expects("plain"), Some(false));
+    }
+
+    /// A test whose one line holds `calls` distinct callees.
+    fn budget_index(calls: usize) -> (RustIndex, RelatedTest) {
+        let line: String = (0..calls).map(|i| format!("h{i}();")).collect();
+        let facts = crate::analysis::rust_index::summarize_file(
+            PathBuf::from("src/lib.rs"),
+            format!("#[test]\nfn wide() {{\n    {line}\n}}\n"),
+        );
+        let mut related = related("wide");
+        related.line = facts
+            .tests
+            .iter()
+            .find(|test| test.name == "wide")
+            .map_or(0, |test| test.start_line);
+        let mut index = RustIndex::default();
+        index.extend_functions(facts.functions.iter().cloned());
+        index.extend_tests(facts.tests.iter().cloned());
+        index.insert_file_only(PathBuf::from("src/lib.rs"), facts);
+        (index, related)
+    }
+
+    #[test]
+    fn a_related_test_line_at_the_call_budget_withholds_a_gap_and_names_an_unknown() {
+        let budget = crate::analysis::extract::MAX_CALL_FACTS_PER_LINE;
+        let finding_for = |class: ExposureClass, related: &RelatedTest| {
+            let mut finding = marked();
+            finding.class = class;
+            finding.evidence.clear();
+            finding.related_tests = vec![related.clone()];
+            finding
+        };
+        // One under the budget: nothing may have been dropped.
+        let (under, related_under) = budget_index(budget - 1);
+        let mut finding = finding_for(ExposureClass::ReachableUnrevealed, &related_under);
+        assert!(!withhold_call_budget_gap(&mut finding, &under));
+        assert_eq!(finding.class, ExposureClass::ReachableUnrevealed);
+        assert_eq!(finding.static_limit_kind, None);
+
+        // Wide fixtures hold exactly the budget, then past it.
+        for calls in [budget, budget + 40] {
+            let (index, related) = budget_index(calls);
+            // Gap classes become `static_unknown` and drop the absence claim.
+            for class in [
+                ExposureClass::ReachableUnrevealed,
+                ExposureClass::WeaklyExposed,
+            ] {
+                let mut finding = finding_for(class, &related);
+                assert!(withhold_call_budget_gap(&mut finding, &index), "{calls}");
+                assert_eq!(finding.class, ExposureClass::StaticUnknown);
+                assert_eq!(
+                    finding.static_limit_kind,
+                    Some(StaticLimitKind::RustCallFactBudget)
+                );
+                assert!(finding.activation.missing_discriminators.is_empty());
+                assert!(
+                    finding
+                        .stop_reasons
+                        .contains(&StopReason::GapEvidenceUnresolved)
+                );
+            }
+            // Unknown classes keep their class and gain the reason.
+            for class in [
+                ExposureClass::InfectionUnknown,
+                ExposureClass::PropagationUnknown,
+                ExposureClass::StaticUnknown,
+            ] {
+                let mut finding = finding_for(class.clone(), &related);
+                finding.missing = vec![
+                    "No relevant oracle was detected".to_string(),
+                    "No strong discriminator was detected".to_string(),
+                    "No exact error variant discriminator was detected".to_string(),
+                    "No detected boundary input for the changed predicate".to_string(),
+                    format!("{MISSING_DISCRIMINATOR_VALUE_PREFIX}n == 100"),
+                    "keep this unrelated line".to_string(),
+                ];
+                finding.recommended_next_step = Some("Add a test with input n == 100".to_string());
+                assert!(!finding.activation.missing_discriminators.is_empty());
+                finding.related_tests[0].miss = Some(RelatedTestMiss::NoAssertion);
+                assert!(withhold_call_budget_gap(&mut finding, &index), "{calls}");
+                assert_eq!(finding.class, class);
+                assert_eq!(
+                    finding.static_limit_kind,
+                    Some(StaticLimitKind::RustCallFactBudget)
+                );
+                // Call-derived absence claims are dropped or qualified; the
+                // rest of the missing evidence stays.
+                assert!(
+                    finding
+                        .missing
+                        .contains(&"keep this unrelated line".to_string())
+                );
+                assert!(finding.missing.iter().all(|line| !line.starts_with("No ")));
+                assert!(finding.missing.iter().any(|line| line.contains("per line")));
+                assert!(finding.activation.missing_discriminators.is_empty());
+                assert!(
+                    finding
+                        .recommended_next_step
+                        .as_deref()
+                        .is_some_and(|step| step.contains("per-line call budget")
+                            && !step.contains("n == 100"))
+                );
+                for call_derived in [
+                    RelatedTestMiss::NoCallPath,
+                    RelatedTestMiss::NoAssertion,
+                    RelatedTestMiss::MissingInput,
+                    RelatedTestMiss::AssertionNotObserving,
+                ] {
+                    let mut again = finding_for(class.clone(), &related);
+                    again.related_tests[0].miss = Some(call_derived);
+                    assert!(withhold_call_budget_gap(&mut again, &index));
+                    assert_eq!(
+                        again.related_tests[0].miss,
+                        Some(RelatedTestMiss::ObservationUnconfirmed),
+                        "{call_derived:?}"
+                    );
+                }
+                // An assertion ripr read keeps its strength miss.
+                let mut weak = finding_for(class.clone(), &related);
+                weak.related_tests[0].miss = Some(RelatedTestMiss::WeakAssertion);
+                assert!(withhold_call_budget_gap(&mut weak, &index));
+                assert_eq!(
+                    weak.related_tests[0].miss,
+                    Some(RelatedTestMiss::WeakAssertion)
+                );
+            }
+            // A positive, an absent path and a producer-named limit are left
+            // alone: a dropped call never turns them into a gap.
+            for class in [ExposureClass::Exposed, ExposureClass::NoStaticPath] {
+                let mut finding = finding_for(class.clone(), &related);
+                assert!(!withhold_call_budget_gap(&mut finding, &index));
+                assert_eq!(finding.class, class);
+                assert_eq!(finding.static_limit_kind, None);
+            }
+            let mut named = finding_for(ExposureClass::ReachableUnrevealed, &related);
+            named.static_limit_kind = Some(StaticLimitKind::RustMacroReachUnresolved);
+            assert!(!withhold_call_budget_gap(&mut named, &index));
+            assert_eq!(named.class, ExposureClass::ReachableUnrevealed);
+
+            // A finding whose related test is a different test is untouched.
+            let mut elsewhere = related.clone();
+            elsewhere.name = "other".to_string();
+            let mut finding = finding_for(ExposureClass::ReachableUnrevealed, &elsewhere);
+            assert!(!withhold_call_budget_gap(&mut finding, &index));
+            assert_eq!(finding.class, ExposureClass::ReachableUnrevealed);
+        }
+
+        // The classifier's marker covers a saturated test the render cap
+        // trimmed from the rows; it is consumed either way.
+        let mut capped = marked();
+        capped.evidence = vec![CALL_BUDGET_SATURATED.to_string()];
+        capped.related_tests = Vec::new();
+        assert!(withhold_call_budget_gap(&mut capped, &under));
+        assert_eq!(capped.class, ExposureClass::StaticUnknown);
+        assert!(!capped.evidence.iter().any(|l| l == CALL_BUDGET_SATURATED));
+        let mut exposed = marked();
+        exposed.class = ExposureClass::Exposed;
+        exposed.evidence = vec![CALL_BUDGET_SATURATED.to_string()];
+        assert!(!withhold_call_budget_gap(&mut exposed, &under));
+        assert!(!exposed.evidence.iter().any(|l| l == CALL_BUDGET_SATURATED));
     }
 }

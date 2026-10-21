@@ -46,7 +46,7 @@ Evidence
   - propagation unknown: TypeScript preview adapter does not yet model propagation
   - observation weak: Strongest extracted oracle kind: `unknown` (rank 0)
   - discriminator weak: TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands
-  - related test tests/parser.test.ts:3 empty user throws uses unknown unknown oracle
+  - related test tests/parser.test.ts:3 empty user throws uses no oracle
 
 Weakness
   - Related test reaches `parseUser` but the strongest extracted oracle is `unknown`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form with an exact payload (string, object, or class reference)
