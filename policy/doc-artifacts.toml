@@ -1786,3 +1786,11 @@ path = "docs/specs/RIPR-SPEC-0300-wrapped-signature-one-probe.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Issue #8999 records the wrapped-signature contract: the signature of a new function seeds no probe on its parameter, return or brace lines, several changed lines of one existing signature seed one probe on the first changed line, type-bound declarations keep their own probe, and any ambiguous header fails closed to per-line probes."
+
+[[artifact]]
+id = "RIPR-SPEC-0301"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0301-release-ledger-direct-main.md"
+status = "proposed"
+owner = "release-automation"
+standalone_reason = "Issue #2768 records the direct-main release ledger contract: release-ledger validates a captured ledger against its exact first-parent and reachable range, the closed eleven-value disposition vocabulary, a separate final-tree-effect axis, the #2766 packet and shared JSON, Markdown and manifest digests, and never claims per-commit review."

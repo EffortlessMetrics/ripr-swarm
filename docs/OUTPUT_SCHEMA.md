@@ -14903,6 +14903,49 @@ candidate-tree commit list is the ordered projection of reviewed
 pending and do not enter that projection; once adjudicated through the
 selected cut, each row carries its reviewed tree state into the projection.
 
+## Release Ledger Report
+
+`release-ledger` validates a captured direct-main ledger (`kind: release_ledger`,
+RIPR-SPEC-0301) and writes `target/ripr/reports/release-ledger.{json,md}` from
+the same normalized DTO. The command exits nonzero unless `status` is `valid`.
+The stable top-level report shape is:
+
+```json
+{
+  "report": "release-ledger",
+  "schema_version": "0.1",
+  "status": "valid | invalid",
+  "stage": "dry_run | final",
+  "final_eligible": false,
+  "adjudication_basis": "rule_derived",
+  "rule_version": "v1",
+  "first_parent_commits": 0,
+  "reachable_commits": 0,
+  "blocking_unresolved_records": 0,
+  "digests": {
+    "first_parent": "sha256:...",
+    "reachable": "sha256:...",
+    "records": "sha256:...",
+    "tree": "sha256:..."
+  },
+  "counts_by_disposition": {},
+  "counts_by_final_tree_effect": {},
+  "reconciliation_reasons": [],
+  "ledger": {},
+  "authority_boundary": "direct_main_ledger_only",
+  "must_not_claim": []
+}
+```
+
+`ledger` holds the input DTO: `source` (base, cut, cut tree, observed main
+tip), `range` (`first_parent` and `reachable`, kept separate), `merged_prs`,
+`selected_claims`, `open_prs`, `digests`, an optional `audit` reference and one
+`records` entry per reachable commit. Dispositions use the closed eleven-value
+vocabulary and `final_tree_effect` is a separate closed field backed by an
+`effect_basis`. Markdown carries the same digests as
+`first-parent digest: \`...\`` lines. A `final` ledger rejects any
+`blocking_unresolved` row and requires an audit digest.
+
 ## Operator Cockpit Report
 
 `cargo xtask operator-cockpit` joins existing repo-local report artifacts into

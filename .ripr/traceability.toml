@@ -17258,6 +17258,40 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0301"
+name = "Direct-main release ledger contract and validator"
+spec = "docs/specs/RIPR-SPEC-0301-release-ledger-direct-main.md"
+tests = [
+  "xtask/src/reports/release_ledger/tests.rs::missing_record_is_rejected",
+  "xtask/src/reports/release_ledger/tests.rs::duplicate_record_is_rejected",
+  "xtask/src/reports/release_ledger/tests.rs::record_outside_range_is_rejected",
+  "xtask/src/reports/release_ledger/tests.rs::reordered_first_parent_is_rejected",
+  "xtask/src/reports/release_ledger/tests.rs::count_consistent_but_wrong_set_is_rejected_by_digest",
+  "xtask/src/reports/release_ledger/tests.rs::wrong_first_parent_digest_is_rejected",
+  "xtask/src/reports/release_ledger/tests.rs::merged_pr_contradicting_git_is_rejected",
+  "xtask/src/reports/release_ledger/tests.rs::selected_claim_totals_must_match_rows_and_packet",
+  "xtask/src/reports/release_ledger/tests.rs::wrong_tree_effect_is_rejected",
+  "xtask/src/reports/release_ledger/tests.rs::blocking_unresolved_fails_only_in_final",
+  "xtask/src/reports/release_ledger/tests.rs::free_form_vocabulary_is_rejected",
+  "xtask/src/reports/release_ledger/tests.rs::projection_digest_disagreement_is_rejected",
+  "xtask/src/reports/release_ledger/tests.rs::cut_that_is_not_exact_main_is_rejected",
+  "xtask/src/reports/release_ledger/tests.rs::open_pr_inside_range_or_with_included_disposition_is_rejected",
+  "xtask/src/reports/release_ledger/tests.rs::valid_ledger_has_no_reasons",
+]
+fixtures = []
+code = [
+  "xtask/src/reports/release_ledger.rs",
+  "xtask/src/reports/release_ledger/dto.rs",
+  "xtask/src/reports/release_ledger/validate.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0301-release-ledger-direct-main.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0300"
 name = "A wrapped function signature seeds one probe, not one per physical line"
 spec = "docs/specs/RIPR-SPEC-0300-wrapped-signature-one-probe.md"
