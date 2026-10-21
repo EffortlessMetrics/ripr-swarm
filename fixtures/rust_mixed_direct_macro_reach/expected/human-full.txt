@@ -23,7 +23,7 @@ Static exposure
   weakly_exposed (warning, confidence 0.92)
 
 Evidence
-  - reach yes: Related tests appear to reach inner: inner_is_positive, outer_triples
+  - reach yes: Related tests appear to reach inner: inner_is_positive
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches returned value: 3 * x
   - observation yes: A related test observes a value or effect near the changed behavior

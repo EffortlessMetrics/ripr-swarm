@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- With no `ripr.toml`, a root `tsconfig.json`/`jsconfig.json` or detectable TypeScript source below root `src`/`tests` now enables the TypeScript preview adapter, as Python project detection already does. An explicit `ripr.toml` remains authoritative, `package.json` or JavaScript source without a `tsconfig.json`/`jsconfig.json` does not select it, and the seam-cache identity and LSP configuration reload bind the same presence inputs (#3743).

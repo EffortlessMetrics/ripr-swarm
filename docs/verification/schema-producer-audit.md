@@ -13,7 +13,7 @@ Run the registered contracts with:
 
 ```bash
 cargo xtask check-verification-contracts --check
-cargo test -p xtask verification_contracts
+cargo test -p xtask --bin xtask verification_contracts
 ```
 
 ## Producer state vocabulary
