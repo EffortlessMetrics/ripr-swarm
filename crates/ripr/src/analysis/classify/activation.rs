@@ -3705,13 +3705,17 @@ pub(in crate::analysis) fn returned_comparison_view(probe: &Probe) -> Option<Pro
     Some(view)
 }
 
-/// `return x > 1;` -> (`x > 1`, true); a text without a leading `return `
-/// comes back unchanged and `false`.
+/// `return x > 1;` -> (`x > 1`, true); a text without a leading `return`
+/// keyword comes back unchanged and `false`. The keyword must be followed by
+/// whitespace (space, tab, newline), so `returnx > 1`, `return_x > 1` and
+/// `returned > 1` stay identifiers.
 fn strip_explicit_return(text: &str) -> (String, bool) {
     let trimmed = text.trim();
-    match trimmed.strip_prefix("return ") {
-        Some(rest) => (rest.trim().trim_end_matches(';').trim().to_string(), true),
-        None => (text.to_string(), false),
+    match trimmed.strip_prefix("return") {
+        Some(rest) if rest.starts_with(char::is_whitespace) => {
+            (rest.trim().trim_end_matches(';').trim().to_string(), true)
+        }
+        _ => (text.to_string(), false),
     }
 }
 
@@ -3722,10 +3726,52 @@ fn is_top_level_comparison(expression: &str) -> bool {
     if expression.contains("::<") {
         return false;
     }
+    let chars: Vec<char> = expression.chars().collect();
     let mut depth = 0i32;
     let mut top_level = 0usize;
-    for ch in expression.chars() {
+    let mut index = 0usize;
+    while index < chars.len() {
+        let ch = chars.get(index).copied().unwrap_or(' ');
+        index += 1;
         match ch {
+            '"' => {
+                // A raw string has no escapes; its end cannot be found by this
+                // scan, so it is not a recognised comparison.
+                if matches!(
+                    index.checked_sub(2).and_then(|i| chars.get(i)),
+                    Some('r' | '#')
+                ) {
+                    return false;
+                }
+                loop {
+                    match chars.get(index) {
+                        None => return false,
+                        Some('\\') => index += 2,
+                        Some('"') => {
+                            index += 1;
+                            break;
+                        }
+                        Some(_) => index += 1,
+                    }
+                }
+            }
+            '\'' => {
+                // Only a `'x'` or `'\...'` shape is a char literal; anything
+                // else (`'a` lifetimes, labels) keeps the plain scan.
+                if chars.get(index) == Some(&'\\') {
+                    // Skip the backslash and the escaped char, then find the
+                    // closing quote (`'\n'`, `'\''`, `'\x41'`, `'\u{41}'`).
+                    match chars
+                        .get(index + 2..)
+                        .and_then(|rest| rest.iter().position(|c| *c == '\''))
+                    {
+                        Some(offset) => index += 2 + offset + 1,
+                        None => return false,
+                    }
+                } else if chars.get(index + 1) == Some(&'\'') {
+                    index += 2;
+                }
+            }
             '(' | '[' | '{' => depth += 1,
             ')' | ']' | '}' => {
                 depth -= 1;
@@ -6442,6 +6488,56 @@ assert_eq!(input.amount, 100);"#
         );
         assert_eq!(view("return x > 1 && y", "return x > 2 && y"), None);
         assert_eq!(view("return x == 100", "return x > 101"), None);
+    }
+
+    /// #9145 keyword boundary: `return` is stripped before any whitespace, never
+    /// inside an identifier.
+    #[test]
+    fn explicit_return_keyword_needs_a_whitespace_boundary() {
+        let strip = |text: &str| strip_explicit_return(text);
+        assert_eq!(strip("return x > 1;"), ("x > 1".to_string(), true));
+        assert_eq!(strip("return\tx > 1;"), ("x > 1".to_string(), true));
+        assert_eq!(strip("return\nx > 1;"), ("x > 1".to_string(), true));
+        for identifier in ["returnx > 1", "return_x > 1", "returned > 1", "return"] {
+            assert_eq!(strip(identifier), (identifier.to_string(), false));
+        }
+        let view = |before: &str, after: &str| {
+            let mut p = probe(ProbeFamily::ReturnValue, after);
+            p.before = Some(before.to_string());
+            returned_comparison_view(&p).map(|v| v.expression)
+        };
+        assert_eq!(
+            view("return\tx > 100", "return\tx > 101;"),
+            Some("x > 101".to_string())
+        );
+        assert_eq!(
+            view("returned > 100", "returned > 101"),
+            Some("returned > 101".to_string())
+        );
+    }
+
+    /// #9145 literals: brackets and operators inside string or char literals do
+    /// not change depth or count as the comparison; lifetimes are not literals.
+    #[test]
+    fn top_level_comparison_skips_string_and_char_literals() {
+        assert!(is_top_level_comparison(r#"s == ")""#));
+        assert!(is_top_level_comparison(r#"s == "(""#));
+        assert!(is_top_level_comparison(r#"s == "a\"(" "#.trim()));
+        assert!(is_top_level_comparison("c == ')'"));
+        assert!(is_top_level_comparison("c == '('"));
+        assert!(is_top_level_comparison("c == '\\''"));
+        assert!(is_top_level_comparison("c == '\\n'"));
+        // Operators inside a literal are not the comparison.
+        assert!(!is_top_level_comparison(r#""a<b""#));
+        assert!(!is_top_level_comparison(r#"f("x", y > 1)"#));
+        // A bracket in a literal does not hide a real nested comparison.
+        assert!(!is_top_level_comparison(r#"f(")", a > 1)"#));
+        // Unterminated strings and raw strings fail closed.
+        assert!(!is_top_level_comparison(r#"s == "abc"#));
+        assert!(!is_top_level_comparison(r##"s == r#"a"#"##));
+        // Lifetimes keep the plain scan.
+        assert!(is_top_level_comparison("p(&'a x) > 1"));
+        assert!(!is_top_level_comparison("f(&'a str, a > 1)"));
     }
 
     /// RIPR-SPEC-0228 keyed reads: argument `i` of a method call is call

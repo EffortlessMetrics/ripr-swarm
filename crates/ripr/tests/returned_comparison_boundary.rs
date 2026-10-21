@@ -196,6 +196,31 @@ fn an_explicit_return_is_read_at_its_boundary_like_the_tail_form() -> Result<(),
 }
 
 #[test]
+fn an_explicit_return_followed_by_a_tab_is_read_at_its_boundary() -> Result<(), String> {
+    // Any whitespace after the `return` keyword, not only a space.
+    let findings = findings("    return\tx > 101;", "    return\tx > 100;", FAR_INPUTS)?;
+    let return_value = family(&findings, "return_value")?;
+    assert!(
+        return_value.probe.expression.contains("return\t"),
+        "{return_value:?}"
+    );
+    assert_ne!(
+        return_value.class,
+        ExposureClass::Exposed,
+        "{return_value:?}"
+    );
+    assert!(
+        return_value
+            .ripr
+            .infect
+            .summary
+            .contains("equality-boundary discriminator is missing"),
+        "{return_value:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn an_explicit_return_with_a_boundary_input_stays_exposed() -> Result<(), String> {
     // Positive control: `thr(101)` separates the versions.
     let findings = findings(
