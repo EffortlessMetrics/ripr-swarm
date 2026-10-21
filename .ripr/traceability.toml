@@ -383,6 +383,9 @@ id = "RIPR-SPEC-0003"
 name = "agent context packet"
 spec = "docs/specs/RIPR-SPEC-0003-agent-context.md"
 tests = [
+  "crates/ripr/tests/context_packet_totals.rs::context_packet_related_test_totals_distinguish_identical_bounded_rows",
+  "crates/ripr/tests/context_packet_totals.rs::context_packet_related_test_totals_preserve_floors_and_display_windows",
+  "crates/ripr/tests/context_packet_totals.rs::context_packet_related_test_totals_accept_legacy_omitted_and_null_metadata",
   "crates/ripr/src/app/selector.rs::tests::malformed_location_misses_get_syntax_guidance_without_classifying_ids",
   "crates/ripr/src/app/selector.rs::tests::unique_probe_and_gap_and_location_selectors_resolve_one_finding",
   "crates/ripr/src/app/selector.rs::tests::unmatched_selector_is_no_match",
@@ -400,6 +403,7 @@ tests = [
   "crates/ripr/src/app/context.rs::tests::context_unmatched_and_seam_shaped_selectors_refuse_as_no_match",
   "crates/ripr/tests/cli_smoke.rs::selector_ambiguity_and_gap_identity_route_through_explain_and_context",
   "crates/ripr/tests/cli_smoke.rs::selector_location_misses_explain_syntax_and_preserve_retry_scope",
+  "crates/ripr/tests/cli_smoke/selector_recovery_scope.rs::selector_recovery_replays_committed_worktree_and_supplied_diff_scopes",
   "crates/ripr/tests/cli_smoke/unknown_explain.rs::unknown_explain_real_reasons_have_supported_actions_in_every_mode",
   "crates/ripr/tests/cli_smoke/unknown_explain.rs::unknown_explain_repair_preserves_decidable_recipes"
 ]
@@ -408,6 +412,7 @@ code = [
   "crates/ripr/src/app/selector.rs",
   "crates/ripr/src/app/explain.rs",
   "crates/ripr/src/app/context.rs",
+  "crates/ripr/src/domain/context_packet.rs",
   "crates/ripr/src/analysis/classify/decision.rs",
   "crates/ripr/src/analysis/classifier/finding.rs",
   "crates/ripr/src/output/human/explain.rs",
@@ -980,6 +985,9 @@ id = "RIPR-SPEC-0007"
 name = "repository configuration"
 spec = "docs/specs/RIPR-SPEC-0007-repository-configuration.md"
 tests = [
+  "crates/ripr/src/analysis/diff/path.rs::tests::artifact_root_gitignore_entry_escapes_patterns_separately_from_paths",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_ignore_advice_covers_only_the_literal_root",
+  "crates/ripr/src/analysis/pipeline.rs::tests::ripr_artifact_disclosure_escapes_gitignore_metacharacters",
   "crates/ripr/tests/cli_smoke.rs::config_validate_does_not_consume_root_flag_as_a_path",
   "crates/ripr/tests/cli_smoke.rs::check_github_over_broad_suppression_policy_emits_denominator_notice",
   "crates/ripr/tests/cli_smoke/suppression_notice.rs::retained_oracle_rejects_silence_wrong_counts_and_leaked_annotations",
@@ -1123,6 +1131,8 @@ tests = [
 ]
 fixtures = []
 code = [
+  "crates/ripr/src/analysis/diff/path.rs",
+  "crates/ripr/src/analysis/pipeline.rs",
   "crates/ripr/src/config.rs",
   "crates/ripr/src/workspace_status.rs",
   "crates/ripr/src/app/python_repair_binding.rs",
@@ -1517,6 +1527,14 @@ id = "RIPR-SPEC-0010"
 name = "agent working-set brief"
 spec = "docs/specs/RIPR-SPEC-0010-agent-working-set-brief.md"
 tests = [
+  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_empty_and_ordinary_patches_keep_successful_selection",
+  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_refusals_cannot_become_empty_or_fallback_successes",
+  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_base_uses_the_same_parser_refusal_before_inventory",
+  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_errors_keep_diff_input_identity_and_budget_guards",
+  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_truncated_sections_cannot_become_empty_or_partial_successes",
+  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_path_like_hunk_payload_keeps_real_changed_line_selection",
+  "crates/ripr/src/analysis/diff/parse/stream/path_admission_tests.rs::path_like_added_and_removed_lines_stay_hunk_payload",
+  "crates/ripr/src/analysis/diff/parse/stream/path_admission_tests.rs::actual_deep_headers_still_refuse_after_hunk_payload",
   "crates/ripr/src/app/agent_brief.rs::tests::agent_brief_selector_ranks_explicit_seam_id_first",
   "crates/ripr/src/app/agent_brief.rs::tests::changed_scope_that_fills_the_slots_selects_the_same_seams_as_the_full_scope",
   "crates/ripr/src/app/agent_brief.rs::tests::changed_scope_does_not_fill_the_slots_with_hidden_or_too_few_seams",
@@ -1554,6 +1572,10 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/app/agent_brief.rs",
+  "crates/ripr/src/cli/commands_agent_support.rs",
+  "crates/ripr/src/analysis/diff/parse.rs",
+  "crates/ripr/src/analysis/diff/parse/stream.rs",
+  "crates/ripr/src/core_error.rs",
   "crates/ripr/src/cli/agent.rs",
   "crates/ripr/src/cli/commands.rs",
   "crates/ripr/src/output/agent_brief.rs",
@@ -11402,6 +11424,9 @@ id = "RIPR-SPEC-0171"
 name = "path-dependency diff-scope expansion"
 spec = "docs/specs/RIPR-SPEC-0171-path-dependency-diff-scope.md"
 tests = [
+  "crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_shared_tail_visits_each_edge_at_most_twice",
+  "crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_matches_per_seed_walks_on_all_three_node_graphs",
+  "crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_preserves_overlapping_seeds_and_cycle_roots",
   "crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_reaches_dependents_of_changed_packages_only",
   "crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_adds_nothing_for_unmapped_or_empty_changed_roots",
   "crates/ripr/src/analysis/workspace/path_dependencies.rs::tests::expansion_discloses_limited_and_unavailable_graph_states",
@@ -13821,6 +13846,10 @@ id = "RIPR-SPEC-0211"
 name = "MCP workspace session evidence"
 spec = "docs/specs/RIPR-SPEC-0211-mcp-workspace-session-evidence.md"
 tests = [
+  "crates/ripr/tests/mcp_stdio.rs::gap_details_disclose_pre_cap_related_test_totals_across_refreshes",
+  "crates/ripr/src/mcp/gaps.rs::tests::related_test_totals_bind_equal_windows_to_distinct_evidence",
+  "crates/ripr/src/mcp/gaps.rs::tests::legacy_serialized_findings_project_retained_totals_without_digest_drift",
+  "crates/ripr/src/mcp/workspace.rs::tests::related_test_totals_change_snapshot_identity_without_changing_rows",
   "crates/ripr/tests/mcp_stdio.rs::rejection_arms_survive_the_stdio_transport",
   "crates/ripr/tests/mcp_sdk.rs::official_sdk_legacy_client_lists_calls_and_reads_status",
   "crates/ripr/tests/mcp_sdk.rs::official_sdk_discovery_client_lists_calls_and_reads_status",
@@ -16449,6 +16478,12 @@ id = "RIPR-SPEC-0241"
 name = "check --json refusal envelope"
 spec = "docs/specs/RIPR-SPEC-0241-check-json-refusal-envelope.md"
 tests = [
+  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_empty_and_ordinary_patches_keep_successful_selection",
+  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_refusals_cannot_become_empty_or_fallback_successes",
+  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_base_uses_the_same_parser_refusal_before_inventory",
+  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_errors_keep_diff_input_identity_and_budget_guards",
+  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_truncated_sections_cannot_become_empty_or_partial_successes",
+  "crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_path_like_hunk_payload_keeps_real_changed_line_selection",
   "crates/ripr/tests/cli_smoke/sample_output.rs::retained_oracles_reject_wrong_contract_shape_count_and_refusal",
   "crates/ripr/tests/cli_smoke.rs::check_json_unresolvable_base_emits_refusal_envelope",
   "crates/ripr/tests/cli_smoke.rs::check_json_unusable_root_emits_repository_root_unusable",

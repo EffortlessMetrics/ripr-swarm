@@ -4833,3 +4833,6 @@ fn member_context_selector_shadowed_by_a_root_package_file_is_refused() -> Resul
     );
     Ok(())
 }
+
+#[path = "task_first_facade/brief_diff_status.rs"]
+mod brief_diff_status;
