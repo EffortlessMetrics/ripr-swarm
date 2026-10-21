@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A Python owner decorated with `@final`, `@override` or `@no_type_check` resolved to `typing` (or `final`/`override` from `typing_extensions`) no longer reads `static_unknown` / `decorator_indirection`; these markers return the function unchanged. A rebound (anywhere in the file) or competing-alias name, a star import, an unreadable stacked decorator, a local same-named decorator, and `overload`, `abstractmethod`, `contextmanager` and `property` keep the limit (RIPR-SPEC-0028, #9099).
