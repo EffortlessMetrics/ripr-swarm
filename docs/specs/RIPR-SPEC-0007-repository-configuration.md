@@ -398,6 +398,10 @@ and exits 2.
   pins literal rule escaping and unchanged raw path spelling.
 - `crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_tracking_untrack_names_only_indexed_roots`
   pins the `~ ` advisory mark on the tracked-artifacts warning.
+- `crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_ignore_names_the_gitignore_entry`
+  pins the `~ ` advisory mark on the not-ignored artifact-root warning.
+- `crates/ripr/tests/chaos_interrupted_runs.rs::doctor_says_when_the_cache_cannot_be_written`
+  pins the `~ ` advisory mark and successful exit for an unwritable cache.
 - `crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_ignore_advice_covers_only_the_literal_root`
   feeds the actual advice to Git and distinguishes descendants from siblings
   (Unix-only literal-star filesystem fixture).

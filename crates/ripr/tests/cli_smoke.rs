@@ -781,7 +781,7 @@ fn write_bound_repo_exposure_fixture(
     let placeholder = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
     let raw = format!(
         r#"{{
-  "schema_version": "0.4",
+  "schema_version": "0.5",
   "artifact": {{
     "kind": "repo_exposure",
     "schema_version": "1",
@@ -998,7 +998,7 @@ fn bind_repo_exposure_fixture_with_worktree(
     worktree: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(source)?)?;
-    value["schema_version"] = serde_json::Value::String("0.4".to_string());
+    value["schema_version"] = serde_json::Value::String("0.5".to_string());
     value["run_status"] = serde_json::Value::String("complete".to_string());
     let head = concrete_fixture_repository_head(root)?;
     let root_identity = root.canonicalize()?.to_string_lossy().replace('\\', "/");
@@ -4283,7 +4283,7 @@ fn check_repo_exposure_json_refusal_emits_the_refused_envelope() -> Result<(), S
     let value: serde_json::Value = serde_json::from_str(&stdout)
         .map_err(|err| format!("repo-exposure refusal must parse as JSON: {err}\n{stdout}"))?;
     for (pointer, expected) in [
-        ("/schema_version", "0.4"),
+        ("/schema_version", "0.5"),
         ("/scope", "repo"),
         ("/run_status", "refused"),
         ("/limitations/0/category", "base_unresolvable"),
@@ -10500,7 +10500,7 @@ fn agent_verify_rejects_unsupported_repo_exposure_schema() -> Result<(), Box<dyn
     write_bound_repo_exposure_fixture(&root, &before, seam)?;
     write_bound_repo_exposure_fixture(&root, &after, seam)?;
     let altered = std::fs::read_to_string(&before)?
-        .replace("\"schema_version\": \"0.4\"", "\"schema_version\": \"9.0\"");
+        .replace("\"schema_version\": \"0.5\"", "\"schema_version\": \"9.0\"");
     std::fs::write(&before, altered)?;
 
     let before_path = before.display().to_string();
@@ -14908,8 +14908,8 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     // pins the end-to-end wiring and consistency.
     let generator = env!("CARGO_PKG_VERSION");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let warned = stderr.contains("is a development version");
-    if warned {
+    let noted = stderr.contains("is a development version");
+    if noted {
         // The pin is compiled into the binary, so the note must say to
         // upgrade ripr before refreshing (the same old binary re-pins).
         let upgrade_at = stderr.find("upgrade ripr, then refresh");
@@ -18098,6 +18098,9 @@ fn pilot_names_typescript_diff_first_route_when_repo_has_no_rust_seams() -> Resu
                 "package.json",
                 "{\"name\":\"pilot-lang-ts\",\"version\":\"0.0.0\"}\n",
             ),
+            // Pinned: with no ripr.toml, TypeScript project detection would
+            // enable the preview; this test covers the disabled-route wording.
+            ("ripr.toml", "[languages]\nenabled = [\"rust\"]\n"),
             ("src/pricing.ts", base),
             (
                 "tests/pricing.test.ts",
@@ -30449,6 +30452,63 @@ fn check_missing_base_advice_does_not_assume_origin_remote()
     assert!(
         !stderr.contains("git fetch origin"),
         "the repair must not assume an `origin` remote: {stderr}"
+    );
+    std::fs::remove_dir_all(&root)?;
+    Ok(())
+}
+
+/// #8652: through the public `check` path, an unqualified base that only
+/// exists as a remote-tracking ref names that full ref, and the suggested
+/// ref then loads instead of failing again.
+#[test]
+fn check_missing_base_advice_names_the_resolvable_remote_tracking_ref()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("missing-base-remote-tracking");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(root.join("src/lib.rs"), "")?;
+    init_git_fixture_repo(&root)?;
+    let add = run_command(
+        "git",
+        Some(&root),
+        &["remote", "add", "origin", "https://example.test/fork.git"],
+    )?;
+    assert!(add.status.success(), "fixture must gain `origin`: {add:?}");
+    let tracking = run_command(
+        "git",
+        Some(&root),
+        &["update-ref", "refs/remotes/origin/topic", "HEAD"],
+    )?;
+    assert!(
+        tracking.status.success(),
+        "fixture must gain the tracking ref: {tracking:?}"
+    );
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root.display().to_string(),
+        "--base",
+        "topic",
+    ]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--base refs/remotes/origin/topic"),
+        "the public failure must name the resolvable tracking ref: {stderr}"
+    );
+    let suggested = run_ripr(&[
+        "check",
+        "--root",
+        &root.display().to_string(),
+        "--base",
+        "refs/remotes/origin/topic",
+    ]);
+    assert!(
+        suggested.status.success(),
+        "the suggested base must load through `check`: {suggested:?}"
     );
     std::fs::remove_dir_all(&root)?;
     Ok(())
