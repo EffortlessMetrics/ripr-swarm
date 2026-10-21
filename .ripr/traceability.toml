@@ -9,6 +9,7 @@ id = "RIPR-SPEC-0001"
 name = "static exposure loop"
 spec = "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md"
 tests = [
+  "crates/ripr/src/analysis/classify/reach.rs::given_mixed_reaching_and_proximity_relations_when_building_reach_evidence_then_only_reaching_tests_are_named",
   "crates/ripr/src/analysis/input_boundary.rs::fanout_boundary_rejects_excluded_aliases_to_captured_files",
   "crates/ripr/tests/cli_smoke/native_fanout.rs::fanout_excluded_alias_in_git_refuses_captured_target",
   "crates/ripr/tests/cli_smoke/native_fanout.rs::fanout_excluded_alias_in_cargo_target_refuses_captured_target",
