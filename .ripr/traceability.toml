@@ -536,7 +536,6 @@ tests = [
   "crates/ripr/src/analysis/seams.rs::tests::byte_span_with_shared_starts_matches_single_shot",
   "crates/ripr/src/analysis/seams.rs::tests::byte_span_refuses_mid_character_offsets",
   "crates/ripr/src/analysis/seams.rs::tests::seam_id_is_stable_when_span_attaches",
-  "crates/ripr/src/analysis/seam_inventory.rs::tests::given_match_and_predicate_shapes_when_repo_inventory_runs_then_only_predicate_has_span",
   "crates/ripr/src/analysis/seams.rs::tests::seam_kind_round_trips_through_str",
   "crates/ripr/src/analysis/seams.rs::tests::required_discriminator_carries_kind_via_as_str",
   "crates/ripr/src/analysis/seams.rs::tests::expected_sink_str_covers_all_variants",
