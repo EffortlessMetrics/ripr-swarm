@@ -2127,6 +2127,26 @@ fn bool_owner_assert_pin_matched_static_and_runtime_controls() -> Result<(), Str
         ),
         ("below_side_only", "assert!(!gate(9));", false),
         (
+            "crate_qualified_call",
+            "assert!(crate::gate(10));\n        assert!(!crate::gate(9));",
+            true,
+        ),
+        (
+            "let_bound_disjunction",
+            "let hit = gate(10);\n        assert!(hit || gate(50));\n        assert!(!gate(9));",
+            false,
+        ),
+        (
+            "let_bound_mutable_reassigned",
+            "let mut hit = gate(10);\n        hit = true;\n        assert!(hit);\n        assert!(!gate(9));",
+            false,
+        ),
+        (
+            "let_bound_results",
+            "let hit = gate(10);\n        let miss = gate(9);\n        assert!(hit);\n        assert!(!miss);",
+            true,
+        ),
+        (
             "shadowed_owner",
             "let gate = |value: u32| value >= 10;\n        assert!(gate(10));\n        assert!(!gate(9));",
             false,

@@ -10438,6 +10438,20 @@
       ]
     },
     {
+      "id": "rust_atomic_ordering_swap_strong_object_oracle_not_exposed",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/atomic_ordering_swap_strong_object_oracle",
+      "vector": "atomic_ordering_only_call_edit_cannot_borrow_a_strong_whole_object_oracle",
+      "probe_family": "static_unknown",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
       "id": "rust_returned_comparison_boundary_gap",
       "language": "rust",
       "tier": "pure",
