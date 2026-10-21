@@ -160,9 +160,9 @@ impl UnseenReachNames {
             .map(|file| file.data().source.as_ref())
             .collect();
         // The external-docs parse is most of this scan and every file is
-        // independent, so the parses run on the rayon pool (`build` only runs
-        // on a caller's own thread, never from inside a classification
-        // worker, where `memoize_many` computes in line).
+        // independent, so the parses run on the rayon pool. `build` can also
+        // be reached from a classification worker (through a `OnceLock`
+        // init); there the scans run in line, as `memoize_many` does.
         let external_docs = includes_external_docs_many(&sources)
             .into_iter()
             .any(|includes| includes);
@@ -180,7 +180,7 @@ impl UnseenReachNames {
             left.extend(right);
             left
         }
-        let named: HashSet<&str> = if rayon::current_thread_index().is_none() {
+        let named: HashSet<&str> = if super::owner_pin::nested_parallelism_allowed() {
             sources
                 .par_iter()
                 .fold(HashSet::new, |names, source| collect_names(names, source))
@@ -249,11 +249,13 @@ pub(in crate::analysis) fn includes_external_docs_many(sources: &[&str]) -> Vec<
         .copied()
         .filter(|source| may_include_external_docs(source))
         .collect();
+    #[cfg(test)]
     let parsed = std::sync::atomic::AtomicUsize::new(0);
     let mut answers = crate::analysis::syntax::run_memo::memoize_many(
         crate::analysis::syntax::run_memo::Product::ExternalDocs,
         &candidates,
         |source| {
+            #[cfg(test)]
             parsed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             external_docs_uncached(source)
         },

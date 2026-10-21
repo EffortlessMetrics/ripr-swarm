@@ -122,6 +122,11 @@ pub(crate) fn memoize_with<T: Clone + 'static>(
 /// touched on the calling thread: workers run `compute` and nothing else, so
 /// the thread-local scope still holds every product afterwards. A call from a
 /// rayon worker, which must not block on a nested fan-out, computes in line.
+///
+/// `compute` runs on pool workers that have no scope of their own, so unlike
+/// [`memoize`] it must not rely on memoizing other products: a nested
+/// `memoize` there recomputes and nothing reaches the caller's scope. Keys use
+/// discriminator 0 and no extra query, matching `memoize`.
 pub(crate) fn memoize_many<T: Clone + Send + 'static>(
     product: Product,
     sources: &[&str],
@@ -275,6 +280,42 @@ mod tests {
         let other = super::memoize_many(Product::LocalTestMacros, &["a"], compute);
         assert_eq!(other, vec![1]);
         assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn memoize_many_computes_in_line_on_a_pool_worker_and_shares_keys() {
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(2).build();
+        assert!(pool.is_ok(), "test pool must build");
+        let Ok(pool) = pool else {
+            return;
+        };
+        let sources = ["a", "bb", "a", "ccc"];
+        let (answers, stored_threads) = pool.install(|| {
+            let _scope = enter();
+            let caller = std::thread::current().id();
+            let threads = std::sync::Mutex::new(Vec::new());
+            let answers = super::memoize_many(Product::ExternalDocs, &sources, |source| {
+                if let Ok(mut seen) = threads.lock() {
+                    seen.push(std::thread::current().id());
+                }
+                source.len()
+            });
+            // The worker's own scope now serves the serial and the `""`-extra forms.
+            let serial = Cell::new(0);
+            assert_eq!(counted(&serial, Product::ExternalDocs, 0, "bb"), 2);
+            assert_eq!(serial.get(), 0, "the batch stored under the plain key");
+            let extra = super::memoize_with(Product::ExternalDocs, 0, "", "ccc", || 99usize);
+            assert_eq!(extra, 3);
+            let seen = threads.lock().map(|seen| seen.clone()).unwrap_or_default();
+            (answers, (caller, seen))
+        });
+        assert_eq!(answers, vec![1, 2, 1, 3]);
+        let (caller, seen) = stored_threads;
+        assert_eq!(seen.len(), 3, "a repeated text is computed once");
+        assert!(
+            seen.iter().all(|id| *id == caller),
+            "a pool worker computes in line instead of fanning out"
+        );
     }
 
     #[test]
