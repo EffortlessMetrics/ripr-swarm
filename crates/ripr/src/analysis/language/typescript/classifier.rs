@@ -5795,7 +5795,11 @@ fn ts_unentered_guard(context: &TsPostLadderContext<'_>) -> Option<TsUnenteredGu
             context.alias_map,
             context.workspace_root,
         );
-        let callback = test_callback_block(&test.body_text).unwrap_or(&test.body_text);
+        // The whole registration, not the first arrow block in it: text
+        // outside any one callback (arguments to `test.each`, statements
+        // before a nested arrow) can call the owner too.
+        let callback = test.body_text.as_str();
+        let masked_body = ts_mask_literals_and_comments(callback);
         // Calls outside the test bodies (a hook, a file-level binding) and
         // imports that are not the owner or a test framework could enter the
         // arm with inputs this reader never sees.
@@ -5843,7 +5847,7 @@ fn ts_unentered_guard(context: &TsPostLadderContext<'_>) -> Option<TsUnenteredGu
         let mut calls = 0usize;
         for name in names {
             if local_identifier_declared_in_test_body(&test.body_text, name)
-                || !every_owner_reference_is_a_call(callback, name, &receivers)
+                || !every_owner_reference_is_a_call(&masked_body, name, &receivers)
             {
                 return None;
             }

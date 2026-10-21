@@ -297,18 +297,12 @@ fn arrow_owner_locates_by_position_or_fails_open() -> Result<(), String> {
         "    total = total / 2;",
         &test_with(&[("price(2)", "20")]),
     )?;
-    // Located by position the arm is unentered; if location fails the
-    // verdict must stay with the ladder. Either way never a wrong guard.
-    if finding.class == ExposureClass::WeaklyExposed {
-        assert!(
-            finding
-                .missing
-                .iter()
-                .any(|line| line.contains("`coupon === 'HALF'`")),
-            "{:?}",
-            finding.missing
-        );
-    }
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "{:?}",
+        finding.missing
+    );
     // An entering call still keeps the credit for an arrow owner.
     let entered = finding_at(
         "guard-arrow-entered",
@@ -336,6 +330,69 @@ fn a_file_level_getter_that_calls_the_owner_keeps_exposed() -> Result<(), String
         ExposureClass::Exposed,
         "{:?}",
         finding.missing
+    );
+    Ok(())
+}
+
+#[test]
+fn text_outside_the_first_arrow_block_is_read() -> Result<(), String> {
+    let head = "import { price } from \"../src/price\";\n";
+    for (label, body) in [
+        (
+            "guard-callback-after",
+            "test(\"price\", function () {\n  expect(price(3, \"HALF\")).toBe(15);\n  [1].forEach(() => { expect(price(2)).toBe(20); });\n});\n",
+        ),
+        (
+            "guard-each",
+            "test.each([price(3, \"HALF\")])(\"n\", (v) => {\n  expect(price(2)).toBe(20);\n});\n",
+        ),
+        (
+            "guard-title-arrow",
+            "test(\"a => { b\", function () {\n  expect(price(3, \"HALF\")).toBe(15);\n  expect(price(2)).toBe(20);\n});\n",
+        ),
+    ] {
+        let finding = then_arm(label, &format!("{head}{body}"))?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn comments_before_an_if_keep_the_real_condition() -> Result<(), String> {
+    // A comment before the guard once shifted the condition text to `0`,
+    // which reads false for every call and demoted a change an entering call
+    // covers.
+    let source = PRICE
+        .replace("  if (coupon", "  // 0\n  if (coupon")
+        .replace("total / 3", "total / 2");
+    let run = |label: &str, calls: &[(&str, &str)]| {
+        finding_at(
+            label,
+            &source,
+            5,
+            "    total = total / 3;",
+            "    total = total / 2;",
+            &test_with(calls),
+        )
+    };
+    let entered = run("guard-comment-entered", &[("price(3, 'HALF')", "15")])?;
+    assert_eq!(
+        entered.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        entered.missing
+    );
+    let missed = run("guard-comment-missed", &[("price(2)", "20")])?;
+    assert_eq!(
+        missed.class,
+        ExposureClass::WeaklyExposed,
+        "{:?}",
+        missed.missing
     );
     Ok(())
 }

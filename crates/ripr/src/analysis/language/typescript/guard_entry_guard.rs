@@ -121,11 +121,8 @@ pub(crate) fn enclosing_conditions(
             '{' if parens == 0 => {
                 let header: String = masked_chars[segment_start..at].iter().collect();
                 let header_original: String = original[segment_start..at].iter().collect();
-                let (conditions, next_chain) = block_conditions(
-                    header.trim(),
-                    header_original.trim(),
-                    chain.take().unwrap_or_default(),
-                );
+                let (conditions, next_chain) =
+                    block_conditions(&header, &header_original, chain.take().unwrap_or_default());
                 closing_conditions.push(next_chain);
                 stack.push(Block { conditions });
                 segment_start = at + 1;
@@ -317,19 +314,26 @@ impl CallInputs<'_> {
     /// `Some(false)` when `condition` is provably false for this call and
     /// `Some(true)` when provably true; `None` when unreadable.
     fn evaluate(&self, condition: &str) -> Option<bool> {
+        self.evaluate_at(condition, 0)
+    }
+
+    fn evaluate_at(&self, condition: &str, depth: usize) -> Option<bool> {
+        if depth > MAX_DEPTH {
+            return None;
+        }
         let condition = condition.trim();
         // A ternary (or optional chain) changes precedence.
         if condition.contains('?') {
             return None;
         }
         if let Some(parts) = split_top_level(condition, "||") {
-            return or_of(parts.iter().map(|part| self.evaluate(part)));
+            return or_of(parts.iter().map(|part| self.evaluate_at(part, depth + 1)));
         }
         if let Some(parts) = split_top_level(condition, "&&") {
-            return and_of(parts.iter().map(|part| self.evaluate(part)));
+            return and_of(parts.iter().map(|part| self.evaluate_at(part, depth + 1)));
         }
         if let Some(inner) = strip_outer_parens(condition) {
-            return self.evaluate(inner);
+            return self.evaluate_at(inner, depth + 1);
         }
         if let Some(rest) = condition.strip_prefix('!')
             && !rest.starts_with('=')
@@ -338,22 +342,25 @@ impl CallInputs<'_> {
             if has_top_level_comparison(rest) {
                 return None;
             }
-            return self.evaluate(rest).map(|value| !value);
+            return self.evaluate_at(rest, depth + 1).map(|value| !value);
         }
         for operator in ["===", "!==", "==", "!=", "<=", ">=", "<", ">"] {
             if let Some((left, right)) = split_once_top_level(condition, operator) {
-                let left = self.operand(left)?;
-                let right = self.operand(right)?;
+                let left = self.operand(left, 0)?;
+                let right = self.operand(right, 0)?;
                 return compare(&left, operator, &right);
             }
         }
-        self.operand(condition).map(|value| value.truthy())
+        self.operand(condition, 0).map(|value| value.truthy())
     }
 
-    fn operand(&self, text: &str) -> Option<Lit> {
+    fn operand(&self, text: &str, depth: usize) -> Option<Lit> {
+        if depth > MAX_DEPTH {
+            return None;
+        }
         let text = text.trim();
         if let Some(inner) = strip_outer_parens(text) {
-            return self.operand(inner);
+            return self.operand(inner, depth + 1);
         }
         if let Some(literal) = parse_literal(text) {
             return Some(literal);
@@ -428,7 +435,7 @@ pub(crate) fn calls_only_allowed(test_text: &str, allowed: &[&str], receivers: &
             let calls = chars.get(next) == Some(&'(');
             let before = chars[..at].iter().rev().find(|c| !c.is_whitespace());
             let is_member = before == Some(&'.');
-            if calls && is_member && !member_receiver_is_readable(&chars, at, receivers, allowed) {
+            if calls && is_member && !member_receiver_is_readable(&chars, at, receivers) {
                 return false;
             }
             let keyword = matches!(
@@ -458,17 +465,52 @@ pub(crate) fn calls_only_allowed(test_text: &str, allowed: &[&str], receivers: &
     true
 }
 
-/// Whether the member call whose name starts at `at` is on a receiver whose
-/// root is a test-framework object or an owner namespace, or on the result of
-/// a call/index the scan checks separately (`expect(x).toBe(`).
-fn member_receiver_is_readable(
-    chars: &[char],
-    at: usize,
-    receivers: &[String],
-    allowed: &[&str],
-) -> bool {
-    const FRAMEWORK: [&str; 7] = ["expect", "assert", "jest", "vi", "test", "it", "describe"];
+/// Harmless `jest` / `vi` members: they build or configure mocks and timers
+/// but never load a module or run its code (`requireActual`, `requireMock`
+/// and `createMockFromModule` do).
+/// Deepest nesting the condition reader follows before it gives up.
+const MAX_DEPTH: usize = 32;
+
+const HARMLESS_MOCK_MEMBERS: [&str; 16] = [
+    "fn",
+    "spyOn",
+    "mock",
+    "unmock",
+    "doMock",
+    "useFakeTimers",
+    "useRealTimers",
+    "setSystemTime",
+    "advanceTimersByTime",
+    "runAllTimers",
+    "clearAllMocks",
+    "resetAllMocks",
+    "restoreAllMocks",
+    "clearAllTimers",
+    "isMockFunction",
+    "mocked",
+];
+
+/// Longest backward scan over a call's arguments before the reader gives up.
+const MAX_RECEIVER_SCAN: usize = 4000;
+
+/// Whether the member call whose name starts at `at` hangs off a receiver the
+/// reader can account for: an owner namespace (no call hop), a test-runner
+/// object, `expect(..)` / `assert(..)` and their chains, or a harmless
+/// `jest` / `vi` member. A chain off any other call result, an index or a
+/// parenthesized expression is unreadable.
+fn member_receiver_is_readable(chars: &[char], at: usize, receivers: &[String]) -> bool {
     let mut end = at;
+    let mut via_call = false;
+    // Member names from the call back toward the root (`jest.fn().x` has
+    // `x`, then `fn`).
+    let mut members: Vec<String> = Vec::new();
+    {
+        let mut k = at;
+        while k < chars.len() && is_identifier_char(chars[k]) {
+            k += 1;
+        }
+        members.push(chars[at..k].iter().collect());
+    }
     loop {
         // `end` is just after a `.`; step to the receiver's last token.
         let mut i = end;
@@ -493,10 +535,14 @@ fn member_receiver_is_readable(
             return false;
         }
         if chars[i - 1] == ')' {
+            via_call = true;
             // Step to the call's callee: `expect(x).toBe(` roots at `expect`.
             let mut depth = 0usize;
             let mut open = None;
-            for k in (0..i).rev() {
+            for (scanned, k) in (0..i).rev().enumerate() {
+                if scanned > MAX_RECEIVER_SCAN {
+                    return false;
+                }
                 match chars[k] {
                     ')' => depth += 1,
                     '(' => {
@@ -531,12 +577,18 @@ fn member_receiver_is_readable(
             j -= 1;
         }
         if j > 0 && chars[j - 1] == '.' {
+            members.push(word);
             end = i;
             continue;
         }
-        return FRAMEWORK.contains(&word.as_str())
-            || allowed.contains(&word.as_str())
-            || receivers.contains(&word);
+        return match word.as_str() {
+            "expect" | "assert" => true,
+            "test" | "it" | "describe" => !via_call,
+            "jest" | "vi" => members
+                .last()
+                .is_some_and(|member| HARMLESS_MOCK_MEMBERS.contains(&member.as_str())),
+            _ => !via_call && receivers.contains(&word),
+        };
     }
 }
 
@@ -1022,6 +1074,91 @@ mod tests {
             "expect(price(2)).resolves.toBe(1);",
             &allowed,
             &ns
+        ));
+    }
+
+    #[test]
+    fn comments_before_if_do_not_shift_the_condition_text() {
+        let cond = |source: &str, line: usize, text: &str| {
+            enclosing_conditions(source, 1, line, text)
+                .map(|c| c.iter().map(GuardCondition::display).collect::<Vec<_>>())
+        };
+        for lead in [
+            "// 0",
+            "// note: 0",
+            "// legacy note",
+            "/* 0 */",
+            "/* a\n b */",
+        ] {
+            let source = format!(
+                "function f(x) {{\n  {lead}\n  if (x === 'HALF') {{\n    x = 2;\n  }}\n}}\n"
+            );
+            let line = source
+                .lines()
+                .position(|l| l.trim() == "x = 2;")
+                .map_or(0, |p| p + 1);
+            assert_eq!(
+                cond(&source, line, "x = 2;"),
+                Some(vec!["x === 'HALF'".to_string()]),
+                "{lead}"
+            );
+            let chain = format!(
+                "function f(x) {{\n  if (x === 1) {{\n    x = 5;\n  }} {lead}\n  else if (x === 'B') {{\n    x = 2;\n  }}\n}}\n"
+            );
+            let line = chain
+                .lines()
+                .position(|l| l.trim() == "x = 2;")
+                .map_or(0, |p| p + 1);
+            assert_eq!(
+                cond(&chain, line, "x = 2;"),
+                Some(vec!["!(x === 1)".to_string(), "x === 'B'".to_string()]),
+                "{lead}"
+            );
+        }
+    }
+
+    #[test]
+    fn mock_module_loaders_and_call_result_chains_are_unreadable() {
+        let allowed = ["price", "expect"];
+        let ns: Vec<String> = Vec::new();
+        for refused in [
+            "expect(jest.requireActual('../src/checkout').half()).toBe(15);",
+            "expect(vi.requireMock('x').half()).toBe(1);",
+            "jest.createMockFromModule('x').run();",
+            "jest.requireActual('x').run('HALF');",
+            "price(2).toFixed(2);",
+        ] {
+            assert!(!calls_only_allowed(refused, &allowed, &ns), "{refused}");
+        }
+        for readable in [
+            "jest.fn().mockReturnValue(1);",
+            "jest.spyOn(console, 'log');",
+            "vi.useFakeTimers();",
+            "expect(price(2)).toBe(20);",
+        ] {
+            assert!(calls_only_allowed(readable, &allowed, &ns), "{readable}");
+        }
+    }
+
+    #[test]
+    fn deeply_nested_conditions_give_up() {
+        let params = vec!["a".to_string()];
+        let defaults = vec![false];
+        let src = "function f(a) {\n  return a;\n}\n";
+        let nested = format!("{}a === 2{}", "(".repeat(200), ")".repeat(200));
+        let arguments = vec!["1".to_string()];
+        let call = CallInputs {
+            owner_source: src,
+            params: &params,
+            defaults: &defaults,
+            arguments: &arguments,
+        };
+        assert!(!call_excludes_arm(
+            &call,
+            &[GuardCondition {
+                text: nested,
+                want: true
+            }]
         ));
     }
 }
