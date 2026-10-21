@@ -1,2 +1,0 @@
-<!-- section: Added -->
-- `ripr capabilities [--language NAME] [--json]` prints a versioned, read-only registry of what ripr can establish per language, framework, mode (diff or repo) and family (static facts or repair routing). Each cell carries one closed support state, a tier ceiling, the limit or fallback to honor, and the specs that define the claim; adapter availability is reported separately and never changes a cell, and a combination with no cell is `not_proven`. Nothing is promoted, executed, or read from the repository (#5531).

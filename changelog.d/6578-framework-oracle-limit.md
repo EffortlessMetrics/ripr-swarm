@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A weak gap behind a test-framework oracle ripr does not evaluate now reads `static_unknown` with the new `rust_framework_oracle_unresolved` limit instead of `weakly_exposed`: an environment-activated branch asserted after `set_var`/`remove_var`, a mockall `returning` closure that reads its arguments, an expect-test `assert_debug_eq` literal, and an insta snapshot of a field no redaction names. Nothing is credited; closures that ignore their arguments, relational-only tests and redacted fields keep the gap (RIPR-SPEC-0240, #6578).

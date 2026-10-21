@@ -1,8 +1,0 @@
-<!-- section: Internal / CI -->
-- CI: Ready-triggered qualification now refuses before product allocation when
-  the exact PR head moved, claim identity is incomplete, another open PR owns
-  the same governing claim and acceptance delta, or a non-docs candidate
-  exceeds the ordinary 160-file / 3,000-line admission budget (#2022, #4987).
-  A recorded winner or replacement counts only when consistent from both PRs,
-  so two PRs that each name themselves, or a peer naming an unrelated PR,
-  cannot both pass admission.

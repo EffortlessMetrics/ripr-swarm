@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- Python: `fixture_owner_call` skips any parameter a pytest `parametrize` names (read syntactically, so variable argvalues and non-routing `indirect=` values still count) unless `indirect=` literally routes it to the fixture, binds the last same-name fixture in a file, attaches at most eight fixture definitions per test, and a skipped test with a fixture relation is never `exposed` (#4563).
