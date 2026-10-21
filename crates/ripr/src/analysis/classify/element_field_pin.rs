@@ -516,10 +516,21 @@ impl DropImplIndex {
         // pool, whose threads a test cannot read.
         #[cfg(test)]
         DROP_SCAN_COUNT.with(|count| count.set(count.get() + sources.len()));
-        let scans: Vec<Option<BTreeSet<String>>> = sources
-            .par_iter()
-            .map(|source| non_plain_drop_types(source))
-            .collect();
+        // Classification runs on pool workers, and a worker blocked in a
+        // nested `par_iter` steals sibling probes that re-enter this
+        // `OnceLock` (#8756), so scan in line there.
+        let scans: Vec<Option<BTreeSet<String>>> = if super::owner_pin::nested_parallelism_allowed()
+        {
+            sources
+                .par_iter()
+                .map(|source| non_plain_drop_types(source))
+                .collect()
+        } else {
+            sources
+                .iter()
+                .map(|source| non_plain_drop_types(source))
+                .collect()
+        };
         let mut built = Self::default();
         for scan in scans {
             match scan {
@@ -1814,6 +1825,33 @@ mod tests {
         let rebuilt = DROP_SCAN_COUNT.with(|count| count.get());
         if rebuilt != 6 {
             return Err(format!("expected a rebuild after clear (6), saw {rebuilt}"));
+        }
+        Ok(())
+    }
+
+    /// #9209: a pool worker builds the index in line, and every worker's
+    /// lookup agrees with the caller thread's.
+    #[test]
+    fn a_pool_worker_builds_the_drop_index_in_line() -> Result<(), String> {
+        let index = drop_index(&[
+            ("src/a.rs", "pub struct Row;\n"),
+            (
+                "src/b.rs",
+                "pub struct Loud;\nimpl Drop for Loud { fn drop(&mut self) { std::process::exit(0); } }\n",
+            ),
+        ])?;
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .build()
+            .map_err(|e| e.to_string())?;
+        let answers: Vec<(bool, bool)> = pool.install(|| {
+            (0..8)
+                .into_par_iter()
+                .map(|_| (drop_is_plain(&index, "Row"), drop_is_plain(&index, "Loud")))
+                .collect()
+        });
+        if answers.iter().any(|answer| *answer != (true, false)) {
+            return Err(format!("workers disagreed: {answers:?}"));
         }
         Ok(())
     }
