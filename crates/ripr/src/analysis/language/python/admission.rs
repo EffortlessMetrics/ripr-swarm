@@ -157,12 +157,14 @@ impl PythonAdmissionContext {
         module_bindings(statements, &mut bindings, &mut registries);
         // A plain-name decorator defined in this module can store what it
         // decorates in a global (`def register(f): HANDLERS.append(f)`).
-        let mut functions = BTreeMap::new();
+        let mut functions: BTreeMap<String, Vec<&ast::StmtFunctionDef>> = BTreeMap::new();
         module_function_defs(statements, &mut functions);
         let mut decorators = BTreeSet::new();
         plain_decorator_names(statements, &mut decorators);
         for decorator in &decorators {
-            if let Some(function) = functions.get(decorator) {
+            // Every same-name definition is examined: a later redefinition
+            // must not hide the one that stored the decorated callable.
+            for function in functions.get(decorator).into_iter().flatten() {
                 registering_roots(function, &mut registries);
             }
         }
@@ -547,15 +549,18 @@ fn relative_import_aliases(statements: &[Stmt], out: &mut BTreeSet<String>) {
     }
 }
 
-/// Module-level functions by name, at any module-level nesting.
+/// Module-level functions by name (every definition of a name), at any
+/// module-level nesting.
 fn module_function_defs<'s>(
     statements: &'s [Stmt],
-    out: &mut BTreeMap<String, &'s ast::StmtFunctionDef>,
+    out: &mut BTreeMap<String, Vec<&'s ast::StmtFunctionDef>>,
 ) {
     for stmt in statements {
         match stmt {
             Stmt::FunctionDef(function) => {
-                out.insert(function.name.to_string(), function);
+                out.entry(function.name.to_string())
+                    .or_default()
+                    .push(function);
             }
             Stmt::ClassDef(_) | Stmt::AsyncFunctionDef(_) => {}
             other => {
@@ -600,30 +605,30 @@ fn plain_decorator_names(statements: &[Stmt], out: &mut BTreeSet<String>) {
 fn registering_roots(function: &ast::StmtFunctionDef, out: &mut Vec<String>) {
     let mut params = BTreeSet::new();
     parameter_names(&function.args, &mut params);
-    let mut roots = Vec::new();
-    registering_block_roots(&function.body, &mut params, &mut roots);
-    out.extend(roots.into_iter().filter(|root| !params.contains(root)));
+    registering_block_roots(&function.body, &params, out);
 }
 
-fn registering_block_roots(
-    statements: &[Stmt],
-    params: &mut BTreeSet<String>,
-    out: &mut Vec<String>,
-) {
+/// Roots written in `statements`, minus the parameters in scope at the write.
+/// A nested function's parameters shadow only that function's own body.
+fn registering_block_roots(statements: &[Stmt], params: &BTreeSet<String>, out: &mut Vec<String>) {
     for stmt in statements {
         match stmt {
             Stmt::FunctionDef(function) => {
-                parameter_names(&function.args, params);
-                registering_block_roots(&function.body, params, out);
+                let mut inner = params.clone();
+                parameter_names(&function.args, &mut inner);
+                registering_block_roots(&function.body, &inner, out);
             }
             Stmt::AsyncFunctionDef(function) => {
-                parameter_names(&function.args, params);
-                registering_block_roots(&function.body, params, out);
+                let mut inner = params.clone();
+                parameter_names(&function.args, &mut inner);
+                registering_block_roots(&function.body, &inner, out);
             }
             other => {
+                let mut roots = Vec::new();
                 let mut bindings = Vec::new();
-                module_bindings(std::slice::from_ref(other), &mut bindings, out);
-                out.extend(bindings.into_iter().flat_map(|(names, _)| names));
+                module_bindings(std::slice::from_ref(other), &mut bindings, &mut roots);
+                roots.extend(bindings.into_iter().flat_map(|(names, _)| names));
+                out.extend(roots.into_iter().filter(|root| !params.contains(root)));
             }
         }
     }

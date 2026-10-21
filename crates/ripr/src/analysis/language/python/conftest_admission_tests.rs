@@ -252,6 +252,16 @@ fn plain_name_registering_decorator_taints_the_registry() -> Result<(), String> 
         "HANDLERS = {{}}\n\n\ndef register(key):\n    def wrap(f):\n        HANDLERS[key] = f\n        return f\n    return wrap\n\n\n@register('a')\ndef verify(x):\n    assert x\n\n\n{REGISTRY_TEST}"
     );
     assert_eq!(single_file("tests/test_m.py", &factory)?, UNRESOLVED);
+    // A later same-name redefinition does not hide the storing definition.
+    let redefined = format!(
+        "HANDLERS = []\n\n\ndef register(f):\n    HANDLERS.append(f)\n    return f\n\n\n@register\ndef verify(x):\n    assert x\n\n\ndef register(f):\n    return f\n\n\n{REGISTRY_TEST}"
+    );
+    assert_eq!(single_file("tests/test_m.py", &redefined)?, UNRESOLVED);
+    // An unrelated nested function's parameter does not shadow the write.
+    let shadowed = format!(
+        "HANDLERS = []\n\n\ndef register(f):\n    HANDLERS.append(f)\n\n    def unused(HANDLERS):\n        return HANDLERS\n\n    return f\n\n\n@register\ndef verify(x):\n    assert x\n\n\n{REGISTRY_TEST}"
+    );
+    assert_eq!(single_file("tests/test_m.py", &shadowed)?, UNRESOLVED);
     // A decorator that stores nothing leaves the registry empty.
     let inert = format!(
         "HANDLERS = []\n\n\ndef passthrough(f):\n    return f\n\n\n@passthrough\ndef verify(x):\n    assert x\n\n\n{REGISTRY_TEST}"
