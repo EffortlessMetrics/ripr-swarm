@@ -48,6 +48,12 @@ pub(crate) struct RepairRoute {
     pub(crate) finding_id: String,
     /// The exact seam ID the repair resolver accepts for this finding.
     pub(crate) seam_id: String,
+    /// The production file whose uncommitted changes make `ripr repair`
+    /// refuse this seam today (its inline `#[cfg(test)]` module is the edit
+    /// target and starts only from the committed file). When set, the check
+    /// screen states the commit-or-stash requirement instead of offering the
+    /// repair start as a runnable next action.
+    pub(crate) uncommitted_target: Option<String>,
 }
 
 /// Why the check pipeline offered no repair start for its selected finding
@@ -96,8 +102,10 @@ impl RepairRouteRefusal {
                 gate()
             ),
             Self::SeamLimit => {
-                "no repair start offered: the seam budget left the repair candidate set unreadable or truncated; rerun with a wider seam budget"
-                    .to_string()
+                format!(
+                    "no repair start offered: the seam budget left the repair candidate set unreadable or truncated; {}",
+                    super::task_first::WIDEN_SEAM_BUDGET
+                )
             }
             Self::NoBindingSeam => format!(
                 "no repair start offered: no seam in the finding's file binds this finding; {}",
@@ -332,6 +340,10 @@ fn navigation_args(
         }
         if worktree {
             args.push("--worktree".to_string());
+        } else if input.git_candidate.is_none() {
+            // All live CLI siblings default to the dirty worktree. A command
+            // for committed input must therefore carry its explicit source.
+            args.push("--committed".to_string());
         }
     }
 
@@ -489,6 +501,7 @@ mod tests {
         );
         // The route only answers for its own finding.
         let routed = navigation.with_repair_route_outcome(CheckRepairRoute::Route(RepairRoute {
+            uncommitted_target: None,
             finding_id: "probe:one".to_string(),
             seam_id: "67fc764ba37d77bd".to_string(),
         }));
@@ -567,7 +580,7 @@ mod tests {
         assert_eq!(
             navigation.explain_command("probe:id"),
             format!(
-                "ripr explain --root {} --base origin/main --mode draft probe:id",
+                "ripr explain --root {} --base origin/main --committed --mode draft probe:id",
                 bound(".")
             )
         );

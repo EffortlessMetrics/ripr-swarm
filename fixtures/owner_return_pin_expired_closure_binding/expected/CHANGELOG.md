@@ -206,3 +206,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_return_pin_expired_closure_binding (17)
+
+Reason:
+RIPR-SPEC-0224: cause-neutral assertion_not_credited sentence (#8780)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_expired_closure_binding --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — owner_return_pin_expired_closure_binding (18)
+
+Reason:
+RIPR-SPEC-0224: human output words a test with no assertion 'uses no oracle' (#8747)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_expired_closure_binding --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

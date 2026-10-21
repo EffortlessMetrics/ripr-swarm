@@ -662,7 +662,7 @@ fn enforce_repo_index_file_limit(file_count: usize, scope_limit: usize) -> Resul
     ))
 }
 
-fn diff_changed_rust_line_limit() -> Result<usize, String> {
+pub(crate) fn diff_changed_rust_line_limit() -> Result<usize, String> {
     diff_changed_rust_line_limit_from_env(std::env::var(DIFF_CHANGED_RUST_LINE_LIMIT_ENV))
 }
 
@@ -1337,6 +1337,13 @@ fn apply_probe_and_oracle_limits(
     // RIPR-SPEC-0240: a `#[should_panic]` test's panic outcome is an oracle
     // ripr does not resolve, not a missing assertion.
     classify::withhold_should_panic_gap(finding, index);
+    // #8600: a related test line at the call-fact budget may hide a call, so
+    // a negative claim over that test's calls is a named limit.
+    classify::withhold_call_budget_gap(finding, index);
+    // RIPR-SPEC-0240: a test-framework oracle ripr does not evaluate (an
+    // environment-activated branch, a mock closure, an expect-test debug
+    // literal, an unredacted insta field) is not a missing assertion.
+    classify::withhold_framework_oracle_gap(finding, index);
     // RIPR-SPEC-0240 runs last so a producer-named limit keeps its finding.
     classify::withhold_unsupported_gap(finding);
 }

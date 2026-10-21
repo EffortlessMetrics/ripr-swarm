@@ -27,6 +27,7 @@ Linked issues:
 - #6654 (corpus cases scored false actionable under the first draft)
 - #7315 (literal rejection equality observes the rejected reason)
 - #8714 (conditional-branch assertion guard and disclosure)
+- #8959 (lexically bound runner registrations)
 
 Linked PRs:
 
@@ -148,20 +149,105 @@ assertion is `weakly_exposed`, not `reachable_unrevealed`.
 - A registration is an expression statement whose expression is the root
   call. `const x = test(...)` registers nothing.
 
+**Rule 14. Registration provenance and unused function values (#8959).**
+Bare and awaited registrations use the same runner-binding admission. A
+local no-op, unrelated import or shadow cannot donate its callback's tests.
+A top-level immutable result of a named Vitest/Playwright `test` import's
+`.extend(...)` retains registration provenance when the imported receiver
+has no other uses that could replace or expose its mutable extension method.
+Arbitrary factory results and mutable bindings are not treated as runners.
+
+A plain `const` function value with no reference outside its declaration
+does not execute its body. Relation discovery masks that initializer in a
+separate reach view, including heuristic fallbacks and supported named
+callback bodies, while retaining the original source for evidence. Called, aliased or passed functions retain
+the existing bounded rules; opaque `eval`, `with` and escaped identifiers
+prevent this unused-value proof. Byte-preserving masking keeps Unicode
+source offsets aligned with parser spans. If the owner call is only in that
+unused closure, no test path is established. If the owner executes outside
+the closure but only its assertion is dead, the existing `weakly_exposed`
+with unknown oracle remains correct. Supported executed callbacks retain
+RIPR-SPEC-0246 semantics; this is not a general invocation graph.
+
+The complementary `jest-mined-local-noop-describe` and
+`jest-mined-local-noop-test` corpus cases are incorporated from #8968,
+commit `5d7657fbc7240b2c0a62c9934ca2e7fda3a1b209` (Claude). Their original
+Jest runtime-mutant labels and source hashes are retained with attribution;
+copying those labels does not claim an independent runtime rerun.
+
+**Rule 13. A called suite factory is its expansion (2026-10-20).** A
+top-level `function factory(a, b) { describe(a, () => { ... b(x) ... }); }`
+registers nothing until it is called, and its assertions name the owner only
+through a parameter. Each top-level call `factory("sum", sumAll);` reads as
+the factory's statements with every parameter replaced by its argument, as if
+written out at that point (the line reported is the call's). It expands only
+when all of these hold, and otherwise the call registers nothing as before:
+
+- the factory is a non-async, non-generator declaration whose parameters are
+  distinct plain names (no default, rest or destructuring) and whose body is
+  only call statements (registrations and hooks), with no declaration,
+  `return` or control flow;
+- the file mentions the factory only at its declaration and at top-level
+  expression-statement calls; a reassignment, export, alias, method call
+  (`.call`, `.bind`), nested call or second declaration leaves every call
+  unexpanded, while a call with other than exactly one plain argument per
+  parameter (spread, type arguments, awaited) is skipped on its own;
+- each argument is a string or number literal or a plain identifier. A
+  parameter bound to an identifier is used in the body only as a callee
+  (`impl(...)`); one bound to a literal only as a whole call argument
+  (`describe(name, ...)`), not inside a template or as a member;
+- the body does not rebind a parameter and does not already mention an
+  identifier argument, so the renaming captures nothing;
+- no parameter is spelled inside a string, template or comment of the body,
+  and the body has no bare `/` (a regex or division), so the renaming never
+  changes an expected value or a title;
+- the file contains no `\u` escape, and at most eight calls expand per file.
+
+The file-level passes follow the expansion rather than the declaration. A
+committed snapshot (RIPR-SPEC-0258) counts the file's snapshot calls with each
+fully expanded factory's declaration left out and each expansion in, so two
+calls of one factory each earn their own entry when their titles join to
+different keys. The partial-extraction disclosure skips a fully expanded
+factory's own registrations, still discloses a registration an expansion
+dropped, and names the call's line. A rendered pointer to an expanded test's
+assertion names the call's line; the assertion's own line stays an offset from
+the call, which the classifier indexes.
+
+**Rule 12. A named function passed as the callback is the test body
+(2026-10-20).** `test("title", name)` runs the function `name`, so its body
+supplies the test's assertions and owner calls, as an inline callback would.
+The reference resolves only when `name` is declared exactly once in the file
+as `function name() {...}` (not a generator, not exported) with no
+parameters, in the same statement list as the registration (a function from
+an enclosing `describe` or file scope is not resolved, because the test's
+scope bindings come from the registration's scope), and every other mention of `name` in the file is the callback of
+a titled `test` / `it` call (`.only`, `.concurrent`, `.sequential` allowed;
+a title with an escape or a template substitution is not read). A call, a
+reassignment, a same-named parameter or variable, an export, a second
+declaration or the name inside a title leaves the reference unresolved, as
+does any `.each` or `.skip` form, or an options object between the title
+and the name (`test(title, { timeout }, name)`). Any unicode escape (`\u`) in the
+file leaves every reference unresolved, because an escaped spelling of the
+name would be invisible to the mention scan. The runner shadow checks of rule 3 read
+the function body. Arrow and function-expression bindings (`const name =
+...`) are not resolved.
+
 **Rule 1. An awaited root registers.** An expression statement whose
 expression is `await <root call>` at file or describe level registers
 exactly as the bare call does. This covers the node:test ESM form
 `await test("name", fn)`. It extends the `test` root RIPR-SPEC-0027 lists;
 no accepted spec names the awaited form. An awaited subtest
 `await t.test(...)` inside a test body is not a registration.
-Before an awaited registration contributes assertions, the existing admission
+Before a bare or awaited registration contributes assertions, the existing admission
 scanner must recognize its runner root at the call site. File-local helpers,
 unrelated imports and enclosing callback/loop bindings cannot turn an unused
-callback into test evidence. This fence applies to the newly supported awaited
-form; it does not change bare-root registration semantics. A sibling suite's
+callback into test evidence. Bare roots use the same binding fence (#8959).
+Hoisted `var` bindings remain visible in nested suites; block-local function
+bindings in modules and strict scripts do not shadow a sibling registration.
+A sibling suite's
 helper is outside this lexical scope. Re-exports do not create local runner
 bindings, and an ESM namespace object is not a callable registration root.
-The awaited CommonJS exemption requires an immutable runner declaration and
+The CommonJS exemption requires an immutable runner declaration and
 either ambient `require` syntax or an immutable loader created by a locally
 imported `node:module`/`module` `createRequire(import.meta.url)`. Mutable loaders
 or runner bindings and same-spelled helper factories remain uncredited.
@@ -536,6 +622,20 @@ default binding is an unrelated import that shadows the owner name, for the
 direct-call arm and for the shadowing check alike. A namespace binding is
 never an anchor for a bare call.
 
+Amended 2026-10-19 (decision 15): a default import is also the receiver of
+`local.name(...)` when the owner module's one `export default { ... }`
+object holds the top-level function (or `const` arrow function; a `let` or
+`var` arrow can be rebound in a nested scope and stays unreached) `name` under
+its own name (`{ name }` or
+`{ name: name }`). The object must be made only of such plain entries; a
+spread, computed key, method, getter, renamed entry or duplicate key leaves
+every owner unmarked. The test file must use `local` for nothing but calls of
+that one member, anywhere in the file (setup hooks and file-level code
+included), so an alias (`const m = local.name`), a reassignment, `Object.assign`
+or a body-local rebinding of `local` all refuse the relation. The relation is
+`imported_owner_call` and the observation guard reads `local.name(...)` as a
+call of the owner, as it does for a namespace import.
+
 ### Observation guard
 
 The guard runs at ladder step 4. Predicate, MatchArm, ErrorPath and
@@ -704,6 +804,31 @@ rejected alternative. Any can be reversed later without touching the rest.
     is the same evidence as a hand-written test with those literals.
     Rejected: resolve tables held in a `const`, which needs scope
     resolution the adapter does not have.
+15. **Default-exported object members (2026-10-19).** Adopted: rule 5's
+    default-object arm, for the axios `utils.merge` shape that read
+    `no_static_path` (`jest-mined-default-export-object`). A plain
+    `{ name }` object cannot change which function `name` holds, so a call
+    through it is a direct call. Rejected: crediting a member of any object
+    literal or of a CommonJS `module.exports = { ... }` object (a spread or
+    later write can replace the member), and following a renamed entry
+    (`{ merge: mergeImpl }`), which needs the owner name to differ from the
+    exported name.
+16. **Function-reference callbacks (2026-10-20).** Adopted: rule 12, for
+    the jest `function sumsEveryValue() {...}; test("...", sumsEveryValue)`
+    shape that read `no_static_path` (`jest-mined-test-fn-reference`). A
+    function declared once and mentioned only as a test callback cannot be
+    replaced between declaration and registration. Rejected: resolving
+    `const` arrow bindings and parameterised factories
+    (`jest-mined-suite-factory`), which need call-site parameter binding.
+17. **Suite-factory calls (2026-10-20).** Adopted: rule 13, for the jest
+    shared-suite helper that read `no_static_path`
+    (`jest-mined-suite-factory`). Expanding the call and rerunning the
+    unchanged extractor keeps every existing gate (shadowing, relation,
+    admission) in force, where a parameter-binding model in the extractor
+    would duplicate them. Rejected: factories reached through a wrapper,
+    export or alias, argument expressions (`sumAll.bind(null)`, arrows,
+    members), and parameters used as values or in templates; each needs
+    data flow the adapter does not have.
 
 ## Required Evidence
 
@@ -796,7 +921,15 @@ to `amount - 20`, and `tests/lib.test.ts` has
     env read) keeps the credited assertion but the result now carries the
     `typescript_conditional_assertion_credit` limitation, naming the
     unevaluated condition and recording that the credited oracle may never
-    execute (classification-neutral disclosure, #8714).
+    execute (classification-neutral disclosure, #8714). Statements after an
+    unconditional exit in the same statement list (`return`, `throw`,
+    `break`, `continue`, a block holding one, an `if (true)` whose
+    consequent exits, an `if (false)` whose alternate exits, or an `if`
+    whose branches both exit) are dead code: their assertions are withheld
+    at collection and cannot credit `exposed`, and the conditional-credit
+    probe and walker stop at the same point so a dead `if (flag)` after
+    `return;` produces no limitation. An undecidable one-sided exit
+    (`if (skip) { return; }`) keeps the later assertion credited (#9003).
 12. `src/lib.ts` is `export function parse(s: string): string { if (s ===
     "") { throw new Error("empty"); } return s; }`, formatted with the
     `throw` on its own line, which is the changed line: `"empty"` changed
@@ -952,6 +1085,22 @@ to `amount - 20`, and `tests/lib.test.ts` has
   `find_related_tests_module_value_use_masking_only_negatives`,
   `default_import_does_not_credit_named_non_default_owner`,
   `overcredit_4103_spy_fabrication_blocks_owner_credit_and_names_limitation`.
+- `crates/ripr/src/analysis/language/typescript/tests/default_object_member_tests.rs`
+  pins decision 15: the credited shorthand and same-name forms, every object
+  shape that could replace the member, and every test use of the default
+  import other than a member call. The corpus case
+  `jest-mined-default-export-object` reads `credited`.
+- `crates/ripr/src/analysis/language/typescript/tests/function_reference_callback_tests.rs`
+  pins rule 12 and decision 16: the credited forms (declared first, hoisted,
+  async, `.only`, inside `describe`) against every mention, signature and
+  registration shape that must stay unresolved. The corpus case
+  `jest-mined-test-fn-reference` reads `credited`.
+- `crates/ripr/src/analysis/language/typescript/tests/suite_factory_tests.rs`
+  pins rule 13 and decision 17: calls that read like the written-out suite
+  against every factory shape, extra mention and argument form that must stay
+  unexpanded, and the snapshot count, partial-extraction disclosure and
+  evidence pointer of an expanded call. The corpus case
+  `jest-mined-suite-factory` reads `credited`.
 - Existing: `crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs`
   and the `tests/` modules beside it: `mock_form_tests.rs`,
   `scope_receiver_tests.rs`, `reexport_chain_tests.rs`.
@@ -974,9 +1123,18 @@ to `amount - 20`, and `tests/lib.test.ts` has
   and 10
   (`expect_call_from_assertion_inner`, `call_expression_is_expect`,
   `oracle_for_matcher`, `safe_error_class_payload_text`).
-- `crates/ripr/src/analysis/language/typescript/tests_extract.rs`: rule 1
-  (`test_from_statement`, `describe_body_from_statement`) and the
+- `crates/ripr/src/analysis/language/typescript/suite_factory.rs`
+  (`expand_suite_factories`, rule 13) and the rerun in `tests_extract.rs`
+  (`extract_tests_expanding_suite_factories`).
+- `crates/ripr/src/analysis/language/typescript/tests_extract.rs`: rule 12
+  (`referenced_callback_function`, `function_used_only_as_test_callback`);
+  rule 1 (`test_from_statement`, `describe_body_from_statement`) and the
   `expect` binding facts rule 3 reads.
+- `crates/ripr/src/analysis/language/typescript/owners.rs`:
+  `mark_default_object_members` (decision 15); `related_tests.rs`
+  `import_references_owner_call` and `tests_extract.rs`
+  `default_member_only_locals` (the whole-file use check), and
+  `classifier.rs` `owner_namespace_receivers`, read the marker.
 - `crates/ripr/src/analysis/language/typescript/related_tests.rs`: rule 5
   (`direct_owner_call_has_declaration_anchor`,
   `owner_name_shadowed_by_unrelated_import`) and the owner bindings

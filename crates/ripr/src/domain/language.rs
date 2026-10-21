@@ -434,6 +434,20 @@ pub enum StaticLimitKind {
     /// expects. The gap is withheld and the class is `static_unknown`. See
     /// RIPR-SPEC-0240.
     RustPanicOutcomeUnresolved,
+    /// A related Rust test has a source line holding as many distinct callees
+    /// as the per-line call-fact budget keeps (256), so additional callees
+    /// may have been omitted. Any negative or uniqueness claim over that
+    /// test's calls (no assertion, no helper, one owner call) is not
+    /// established. The gap is withheld; exactly at the budget is treated as
+    /// possibly truncated, not as proof that a call was dropped. See #8600.
+    RustCallFactBudget,
+    /// A related test checks the changed code through a test-framework idiom
+    /// ripr does not evaluate: an environment-activated branch asserted after
+    /// `set_var`/`remove_var`, a mockall `returning` closure that reads its
+    /// arguments, an expect-test `assert_debug_eq` literal, or an insta
+    /// snapshot of a field no redaction names. The gap is withheld and the
+    /// class is `static_unknown`. See RIPR-SPEC-0240.
+    RustFrameworkOracleUnresolved,
 }
 
 impl StaticLimitKind {
@@ -491,6 +505,8 @@ impl StaticLimitKind {
             StaticLimitKind::RustAssertionContextUnresolved => "rust_assertion_context_unresolved",
             StaticLimitKind::RustLogCaptureUnresolved => "rust_log_capture_unresolved",
             StaticLimitKind::RustPanicOutcomeUnresolved => "rust_panic_outcome_unresolved",
+            StaticLimitKind::RustCallFactBudget => "rust_call_fact_budget",
+            StaticLimitKind::RustFrameworkOracleUnresolved => "rust_framework_oracle_unresolved",
         }
     }
 
@@ -611,6 +627,21 @@ impl StaticLimitKind {
                  ripr does not resolve whether the panic comes from the changed code or from an \
                  earlier call. ripr does not claim a gap; this is a named limitation, not a \
                  coverage claim."
+            }
+            StaticLimitKind::RustCallFactBudget => {
+                "A related Rust test has a source line with as many distinct calls as ripr \
+                 keeps per line (256), so more calls on that line may have been omitted. \
+                 Whether the test contains another call, helper or assertion there is not \
+                 established, so ripr does not claim a gap; this is a named limitation, not \
+                 a coverage claim."
+            }
+            StaticLimitKind::RustFrameworkOracleUnresolved => {
+                "A related Rust test checks this code through a test-framework idiom that ripr \
+                 does not evaluate (an environment variable the test sets or removes, a mockall \
+                 closure that reads the call's arguments, an expect-test debug literal, or an \
+                 insta snapshot kept outside the source), so ripr cannot say whether the check \
+                 notices the change. ripr does not claim a gap; this is a named limitation, not \
+                 a coverage claim."
             }
         }
     }
@@ -923,6 +954,14 @@ mod tests {
             StaticLimitKind::RustPanicOutcomeUnresolved.as_str(),
             "rust_panic_outcome_unresolved"
         );
+        assert_eq!(
+            StaticLimitKind::RustCallFactBudget.as_str(),
+            "rust_call_fact_budget"
+        );
+        assert_eq!(
+            StaticLimitKind::RustFrameworkOracleUnresolved.as_str(),
+            "rust_framework_oracle_unresolved"
+        );
     }
 
     #[test]
@@ -951,6 +990,8 @@ mod tests {
             StaticLimitKind::RustAssertionContextUnresolved,
             StaticLimitKind::RustLogCaptureUnresolved,
             StaticLimitKind::RustPanicOutcomeUnresolved,
+            StaticLimitKind::RustCallFactBudget,
+            StaticLimitKind::RustFrameworkOracleUnresolved,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
         // static-language vocabulary is enforced repo-wide by

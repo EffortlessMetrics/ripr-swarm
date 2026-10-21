@@ -334,3 +334,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — assertion_shaped_oracle_test_file (20)
+
+Reason:
+RIPR-SPEC-0224: unclassified-kind oracle not graded against this probe (#8388)
+
+Command:
+`cargo xtask goldens bless assertion_shaped_oracle_test_file --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

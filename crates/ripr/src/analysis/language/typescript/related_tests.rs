@@ -729,6 +729,9 @@ pub(crate) fn owner_call_relation(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> Option<TypeScriptRelationKind> {
+    if let Some(view) = test.reach_view() {
+        return owner_call_relation(&view, owner, reexport_index, alias_map, workspace_root);
+    }
     if owner.owner_kind == OwnerKind::ModuleFunction {
         return module_initializer_observer_relation(test, owner, alias_map, workspace_root)
             .then_some(TypeScriptRelationKind::ModuleValueReference);
@@ -803,7 +806,7 @@ pub(crate) fn owner_call_relation(
         {
             return false;
         }
-        import_references_owner_call(import, &test.body_text, owner)
+        import_references_owner_call(import, test, owner)
     }) {
         return Some(TypeScriptRelationKind::ImportedOwnerCall);
     }
@@ -906,6 +909,7 @@ pub(crate) fn module_entry_owner(
         class_name: None,
         exported_as_default: entry.exported_as_default,
         class_default_export: false,
+        default_object_member: false,
         method_kind: TypeScriptMethodKind::Ordinary,
         module_entries: Vec::new(),
         params: Vec::new(),
@@ -2029,6 +2033,9 @@ fn heuristic_relation(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> Option<TypeScriptRelationKind> {
+    if let Some(view) = test.reach_view() {
+        return heuristic_relation(&view, owner, alias_map, workspace_root);
+    }
     if owner.owner_kind == OwnerKind::ModuleFunction {
         return module_value_use_relation(test, owner, alias_map, workspace_root)
             .then_some(TypeScriptRelationKind::ModuleValueUse);
@@ -2330,6 +2337,9 @@ pub(crate) fn owner_path_disposition(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> TypeScriptOwnerPathDisposition {
+    if let Some(view) = test.reach_view() {
+        return owner_path_disposition(&view, relation, owner, alias_map, workspace_root);
+    }
     if relation == TypeScriptRelationKind::ModuleEntryCall {
         return TypeScriptOwnerPathDisposition::ModuleEntryPath;
     }
@@ -2570,11 +2580,25 @@ fn owner_export_imported_from_unrelated_source(
 
 fn import_references_owner_call(
     import: &TypeScriptImport,
-    body_text: &str,
+    test: &TypeScriptTest,
     owner: &TypeScriptOwner,
 ) -> bool {
+    let body_text = test.body_text.as_str();
     if import.namespace {
         return contains_member_call_name(body_text, &import.local, &owner.name);
+    }
+    // RIPR-SPEC-0243 rule 5: a default import of a module whose `export
+    // default { name }` object holds the owner reaches it as
+    // `local.name(...)`. The whole test file (comments and titles blanked,
+    // setup hooks included) must use the local for nothing else, so the
+    // member cannot be reassigned, aliased, shadowed or passed elsewhere
+    // first (a body-local `const local = ...` is itself such a use).
+    if owner.default_object_member && import.imported.as_deref() == Some("default") {
+        return test
+            .default_member_only_locals_in_file
+            .iter()
+            .any(|(local, member)| *local == import.local && *member == owner.name)
+            && contains_member_call_name(body_text, &import.local, &owner.name);
     }
     // A default import (`import local from './owner'`) binds the owner
     // module's default export (#4103 under-credit): credit a call through the

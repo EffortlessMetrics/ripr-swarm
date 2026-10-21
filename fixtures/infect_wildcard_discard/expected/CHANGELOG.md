@@ -406,3 +406,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — infect_wildcard_discard (20)
+
+Reason:
+RIPR-SPEC-0096: #8389 the unchanged tail expression 'amount' that git reports as removed and re-added beside the inserted wildcard-discard line is byte-identical on both sides, so it no longer seeds a spurious return_value probe; the wildcard-discard static_unknown probe the fixture exists for is unchanged
+
+Command:
+`cargo xtask goldens bless infect_wildcard_discard --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — infect_wildcard_discard (21)
+
+Reason:
+RIPR-SPEC-0224: ungraded oracle reads '<kind> oracle, not graded against this probe' (#8388)
+
+Command:
+`cargo xtask goldens bless infect_wildcard_discard --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

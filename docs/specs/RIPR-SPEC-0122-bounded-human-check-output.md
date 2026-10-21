@@ -284,6 +284,16 @@ write. Unresolved identity/disclosure fields are explicitly null and warnings
 are empty. An exact path or a suggested seam ID can select one behavior;
 nested seams remain governed by the existing nesting rule (#7762).
 
+For an integration-file stub, `run_command` names the effective cargo test
+target (#8794): an explicit `[[test]]` entry for the file supplies the name,
+otherwise the auto-discovered name when discovery is enabled for the package
+edition. When the target name is not established (`autotests = false` without
+an entry, edition-2015 packages whose explicit entries disable discovery,
+`harness = false`, a name-only entry whose `tests/<n>.rs` and
+`tests/<n>/main.rs` both exist, an unusable `path`, a shadowed name, or
+`required-features`, which is omitted conservatively without default-feature
+resolution) the command is `null` and the human output says so.
+
 The stub producer covers free functions and methods of inherent or trait
 impls at module level whose generics are lifetimes only; a trait-impl method
 is called as `<Type as Trait>::method(..)` (#5471). A changed field of the
@@ -498,6 +508,14 @@ suggested write cannot fail on the same missing base.
   advisory)` for `exposed` findings with an observation rationale; `Missing
   discriminator` otherwise) and for both `preview_limited` safe-next-action
   arms (complete-but-advisory packet versus missing packet fields).
+- Tests for the held repair start (#8738): the default check screen does not
+  list `ripr repair <seam>` as a bare runnable action when the selected
+  edit target (an existing test target or a producer-proposed inline file)
+  is a production Rust file whose worktree or index copy differs from HEAD;
+  it prints one `Repair start (needs a committed ...)` line stating the
+  commit-or-stash requirement, naming the test route only when a stub is
+  rendered. The predicate is the edit cage's own committed-file law, deferring
+  (no hold) when it cannot be established.
 - Format parsing tests for `human-full` and `text-full`.
 - CLI unit tests for repo-scope warnings with `--base` and `--diff`, and no
   warning for diff-scoped JSON.

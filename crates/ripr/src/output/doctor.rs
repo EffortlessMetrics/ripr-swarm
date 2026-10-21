@@ -87,7 +87,7 @@ pub(crate) enum DoctorFirstCommand {
 
 impl DoctorFirstCommand {
     pub(crate) const SAVED_DIFF_LINE: &'static str = "ripr check --diff PATH";
-    pub(crate) const WORKTREE_LINE: &'static str = "ripr check --base HEAD --worktree";
+    pub(crate) const WORKTREE_LINE: &'static str = "ripr check";
     pub(crate) const DEFAULT_LINE: &'static str = "ripr check";
 
     /// `dirty_worktree` is only evaluated when git can run, so a gitless
@@ -294,7 +294,7 @@ impl DoctorFirstCommand {
                         let mut lines = vec![format!(
                             "- Recommended first command: this repository has no commits yet, \
                              so `ripr check` has no base to diff; commit once first (then \
-                             `ripr check --base HEAD --worktree` analyzes uncommitted edits), \
+                             `ripr check` analyzes your branch and uncommitted edits), \
                              or explore the repository without Git history: `{bash}`"
                         )];
                         if let crate::output::markdown::PowershellForm::Translated(powershell) =
@@ -303,7 +303,7 @@ impl DoctorFirstCommand {
                             lines.push(format!(
                                 "- Recommended first command (PowerShell): this repository has \
                                  no commits yet, so `ripr check` has no base to diff; commit \
-                                 once first (then `ripr check --base HEAD --worktree` analyzes \
+                                 once first (then `ripr check` analyzes \
                                  uncommitted edits), or explore the repository without Git history: `{powershell}`"
                             ));
                         }
@@ -711,8 +711,9 @@ pub(crate) struct DoctorCacheStatus {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DoctorArtifactIgnore {
-    /// `target/ripr` does not exist under the root: there is nothing to
-    /// cover yet.
+    /// None of ripr's artifact roots (the default `target/ripr` or a
+    /// relocated in-repository base) exists under the root: there is
+    /// nothing to cover yet.
     NoArtifacts,
     /// Git ignore rules cover the artifact root.
     Ignored,
@@ -728,8 +729,10 @@ pub(crate) enum DoctorArtifactIgnore {
     NotChecked,
 }
 
-/// Whether git's index tracks files under ripr's artifact root
-/// (`target/ripr`) (#8276).
+/// Whether git's index tracks files under ripr's artifact roots — the
+/// default `target/ripr` plus any in-repository relocated writer base
+/// (`RIPR_CACHE_DIR`, `[perl].cache_dir`) (#7663 / #8276, relocated bases
+/// #8751).
 ///
 /// Orthogonal to [`DoctorArtifactIgnore`]: a repository can ignore
 /// `/target/ripr/` while earlier reports stay tracked, so the reports keep
@@ -1895,7 +1898,7 @@ fn evaluate_doctor_core_with_probe_for_profile(
                         "git_head",
                         "this repository has no commits yet (unborn HEAD); `ripr check` has \
                          no base to diff — commit once first, then analyze uncommitted edits \
-                         with `ripr check --base HEAD --worktree`"
+                         with `ripr check`"
                             .to_string(),
                     );
                 }
@@ -3450,6 +3453,23 @@ mod tests {
                 .map_err(|err| format!("restore parent mode {mode:#o}: {err}"))
         };
         restore(0o000)?;
+        let denied =
+            match crate::testing::access_denial::denied_by_permission(std::fs::metadata(&child)) {
+                Ok(denied) => denied,
+                Err(error) => {
+                    restore(0o755)?;
+                    let _ = std::fs::remove_dir_all(&parent);
+                    return Err(error);
+                }
+            };
+        if crate::testing::access_denial::skip_unless_denied(
+            "an_unreadable_root_is_not_reported_as_missing",
+            denied,
+        ) {
+            restore(0o755)?;
+            let _ = std::fs::remove_dir_all(&parent);
+            return Ok(());
+        }
         let classified = DoctorRootPath::classify(&child);
         let (report, probed) = evaluate_without_rust_toolchain(&child, &[LanguageId::Rust]);
         restore(0o755)?;
@@ -3487,6 +3507,23 @@ mod tests {
                 .map_err(|err| format!("restore jail mode {mode:#o}: {err}"))
         };
         restore(0o000)?;
+        let denied =
+            match crate::testing::access_denial::denied_by_permission(std::fs::metadata(&link)) {
+                Ok(denied) => denied,
+                Err(error) => {
+                    restore(0o755)?;
+                    let _ = std::fs::remove_dir_all(&parent);
+                    return Err(error);
+                }
+            };
+        if crate::testing::access_denial::skip_unless_denied(
+            "a_symlink_into_an_unreadable_directory_is_not_reported_as_a_file",
+            denied,
+        ) {
+            restore(0o755)?;
+            let _ = std::fs::remove_dir_all(&parent);
+            return Ok(());
+        }
         let classified = DoctorRootPath::classify(&link);
         let (report, probed) = evaluate_without_rust_toolchain(&link, &[LanguageId::Rust]);
         restore(0o755)?;
@@ -4676,7 +4713,7 @@ mod tests {
                 size_display: "1.00 KB".to_string(),
                 artifact_ignore: DoctorArtifactIgnore::Ignored,
                 artifact_tracking: DoctorArtifactTracking::Tracked {
-                    warning: "! tracked".to_string(),
+                    warning: "~ tracked".to_string(),
                 },
             },
             test_surfaces: vec![DoctorTestSurface {
@@ -4714,7 +4751,7 @@ mod tests {
         assert_eq!(parsed["cache"]["artifact_ignore"], "ignored");
         assert_eq!(
             parsed["cache"]["artifact_tracking"]["tracked"]["warning"],
-            "! tracked"
+            "~ tracked"
         );
         assert_eq!(parsed["test_surfaces"][0]["framework"], "pytest");
         assert_eq!(parsed["test_surfaces"][0]["evidence"], "python: pytest");
@@ -5233,7 +5270,7 @@ mod tests {
             );
             assert_eq!(
                 DoctorFirstCommand::Worktree.command_line_for_root(Path::new("/work/my app"))?,
-                "ripr check --root '/work/my app' --base HEAD --worktree"
+                "ripr check --root '/work/my app'"
             );
             assert_eq!(
                 DoctorFirstCommand::recommendation_lines(
@@ -5689,7 +5726,7 @@ mod tests {
             "no commits yet",
             "has no base to diff",
             "commit once first",
-            "--base HEAD --worktree",
+            "analyzes your branch and uncommitted edits",
             // Canonical whole-repo route (domain::next_action): pilot.
             "ripr pilot --root",
         ] {

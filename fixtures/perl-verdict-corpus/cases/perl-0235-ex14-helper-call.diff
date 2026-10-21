@@ -1,13 +1,13 @@
 diff --git a/lib/Shop/Pricing.pm b/lib/Shop/Pricing.pm
-index 2bfb0c0..9ee3c03 100644
+index 2bfb0c0..8fc836f 100644
 --- a/lib/Shop/Pricing.pm
 +++ b/lib/Shop/Pricing.pm
-@@ -69,7 +69,7 @@ sub bundle_price {
-     my ($items) = @_;
-     my $sum = 0;
-     $sum += $_ for @$items;
--    return $sum - (@$items >= 3 ? 5 : 0);
-+    return $sum - (3 <= @$items ? 5 : 0);
- }
+@@ -28,7 +28,7 @@ sub shipping_fee {
  
- sub clamp_qty {
+ sub tier_label {
+     my ($points) = @_;
+-    return 'gold' if $points >= 1000;
++    return 'gold' if 1000 <= $points;
+     return 'silver' if $points >= 500;
+     return 'bronze';
+ }

@@ -4828,7 +4828,12 @@ mod tests {
         // `python_wrong_receiver_assertion` each withhold owner credit from an
         // assertion on a different object and add one orthogonal card; the
         // two controls stay exposed and carry no card.
-        if (direct, no_strong, orthogonal, family_selection) != (5, 27, 16, 1) {
+        // #9002: `python_fallthrough_return_early_exit` downgrades a changed
+        // fallthrough return to `weakly_exposed` because every strong call
+        // takes the preceding early exit (RIPR-SPEC-0260); the card names the
+        // missing `not (total > 1000)` discriminator and stays direct-aligned
+        // and packet-eligible.
+        if (direct, no_strong, orthogonal, family_selection) != (6, 27, 16, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

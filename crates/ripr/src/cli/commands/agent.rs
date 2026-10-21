@@ -13,9 +13,9 @@ use crate::app::agent_brief::{
 use crate::app::{self, OutputFormat};
 use crate::cli::CommandError;
 use crate::cli::agent::{
-    AgentBriefOptions, AgentCommand, AgentPacketOptions, AgentReceiptOptions, AgentRepairOptions,
-    AgentRepairPhase, AgentReviewSummaryOptions, AgentStartOptions, AgentStatusOptions,
-    AgentVerifyExecuteOptions, AgentVerifyOptions, parse_agent_args,
+    AgentBriefOptions, AgentBriefWorkingSet, AgentCommand, AgentPacketOptions, AgentReceiptOptions,
+    AgentRepairOptions, AgentRepairPhase, AgentReviewSummaryOptions, AgentStartOptions,
+    AgentStatusOptions, AgentVerifyExecuteOptions, AgentVerifyOptions, parse_agent_args,
 };
 use crate::cli::commands_agent_support::{
     agent_identity_path, build_agent_receipt_provenance, read_agent_verify_snapshot,
@@ -34,6 +34,7 @@ use std::path::{Path, PathBuf};
 
 use super::agent_dispatch;
 use super::agent_gap_packet::render_agent_packet_from_gap_ledger;
+use super::check::{bind_member_selector_file, resolve_implicit_command_root};
 use super::write_text_file;
 
 /// Schema version of the `ripr agent repair --phase after` success envelope
@@ -63,11 +64,165 @@ const REPAIR_AFTER_REFUSAL_SCHEMA_VERSION: &str = "0.2";
 /// attempt, not a retry of this one.
 const REPAIR_AFTER_FAILURE_SCHEMA_VERSION: &str = "0.4";
 
+/// #8872: the before phase is driven from `cli::run` before dispatch reaches
+/// [`agent`], so it resolves the root through this same owner there.
+pub(in crate::cli) fn resolve_agent_repair_root(
+    options: &mut AgentRepairOptions,
+) -> Result<(), String> {
+    let prefix =
+        super::check::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+    // A member-relative `file:line` selector binds to the invocation directory
+    // before subject translation, locking or publication, so it can never
+    // suffix-match a sibling member. Structured ids pass through unchanged.
+    if let Some(item) = options.seam_id.take() {
+        options.seam_id = Some(super::check::bind_member_selector_item(
+            prefix.as_deref(),
+            &options.root,
+            &item,
+        )?);
+    }
+    Ok(())
+}
+
+/// #8872: the same implicit workspace root `ripr check` uses, for the agent
+/// subcommands that default `--root` to `.`; `--root .` opts out. Relative
+/// `verify` snapshot paths typed from a member directory stay bound to that
+/// directory. Runs after the help short-circuit so `--help` stays inert.
+fn resolve_agent_command_root(command: &mut AgentCommand) -> Result<(), String> {
+    match command {
+        AgentCommand::Start(options) => {
+            resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+        }
+        AgentCommand::Card(options) => {
+            resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+        }
+        AgentCommand::Status(options) => {
+            resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+        }
+        AgentCommand::Repair(options) => resolve_agent_repair_root(options)?,
+        // #8902: the artifact-consuming siblings. A `--json` run that fails to
+        // resolve the root is a post-argv failure, so it still writes the
+        // #7331 refusal envelope (keyed to the root as typed) before stderr.
+        AgentCommand::Brief(options) => {
+            let base = match &options.working_set {
+                AgentBriefWorkingSet::Base(base) => Some(base.clone()),
+                _ => None,
+            };
+            let prefix = resolve_json_command_root(
+                &mut options.root,
+                options.root_explicit,
+                output::agent_brief::AGENT_BRIEF_SCHEMA_VERSION,
+                base.as_deref(),
+                options.json,
+            )?;
+            // `--diff` and `--files` are root-relative inputs of the brief:
+            // an existing member-relative file binds to the invocation
+            // directory; a missing one is passed through so the brief's own
+            // confinement/read diagnostics stay reachable.
+            match &mut options.working_set {
+                AgentBriefWorkingSet::Diff(path) => {
+                    bind_existing_member_file(prefix.as_deref(), &options.root, path);
+                }
+                AgentBriefWorkingSet::Files(paths) => {
+                    for path in paths {
+                        bind_existing_member_file(prefix.as_deref(), &options.root, path);
+                    }
+                }
+                AgentBriefWorkingSet::Base(_) | AgentBriefWorkingSet::SeamId(_) => {}
+            }
+        }
+        AgentCommand::Packet(options) => {
+            resolve_json_command_root(
+                &mut options.root,
+                options.root_explicit,
+                app::AGENT_SEAM_PACKET_SCHEMA_VERSION,
+                None,
+                options.json,
+            )?;
+            // `--gap-ledger` is read as typed from the invocation directory,
+            // the same file the operator named, so it needs no rebinding.
+        }
+        AgentCommand::VerifyExecute(options) => {
+            let prefix =
+                match resolve_implicit_command_root(&mut options.root, options.root_explicit) {
+                    Ok(prefix) => prefix,
+                    Err(error) => {
+                        // The typed disposition is the contract on every
+                        // terminal state, so an unresolvable root answers in
+                        // that shape.
+                        print!(
+                            "{}",
+                            app::verification_execution::render_unusable_root(&error)
+                        );
+                        return Err(error);
+                    }
+                };
+            bind_existing_member_file(prefix.as_deref(), &options.root, &mut options.packet);
+        }
+        AgentCommand::Receipt(options) => {
+            let prefix = resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+            bind_existing_member_file(prefix.as_deref(), &options.root, &mut options.verify_json);
+        }
+        AgentCommand::ReviewSummary(options) => {
+            resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+        }
+        AgentCommand::Verify(options) => {
+            let prefix = resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+            for path in [&mut options.before, &mut options.after] {
+                let bound = bind_member_selector_file(
+                    prefix.as_deref(),
+                    &options.root,
+                    &path.to_string_lossy(),
+                )?;
+                *path = PathBuf::from(bound);
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// #8902: bind a member-relative input file to the invocation directory when
+/// it exists there; a file that does not exist is left as typed so the
+/// command's own read/confinement diagnostic names it.
+fn bind_existing_member_file(prefix: Option<&str>, root: &Path, path: &mut PathBuf) {
+    if let Ok(bound) = bind_member_selector_file(prefix, root, &path.to_string_lossy()) {
+        *path = PathBuf::from(bound);
+    }
+}
+
+/// Resolve the implicit root for a command whose `--json` mode answers a
+/// root-resolution failure with the #7331 refusal envelope (root-unusable
+/// family), keyed to the root as typed; prose runs return the bare error.
+fn resolve_json_command_root(
+    root: &mut PathBuf,
+    root_explicit: bool,
+    schema_version: &'static str,
+    base: Option<&str>,
+    json: bool,
+) -> Result<Option<String>, String> {
+    let typed_root = root.clone();
+    resolve_implicit_command_root(root, root_explicit).map_err(|error| {
+        if !json {
+            return error;
+        }
+        refuse_json_envelope(
+            schema_version,
+            "repo",
+            None,
+            &typed_root,
+            base,
+            CoreError::repository_root_unusable(error),
+        )
+    })
+}
+
 pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
-    let command = parse_agent_args(args)?;
+    let mut command = parse_agent_args(args)?;
     if let Some(result) = agent_dispatch::run_agent_help_command(&command) {
         return result.map_err(CommandError::from);
     }
+    resolve_agent_command_root(&mut command)?;
 
     match command {
         AgentCommand::Start(options) => run_agent_start(options).map_err(CommandError::from),
@@ -966,13 +1121,20 @@ pub(super) fn repair_attempt_input_error(
 pub(in crate::cli) fn run_before_repair_with_identity(
     options: AgentRepairOptions,
     identity: &crate::app::repair_attempt::BeforeRepairAttemptIdentity,
-) -> Result<(), CommandError> {
+) -> Result<(), crate::cli::BeforePhaseError> {
     if options.phase != AgentRepairPhase::Before {
         return Err(CommandError::Failure(
             "prepared before identity requires the before phase".to_string(),
-        ));
+        )
+        .into());
     }
-    run_agent_repair_with_identity(options, Some(identity))
+    let (result, start_refused) = run_agent_repair_with_identity_ctx(options, Some(identity));
+    match result {
+        Err(error) if start_refused => Err(crate::cli::BeforePhaseError::Refused(
+            error.message().to_string(),
+        )),
+        other => other.map_err(Into::into),
+    }
 }
 
 /// Shared with the task-first `ripr continue` façade (#6305): both
@@ -982,10 +1144,21 @@ pub(in crate::cli) fn run_agent_repair_with_identity(
     options: AgentRepairOptions,
     identity: Option<&crate::app::repair_attempt::BeforeRepairAttemptIdentity>,
 ) -> Result<(), CommandError> {
+    run_agent_repair_with_identity_ctx(options, identity).0
+}
+
+/// [`run_agent_repair_with_identity`] plus whether a before phase refused to
+/// start with nothing written (#9033), so the façade can map that refusal to
+/// the decision exit code while the advanced spelling keeps its failure code.
+fn run_agent_repair_with_identity_ctx(
+    options: AgentRepairOptions,
+    identity: Option<&crate::app::repair_attempt::BeforeRepairAttemptIdentity>,
+) -> (Result<(), CommandError>, bool) {
     let json = options.json;
     let mut refusal = AfterPhaseRefusalContext::default();
     let result = run_agent_repair_phase(options, &mut refusal, identity);
     if let (Err(error), Some((root, store, attempt_id))) = (&result, &refusal.selected_attempt)
+        && !refusal.stop_unrecorded
         && let Err(record_error) = record_after_phase_refusal(
             root,
             store.as_deref(),
@@ -1031,11 +1204,13 @@ pub(in crate::cli) fn run_agent_repair_with_identity(
             Err(render_error) => eprintln!("ripr: {render_error}"),
         }
     }
-    if refusal.selected_attempt.is_some() && refusal.typed {
+    let start_refused = refusal.start_refused;
+    let result = if refusal.selected_attempt.is_some() && refusal.typed {
         result.map_err(CommandError::Decision)
     } else {
         result.map_err(CommandError::Failure)
-    }
+    };
+    (result, start_refused)
 }
 
 /// Records a refused after phase on its attempt, choosing the authority by the
@@ -1119,6 +1294,10 @@ struct AfterPhaseRefusalContext {
     /// unreadable retained packet or manifest, a failed snapshot write,
     /// failed receipt or apply-record publication) stay exit code 2.
     typed: bool,
+    /// Set when a before phase refused to start because the selected inline
+    /// target is an uncommitted production file (#9033), before any
+    /// workflow artifact or attempt existed.
+    start_refused: bool,
     /// Set once the phase printed its one stdout document (the bare verify
     /// document on a post-verify refusal), so a refusal never prints a
     /// second document.
@@ -1139,6 +1318,10 @@ struct AfterPhaseRefusalContext {
     /// artifact publication keeps the fresh projections for a retryable
     /// attempt while a pre-tail failure restores the pre-attempt state.
     tail_reached: bool,
+    /// Set when the after phase stopped on a spent retry budget: that stop is
+    /// a state observation, so it is not recorded as another refusal (which
+    /// would push the real refusals out of the bounded history).
+    stop_unrecorded: bool,
 }
 
 /// What a finished-but-refused attempt carries into the failure envelope.
@@ -1303,8 +1486,33 @@ fn render_repair_after_failure_json(
 impl AfterPhaseRefusalContext {
     /// Prints one narration line and keeps it for the refusal record.
     fn narrate(&mut self, line: String) {
+        let line = self.without_refused_start(line);
         eprintln!("ripr: {line}");
         self.narration.push(line);
+    }
+
+    /// #8766: a narrated recovery that names a new `--phase before` attempt
+    /// is printed (and recorded) without that recipe when the shared repair
+    /// gate does not admit a new start for the attempt's seam. `ripr
+    /// continue`'s in-process after phase narrates through here too.
+    fn without_refused_start(&self, line: String) -> String {
+        if !line.contains("--phase before") {
+            return line;
+        }
+        let Some((root, store, attempt_id)) = &self.selected_attempt else {
+            return line;
+        };
+        let Ok(manifest) = crate::app::repair_attempt::load_repair_attempt_manifest_from(
+            root,
+            store.as_deref(),
+            attempt_id,
+        ) else {
+            return line;
+        };
+        match crate::app::task_first::repair_start_refusal(root, &manifest.seam_id) {
+            Some(_) => crate::app::agent_status::without_start_recipe(&line),
+            None => line,
+        }
     }
 }
 
@@ -1337,6 +1545,7 @@ fn run_agent_repair_phase(
 ) -> Result<(), String> {
     let AgentRepairOptions {
         root,
+        root_explicit: _,
         seam_id,
         attempt_id,
         phase,
@@ -1401,6 +1610,20 @@ fn run_agent_repair_phase(
                 },
             )
             .map_err(|error| error.to_string())?;
+            // #9033: the selected inline target must be the committed file.
+            // Checked on the inventory loaded above, before the cage policy,
+            // the lock-protected publication or any workflow artifact, so a
+            // refused start leaves nothing for `ripr status` to read.
+            if let Some(file) = crate::app::task_first::held_inline_start_file(
+                &root,
+                &seam_id,
+                &before_report.classified,
+            ) {
+                refusal.start_refused = true;
+                return Err(crate::app::task_first::uncommitted_start_refusal_message(
+                    &root, &seam_id, &file,
+                ));
+            }
             let mut policy =
                 crate::app::repair_attempt::edit_cage_policy_from_packet(&packet, &seam_id)
                     .map_err(|error| before_phase_refusal(&seam_id, &root, &error))?;
@@ -1446,6 +1669,7 @@ fn run_agent_repair_phase(
             let started = write_agent_start_with_report(
                 &AgentStartOptions {
                     root: root.clone(),
+                    root_explicit: true,
                     seam_id: seam_id.clone(),
                     out_dir: std::path::PathBuf::from("target/ripr/workflow"),
                     json: false,
@@ -1512,6 +1736,36 @@ fn run_agent_repair_phase(
                 attempt.seam_id,
                 root.display()
             );
+            // The attempt authority owns the retry budget: a spent budget is a
+            // stop state, not another retry.
+            let prior_refusals = crate::app::repair_attempt::load_repair_attempt_manifest_from(
+                &root,
+                store_ref,
+                &attempt.attempt_id,
+            )
+            .map_err(|error| {
+                repair_attempt_input_error(&root, store_ref, attempt_id.as_deref(), error)
+            })?;
+            if prior_refusals.state == crate::app::repair_attempt::RepairAttemptState::AwaitingEdit
+                && crate::app::repair_attempt::after_refusal_budget_exhausted(&prior_refusals)
+            {
+                for line in repair_after_retry_budget_lines(
+                    &root,
+                    store_ref,
+                    &attempt,
+                    crate::app::repair_attempt::after_refusal_total(&prior_refusals),
+                ) {
+                    refusal.narrate(line);
+                }
+                refusal.typed = true;
+                refusal.stop_unrecorded = true;
+                return Err(format!(
+                    "repair attempt `{}` has spent its after-phase retry budget ({} refusals)",
+                    attempt.attempt_id.as_str(),
+                    crate::app::repair_attempt::after_refusal_total(&prior_refusals)
+                ));
+            }
+            let prior_refusals = crate::app::repair_attempt::after_refusal_total(&prior_refusals);
             eprintln!(
                 "ripr: consuming attempt manifest {}",
                 output::path::human_path(&attempt.manifest_path)
@@ -1629,6 +1883,7 @@ fn run_agent_repair_phase(
 
             let verify_options = AgentVerifyOptions {
                 root: root.clone(),
+                root_explicit: true,
                 before,
                 after,
                 json: true,
@@ -1654,6 +1909,7 @@ fn run_agent_repair_phase(
                                 store_ref,
                                 &attempt,
                                 &cage_policy,
+                                prior_refusals,
                             ) {
                                 refusal.narrate(line);
                             }
@@ -1777,6 +2033,7 @@ fn run_agent_repair_phase(
                 let receipt_result = run_agent_receipt_for_attempt(
                     AgentReceiptOptions {
                         root: root.clone(),
+                        root_explicit: true,
                         verify_json: verify_json.clone(),
                         seam_id: attempt.seam_id.clone(),
                         attempt_id: None,
@@ -2392,12 +2649,15 @@ fn repair_after_no_movement_lines(
     store: Option<&Path>,
     attempt: &crate::app::repair_attempt::ResolvedRepairAttempt,
     policy: &crate::edit_cage::EditCagePolicy,
+    prior_refusals: u32,
 ) -> Vec<String> {
     use crate::agent::loop_commands::{bound_root, shell_arg};
 
     let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
     let attempt_arg = shell_arg(attempt.attempt_id.as_str());
     let store_flag = crate::app::repair_attempt::quoted_store_flag(store);
+    let this_refusal = prior_refusals.saturating_add(1);
+    let budget = crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET;
     let target = terminal_safe(policy.selected_target.path().to_string());
     let edit = if policy.inline_test_module_target {
         format!(
@@ -2406,14 +2666,66 @@ fn repair_after_no_movement_lines(
     } else {
         format!("make the focused test edit in `{target}`; leave production code unchanged")
     };
-    vec![
-        format!(
-            "attempt `{}` remains `awaiting_edit` and still awaits the focused test edit.",
-            attempt.attempt_id.as_str()
-        ),
+    if this_refusal >= budget {
+        // The refusal that spends the budget must not advise another retry:
+        // the next after phase stops without running.
+        let seam_arg = shell_arg(&attempt.seam_id);
+        return vec![
+            format!(
+                "attempt `{}` recorded after-phase refusal {this_refusal} and spent the {budget}-refusal retry budget for this attempt; its next after phase refuses without running.",
+                attempt.attempt_id.as_str()
+            ),
+            format!(
+                "to recover: set the failed edits aside, then start a new attempt with `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before` while the gap still exists."
+            ),
+            format!(
+                "inspect the recorded refusals with `ripr agent status --root {root_arg}{store_flag} --attempt {attempt_arg}`."
+            ),
+        ];
+    }
+    let mut lines = vec![format!(
+        "attempt `{}` remains `awaiting_edit` and still awaits the focused test edit.",
+        attempt.attempt_id.as_str()
+    )];
+    if this_refusal > 1 {
+        lines.push(format!(
+            "this is after-phase refusal {this_refusal} of the {budget}-refusal retry budget for this attempt: earlier edits did not move the gap, so the discriminator may be wrong. Re-read the recorded refusals in the attempt manifest and the selected seam before editing again; at refusal {budget} the after phase stops and requires a new attempt."
+        ));
+    }
+    lines.extend([
         format!("to recover: {edit}, then rerun this after-phase command."),
         format!(
             "inspect the selected attempt with `ripr agent status --root {root_arg}{store_flag} --attempt {attempt_arg}`."
+        ),
+    ]);
+    lines
+}
+
+/// Stop narration once an attempt spent its after-phase retry budget: the
+/// after phase refuses without running, and the recovery is a new attempt.
+fn repair_after_retry_budget_lines(
+    root: &Path,
+    store: Option<&Path>,
+    attempt: &crate::app::repair_attempt::ResolvedRepairAttempt,
+    refusals: u32,
+) -> Vec<String> {
+    use crate::agent::loop_commands::{bound_root, shell_arg};
+
+    let root_arg = shell_arg(&bound_root(&root.to_string_lossy()));
+    let attempt_arg = shell_arg(attempt.attempt_id.as_str());
+    let seam_arg = shell_arg(&attempt.seam_id);
+    let store_flag = crate::app::repair_attempt::quoted_store_flag(store);
+    vec![
+        format!(
+            "attempt `{}` recorded {refusals} after-phase refusals and spent its {}-refusal retry budget; the after phase did not run again.",
+            attempt.attempt_id.as_str(),
+            crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
+        ),
+        format!(
+            "inspect what was rejected and why with `ripr agent status --root {root_arg}{store_flag} --attempt {attempt_arg}` (the attempt manifest keeps the bounded refusal history)."
+        ),
+        format!(
+            "to recover: set the failed edits aside, then start a new attempt with `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before` while the gap still exists."
         ),
     ]
 }

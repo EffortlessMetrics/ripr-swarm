@@ -63,3 +63,27 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — match_arm_tuple_terminal_imported_formatter (6)
+
+Reason:
+RIPR-SPEC-0122: human source-value evidence names the test file (path:line) only when the shown window spans more than one test file, and the window line reads 'read from related tests' (#8389)
+
+Command:
+`cargo xtask goldens bless match_arm_tuple_terminal_imported_formatter --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — match_arm_tuple_terminal_imported_formatter (7)
+
+Reason:
+RIPR-SPEC-0152: base-side findings render at note severity in human output (#9004)
+
+Command:
+`cargo xtask goldens bless match_arm_tuple_terminal_imported_formatter --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

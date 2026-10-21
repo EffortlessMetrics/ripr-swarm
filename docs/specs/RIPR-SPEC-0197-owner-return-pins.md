@@ -112,6 +112,16 @@ rule only for an assertion whose context was admitted.
    `serial`, `parallel`, `file_serial` and `file_parallel`, which run the
    body unchanged, and only with no arguments or bare lock keys;
    `inner_attrs`, `crate`, `path` or any other argument shape refuses it.
+   A bare `#[test]` is libtest's only while nothing rebinds `test` (#6749): a
+   `use` in the test's module (or, through `use super::*`, an enclosing
+   module of the file, however many `super` levels up) that binds the name
+   `test`, renamed or not, or an `extern crate .. as test`, refuses the pin.
+   A macro-generated test is judged by the whole file: any such binding
+   anywhere in it refuses. A glob of a crate outside the workspace is already
+   refused by the macro-binding authority. A glob of the workspace's own
+   crate or modules is not seen into, nor is an enclosing module in another
+   file; a `pub use` rebinding `test` behind either is outside what the
+   file shows.
    Resolution reads the test's own module item list. A bare lock needs a
    direct `use serial_test::<lock>` item there (optionally renamed, `r#`
    normalized) and no other `use` binding the same name; imports in function
@@ -218,7 +228,12 @@ rule only for an assertion whose context was admitted.
    scope re-raises an unjoined thread's panic) or carries the same join chain.
    The closure `std::thread::scope` runs is itself on an ordinary path: it is
    called once on the test thread and its panic propagates. A `::thread::`
-   path names an extern crate, so it never matches. Names are not
+   path names an extern crate, so it never matches. A bare `scope(..)` or
+   `spawn(..)` (#8999) matches only when the function's own module holds
+   exactly `use std::thread::scope;` (or `spawn`) with no rename or list form,
+   and nothing else in the file is named `scope` (`spawn`) or ends a `use` in
+   that name; a local function, another import, a rename or an import in a
+   different module stays refused. Names are not
    resolved, so the test's file refuses when it holds an item, alias or
    binding named `std` or `thread`; an `extern crate thread;`; a `use` ending in `std` or `thread`
    other than exactly `use std::thread;`, or a `self` in a `use` list under
@@ -2284,7 +2299,10 @@ assertions. This repair shares the existing callback without that larger migrati
   `owner_pin_macro_ambiguity_in_other_files_and_run_memo`,
   `owner_pin_closure_call_must_share_the_bindings_live_scope`, and
   `shared_return_admission_uses_the_outer_invocation_identity`,
-  `serial_test_locks_keep_the_pin_and_other_attributes_refuse_it`, and
+  `serial_test_locks_keep_the_pin_and_other_attributes_refuse_it`,
+  `a_rebound_test_attribute_refuses_the_pin_and_the_builtin_keeps_it` (with the
+  honesty-corpus control `rust_owner_pin_rebound_test_attribute`, fixture
+  `owner_return_pin_rebound_test_attribute`), and
   `owner_pin_requires_test_item_ancestry_and_enabled_cfg` in the same test module.
 - Bitwise tails (#6675): `a_bitwise_or_tail_is_unconditional_but_closures_and_lazy_or_are_not`
   and `bitwise_pipe_reading_distinguishes_operand_position`; the public-API
@@ -2517,3 +2535,16 @@ existing owner-call argument pin is unavailable; this leaf does not relax that
 authority. Withheld diff-index source bindings receive the same constructor scan.
 Full frozen consumer replay is separate from fixture admission and never clears
 consumer gates, missing IDs or unrelated propagation residuals by absence.
+
+### A returned bare comparison is read at its boundary (#9094)
+
+A `return_value` probe whose changed expression is one bare relational
+comparison (`x > 101` against `x > 100`, no `&&`/`||`) is the same changed
+predicate a `predicate` probe on that line reads. When the predicate lens
+resolves a missing equality-boundary discriminator for it and its infection
+reading is `weak`, the return-value finding takes that discriminator and that
+infection reading instead of crediting `yes`, so inputs far from the threshold
+(`thr(50)`, `thr(500)`) never read `exposed`. A boundary the lens cannot read
+(`unresolved`), a compound expression, a non-comparison return value and an
+operator change (`x == 100` to `x > 101`, where an off-boundary input can
+separate the versions) keep their previous reading: the rule only downgrades and is not a runtime claim.

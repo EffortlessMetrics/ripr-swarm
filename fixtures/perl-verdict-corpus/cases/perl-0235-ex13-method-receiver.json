@@ -3,46 +3,45 @@
   "subject_id": "authored-perl-testmore-shop",
   "diff": "cases/perl-0235-ex13-method-receiver.diff",
   "anchor": {
-    "file": "lib/Shop/Cart.pm",
-    "line": 20
+    "file": "lib/Shop/Pricing.pm",
+    "line": 31
   },
   "edit_kind": "behavior_preserving_rewrite",
-  "behavior_family": "return_value_arithmetic",
+  "behavior_family": "predicate_boundary",
   "test_shape": "testmore_is_method_receiver_relation",
-  "hard_case": "RIPR-SPEC-0235 example 13: the relation is a method_receiver call bound to the is() oracle on $cart->total.",
+  "hard_case": "RIPR-SPEC-0235 example 13: the relation is a method_receiver call bound to the is() oracle on the changed owner.",
   "truth": {
-    "state": "discriminated",
+    "state": "not_discriminated",
     "method": "runtime_mutant_kill",
     "test_command": "prove -l t",
     "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
     "mutants": [
       {
-        "replacement": "$total += $_->{qty} + $_->{price} for @{ $self->{items} };",
-        "mutated_line": "$total += $_->{qty} + $_->{price} for @{ $self->{items} };",
-        "outcome": "tests_failed",
-        "failing_test": "t/cart.t: total multiplies price by quantity",
-        "equivalence_review": "not equivalent: total becomes 18"
+        "replacement": "return 'gold' if 1000 < $points;",
+        "mutated_line": "return 'gold' if 1000 < $points;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 1000 points become silver"
       },
       {
-        "replacement": "$total += $_->{price} for @{ $self->{items} };",
-        "mutated_line": "$total += $_->{price} for @{ $self->{items} };",
-        "outcome": "tests_failed",
-        "failing_test": "t/cart.t: total multiplies price by quantity",
-        "equivalence_review": "not equivalent: quantity is ignored"
+        "replacement": "return 'gold' if 1500 <= $points;",
+        "mutated_line": "return 'gold' if 1500 <= $points;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 1200 points become silver"
       }
     ]
   },
   "expected": {
-    "ideal_verdict": "credited",
+    "ideal_verdict": "gap",
     "acceptable_verdicts": [
-      "credited",
-      "limited",
-      "silent"
+      "gap",
+      "limited"
     ]
   },
-  "reasoning": "is($cart->total, 25) fails under both mutants. Once the packet binds the method_receiver relation to that exact oracle, the spec credits it; ripr reports reachable_unrevealed, a false actionable.",
+  "reasoning": "RIPR-SPEC-0235 example 13: the relation is a method_receiver call bound to the is() oracle on the changed owner. The rewrite and run truth are those of perl-testmore-tier-far-from-boundary (not_discriminated): the inputs 2000 and 10 are far from 1000, so no mutant of the threshold fails. The packet edit changes which facts ripr reads, not what prove -l t does with the rewrite. A strong oracle on the owner that the packet cannot tie to the changed value is an unconfirmed observation, not a discriminator, so the spec's weakly_exposed gap and the label agree.",
   "labeling_observation": {
-    "ripr_commit": "28e86e6",
+    "ripr_commit": "4f48195",
     "full_checkout_verdict": "gap",
     "full_checkout_classifications": [
       "reachable_unrevealed"
@@ -51,9 +50,9 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex13-method-receiver.json",
-    "sha256": "f0015220e21f671a7f16520e58414904615cb35d81d22733043a31518a179455",
+    "sha256": "f2b5ae3cdc93269bf204233c9318e38962adac60cdf87f8faf49445c5d2343e2",
     "provenance": "edited_producer",
-    "edits": "Started from the producer packet of perl-testmore-cart-method-total, then in relations where {\"test_id\": \"test:t/cart.t\"} set {\"change_id\": \"$CHANGE_ID\", \"oracle_id\": \"oracle:t/cart.t:is:117-175\", \"owner_id\": \"$CHANGE_OWNER\", \"reachability_hint\": \"reachable\", \"relation_kind\": \"method_receiver\"}; in oracles where {\"oracle_id\": \"oracle:t/cart.t:is:117-175\"} set {\"target_owner_id\": \"$CHANGE_OWNER\"}; the packet fingerprint was recomputed."
+    "edits": "Started from the producer packet of perl-testmore-tier-far-from-boundary, then in oracles where {\"oracle_id\": \"oracle:t/qualified.t:is:130-198\"} set {\"observed_sink\": null}; in relations where {\"oracle_id\": \"oracle:t/qualified.t:is:130-198\"} set {\"relation_kind\": \"method_receiver\"}; the packet fingerprint was recomputed."
   },
   "spec_examples": [
     "RIPR-SPEC-0235#13"

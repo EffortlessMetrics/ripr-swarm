@@ -13,6 +13,8 @@ use std::path::{Component, Path, PathBuf};
 
 mod diagnostic;
 mod model;
+#[cfg(test)]
+mod perl_executable_tests;
 mod python;
 mod toolchain_file;
 #[cfg(feature = "lang-typescript")]
@@ -47,9 +49,54 @@ pub(crate) use python::{
 pub(crate) use toolchain_file::{repository_toolchain_path_pin, toolchain_path_pin_refusal};
 #[cfg(feature = "lang-typescript")]
 pub(crate) use typescript::{
-    declared_typescript_handwritten_under, is_declared_handwritten_typescript_path,
-    is_detectable_excluded_typescript_path, is_detectable_generated_typescript_path,
-    is_typescript_dir_pruned_from_discovery,
+    TYPESCRIPT_PROJECT_MARKERS, TYPESCRIPT_SOURCE_DIR_MARKERS,
+    declared_typescript_handwritten_under, detect_typescript_project,
+    is_declared_handwritten_typescript_path, is_detectable_excluded_typescript_path,
+    is_detectable_generated_typescript_path, is_detectable_typescript_source_name,
+    is_typescript_dir_pruned_from_discovery, is_typescript_excluded_dir_everywhere,
+    source_dir_contains_detectable_typescript, typescript_project_marker_name,
+    typescript_source_dir_marker_name,
+};
+
+/// Without `lang-typescript` no-config detection never selects the adapter,
+/// so these inert forms keep the shared call sites unconditional.
+#[cfg(not(feature = "lang-typescript"))]
+mod typescript_absent {
+    use std::path::Path;
+
+    pub(crate) const TYPESCRIPT_PROJECT_MARKERS: &[&str] = &[];
+    pub(crate) const TYPESCRIPT_SOURCE_DIR_MARKERS: &[&str] = &[];
+
+    pub(crate) fn detect_typescript_project(_root: &Path) -> bool {
+        false
+    }
+
+    pub(crate) fn is_typescript_excluded_dir_everywhere(_name: &str) -> bool {
+        false
+    }
+
+    pub(crate) fn typescript_project_marker_name(_name: &str) -> Option<&'static str> {
+        None
+    }
+
+    pub(crate) fn typescript_source_dir_marker_name(_name: &str) -> Option<&'static str> {
+        None
+    }
+
+    pub(crate) fn is_detectable_typescript_source_name(_name: &str) -> bool {
+        false
+    }
+
+    pub(crate) fn source_dir_contains_detectable_typescript(_root: &Path, _marker: &str) -> bool {
+        false
+    }
+}
+#[cfg(not(feature = "lang-typescript"))]
+pub(crate) use typescript_absent::{
+    TYPESCRIPT_PROJECT_MARKERS, TYPESCRIPT_SOURCE_DIR_MARKERS, detect_typescript_project,
+    is_detectable_typescript_source_name, is_typescript_excluded_dir_everywhere,
+    source_dir_contains_detectable_typescript, typescript_project_marker_name,
+    typescript_source_dir_marker_name,
 };
 
 pub(crate) const CONFIG_FILE_NAME: &str = "ripr.toml";
@@ -327,6 +374,14 @@ fn default_config_for_root(root: &Path) -> Result<RiprConfig, String> {
         if !config.languages.enabled.contains(&LanguageId::Python) {
             config.languages.enabled.push(LanguageId::Python);
         }
+    }
+    // Unlike Python, a binary built without `lang-typescript` stays silent:
+    // `detect_typescript_project` is inert there, and a root `tsconfig.json`
+    // alone is common in Rust repositories with a web frontend.
+    if detect_typescript_project(root)
+        && !config.languages.enabled.contains(&LanguageId::TypeScript)
+    {
+        config.languages.enabled.push(LanguageId::TypeScript);
     }
     Ok(config)
 }
@@ -800,6 +855,16 @@ impl RiprConfig {
                 }
                 None => None,
             };
+            if let Some(executable) = &perl.executable {
+                if executable.contains('\0') {
+                    return Err("perl.executable must not contain NUL characters"
+                        .to_string()
+                        .into());
+                }
+                if executable.is_empty() {
+                    return Err("perl.executable must not be empty; remove the key to use the default exporter".to_string().into());
+                }
+            }
             config.perl = PerlConfig {
                 producer,
                 executable: perl.executable.map(PathBuf::from),
