@@ -1,0 +1,9 @@
+diff --git a/reach/chain.py b/reach/chain.py
+--- a/reach/chain.py
++++ b/reach/chain.py
+@@ -18,4 +18,4 @@
+         return self._f()
+ 
+     def _f(self):
+-        return 6
++        return 7

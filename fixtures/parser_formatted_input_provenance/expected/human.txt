@@ -24,13 +24,14 @@ Start here:
     configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain
     unknown
   Evidence: reach yes · infection unknown · propagation yes · observation yes · discriminator not established
-    - reach yes: Related tests appear to reach parse_note: other_parser_condition, unresolved_target_location_is_required_and_positive, unrelated_plan_and_gate_oracles
+    - reach yes: Related tests appear to reach parse_note: other_parser_condition, unresolved_target_location_is_required_and_positive
     - infection unknown: Changed boundary input is unresolved: boundary operand `reason` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell…
     - 15 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/parser_formatted_input_provenance/input --diff <cwd>/fixtures/parser_formatted_input_provenance/diff.patch --mode fast probe:src_lib.rs:predicate:7ed3887e
   ripr context --root <cwd>/fixtures/parser_formatted_input_provenance/input --diff <cwd>/fixtures/parser_formatted_input_provenance/diff.patch --mode fast --at probe:src_lib.rs:predicate:7ed3887e
+  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:predicate:7ed3887e --root <cwd>/fixtures/parser_formatted_input_provenance/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/parser_formatted_input_provenance/input --at src/lib.rs:44 --kind predicate
 

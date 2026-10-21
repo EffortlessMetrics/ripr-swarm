@@ -369,3 +369,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_cross_file_construct_call (19)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless python_cross_file_construct_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

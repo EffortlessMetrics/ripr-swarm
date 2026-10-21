@@ -411,6 +411,7 @@ impl<'a> ValueEnv<'a> {
             }
             for value in extract_inner_literals(&cap.arg) {
                 out.push(ValueFact {
+                    file: None,
                     line: cap.line,
                     text: format!(".{}({})", cap.method, cap.arg),
                     value,

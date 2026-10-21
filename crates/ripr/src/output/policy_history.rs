@@ -198,8 +198,7 @@ pub(crate) fn build_policy_history_report(input: PolicyHistoryInput) -> PolicyHi
 
     let history_records = history_values
         .iter()
-        .enumerate()
-        .filter_map(|(index, value)| {
+        .filter_map(|(line, value)| {
             let source = value.get("current").unwrap_or(value);
             if string_path(source, &["current_policy_ceiling"]).is_none()
                 && string_path(source, &["recommended_mode"]).is_none()
@@ -207,8 +206,7 @@ pub(crate) fn build_policy_history_report(input: PolicyHistoryInput) -> PolicyHi
                 warnings.push(Notice {
                     kind: "history_shape_unsupported".to_string(),
                     message: format!(
-                        "Policy history line {} does not contain a supported snapshot shape.",
-                        index + 1
+                        "Policy history line {line} does not contain a supported snapshot shape."
                     ),
                     source_artifact: input.history_path.clone(),
                 });
@@ -449,7 +447,7 @@ fn parse_history_jsonl(
     text: &Option<Result<String, String>>,
     warnings: &mut Vec<Notice>,
     unknowns: &mut Vec<Notice>,
-) -> (ArtifactStatus, Vec<Value>) {
+) -> (ArtifactStatus, Vec<(usize, Value)>) {
     let Some(path) = path else {
         unknowns.push(Notice {
             kind: "history_not_supplied".to_string(),
@@ -501,7 +499,7 @@ fn parse_history_jsonl(
             continue;
         }
         match serde_json::from_str::<Value>(trimmed) {
-            Ok(value) => values.push(value),
+            Ok(value) => values.push((index + 1, value)),
             Err(error) => {
                 malformed += 1;
                 warnings.push(Notice {
@@ -1070,6 +1068,21 @@ mod tests {
         }
     }
 
+    fn history_input(current: &str, jsonl: &str) -> PolicyHistoryInput {
+        let mut input = input(current);
+        input.history_path = Some(".ripr/policy-history.jsonl".to_string());
+        input.history_jsonl = Some(Ok(jsonl.to_string()));
+        input
+    }
+
+    fn unsupported_shape_message(report: &PolicyHistoryReport) -> Option<&str> {
+        report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "history_shape_unsupported")
+            .map(|warning| warning.message.as_str())
+    }
+
     fn operations(ceiling: &str, safe_modes: &[&str]) -> String {
         operations_with_current(
             ceiling,
@@ -1232,6 +1245,77 @@ mod tests {
                 .any(|warning| warning.kind == "history_line_malformed")
         );
         assert_eq!(report.trend.ceiling.direction, "improved");
+    }
+
+    #[test]
+    fn policy_history_shape_warning_uses_physical_line_after_blank_prefix() {
+        let report = build_policy_history_report(history_input(
+            &operations("ready_for_visible_only", &["visible-only"]),
+            "\n{}\n",
+        ));
+
+        assert_eq!(
+            unsupported_shape_message(&report),
+            Some("Policy history line 2 does not contain a supported snapshot shape.")
+        );
+    }
+
+    #[test]
+    fn policy_history_shape_warning_uses_physical_line_after_malformed_prefix() {
+        let report = build_policy_history_report(history_input(
+            &operations("ready_for_visible_only", &["visible-only"]),
+            "not-json\n{}\n",
+        ));
+
+        assert_eq!(
+            unsupported_shape_message(&report),
+            Some("Policy history line 2 does not contain a supported snapshot shape.")
+        );
+        assert!(
+            report.warnings.iter().any(|warning| {
+                warning.kind == "history_line_malformed" && warning.message.contains("line 1 ")
+            }),
+            "malformed prefix must keep its physical line, got {:?}",
+            report.warnings
+        );
+    }
+
+    #[test]
+    fn policy_history_combined_prefixes_report_physical_line_four_and_keep_snapshot()
+    -> Result<(), String> {
+        let report = build_policy_history_report(history_input(
+            &operations("ready_for_visible_only", &["visible-only"]),
+            "\nnot-json\n{\"generated_at\":\"unix_ms:1\",\"current_policy_ceiling\":\"ready_for_visible_only\",\"recommended_mode\":\"visible-only\"}\n{}\n",
+        ));
+
+        assert_eq!(
+            unsupported_shape_message(&report),
+            Some("Policy history line 4 does not contain a supported snapshot shape.")
+        );
+        assert!(
+            report.warnings.iter().any(|warning| {
+                warning.kind == "history_line_malformed" && warning.message.contains("line 2 ")
+            }),
+            "combined input must keep malformed physical line 2, got {:?}",
+            report.warnings
+        );
+        assert_eq!(report.history_summary.entries, 2);
+        assert_eq!(
+            report.trend.ceiling.previous.as_deref(),
+            Some("ready_for_visible_only")
+        );
+
+        let json = render_policy_history_json(&report)?;
+        let markdown = render_policy_history_markdown(&report);
+        assert!(
+            json.contains("Policy history line 4 does not contain a supported snapshot shape."),
+            "JSON must inherit physical line 4, got {json}"
+        );
+        assert!(
+            markdown.contains("Policy history line 4 does not contain a supported snapshot shape."),
+            "Markdown must inherit physical line 4, got {markdown}"
+        );
+        Ok(())
     }
 
     #[test]

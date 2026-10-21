@@ -60,6 +60,7 @@ mod boundary;
 mod classify;
 mod deleted_lines;
 mod guard_activation;
+mod wrapped_call;
 use classify::{PythonNoBehaviorContext, classify_change_with_context};
 #[cfg(test)]
 use classify::{classify_change, classify_change_with_old};
@@ -115,9 +116,9 @@ use related_tests::{
     PythonRelatedCandidate, PythonRelationKind, binding_target_for_construction, body_calls_owner,
     construct_result_is_called, contains_any_attribute_call, find_related_tests,
     has_unclosed_quote, imported_module_matches_owner, local_binding_calls_owner,
-    normalize_similarity_key, normalize_test_stem, owner_similarity_keys, python_repair_placement,
-    related_test_candidates, related_test_relation, same_stem_related, similarity_key_contains,
-    verify_command_for_test,
+    normalize_similarity_key, normalize_test_stem, owner_similarity_keys,
+    python_repair_placement_on, related_test_candidates, related_test_relation, same_stem_related,
+    similarity_key_contains, verify_command_for_test_on,
 };
 use related_tests::{
     assertion_calls_method_only_on_foreign_receiver, first_parenthesized_string_argument,
@@ -193,6 +194,11 @@ struct PythonOwner {
     cli_receiver_names: Vec<String>,
     route_paths: Vec<String>,
     dynamic_route_decorators: Vec<String>,
+    /// Decorator names whose binding is not the plain name they spell: a
+    /// decorator written as a call (`@final(wrapper)`) or one whose first
+    /// segment is redefined at module level. Transparent-decorator rules must
+    /// not trust the import for these.
+    unplain_decorators: Vec<String>,
     /// Declared parameters of a function/method owner, in declaration order.
     /// Empty for class and module owners. Used only to bind literal test-call
     /// arguments to predicate boundary operands (`boundary.rs`).
@@ -204,6 +210,12 @@ struct PythonOwner {
     /// workspace source file also produces (`related_tests.rs`, #4566).
     /// Empty until the workspace pass fills it.
     ambiguous_src_modules: Vec<related_tests::AmbiguousSrcModule>,
+    /// Dotted module paths of other workspace source files that define a
+    /// free function with this owner's name (`related_tests.rs`, #8759). A
+    /// test that imports the name from one of them (and from no module that
+    /// may be this owner's) exercises that definition instead. Empty until
+    /// the workspace pass fills it.
+    rival_definition_modules: Vec<String>,
     /// Module-scope literal constants visible in a function/method owner
     /// (not shadowed locally). Empty for class and module owners. Used only
     /// to resolve named predicate boundary operands (`boundary.rs`, #4227).
@@ -300,6 +312,9 @@ struct PythonTest {
     /// pass (`fixtures.rs`); empty until then.
     fixture_defs: Vec<PythonFixtureDef>,
     parametrized: bool,
+    /// Argnames a pytest parametrize decorator supplies directly (not routed
+    /// to a fixture by `indirect=`); never resolved as fixtures (#4563).
+    direct_parametrized: Vec<String>,
     /// Literal `@pytest.mark.parametrize` cases, when statically certain (#4559).
     parametrize: Option<parametrize::PythonParametrizeCases>,
     /// Parameters Hypothesis `@given(...)` supplies (#6601); never fixtures.
@@ -684,6 +699,8 @@ impl PythonAdapter {
         let mut all_owners: Vec<PythonOwner> = Vec::new();
         let mut all_tests: Vec<PythonTest> = Vec::new();
         let mut fixture_defs_by_file: BTreeMap<PathBuf, Vec<PythonFixtureDef>> = BTreeMap::new();
+        // Conftests that install implicit setup around tests (#6657).
+        let mut implicit_conftests: BTreeSet<PathBuf> = BTreeSet::new();
         let mut docstring_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
             BTreeMap::new();
         let mut import_ranges_by_file: BTreeMap<PathBuf, Vec<RangeInclusive<usize>>> =
@@ -722,6 +739,14 @@ impl PythonAdapter {
             if !facts.fixtures.is_empty() {
                 fixture_defs_by_file.insert(relative.clone(), facts.fixtures.clone());
             }
+            // A conftest with implicit setup, or one that only partly parsed,
+            // may assert around every test below it.
+            if facts.conftest_implicit_setup
+                || (relative.file_name().and_then(|name| name.to_str()) == Some("conftest.py")
+                    && !facts.limitations.is_empty())
+            {
+                implicit_conftests.insert(relative.clone());
+            }
             if is_test_file(relative) {
                 all_tests.extend(facts.tests);
             } else {
@@ -729,6 +754,11 @@ impl PythonAdapter {
             }
         }
         fixtures::attach_fixture_defs(&mut all_tests, &fixture_defs_by_file);
+        fixtures::taint_admission_by_conftest(&mut all_tests, &implicit_conftests, |conftest| {
+            // A chain conftest that exists but was never read (capped,
+            // excluded or unreadable) cannot be ruled out.
+            !workspace_read.sources.contains_key(conftest) && options.root.join(conftest).is_file()
+        });
         reexports::apply_package_reexports(&mut all_owners, |file| {
             workspace_read.sources.get(file).map(String::as_str)
         });
@@ -736,6 +766,7 @@ impl PythonAdapter {
             &mut all_owners,
             workspace_files.iter().filter(|file| !is_test_file(file)),
         );
+        related_tests::apply_rival_definition_modules(&mut all_owners);
 
         // Walk-count cap disclosure: one named limitation carrying the
         // refused count, mirroring the TypeScript adapter's
@@ -1053,6 +1084,9 @@ impl PythonAdapter {
 
 #[cfg(test)]
 mod assertion_selection_tests;
+
+#[cfg(test)]
+mod conftest_admission_tests;
 
 #[cfg(test)]
 mod deleted_lines_tests;

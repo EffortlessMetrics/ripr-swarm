@@ -35,6 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_method_owner/input --diff <cwd>/fixtures/python_method_owner/diff.patch --mode fast probe:src_policy.py:python_preview:26786dfe
   ripr context --root <cwd>/fixtures/python_method_owner/input --diff <cwd>/fixtures/python_method_owner/diff.patch --mode fast --at probe:src_policy.py:python_preview:26786dfe
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_policy.py:python_preview:26786dfe --root <cwd>/fixtures/python_method_owner/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

@@ -47,7 +47,7 @@ Evidence
   - observation weak: Strongest extracted oracle kind: `unknown` (rank 0)
   - discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `throws error matching "TOKEN_REQUIRED"`
   - local flow reaches error variant: throw "TOKEN_REQUIRED"; (line 3)
-  - related test tests/load.test.ts:4 missing token uses unknown unknown oracle
+  - related test tests/load.test.ts:4 missing token uses no oracle
 
 Weakness
   - Related test reaches `load` but the strongest extracted oracle is `unknown`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form with an exact payload (string, object, or class reference)

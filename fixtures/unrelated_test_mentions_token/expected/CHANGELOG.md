@@ -507,3 +507,15 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — unrelated_test_mentions_token (18)
+
+Reason:
+RIPR-SPEC-0122: no_static_path Weakness list no longer restates the Evidence block (#9033)
+
+Command:
+`cargo xtask goldens bless unrelated_test_mentions_token --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

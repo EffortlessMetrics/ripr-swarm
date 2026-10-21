@@ -32,6 +32,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_jest_vitest_assertion_facts/input --diff <cwd>/fixtures/typescript_jest_vitest_assertion_facts/diff.patch --mode fast probe:src_signals.ts:typescript_preview:8ca5702a
   ripr context --root <cwd>/fixtures/typescript_jest_vitest_assertion_facts/input --diff <cwd>/fixtures/typescript_jest_vitest_assertion_facts/diff.patch --mode fast --at probe:src_signals.ts:typescript_preview:8ca5702a
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_signals.ts:typescript_preview:8ca5702a --root <cwd>/fixtures/typescript_jest_vitest_assertion_facts/input` for the full gate's answer
 
 Hidden:
   6 lower-priority finding(s) omitted from default human output (TypeScript preview: 6).

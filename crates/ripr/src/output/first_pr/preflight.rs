@@ -723,13 +723,17 @@ mod tests {
 
         std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o000))
             .map_err(|error| format!("chmod ripr.toml 000: {error}"))?;
+        // A privileged process can still read mode 000, so the denial this
+        // test pins cannot occur. Skip visibly rather than fail production
+        // behavior that stays correct for unprivileged users.
+        if crate::testing::access_denial::skip_unless_denied(
+            "unreadable_regular_ripr_toml_is_present_not_ok",
+            crate::testing::access_denial::file_read_denied(&config)?,
+        ) {
+            return Ok(());
+        }
         let load_error = match crate::config::load_for_root(&root) {
-            Ok(_) => {
-                // A privileged process can still read mode 000. Skip rather
-                // than fail the production behavior that remains correct for
-                // unprivileged users.
-                return Ok(());
-            }
+            Ok(_) => return Err("load_for_root read a file this process cannot read".to_string()),
             Err(error) => error,
         };
         if !load_error.contains("ripr.toml") {

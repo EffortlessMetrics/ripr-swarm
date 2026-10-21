@@ -340,7 +340,21 @@ mod tests {
             ModeScenario {
                 given_mode: "slow",
                 then_result: Err(
-                    "unknown mode \"slow\"; expected `instant`, `draft`, `fast`, `deep`, or `ready`"
+                    "unknown mode \"slow\". Accepted: instant, draft, fast, deep, ready."
+                        .to_string(),
+                ),
+            },
+            ModeScenario {
+                given_mode: "redy",
+                then_result: Err(
+                    "unknown mode \"redy\". Did you mean `ready`? Accepted: instant, draft, fast, deep, ready."
+                        .to_string(),
+                ),
+            },
+            ModeScenario {
+                given_mode: "fats",
+                then_result: Err(
+                    "unknown mode \"fats\". Did you mean `fast`? Accepted: instant, draft, fast, deep, ready."
                         .to_string(),
                 ),
             },

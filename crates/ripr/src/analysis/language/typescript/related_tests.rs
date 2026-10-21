@@ -729,6 +729,9 @@ pub(crate) fn owner_call_relation(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> Option<TypeScriptRelationKind> {
+    if let Some(view) = test.reach_view() {
+        return owner_call_relation(&view, owner, reexport_index, alias_map, workspace_root);
+    }
     if owner.owner_kind == OwnerKind::ModuleFunction {
         return module_initializer_observer_relation(test, owner, alias_map, workspace_root)
             .then_some(TypeScriptRelationKind::ModuleValueReference);
@@ -803,7 +806,7 @@ pub(crate) fn owner_call_relation(
         {
             return false;
         }
-        import_references_owner_call(import, &test.body_text, owner)
+        import_references_owner_call(import, test, owner)
     }) {
         return Some(TypeScriptRelationKind::ImportedOwnerCall);
     }
@@ -906,6 +909,7 @@ pub(crate) fn module_entry_owner(
         class_name: None,
         exported_as_default: entry.exported_as_default,
         class_default_export: false,
+        default_object_member: false,
         method_kind: TypeScriptMethodKind::Ordinary,
         module_entries: Vec::new(),
         params: Vec::new(),
@@ -942,6 +946,51 @@ pub(crate) fn module_initializer_observer_relation(
         import.imported.as_deref() == Some(owner.name.as_str())
             && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
             && expect_actual_references_identifier(&test.body_text, &import.local)
+    })
+}
+
+/// Heuristic reach for a module-level value (`export const stop =
+/// Symbol('stop')`, #8568): the test imports the changed binding from the
+/// owner's own module and uses it as a value anywhere in its body (an
+/// argument, an array element, a return value), not only as the direct
+/// subject of `expect(...)` (which `module_initializer_observer_relation`
+/// credits as an oracle). The use proves the test loads and consumes the
+/// binding; it does not prove an assertion observes the initializer, so the
+/// relation is uncertain and never lends oracle credit.
+///
+/// Identity gates: the import specifier must resolve to the owner module, the
+/// imported name must be the owner (or the module default when the owner is
+/// the default export), the local must not be re-declared in the test body,
+/// the owner module must not be mocked, and the reference must sit outside
+/// comments and string literals and not be a member property or object key.
+fn module_value_use_relation(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    if test_mocks_owner_module(test, owner, alias_map, workspace_root) {
+        return false;
+    }
+    // Mask comments, string/template text and regexes (including trailing
+    // `//` and multi-line forms) so only code references count.
+    let masked = super::classifier::ts_mask_literals_and_comments(&test.body_text);
+    let body = masked.as_str();
+    test.imports_in_file.iter().any(|import| {
+        if !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root) {
+            return false;
+        }
+        if enclosing_scope_shadows(test, &import.local) {
+            return false;
+        }
+        if import.namespace {
+            return contains_member_reference(body, &import.local, &owner.name)
+                && !local_identifier_declared_in_test_body(body, &import.local);
+        }
+        import.imported.as_deref().is_some_and(|imported| {
+            imported == owner.name || (imported == "default" && owner.exported_as_default)
+        }) && !local_identifier_declared_in_test_body(body, &import.local)
+            && contains_identifier_reference(body, &import.local)
     })
 }
 
@@ -1984,6 +2033,13 @@ fn heuristic_relation(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> Option<TypeScriptRelationKind> {
+    if let Some(view) = test.reach_view() {
+        return heuristic_relation(&view, owner, alias_map, workspace_root);
+    }
+    if owner.owner_kind == OwnerKind::ModuleFunction {
+        return module_value_use_relation(test, owner, alias_map, workspace_root)
+            .then_some(TypeScriptRelationKind::ModuleValueUse);
+    }
     if !heuristic_owner_supported(owner) {
         return None;
     }
@@ -2281,6 +2337,9 @@ pub(crate) fn owner_path_disposition(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
 ) -> TypeScriptOwnerPathDisposition {
+    if let Some(view) = test.reach_view() {
+        return owner_path_disposition(&view, relation, owner, alias_map, workspace_root);
+    }
     if relation == TypeScriptRelationKind::ModuleEntryCall {
         return TypeScriptOwnerPathDisposition::ModuleEntryPath;
     }
@@ -2342,7 +2401,8 @@ fn ts_relation_to_domain(
         TypeScriptRelationKind::ModuleEntryCall => RelationReason::HelperOwnerCall,
         // Heuristic relations: no strong domain mapping — emit None to preserve
         // the existing behaviour for these lower-confidence relation kinds.
-        TypeScriptRelationKind::SameFileProximity
+        TypeScriptRelationKind::ModuleValueUse
+        | TypeScriptRelationKind::SameFileProximity
         | TypeScriptRelationKind::DescribeName
         | TypeScriptRelationKind::TestName => return (None, None),
     };
@@ -2355,7 +2415,8 @@ fn ts_relation_to_domain(
         TypeScriptRelationKind::ImportedOwnerCall
         | TypeScriptRelationKind::ReExportChainFollowed
         | TypeScriptRelationKind::ModuleEntryCall => RelationConfidence::Medium,
-        TypeScriptRelationKind::SameFileProximity
+        TypeScriptRelationKind::ModuleValueUse
+        | TypeScriptRelationKind::SameFileProximity
         | TypeScriptRelationKind::DescribeName
         | TypeScriptRelationKind::TestName => RelationConfidence::Low,
     };
@@ -2519,11 +2580,25 @@ fn owner_export_imported_from_unrelated_source(
 
 fn import_references_owner_call(
     import: &TypeScriptImport,
-    body_text: &str,
+    test: &TypeScriptTest,
     owner: &TypeScriptOwner,
 ) -> bool {
+    let body_text = test.body_text.as_str();
     if import.namespace {
         return contains_member_call_name(body_text, &import.local, &owner.name);
+    }
+    // RIPR-SPEC-0243 rule 5: a default import of a module whose `export
+    // default { name }` object holds the owner reaches it as
+    // `local.name(...)`. The whole test file (comments and titles blanked,
+    // setup hooks included) must use the local for nothing else, so the
+    // member cannot be reassigned, aliased, shadowed or passed elsewhere
+    // first (a body-local `const local = ...` is itself such a use).
+    if owner.default_object_member && import.imported.as_deref() == Some("default") {
+        return test
+            .default_member_only_locals_in_file
+            .iter()
+            .any(|(local, member)| *local == import.local && *member == owner.name)
+            && contains_member_call_name(body_text, &import.local, &owner.name);
     }
     // A default import (`import local from './owner'`) binds the owner
     // module's default export (#4103 under-credit): credit a call through the

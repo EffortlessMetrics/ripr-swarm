@@ -1,0 +1,60 @@
+{
+  "case_id": "perl-0235-ex27-weakly-reachable-and-package-reference",
+  "subject_id": "authored-perl-testmore-shop",
+  "diff": "cases/perl-0235-ex27-weakly-reachable-and-package-reference.diff",
+  "anchor": {
+    "file": "lib/Shop/Pricing.pm",
+    "line": 31
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "testmore_is_far_from_boundary",
+  "hard_case": "RIPR-SPEC-0235 example 27: one weakly_reachable direct_owner_call and one reachable package_reference from another test, both bound to strong oracles.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "return 'gold' if 1000 < $points;",
+        "mutated_line": "return 'gold' if 1000 < $points;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 1000 points become silver"
+      },
+      {
+        "replacement": "return 'gold' if 1500 <= $points;",
+        "mutated_line": "return 'gold' if 1500 <= $points;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 1200 points become silver"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0235 example 27: one weakly_reachable direct_owner_call and one reachable package_reference from another test, both bound to strong oracles. The rewrite and run truth are those of perl-testmore-tier-far-from-boundary (not_discriminated); the packet edit changes which facts ripr reads, not what prove -l t does with the rewrite.",
+  "labeling_observation": {
+    "ripr_commit": "4f48195",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-0235-ex27-weakly-reachable-and-package-reference.json",
+    "sha256": "9b6ad34ead20360b3bd6c3bebb065003916cae4c27e30f38b224d55f81cc1e5b",
+    "provenance": "edited_producer",
+    "edits": "Started from the producer packet of perl-testmore-tier-far-from-boundary, then in relations where {\"change_id\": \"$CHANGE_ID\"} set {\"reachability_hint\": \"weakly_reachable\"}; in oracles where {\"oracle_id\": \"oracle:t/bulk.t:is:133-168\"} set {\"target_owner_id\": \"$CHANGE_OWNER\"}; append to relations: {\"change_id\": \"$CHANGE_ID\", \"confidence\": \"medium\", \"oracle_id\": \"oracle:t/bulk.t:is:133-168\", \"owner_id\": \"$CHANGE_OWNER\", \"provenance_refs\": [], \"reachability_hint\": \"reachable\", \"relation_id\": \"relation:file:t/bulk.t:package_reference:$CHANGE_ID\", \"relation_kind\": \"package_reference\", \"test_id\": \"test:t/bulk.t\"}; the packet fingerprint was recomputed. The retained oracle facts predate the producer pin: its `isnt` oracle stays `strong_exact` here, where the pinned producer now emits `weak_smoke` (RIPR-SPEC-0235 rule 17 demotes it either way)."
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0235#27"
+  ]
+}
