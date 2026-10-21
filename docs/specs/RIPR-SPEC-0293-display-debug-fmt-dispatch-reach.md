@@ -87,3 +87,29 @@ Existing shadow checks for the owner's type and trait still apply. Derived
 
 - Derived `Debug`, trait objects, generic dispatch, and values returned by
   calls whose type needs inference.
+
+## Acceptance Examples
+
+1. `let err = DecodeError::InvalidLastSymbol(1, b'0');` then
+   `assert_eq!(format!("{:?}", err), "...")` relates the test to
+   `impl Debug for DecodeError::fmt` as `direct_owner_call`.
+2. The same test against `impl Display for DecodeError::fmt` relates nothing.
+3. A second `DecodeError` declared elsewhere, or a local
+   `macro_rules! format`, relates nothing.
+
+## Test Mapping
+
+- `crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs`: the
+  `tests` module, one test per Required Evidence bullet.
+
+## Implementation Mapping
+
+- `crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs`:
+  `FmtContext`, `test_dispatches_to_fmt`, `macro_dispatch`, `args_dispatch`,
+  `expr_has_type`.
+- `crates/ripr/src/analysis/classify/related_tests.rs`: candidate prefilter,
+  `calls_owner` and `owner_call_relation_reason` wiring.
+
+## Metrics
+
+- `unit_test_pass_rate`: the fmt dispatch tests are required Rust tests.
