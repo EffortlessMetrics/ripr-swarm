@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! // lib.rs
-//! use axum_macros::__private_axum_test as test;
+//! use app_macros::wrapped_test as test;
 //! // anywhere in the crate
 //! #[crate::test]
 //! async fn handles_request() { .. }
