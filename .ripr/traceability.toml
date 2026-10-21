@@ -16683,6 +16683,10 @@ tests = [
   "crates/ripr/src/analysis/language/python/boundary.rs::call_line_text_tests::exact_limit_line_is_whole_and_one_over_is_cut",
   "crates/ripr/src/analysis/language/python/boundary.rs::call_line_text_tests::exact_call_length_with_space_before_paren_keeps_the_closing_paren",
   "crates/ripr/src/analysis/language/python/tests.rs::boundary_call_row_window_counts_whitespace_before_the_paren",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::fallthrough_return_after_early_exit_taken_by_every_call_is_weakly_exposed",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::fallthrough_return_with_input_missing_the_early_exit_stays_exposed",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::fallthrough_return_with_disjoint_early_exits_words_at_least_one",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::fallthrough_return_ignores_early_exit_text_inside_a_docstring",
 ]
 code = [
   "crates/ripr/src/analysis/language/python/guard_activation.rs",

@@ -130,18 +130,28 @@ pub(super) fn python_guarded_arm_gap(
     observed_values.dedup();
 
     let mut parts = Vec::new();
-    for (_, condition) in &early_exits {
-        let observed = condition_observed_values(condition, &rows);
+    if !early_exits.is_empty() {
+        let names = early_exits
+            .iter()
+            .map(|(_, condition)| format!("`{condition}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut observed: Vec<String> = early_exits
+            .iter()
+            .flat_map(|(_, condition)| {
+                condition_observed_values(condition, &rows)
+                    .into_iter()
+                    .map(|value| format!("{} = {value}", condition_lhs(condition)))
+            })
+            .collect();
+        observed.sort();
+        observed.dedup();
         parts.push(format!(
-            "every strong related test input satisfies `{condition}` and exits the owner before the changed line{}",
+            "each strong related test input satisfies at least one preceding early-exit condition ({names}) and exits the owner before the changed line{}",
             if observed.is_empty() {
                 String::new()
             } else {
-                format!(
-                    "; observed {} values: {}",
-                    condition_lhs(condition),
-                    observed.join(", ")
-                )
+                format!("; observed {}", observed.join(", "))
             }
         ));
     }
@@ -270,6 +280,54 @@ pub(super) fn guarding_conditions(
     (!conditions.is_empty()).then_some(conditions)
 }
 
+/// Per line, whether it starts inside (or is wholly part of) a triple-quoted
+/// string, so docstring text that looks like `if X:` / `return` is not read as
+/// code. A line that closes a string and then holds code counts as inside;
+/// the callers only skip such lines, which fails open.
+fn lines_inside_triple_quotes(lines: &[&str]) -> Vec<bool> {
+    let mut open: Option<&str> = None;
+    let mut mask = Vec::with_capacity(lines.len());
+    for line in lines {
+        let mut inside = open.is_some();
+        let mut rest: &str = line;
+        loop {
+            match open {
+                Some(delimiter) => match rest.find(delimiter) {
+                    Some(position) => {
+                        rest = &rest[position + delimiter.len()..];
+                        open = None;
+                    }
+                    None => break,
+                },
+                None => {
+                    // Earliest triple quote outside a comment; single-line
+                    // quotes are not tracked, so a quote character inside
+                    // another string can only make the mask larger.
+                    let comment = rest.find('#').unwrap_or(rest.len());
+                    let double = rest.find("\"\"\"");
+                    let single = rest.find("'''");
+                    let start = match (double, single) {
+                        (Some(d), Some(s)) if d <= s => Some((d, "\"\"\"")),
+                        (Some(d), None) => Some((d, "\"\"\"")),
+                        (_, Some(s)) => Some((s, "'''")),
+                        (None, None) => None,
+                    };
+                    match start {
+                        Some((position, delimiter)) if position < comment => {
+                            inside = true;
+                            rest = &rest[position + delimiter.len()..];
+                            open = Some(delimiter);
+                        }
+                        _ => break,
+                    }
+                }
+            }
+        }
+        mask.push(inside);
+    }
+    mask
+}
+
 /// Conditions of simple `if X:` statements in the changed line's own block
 /// that precede it and always leave the owner (`return`/`raise` as the last
 /// body statement, no `elif`/`else` chain). The changed line runs only for
@@ -291,8 +349,16 @@ fn early_exit_conditions(
         return Vec::new();
     }
     let block_indent = leading_whitespace(changed);
+    let in_string = lines_inside_triple_quotes(&lines);
+    if in_string.get(changed_index).copied().unwrap_or(true) {
+        return Vec::new();
+    }
     let mut found = Vec::new();
     for index in (owner.start_line..changed_index).rev() {
+        if in_string[index] {
+            // Docstring or multi-line string text is not code.
+            continue;
+        }
         let raw = lines[index];
         let trimmed = raw.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {

@@ -1572,6 +1572,44 @@ fn fallthrough_return_with_input_missing_the_early_exit_stays_exposed() -> Resul
     Ok(())
 }
 
+#[test]
+fn fallthrough_return_with_disjoint_early_exits_words_at_least_one() -> Result<(), String> {
+    // f(20) takes the first exit and f(-1) the second: neither condition holds
+    // for every call, so the reason must not claim that.
+    let finding = classify_added_case(
+        "def f(x):\n    if x > 10:\n        return 1\n    if x < 0:\n        return 2\n    return 3\n",
+        "from src.subject import f\n\ndef test_f():\n    assert f(20) == 1\n    assert f(-1) == 2\n",
+        6,
+        "    return 3",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    let reason = missing_boundary(&finding, "not (x > 10) and not (x < 0)")
+        .ok_or_else(|| format!("missing discriminator absent: {finding:?}"))?;
+    assert!(
+        reason.contains("each strong related test input satisfies at least one preceding early-exit condition (`x > 10`, `x < 0`)"),
+        "{reason}"
+    );
+    assert!(
+        !reason.contains("every strong related test input satisfies"),
+        "{reason}"
+    );
+    Ok(())
+}
+
+#[test]
+fn fallthrough_return_ignores_early_exit_text_inside_a_docstring() -> Result<(), String> {
+    // The `if`/`return` lines live in the docstring, so they are not code and
+    // the final return stays exposed under the exact oracle.
+    let finding = classify_added_case(
+        "def quote(total):\n    \"\"\"\n    if total > 1000:\n        return 0\n    \"\"\"\n    return round(total * 1.05, 2)\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(2000.0) == 2100.0\n",
+        6,
+        "    return round(total * 1.05, 2)",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
 // The gate's premise is "EVERY strong related call provably fails the
 // guard". Each of the following shapes leaves that premise unprovable, so
 // the gate must fail open and keep the oracle verdict rather than
