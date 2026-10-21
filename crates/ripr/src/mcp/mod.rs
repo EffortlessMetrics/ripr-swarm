@@ -153,6 +153,14 @@ pub fn run(args: &[String]) -> Result<(), String> {
         index += 1;
     }
 
+    // A person who typed `ripr mcp` at a prompt would otherwise see a silent
+    // hang; an MCP client pipes stdin, so the hint never reaches one.
+    if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        eprintln!(
+            "ripr mcp serves MCP JSON-RPC over stdio for an MCP client; it is waiting for a client on stdin. Run `ripr init --mcp` to register it with your client, or `ripr mcp --help` for details."
+        );
+    }
+
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
