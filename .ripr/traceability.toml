@@ -16158,6 +16158,11 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/conditional_assertion_tests.rs::ts_assertion_after_unconditional_exit_is_withheld",
+  "crates/ripr/src/analysis/language/typescript/conditional_assertion_tests.rs::ts_assertion_after_conditional_exit_stays_credited",
+  "crates/ripr/src/analysis/language/typescript/conditional_assertion_tests.rs::ts_decidable_if_exit_withholds_following_assertion",
+  "crates/ripr/src/analysis/language/typescript/conditional_assertion_tests.rs::ts_dead_conditional_after_return_yields_no_credit_gap",
+  "crates/ripr/src/analysis/language/typescript/conditional_assertion_tests.rs::ts_dead_assertion_after_return_does_not_expose",
   "crates/ripr/src/analysis/language/typescript/tests/registration_binding_tests.rs::registration_bindings_keep_imported_and_global_controls",
   "crates/ripr/src/analysis/language/typescript/tests/registration_binding_tests.rs::registration_bindings_reject_local_noop_callbacks",
   "crates/ripr/src/analysis/language/typescript/tests/registration_binding_tests.rs::registration_bindings_preserve_unrelated_valid_evidence",
@@ -16245,6 +16250,7 @@ fixtures = [
   "fixtures/typescript_effect_owner_alias",
   "fixtures/typescript_caught_assertion",
   "fixtures/typescript_finally_completion",
+  "fixtures/ts_dead_assertion_after_return",
 ]
 code = [
   "crates/ripr/src/analysis/language/typescript/admission.rs",
