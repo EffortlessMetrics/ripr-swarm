@@ -52,7 +52,11 @@ pub(super) fn python_guarded_arm_gap(
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
 ) -> Option<GuardedArmGap> {
-    let conditions = guarding_conditions(owner, owner_source, changed_line)?;
+    let conditions = guarding_conditions(owner, owner_source, changed_line).unwrap_or_default();
+    let early_exits = early_exit_conditions(owner, owner_source, changed_line);
+    if conditions.is_empty() && early_exits.is_empty() {
+        return None;
+    }
     let constants = unrebound_constants(owner, related_candidates);
     let (rows, gaps) =
         strong_owner_call_rows_with_gaps(owner, &constants, related_candidates, focus);
@@ -85,6 +89,17 @@ pub(super) fn python_guarded_arm_gap(
                 owner_source,
                 owner.start_line,
             ) == Some(false)
+        }) || early_exits.iter().any(|(condition_line, condition)| {
+            // A row that satisfies an earlier `if X: return ...` leaves the
+            // owner before the changed line, so the line never runs for it.
+            condition_holds(
+                condition,
+                *condition_line,
+                row,
+                &constants,
+                owner_source,
+                owner.start_line,
+            ) == Some(true)
         })
     });
     if !every_row_excluded {
@@ -115,6 +130,21 @@ pub(super) fn python_guarded_arm_gap(
     observed_values.dedup();
 
     let mut parts = Vec::new();
+    for (_, condition) in &early_exits {
+        let observed = condition_observed_values(condition, &rows);
+        parts.push(format!(
+            "every strong related test input satisfies `{condition}` and exits the owner before the changed line{}",
+            if observed.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "; observed {} values: {}",
+                    condition_lhs(condition),
+                    observed.join(", ")
+                )
+            }
+        ));
+    }
     for (_, condition) in &conditions {
         let observed = condition_observed_values(condition, &rows);
         parts.push(format!(
@@ -135,9 +165,10 @@ pub(super) fn python_guarded_arm_gap(
         parts.join(" and ")
     );
     Some(GuardedArmGap {
-        discriminator: conditions
+        discriminator: early_exits
             .iter()
-            .map(|(_, condition)| condition.as_str())
+            .map(|(_, condition)| format!("not ({condition})"))
+            .chain(conditions.iter().map(|(_, condition)| condition.clone()))
             .collect::<Vec<_>>()
             .join(" and "),
         observed_values,
@@ -237,6 +268,83 @@ pub(super) fn guarding_conditions(
     }
     conditions.reverse();
     (!conditions.is_empty()).then_some(conditions)
+}
+
+/// Conditions of simple `if X:` statements in the changed line's own block
+/// that precede it and always leave the owner (`return`/`raise` as the last
+/// body statement, no `elif`/`else` chain). The changed line runs only for
+/// inputs that fail every such condition. Anything the reader cannot place
+/// honestly yields no entry, which keeps the existing verdict.
+fn early_exit_conditions(
+    owner: &PythonOwner,
+    owner_source: &str,
+    changed_line: usize,
+) -> Vec<(usize, String)> {
+    let lines: Vec<&str> = owner_source.lines().collect();
+    let Some(changed_index) = changed_line.checked_sub(1) else {
+        return Vec::new();
+    };
+    let Some(changed) = lines.get(changed_index) else {
+        return Vec::new();
+    };
+    if owner.start_line == 0 || changed.trim().is_empty() {
+        return Vec::new();
+    }
+    let block_indent = leading_whitespace(changed);
+    let mut found = Vec::new();
+    for index in (owner.start_line..changed_index).rev() {
+        let raw = lines[index];
+        let trimmed = raw.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let indent = leading_whitespace(raw);
+        if indent < block_indent {
+            // Left the changed line's block; enclosing levels are not read.
+            break;
+        }
+        if indent > block_indent {
+            continue;
+        }
+        let Some(condition) = trimmed
+            .strip_prefix("if ")
+            .and_then(|rest| rest.trim_end().strip_suffix(':'))
+        else {
+            continue;
+        };
+        let mut body: Vec<&str> = Vec::new();
+        let mut chain_continues = false;
+        for line in &lines[index + 1..] {
+            let t = line.trim();
+            if t.is_empty() || t.starts_with('#') {
+                continue;
+            }
+            if leading_whitespace(line) > block_indent {
+                body.push(line);
+                continue;
+            }
+            chain_continues = t.starts_with("elif ") || t.starts_with("else");
+            break;
+        }
+        // The last body statement must sit at the body's own top level; a
+        // nested `return` under an inner `if` does not always exit.
+        let terminates = match (body.first(), body.last()) {
+            (Some(first), Some(last)) => {
+                let t = last.trim();
+                leading_whitespace(first) == leading_whitespace(last)
+                    && (t == "return"
+                        || t.starts_with("return ")
+                        || t == "raise"
+                        || t.starts_with("raise "))
+            }
+            _ => false,
+        };
+        if terminates && !chain_continues {
+            found.push((index, condition.trim().to_string()));
+        }
+    }
+    found.reverse();
+    found
 }
 
 fn leading_whitespace(text: &str) -> usize {

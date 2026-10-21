@@ -1523,6 +1523,55 @@ fn guarded_arm_return_value_with_activating_input_stays_exposed() -> Result<(), 
     Ok(())
 }
 
+// A return after an earlier `if X: return ...` runs only for inputs that fail
+// `X`. When every strong related call satisfies `X`, the fallthrough return
+// never runs, so the exact-value oracle cannot discriminate its change.
+#[test]
+fn fallthrough_return_after_early_exit_taken_by_every_call_is_weakly_exposed() -> Result<(), String>
+{
+    let finding = classify_added_case(
+        QUOTE_SOURCE,
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(2000.0) == 2040.0\n",
+        4,
+        "    return round(total * 1.05, 2)",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(
+        missing_boundary(&finding, "not (total > 1000)").is_some(),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn fallthrough_return_with_input_missing_the_early_exit_stays_exposed() -> Result<(), String> {
+    let finding = classify_added_case(
+        QUOTE_SOURCE,
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(2000.0) == 2040.0\n    assert quote(100.0) == 105.0\n",
+        4,
+        "    return round(total * 1.05, 2)",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    // A non-terminating `if` body, or one chained to `else`, does not exit.
+    for source in [
+        "def quote(total):\n    if total > 1000:\n        total = 5\n    return round(total * 1.05, 2)\n",
+        "def quote(total):\n    if total > 1000:\n        if total > 5000:\n            return 0\n    return round(total * 1.05, 2)\n",
+    ] {
+        let finding = classify_added_case(
+            source,
+            "from src.subject import quote\n\ndef test_quote():\n    assert quote(2000.0) == 2100.0\n",
+            source.lines().count(),
+            "    return round(total * 1.05, 2)",
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{source}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
 // The gate's premise is "EVERY strong related call provably fails the
 // guard". Each of the following shapes leaves that premise unprovable, so
 // the gate must fail open and keep the oracle verdict rather than
