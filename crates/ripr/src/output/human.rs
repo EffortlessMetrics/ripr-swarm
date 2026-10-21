@@ -2246,6 +2246,43 @@ mod tests {
         }
     }
 
+    /// #9004: the bounded digest path shares the same display rule, and a
+    /// configured `off` or `info` severity is passed through unchanged for
+    /// base-side evidence (only `warning` is softened to `note`).
+    #[test]
+    fn base_side_digest_and_configured_severity_passthrough() {
+        use crate::config::ConfigSeverity;
+        let current = sample_finding();
+        let mut base_side = current.clone();
+        base_side.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        let digest = |finding: &Finding, config: &crate::config::RiprConfig| {
+            super::sections::render_finding_digest_with_config(finding, config, Path::new("."))
+        };
+        let default = crate::config::RiprConfig::default();
+        assert!(digest(&current, &default).contains("severity: warning,"));
+        let softened = digest(&base_side, &default);
+        assert!(softened.contains("severity: note,"), "{softened}");
+        assert!(!softened.contains("severity: warning"), "{softened}");
+
+        for (configured, expected) in [(ConfigSeverity::Off, "off"), (ConfigSeverity::Info, "info")]
+        {
+            let mut config = crate::config::RiprConfig::default();
+            config.severity.findings.weakly_exposed = configured;
+            let rendered = digest(&base_side, &config);
+            assert!(
+                rendered.contains(&format!("severity: {expected},")),
+                "{rendered}"
+            );
+            let full = super::render_finding_with_config(
+                &base_side,
+                &config,
+                Path::new("."),
+                super::JsonPointerWording::CheckFlag,
+            );
+            assert!(full.contains(&format!("({expected}, confidence")), "{full}");
+        }
+    }
+
     /// rc rehearsal (py-pricing): Start here picked the card-less constant
     /// finding at line 5 over the carded literal finding at line 11, so check
     /// said "no ripr command routes this" while pilot had a card. A Python

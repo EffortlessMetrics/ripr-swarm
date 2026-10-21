@@ -60,6 +60,4 @@ Command:
 `cargo xtask goldens bless field_match_raw_option_shadow --reason "..."`
 
 Updated:
-- `expected/check.json`
-- `expected/human.txt`
 - `expected/human-full.txt`

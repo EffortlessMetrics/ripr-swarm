@@ -86,6 +86,4 @@ Command:
 `cargo xtask goldens bless match_arm_tuple_terminal_inherited_constructor --reason "..."`
 
 Updated:
-- `expected/check.json`
-- `expected/human.txt`
 - `expected/human-full.txt`
