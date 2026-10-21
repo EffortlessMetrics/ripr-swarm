@@ -491,6 +491,10 @@ fn list_gaps_tool_descriptor() -> Value {
                 "language": {
                     "type": "string",
                     "minLength": 1,
+                    "enum": crate::domain::LanguageId::ALL
+                        .iter()
+                        .map(crate::domain::LanguageId::as_str)
+                        .collect::<Vec<_>>(),
                     "description": "Narrow to one language wire string (for example `rust` or `python`)."
                 },
                 "repair_ready": {
