@@ -250,8 +250,8 @@ fn event_commit_bindings_are_exact_and_history_is_available() -> TestResult {
         .ok_or("detector step env")?;
     for binding in [
         "          EVENT_NAME: ${{ github.event_name }}",
-        "          BASE_SHA: ${{ github.event.pull_request.base.sha }}",
-        "          HEAD_SHA: ${{ github.event.pull_request.head.sha }}",
+        "          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}",
+        "          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}",
     ] {
         assert_eq!(
             env.lines().filter(|line| *line == binding).count(),
@@ -305,6 +305,8 @@ fn stale_event_base_and_synthetic_merge_checkout_use_pr_head() -> TestResult {
     );
     let production = shell("detect-docs-only")?;
     assert!(fixture.detect(&production, "pull_request", &base, &head, None)?);
+    // The merge queue classifies the queued commit the same way.
+    assert!(fixture.detect(&production, "merge_group", &base, &head, None)?);
     let range = "\"$BASE_SHA\"...\"$HEAD_SHA\"";
     assert_eq!(
         production.matches(range).count(),
