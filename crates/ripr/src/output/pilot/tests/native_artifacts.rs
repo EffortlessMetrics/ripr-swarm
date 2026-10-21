@@ -35,14 +35,19 @@ fn pilot_followups_preserve_native_default_artifacts() {
                 "ripr pilot --root {quoted_root} --out {quoted_out} --mode draft --max-seams 5 --timeout-ms 120000"
             )
         );
-        assert_eq!(commands.after_snapshot, format!(
-            "ripr check --root {quoted_root} --mode draft --format repo-exposure-json > {after}"
-        ));
-        assert_eq!(commands.outcome, format!(
-            "ripr outcome --before {before} --after {after}"
-        ));
-        assert_eq!(commands::python_card_first_pr_command(root), format!(
-            "ripr first-pr --root {quoted_root}"
-        ));
+        assert_eq!(
+            commands.after_snapshot,
+            format!(
+                "ripr check --root {quoted_root} --mode draft --format repo-exposure-json > {after}"
+            )
+        );
+        assert_eq!(
+            commands.outcome,
+            format!("ripr outcome --before {before} --after {after}")
+        );
+        assert_eq!(
+            commands::python_card_first_pr_command(root),
+            format!("ripr first-pr --root {quoted_root}")
+        );
     }
 }

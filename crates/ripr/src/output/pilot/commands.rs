@@ -192,23 +192,26 @@ impl PilotCommands {
         // so a pasted retry or snapshot command names this checkout.
         let command_root =
             loop_commands::bound_root(&loop_commands::root_path_display(context.root));
+        // Artifact arguments and redirects must preserve the same native
+        // spelling as the selected root, including the default output path.
+        // display_path/shell_path would select a different Unix directory.
         let after_snapshot = loop_commands::check_repo_exposure_command(
             &command_root,
             context.mode.as_str(),
-            &display_path(&after_path),
+            &loop_commands::root_path_display(&after_path),
         );
         let outcome = loop_commands::outcome_command(
-            &display_path(&loop_commands::bound_root_path(
+            &loop_commands::root_path_display(&loop_commands::bound_root_path(
                 &context.artifacts.repo_exposure_json,
             )),
-            &display_path(&after_path),
+            &loop_commands::root_path_display(&after_path),
             None,
         );
         let retry_timeout_ms = suggested_retry_timeout_ms(context.timeout_ms);
         let retry = format!(
             "ripr pilot --root {} --out {} --mode {} --max-seams {} --timeout-ms {}",
             loop_commands::shell_arg(&command_root),
-            loop_commands::shell_path(&out_dir),
+            loop_commands::shell_arg(&loop_commands::root_path_display(&out_dir)),
             context.mode.as_str(),
             context.max_seams,
             retry_timeout_ms

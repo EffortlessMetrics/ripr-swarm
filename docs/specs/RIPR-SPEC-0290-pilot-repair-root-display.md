@@ -100,7 +100,25 @@ For every root without a literal backslash, and on Windows for every root,
 the rendered commands are unchanged: `root_path_display` equals
 `display_path` there. No golden, fixture pin, or human output moves.
 
+### Rule 4: native artifact paths
+
+The retry `--out`, after-snapshot redirect, and outcome `--before` and
+`--after` arguments use `root_path_display` for their bound artifact paths,
+then the existing shell argument quoting. Default output under the selected
+root keeps its literal Unix backslashes and quotes. Pasting the commands
+from another working directory must read and write the original packet,
+leaving a separately existing slash-normalized sibling untouched.
+
 ## Required Evidence
+
+- `pilot_followups_preserve_native_default_artifacts` independently pins all
+  retry/snapshot/outcome paths and the Python first-pr route for native roots,
+  an apostrophe plus backslash root, and an ordinary-root control. It rejects
+  the pre-repair artifact rendering.
+- Real CLI execution of default-output retry, snapshot, and outcome commands
+  from a foreign CWD checks expected exits, native artifact identity, source
+  custody, and slash-sibling non-mutation. Removing the native before input
+  must make the same outcome command fail.
 
 - A unit test pins `repair_start_command` for a Unix root containing a
   literal backslash (`/tmp/team\repo`) and asserts the offered route keeps
@@ -135,6 +153,10 @@ the rendered commands are unchanged: `root_path_display` equals
 
 ## Test Mapping
 
+- `crates/ripr/src/output/pilot/tests/native_artifacts.rs`:
+  `pilot_followups_preserve_native_default_artifacts` (examples 3 and 4,
+  Rule 4, and ordinary-root control).
+
 - `crates/ripr/src/output/pilot/tests.rs`:
   `pilot_repair_start_preserves_a_literal_backslash_unix_root` (example 1,
   with the Windows stable-separator branch).
@@ -146,7 +168,7 @@ the rendered commands are unchanged: `root_path_display` equals
 
 - `crates/ripr/src/output/pilot/commands.rs`:
   `offered_repair_start_route`, `python_card_first_pr_command`,
-  `PilotCommands::new` (command root), rendering the root with
+  `PilotCommands::new` (command root and artifact paths), rendering paths with
   `crate::agent::loop_commands::root_path_display` before
   `crate::agent::loop_commands::bound_root`.
 - `crates/ripr/src/agent/loop_commands.rs`: `root_path_display`,
