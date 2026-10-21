@@ -56,7 +56,9 @@ use super::seam_inventory::{SeamLimitSource, repo_exposure_seam_limit};
 use super::test_grip_evidence::RelatedTestGrip;
 use super::test_grip_evidence::shared_grips::SharedGrips;
 use crate::config::{
-    PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, source_dir_contains_detectable_python,
+    PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, TYPESCRIPT_PROJECT_MARKERS,
+    TYPESCRIPT_SOURCE_DIR_MARKERS, source_dir_contains_detectable_python,
+    source_dir_contains_detectable_typescript,
 };
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -3988,6 +3990,8 @@ fn hash_named_workspace_files(root: &Path, file_name: &str) -> String {
 /// here are presence-only, exactly as no-config detection consumes them:
 /// root marker files and detectable Python source below root `src`/`tests`
 /// (bounded to two presence booleans — never a per-file enumeration).
+/// TypeScript no-config detection (`tsconfig.json`/`jsconfig.json` and
+/// detectable TypeScript source below `src`/`tests`) binds the same way.
 /// Content-only edits intentionally preserve this identity while creation
 /// and deletion invalidate it. Generated files and excluded directories do
 /// not participate: detection ignores them, so binding them would orphan
@@ -4004,7 +4008,21 @@ fn hash_workspace_manifests(root: &Path) -> String {
         .copied()
         .filter(|dir| source_dir_contains_detectable_python(root, dir))
         .collect();
-    if present_python_markers.is_empty() && detectable_source_dirs.is_empty() {
+    let present_typescript_markers: Vec<&str> = TYPESCRIPT_PROJECT_MARKERS
+        .iter()
+        .copied()
+        .filter(|marker| root.join(marker).is_file())
+        .collect();
+    let detectable_typescript_dirs: Vec<&str> = TYPESCRIPT_SOURCE_DIR_MARKERS
+        .iter()
+        .copied()
+        .filter(|dir| source_dir_contains_detectable_typescript(root, dir))
+        .collect();
+    if present_python_markers.is_empty()
+        && detectable_source_dirs.is_empty()
+        && present_typescript_markers.is_empty()
+        && detectable_typescript_dirs.is_empty()
+    {
         return cargo_identity;
     }
 
@@ -4016,6 +4034,16 @@ fn hash_workspace_manifests(root: &Path) -> String {
     }
     for dir in detectable_source_dirs {
         identity.push_str("python_source_dir=");
+        identity.push_str(dir);
+        identity.push('\n');
+    }
+    for marker in present_typescript_markers {
+        identity.push_str("typescript_marker=");
+        identity.push_str(marker);
+        identity.push('\n');
+    }
+    for dir in detectable_typescript_dirs {
+        identity.push_str("typescript_source_dir=");
         identity.push_str(dir);
         identity.push('\n');
     }

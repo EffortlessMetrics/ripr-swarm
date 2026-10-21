@@ -57,8 +57,10 @@ use crate::analysis::ClassifiedSeam;
 use crate::analysis::cancellation::AnalysisAbortKind;
 use crate::config::{
     CONFIG_FILE_NAME, LspDiagnosticProfile, PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS,
-    is_detectable_python_source_name, is_python_excluded_dir_everywhere,
-    python_project_marker_name, python_source_dir_marker_name,
+    is_detectable_python_source_name, is_detectable_typescript_source_name,
+    is_python_excluded_dir_everywhere, is_typescript_excluded_dir_everywhere,
+    python_project_marker_name, python_source_dir_marker_name, typescript_project_marker_name,
+    typescript_source_dir_marker_name,
 };
 use crate::domain::{StageEvidence, StageState};
 use crate::lsp::diagnostic_budget::DiagnosticDeliveryOutcome;
@@ -3944,6 +3946,11 @@ enum WorkspaceInputKind {
     /// detectable-file events because watched-file globs cannot express
     /// directory presence.
     PythonSourcePresence,
+    /// Canonical root `tsconfig.json`/`jsconfig.json`: the TypeScript
+    /// no-config detection marker class.
+    TypescriptProjectMarker,
+    /// Detectable TypeScript source below a root `src`/`tests` directory.
+    TypescriptSourcePresence,
     /// Root gap decision ledger or root `.git/HEAD` (#4896): diagnostics
     /// read both on every refresh, but neither is a configuration or
     /// workspace-graph input.
@@ -3952,7 +3959,13 @@ enum WorkspaceInputKind {
 
 impl WorkspaceInputKind {
     fn reloads_repository_config(self) -> bool {
-        matches!(self, Self::PythonProjectMarker | Self::PythonSourcePresence)
+        matches!(
+            self,
+            Self::PythonProjectMarker
+                | Self::PythonSourcePresence
+                | Self::TypescriptProjectMarker
+                | Self::TypescriptSourcePresence
+        )
     }
 
     fn invalidates_workspace_graph(self) -> bool {
@@ -3997,8 +4010,38 @@ fn workspace_input_kind(root: &Path, path: &Path) -> Option<WorkspaceInputKind> 
     {
         return Some(WorkspaceInputKind::PythonProjectMarker);
     }
-    path_is_detectable_source_dir_python(root, path)
-        .then_some(WorkspaceInputKind::PythonSourcePresence)
+    if let Some(marker) = typescript_project_marker_name(name)
+        && path_matches_root_file(root, path, marker)
+    {
+        return Some(WorkspaceInputKind::TypescriptProjectMarker);
+    }
+    if path_is_detectable_source_dir_python(root, path) {
+        return Some(WorkspaceInputKind::PythonSourcePresence);
+    }
+    path_is_detectable_source_dir_typescript(root, path)
+        .then_some(WorkspaceInputKind::TypescriptSourcePresence)
+}
+
+/// TypeScript form of [`path_is_detectable_source_dir_python`]: a detectable
+/// TypeScript source file below a root `src`/`tests` directory, outside the
+/// excluded directories. Presence-only; the file is never read.
+fn path_is_detectable_source_dir_typescript(root: &Path, path: &Path) -> bool {
+    let Some(relative) = root_relative_components(root, path) else {
+        return false;
+    };
+    let Some((marker, below)) = relative.split_first() else {
+        return false;
+    };
+    if typescript_source_dir_marker_name(marker).is_none() {
+        return false;
+    }
+    let Some((file_name, directories)) = below.split_last() else {
+        return false;
+    };
+    directories
+        .iter()
+        .all(|dir| !is_typescript_excluded_dir_everywhere(dir))
+        && is_detectable_typescript_source_name(file_name)
 }
 
 /// Whether `path` resolves below the workspace root to a detectable Python

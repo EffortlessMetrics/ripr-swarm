@@ -139,7 +139,13 @@ enabled = ["rust"]
 The default `enabled` value is `["rust"]`. Preview adapters do not run
 when absent from explicit `enabled`. When `ripr.toml` is missing, a
 language-specific project detector may add a preview adapter for a recognized
-project root; Python project detection is the first such exception. A
+project root. Python project detection is the first such exception;
+TypeScript project detection follows it, selecting the TypeScript adapter
+from a root `tsconfig.json` or `jsconfig.json`, or from detectable
+TypeScript source (`.ts`, `.tsx`, `.mts`, `.cts`; not generated names or
+excluded directories) below root `src` or `tests`. `package.json` and
+plain JavaScript alone do not select it. A binary built without
+`lang-typescript` ignores the detector silently. A
 `--languages rust,typescript` CLI flag overrides config when needed.
 
 An explicit `ripr.toml` is authoritative. For example, a Python-shaped
