@@ -29,10 +29,8 @@ Linked PRs:
 
 Support-tier impact:
 
-- None. The `rust_test_stub` document (schema `0.2`) gains one additive
+- None under [SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md). The `rust_test_stub` document (schema `0.2`) gains one additive
   `already_present` boolean; no command accepts or executes anything new.
-- Claim boundaries remain governed by
-  [support tiers](../status/SUPPORT_TIERS.md).
 
 Policy impact:
 
