@@ -434,6 +434,12 @@ pub enum StaticLimitKind {
     /// expects. The gap is withheld and the class is `static_unknown`. See
     /// RIPR-SPEC-0240.
     RustPanicOutcomeUnresolved,
+    /// A related test that calls the owner directly pins its result with
+    /// `debug_assert_eq!(owner(..), expected)`. That runs under the default
+    /// `cargo test` profile but is compiled out under `--release`, so ripr
+    /// neither credits nor denies the discriminator. The gap is withheld and
+    /// the class is `static_unknown`. See RIPR-SPEC-0240 / #8051.
+    RustDebugAssertionProfileUnresolved,
     /// A related Rust test has a source line holding as many distinct callees
     /// as the per-line call-fact budget keeps (256), so additional callees
     /// may have been omitted. Any negative or uniqueness claim over that
@@ -505,6 +511,9 @@ impl StaticLimitKind {
             StaticLimitKind::RustAssertionContextUnresolved => "rust_assertion_context_unresolved",
             StaticLimitKind::RustLogCaptureUnresolved => "rust_log_capture_unresolved",
             StaticLimitKind::RustPanicOutcomeUnresolved => "rust_panic_outcome_unresolved",
+            StaticLimitKind::RustDebugAssertionProfileUnresolved => {
+                "rust_debug_assertion_profile_unresolved"
+            }
             StaticLimitKind::RustCallFactBudget => "rust_call_fact_budget",
             StaticLimitKind::RustFrameworkOracleUnresolved => "rust_framework_oracle_unresolved",
         }
@@ -627,6 +636,13 @@ impl StaticLimitKind {
                  ripr does not resolve whether the panic comes from the changed code or from an \
                  earlier call. ripr does not claim a gap; this is a named limitation, not a \
                  coverage claim."
+            }
+            StaticLimitKind::RustDebugAssertionProfileUnresolved => {
+                "A related Rust test calls this code and checks its result with \
+                 `debug_assert_eq!`, which runs under the default test profile but is compiled out \
+                 when tests run with `--release`. ripr does not resolve which profile runs the \
+                 tests, so it does not claim a gap; this is a named limitation, not a coverage \
+                 claim."
             }
             StaticLimitKind::RustCallFactBudget => {
                 "A related Rust test has a source line with as many distinct calls as ripr \
@@ -955,6 +971,10 @@ mod tests {
             "rust_panic_outcome_unresolved"
         );
         assert_eq!(
+            StaticLimitKind::RustDebugAssertionProfileUnresolved.as_str(),
+            "rust_debug_assertion_profile_unresolved"
+        );
+        assert_eq!(
             StaticLimitKind::RustCallFactBudget.as_str(),
             "rust_call_fact_budget"
         );
@@ -990,6 +1010,7 @@ mod tests {
             StaticLimitKind::RustAssertionContextUnresolved,
             StaticLimitKind::RustLogCaptureUnresolved,
             StaticLimitKind::RustPanicOutcomeUnresolved,
+            StaticLimitKind::RustDebugAssertionProfileUnresolved,
             StaticLimitKind::RustCallFactBudget,
             StaticLimitKind::RustFrameworkOracleUnresolved,
         ];

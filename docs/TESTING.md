@@ -105,6 +105,28 @@ Inspect the selected package instead with
 For workflow-policy, agent-skill, and executable-file edits, use the existing
 [`cargo policy` frontdoor](../CONTRIBUTING.md#local-setup) for focused feedback.
 
+### Bounded module-motion controls
+
+The #4680 controls implement the
+[bounded module-motion contract](specs/RIPR-SPEC-0005-repo-seam-inventory.md#bounded-rust-module-motion).
+They build real disk-backed indexes for parent, inline-child and file-child
+placements, pair accessible observers with wrong-owner, changed-value and private
+child negatives, and check descendant/helper preservation. They also exercise
+default-target authority, all five compact stage states, portable snapshot
+identity, and production repair-target selection through rendered card JSON.
+
+```bash
+cargo test --locked --offline -p ripr --lib module_extraction
+cargo test --locked --offline -p ripr --lib unit_target_discovery_flags_do_not_change_shared_root_authority
+```
+
+The aggregate `module_extraction_controls` reports every control family even when
+one fails; a failure still fails the test. These tests do not close the separate
+local binding/shadowing or duplicate-import residuals on #4680. Record the exact
+head, selected features and controls actually reached when reporting a hosted
+fail-fast run. Host restrictions take precedence over these local examples;
+use the existing permitted hosted qualification route when local builds are held.
+
 ### Measured example and limits
 
 At `97cc171257fd76a1b3b9e79cc41ad949e0ecc861`, the three Cargo commands above were

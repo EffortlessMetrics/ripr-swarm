@@ -266,6 +266,19 @@ reach through them keeps the limitations above. A generated test whose
 transcriber calls a helper macro from another file is indexed for reach, but
 an assertion inside that helper is refused like any untrusted macro.
 
+## Macro Definition Edits
+
+A changed line that lies wholly inside a `macro_rules!` definition (matcher or
+transcriber text, including `#`, `use` and `mod` lines that the transcriber
+emits) is macro token text, not a Rust expression. The probe seeder emits one
+`static_unknown` probe per definition and diff side (keyed by name and start
+line) and no expression-family probe, so a matcher arm such as
+`($args:ident) => {` is never graded `weakly_exposed`. A line that also holds
+code outside the definition's byte extent keeps normal seeding, and lines in an
+inline test module stay test evidence. Only `macro_rules!` is covered (including
+raw-identifier names); macros 2.0 are not. An unclosed definition runs to the
+end of the file, which is an approximation for an edit in progress.
+
 ## Wire Format
 
 | Field | Value when fires | Value when not fires |
@@ -346,6 +359,23 @@ an assertion inside that helper is refused like any untrusted macro.
 
 ## Test Mapping
 
+- `crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::macro_rules_definition_lines_seed_one_static_unknown_not_expression_probes`
+- `crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::removed_macro_rules_lines_do_not_seed_expression_probes`
+- `crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::same_named_macro_definitions_each_seed_their_own_unknown`
+- `crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::macro_inside_an_inline_test_module_seeds_no_probe`
+- `crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::attribute_only_edit_inside_a_macro_seeds_unknown_on_both_sides`
+- `crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::a_line_mixing_a_macro_definition_and_other_code_keeps_normal_seeding`
+- `crates/ripr/src/analysis/probes/macro_definition.rs::tests::extents_cover_matcher_and_transcriber_lines`
+- `crates/ripr/src/analysis/probes/macro_definition.rs::tests::prose_and_lookalikes_are_not_definitions`
+- `crates/ripr/src/analysis/probes/macro_definition.rs::tests::an_unclosed_definition_runs_to_the_end_of_the_file`
+- `crates/ripr/src/analysis/probes/macro_definition.rs::tests::an_unclosed_definition_with_trailing_non_ascii_does_not_panic`
+- `crates/ripr/src/analysis/probes/macro_definition.rs::tests::paren_and_bracket_delimiters_are_definitions`
+- `crates/ripr/src/analysis/probes/macro_definition.rs::tests::nested_braces_and_repetitions_close_at_the_outer_delimiter`
+- `crates/ripr/src/analysis/probes/macro_definition.rs::tests::a_brace_char_literal_does_not_unbalance_the_extent`
+- `crates/ripr/src/analysis/probes/macro_definition.rs::tests::spacing_around_the_bang_is_accepted`
+- `crates/ripr/src/analysis/probes/macro_definition.rs::tests::two_same_named_definitions_are_both_found`
+- `crates/ripr/src/analysis/probes/macro_definition.rs::tests::raw_identifier_macro_names_are_definitions`
+- `crates/ripr/src/analysis/probes/macro_definition.rs::tests::a_mixed_line_is_owned_by_no_definition`
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_entry_path_stops_at_owner_macro_then_macro_witness_is_captured`
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_macro_definition_does_not_name_owner_then_macro_witness_is_none`
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_test_invokes_owner_macro_directly_then_macro_witness_is_captured`
@@ -388,6 +418,7 @@ an assertion inside that helper is refused like any untrusted macro.
 | Macro witness producer | `crates/ripr/src/analysis/classify/transitive_reach.rs` |
 | Same-file test generator expansion | `crates/ripr/src/analysis/syntax/local_test_macros.rs` |
 | Generated test indexing | `crates/ripr/src/analysis/facts/macro_generated_tests.rs` |
+| Macro definition extents | `crates/ripr/src/analysis/probes/macro_definition.rs` |
 | Generated test assertion admission | `crates/ripr/src/analysis/classify/owner_pin.rs` |
 | Classifier export | `crates/ripr/src/analysis/classify/mod.rs` |
 | Diff/repo-mode wiring | `crates/ripr/src/analysis/language/rust/mod.rs` |

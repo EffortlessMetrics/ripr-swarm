@@ -1606,7 +1606,7 @@ fn help_json_is_deterministic_across_roots_env_and_side_effect_free() -> Result<
         // sha256 hex digest. A partial document must not pass as complete.
         let value: serde_json::Value = serde_json::from_slice(&baseline_stdout)
             .map_err(|error| format!("help --json is not valid JSON: {error}"))?;
-        if value["schema_version"] != serde_json::json!(2) {
+        if value["schema_version"] != serde_json::json!(3) {
             return Err(format!(
                 "help --json schema_version moved: {}",
                 value["schema_version"]
@@ -3604,6 +3604,16 @@ fn check_json_malformed_config_emits_redacted_refusal() -> Result<(), String> {
     if !stderr.contains("canary_config_secret_6834") {
         return Err(format!("stderr keeps the full human diagnostic: {stderr}"));
     }
+    // #9033: stderr also names the way out; the machine message stays the
+    // one-line summary.
+    if !stderr.contains("removing it makes ripr use the next ripr.toml it finds") {
+        return Err(format!("stderr must name how to recover: {stderr}"));
+    }
+    if message.contains("built-in defaults") {
+        return Err(format!(
+            "the recovery hint must not enter the machine message: {message}"
+        ));
+    }
     ignore_remove_dir_all(&root);
     Ok(())
 }
@@ -3679,9 +3689,22 @@ fn assert_json_refusal_envelope(
     identity: &str,
     repair_route: &str,
 ) -> Result<serde_json::Value, String> {
-    if output.status.code() != Some(2) {
+    assert_json_refusal_envelope_with_exit(output, 2, schema_version, scope, identity, repair_route)
+}
+
+/// Same envelope contract with an explicit process exit: typed named
+/// refusals (an unknown `--seam-id`) exit 3, could-not-complete exits 2.
+fn assert_json_refusal_envelope_with_exit(
+    output: &Output,
+    exit: i32,
+    schema_version: &str,
+    scope: &str,
+    identity: &str,
+    repair_route: &str,
+) -> Result<serde_json::Value, String> {
+    if output.status.code() != Some(exit) {
         return Err(format!(
-            "expected exit 2 for {identity}, got {:?}\nstderr:\n{}",
+            "expected exit {exit} for {identity}, got {:?}\nstderr:\n{}",
             output.status.code(),
             String::from_utf8_lossy(&output.stderr)
         ));
@@ -3947,8 +3970,9 @@ fn agent_packet_json_unknown_seam_id_emits_refusal_envelope() -> Result<(), Stri
         "--seam-id",
         "seam:definitely-not-real-9f2a-7331",
     ]);
-    let value = assert_json_refusal_envelope(
+    let value = assert_json_refusal_envelope_with_exit(
         &output,
+        3,
         "0.5",
         "repo",
         "seam_id_unknown",
@@ -5845,9 +5869,9 @@ fn agent_card_hands_off_one_seam_as_the_default_repair_card()
 
     // A cold agent's `probe:...` finding ID is refused with the same seam-ID
     // source hint the packet surface names. #5007: the refusal is typed —
-    // exit code 3, not an operational failure — and under `--json` stderr
-    // carries one parseable `agent_card_refusal` envelope with the prose
-    // rendering after it, while stdout stays empty.
+    // exit code 3, not an operational failure — and under `--json` stdout
+    // carries one parseable `agent_card_refusal` envelope while the prose
+    // rendering stays on stderr.
     let unknown = run_ripr(&[
         "agent",
         "card",
@@ -5881,15 +5905,11 @@ fn agent_card_hands_off_one_seam_as_the_default_repair_card()
         "a named refusal takes the decision exit code: {typed:?}"
     );
     assert!(
-        typed.stdout.is_empty(),
-        "the card-artifact stdout stays empty on a refusal: {typed:?}"
+        unknown.stdout.is_empty(),
+        "without --json a refusal keeps stdout empty: {unknown:?}"
     );
     let typed_stderr = String::from_utf8_lossy(&typed.stderr);
-    let envelope_end = typed_stderr
-        .find("\n}\n")
-        .ok_or("the refusal envelope did not terminate on stderr")?
-        + 3;
-    let envelope: serde_json::Value = serde_json::from_str(&typed_stderr[..envelope_end])?;
+    let envelope: serde_json::Value = serde_json::from_slice(&typed.stdout)?;
     assert_eq!(envelope["schema_version"], "0.1", "{envelope}");
     assert_eq!(envelope["kind"], "agent_card_refusal", "{envelope}");
     assert_eq!(envelope["error"]["kind"], "seam_not_found", "{envelope}");
@@ -5910,8 +5930,8 @@ fn agent_card_hands_off_one_seam_as_the_default_repair_card()
         "{envelope}"
     );
     assert!(
-        typed_stderr[envelope_end..].contains("is a `ripr check` finding ID, not a seam ID"),
-        "the human prose rendering stays on stderr after the envelope: {typed_stderr}"
+        typed_stderr.contains("is a `ripr check` finding ID, not a seam ID"),
+        "the human prose rendering stays on stderr: {typed_stderr}"
     );
     std::fs::remove_dir_all(root)?;
     Ok(())
@@ -11608,6 +11628,92 @@ fn make_temp_workspace(report: Option<&str>) -> Result<PathBuf, String> {
     make_temp_workspace_with_suppressions(report, None)
 }
 
+/// #5102: a completed doctor diagnosis with failed checks exits 3 (typed
+/// decision), a usage error exits 2 (could not complete, no check ran), and
+/// a clean doctor exits 0. Error text stays `doctor found issues`.
+#[test]
+fn doctor_exit_codes_distinguish_findings_usage_and_clean() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let root = workspace.display().to_string();
+
+    let clean = run_ripr(&["doctor", "--root", &root]);
+    assert_eq!(
+        clean.status.code(),
+        Some(0),
+        "clean doctor must exit 0; stderr:\n{}",
+        String::from_utf8_lossy(&clean.stderr)
+    );
+
+    let missing = workspace.join("missing-root");
+    let missing_arg = missing.display().to_string();
+    for args in [
+        vec!["doctor", "--root", missing_arg.as_str()],
+        vec!["doctor", "--root", missing_arg.as_str(), "--json"],
+    ] {
+        let findings = run_ripr(&args);
+        assert_eq!(
+            findings.status.code(),
+            Some(3),
+            "completed doctor with findings must exit 3: {args:?}; stderr:\n{}",
+            String::from_utf8_lossy(&findings.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&findings.stderr).contains("doctor found issues"),
+            "findings exit must keep the stable error text: {args:?}"
+        );
+    }
+
+    let usage = run_ripr(&["doctor", "--bogus"]);
+    assert_eq!(
+        usage.status.code(),
+        Some(2),
+        "doctor usage error must exit 2; stderr:\n{}",
+        String::from_utf8_lossy(&usage.stderr)
+    );
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn doctor_json_from_cargo_build_output_suppresses_path_mismatch_warning() -> Result<(), String> {
+    // #9097: the harness runs the Cargo-built binary; a different installed
+    // `ripr` earlier on PATH is the normal contributor setup, so the public
+    // doctor surface must not emit the PATH-mismatch warning.
+    let workspace = make_temp_workspace(None)?;
+    let fake_bin = workspace.join("fake-bin");
+    std::fs::create_dir_all(&fake_bin).map_err(|error| error.to_string())?;
+    let fake_name = if cfg!(windows) { "ripr.exe" } else { "ripr" };
+    std::fs::write(fake_bin.join(fake_name), b"not a real ripr\n")
+        .map_err(|error| error.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            fake_bin.join(fake_name),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    let path = std::env::join_paths(std::iter::once(fake_bin.clone()).chain(
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+    ))
+    .map_err(|error| error.to_string())?;
+    let path = path.to_string_lossy().into_owned();
+    let root = workspace.display().to_string();
+    let output = run_ripr_with_env(&["doctor", "--json", "--root", &root], &[("PATH", &path)]);
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(
+        stdout.contains("fake-bin"),
+        "doctor must report the PATH ripr it found:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("not the running binary"),
+        "cargo build output must not warn about a PATH mismatch:\n{stdout}"
+    );
+    Ok(())
+}
+
 #[test]
 fn doctor_reports_missing_config_defaults() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
@@ -13406,6 +13512,28 @@ fn doctor_reports_malformed_config_error() -> Result<(), String> {
     Ok(())
 }
 
+/// #9033: the loader's recovery line is for `check`/`explain`; verbose doctor
+/// already prints its own `Fix:` line and must not repeat it as an `error:` line.
+#[test]
+fn doctor_verbose_malformed_config_omits_the_loader_recovery_line() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    std::fs::write(workspace.join("ripr.toml"), "[bogus\n")
+        .map_err(|e| format!("write ripr.toml: {e}"))?;
+    let root = workspace.display().to_string();
+    let output = run_ripr(&["doctor", "--verbose", "--root", &root]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !stdout.contains("  Fix: correct ") {
+        return Err(format!("doctor must keep its own Fix line:\n{stdout}"));
+    }
+    if !stdout.contains("error: ") || stdout.contains("built-in defaults") {
+        return Err(format!(
+            "verbose doctor must show the parser error but not the loader hint:\n{stdout}"
+        ));
+    }
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
 /// #8168: an otherwise healthy committed Cargo repo with malformed `ripr.toml`
 /// must name a config correction, not `ripr check`.
 #[test]
@@ -14400,8 +14528,8 @@ fn doctor_without_git_names_the_fix_and_recommends_the_diff_route() -> Result<()
     assert_failure(&output);
     assert_eq!(
         output.status.code(),
-        Some(2),
-        "doctor without git stays exit 2; stderr:\n{}",
+        Some(3),
+        "doctor without git completes with findings and exits 3 (#5102); stderr:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);

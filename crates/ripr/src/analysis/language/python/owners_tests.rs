@@ -158,6 +158,7 @@ fn owner_from_function(
         .unwrap_or_else(|| name.to_string());
     let route_paths = collect_static_route_paths(context.source, decorators);
     let dynamic_route_decorators = collect_dynamic_route_decorators(context.source, decorators);
+    let unplain_decorators = called_decorator_names(decorators);
     let mut decorators = decorator_names;
     if is_async {
         decorators.push("async_def".to_string());
@@ -192,6 +193,7 @@ fn owner_from_function(
         cli_receiver_names: collect_static_cli_receiver_names(context.source, context.imports),
         route_paths,
         dynamic_route_decorators,
+        unplain_decorators,
         parameters,
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
@@ -255,6 +257,7 @@ fn owner_from_class(
         cli_receiver_names: collect_static_cli_receiver_names(context.source, context.imports),
         route_paths: collect_static_route_paths(context.source, decorators),
         dynamic_route_decorators: collect_dynamic_route_decorators(context.source, decorators),
+        unplain_decorators: called_decorator_names(decorators),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
@@ -284,6 +287,7 @@ pub(super) fn module_owner(
         cli_receiver_names: collect_static_cli_receiver_names(source, imports),
         route_paths: Vec::new(),
         dynamic_route_decorators: Vec::new(),
+        unplain_decorators: Vec::new(),
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
         ambiguous_src_modules: Vec::new(),
@@ -1094,6 +1098,16 @@ fn test_member_names(class: &ast::StmtClassDef) -> BTreeSet<&str> {
     }
     names.retain(|name| name.starts_with("test"));
     names
+}
+
+/// Names of decorators written as a call, whose result (not the named
+/// function) wraps the owner.
+fn called_decorator_names(decorators: &[Expr]) -> Vec<String> {
+    decorators
+        .iter()
+        .filter(|decorator| matches!(decorator, Expr::Call(_)))
+        .filter_map(expr_full_name)
+        .collect()
 }
 
 pub(super) fn decorator_names(decorators: &[Expr]) -> Vec<String> {

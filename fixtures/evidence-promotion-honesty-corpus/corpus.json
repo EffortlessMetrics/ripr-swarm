@@ -2615,6 +2615,47 @@
       ]
     },
     {
+      "id": "rust_test_in_struct_literal_not_exact",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/test_in_struct_literal_not_exact",
+      "vector": "comparison_held_in_a_struct_literal_is_never_an_exact_oracle",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "relational_check",
+          "strength": "weak"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "score_is_zero_only_for_zero_points",
+          "file": "src/lib.rs",
+          "line": 15,
+          "kind": "relational_check",
+          "strength": "weak"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_inequality_struct_assertion_not_exact",
       "language": "rust",
       "tier": "pure",
@@ -7996,6 +8037,35 @@
       ]
     },
     {
+      "id": "ts_dead_assertion_after_try_empty_catch",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/ts_dead_assertion_after_try_empty_catch",
+      "vector": "strong_assertion_after_bare_exit_try_with_unreachable_catch_treated_as_discriminator",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "ts_dropped_term_zero_input",
       "language": "typescript",
       "tier": "pure",
@@ -10345,6 +10415,20 @@
       "assertions": [
         { "type": "must_not_report_clean" },
         { "type": "must_not_promote" }
+      ]
+    },
+    {
+      "id": "rust_atomic_ordering_swap_strong_object_oracle_not_exposed",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/atomic_ordering_swap_strong_object_oracle",
+      "vector": "atomic_ordering_only_call_edit_cannot_borrow_a_strong_whole_object_oracle",
+      "probe_family": "static_unknown",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
       ]
     },
     {
