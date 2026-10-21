@@ -1,5 +1,5 @@
 //! Public-path controls for a slice-length boundary whose tests pass literal
-//! `&[..]` arguments directly in assertions (#8061 lane, abstention).
+//! `&[..]` arguments directly in assertions (#9247, abstention).
 //!
 //! The empty literal reaches `xs.len() == 0` and an exact pin on that same call
 //! credits it; literals that never reach the boundary keep the missing
