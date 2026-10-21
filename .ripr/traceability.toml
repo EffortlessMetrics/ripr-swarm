@@ -17117,3 +17117,22 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0293"
+name = "Doctor suppresses PATH-mismatch warning for Cargo build outputs"
+spec = "docs/specs/RIPR-SPEC-0293-doctor-cargo-build-path-warning.md"
+tests = [
+  "crates/ripr/src/output/doctor_binary.rs::tests::cargo_build_output_running_binary_suppresses_path_mismatch_warning",
+  "crates/ripr/src/output/doctor_binary.rs::tests::different_installed_ripr_on_path_warns_without_build_output_claim",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/output/doctor_binary.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0293-doctor-cargo-build-path-warning.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

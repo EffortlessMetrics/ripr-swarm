@@ -104,6 +104,7 @@ fn evaluate_binary_identity(
         }
         _ => None,
     };
+    let executable_is_cargo_build_output = executable.as_deref().is_some_and(is_cargo_build_output);
     let mut warnings = Vec::new();
     if let (Some(path), Some(dir), true) = (
         path_ripr.as_deref(),
@@ -118,11 +119,15 @@ fn evaluate_binary_identity(
             human_path(dir)
         ));
     }
-    if let (Some(executable), Some(path), Some(false)) = (
-        executable.as_deref(),
-        path_ripr.as_deref(),
-        path_ripr_is_running_executable,
-    ) {
+    // #9097: a running Cargo build output beside a different installed PATH
+    // `ripr` is the normal contributor setup, not a mismatch worth a warning.
+    if !executable_is_cargo_build_output
+        && let (Some(executable), Some(path), Some(false)) = (
+            executable.as_deref(),
+            path_ripr.as_deref(),
+            path_ripr_is_running_executable,
+        )
+    {
         warnings.push(format!(
             "`ripr` on PATH is {}, not the running binary {}; this report describes the running \
              binary, and unless that PATH entry is a shim that launches it, commands that run \
@@ -135,7 +140,7 @@ fn evaluate_binary_identity(
         version: build_identity::version_line(),
         commit: build_identity::commit().map(str::to_string),
         commit_dirty: build_identity::commit_dirty(),
-        executable_is_cargo_build_output: executable.as_deref().is_some_and(is_cargo_build_output),
+        executable_is_cargo_build_output,
         // #5252 item 5: the human lines already normalize through
         // `human_path_text` (#4378); the stored (and JSON-serialized) form
         // must match instead of leaking the verbatim `\\?\` prefix and
@@ -384,6 +389,40 @@ mod tests {
             {
                 return Err(format!(
                     "a different installed ripr must get only the other-binary warning: {identity:?}"
+                ));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    #[test]
+    fn cargo_build_output_running_binary_suppresses_path_mismatch_warning() -> Result<(), String> {
+        // #9097: a Cargo build output running against an installed `ripr`
+        // on PATH is the normal contributor setup; the PATH-mismatch warning
+        // must not fire, while identity fields stay truthful about both paths.
+        let root = temp_dir("cargo-running")?;
+        let profile = cargo_profile_dir(&root)?;
+        let running = executable(&profile)?;
+        let installed_dir = root.join("bin");
+        std::fs::create_dir_all(&installed_dir).map_err(|error| error.to_string())?;
+        executable(&installed_dir)?;
+        let result = (|| -> Result<(), String> {
+            let path = std::env::join_paths([&installed_dir]).map_err(|error| error.to_string())?;
+            let found = first_on_path(&path, &ripr_executable_names(None));
+            let identity = evaluate_binary_identity(Some(running.clone()), found);
+            if !identity.executable_is_cargo_build_output
+                || identity.path_ripr_is_cargo_build_output
+                || identity.path_ripr_is_running_executable != Some(false)
+            {
+                return Err(format!(
+                    "cargo build output against installed PATH ripr must keep truthful identity: {identity:?}"
+                ));
+            }
+            if !identity.warnings.is_empty() {
+                return Err(format!(
+                    "cargo build output must not print the PATH-mismatch warning: {identity:?}"
                 ));
             }
             Ok(())
