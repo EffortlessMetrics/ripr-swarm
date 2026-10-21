@@ -17,7 +17,8 @@
 //!
 //! - the crate root (`src/lib.rs`, else `src/main.rs`; every existing root
 //!   must agree) for `crate::test`, or the test's own file for `self::test`,
-//!   has exactly one top-level, ungated `use ... as test;`;
+//!   has exactly one top-level `use ... as test;` that is ungated or gated only on
+//!   `cfg(test)` (`cfg(all(test, ..))` too);
 //! - the aliased name resolves to exactly one `#[proc_macro_attribute]` fn
 //!   in the analyzed index; and
 //! - source of that macro's package names a known test attribute
@@ -25,7 +26,7 @@
 //!
 //! The target is matched by its last path segment, so a same-named macro in
 //! another crate is not told apart; two candidates refuse. Anything
-//! unresolved (an external crate, a gated or repeated import, a macro that
+//! unresolved (an external crate, a non-test-gated or repeated import, a macro that
 //! never names a test attribute) credits nothing. Arbitrary `#[x::test]`
 //! paths are untouched.
 
@@ -133,7 +134,8 @@ fn proc_macro_files(
     proc_macros
 }
 
-/// The last path segment of the single top-level, ungated `use ... as test`.
+/// The last path segment of the single top-level `use ... as test`, ungated
+/// or gated only on test builds.
 fn test_alias_target(source: &str) -> Option<String> {
     if !source.contains("as test") && !source.contains("as r#test") {
         return None;
@@ -147,7 +149,14 @@ fn test_alias_target(source: &str) -> Option<String> {
         let Some(tree) = item.use_tree() else {
             continue;
         };
-        let gated = item.attrs().next().is_some();
+        // An attribute that holds in every test build (`cfg(test)`,
+        // `cfg(all(test, ..))`) leaves the alias active wherever tests run;
+        // any other attribute (feature, `not(test)`, ..) keeps it unproven.
+        let attrs: Vec<String> = item
+            .attrs()
+            .map(|attr| attr.syntax().text().to_string())
+            .collect();
+        let gated = !attrs.is_empty() && !super::cfg_predicates::attributes_require_test(&attrs);
         for tree in tree.syntax().descendants().filter_map(ast::UseTree::cast) {
             let Some(alias) = tree.rename().and_then(|rename| rename.name()) else {
                 continue;

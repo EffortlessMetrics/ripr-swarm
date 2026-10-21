@@ -1439,6 +1439,32 @@ fn self_test_alias_is_credited_only_in_the_aliasing_file() -> Result<(), String>
 }
 
 #[test]
+fn crate_test_alias_gated_on_a_test_build_is_credited() -> Result<(), String> {
+    for gate in ["#[cfg(test)]", "#[cfg(all(test, feature = \"x\"))]"] {
+        let root = format!("{gate}\nuse my_macros::wrapped_test as test;\n");
+        let names = alias_test_names(&[
+            ("app/src/lib.rs", &root),
+            ("app/src/user.rs", USER),
+            ("macros/src/lib.rs", WRAPPER_MACRO),
+        ])?;
+        assert_eq!(names, ["aliased"], "gate {gate}");
+    }
+    for gate in ["#[cfg(not(test))]", "#[cfg(any(test, feature = \"x\"))]"] {
+        let root = format!("{gate}\nuse my_macros::wrapped_test as test;\n");
+        let names = alias_test_names(&[
+            ("app/src/lib.rs", &root),
+            ("app/src/user.rs", USER),
+            ("macros/src/lib.rs", WRAPPER_MACRO),
+        ])?;
+        assert!(
+            names.is_empty(),
+            "gate {gate} must not be credited: {names:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn crate_test_stays_a_non_test_without_a_resolvable_wrapper() -> Result<(), String> {
     let cases: [(&str, Vec<(&str, &str)>); 6] = [
         (
