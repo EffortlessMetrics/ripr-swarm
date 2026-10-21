@@ -322,6 +322,129 @@ fn line(value: Value) -> Result<Vec<u8>, String> {
     Ok(encoded)
 }
 
+/// JSON-RPC conformance of the error replies a client can otherwise only
+/// observe as a hang or an unhelpful message: every unreadable or rejected
+/// message gets exactly one correlated reply, and the session survives all of
+/// them to answer a final valid request.
+#[test]
+fn json_rpc_rejections_are_answered_with_spec_codes_and_the_session_survives() -> Result<(), String>
+{
+    let root = workspace_root()?;
+    let deep = format!(
+        "{{\"jsonrpc\":\"2.0\",\"id\":\"deep\",\"method\":\"tools/list\",\"params\":{}{}}}\n",
+        "[".repeat(5000),
+        "]".repeat(5000)
+    );
+    let oversized = format!(
+        "{{\"jsonrpc\":\"2.0\",\"id\":\"big\",\"method\":\"tools/list\",\"params\":{{\"x\":\"{}\"}}}}\n",
+        "a".repeat(300_000)
+    );
+    let initialize = line(json!({
+        "jsonrpc": "2.0", "id": "init", "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25", "capabilities": {},
+            "clientInfo": { "name": "ripr-integration-test", "version": "1" }
+        }
+    }))?;
+    let initialized = line(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))?;
+    let tool_call = |id: &str, name: &str, arguments: Value| {
+        line(json!({
+            "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": { "name": name, "arguments": arguments }
+        }))
+    };
+    let exchanges: Vec<(Vec<u8>, Value, i64)> = vec![
+        (b"{not json\n".to_vec(), Value::Null, -32700),
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":null,\"method\":\"tools/list\"}\n".to_vec(),
+            Value::Null,
+            -32600,
+        ),
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":1.5,\"method\":\"tools/list\"}\n".to_vec(),
+            Value::Null,
+            -32600,
+        ),
+        (deep.into_bytes(), Value::Null, -32700),
+        (oversized.into_bytes(), json!("big"), -32600),
+        (
+            b"{\"jsonrpc\":\"1.0\",\"id\":\"v1\",\"method\":\"tools/list\"}\n".to_vec(),
+            json!("v1"),
+            -32600,
+        ),
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":\"init-again\",\"method\":\"initialize\"}\n".to_vec(),
+            json!("init-again"),
+            -32602,
+        ),
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":\"nope\",\"method\":\"nope/never\"}\n".to_vec(),
+            json!("nope"),
+            -32601,
+        ),
+        (
+            tool_call("unknown-tool", "ripr_everything", json!({}))?,
+            json!("unknown-tool"),
+            -32602,
+        ),
+        (
+            tool_call(
+                "bad-language",
+                "ripr_list_gaps",
+                json!({"language": "cobol"}),
+            )?,
+            json!("bad-language"),
+            -32602,
+        ),
+    ];
+    let timeout = Duration::from_secs(30);
+    let mut session = SequentialStdio::spawn(&root)?;
+    let first = session.raw_exchange(&initialize, timeout)?;
+    if first.get("id") != Some(&json!("init")) || first.get("error").is_some() {
+        return Err(format!("initialize failed: {first}"));
+    }
+    session.send_raw(&initialized)?;
+    let mut messages = Vec::new();
+    for (bytes, id, code) in exchanges {
+        let response = session.raw_exchange(&bytes, timeout)?;
+        if response.get("id") != Some(&id)
+            || response.pointer("/error/code").and_then(Value::as_i64) != Some(code)
+            || response.get("jsonrpc") != Some(&json!("2.0"))
+        {
+            return Err(format!(
+                "wrong reply, expected id {id} code {code}: {response}"
+            ));
+        }
+        messages.push(
+            response
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+        );
+    }
+    // Every rejection left the session up and answering.
+    let alive = session.raw_exchange(
+        &line(json!({"jsonrpc": "2.0", "id": "alive", "method": "ping"}))?,
+        timeout,
+    )?;
+    if alive.get("id") != Some(&json!("alive")) || alive.get("result") != Some(&json!({})) {
+        return Err(format!("the session did not survive: {alive}"));
+    }
+    // Messages say what is wrong, not just which method was named.
+    if messages[0] != "Parse error"
+        || !messages[6].contains("expected `protocolVersion`")
+        || messages[7] != "Method not found: nope/never"
+        || !messages[8].starts_with("unknown tool")
+        || !messages[9].contains("unknown language \"cobol\"")
+        || !messages[9].contains("rust")
+        || !messages[9].contains("perl")
+    {
+        return Err(format!("rejection messages drifted: {messages:?}"));
+    }
+    Ok(())
+}
+
 /// Optional tool fields may be omitted, but their advertised string/integer
 /// types do not accept explicit null. Pin the schemas and dispatch separately
 /// against literal expectations, through the actual stdio process (#7314).
@@ -1008,7 +1131,7 @@ fn rejection_arms_survive_the_stdio_transport() -> Result<(), String> {
         return Err(format!("expected 6 MCP responses, got {}", responses.len()));
     }
     let expected: [(&str, i64); 3] = [
-        ("unknown-tool", -32601),
+        ("unknown-tool", -32602),
         ("with-arguments", -32602),
         ("unknown-resource", -32602),
     ];
@@ -1817,15 +1940,24 @@ impl SequentialStdio {
         }
     }
 
-    fn send_raw(&mut self, encoded: &[u8]) -> Result<(), String> {
+    fn send_raw(&mut self, bytes: &[u8]) -> Result<(), String> {
         let stdin = self
             .stdin
             .as_mut()
             .ok_or_else(|| "the session stdin was already released".to_string())?;
         stdin
-            .write_all(encoded)
+            .write_all(bytes)
             .and_then(|()| stdin.flush())
-            .map_err(|error| format!("write raw frame: {error}"))
+            .map_err(|error| format!("write raw line: {error}"))
+    }
+
+    /// Write one raw line and return the next reply, whatever its id: the
+    /// exchange for messages whose reply id is under test.
+    fn raw_exchange(&mut self, bytes: &[u8], timeout: Duration) -> Result<Value, String> {
+        self.send_raw(bytes)?;
+        self.replies
+            .recv_timeout(timeout)
+            .map_err(|error| format!("no reply to a raw line ({error}): the client would hang"))
     }
 
     fn next_reply(&mut self, timeout: Duration) -> Result<Value, String> {
@@ -2053,7 +2185,9 @@ fn empty_gap_pages_keep_structured_outcomes_at_the_response_bound() -> Result<()
         .as_str()
         .ok_or("baseline omitted snapshot ID")?;
 
-    for field in ["file", "class", "language"] {
+    // `language` is not here: an unknown language is rejected as Invalid
+    // Params before any page is built, so it can no longer carry the filler.
+    for field in ["file", "class"] {
         let fitting_filter = "\u{1}".repeat(9_500);
         let mut arguments = json!({});
         arguments[field] = json!(fitting_filter);
@@ -2287,7 +2421,9 @@ fn refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation() -> Re
             vec![],
         ),
         (json!({"class": "unknown-class"}), vec![]),
-        (json!({"language": "unknown-language"}), vec![]),
+        // An unknown language wire string is Invalid Params, pinned by
+        // `json_rpc_rejections_are_answered_with_spec_codes_and_the_session_survives`.
+        (json!({"language": "typescript"}), vec![]),
         (json!({"file": "missing.rs"}), vec![]),
     ];
     if cfg!(feature = "lang-python") {
@@ -3797,5 +3933,156 @@ fn gap_details_disclose_pre_cap_related_test_totals_across_refreshes() -> Result
             .as_array()
             .is_some_and(|fields| fields.contains(&json!("related_tests_total")))
     );
+    Ok(())
+}
+
+/// #8717 weak-boundary fixture: `is_adult` narrows `> 18` to `>= 18` and the
+/// lone test `assert!(is_adult(30))` never pins the boundary, so the seam is a
+/// weakly gripped predicate boundary the CLI repair gate admits.
+fn install_weak_boundary_fixture() -> Result<PathBuf, String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("clock before Unix epoch: {error}"))?
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-mcp-stdio-weak-boundary-{}-{stamp}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"weak-boundary-fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[lib]\nname = \"weak_boundary_fixture\"\npath = \"src/lib.rs\"\n\n[workspace]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn is_adult(age: u32) -> bool {\n    age > 18\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("tests/adult.rs"),
+        "use weak_boundary_fixture::is_adult;\n\n#[test]\nfn adult_is_recognized() {\n    assert!(is_adult(30));\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join(".gitignore"), "/target\n").map_err(|error| error.to_string())?;
+    fixture_git_ok(&root, &["-c", "init.defaultBranch=main", "init", "-q"])?;
+    fixture_git_ok(&root, &["config", "user.name", "ripr fixture"])?;
+    fixture_git_ok(&root, &["config", "user.email", "fixture@ripr.invalid"])?;
+    fixture_git_ok(&root, &["config", "core.autocrlf", "false"])?;
+    commit_fixture(&root, "base")?;
+    fixture_git_ok(&root, &["checkout", "-q", "-b", "feat"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn is_adult(age: u32) -> bool {\n    age >= 18\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    commit_fixture(&root, "widen boundary")?;
+    Ok(root)
+}
+
+/// #8717: a weakly gripped boundary that names its missing discriminator is
+/// the repair target. MCP reports it repair-ready and binds an `awaiting_edit`
+/// attempt exactly when `ripr repair` admits the same item, and an item the
+/// CLI refuses (the sibling return-value gap on the same line) stays refused
+/// with the shared validator's typed reason and no attempt.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn weak_boundary_naming_its_discriminator_is_repair_ready_only_where_the_cli_admits()
+-> Result<(), String> {
+    const BOUNDARY: &str = "gap:rust:src/lib.rs:is_adult:predicate_boundary:predicate:age==18";
+    const REFRESH_TIMEOUT: Duration = Duration::from_mins(3);
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let root = install_weak_boundary_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    structured_tool_success(&refresh, "ripr_refresh")?;
+    let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    let list = structured_tool_success(&list, "ripr_list_gaps")?;
+    let items = list["items"].as_array().ok_or("list omitted items")?;
+    if !items.iter().any(|item| item["canonical_id"] == BOUNDARY) {
+        return Err(format!("fixture lost the boundary item {BOUNDARY}: {list}"));
+    }
+    let mut cli_admitted = 0;
+    let mut cli_refused = 0;
+    for item in items {
+        let id = item["canonical_id"].as_str().ok_or("item omitted id")?;
+        if item["class"] != "weakly_exposed" {
+            return Err(format!("fixture items must be weakly exposed: {item}"));
+        }
+        let gap = session.call_tool(
+            &format!("gap-{id}"),
+            "ripr_get_gap",
+            json!({ "canonical_id": id }),
+            REPLY_TIMEOUT,
+        )?;
+        let gap = structured_tool_success(&gap, "ripr_get_gap")?;
+        // Stimulus precondition: the producer names the missing value.
+        if gap["item"]["missing"]
+            .as_array()
+            .is_none_or(|missing| missing.is_empty())
+        {
+            return Err(format!(
+                "fixture item {id} must name a missing value: {gap}"
+            ));
+        }
+        let finding_id = gap["item"]["finding_id"]
+            .as_str()
+            .ok_or("gap omitted finding_id")?
+            .to_string();
+        let prepare = session.call_tool(
+            &format!("prepare-{id}"),
+            "ripr_prepare_repair",
+            json!({ "canonical_id": id }),
+            REPLY_TIMEOUT,
+        )?;
+        let prepare = structured_tool_success(&prepare, "ripr_prepare_repair")?;
+        if gap["item"]["readiness"]["repair_packet_ready"] != item["repair_packet_ready"]
+            || prepare["repair_packet_ready"] != item["repair_packet_ready"]
+        {
+            return Err(format!(
+                "MCP surfaces disagree on readiness for {id}: {item} {gap} {prepare}"
+            ));
+        }
+        match cli_repair_refusal(&root, &finding_id)? {
+            None => {
+                cli_admitted += 1;
+                if item["repair_packet_ready"] != true
+                    || !item["repair_ineligibility"].is_null()
+                    || prepare["attempt"]["state"] != "awaiting_edit"
+                    || prepare["fix_site"]["file"] != "tests/adult.rs"
+                {
+                    return Err(format!(
+                        "`ripr repair` admits {id}; MCP must be ready with an attempt and the weak test as fix site: {item} {prepare}"
+                    ));
+                }
+            }
+            Some(refusal) => {
+                cli_refused += 1;
+                if item["repair_packet_ready"] != false
+                    || !prepare["attempt"].is_null()
+                    || item["repair_ineligibility"].as_str().is_none()
+                    || item["repair_ineligibility"] == "missing_discriminator"
+                {
+                    return Err(format!(
+                        "`ripr repair` refuses {id} ({refusal}); MCP must stay not-ready with the shared validator's typed reason and no attempt: {item} {prepare}"
+                    ));
+                }
+            }
+        }
+        if id == BOUNDARY && item["repair_packet_ready"] != true {
+            return Err(format!(
+                "the weak boundary naming its discriminator must be repair-ready: {item}"
+            ));
+        }
+    }
+    if cli_admitted == 0 || cli_refused == 0 {
+        return Err(format!(
+            "control needs one CLI-admitted and one CLI-refused item; admitted={cli_admitted} refused={cli_refused}"
+        ));
+    }
     Ok(())
 }
