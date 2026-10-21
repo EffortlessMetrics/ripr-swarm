@@ -1136,11 +1136,13 @@ pub fn resolve_base_commit(
 /// the default-base failure context; any Git failure answers `None`, so
 /// callers never advise a `--base` repair that this probe could not
 /// support (#7644).
-/// The first branch (in `for-each-ref` order) that
-/// could serve as one, named as a usable
-/// `--base` value (`main`, `origin/main`). Callers that advise a
-/// `--base` repair must name this probed ref, never a hardcoded
-/// example, and must not name the base already in use.
+/// The branch with the smallest root-scoped changed-line count whose
+/// Rust lines stay within the changed-line guard, named as a usable
+/// `--base` value (`main`, `origin/main`); ref order breaks ties.
+/// A branch whose diff the guard would refuse is not a candidate
+/// (#9013). Callers that advise a `--base` repair must name this
+/// probed ref, never a hardcoded example, and must not name the base
+/// already in use.
 pub fn another_base_candidate(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
     let git_lines = |args: &[&str]| -> Vec<String> {
         crate::git::run_git_output_with_deadline(root, args, git_timeout)
@@ -1172,8 +1174,15 @@ pub fn another_base_candidate(root: &Path, git_timeout: Option<Duration>) -> Opt
     })
     .filter(|name| !current.contains(name));
     let head_commit = resolve_base_commit(root, Some("HEAD"), git_timeout)?;
+    // #9013: a candidate is only advice ripr can stand behind when the
+    // advised run would itself be analyzed, so a branch whose root-scoped
+    // diff exceeds the changed-Rust-line guard is not a candidate. An
+    // unreadable/invalid guard configuration yields no advice rather than
+    // advice the guard would refuse.
+    let rust_line_limit = crate::analysis::language::diff_changed_rust_line_limit().ok()?;
     const MERGE_BASE_PROBE_CAP: usize = 64;
-    others.take(MERGE_BASE_PROBE_CAP).find(|name| {
+    let mut best: Option<(usize, String)> = None;
+    for name in others.take(MERGE_BASE_PROBE_CAP) {
         let merge_base_differs = crate::git::run_git_output_with_deadline(
             root,
             &["merge-base", name.as_str(), "HEAD"],
@@ -1184,25 +1193,63 @@ pub fn another_base_candidate(root: &Path, git_timeout: Option<Duration>) -> Opt
         .is_some_and(|output| {
             String::from_utf8_lossy(&output.stdout).trim() != head_commit.as_str()
         });
+        if !merge_base_differs {
+            continue;
+        }
         // A distinct historical range can still restore the merge-base
         // tree; only a non-empty three-dot diff makes the advice useful.
         // `--relative` scopes that diff to `root` like the analysis
         // loader, so a branch differing only outside the analyzed root
         // does not count.
-        merge_base_differs
-            && crate::git::run_git_output_with_deadline(
-                root,
-                &[
-                    "diff",
-                    "--relative",
-                    "--quiet",
-                    &format!("{name}...HEAD"),
-                    "--",
-                ],
-                git_timeout,
-            )
-            .is_ok_and(|output| output.status.code() == Some(1))
-    })
+        let numstat = crate::git::run_git_output_with_deadline(
+            root,
+            &[
+                "diff",
+                "--relative",
+                "--numstat",
+                &format!("{name}...HEAD"),
+                "--",
+            ],
+            git_timeout,
+        );
+        let Ok(output) = numstat else { continue };
+        if !output.status.success() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        if text.trim().is_empty() {
+            continue;
+        }
+        let mut total_lines = 0usize;
+        let mut rust_lines = 0usize;
+        for line in text.lines() {
+            let mut fields = line.split('\t');
+            let (Some(added), Some(deleted), Some(path)) =
+                (fields.next(), fields.next(), fields.next())
+            else {
+                continue;
+            };
+            let changed = added
+                .parse::<usize>()
+                .unwrap_or(0)
+                .saturating_add(deleted.parse::<usize>().unwrap_or(0));
+            total_lines = total_lines.saturating_add(changed);
+            let new_path = path.rsplit(" => ").next().unwrap_or(path);
+            if new_path.trim_end().ends_with(".rs") {
+                rust_lines = rust_lines.saturating_add(changed);
+            }
+        }
+        if rust_lines > rust_line_limit {
+            continue;
+        }
+        // Nearest first: the smallest analyzable diff is the plausible
+        // parent of the current work; ref order only breaks ties.
+        let candidate = (total_lines, name);
+        if best.as_ref().is_none_or(|current| candidate < *current) {
+            best = Some(candidate);
+        }
+    }
+    best.map(|(_, name)| name)
 }
 
 /// Load `<base>...<head>` for the commands that name both revisions (`diff`,
@@ -2603,6 +2650,58 @@ mod tests {
         assert!(
             another_base_candidate(&sub, None).is_some(),
             "a branch differing inside the analysis root must count"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn another_base_candidate_rejects_a_diff_over_the_changed_line_guard() -> std::io::Result<()> {
+        // #9013: ripr must not advise `--base <branch>` when following that
+        // advice would refuse with `diff_scope_oversized`. The only other
+        // branch here differs by more Rust lines than the guard admits.
+        let dir = unique_fixture_root("another-base-candidate-oversized")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        run_git_checked(&dir, &["branch", "ancient"])?;
+        let big = (0..2_100)
+            .map(|n| format!("fn f{n}() {{}}\n"))
+            .collect::<String>();
+        fs::write(dir.join("big.rs"), big)?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "big rust change"])?;
+        assert_eq!(
+            another_base_candidate(&dir, None),
+            None,
+            "a branch whose diff exceeds the changed-Rust-line guard must not be advised"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn another_base_candidate_prefers_the_smallest_analyzable_diff() -> std::io::Result<()> {
+        // #9013: with several qualifying branches, ref order must not pick
+        // an ancient branch over the near branch whose diff ripr can
+        // actually analyze and that plausibly parents the current work.
+        let dir = unique_fixture_root("another-base-candidate-nearest")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        run_git_checked(&dir, &["branch", "aaa-ancient"])?;
+        let big = (0..300)
+            .map(|n| format!("fn g{n}() {{}}\n"))
+            .collect::<String>();
+        fs::write(dir.join("big.rs"), big)?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "larger change"])?;
+        run_git_checked(&dir, &["branch", "zzz-near"])?;
+        fs::write(dir.join("small.rs"), "fn only() {}\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "small change"])?;
+        assert_eq!(
+            another_base_candidate(&dir, None).as_deref(),
+            Some("zzz-near"),
+            "the smallest analyzable diff must win over first-in-ref-order"
         );
         ignore_remove_dir_all(&dir);
         Ok(())
