@@ -184,7 +184,8 @@ pub(crate) fn selector_limitation_fresh_run(
             "could not resolve {selector:?}: the seam inventory is unreadable, so no match could be checked; run `{list_command}` to list available finding ids"
         ),
         super::selector::SelectorLimitation::InventoryTruncated { analyzed, total } => format!(
-            "could not resolve {selector:?}: the seam inventory is truncated ({analyzed} of {total} seams), so no match could be checked; rerun with a wider seam budget, or run `{list_command}` to list available finding ids"
+            "could not resolve {selector:?}: the seam inventory is truncated ({analyzed} of {total} seams), so no match could be checked; {budget}, or run `{list_command}` to list available finding ids",
+            budget = super::task_first::WIDEN_SEAM_BUDGET
         ),
     }
 }
