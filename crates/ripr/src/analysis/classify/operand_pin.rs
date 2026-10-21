@@ -830,10 +830,8 @@ fn is_identifier(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::facts::{FunctionSourceRole, OracleFact, OwnedRustIndex};
-    use crate::analysis::rust_index::{FileFacts, FunctionFact};
-    use crate::domain::{OracleStrength, SymbolId};
-    use std::collections::BTreeMap;
+    use crate::analysis::facts::OracleFact;
+    use crate::domain::OracleStrength;
     use std::path::PathBuf;
 
     const OWNER: &str = "pub fn quote(unit: u64, quantity: u64) -> Quote {
@@ -846,54 +844,17 @@ mod tests {
     }
 }";
 
-    /// An index holding one file whose functions carry `bodies` verbatim,
-    /// the way the parser producer records signatures in `body`.
+    /// Use the real producer for declaration names, containers and bodies.
     fn index_with(bodies: &[&str]) -> RustIndex {
         let path = PathBuf::from("src/lib.rs");
-        let functions: Vec<FunctionFact> = bodies
-            .iter()
-            .enumerate()
-            .map(|(offset, body)| FunctionFact {
-                id: SymbolId(format!("lib::{}::{offset}", fn_name_of(body))),
-                name: fn_name_of(body).to_string(),
-                file: path.clone(),
-                start_line: 1,
-                end_line: 1,
-                body: (*body).into(),
-                calls: Vec::new(),
-                returns: Vec::new(),
-                literals: Vec::new(),
-                source_role: FunctionSourceRole::Production,
-                attrs: Vec::new(),
-                impl_attrs: Vec::new(),
-                nested_fn_names: Vec::new(),
-                let_bindings: Vec::new(),
-                item: Default::default(),
-                impl_context: Default::default(),
-            })
-            .collect();
-        RustIndex::from_owned(OwnedRustIndex {
-            files: BTreeMap::from([(
-                path.clone(),
-                FileFacts {
-                    path: path.clone(),
-                    functions: functions.clone(),
-                    source: "".into(),
-                    ..FileFacts::default()
-                },
-            )]),
-            functions,
-            ..Default::default()
-        })
-    }
-
-    fn fn_name_of(body: &str) -> &str {
-        let at = body.find("fn ").unwrap_or(0);
-        let rest = &body[at + 3..];
-        let end = rest
-            .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
-            .unwrap_or(rest.len());
-        &rest[..end]
+        let facts = crate::analysis::rust_index::summarize_file(path.clone(), bodies.join("\n"));
+        assert!(
+            !facts.used_lexical_fallback,
+            "premise: parser facts available"
+        );
+        let mut index = RustIndex::default();
+        index.insert_file(path, facts, true);
+        index
     }
 
     fn test_with(body_lines: &[&str]) -> TestSummary {
@@ -1722,6 +1683,107 @@ mod tests {
             ),
             None
         );
+    }
+
+    const SHADOW_SOURCE: &str =
+        include_str!("../../../tests/fixtures/operand_callee_identity/let_shadow.rs");
+    const METHOD_SOURCE: &str =
+        include_str!("../../../tests/fixtures/operand_callee_identity/method_confusion.rs");
+    const PRIMITIVE_SOURCE: &str =
+        include_str!("../../../tests/fixtures/operand_callee_identity/primitive_control.rs");
+
+    fn parsed_pin(source: &str) -> Result<Option<OperandOnlyPin>, String> {
+        let index = index_with(&[source]);
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "quote")
+            .ok_or("premise: quote indexed")?;
+        assert_eq!(index.tests().len(), 1, "premise: one parsed test");
+        let tests = index
+            .tests()
+            .iter()
+            .map(|test| (test, RelationReason::DirectOwnerCall))
+            .collect::<Vec<_>>();
+        assert!(
+            tests[0].0.assertions.len() >= 2,
+            "premise: paired field oracles were parsed"
+        );
+        Ok(operand_only_pin(
+            "total_cents: subtotal + shipping",
+            &owner.name,
+            owner.body.as_str(),
+            &tests,
+            &index,
+        ))
+    }
+
+    #[test]
+    fn parsed_local_callee_bindings_do_not_prove_a_primitive_return() -> Result<(), String> {
+        for binding in [
+            "let shipping_cents = flat_rate;",
+            "let (shipping_cents,) = (flat_rate,);",
+            "let r#shipping_cents = flat_rate;",
+            "let shipping_cents;\n    shipping_cents = flat_rate;",
+        ] {
+            let source = SHADOW_SOURCE.replace("let shipping_cents = flat_rate;", binding);
+            assert_eq!(parsed_pin(&source)?, None, "{binding}");
+        }
+        for parameter in [
+            "shipping_cents: fn(u64) -> Shipping",
+            "r#shipping_cents: fn(u64) -> Shipping",
+            "(shipping_cents,): (fn(u64) -> Shipping,)",
+        ] {
+            let argument = if parameter.starts_with('(') {
+                "(flat_rate,)"
+            } else {
+                "flat_rate"
+            };
+            let source = SHADOW_SOURCE
+                .replace("    let shipping_cents = flat_rate;\n", "")
+                .replace("quantity: u64)", &format!("quantity: u64, {parameter})"))
+                .replace("quote(3_000, 3)", &format!("quote(3_000, 3, {argument})"));
+            assert_eq!(parsed_pin(&source)?, None, "{parameter}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parsed_associated_callees_do_not_prove_a_free_call_return() -> Result<(), String> {
+        for source in [
+            METHOD_SOURCE.to_string(),
+            METHOD_SOURCE.replace("&self, _: u64", "_: u64"),
+        ] {
+            let index = index_with(&[&source]);
+            let callees = index
+                .functions()
+                .iter()
+                .filter(|function| function.name == "shipping_cents")
+                .collect::<Vec<_>>();
+            assert_eq!(callees.len(), 1, "premise: only the decoy has this name");
+            assert!(matches!(
+                callees[0].item.container,
+                crate::analysis::facts::FunctionContainer::Inherent { .. }
+            ));
+            assert_eq!(parsed_pin(&source)?, None);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parsed_qualified_primitive_call_is_not_shadowed_by_a_value() -> Result<(), String> {
+        assert!(parsed_pin(PRIMITIVE_SOURCE)?.is_some());
+        let source = PRIMITIVE_SOURCE
+            .replace(
+                "    let subtotal =",
+                "    let shipping_cents = 7u64;\n    let subtotal =",
+            )
+            .replace(
+                "= shipping_cents(subtotal)",
+                "= crate::shipping_cents(subtotal)",
+            );
+        assert!(parsed_pin(&source)?.is_some());
+        Ok(())
     }
 
     #[test]
