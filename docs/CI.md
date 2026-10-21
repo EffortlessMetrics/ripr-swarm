@@ -73,7 +73,8 @@ required `Ripr Rust Small Result` exists only for that request). ub-review, the
 Python wheel workflow and source-of-truth still follow their own triggers until
 #4984/#8082 integrate them. Agents and authors prove
 the change locally ([validation](agent-context/validation.md#local-and-hosted-proof)),
-publish a Draft, and add the `merge-ready` label last. Adding `merge-ready`
+publish a Draft, mark it Ready once review is complete, and add the `merge-ready`
+label last (admission refuses a Draft PR). Adding `merge-ready`
 starts the required Result and the non-required lanes once for the head it was applied to. A later push
 to a labeled PR does not rerun them: re-apply the label (remove it, then add it
 again) once the new head is ready to qualify. Removing the label does not cancel
