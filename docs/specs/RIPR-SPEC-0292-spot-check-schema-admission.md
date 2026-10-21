@@ -46,7 +46,7 @@ Policy impact:
 
 `cargo xtask mutation-spot-check` gates `classify_records` on a single
 hard-coded calibration schema version (`CALIBRATION_SCHEMA_VERSION = "0.2"`).
-The calibrate clarity work (RIPR-SPEC-0286, PR #8988) moves the
+The calibrate clarity work (RIPR-SPEC-0294, PR #8988) moves the
 mutation-calibration report schema to 0.3, adding `provenance` and
 `how_to_read` without changing the joined-record shape the spot check
 scores. Once #8988 lands, the spot check would refuse every report the
@@ -84,7 +84,7 @@ A document at any other `schema_version` (older than 0.2, newer than the
 supported set, or missing) is refused before any record is scored. The
 refusal message names the version found in the document, the supported
 versions, and the owning renderer constant (with its before/after
-RIPR-SPEC-0286 values), and tells the operator to rebuild ripr and
+RIPR-SPEC-0294 values), and tells the operator to rebuild ripr and
 re-run the spot check so the calibration JSON carries a supported schema.
 
 ## Required Evidence
@@ -105,7 +105,7 @@ re-run the spot check so the calibration JSON carries a supported schema.
 - Changing classification logic, dispositions, or scored verdict
   families; admission is a gate in front of the unchanged classifier.
 - Changing report generation: the renderer's schema version, the
-  0.3 additions, and any future bump remain owned by RIPR-SPEC-0286.
+  0.3 additions, and any future bump remain owned by RIPR-SPEC-0294.
 - Accepting versions older than 0.2: pre-0.2 reports lack the
   span-containment join, and the gate stays fail-closed for them.
 
