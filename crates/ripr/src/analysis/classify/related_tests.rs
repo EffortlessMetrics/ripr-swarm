@@ -141,13 +141,11 @@ impl RelatedTestCandidateIndex {
 
         for (test_index, test) in index.tests().iter().enumerate() {
             candidates.all_tests.push(test_index);
-<<<<<<< HEAD
             if fmt_dispatch::body_may_dispatch_fmt(&test.body) {
                 candidates.fmt_dispatch_tests.push(test_index);
-=======
+            }
             if test.body.contains("assert_eq!") || test.body.contains("assert_ne!") {
                 candidates.by_equality_assert.push(test_index);
->>>>>>> origin/main
             }
             let refused =
                 crate::analysis::extract::property_macros::property_only_call_names(&test.body);
@@ -304,15 +302,13 @@ impl RelatedTestCandidateIndex {
             }
         }
 
-<<<<<<< HEAD
         // A changed `Display`/`Debug` `fmt` is reached through formatting
         // that never spells `fmt`.
         if owner_fn.is_some_and(fmt_dispatch::is_fmt_dispatch_owner) {
             selected.extend(self.fmt_dispatch_tests.iter().copied());
-=======
+        }
         if owner_fn.is_some_and(equality_dispatch::has_partial_eq_shape) {
             extend_bucket(&mut selected, Some(self.by_equality_assert.as_slice()));
->>>>>>> origin/main
         }
 
         if owner_fn.is_none() {
@@ -912,7 +908,6 @@ fn find_related_tests_with_candidates<'a>(
             && !property_only_owner_call
             && (test.calls.iter().any(|call| call.name == owner_name)
                 || body_contains_owner_call(&test.body, owner_name));
-<<<<<<< HEAD
         // A formatting macro or `to_string()` on a value typed as the owner's
         // self type runs a changed `Display`/`Debug` `fmt` without naming it.
         let dispatches_to_fmt = owner_fn.is_some_and(|owner| {
@@ -929,7 +924,6 @@ fn find_related_tests_with_candidates<'a>(
                 })
         });
         let calls_owner = calls_owner_by_name || dispatches_to_fmt;
-=======
         // #8999: `assert_eq!(a, b)` over two values of the owner's type runs
         // the owner's `PartialEq::eq` with no call fact naming it. A distinct
         // signal from `calls_owner`: it bypasses none of the cross-package
@@ -952,7 +946,6 @@ fn find_related_tests_with_candidates<'a>(
                 }
                 _ => false,
             };
->>>>>>> origin/main
         // #3714: captured `calls` facts only — the same authority as
         // `calls_owner`. Never overrides owner attribution. A same-named
         // local definition or binding in the test body defeats the admit
