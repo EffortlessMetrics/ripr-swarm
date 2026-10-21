@@ -1326,6 +1326,23 @@ pub(crate) fn chain_entry_pin_admits(
             _ => {}
         }
     }
+    // The entry pin is the method-hop claim (#5352): a free-function
+    // wrapper chain keeps its documented no-return-credit reading
+    // (RIPR-SPEC-0159), so every hop must be an identity-bound method
+    // call site.
+    let every_hop_is_a_method_site = chain.hops.iter().enumerate().all(|(step, hop)| {
+        let callee = match step.checked_sub(1) {
+            None => owner_name,
+            Some(below) => match chain.hops.get(below) {
+                Some(lower) => lower.caller.name.as_str(),
+                None => return false,
+            },
+        };
+        method_call_site(&hop.call_text, callee).is_some()
+    });
+    if !every_hop_is_a_method_site {
+        return false;
+    }
     if !chain_forwards_to_observed_hops(owner_name, chain, related_tests) {
         return false;
     }
