@@ -58,7 +58,14 @@ fn exercise_traps(root: &std::path::Path) -> TestResult {
             // interpreter. Its native status must escape the driver unchanged.
             let script = format!("{source}\n/bin/bash \"{target}\"\n");
             let output = Command::new("/usr/bin/timeout")
-                .args(["--kill-after=1s", "5s", "/bin/bash", "-euo", "pipefail", "-c"])
+                .args([
+                    "--kill-after=1s",
+                    "5s",
+                    "/bin/bash",
+                    "-euo",
+                    "pipefail",
+                    "-c",
+                ])
                 .arg(script)
                 .env_clear()
                 .env("PATH", "/usr/bin:/bin")
@@ -70,7 +77,9 @@ fn exercise_traps(root: &std::path::Path) -> TestResult {
             assert_eq!(output.status.code(), Some(status), "{output:?}");
             assert_eq!(fs::read_to_string(&marker)?, message);
             if leaf.contains("$CI_TRAP_INERT") {
-                assert!(!case.join(leaf.replace("$CI_TRAP_INERT", "EXPANDED_WRONG")).exists());
+                assert!(!case
+                    .join(leaf.replace("$CI_TRAP_INERT", "EXPANDED_WRONG"))
+                    .exists());
             }
         }
     }
