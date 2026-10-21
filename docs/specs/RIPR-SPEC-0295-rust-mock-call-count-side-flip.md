@@ -187,6 +187,11 @@ reads `exposed`.
   integer literals.
 - Judging the returned value. The rule says nothing about what `send`
   returns or whether the result assertions discriminate on their own.
+- Predicate inversions of the guard (`>` to `<=`, `==` or `!=`). The credit
+  rests on the two edge-move mutants only: an inversion that takes just the
+  edge input leaves the count unchanged, so a count-only test with no result
+  assertion does not notice it. Like RIPR-SPEC-0227 this is the edge-pair
+  claim, not a claim about every mutant of the predicate.
 
 ## Acceptance Examples
 
