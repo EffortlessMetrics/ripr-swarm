@@ -154,9 +154,10 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Prepare locked owner-return fixture dependencies
         if: steps.surface.outputs.rust == 'true'
-        run: |
-          cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
-          cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
+        run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
+      - name: Prepare locked json owner-return fixture dependencies
+        if: steps.surface.outputs.rust == 'true'
+        run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
 
       - name: Test --no-default-features --features lang-rust
         if: steps.surface.outputs.rust == 'true'

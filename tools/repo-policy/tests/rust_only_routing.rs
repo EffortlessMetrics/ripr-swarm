@@ -232,6 +232,12 @@ fn verify_guarded_rust_only_steps(source: &str) -> TestResult {
             ),
         ),
         (
+            "name: Prepare locked json owner-return fixture dependencies",
+            Some(
+                "cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml",
+            ),
+        ),
+        (
             "name: Test --no-default-features --features lang-rust",
             Some(
                 "cargo test -p ripr --locked --no-default-features --features lang-rust --no-fail-fast",
@@ -275,6 +281,7 @@ fn rust_step_contract_refuses_missing_guards_and_misplaced_commands() -> TestRes
         "uses: dtolnay/rust-toolchain@1.95.0",
         "uses: Swatinem/rust-cache@v2",
         "name: Prepare locked owner-return fixture dependencies",
+        "name: Prepare locked json owner-return fixture dependencies",
         "name: Test --no-default-features --features lang-rust",
     ] {
         let prefix =
