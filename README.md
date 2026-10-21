@@ -236,8 +236,11 @@ a promise that every surface is available from the published package.
 
 With no `ripr.toml`, ripr analyzes Rust and also enables Python preview when
 it detects Python project markers or Python source under `src/` or `tests/`;
-TypeScript/JavaScript is enabled only through `[languages] enabled` in
-`ripr.toml`, and a `ripr.toml` that sets `enabled = ["rust"]` keeps Python off
+TypeScript preview is likewise enabled when it detects a root `tsconfig.json`
+or `jsconfig.json`, or TypeScript source under `src/` or `tests/`; otherwise
+TypeScript/JavaScript is enabled through `[languages] enabled` in `ripr.toml`,
+and a `ripr.toml` that sets `enabled = ["rust"]` keeps Python off (and
+TypeScript off too)
 (see [Configuration](docs/CONFIGURATION.md#languages)).
 
 Findings are static and advisory. An empty result does not establish test

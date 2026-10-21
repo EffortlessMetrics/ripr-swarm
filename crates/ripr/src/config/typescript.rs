@@ -166,6 +166,15 @@ pub(crate) fn is_detectable_typescript_source_name(name: &str) -> bool {
                 == Some(crate::analysis::TsJsSourceKind::TypeScript)
         })
         && !is_detectable_generated_typescript_name(name)
+        && !is_typescript_declaration_name(name)
+}
+
+/// `.d.ts`, `.d.mts` and `.d.cts` declaration files. The adapter skips them
+/// when generating findings, so declarations alone never select it.
+fn is_typescript_declaration_name(name: &str) -> bool {
+    [".d.ts", ".d.mts", ".d.cts"]
+        .iter()
+        .any(|suffix| name.len() > suffix.len() && name.ends_with(suffix))
 }
 
 /// Whether a root source-directory marker contains detectable TypeScript
@@ -325,6 +334,7 @@ mod tests {
         write(&root, "src/vendor/lib.ts")?;
         write(&root, "src/node_modules/pkg/index.ts")?;
         write(&root, "src/api.generated.ts")?;
+        write(&root, "src/types.d.ts")?;
         assert!(!detect_typescript_project(&root));
         write(&root, "tests/cart.test.ts")?;
         assert!(detect_typescript_project(&root), "harness sanity");

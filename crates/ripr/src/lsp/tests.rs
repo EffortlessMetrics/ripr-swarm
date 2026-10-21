@@ -219,9 +219,40 @@ fn watched_file_batch_preserves_config_and_workspace_graph_signals() -> Result<(
         WatchedFileChanges {
             config_changed: true,
             workspace_graph_changed: true,
+            typescript_input_changed: false,
             diagnostics_input_changed: false,
         }
     );
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn watched_typescript_inputs_reload_config_and_refresh_analysis() -> Result<(), String> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let backend_root = root.clone();
+    let (service, _socket) =
+        LspService::new(move |client| Backend::new(client, backend_root.clone()));
+    let backend = service.inner();
+    backend.initialize_test_workspace_root();
+
+    for relative in ["tsconfig.json", "src/cart.ts"] {
+        let uri = file_uri_for_path(&root.join(relative))
+            .map_err(|err| format!("{relative} URI failed: {err}"))?;
+        let changes = vec![FileEvent {
+            uri,
+            typ: FileChangeType::CHANGED,
+        }];
+        assert_eq!(
+            backend.watched_file_change_kinds(&changes),
+            WatchedFileChanges {
+                config_changed: true,
+                typescript_input_changed: true,
+                ..WatchedFileChanges::default()
+            },
+            "{relative}"
+        );
+    }
     Ok(())
 }
 

@@ -3407,6 +3407,11 @@ impl Backend {
             };
             kinds.config_changed |= kind.reloads_repository_config();
             kinds.workspace_graph_changed |= kind.invalidates_workspace_graph();
+            kinds.typescript_input_changed |= matches!(
+                kind,
+                WorkspaceInputKind::TypescriptProjectMarker
+                    | WorkspaceInputKind::TypescriptSourcePresence
+            );
             kinds.diagnostics_input_changed |= kind == WorkspaceInputKind::DiagnosticsInput;
         }
         kinds
@@ -4007,6 +4012,12 @@ impl Backend {
 pub(super) struct WatchedFileChanges {
     pub(super) config_changed: bool,
     pub(super) workspace_graph_changed: bool,
+    /// A TypeScript detection input (root `tsconfig.json`/`jsconfig.json` or
+    /// detectable TypeScript source) changed. The adapter reads `tsconfig`
+    /// path aliases and indexes sources even when it is already enabled, so
+    /// the analysis input is invalidated and refreshed even if the reloaded
+    /// configuration is unchanged.
+    pub(super) typescript_input_changed: bool,
     /// A non-buffer diagnostics input changed without changing configuration
     /// or the Cargo graph: only a diagnostics refresh is needed (#4896).
     pub(super) diagnostics_input_changed: bool,
@@ -5867,11 +5878,14 @@ impl LanguageServer for Backend {
         if changes.config_changed {
             self.reload_repository_config().await;
         }
-        if changes.workspace_graph_changed {
-            self.invalidate_analysis_input_and_end_queued_progress(
-                "workspace_manifest_or_lockfile_changed",
-            )
-            .await;
+        if changes.workspace_graph_changed || changes.typescript_input_changed {
+            let reason = if changes.workspace_graph_changed {
+                "workspace_manifest_or_lockfile_changed"
+            } else {
+                "typescript_project_input_changed"
+            };
+            self.invalidate_analysis_input_and_end_queued_progress(reason)
+                .await;
             self.publish_analysis_status().await;
             self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::ConfigReload)
                 .await;

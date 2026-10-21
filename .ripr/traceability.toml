@@ -3071,14 +3071,27 @@ tests = [
   "crates/ripr/src/cli/commands/doctor.rs::tests::detect_languages_treats_modern_ts_js_extensions_as_language_markers",
   "crates/ripr/src/cli/commands/doctor.rs::tests::perl_walks_do_not_follow_directory_symlink_loops",
   "crates/ripr/src/output/json/mod.rs",
+  "crates/ripr/src/config/tests.rs::missing_config_detects_typescript_markers_and_source",
+  "crates/ripr/src/config/tests.rs::missing_config_ignores_package_json_and_plain_javascript",
+  "crates/ripr/src/config/tests.rs::explicit_config_keeps_typescript_disabled_in_a_typescript_repo",
+  "crates/ripr/src/config/typescript.rs::tests::detection_requires_a_marker_or_typescript_source",
+  "crates/ripr/src/config/typescript.rs::tests::excluded_and_generated_source_does_not_enable_detection",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::typescript_detection_inputs_change_cache_identity",
+  "crates/ripr/src/lsp/backend.rs::workspace_input_tests::typescript_detection_inputs_classify_like_the_detector",
+  "crates/ripr/src/lsp/backend.rs::workspace_input_tests::dynamic_watchers_cover_the_canonical_detection_input_set",
+  "crates/ripr/src/lsp/tests.rs::watched_typescript_inputs_reload_config_and_refresh_analysis",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
   "fixtures/typescript_mocked_module_limit",
+  "fixtures/ts_full_repo_guidance",
 ]
 code = [
   "crates/ripr/Cargo.toml",
   "crates/ripr/src/config.rs",
+  "crates/ripr/src/config/typescript.rs",
+  "crates/ripr/src/analysis/seam_cache.rs",
+  "crates/ripr/src/lsp/backend.rs",
   "crates/ripr/src/domain/language.rs",
   "crates/ripr/src/domain/probe.rs",
   "crates/ripr/src/analysis/language/mod.rs",
