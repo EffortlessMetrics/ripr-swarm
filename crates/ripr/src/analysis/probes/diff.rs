@@ -179,6 +179,10 @@ pub(crate) fn probes_for_file_with_relations(
         added_type_bound_lines(index, changed)
     };
 
+    // Type-bound lines of a wrapped signature are declarations of their own
+    // (one visible `static_unknown` each) and are never grouped away; parsed
+    // lazily, only when a line sits in a wrapped signature (#8999).
+    let signature_bounds = std::cell::OnceCell::<Vec<bool>>::new();
     for (added_index, added) in changed.added_lines.iter().enumerate() {
         let text = added.text.trim();
         if should_ignore_changed_line(text)
@@ -195,7 +199,15 @@ pub(crate) fn probes_for_file_with_relations(
         ) {
             continue;
         }
-        if opens_new_function_with_added_body(index, changed, added.new_side_line, text) {
+        if opens_new_function_with_added_body(index, changed, added_index, &signature_bounds)
+            || continues_changed_signature(
+                index,
+                changed,
+                added_index,
+                &skip_added,
+                &signature_bounds,
+            )
+        {
             continue;
         }
         let propagation_subject = propagation_subjects.get(&added.new_side_line);
@@ -977,37 +989,126 @@ fn neutral_spelling(line: &str) -> String {
     out
 }
 
-/// Whether an added `text` line is only the one-line signature of a NEW
-/// function whose body lines are added too: the owner starts on this line, no
-/// line of its span was removed and no removed line declared a function of the
-/// same name (so the signature did not change, even when git pairs the old
-/// signature with an unrelated inserted line), and another added line in the
-/// span carries the behavior. A signature has no runtime behavior of its own
-/// (Rust has no default arguments), so probing it only repeats the body
-/// findings. Multi-line signatures and one-line bodies keep their probes.
+/// The line holding the body-opening `{` of `function`, when its signature
+/// spans physical lines (`start_line..=open_line`). `None` for a body-less
+/// declaration, a one-line body (`fn f() { x }`) or an unreadable shape: a
+/// signature is grouped only when its extent is unambiguous (#8999).
+fn signature_open_line(
+    index: &RustIndex,
+    path: &Path,
+    function: &crate::analysis::rust_index::FunctionSummary,
+) -> Option<usize> {
+    /// Bound on the downward walk; a longer header is not grouped.
+    const MAX_SIGNATURE_LINES: usize = 64;
+    let facts = find_file_facts(index, path)?;
+    let count = function.end_line.checked_sub(function.start_line)?;
+    for (offset, raw) in facts
+        .source
+        .lines()
+        .skip(function.start_line.checked_sub(1)?)
+        .take(count.min(MAX_SIGNATURE_LINES) + 1)
+        .enumerate()
+    {
+        let text = raw.trim();
+        if text.contains('{') {
+            return (text.ends_with('{') && text.matches('{').count() == 1)
+                .then_some(function.start_line + offset);
+        }
+        if text.ends_with(';') {
+            return None;
+        }
+    }
+    None
+}
+
+/// Whether an added `text` line belongs to the signature of a NEW function
+/// whose body lines are added too: the signature (one line, or the physical
+/// lines from the `fn` line through the line opening the body) starts on the
+/// owner's first line, no line of its span was removed and no removed line
+/// declared a function of the same name (so the signature did not change, even
+/// when git pairs the old signature with an unrelated inserted line), and
+/// another added body line carries the behavior. A signature has no runtime
+/// behavior of its own (Rust has no default arguments), so probing it, once
+/// per physical line for a wrapped one, only repeats the body findings. One-line
+/// bodies keep their probes.
 fn opens_new_function_with_added_body(
     index: &RustIndex,
     changed: &ChangedFile,
-    line: usize,
-    text: &str,
+    added_index: usize,
+    signature_bounds: &std::cell::OnceCell<Vec<bool>>,
 ) -> bool {
-    if !text.contains("fn ") || !text.ends_with('{') || text.matches('{').count() != 1 {
-        return false;
-    }
+    let line = changed.added_lines[added_index].new_side_line;
     let Some(function) = find_owner_function(index, &changed.path, line) else {
         return false;
     };
-    function.start_line == line
-        && function.end_line > line
+    let Some(open_line) = signature_open_line(index, &changed.path, function) else {
+        return false;
+    };
+    line <= open_line
+        && function.end_line > open_line
+        && !is_signature_type_bound(index, changed, added_index, signature_bounds)
         && !changed.removed_lines.iter().any(|removed| {
             (function.start_line..=function.end_line).contains(&removed.new_side_line)
                 || declares_fn_named(&removed.text, &function.name)
         })
         && changed.added_lines.iter().any(|other| {
-            other.new_side_line > line
+            other.new_side_line > open_line
                 && other.new_side_line <= function.end_line
                 && !should_ignore_changed_line(other.text.trim())
         })
+}
+
+/// Whether an earlier added line of the same multi-line signature already
+/// carries the signature's probe, so this physical line is the same logical
+/// declaration change rather than a second one (#8999). The first retained
+/// line keeps the probe (its id and span stay stable); only lines of one
+/// function's header from `fn` through the body-opening line group.
+fn continues_changed_signature(
+    index: &RustIndex,
+    changed: &ChangedFile,
+    added_index: usize,
+    skip_added: &[bool],
+    signature_bounds: &std::cell::OnceCell<Vec<bool>>,
+) -> bool {
+    let line = changed.added_lines[added_index].new_side_line;
+    let Some(function) = find_owner_function(index, &changed.path, line) else {
+        return false;
+    };
+    let Some(open_line) = signature_open_line(index, &changed.path, function) else {
+        return false;
+    };
+    if line > open_line
+        || line <= function.start_line
+        || is_signature_type_bound(index, changed, added_index, signature_bounds)
+    {
+        return false;
+    }
+    changed.added_lines[..added_index]
+        .iter()
+        .enumerate()
+        .any(|(earlier, other)| {
+            other.new_side_line >= function.start_line
+                && other.new_side_line < line
+                && !skip_added[earlier]
+                && !should_ignore_changed_line(other.text.trim())
+                && !is_signature_type_bound(index, changed, earlier, signature_bounds)
+        })
+}
+
+/// Whether added line `added_index` is a generic or `where` type-bound
+/// declaration: it keeps its own `static_unknown` probe (a changed bound is
+/// disclosed) instead of being grouped into the signature's.
+fn is_signature_type_bound(
+    index: &RustIndex,
+    changed: &ChangedFile,
+    added_index: usize,
+    signature_bounds: &std::cell::OnceCell<Vec<bool>>,
+) -> bool {
+    signature_bounds
+        .get_or_init(|| added_type_bound_lines(index, changed))
+        .get(added_index)
+        .copied()
+        .unwrap_or(false)
 }
 
 /// Whether `text` holds `fn <name>` (raw `r#` spelling included).
@@ -3970,6 +4071,109 @@ mod tests {
             probes.iter().any(|probe| probe.location.line == 1),
             "{probes:?}"
         );
+    }
+
+    const WRAPPED_SIGNATURE: &str = "pub fn price(\n    amount: u64,\n    years: u32,\n) -> u64\nwhere\n    u64: Copy,\n{\n    if years >= 5 {\n        amount - 1\n    } else {\n        amount\n    }\n}\n";
+
+    fn wrapped_signature_change(
+        added: &[usize],
+        removed: &[(usize, &str)],
+    ) -> (RustIndex, ChangedFile) {
+        let path = PathBuf::from("src/lib.rs");
+        let mut index = RustIndex::default();
+        index.insert_file_only(
+            path.clone(),
+            crate::analysis::rust_index::summarize_file(
+                path.clone(),
+                WRAPPED_SIGNATURE.to_string(),
+            ),
+        );
+        let lines = WRAPPED_SIGNATURE.lines().collect::<Vec<_>>();
+        let added_lines = added
+            .iter()
+            .map(|&line| ChangedLine {
+                line,
+                new_side_line: line,
+                text: lines[line - 1].to_string(),
+            })
+            .collect();
+        let removed_lines = removed
+            .iter()
+            .map(|&(line, text)| ChangedLine {
+                line,
+                new_side_line: line,
+                text: text.to_string(),
+            })
+            .collect();
+        (
+            index,
+            ChangedFile {
+                path,
+                added_lines,
+                removed_lines,
+            },
+        )
+    }
+
+    /// #8999: a new function whose signature wraps over several physical
+    /// lines (params, return type, body-opening brace) seeds no probe on those
+    /// lines, exactly like the one-line form; the `where` clause and its bound
+    /// keep their declaration probes (bound contract) and the body its own.
+    #[test]
+    fn probes_for_file_skips_wrapped_signature_lines_of_new_function_but_keeps_bound() {
+        let (index, changed) = wrapped_signature_change(&(1..=13).collect::<Vec<_>>(), &[]);
+
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+
+        assert!(
+            probes.iter().any(|probe| probe.location.line == 8),
+            "premise: the body predicate is probed: {probes:?}"
+        );
+        let signature = probes
+            .iter()
+            .filter(|probe| probe.location.line <= 7)
+            .map(|probe| (probe.location.line, probe.expression.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            signature,
+            vec![(5, "where"), (6, "u64: Copy,")],
+            "{probes:?}"
+        );
+    }
+
+    /// #8999: two physical lines of one existing signature changing is one
+    /// declaration change: one probe, kept on the first changed line.
+    #[test]
+    fn probes_for_file_groups_changed_wrapped_signature_lines_into_one_probe() {
+        let (index, changed) =
+            wrapped_signature_change(&[2, 3], &[(2, "    amount: u32,"), (3, "    years: u8,")]);
+
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+
+        let lines = probes
+            .iter()
+            .map(|probe| probe.location.line)
+            .collect::<Vec<_>>();
+        assert_eq!(lines, vec![2], "{probes:?}");
+    }
+
+    /// #8999 negative: grouping stops at the signature. A changed body line
+    /// of the same function, and a signature line separated from the group by
+    /// the body, keep their own probes.
+    #[test]
+    fn probes_for_file_keeps_body_probe_beside_changed_wrapped_signature() {
+        let (index, changed) =
+            wrapped_signature_change(&[3, 8], &[(3, "    years: u8,"), (8, "    if years > 5 {")]);
+
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+
+        let mut lines = probes
+            .iter()
+            .map(|probe| probe.location.line)
+            .collect::<Vec<_>>();
+        lines.sort_unstable();
+        lines.dedup();
+        assert_eq!(lines, vec![3, 8], "{probes:?}");
     }
 
     #[test]
