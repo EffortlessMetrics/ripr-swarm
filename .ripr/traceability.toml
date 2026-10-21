@@ -11554,7 +11554,6 @@ outputs = [
   "fixtures/same_name_qualified_other_module/expected/human-full.txt",
   "fixtures/glob_import_qualified_other_module/expected/check.json",
   "fixtures/glob_import_qualified_other_module/expected/human.txt",
-  "fixtures/glob_import_qualified_other_module/expected/human-full.txt",
 ]
 metrics = [
   "unit_test_pass_rate",
