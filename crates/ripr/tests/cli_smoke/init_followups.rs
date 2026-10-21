@@ -616,6 +616,11 @@ fn workflow_warning_omits_refresh_for_unrepresentable_root() -> TestResult {
         let stderr = String::from_utf8(init.stderr)?;
         if stderr.contains("is a development version") {
             assert!(stderr.contains("refresh command omitted"), "{stderr}");
+            assert!(
+                stderr.contains("upgrade ripr and refresh the workflow (refresh command omitted"),
+                "{stderr}"
+            );
+            assert!(!stderr.contains("then refresh command omitted"), "{stderr}");
             assert!(stderr.contains("UTF-8"), "{stderr}");
             assert!(!stderr.contains("`ripr init"), "{stderr}");
         }

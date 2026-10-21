@@ -119,7 +119,13 @@ fn recoverable_request_id(frame: &[u8]) -> Option<serde_json::Value> {
     let object = value.as_object()?;
     object.get("method")?.as_str()?;
     let id = object.get("id")?;
-    (id.is_string() || id.is_i64() || id.is_u64()).then(|| id.clone())
+    let echoable = id.is_string() || id.is_i64() || id.is_u64();
+    // An id over the admission bound is never echoed, even in a rejection:
+    // the reply would otherwise carry it past the response cap.
+    let within_bound = serde_json::to_vec(id)
+        .map(|serialized| serialized.len() <= super::MAX_REQUEST_ID_BYTES)
+        .unwrap_or(false);
+    (echoable && within_bound).then(|| id.clone())
 }
 impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transport<RoleServer>
     for BoundedTransport<R, W>
@@ -260,6 +266,26 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
             let mut bytes = BytesMut::from(frame.as_slice());
             match JsonRpcMessageCodec::<ClientJsonRpcMessage>::default().decode_eof(&mut bytes) {
                 Ok(Some(message)) => {
+                    if let ClientJsonRpcMessage::Request(request) = &message
+                        && serde_json::to_vec(&request.id)
+                            .map(|id| id.len() > super::MAX_REQUEST_ID_BYTES)
+                            .unwrap_or(true)
+                    {
+                        match protocol_error_frame(
+                            -32600,
+                            "MCP request id exceeds the configured byte limit",
+                        ) {
+                            Ok(frame) => self.pending_protocol_error = Some(frame),
+                            Err(error) => {
+                                record_failure(
+                                    &self.failure,
+                                    super::writer::failure_reason(&error),
+                                );
+                                return None;
+                            }
+                        }
+                        continue;
+                    }
                     if let ClientJsonRpcMessage::Request(request) = &message
                         && self.admission.admit(request.id.clone()).is_err()
                     {

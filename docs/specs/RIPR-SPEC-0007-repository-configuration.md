@@ -87,7 +87,7 @@ path advice is outside this bounded contract.
 
 Doctor's human output marks a blocking failure with `!` and an advisory with
 `~`. A failed core check or a failed required runtime probe is blocking: it
-uses `!` and the run exits 2. An advisory never changes the exit status: the
+uses `!` and the completed run exits 3 (#5102). An advisory never changes the exit status: the
 artifact root not covered by git ignore rules, the artifact root tracked by
 git, and an unwritable cache each use `~`. `ripr doctor --help` documents both
 marks. This obligation does not change JSON fields or output schemas.
@@ -310,6 +310,27 @@ then the config is present but unreadable,
 and it is not described as using built-in defaults.
 ```
 
+### Doctor exit codes distinguish findings, usage errors, and clean runs (#5102)
+
+```text
+Given a workspace where a doctor check fails,
+when ripr doctor completes its diagnosis (human or --json),
+then the full report is written and doctor exits 3 via
+CommandError::Decision, with stderr naming `doctor found issues`;
+
+Given an invalid doctor invocation (for example `ripr doctor --bogus`),
+when no check has run,
+then doctor exits 2 via CommandError::Failure;
+
+Given a workspace where every doctor check passes,
+when ripr doctor runs,
+then doctor exits 0.
+```
+
+Operational failures before a report exists stay exit 2.
+`ripr help --json` projects this as the `doctor_findings` exit kind for
+`cmd:doctor`.
+
 ### Doctor separates analysis readiness from source-build prerequisites
 
 ```text
@@ -324,7 +345,7 @@ withheld.
 Given the same workspace,
 when ripr doctor runs with --profile source-build,
 then the cargo and rustc checks fail, the report status is fail, and doctor
-exits 2;
+exits 3;
 and a missing cargo or rustc names an install route on its own failing line;
 and the run does not print the analysis-profile start-here packet, recovery
 states, proof-rail note, or "Recommended first command: ripr check";
@@ -390,7 +411,7 @@ Given a repository whose ignore rules do not cover the artifact root, or whose
 index tracks an artifact root, or whose cache directory is unwritable, doctor
 prints each advisory starting with `~ ` and exits with the status of its core
 checks alone; only a failed core check or required runtime probe prints `!`
-and exits 2.
+and exits 3.
 
 ## Test Mapping
 
@@ -398,6 +419,10 @@ and exits 2.
   pins literal rule escaping and unchanged raw path spelling.
 - `crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_tracking_untrack_names_only_indexed_roots`
   pins the `~ ` advisory mark on the tracked-artifacts warning.
+- `crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_ignore_names_the_gitignore_entry`
+  pins the `~ ` advisory mark on the not-ignored artifact-root warning.
+- `crates/ripr/tests/chaos_interrupted_runs.rs::doctor_says_when_the_cache_cannot_be_written`
+  pins the `~ ` advisory mark and successful exit for an unwritable cache.
 - `crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_ignore_advice_covers_only_the_literal_root`
   feeds the actual advice to Git and distinguishes descendants from siblings
   (Unix-only literal-star filesystem fixture).
@@ -468,6 +493,10 @@ Current tests:
 - `crates/ripr/src/app/tests/rendering_contracts.rs::configured_finding_severity_applies_to_human_json_and_github`
 - `crates/ripr/src/lsp/diagnostics.rs::seam_diagnostic_tests::configured_seam_severity_can_disable_a_class`
 - `crates/ripr/tests/cli_smoke.rs::doctor_reports_missing_config_defaults`
+- `crates/ripr/tests/cli_smoke.rs::doctor_exit_codes_distinguish_findings_usage_and_clean`
+- `crates/ripr/src/cli/help_json.rs::tests::orchestrator_exit_contracts_match_the_implemented_mapping`
+- `crates/ripr/src/cli/commands/doctor.rs::tests::doctor_human_projection_fails_for_missing_root`
+- `crates/ripr/src/cli/commands/doctor.rs::tests::doctor_json_and_tool_failures_return_errors`
 - `crates/ripr/tests/cli_smoke.rs::doctor_reports_loaded_config_path`
 - `crates/ripr/tests/cli_smoke.rs::doctor_reports_malformed_config_error`
 - `crates/ripr/src/output/doctor.rs::tests::old_workspace_compiler_is_advisory_for_analysis_and_fails_source_build`
