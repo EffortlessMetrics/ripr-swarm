@@ -132,6 +132,9 @@ unsupported state as unknown and fabricates no reason conforms.
 | `missing_exact_assertion` | yes | pending #5491 | pending #5495 | no |
 | `observation_unconfirmed` | yes | pending #5491 | pending #5495 | yes |
 
+Rust "yes" means the reason is emitted; it does not claim conformance with every
+law above (see Current Rust conformance gaps).
+
 "Pending" means the producer has not mapped that reason yet; the row-evidence
 prerequisites for it are specified in this document. Perl's narrower coverage is
 a capability difference, not a parity failure.
@@ -157,14 +160,17 @@ not yet satisfy all of it, and these gaps are tracked rather than claimed away:
 
 - Decision independence (#5563): `RelatedTest::is_unmatched()` is derived from
   `miss == assertion_not_observing`, and `Finding::oracle_related_tests`,
-  `exact_oracle_gap_next_step` and the diagnostic witness read it, so changing
-  a row's miss can change triage ordering, next step or fix-site selection.
+  `exact_oracle_gap_next_step` and the diagnostic witness read it, and
+  `exact_oracle_gap_next_step` also branches directly on
+  `miss == missing_exact_assertion`, so changing a row's miss can change triage
+  ordering, next step or fix-site selection.
 - Row-owned support (#5564): the annotation pass computes boundary and
   exact-assertion presence once from the finding-wide `missing_discriminators`
   list and assigns `missing_input` or `missing_exact_assertion` to eligible
   rows, so a row can carry a fact that belongs to another test.
-- Family-typed rendering (#5493): `input_boundary_fact` and the reason renderer
-  select facts from text such as ` == ` rather than the typed `ProbeFamily`.
+- Family-typed rendering (#5493): the reason renderer ignores the finding's
+  `ProbeFamily` and hard-codes its fact lookups, and `input_boundary_fact`
+  selects predicate facts by ` == ` text.
 
 Until those land, Rust is listed as supported in the capability table only for
 the vocabulary it emits, not as conforming to decision independence, row
@@ -203,8 +209,9 @@ written and must not copy these gaps.
   that row. Unequal sink text stays unconfirmed. Every other Perl row keeps no
   miss: advisory relations, weak or missing oracles, partial or blocked
   packets, and the finding-wide discriminator, which has no test identity.
-- `miss` is evidence only. No stage, class, confidence, stop reason, or next
-  step reads it. Post-classification gates that asked whether any related
+- `miss` is evidence only (target; the Rust exceptions are listed under
+  Current Rust conformance gaps). No stage, class, confidence or stop reason
+  reads it, and the next-step and ordering exceptions are those gaps. Post-classification gates that asked whether any related
   test survived oracle matching use `Finding::oracle_related_tests`, which
   skips `assertion_not_observing` rows, so their decisions are unchanged.
 - Oracle rows are ranked and packed into the eight-row window exactly as
@@ -464,7 +471,8 @@ actionability or rendered output.
   `crates/ripr/src/mcp/gaps.rs::tests` — the same packet-backed row, token and
   shared sentence in check JSON, the context packet, human-full, `ripr
   explain`, the human digest, LSP hover, related information and diagnostic
-  data, and MCP gap evidence; no projected decision reads `miss`.
+  data, and MCP gap evidence; no projected surface adds a decision that reads
+  `miss` beyond the Rust gaps listed above.
 - `crates/ripr/src/output/human/explain.rs::tests` — an unconfirmed row is not
   labelled a miss.
 - `crates/ripr/src/analysis/language/python/python_tests.rs` and
