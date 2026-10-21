@@ -273,6 +273,7 @@ fn tests_call_matching(
     !name.is_empty()
         && index.tests().iter().any(|test| {
             let file_facts = index.files().get(&test.file);
+            let per_test: std::cell::Cell<Option<bool>> = std::cell::Cell::new(None);
             let imports_of = || match &file_facts {
                 Some(facts) => {
                     if let Some(known) = file_imports.borrow().get(test.file.as_path()) {
@@ -282,7 +283,14 @@ fn tests_call_matching(
                     file_imports.borrow_mut().insert(test.file.as_path(), known);
                     known
                 }
-                None => source_imports_foreign_entry(index, test.body.as_str(), name),
+                None => match per_test.get() {
+                    Some(known) => known,
+                    None => {
+                        let known = source_imports_foreign_entry(index, test.body.as_str(), name);
+                        per_test.set(Some(known));
+                        known
+                    }
+                },
             };
             test.calls.iter().any(|call| {
                 call.name == name
@@ -3145,11 +3153,12 @@ mod tests {
             return Err(format!("fixture built {} tests", index.tests().len()));
         }
         super::super::macro_item_names::SCAN_COUNT.with(|count| count.set(0));
-        let found = tests_call_name(&index, "parse");
-        let scans = super::super::macro_item_names::SCAN_COUNT.with(|count| count.get());
-        if !found {
-            return Err("expected a test to call `parse`".to_string());
+        // No test matches, so `any` cannot short-circuit: all 60 tests are
+        // evaluated and a per-test (uncached) import scan would count 60.
+        if tests_call_matching(&index, "parse", |_| false) {
+            return Err("matcher rejects every kind".to_string());
         }
+        let scans = super::super::macro_item_names::SCAN_COUNT.with(|count| count.get());
         if scans != 1 {
             return Err(format!("expected one scan for one file, saw {scans}"));
         }
