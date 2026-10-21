@@ -27,6 +27,16 @@ counts would be accidental.
 
 ## Behavior
 
+Actual Rust match arms carry parser-owned geometry from the pattern start
+through the complete arm body and optional trailing comma (#5905). The
+`=>` token remains the identity and internal display anchor; the `match`
+keyword shape remains span-less. Macro token-tree arrows and unavailable
+parser geometry never receive fabricated spans. Repo-seams schema 0.3 and
+repo-exposure schema 0.5 emit `line` as the span start line when a span is
+available, so multiline patterns have coherent coordinates. Span-less
+entries retain their display line. Existing source-line change ranking and
+unique-innermost/ambiguous finding ownership remain separate consumers.
+
 `ripr` should be able to inventory a repository and emit a seam catalog where
 each seam carries:
 

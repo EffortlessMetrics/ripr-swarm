@@ -30,11 +30,11 @@ Evidence
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion
   - local flow reaches returned value: 0 (line 19)
-  - related test src/lib.rs:57 mean_lies_between_min_and_max uses none unknown oracle; misses: has no assertion
+  - related test src/lib.rs:57 mean_lies_between_min_and_max uses no oracle; misses: has no assertion
   - related test src/lib.rs:43 average_of_nothing_is_zero uses strong exact value oracle: assert_eq!(average(&[]), 0); misses: no call to the changed code found; linked by file location only
   - related test src/lib.rs:43 average_of_nothing_is_zero uses strong exact value oracle: assert_eq!(average(&[2, 4]), 3); misses: no call to the changed code found; linked by file location only
   - related test src/lib.rs:49 initial_table uses strong exact value oracle: assert_eq!(initial(name), want, "{name:?}"); misses: no call to the changed code found; linked by file location only
-  - related test src/lib.rs:79 ratio_smoke uses none unknown oracle; misses: has no assertion
+  - related test src/lib.rs:79 ratio_smoke uses no oracle; misses: has no assertion
   - related tests (showing 5 of 6; more in --format json)
   - source assertion argument value 0 at line 44
   - source assertion argument value 2 at line 45
