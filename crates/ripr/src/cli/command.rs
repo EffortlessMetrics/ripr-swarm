@@ -218,6 +218,11 @@ fn cli_command_from_dispatch(
 fn unknown_command_error(command: &str) -> String {
     // A flag in command position means options were put before the command.
     if command.starts_with('-') {
+        if let Some(flag) = closest_of(command, &["--version", "--help"]) {
+            return format!(
+                "unknown command {command:?}. Did you mean `{flag}`? Run `ripr --help`."
+            );
+        }
         let example = if command == "--root" {
             "--root .".to_string()
         } else {
@@ -232,12 +237,7 @@ fn unknown_command_error(command: &str) -> String {
         return "unknown command \"version\". Did you mean `--version`? Run `ripr --help`."
             .to_string();
     }
-    let suggestion = if command.starts_with('-') {
-        closest_of(command, &["--version", "--help"])
-    } else {
-        closest_command(command)
-    };
-    match suggestion {
+    match closest_command(command) {
         Some(suggestion) => {
             format!("unknown command {command:?}. Did you mean `{suggestion}`? Run `ripr --help`.")
         }
@@ -482,7 +482,10 @@ mod tests {
         // A flag nowhere near a top-level flag gets no invented suggestion.
         assert_eq!(
             CliCommand::from_parts(Some("--bogus"), Vec::new()),
-            Err("unknown command \"--bogus\". Run `ripr --help`.".to_string())
+            Err(
+                "unknown command \"--bogus\"; options go after the command, e.g. `ripr check --bogus ...`"
+                    .to_string()
+            )
         );
     }
 
