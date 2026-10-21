@@ -117,8 +117,9 @@ completed after resolving the new graph.
 | uuid 1.26.0 | Apache-2.0 OR MIT | 1.85.0 |
 
 Compatibility follows the SDK: unsupported or discovery-only initialize
-versions negotiate `2025-11-25`; syntax-invalid JSON is ignored, invalid typed
-shapes recover with Invalid Request, and unknown error IDs may be omitted.
+versions negotiate `2025-11-25`; syntax-invalid JSON is answered with Parse
+error (`-32700`, null id), invalid typed shapes recover with Invalid Request
+(`-32600`), and unknown error IDs in SDK-dispatched responses may be omitted.
 Readable IDs are never silently replaced: a response/fallback that cannot fit
 the 128-KiB output cap terminates with a bounded operational error. The raw
 client harness waits for correlated replies before EOF, rather than assuming
@@ -146,7 +147,7 @@ mapping specifies successor proof; it does not claim that it has run.
 | Prior control | Successor owner / disposition |
 | --- | --- |
 | CLI argument rejection | Existing `mcp::tests::parser_rejects_unknown_and_ambiguous_root_arguments`, unchanged |
-| Invalid JSON produces parse error | SDK syntax-ignore policy; typed-shape/recovery transport control replaces manual parse-error assertion |
+| Invalid JSON produces parse error | Transport answers syntax-invalid JSON with `-32700` (the SDK would drop it silently); typed-shape/recovery transport control covers `-32600` |
 | Unsupported initialize chooses default | Official client initialize-version control; handshake default corrected to SDK `LATEST_WITH_INITIALIZE` |
 | Repeated initialize stability | SDK lifecycle owner; no retained application session state or custom renegotiation gate |
 | Malformed discovery metadata | Public stdio discovery negative control through actual SDK |

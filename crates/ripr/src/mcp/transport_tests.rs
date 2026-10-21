@@ -246,7 +246,8 @@ async fn oversized_frame_error_carries_explicit_null_id() -> Result<(), String> 
 }
 
 #[tokio::test]
-async fn sdk_syntax_ignore_and_typed_shape_error_recover_next_request() -> Result<(), String> {
+async fn syntax_error_and_typed_shape_error_are_each_answered_then_next_request_recovers()
+-> Result<(), String> {
     let input = b"{not json}\ntrue\n{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"control\",\"version\":\"1\"}}}\n";
     let writer = Arc::new(Mutex::new(FrameWriter::new(Vec::<u8>::new())));
     let mut transport = BoundedTransport {
@@ -260,31 +261,160 @@ async fn sdk_syntax_ignore_and_typed_shape_error_recover_next_request() -> Resul
     let message = transport
         .receive()
         .await
-        .ok_or_else(|| "typed recovery lost valid request".to_string())?;
+        .ok_or_else(|| "recovery lost the valid request".to_string())?;
     if !matches!(message, ClientJsonRpcMessage::Request(_)) {
-        return Err("typed recovery did not return the request".into());
+        return Err("recovery did not return the request".into());
     }
     let guard = writer.lock().await;
-    let frames: Vec<_> = guard
+    let frames: Vec<Value> = guard
         .output()
         .split(|byte| *byte == b'\n')
         .filter(|frame| !frame.is_empty())
-        .collect();
-    if frames.len() != 1 {
-        return Err("syntax must be ignored; exactly one typed-shape error expected".into());
-    }
-    let frame = frames
-        .first()
-        .ok_or_else(|| "typed-shape error missing".to_string())?;
-    let error: Value = serde_json::from_slice(frame).map_err(|error| error.to_string())?;
+        .map(|frame| serde_json::from_slice(frame).map_err(|error| error.to_string()))
+        .collect::<Result<_, _>>()?;
     // Transport-level errors carry an explicit null id per JSON-RPC (#5254
     // item 3), not a missing member.
-    if error.get("id") != Some(&Value::Null)
-        || error.pointer("/error/code").and_then(Value::as_i64) != Some(-32600)
-    {
-        return Err("protocol typed-shape error ID/code differs".into());
+    let [parse, shape] = frames.as_slice() else {
+        return Err(format!(
+            "expected a parse error then a shape error: {frames:?}"
+        ));
+    };
+    for (frame, code) in [(parse, -32700), (shape, -32600)] {
+        if frame.get("id") != Some(&Value::Null)
+            || frame.pointer("/error/code").and_then(Value::as_i64) != Some(code)
+        {
+            return Err(format!("wrong id/code, expected {code}: {frame}"));
+        }
     }
     Ok(())
+}
+
+/// One inbound frame in, the error frames the transport wrote out.
+async fn error_frames_for(input: &[u8]) -> Result<Vec<Value>, String> {
+    let writer = Arc::new(Mutex::new(FrameWriter::new(Vec::<u8>::new())));
+    let mut transport = BoundedTransport {
+        reader: Arc::new(Mutex::new(FrameReader::new(input))),
+        writer: writer.clone(),
+        failure: Arc::new(TransportFailure::default()),
+        admission: Arc::new(Admission::default()),
+        pending_protocol_error: None,
+        writer_needs_drain: false,
+    };
+    if transport.receive().await.is_some() {
+        return Err(format!("{input:?} must not yield a message"));
+    }
+    let guard = writer.lock().await;
+    guard
+        .output()
+        .split(|byte| *byte == b'\n')
+        .filter(|frame| !frame.is_empty())
+        .map(|frame| serde_json::from_slice(frame).map_err(|error| error.to_string()))
+        .collect()
+}
+
+#[tokio::test]
+async fn unanswerable_frames_get_a_parse_or_invalid_request_reply_not_silence() -> Result<(), String>
+{
+    // A client waiting on any of these would hang forever if they were
+    // dropped (F5): non-JSON and truncated JSON are Parse errors; a deeply
+    // nested request exceeds the parser's depth limit and is also not
+    // readable JSON; null and fractional ids are valid JSON that is not a
+    // typed request.
+    let deep = format!(
+        "{{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/list\",\"params\":{}{}}}\n",
+        "[".repeat(5000),
+        "]".repeat(5000)
+    );
+    let cases: [(&[u8], i64); 6] = [
+        (b"{not json\n", -32700),
+        (b"{\"jsonrpc\":\"2.0\",\"id\":1,\"met\n", -32700),
+        (deep.as_bytes(), -32700),
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":null,\"method\":\"tools/list\"}\n",
+            -32600,
+        ),
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":1.5,\"method\":\"tools/list\"}\n",
+            -32600,
+        ),
+        (
+            b"{\"jsonrpc\":\"1.0\",\"id\":\"known\",\"method\":\"tools/list\"}\n",
+            -32600,
+        ),
+    ];
+    for (input, code) in cases {
+        let frames = error_frames_for(input).await?;
+        let [frame] = frames.as_slice() else {
+            return Err(format!(
+                "expected exactly one reply for {input:.60?}: {frames:?}"
+            ));
+        };
+        let expected_id = if input.starts_with(b"{\"jsonrpc\":\"1.0\"") {
+            json!("known")
+        } else {
+            Value::Null
+        };
+        if frame.get("id") != Some(&expected_id)
+            || frame.pointer("/error/code").and_then(Value::as_i64) != Some(code)
+            || frame.get("jsonrpc") != Some(&json!("2.0"))
+        {
+            return Err(format!("wrong reply for {input:.60?}: {frame}"));
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn oversized_frame_error_names_a_front_loaded_request_id() -> Result<(), String> {
+    let filler = "a".repeat(super::super::MAX_MESSAGE_BYTES);
+    let cases: [(String, Value); 6] = [
+        (
+            format!("{{\"jsonrpc\":\"2.0\",\"id\":42,\"method\":\"m\",\"params\":\"{filler}\"}}\n"),
+            json!(42),
+        ),
+        (
+            format!("{{\"id\":\"req-9\",\"params\":\"{filler}\"}}\n"),
+            json!("req-9"),
+        ),
+        // An id after the retained prefix is unreadable: keep null.
+        (
+            format!("{{\"params\":\"{filler}\",\"id\":42}}\n"),
+            Value::Null,
+        ),
+        // A nested `id` is not the request id.
+        (
+            format!("{{\"params\":{{\"id\":7}},\"x\":\"{filler}\"}}\n"),
+            Value::Null,
+        ),
+        // An `id` spelled inside a string is not a member.
+        (
+            format!("{{\"text\":\"\\\"id\\\":7,\",\"x\":\"{filler}\"}}\n"),
+            Value::Null,
+        ),
+        // Non-object frames and unusable id kinds stay null.
+        (format!("[\"{filler}\"]\n"), Value::Null),
+    ];
+    for (input, expected_id) in cases {
+        let frames = error_frames_for(input.as_bytes()).await?;
+        let [frame] = frames.as_slice() else {
+            return Err(format!("expected one reply, got {frames:?}"));
+        };
+        if frame.get("id") != Some(&expected_id)
+            || frame.pointer("/error/code").and_then(Value::as_i64) != Some(-32600)
+        {
+            return Err(format!(
+                "wrong oversized reply, expected id {expected_id}: {frame}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn oversized_request_id_rejects_a_number_cut_by_the_prefix_end() {
+    assert_eq!(oversized_request_id(br#"{"id":12"#), None);
+    assert_eq!(oversized_request_id(br#"{"id":12,"m":"#), Some(json!(12)));
+    assert_eq!(oversized_request_id(br#"{"id":true,"m":1}"#), None);
 }
 
 #[tokio::test]
@@ -532,7 +662,7 @@ async fn oversized_frame_is_discarded_without_allocating_past_the_cap() -> Resul
     input.push(b'\n');
     input.extend_from_slice(b"{}\n");
     let mut reader = FrameReader::new(input.as_slice());
-    if !matches!(read_frame(&mut reader).await?, FrameRead::Oversized) {
+    if !matches!(read_frame(&mut reader).await?, FrameRead::Oversized(_)) {
         return Err("oversized frame must fail closed".to_string());
     }
     match read_frame(&mut reader).await? {

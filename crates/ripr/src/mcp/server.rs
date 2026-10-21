@@ -185,6 +185,19 @@ impl McpServer {
         let file = optional_nonempty_string_argument(&arguments, "file")?;
         let class = optional_nonempty_string_argument(&arguments, "class")?;
         let language = optional_nonempty_string_argument(&arguments, "language")?;
+        if let Some(language) = language.as_deref()
+            && crate::domain::LanguageId::display_name_for_wire(language).is_none()
+        {
+            // A typo would otherwise read as "no gaps in that language".
+            let allowed: Vec<&str> = crate::domain::LanguageId::ALL
+                .iter()
+                .map(crate::domain::LanguageId::as_str)
+                .collect();
+            return Err(ErrorData::invalid_params(
+                format!("unknown language {language:?}; allowed: {allowed:?}"),
+                Some(serde_json::json!({ "allowed": allowed })),
+            ));
+        }
         let repair_ready = optional_bool_argument(&arguments, "repair_ready")?;
         let session = self.session.lock().await;
         match session.list_gaps(
@@ -731,13 +744,16 @@ impl ServerHandler for McpServer {
     /// custom request and the default answers `-32601` with only the method
     /// name. A method this server serves is not missing: report the shape
     /// violation as `-32602` so a client can tell a bad call from a bad
-    /// method (#8504).
+    /// method (#8504). `initialize` is served too: a repeated `initialize`
+    /// without its required params is a params error, not a missing method.
+    /// A method that is missing says so conventionally (`Method not found:`).
     async fn on_custom_request(
         &self,
         request: CustomRequest,
         _: RequestContext<RoleServer>,
     ) -> Result<CustomResult, ErrorData> {
-        const SERVED_METHODS: [&str; 8] = [
+        const SERVED_METHODS: [&str; 9] = [
+            "initialize",
             "server/discover",
             "completion/complete",
             "tools/call",
@@ -748,14 +764,17 @@ impl ServerHandler for McpServer {
             "prompts/list",
         ];
         if SERVED_METHODS.contains(&request.method.as_str()) {
-            return Err(ErrorData::invalid_params(
-                format!("invalid params for `{}`", request.method),
-                None,
-            ));
+            let message = if request.method == "initialize" {
+                "invalid params for `initialize`: expected `protocolVersion`, `capabilities` and `clientInfo`"
+                    .to_owned()
+            } else {
+                format!("invalid params for `{}`", request.method)
+            };
+            return Err(ErrorData::invalid_params(message, None));
         }
         Err(ErrorData::new(
             ErrorCode::METHOD_NOT_FOUND,
-            request.method,
+            format!("Method not found: {}", request.method),
             None,
         ))
     }
@@ -844,8 +863,10 @@ impl ServerHandler for McpServer {
                 self.list_repair_attempts_tool(request.arguments, max_envelope_bytes)
                     .await
             }
+            // MCP: an unknown tool is a protocol error with Invalid Params
+            // (-32602), not Method Not Found; the method `tools/call` exists.
             _other => Err(ErrorData::new(
-                ErrorCode::METHOD_NOT_FOUND,
+                ErrorCode::INVALID_PARAMS,
                 "unknown tool; available: ripr_workspace_status, ripr_refresh, ripr_list_gaps, ripr_get_gap, ripr_prepare_repair, ripr_get_repair_attempt, ripr_get_receipt_status, ripr_get_repair_card, ripr_list_repair_attempts",
                 Some(serde_json::json!({
                     "available": [
