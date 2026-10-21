@@ -105,23 +105,42 @@ jobs:
       - name: Prepare locked JSON owner-return fixture dependencies
         run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
 
+      # Every cargo step below writes its log with a file redirect, not
+      # `| tee`. A pipe stays open until every process holding its write end
+      # exits, so one test that leaks a child (a failed test skipping its
+      # cleanup) made `tee` wait for EOF after cargo had already finished.
+      # The 2026-10-21 run (39549631529) printed cargo's final
+      # "7 targets failed" at 05:50 and then sat until the 90-minute job limit
+      # cancelled it; the nightly was cancelled 15 of its last 18 runs for
+      # this reason. A redirect makes the step wait on cargo alone and the log
+      # is replayed with `cat` afterwards. Each step also has its own
+      # `timeout-minutes` with `continue-on-error`, so a genuinely stuck step
+      # is bounded and the later steps still run: its missing status file is
+      # then reported as missing evidence by the summarizer instead of the
+      # whole job dying with no verdict.
       # Feature-combination testing (#2400): verify --no-default-features and
       # --all-features compile and test. These paths are never exercised by the
       # default CI which always uses all three language features.
       - name: Check --no-default-features (advisory)
+        timeout-minutes: 15
+        continue-on-error: true
         shell: bash
         run: |
-          mkdir -p target; set +e; cargo check -p ripr --no-default-features --features lang-rust --all-targets 2>&1 | tee target/nofeatures-check.log; printf '%s\n' "${PIPESTATUS[0]}" > target/nofeatures-check.status; exit 0
+          mkdir -p target; set +e; cargo check -p ripr --no-default-features --features lang-rust --all-targets > target/nofeatures-check.log 2>&1; printf '%s\n' "$?" > target/nofeatures-check.status; cat target/nofeatures-check.log; exit 0
 
       - name: Test --no-default-features (advisory)
+        timeout-minutes: 30
+        continue-on-error: true
         shell: bash
         run: |
-          mkdir -p target; set +e; cargo test -p ripr --no-default-features --features lang-rust --no-fail-fast 2>&1 | tee target/nofeatures-test.log; printf '%s\n' "${PIPESTATUS[0]}" > target/nofeatures-test.status; exit 0
+          mkdir -p target; set +e; cargo test -p ripr --no-default-features --features lang-rust --no-fail-fast > target/nofeatures-test.log 2>&1; printf '%s\n' "$?" > target/nofeatures-test.status; cat target/nofeatures-test.log; exit 0
 
       - name: Check --all-features (advisory)
+        timeout-minutes: 15
+        continue-on-error: true
         shell: bash
         run: |
-          mkdir -p target; set +e; cargo check -p ripr --all-features --all-targets 2>&1 | tee target/allfeatures-check.log; printf '%s\n' "${PIPESTATUS[0]}" > target/allfeatures-check.status; exit 0
+          mkdir -p target; set +e; cargo check -p ripr --all-features --all-targets > target/allfeatures-check.log 2>&1; printf '%s\n' "$?" > target/allfeatures-check.status; cat target/allfeatures-check.log; exit 0
 
       # Every `run:` below uses a `|` block scalar. A plain YAML scalar treats
       # ` #` as the start of a comment, which silently truncates a command
@@ -138,14 +157,18 @@ jobs:
       # cannot distinguish a compile failure from a test failure reliably. The
       # step itself exits 0 because test outcomes are advisory.
       - name: Run workspace tests (advisory, run 1)
+        timeout-minutes: 30
+        continue-on-error: true
         shell: bash
         run: |
-          mkdir -p target; set +e; cargo test --workspace --no-fail-fast 2>&1 | tee target/windows-run1.log; printf '%s\n' "${PIPESTATUS[0]}" > target/windows-run1.status; exit 0
+          mkdir -p target; set +e; cargo test --workspace --no-fail-fast > target/windows-run1.log 2>&1; printf '%s\n' "$?" > target/windows-run1.status; cat target/windows-run1.log; exit 0
 
       - name: Run workspace tests (advisory, run 2)
+        timeout-minutes: 30
+        continue-on-error: true
         shell: bash
         run: |
-          mkdir -p target; set +e; cargo test --workspace --no-fail-fast 2>&1 | tee target/windows-run2.log; printf '%s\n' "${PIPESTATUS[0]}" > target/windows-run2.status; exit 0
+          mkdir -p target; set +e; cargo test --workspace --no-fail-fast > target/windows-run2.log 2>&1; printf '%s\n' "$?" > target/windows-run2.status; cat target/windows-run2.log; exit 0
 
       - name: Summarize environment
         shell: bash
