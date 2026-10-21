@@ -45,6 +45,7 @@ pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> 
                 owner.module_entries = owner_entries.clone();
             }
         }
+        assign_class_entries(&mut owners);
         owners
     }) else {
         return Vec::new();

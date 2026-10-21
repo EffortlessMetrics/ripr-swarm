@@ -71,7 +71,7 @@ pub(crate) struct TypeScriptOwner {
 }
 
 /// Syntactic method-shape refinement recorded during owner extraction.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub(crate) enum TypeScriptMethodKind {
     /// An ordinary callable method — invoked only by member CALLS.
     #[default]

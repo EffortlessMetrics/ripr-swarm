@@ -6581,8 +6581,13 @@ fn module_entry_reach_summary(
     } else {
         called.join(", ")
     };
+    let scope = if owner.class_name.is_some() {
+        "same-class"
+    } else {
+        "same-module"
+    };
     format!(
-        "Related tests reach `{}` only through same-module callers ({}); static evidence cannot confirm the changed behavior reaches their assertions. Add a test whose exact-value assertion depends on the changed behavior of `{}`.",
+        "Related tests reach `{}` only through {scope} callers ({}); static evidence cannot confirm the changed behavior reaches their assertions. Add a test whose exact-value assertion depends on the changed behavior of `{}`.",
         owner.name, entries, owner.name
     )
 }

@@ -903,6 +903,22 @@ pub(crate) fn module_entry_owner(
     owner: &TypeScriptOwner,
     entry: &TypeScriptModuleEntry,
 ) -> TypeScriptOwner {
+    if let Some(method_kind) = entry.class_member {
+        // A sibling method of the owner's own class: a test reaches it
+        // through a receiver the test constructs, like any instance method.
+        return TypeScriptOwner {
+            name: entry.name.clone(),
+            owner_kind: OwnerKind::Method,
+            exported_as_default: false,
+            default_object_member: false,
+            method_kind,
+            module_entries: Vec::new(),
+            params: Vec::new(),
+            arity: None,
+            source_text: None,
+            ..owner.clone()
+        };
+    }
     TypeScriptOwner {
         name: entry.name.clone(),
         owner_kind: OwnerKind::Function,
@@ -2930,7 +2946,11 @@ fn strip_typescript_module_extension(path: &str) -> String {
     path.to_string()
 }
 
-fn contains_member_call_name(body_text: &str, object_name: &str, method_name: &str) -> bool {
+pub(crate) fn contains_member_call_name(
+    body_text: &str,
+    object_name: &str,
+    method_name: &str,
+) -> bool {
     if !is_safe_javascript_identifier(object_name) || !is_safe_javascript_identifier(method_name) {
         return false;
     }

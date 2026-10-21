@@ -17284,6 +17284,7 @@ fn undercredit_4103_owner_extraction_records_default_export_fact() {
     assert!(!plain[0].exported_as_default);
 }
 
+mod class_entry_tests;
 mod committed_snapshot_tests;
 mod commonjs_export_tests;
 mod custom_matcher_tests;

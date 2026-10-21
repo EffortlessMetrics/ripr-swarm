@@ -60,6 +60,7 @@ mod boundary_input;
 mod boundary_input_tests;
 mod bounded_read;
 mod bun_bridge;
+mod class_entries;
 mod classifier;
 mod committed_snapshot;
 mod custom_matcher_guard;
@@ -135,6 +136,7 @@ pub(crate) use assertion_selection::{row_projection_move, select_family_relevant
 pub(crate) use boundary_input::*;
 pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
+pub(crate) use class_entries::*;
 pub(crate) use classifier::*;
 pub(crate) use committed_snapshot::*;
 pub(crate) use custom_matcher_guard::*;

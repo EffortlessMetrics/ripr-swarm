@@ -572,7 +572,16 @@ Candidates come from the first non-empty tier:
      only when the owner is the default export, or
      `const m = await import("<owner module>")` with `m.owner(`); and
      `ReExportChainFollowed` (RIPR-SPEC-0095, at most 4 hops).
-2. **Module-entry relations** when tier 1 is empty, package-filtered.
+2. **Module-entry relations** when tier 1 is empty, package-filtered. For
+   an instance method this tier also holds the sibling methods of the same
+   class that reach it through at most 3 `this.method(...)` calls (#8567):
+   a test that calls such a sibling on a receiver it built relates through
+   `ModuleEntryCall`, which reads `weakly_exposed` at most and discloses the
+   reach as "only through same-class callers". The call graph is
+   syntax-only and fail-closed: a caller whose body declares a nested
+   `function` or `class`, a name defined twice in the class, a name some
+   method assigns, deletes or defines on `this`, and static methods
+   contribute no edge.
 3. **Heuristic relations** when tiers 1 and 2 are empty, package-filtered,
    for function, arrow and component owners, when the test body
    references the owner name and does not import that name from an
@@ -1165,6 +1174,12 @@ to `amount - 20`, and `tests/lib.test.ts` has
   (`direct_owner_call_has_declaration_anchor`,
   `owner_name_shadowed_by_unrelated_import`) and the owner bindings
   rule 7 reads.
+- #8567: `crates/ripr/src/analysis/language/typescript/class_entries.rs`
+  (`assign_class_entries`) records the same-class entries on each instance
+  method owner; `related_tests.rs` `module_entry_owner` turns an entry into
+  the receiver-call stand-in that tier 2 checks, and
+  `tests/class_entry_tests.rs` pins the credited chains against each shape
+  that records no edge.
 - `crates/ripr/src/analysis/language/typescript/classifier.rs`: rules 6
   and 7 (`ts_changed_value_is_observed`,
   `ts_observed_local_aliases_owner`), and rule 8's `static_unknown` arm
