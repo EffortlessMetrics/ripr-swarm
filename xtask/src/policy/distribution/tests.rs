@@ -528,7 +528,10 @@ fn compiled_test_names(filter: &str) -> Result<std::collections::BTreeSet<String
         "distribution source-gate test inventory",
     )?;
     if output.timed_out || !output.status.is_some_and(|status| status.success()) {
-        return Err(format!("test inventory failed: {output:?}"));
+        return Err(format!(
+            "test inventory failed: status={:?}, timed_out={}, stderr={}",
+            output.status, output.timed_out, output.stderr
+        ));
     }
     Ok(output
         .stdout
@@ -584,6 +587,13 @@ fn python_source_gate_selects_complete_distribution_inventory() -> Result<(), St
         let actual = compiled_test_names(wrong)?;
         println!("refused {wrong:?}: selected {} tests", actual.len());
         assert_ne!(actual, expected, "accepted wrong selector {wrong}");
+        if wrong.ends_with("::tests") {
+            assert!(!actual.is_empty() && actual.is_subset(&expected));
+        } else if wrong.ends_with("::renamed_away") {
+            assert!(actual.is_empty());
+        } else {
+            assert!(actual.is_superset(&expected));
+        }
     }
     Ok(())
 }
