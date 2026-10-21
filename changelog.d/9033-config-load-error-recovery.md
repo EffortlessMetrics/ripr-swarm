@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- A `ripr.toml` that fails to parse or read now ends its error with one line naming the way out (fix or make the file readable, and that removing it makes ripr use the next `ripr.toml` found in a parent directory, or the built-in defaults when there is none), and a parse error no longer leaves a stray blank line after the TOML excerpt. The one-line JSON refusal `message` and `doctor` output are unchanged (#9033).

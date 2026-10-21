@@ -439,7 +439,12 @@ workspace identity, a card over its detail budget); `policy_omitted` and
 cannot reach them; the rest stay reserved for the slices that own those
 states (they are named now so the wire contract
 stays stable). Tool argument shape violations use standard Invalid Params;
-unknown tools use Method Not Found with the available names in `error.data`.
+unknown tools use Invalid Params (MCP: the `tools/call` method exists; the
+name argument is wrong) with the available names in `error.data`. Unknown
+methods use Method Not Found (`Method not found: <method>`). `ripr_list_gaps`
+rejects a `language` filter that is not a language wire string (`rust`,
+`typescript`, `javascript`, `python`, `perl`) with Invalid Params listing the
+allowed values, instead of returning an indistinguishable empty page.
 
 ## What it does not do
 
@@ -473,8 +478,14 @@ The instructions (returned by both `initialize` and `server/discover`) and the
 tool descriptions state positively what each tool returns, its bounds, and
 what it does not do. Protocol errors keep standard JSON-RPC codes. The pinned
 official Rust SDK owns negotiation, dispatch, correlation and cancellation.
-Syntax-invalid JSON is ignored; well-formed messages with invalid typed
-shapes receive Invalid Request and the transport can read the next frame.
+Every message that cannot be typed is answered, so a client never waits on
+silence: syntax-invalid JSON (including nesting past the parser limit) receives
+Parse error (`-32700`, null id) and well-formed JSON that is not a request the
+SDK can type (null or fractional id, wrong `jsonrpc` version, missing method)
+receives Invalid Request (`-32600`); the transport then reads the next frame.
+The reply carries the request id when a string or integer one is readable. An
+over-cap message is answered `-32600` with its id when a top-level string or
+integer `id` member lies within its first 4 KiB, otherwise null.
 Unknown request IDs are omitted in SDK-dispatched error responses, while
 transport-level protocol errors (well-formed messages with invalid typed
 shapes) carry an explicit null id per JSON-RPC; readable IDs remain
