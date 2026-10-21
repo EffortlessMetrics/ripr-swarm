@@ -3,15 +3,19 @@
 //! `test_has_mocked_module` is a syntax-only check: any `patch(...)`,
 //! `patch.object(...)`, `monkeypatch.setattr(...)` or similar in a related
 //! test limits the finding, whatever it patches. This module narrows that
-//! limit, fail closed, for one shape only: a string-literal dotted target
-//! (`patch("os.getcwd")`, `monkeypatch.setattr("a.b.c", ...)`) none of whose
-//! dotted segments names anything in the owner's file or module.
+//! limit, fail closed, for one shape only: function decorators patching a
+//! string-literal dotted target (`@patch("os.getcwd")`) none of whose dotted
+//! segments names anything in the owner's file or module.
 //!
 //! The decision is by name and never by runtime resolution:
 //!
-//! - every mock site in the test must be a plain `patch(`, `mock.patch(`,
-//!   `mocker.patch(` or `monkeypatch.setattr(` call whose first argument is a
-//!   single-line, non-prefixed, non-concatenated string literal;
+//! - every mock site in the test must be a decorator `@patch(`,
+//!   `@mock.patch(` or `@mocker.patch(` whose first argument is a
+//!   single-line, non-prefixed, non-concatenated string literal, and the test
+//!   body must not mention patch, mock, monkeypatch, `sys` or importlib
+//!   machinery (a body call or an unread spelling keeps the limit);
+//! - a dunder target segment keeps the limit (an operator the owner runs
+//!   implicitly can be the patched name);
 //! - `patch.object`, `patch.multiple`, `monkeypatch.setitem`/`delattr`, a
 //!   bare `@patch` decorator, an object first argument, an f-string, a
 //!   computed target or a decorator whose arguments cannot be read keep the
@@ -23,8 +27,9 @@
 //! - a test method keeps the limit, because a class-level `@patch` is not
 //!   retained on the test and could patch what the owner uses;
 //! - an owner that imports anything outside a short list of self-contained
-//!   standard-library modules, or calls `super()`, keeps the limit: its
-//!   callee may live in another file that uses the patched name.
+//!   standard-library modules, imports inside a function, uses `importlib`
+//!   or `__import__`, or calls `super()`, keeps the limit: its callee may
+//!   live in another file that uses the patched name.
 //!
 //! Residual, documented rather than hidden: a self-contained standard-library
 //! import is trusted not to reach a patched name. The narrowing is a
@@ -78,10 +83,15 @@ pub(super) fn mock_sites_are_disjoint_from_owner(
     };
     if test.qualified_name != test.name
         || owner_source.contains("super(")
+        || owner_source.contains("__import__")
+        || owner_source.contains("importlib")
+        || has_function_local_import(owner_source)
         || owner
             .imports
             .iter()
             .any(|import| !is_self_contained(import))
+        || test.imports.iter().any(aliases_a_mock_helper)
+        || mentions_mock_machinery(&test.body_text)
     {
         return false;
     }
@@ -106,9 +116,12 @@ pub(super) fn mock_sites_are_disjoint_from_owner(
             let Some(target) = literal_target(&body[site + form.len()..]) else {
                 return false;
             };
-            if line_prefix(body, site).trim_start().starts_with('@') {
-                decorator_sites += 1;
+            // Only decorator sites are judged: a body call can sit beside
+            // spellings this scan does not see.
+            if !line_prefix(body, site).trim_start().starts_with('@') {
+                return false;
             }
+            decorator_sites += 1;
             targets.push(target);
         }
     }
@@ -126,9 +139,61 @@ pub(super) fn mock_sites_are_disjoint_from_owner(
         return false;
     }
     let used = owner_names(owner, owner_source);
-    targets
-        .iter()
-        .all(|target| target.split('.').all(|segment| !used.contains(segment)))
+    targets.iter().all(|target| {
+        target
+            .split('.')
+            .all(|segment| !used.contains(segment) && !segment.starts_with("__"))
+    })
+}
+
+/// Tokens that name another way to substitute code at run time. A test body
+/// mentioning any of them may hide a site the decorator scan cannot see.
+const MOCK_MACHINERY_TOKENS: [&str; 11] = [
+    "patch",
+    "mock",
+    "mocker",
+    "monkeypatch",
+    "setattr",
+    "spy",
+    "sys",
+    "importlib",
+    "MagicMock",
+    "Mock",
+    "create_autospec",
+];
+
+fn mentions_mock_machinery(body_text: &str) -> bool {
+    let mut token = String::new();
+    for ch in body_text.chars().chain(std::iter::once(' ')) {
+        if is_python_identifier_char(ch) {
+            token.push(ch);
+        } else if !token.is_empty() {
+            let word = std::mem::take(&mut token);
+            if MOCK_MACHINERY_TOKENS.contains(&word.as_str()) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// `from unittest.mock import patch as p` hides the patch spelling.
+fn aliases_a_mock_helper(import: &super::PythonImport) -> bool {
+    import.alias != import.imported
+        && ["patch", "mock", "monkeypatch", "mocker"]
+            .iter()
+            .any(|name| import.imported.ends_with(name))
+}
+
+/// An indented `import` / `from ... import` inside a function or class body
+/// can reach another file the module-level import list does not show.
+fn has_function_local_import(source: &str) -> bool {
+    source.lines().any(|line| {
+        let trimmed = line.trim_start();
+        line.len() > trimmed.len()
+            && (trimmed.starts_with("import ")
+                || (trimmed.starts_with("from ") && trimmed.contains(" import ")))
+    })
 }
 
 fn is_self_contained(import: &super::PythonImport) -> bool {

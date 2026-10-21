@@ -57,18 +57,49 @@ fn given_decorator_patching_an_unrelated_stdlib_name_then_it_is_disjoint() -> Re
 }
 
 #[test]
-fn given_body_patch_and_monkeypatch_string_targets_then_all_must_be_disjoint() -> Result<(), String>
-{
+fn given_several_decorator_patches_then_all_must_be_disjoint() -> Result<(), String> {
     let both = format!(
-        "{HEAD}def test_total(monkeypatch):\n    monkeypatch.setattr(\"os.getcwd\", lambda: \"/\")\n    with patch(target=\"time.time\"):\n        assert total([1]) == \"[1]\"\n"
+        "{HEAD}@patch(\"os.getcwd\")\n@patch(target=\"time.time\")\ndef test_total(a, b):\n    assert total([1]) == \"[1]\"\n"
     );
     assert!(disjoint(&both, Some(PURE_OWNER_SOURCE))?);
-    let one_hits_owner = format!(
-        "{HEAD}def test_total(monkeypatch):\n    monkeypatch.setattr(\"os.getcwd\", lambda: \"/\")\n    with patch(\"pkg.store.load\"):\n        assert total([1]) == \"[1]\"\n"
-    );
-    assert!(!disjoint(&one_hits_owner, Some(OWNER_SOURCE))?);
     // The same disjoint pair stays limited when the owner reaches another file.
     assert!(!disjoint(&both, Some(OWNER_SOURCE))?);
+    let json_owner = "import json\n\ndef total(items):\n    return json.dumps(items)\n";
+    let one_hits_owner = format!(
+        "{HEAD}@patch(\"os.getcwd\")\n@patch(\"json.dumps\")\ndef test_total(a, b):\n    assert total([1]) == \"[1]\"\n"
+    );
+    assert!(!disjoint(&one_hits_owner, Some(json_owner))?);
+    Ok(())
+}
+
+#[test]
+fn given_body_sites_hidden_spellings_dunders_or_local_imports_then_limit_stays()
+-> Result<(), String> {
+    let cases = [
+        // a body-level patch or monkeypatch is never judged
+        "@patch(\"os.getcwd\")\ndef test_total(m):\n    with patch(\"time.time\"):\n        assert total([1]) == 1\n",
+        "def test_total(monkeypatch):\n    monkeypatch.setattr(\"os.getcwd\", lambda: \"/\")\n    assert total([1]) == 1\n",
+        // a disjoint decorator beside a spelling the scan cannot read
+        "@patch(\"os.getcwd\")\ndef test_total(mocker):\n    mocker.spy(service, \"dep\")\n    assert total([1]) == 1\n",
+        "@patch(\"os.getcwd\")\ndef test_total(m):\n    sys.modules[\"x\"] = fake\n    assert total([1]) == 1\n",
+        // a dunder target rewrites an operator the owner may execute implicitly
+        "@patch(\"shop.Money.__add__\")\ndef test_total(m):\n    assert total([1]) == 1\n",
+    ];
+    for case in cases {
+        let source = format!("{HEAD}{case}");
+        assert!(
+            !disjoint(&source, Some(PURE_OWNER_SOURCE))?,
+            "must keep the limit:\n{case}"
+        );
+    }
+    // A function-local import can reach another file.
+    let local_import = "def total(items):\n    import helpers\n    return helpers.run(items)\n";
+    let plain =
+        format!("{HEAD}@patch(\"os.getcwd\")\ndef test_total(m):\n    assert total([1]) == 1\n");
+    assert!(!disjoint(&plain, Some(local_import))?);
+    // An aliased patch import hides the patch spelling in the body.
+    let aliased = "from unittest.mock import patch as p\nfrom src.service import total\n\n@patch(\"os.getcwd\")\ndef test_total(m):\n    with p(\"shop.Money\"):\n        assert total([1]) == 1\n";
+    assert!(!disjoint(aliased, Some(PURE_OWNER_SOURCE))?);
     Ok(())
 }
 
