@@ -306,8 +306,16 @@ mod tests {
         write(&root, "tsconfig.json")?;
         assert!(detect_typescript_project(&root), "tsconfig.json marker");
         std::fs::remove_file(root.join("tsconfig.json")).map_err(|err| err.to_string())?;
-        write(&root, "src/deep/app.tsx")?;
-        assert!(detect_typescript_project(&root), "nested TS source");
+        for extension in ["tsx", "mts", "cts"] {
+            let file = format!("src/deep/app.{extension}");
+            write(&root, &file)?;
+            assert!(
+                detect_typescript_project(&root),
+                "nested {extension} source"
+            );
+            std::fs::remove_file(root.join(&file)).map_err(|err| err.to_string())?;
+            assert!(!detect_typescript_project(&root), "removed {extension}");
+        }
         std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
     }
 

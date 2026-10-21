@@ -6652,6 +6652,68 @@ mod tests {
     }
 
     #[test]
+    fn typescript_detection_inputs_change_cache_identity() -> Result<(), String> {
+        let root = isolated_dir("typescript-detection-inputs");
+        ignore_remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+        let cache_key = || {
+            WorkspaceState {
+                workspace_root: &root,
+                files: &[],
+                cfg_features: None,
+                config_text: None,
+                test_intent_text: None,
+                suppressions_text: None,
+            }
+            .cache_key()
+        };
+        let baseline = cache_key();
+
+        let marker = root.join("tsconfig.json");
+        std::fs::write(&marker, "{}").map_err(|err| format!("write marker: {err}"))?;
+        let with_marker = cache_key();
+        assert_ne!(
+            baseline.workspace_manifests_hash,
+            with_marker.workspace_manifests_hash
+        );
+        std::fs::write(&marker, "{\"a\":1}").map_err(|err| format!("rewrite marker: {err}"))?;
+        assert_eq!(
+            with_marker.workspace_manifests_hash,
+            cache_key().workspace_manifests_hash,
+            "content-only edits preserve the presence identity"
+        );
+        std::fs::remove_file(&marker).map_err(|err| format!("remove marker: {err}"))?;
+        assert_eq!(
+            baseline.workspace_manifests_hash,
+            cache_key().workspace_manifests_hash
+        );
+
+        std::fs::write(root.join("src/api.generated.ts"), "x")
+            .map_err(|err| format!("write generated: {err}"))?;
+        assert_eq!(
+            baseline.workspace_manifests_hash,
+            cache_key().workspace_manifests_hash,
+            "generated TypeScript does not participate"
+        );
+        let source = root.join("src/app.ts");
+        std::fs::write(&source, "x").map_err(|err| format!("write source: {err}"))?;
+        assert_ne!(
+            baseline.workspace_manifests_hash,
+            cache_key().workspace_manifests_hash
+        );
+        std::fs::remove_file(&source).map_err(|err| format!("remove source: {err}"))?;
+        std::fs::remove_file(root.join("src/api.generated.ts"))
+            .map_err(|err| format!("remove generated: {err}"))?;
+        assert_eq!(
+            baseline.workspace_manifests_hash,
+            cache_key().workspace_manifests_hash
+        );
+
+        ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
     fn python_source_dir_presence_changes_cache_identity() -> Result<(), String> {
         let root = isolated_dir("python-source-dir-inputs");
         ignore_remove_dir_all(&root);

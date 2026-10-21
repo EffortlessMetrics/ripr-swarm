@@ -4278,6 +4278,53 @@ mod workspace_input_tests {
     }
 
     #[test]
+    fn typescript_detection_inputs_classify_like_the_detector() {
+        let root = std::env::temp_dir().join("ripr-workspace-input-root");
+        let outside = std::env::temp_dir().join("ripr-workspace-input-outside");
+
+        for marker in ["tsconfig.json", "jsconfig.json"] {
+            assert_eq!(
+                workspace_input_kind(&root, &root.join(marker)),
+                Some(WorkspaceInputKind::TypescriptProjectMarker),
+                "root marker {marker}"
+            );
+            assert_eq!(
+                workspace_input_kind(&root, &root.join("pkg").join(marker)),
+                None
+            );
+            assert_eq!(workspace_input_kind(&root, &outside.join(marker)), None);
+        }
+        for source in [
+            "src/app.ts",
+            "src/deep/view.tsx",
+            "tests/a.mts",
+            "tests/a.cts",
+        ] {
+            assert_eq!(
+                workspace_input_kind(&root, &root.join(source)),
+                Some(WorkspaceInputKind::TypescriptSourcePresence),
+                "{source}"
+            );
+        }
+        for non_input in [
+            "src/app.js",
+            "src/api.generated.ts",
+            "src/node_modules/p/i.ts",
+            "src/vendor/lib.ts",
+            "lib/app.ts",
+        ] {
+            assert_eq!(
+                workspace_input_kind(&root, &root.join(non_input)),
+                None,
+                "{non_input}"
+            );
+        }
+        assert!(WorkspaceInputKind::TypescriptProjectMarker.reloads_repository_config());
+        assert!(WorkspaceInputKind::TypescriptSourcePresence.reloads_repository_config());
+        assert!(!WorkspaceInputKind::TypescriptSourcePresence.invalidates_workspace_graph());
+    }
+
+    #[test]
     fn cargo_workspace_inputs_remain_recursive_and_graph_scoped() -> Result<(), String> {
         let root = std::env::temp_dir().join("ripr-workspace-input-root");
         let outside = std::env::temp_dir().join("ripr-workspace-input-outside");

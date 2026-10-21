@@ -2756,3 +2756,23 @@ fn explicit_config_keeps_typescript_disabled_in_a_typescript_repo() -> Result<()
     let _ = fs::remove_dir_all(&root);
     Ok(())
 }
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn explicit_config_wins_when_markers_and_source_both_detect() -> Result<(), String> {
+    let root = temp_root("ts-explicit-wins")?;
+    write_file(&root.join("tsconfig.json"), "{}")?;
+    write_file(&root.join("src/app.ts"), "export {};\n")?;
+    write_file(
+        &root.join("ripr.toml"),
+        "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+    )?;
+    let config = load_for_root(&root)?;
+    assert_eq!(
+        config.languages().enabled_owned(),
+        vec![LanguageId::Rust, LanguageId::TypeScript],
+        "explicit list is used verbatim: no duplicate, order preserved"
+    );
+    let _ = fs::remove_dir_all(&root);
+    Ok(())
+}
