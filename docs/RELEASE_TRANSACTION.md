@@ -584,7 +584,7 @@ The version-only `release-negative-corpus` run is legacy smoke
 (`qualification_mode: legacy_smoke_unqualified`). For the #1609-qualified path
 add the complete `--controller-root`, `--candidate-source-root`,
 `--candidate-artifact` group described in [`RELEASE.md`](RELEASE.md) and record
-`qualification_mode` in the packet. Do not claim controlled negative injections
+`qualification_mode` in the packet; the qualified form writes the report under `<controller-root>/target/ripr/reports/`, so point the `jq` guard there. Do not claim controlled negative injections
 for the candidate from the unqualified form (#2792).
 
 | Surface | Repository/worktree and mode | Proof | Boundary |
