@@ -196,10 +196,12 @@ rule 1, on the same value seams.
 (Added 2026-10-21.) When every oracle-eligible related test collects no
 assertion, has assertion admission `assertion_like_present_but_unresolved`,
 and its body holds an `expect(` inside the argument span of a `.then(` or
-an `forEach(async` call (the forms rule 2 refuses; comments and string
-contents are ignored), the finding reads
+an `forEach(async` call that is tied to the owner (the owner is called in
+that span or in the statement's receiver before it) (the forms rule 2
+refuses; comments and string contents are ignored), the finding reads
 `static_unknown` instead of `weakly_exposed`, with a missing note saying the
-discriminator is not established either way. Any other unresolved cause (a
+discriminator is not established either way, and a stop reason
+`gap_evidence_unresolved`. Any other unresolved cause (a
 shadowed `expect`, a no-op helper) stays `weakly_exposed`. Rule 4 removes an
 actionable gap and credits nothing.
 

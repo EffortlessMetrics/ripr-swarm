@@ -4414,7 +4414,10 @@ impl Folder<'_> {
 
 /// True when every oracle-eligible related test holds assertion-like code the
 /// extractor could not resolve, so the absence of a discriminator is unproven.
-fn unresolved_assertions_only(candidates: &[TypeScriptRelatedCandidate<'_>]) -> bool {
+fn unresolved_assertions_only(
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    owner_name: &str,
+) -> bool {
     let mut eligible = candidates
         .iter()
         .filter(|candidate| candidate.relation.uses_oracle())
@@ -4423,17 +4426,27 @@ fn unresolved_assertions_only(candidates: &[TypeScriptRelatedCandidate<'_>]) -> 
         && eligible.all(|candidate| {
             candidate.test.assertions.is_empty()
                 && candidate.test.assertion_admission == TypeScriptAssertionAdmission::Unresolved
-                && body_asserts_in_unmodeled_callback(&candidate.test.body_text)
+                && body_asserts_in_unmodeled_callback(&candidate.test.body_text, owner_name)
         })
 }
 
 /// An `expect(` inside the argument span of a `.then(` or `forEach(async`
-/// call: the two shapes RIPR-SPEC-0246 rule 2 refuses to collect although the
+/// call that is tied to the owner: the owner is called in that span or in the
+/// statement's receiver before the marker (`owner(x).then(...)`). These are
+/// the two shapes RIPR-SPEC-0246 rule 2 refuses to collect although the
 /// assertion still runs. Comments and string contents are blanked first, so a
-/// marker in either never counts. Other `Unresolved` causes (a shadowed
-/// `expect`, a no-op helper) stay actionable gaps.
-fn body_asserts_in_unmodeled_callback(body: &str) -> bool {
+/// marker in either never counts. An unrelated callback, and other
+/// `Unresolved` causes (a shadowed `expect`, a no-op helper), stay actionable
+/// gaps.
+fn body_asserts_in_unmodeled_callback(body: &str, owner_name: &str) -> bool {
     let masked = mask_comments_and_strings(body);
+    let calls_owner = |text: &str| {
+        text.match_indices(owner_name).any(|(at, _)| {
+            let before = text[..at].chars().next_back();
+            before.is_none_or(|c| !(c.is_alphanumeric() || matches!(c, '_' | '$' | '.')))
+                && text[at + owner_name.len()..].starts_with('(')
+        })
+    };
     [".then(", "forEach(async"].iter().any(|marker| {
         masked.match_indices(marker).any(|(start, _)| {
             let Some(offset) = marker.find('(') else {
@@ -4455,14 +4468,18 @@ fn body_asserts_in_unmodeled_callback(body: &str) -> bool {
                     _ => {}
                 }
             }
-            masked.get(open..end).is_some_and(|span| {
-                span.match_indices("expect(").any(|(at, _)| {
-                    !span[..at]
-                        .chars()
-                        .next_back()
-                        .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '.'))
+            let statement_start = masked[..start].rfind([';', '\n']).map_or(0, |at| at + 1);
+            let tied_to_owner = calls_owner(&masked[statement_start..start])
+                || masked.get(open..end).is_some_and(calls_owner);
+            tied_to_owner
+                && masked.get(open..end).is_some_and(|span| {
+                    span.match_indices("expect(").any(|(at, _)| {
+                        !span[..at]
+                            .chars()
+                            .next_back()
+                            .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '.'))
+                    })
                 })
-            })
         })
     })
 }
@@ -5281,7 +5298,7 @@ pub(crate) fn classify_change_with_alias_state(
             StageState::Weak,
             vec![named_limitation],
         )
-    } else if unresolved_assertions_only(&related_candidates) {
+    } else if unresolved_assertions_only(&related_candidates, &owner.name) {
         // Every oracle-eligible test holds assertion-like code the extractor
         // could not resolve, so "no discriminator" is not established. Say
         // unknown, not an actionable gap (RIPR-SPEC-0246 examples 7 and 9).
@@ -5352,6 +5369,8 @@ pub(crate) fn classify_change_with_alias_state(
     } = verdict;
     let static_unknown_by_mock =
         matches!(class, ExposureClass::StaticUnknown) && !ladder_unresolved_unknown;
+    let unresolved_callback_unknown =
+        matches!(class, ExposureClass::StaticUnknown) && ladder_unresolved_unknown;
     // Collect named TS-specific limitations (RIPR-SPEC-0085 §PR4 taxonomy).
     // These are ADDITIVE evidence lines; existing `static_limit_kind` is
     // unchanged. Outside rule 8 a static limit is advisory: an `exposed`
@@ -5517,6 +5536,9 @@ pub(crate) fn classify_change_with_alias_state(
         match &class {
         ExposureClass::Exposed => {
             "TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.".to_string()
+        }
+        ExposureClass::StaticUnknown if ladder_unresolved_unknown => {
+            "TypeScript preview advisory: the related test asserts inside a callback the extractor cannot resolve (a `.then` with a rejection handler or an async `forEach`); no new assertion is needed on that evidence, and no repair packet is emitted.".to_string()
         }
         ExposureClass::NoStaticPath => match &alias_gap {
             Some(gap) => gap.no_static_path_recommendation(),
@@ -5685,6 +5707,8 @@ pub(crate) fn classify_change_with_alias_state(
         },
         stop_reasons: if static_unknown_by_mock {
             vec![StopReason::StaticProbeUnknown]
+        } else if unresolved_callback_unknown {
+            vec![StopReason::GapEvidenceUnresolved]
         } else {
             Vec::new()
         },

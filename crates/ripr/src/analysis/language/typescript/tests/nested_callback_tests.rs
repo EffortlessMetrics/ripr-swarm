@@ -808,6 +808,19 @@ fn refused_nested_callback_assertion_reads_static_unknown() -> Result<(), String
             "{label}: {}",
             finding.ripr.reveal.discriminate.summary
         );
+        assert_eq!(
+            finding.stop_reasons,
+            vec![crate::domain::StopReason::GapEvidenceUnresolved],
+            "{label}"
+        );
+        assert!(
+            finding
+                .recommended_next_step
+                .as_deref()
+                .is_some_and(|step| step.contains("no new assertion is needed")),
+            "{label}: {:?}",
+            finding.recommended_next_step
+        );
     }
     // Discriminating negatives that reach the arm (same-file no-op helper,
     // so admission is `Unresolved` and nothing is collected): the markers
@@ -818,6 +831,10 @@ fn refused_nested_callback_assertion_reads_static_unknown() -> Result<(), String
         (
             "unrelated-then",
             "  Promise.resolve(1).then((n) => n + 1);\n",
+        ),
+        (
+            "unrelated-callback-expect",
+            "  Promise.resolve(1).then(() => expect(1).toBe(1));\n",
         ),
         ("then-in-comment", "  // x.then((r) => expect(r).toBe(1))\n"),
         (
