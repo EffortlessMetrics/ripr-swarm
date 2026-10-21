@@ -54,6 +54,14 @@ pub(crate) struct TypeScriptOwner {
     /// method, getter or duplicate), which keeps the member from being
     /// replaced inside the object. RIPR-SPEC-0243 rule 5.
     pub(crate) default_object_member: bool,
+    /// `true` when the owner is the whole value of a CommonJS
+    /// `module.exports = <function>` assignment (an anonymous or named
+    /// function expression, an arrow, or a plain reference to a top-level
+    /// function declaration). A `require()` of such a module IS the
+    /// function, so the test's binding is called directly; the `require()`
+    /// of an ES module's default export is a namespace object and is not.
+    /// RIPR-SPEC-0243 rule 15.
+    pub(crate) commonjs_default_export: bool,
     /// Exported names of the owner's module whose code reaches this
     /// top-level function through a bounded same-module call graph (an
     /// exported wrapper, or a value a same-module factory built). Empty for

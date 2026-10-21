@@ -29,6 +29,7 @@ pub(crate) fn extract_owners(file: &Path, source: &str) -> Vec<TypeScriptOwner> 
         }
         let mut owners = without_reassigned_commonjs_exports(owners);
         mark_default_exported_bindings(&ret.program.body, &mut owners);
+        mark_commonjs_default_binding(&ret.program, &mut owners);
         mark_default_object_members(&ret.program.body, &mut owners);
         // #7507: a `let`/function owner rebound before its `export default`
         // carries dead code at the declaration site — drop it so no finding
@@ -161,6 +162,7 @@ fn owners_from_commonjs_export(
             )
             .map(|mut owner| {
                 owner.exported_as_default = true;
+                owner.commonjs_default_export = true;
                 vec![owner]
             })
             .unwrap_or_default()
@@ -175,6 +177,7 @@ fn owners_from_commonjs_export(
         )
         .map(|mut owner| {
             owner.exported_as_default = true;
+            owner.commonjs_default_export = true;
             vec![owner]
         })
         .unwrap_or_default(),
@@ -551,6 +554,102 @@ fn mark_default_exported_bindings(body: &[Statement<'_>], owners: &mut [TypeScri
     }
 }
 
+/// Mark a top-level function declaration as the module's CommonJS default
+/// export when a separate statement assigns its binding to `module.exports`
+/// (`module.exports = stringify;`), the CommonJS twin of `export default
+/// stringify;` (RIPR-SPEC-0243 rule 15). Only a plain reference qualifies, and
+/// only while the binding is unambiguous: exactly one assignment to
+/// `module.exports` appears in the whole file, the name is declared by exactly
+/// one top-level function declaration and the file never writes it, so the
+/// value `require()` hands back is that declaration. An opaque file
+/// (`eval`, `with`) marks nothing.
+fn mark_commonjs_default_binding(
+    program: &oxc_ast::ast::Program<'_>,
+    owners: &mut [TypeScriptOwner],
+) {
+    let mut target: Option<&str> = None;
+    for stmt in &program.body {
+        let Statement::ExpressionStatement(expression) = stmt else {
+            continue;
+        };
+        let Expression::AssignmentExpression(assign) = &expression.expression else {
+            continue;
+        };
+        if assign.operator != AssignmentOperator::Assign {
+            continue;
+        }
+        let AssignmentTarget::StaticMemberExpression(member) = &assign.left else {
+            continue;
+        };
+        if !is_module_exports(member) {
+            continue;
+        }
+        if let Expression::Identifier(ident) = &assign.right {
+            target = Some(ident.name.as_str());
+        }
+    }
+    let Some(name) = target else {
+        return;
+    };
+    let declarations = program
+        .body
+        .iter()
+        .filter(|stmt| {
+            matches!(stmt, Statement::FunctionDeclaration(function)
+                if function.id.as_ref().is_some_and(|id| id.name == name))
+        })
+        .count();
+    if declarations != 1 {
+        return;
+    }
+    let Some(code) = super::tests_extract::byte_preserving_code_mask(program.source_text) else {
+        return;
+    };
+    if super::tests_extract::file_is_opaque(&code)
+        || module_exports_assignments(&code) != 1
+        || super::tests_extract::identifier_written_in(&code, name)
+    {
+        return;
+    }
+    for owner in owners.iter_mut() {
+        if owner.class_name.is_none()
+            && owner.owner_kind == OwnerKind::Function
+            && owner.name == name
+        {
+            owner.exported_as_default = true;
+            owner.commonjs_default_export = true;
+        }
+    }
+}
+
+/// How many times masked source text assigns to `module.exports` itself (a
+/// property write such as `module.exports.name = ...` is not counted, but a
+/// bracket spelling of `module` makes the count unknowable, so it reads as
+/// many).
+fn module_exports_assignments(code: &str) -> usize {
+    if code.contains("module[") {
+        return usize::MAX;
+    }
+    let mut count = 0;
+    let mut from = 0;
+    while let Some(found) = code[from..].find("module.exports") {
+        let start = from + found;
+        let end = start + "module.exports".len();
+        from = end;
+        let before = code[..start].chars().next_back();
+        if before
+            .is_some_and(|ch| ch == '.' || ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+        {
+            continue;
+        }
+        let rest = code[end..].trim_start();
+        if rest.starts_with('=') && !rest[1..].starts_with(['=', '>']) {
+            count += 1;
+        }
+    }
+    count
+}
+
 /// Mark top-level function (or const arrow) owners held by the module's `export default {
 /// name }` object (RIPR-SPEC-0243 rule 5). Only an object made entirely of
 /// plain same-name entries qualifies: a spread, computed key, method, getter,
@@ -829,6 +928,7 @@ pub(crate) fn owner_from_variable_declarator(
             method_kind: TypeScriptMethodKind::Ordinary,
             class_default_export: false,
             default_object_member: false,
+            commonjs_default_export: false,
             module_entries: Vec::new(),
             // Non-function initializers carry no resolvable signature facts:
             // no fixed positional signature the boundary witness could
@@ -883,6 +983,7 @@ pub(crate) fn owner_from_function(
         method_kind: TypeScriptMethodKind::Ordinary,
         class_default_export: false,
         default_object_member: false,
+        commonjs_default_export: false,
         module_entries: Vec::new(),
         params,
         arity,
@@ -913,6 +1014,7 @@ pub(crate) fn owner_from_arrow(
         method_kind: TypeScriptMethodKind::Ordinary,
         class_default_export: false,
         default_object_member: false,
+        commonjs_default_export: false,
         module_entries: Vec::new(),
         params,
         arity,
@@ -984,6 +1086,7 @@ pub(crate) fn owner_from_method(
         },
         class_default_export: false,
         default_object_member: false,
+        commonjs_default_export: false,
         module_entries: Vec::new(),
         params,
         arity,

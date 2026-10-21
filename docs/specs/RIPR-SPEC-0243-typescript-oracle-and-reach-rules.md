@@ -29,6 +29,7 @@ Linked issues:
 - #8714 (conditional-branch assertion guard and disclosure)
 - #9138 (assertion after an always-exiting try/finally)
 - #8959 (lexically bound runner registrations)
+- #9181 (CommonJS function export reached through `require()`)
 
 Linked PRs:
 
@@ -175,6 +176,24 @@ The complementary `jest-mined-local-noop-describe` and
 commit `5d7657fbc7240b2c0a62c9934ca2e7fda3a1b209` (Claude). Their original
 Jest runtime-mutant labels and source hashes are retained with attribution;
 copying those labels does not claim an independent runtime rerun.
+
+**Rule 15. A `require()` of a CommonJS function export is that function
+(#9181).** `module.exports = function (...) {}`, `module.exports = function
+name(...) {}`, `module.exports = (...) => ...` and `module.exports = name;`
+(a plain reference to one top-level function declaration) make the module's
+whole export the owner, as `export default` does. A literal
+`const f = require("<owner module>")` in a test file then binds `f` to the
+owner, so a bare `f(...)` is an `ImportedOwnerCall` (or a `DirectOwnerCall`
+when `f` is the owner's own name), and the observation guard reads `f` as the
+owner (rule 7). The relation uses the same identity gates as the default-import
+arm of rule 5: the specifier must resolve to the owner module, a body-local
+declaration or enclosing binding of `f` shadows it, and a mock of the owner
+module blocks it. The `module.exports = name;` form marks the declaration only
+when exactly one assignment to `module.exports` appears in the file, the name
+has exactly one top-level function declaration and the file never writes it;
+`eval`/`with` files, a second or conditional assignment and a rebound name
+mark nothing. `require()` of an ES module's `export default` stays a namespace
+object, not a call.
 
 **Rule 13. A called suite factory is its expansion (2026-10-20).** A
 top-level `function factory(a, b) { describe(a, () => { ... b(x) ... }); }`
@@ -830,6 +849,13 @@ rejected alternative. Any can be reversed later without touching the rest.
     export or alias, argument expressions (`sumAll.bind(null)`, arrows,
     members), and parameters used as values or in templates; each needs
     data flow the adapter does not have.
+18. **CommonJS function exports (#9181).** Adopted: rule 15, because
+    minimist, rfdc and fast-safe-stringify export one function and read
+    `no_static_path` while their own suites failed every mutant of the
+    line, and the ESM twin already relates. The claim is limited to the
+    shapes where the exported value is statically the declared function.
+    Rejected: crediting `require()` of an ES module's default export
+    (runtime namespace object) and an arbitrary `module.exports = expr`.
 
 ## Required Evidence
 

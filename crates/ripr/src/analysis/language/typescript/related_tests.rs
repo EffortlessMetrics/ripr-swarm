@@ -910,6 +910,7 @@ pub(crate) fn module_entry_owner(
         exported_as_default: entry.exported_as_default,
         class_default_export: false,
         default_object_member: false,
+        commonjs_default_export: false,
         method_kind: TypeScriptMethodKind::Ordinary,
         module_entries: Vec::new(),
         params: Vec::new(),
@@ -1890,7 +1891,7 @@ pub(crate) fn default_import_owner_locals<'t>(
     test.imports_in_file
         .iter()
         .filter(|import| {
-            !import.namespace
+            (!import.namespace || commonjs_default_binding(import, owner))
                 && import.imported.as_deref() == Some("default")
                 && import.local != owner.name
                 && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
@@ -2534,7 +2535,7 @@ fn owner_name_import_binding_mismatch(
         .iter()
         .filter(|import| import.local == owner.name)
         .map(|import| {
-            if import.namespace {
+            if import.namespace && !commonjs_default_binding(import, owner) {
                 return Some(OwnerBindingMismatch::Unrelated);
             }
             match import_source_resolution(
@@ -2578,12 +2579,28 @@ fn owner_export_imported_from_unrelated_source(
     })
 }
 
+/// A literal `require()` binding (recorded as a default-named namespace
+/// binding) of a module whose whole export is the owner function
+/// (`module.exports = <function>`, RIPR-SPEC-0243 rule 15).
+pub(crate) fn commonjs_default_binding(import: &TypeScriptImport, owner: &TypeScriptOwner) -> bool {
+    import.namespace
+        && import.imported.as_deref() == Some("default")
+        && owner.commonjs_default_export
+}
+
 fn import_references_owner_call(
     import: &TypeScriptImport,
     test: &TypeScriptTest,
     owner: &TypeScriptOwner,
 ) -> bool {
     let body_text = test.body_text.as_str();
+    // RIPR-SPEC-0243 rule 15: `require()` of a CommonJS `module.exports =
+    // <function>` module returns the function itself, so the bare local call
+    // reaches the owner. The shadow guard matches the default-import arm.
+    if commonjs_default_binding(import, owner) {
+        return contains_call_name(body_text, &import.local)
+            && !local_identifier_declared_in_test_body(body_text, &import.local);
+    }
     if import.namespace {
         return contains_member_call_name(body_text, &import.local, &owner.name);
     }
