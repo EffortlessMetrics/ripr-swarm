@@ -865,13 +865,7 @@ fn missing_discriminator_facts(
         )
         && returned_unresolved.is_none()
         && !owner_fn.is_some_and(|owner| {
-            observed_input_separates_threshold_move(
-                &view,
-                owner,
-                related_tests,
-                helper_chain,
-                index,
-            )
+            observed_input_separates_threshold_move(&view, owner, related_tests)
         })
     {
         missing.push(fact);
@@ -926,33 +920,62 @@ fn missing_discriminator_facts(
 }
 
 /// Whether the owner may compare something other than the caller's value for
-/// `name`: a `let` shadow before the probe line, a `mut` binding or borrow, or
-/// any assignment to it. Conservative on purpose; a true result only declines
-/// the intermediate-input reading and keeps the gap (#9147).
+/// `name`. Coarse and fail-closed: true when `name` occurs as a token in the
+/// body before the probe line at all (any `let`, `for`, `if let`, `while let`,
+/// match-arm or closure binding, or any use that could feed a rebinding), when
+/// the probe line itself carries a binding form beside it, or when `name` is
+/// ever assigned or bound `mut`. A true result only declines the
+/// intermediate-input reading and keeps the gap (#9147).
 fn parameter_may_be_rebound(owner: &FunctionSummary, name: &str, predicate_line: usize) -> bool {
-    if owner_declares_local(owner, name, predicate_line) {
-        return true;
-    }
     let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
     let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
-    masked.match_indices(name).any(|(start, _)| {
-        let before = &masked[..start];
+    let tokens = |text: &str| {
+        text.match_indices(name)
+            .filter(|(start, _)| {
+                !text[..*start].chars().next_back().is_some_and(is_word)
+                    && !text[start + name.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(is_word)
+            })
+            .map(|(start, _)| start)
+            .collect::<Vec<_>>()
+    };
+    let lines: Vec<&str> = masked.lines().collect();
+    let probe_index = predicate_line.saturating_sub(owner.start_line);
+    // The signature is everything up to the body's opening brace.
+    let body_start = masked.find('{').map_or(0, |at| at + 1);
+    let before_probe = lines
+        .iter()
+        .take(probe_index)
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n");
+    if before_probe.len() > body_start && !tokens(&before_probe[body_start..]).is_empty() {
+        return true;
+    }
+    let probe_text = if probe_index == 0 {
+        lines
+            .first()
+            .map_or("", |line| &line[body_start.min(line.len())..])
+    } else {
+        lines.get(probe_index).copied().unwrap_or("")
+    };
+    if !tokens(probe_text).is_empty()
+        && ["let ", "|", "=>", " in ", "match "]
+            .iter()
+            .any(|form| probe_text.contains(form))
+    {
+        return true;
+    }
+    tokens(&masked).into_iter().any(|start| {
         let after = masked[start + name.len()..].trim_start();
-        if before.chars().next_back().is_some_and(is_word)
-            || masked[start + name.len()..]
-                .chars()
-                .next()
-                .is_some_and(is_word)
-        {
-            return false;
-        }
-        let before = before.trim_end();
         let assigned =
             after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>")
                 || ["+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="]
                     .iter()
                     .any(|operator| after.starts_with(operator));
-        assigned || before.ends_with("mut")
+        assigned || masked[..start].trim_end().ends_with("mut")
     })
 }
 
@@ -968,8 +991,6 @@ fn observed_input_separates_threshold_move(
     view: &Probe,
     owner: &FunctionSummary,
     related_tests: &[&TestSummary],
-    helper_chain: Option<&super::helper_transfer::HelperChain>,
-    index: &crate::analysis::rust_index::RustIndex,
 ) -> bool {
     fn parts(expression: &str) -> Option<(&'static str, String, i128)> {
         for operator in [">=", "<=", "==", "!=", ">", "<"] {
@@ -1018,8 +1039,7 @@ fn observed_input_separates_threshold_move(
     }
     // Only unqualified owner calls count: `rival::thr(101)` or `x.thr(101)`
     // may be another function, so a qualified call is never a separating
-    // input. Helper-transferred rows are not read either (fail-closed).
-    let _ = (helper_chain, index);
+    // input. Helper-transferred rows are not read.
     let call_pattern = format!("{}(", owner.name);
     owner_call_parameter_values_where(
         related_tests,

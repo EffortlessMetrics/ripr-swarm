@@ -13062,6 +13062,7 @@ tests = [
   "crates/ripr/tests/returned_comparison_boundary.rs::a_mutated_parameter_does_not_take_the_intermediate_input",
   "crates/ripr/tests/returned_comparison_boundary.rs::an_equality_literal_move_is_separated_only_by_an_input_equal_to_one_literal",
   "crates/ripr/tests/returned_comparison_boundary.rs::a_qualified_rival_call_is_not_a_separating_input",
+  "crates/ripr/tests/returned_comparison_boundary.rs::pattern_and_loop_rebindings_of_the_parameter_keep_the_gap",
   "crates/ripr/tests/check_helper_argument_pins.rs::a_helper_comparing_its_parameters_pins_the_arguments_the_test_passes",
   "crates/ripr/tests/check_helper_argument_pins.rs::a_direct_template_rendering_pins_a_scalar_owner",
   "crates/ripr/tests/check_helper_argument_pins.rs::a_later_genuine_pin_counts_after_a_wrong_owner_call",

@@ -452,3 +452,27 @@ fn a_qualified_rival_call_is_not_a_separating_input() -> Result<(), String> {
     assert_gap_named(&plain, false)?;
     Ok(())
 }
+
+#[test]
+fn pattern_and_loop_rebindings_of_the_parameter_keep_the_gap() -> Result<(), String> {
+    // Each prefix rebinds `x` through a pattern, so the compared value is not
+    // the caller's 101 and the intermediate input must not separate.
+    for prefix in [
+        "    let (x, _) = (0, 0);\n",
+        "    let [x, ..] = [0, 0];\n",
+        "    for x in 0..1 {}\n",
+        "    if let Some(x) = Some(0) {}\n",
+        "    match Some(0) {\n        Some(x) => {}\n        None => {}\n    }\n",
+        "    let _f = |x: i32| x;\n",
+    ] {
+        let findings = findings_after(prefix, "    x > 102", "    x > 100", INTERMEDIATE_INPUT)?;
+        let return_value = family(&findings, "return_value")?;
+        assert_ne!(
+            return_value.class,
+            ExposureClass::Exposed,
+            "{prefix:?} {return_value:?}"
+        );
+        assert_gap_named(&findings, true)?;
+    }
+    Ok(())
+}
