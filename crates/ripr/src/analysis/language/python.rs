@@ -210,6 +210,12 @@ struct PythonOwner {
     /// workspace source file also produces (`related_tests.rs`, #4566).
     /// Empty until the workspace pass fills it.
     ambiguous_src_modules: Vec<related_tests::AmbiguousSrcModule>,
+    /// Dotted module paths of other workspace source files that define a
+    /// free function with this owner's name (`related_tests.rs`, #8759). A
+    /// test that imports the name from one of them (and from no module that
+    /// may be this owner's) exercises that definition instead. Empty until
+    /// the workspace pass fills it.
+    rival_definition_modules: Vec<String>,
     /// Module-scope literal constants visible in a function/method owner
     /// (not shadowed locally). Empty for class and module owners. Used only
     /// to resolve named predicate boundary operands (`boundary.rs`, #4227).
@@ -760,6 +766,7 @@ impl PythonAdapter {
             &mut all_owners,
             workspace_files.iter().filter(|file| !is_test_file(file)),
         );
+        related_tests::apply_rival_definition_modules(&mut all_owners);
 
         // Walk-count cap disclosure: one named limitation carrying the
         // refused count, mirroring the TypeScript adapter's

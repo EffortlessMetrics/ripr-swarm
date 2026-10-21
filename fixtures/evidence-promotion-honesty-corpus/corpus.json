@@ -3634,17 +3634,12 @@
           "type": "must_not_promote"
         },
         {
-          "type": "expected_oracle",
-          "kind": "exact_value",
-          "strength": "strong"
-        },
-        {
           "type": "expected_class",
-          "class": "weakly_exposed"
+          "class": "no_static_path"
         },
         {
           "type": "maximum_class",
-          "class": "weakly_exposed"
+          "class": "no_static_path"
         }
       ]
     },
