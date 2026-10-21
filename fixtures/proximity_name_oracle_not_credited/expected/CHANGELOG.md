@@ -201,3 +201,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — proximity_name_oracle_not_credited (18)
+
+Reason:
+RIPR-SPEC-0001 / #8935 / #8389: preserve the enum source fact from each distinct test file at line 6 under file-aware identity and update the omitted-detail count. Independent review verified unchanged IDs, exposure classes, stages, missing discriminators and repair guidance; fresh main 6be02b0b retains the former two-fact baseline.
+
+Command:
+`cargo xtask goldens bless proximity_name_oracle_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
