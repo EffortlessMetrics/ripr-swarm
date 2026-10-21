@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr agent repair --seam-id <stale-finding-id> --phase before` now refuses in this command's own terms: the message names `agent repair --seam-id` and the stale mapping ("the `ripr check` finding ID is stale or maps to no current seam") instead of attributing the failure to `agent packet` and promising a `ripr repair <finding-id>` route that just resolved to the same refusal. The packet/start surfaces keep their existing wrong-namespace hint unchanged (#8685).

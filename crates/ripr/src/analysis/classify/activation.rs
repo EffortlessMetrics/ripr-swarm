@@ -11,6 +11,7 @@ use super::arm_selection::{may_declare_items_in_owner_scope, may_name_constant};
 use super::text::{
     delimited_contents_at, enum_variant_values, exact_error_variant, path_value_is_constant,
 };
+use crate::analysis::sync_memo::SyncMemo;
 use crate::domain::*;
 
 #[cfg(test)]
@@ -167,8 +168,8 @@ type TestOwnerSlot = (usize, Option<usize>);
 
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct TestValueFacts {
-    index_identity: std::cell::Cell<Option<(usize, usize, u64)>>,
-    by_slot: std::cell::RefCell<std::collections::BTreeMap<TestOwnerSlot, Vec<ValueFact>>>,
+    index_identity: SyncMemo<Option<(usize, usize, u64)>>,
+    by_slot: SyncMemo<std::collections::BTreeMap<TestOwnerSlot, Vec<ValueFact>>>,
 }
 
 impl TestValueFacts {
@@ -197,10 +198,13 @@ impl TestValueFacts {
         owner_fn: Option<&FunctionSummary>,
     ) -> Option<TestOwnerSlot> {
         let identity = index.storage_identity();
-        match self.index_identity.get() {
-            None => self.index_identity.set(Some(identity)),
-            Some(bound) if bound != identity => return None,
-            Some(_) => {}
+        {
+            let mut bound = self.index_identity.borrow_mut();
+            match *bound {
+                None => *bound = Some(identity),
+                Some(bound) if bound != identity => return None,
+                Some(_) => {}
+            }
         }
         let test_slot = index.test_slot(test)?;
         let owner_slot = match owner_fn {
@@ -263,6 +267,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
                     .map(|parameter| format!("{parameter} = {value}"))
                     .unwrap_or(value);
                 facts.push(ValueFact {
+                    file: None,
                     line: call.line,
                     text: call.text.to_string(),
                     value,
@@ -271,6 +276,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
             }
             for value in enum_variant_values(argument) {
                 facts.push(ValueFact {
+                    file: None,
                     line: call.line,
                     text: call.text.to_string(),
                     context: path_value_context(&value),
@@ -288,6 +294,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
             }
             for value in scalar_values(&argument) {
                 facts.push(ValueFact {
+                    file: None,
                     line: assertion.line,
                     text: assertion.text.clone(),
                     value,
@@ -297,6 +304,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
         }
         for value in enum_variant_values(&assertion.text) {
             facts.push(ValueFact {
+                file: None,
                 line: assertion.line,
                 text: assertion.text.clone(),
                 context: path_value_context(&value),
@@ -311,6 +319,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
         if looks_like_table_row(trimmed) {
             for value in spelled_scalar_values(trimmed) {
                 facts.push(ValueFact {
+                    file: None,
                     line: line_number,
                     text: trimmed.to_string(),
                     value,
@@ -321,6 +330,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
         if looks_like_builder_method(trimmed) {
             for value in spelled_scalar_values(trimmed) {
                 facts.push(ValueFact {
+                    file: None,
                     line: line_number,
                     text: trimmed.to_string(),
                     value,
@@ -330,6 +340,11 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
         }
     }
 
+    // #8389: the run-wide value list merges facts from every related test, so
+    // each fact records its own test file; a bare line number is ambiguous.
+    for fact in &mut facts {
+        fact.file = Some(test.file.clone());
+    }
     sort_value_facts(&mut facts);
     facts
 }
@@ -414,6 +429,7 @@ fn observed_discriminator_values(
             && left_value.value == right_value.value
         {
             facts.push(ValueFact {
+                file: None,
                 line: row.first().map(|cell| cell.line).unwrap_or_default(),
                 text: format!(
                     "{} | {}; {}",
@@ -446,6 +462,7 @@ fn observed_discriminator_values(
             .is_some_and(|value| comparable_value(value) == comparable_value(&left_value.value))
         {
             facts.push(ValueFact {
+                file: None,
                 line: left_value.line,
                 text: left_value.text.clone(),
                 value: format!("{left} == {right}"),
@@ -463,6 +480,7 @@ fn observed_discriminator_values(
             index,
         ) {
             facts.push(ValueFact {
+                file: None,
                 line,
                 text: format!("{text} | argument names constant {right}"),
                 value: format!("{left} == {right}"),
@@ -827,6 +845,25 @@ fn missing_discriminator_facts(
             workspace_complete,
             unresolved_boundary,
         )
+    {
+        missing.push(fact);
+    }
+    // A returned bare comparison reads the same boundary, but only a
+    // resolved gap counts: a boundary the lens cannot read leaves the
+    // return-value reading as it was and sets no unresolved reason.
+    let mut returned_unresolved = None;
+    if is_returned_comparison(probe)
+        && let Some(fact) = missing_boundary_discriminator(
+            probe,
+            owner_fn,
+            related_tests,
+            flow_sinks,
+            helper_chain,
+            index,
+            workspace_complete,
+            &mut returned_unresolved,
+        )
+        && returned_unresolved.is_none()
     {
         missing.push(fact);
     }
@@ -1412,6 +1449,7 @@ fn element_boundary_observations(
         .iter()
         .filter(|run| view.tail.run_reaches_boundary(&run.elements, &boundary))
         .map(|run| ValueFact {
+            file: None,
             line: run.line,
             text: format!(
                 "{} | element {} = {boundary} of {}",
@@ -3283,10 +3321,7 @@ fn observed_parameter_values(rows: &[Vec<ParameterValue>], parameter: &str) -> V
 /// text before the parameter's first `:`, so a destructuring pattern is not
 /// widened into its field names (unlike `signature_parameters`).
 pub(crate) fn function_parameters(function: &FunctionSummary) -> Vec<String> {
-    let body = function.body.as_str();
-    let Some(arguments) =
-        parameter_list_open(body).and_then(|open| delimited_contents_at(body, open))
-    else {
+    let Some(arguments) = signature_arguments(function) else {
         return Vec::new();
     };
     parameters_in_arguments(&arguments)
@@ -3301,10 +3336,7 @@ pub(crate) fn function_parameters(function: &FunctionSummary) -> Vec<String> {
 /// binds. Field names in a pattern are kept too, which only widens the
 /// owner-scoped set (#6970 review).
 pub(crate) fn signature_parameters(function: &FunctionSummary) -> Vec<String> {
-    let body = function.body.as_str();
-    let Some(arguments) =
-        parameter_list_open(body).and_then(|open| delimited_contents_at(body, open))
-    else {
+    let Some(arguments) = signature_arguments(function) else {
         return Vec::new();
     };
     split_top_level_args(&arguments)
@@ -3318,10 +3350,7 @@ pub(crate) fn signature_parameters(function: &FunctionSummary) -> Vec<String> {
 /// `i`. A parameter whose pattern binds more or fewer than one name
 /// (`(a, b): (u8, u8)`, `_: u8`) is an empty name.
 pub(crate) fn call_parameter_names(function: &FunctionSummary) -> Vec<String> {
-    let body = function.body.as_str();
-    let Some(arguments) =
-        parameter_list_open(body).and_then(|open| delimited_contents_at(body, open))
-    else {
+    let Some(arguments) = signature_arguments(function) else {
         return Vec::new();
     };
     split_top_level_args(&arguments)
@@ -3340,6 +3369,14 @@ pub(crate) fn call_parameter_names(function: &FunctionSummary) -> Vec<String> {
             })
         })
         .collect()
+}
+
+/// The contents of `function`'s parameter list with comments and strings
+/// masked, so a trailing comment such as `// lo: a, b: c` on a wrapped
+/// signature cannot add, split or shift parameter names (#7840).
+fn signature_arguments(function: &FunctionSummary) -> Option<String> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(&function.body);
+    parameter_list_open(&masked).and_then(|open| delimited_contents_at(&masked, open))
 }
 
 /// The `(` opening the parameter list: the first one after `fn` that sits
@@ -3619,6 +3656,54 @@ fn body_contains_direct_local_alias(body: &str, operand: &str, parameter: &str) 
         let local_name = left.split_once(':').map(|(name, _)| name).unwrap_or(left);
         local_name.trim() == operand && right.trim() == parameter
     })
+}
+
+/// Whether a `return_value` probe's changed expression is one bare relational
+/// comparison (`x > 101`), so the returned bool is the changed predicate and
+/// its boundary is the boundary a `predicate` probe on the same line reads.
+/// When the predicate lens resolves a missing boundary discriminator for it,
+/// the probe reads that gap too: reaching the owner with inputs that never
+/// separate the old and new threshold is not an activated change. A compound (`&&`/`||`)
+/// or non-comparison expression keeps the return-value reading.
+pub(in crate::analysis) fn is_returned_comparison(probe: &Probe) -> bool {
+    matches!(probe.family, ProbeFamily::ReturnValue)
+        && !probe.expression.contains("&&")
+        && !probe.expression.contains("||")
+        && comparison_operands(&probe.expression).is_some()
+        && probe
+            .before
+            .as_deref()
+            .is_some_and(|before| same_comparison_shape(before, &probe.expression))
+}
+
+/// Whether `before` and `after` are bare comparisons in the same operator
+/// family (`>`/`>=`, `<`/`<=`, `==`, `!=`) on the same left operand, so only
+/// the boundary differs. An operator change across families (`x == 100` to
+/// `x > 101`) can separate the versions at an off-boundary input, so it keeps
+/// the return-value reading.
+fn same_comparison_shape(before: &str, after: &str) -> bool {
+    fn operator_and_left(expression: &str) -> Option<(&'static str, String)> {
+        for (operator, family) in [
+            (">=", ">"),
+            ("<=", "<"),
+            ("==", "=="),
+            ("!=", "!="),
+            (">", ">"),
+            ("<", "<"),
+        ] {
+            if let Some((left, right)) = expression.split_once(operator) {
+                let left = clean_operand(left);
+                if !left.is_empty() && !clean_operand(right).is_empty() {
+                    return Some((family, left));
+                }
+            }
+        }
+        None
+    }
+    match (operator_and_left(before), operator_and_left(after)) {
+        (Some(before), Some(after)) => before == after,
+        _ => false,
+    }
 }
 
 pub(in crate::analysis) fn comparison_operands(expression: &str) -> Option<(String, String)> {
@@ -4031,6 +4116,10 @@ pub(super) fn sort_value_facts(facts: &mut Vec<ValueFact>) {
             .then(left.context.as_str().cmp(right.context.as_str()))
             .then(left.value.cmp(&right.value))
             .then(left.text.cmp(&right.text))
+            // Same line/value/text from two files still collapses to one fact
+            // (the first file in path order), exactly as before #8389, so the
+            // JSON observed values and totals do not move.
+            .then(left.file.cmp(&right.file))
     });
     facts.dedup_by(|left, right| {
         left.line == right.line
@@ -4906,6 +4995,18 @@ mod tests {
     }
 
     #[test]
+    fn signature_comments_do_not_shift_parameter_names() {
+        // #7840: a trailing comment holding a comma and a colon is not a
+        // parameter, for all three signature readers.
+        let commented = function(
+            "pub fn tier(\n    lo: u8, // lo: a, b: c\n    hi: u8, /* x: y, z: w */\n) -> u8 {\n    0\n}",
+        );
+        assert_eq!(function_parameters(&commented), vec!["lo", "hi"]);
+        assert_eq!(signature_parameters(&commented), vec!["lo", "hi"]);
+        assert_eq!(call_parameter_names(&commented), vec!["lo", "hi"]);
+    }
+
+    #[test]
     fn same_file_method_chain_owner_call_tracing_covers_activation_alias_helpers() {
         let owner = function(
             "pub fn score(raw_amount: Option<i32>, threshold: i32) -> bool {\n    if let Some(amount) = raw_amount { amount >= threshold } else { false }\n}",
@@ -5685,6 +5786,39 @@ assert_eq!(input.amount, 100);"#
         assert_eq!(context_of("Mode::Fast"), Some(ValueContext::EnumVariant));
     }
 
+    /// #8999: a call through a local alias reads the alias call's own
+    /// arguments, never a target-looking quoted substring on the same line.
+    #[test]
+    fn value_facts_for_test_reads_alias_call_arguments_not_quoted_owner_text() {
+        let owner = function("pub fn score(limit: u32) -> bool {\n    limit > 5\n}");
+        let body = "let f = crate::gate::score;\nassert_eq!(f(7), \"score(100)\");";
+        let test = TestSummary {
+            name: "alias_call".to_string(),
+            file: PathBuf::from("tests/value.rs"),
+            start_line: 1,
+            end_line: 3,
+            body: body.into(),
+            calls: crate::analysis::extract::extract_call_facts(body, 1),
+            assertions: Vec::new(),
+            literals: Vec::new(),
+            attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+        };
+
+        let facts = value_facts_for_test(&test, Some(&owner));
+        let values: Vec<&str> = facts.iter().map(|fact| fact.value.as_str()).collect();
+
+        assert!(
+            values.iter().any(|value| value.ends_with("7")),
+            "{values:?}"
+        );
+        assert!(
+            !values.iter().any(|value| value.contains("100")),
+            "{values:?}"
+        );
+    }
+
     #[test]
     fn value_facts_for_test_filters_non_owner_calls_and_reads_enum_call_arguments() {
         let owner = function(
@@ -6342,6 +6476,7 @@ assert_eq!(input.amount, 100);"#
 
     fn value_fact(line: usize, text: &str, value: &str, context: ValueContext) -> ValueFact {
         ValueFact {
+            file: None,
             line,
             text: text.to_string(),
             value: value.to_string(),

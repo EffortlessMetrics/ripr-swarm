@@ -116,8 +116,11 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPO: ${{ github.repository }}
         run: |
-          gh api --paginate --slurp "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments" \
+          gh api --paginate --slurp "repos/$REPO/pulls/$PR_NUMBER/comments" \
             | ripr pr-comments existing --root . --raw -
 
       - name: Run RIPR
@@ -128,11 +131,14 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPO: ${{ github.repository }}
         run: |
-          gh api --paginate --slurp "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
-            | ripr pr-comments summary --root . --raw - --pull-request "${{ github.event.pull_request.number }}" --head-sha "${{ github.event.pull_request.head.sha }}" --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          gh api --paginate --slurp "repos/$REPO/issues/$PR_NUMBER/comments" \
+            | ripr pr-comments summary --root . --raw - --pull-request "$PR_NUMBER" --head-sha "$PR_HEAD_SHA" --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           while IFS=$'\t' read -r method endpoint request message; do
-            gh api --method "$method" "repos/${{ github.repository }}/$endpoint" --input "$request" </dev/null >/dev/null
+            gh api --method "$method" "repos/$REPO/$endpoint" --input "$request" </dev/null >/dev/null
             echo "$message"
           done < target/ripr/review/summary/summary.tsv
 
@@ -141,10 +147,13 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPO: ${{ github.repository }}
         run: |
-          ripr pr-comments requests --root . --pull-request "${{ github.event.pull_request.number }}" --head-sha "${{ github.event.pull_request.head.sha }}"
+          ripr pr-comments requests --root . --pull-request "$PR_NUMBER" --head-sha "$PR_HEAD_SHA"
           while IFS=$'\t' read -r method endpoint request message; do
-            gh api --method "$method" "repos/${{ github.repository }}/$endpoint" --input "$request" </dev/null >/dev/null
+            gh api --method "$method" "repos/$REPO/$endpoint" --input "$request" </dev/null >/dev/null
             echo "$message"
           done < target/ripr/review/publish/requests.tsv
 
@@ -356,13 +365,15 @@ mod template_pin_tests {
     /// #5428 ci-packet step replacement. #5409 moved the comment JSON work
     /// into `ripr pr-comments existing|requests`, the summary flags into the
     /// workflow env, and the setting docs into docs/CI.md (385 → 150 rendered
-    /// lines), and re-measured the hash below.
+    /// lines). #4452 moved pull-request number, head SHA, and repository
+    /// interpolations out of `run:` shell text into step `env:`, and
+    /// re-measured the hash below.
     /// The unrendered template is the stable identity:
     /// rendering additionally substitutes the install version, the pin
     /// first line, and artifact paths, which the `generated_workflow_*` and
     /// `install_version_*` tests pin at the rendered level.
     const TEMPLATE_SHA256: &str =
-        "123125428b54a3467bf169579fe028842d3b9b7434cf1821e2f2e7fee2d52d24";
+        "50ca3c66abbb3e8e23b333db55c653db979784bfa02f0c5fa097aa145cc4cbec";
 
     #[test]
     fn template_matches_the_pinned_bytes() {

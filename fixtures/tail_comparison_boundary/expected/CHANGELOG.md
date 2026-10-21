@@ -286,3 +286,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — tail_comparison_boundary (25)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless tail_comparison_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — tail_comparison_boundary (26)
+
+Reason:
+RIPR-SPEC-0197: a returned bare comparison (-> bool tail) now reads its resolved missing equality boundary (#9094), so the wrapper-reached ships_free return_value finding names items == 10 as a missing input (infection weak, same class)
+
+Command:
+`cargo xtask goldens bless tail_comparison_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

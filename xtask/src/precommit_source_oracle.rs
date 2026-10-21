@@ -17,6 +17,11 @@ pub(crate) fn require_catalogue(source: &str, expected: &[String]) -> Result<(),
             if line.starts_with("//") {
                 return None;
             }
+            // #8793: file policy runs through a deferring wrapper so an
+            // instrument failure cannot hide the later gates.
+            if line == "check_file_policy_deferring(&mut deferred)?;" {
+                return Some("check-file-policy".to_string());
+            }
             let call = line
                 .strip_suffix("()?;")
                 .or_else(|| line.strip_suffix("()?,"))?;

@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 use super::super::extract::ShadowAuthority;
 use super::super::extract::extract_pattern_words;
+use super::super::extract::retain_reached_oracles;
 use super::super::facts::FileFacts;
 use super::super::facts::FunctionContainer;
 use super::super::facts::FunctionImplContext;
@@ -2423,6 +2424,9 @@ fn extract_parser_oracles(
     for oracle in guarded_matches.oracles {
         assertions.push(oracle);
     }
+    // RIPR-SPEC-0231 rule 8 (#7638): the line scanner's reach reading, so
+    // both adapters drop the same never-executed statements.
+    retain_reached_oracles(&mut assertions, &function_text, function_start);
 
     assertions.sort_by(|a, b| a.line.cmp(&b.line).then(a.text.cmp(&b.text)));
     assertions.dedup_by(|a, b| a.line == b.line && a.text == b.text);

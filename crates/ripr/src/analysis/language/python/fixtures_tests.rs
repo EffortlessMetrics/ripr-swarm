@@ -393,3 +393,44 @@ fn given_a_later_plain_def_replacing_the_fixture_then_it_is_not_attached() -> Re
     assert!(relations(&[("src/utils.py", UTILS_PY), ("tests/test_utils.py", &test)])?.is_empty());
     Ok(())
 }
+
+#[test]
+fn given_a_later_renamed_fixture_def_then_the_earlier_same_name_fixture_is_dropped()
+-> Result<(), String> {
+    let test = SAME_MODULE.replace(
+        "\n\ndef test_short(out):",
+        "\n\n@pytest.fixture(name='other')\ndef out():\n    return 'abc'\n\n\ndef test_short(out):",
+    );
+    assert!(relations(&[("src/utils.py", UTILS_PY), ("tests/test_utils.py", &test)])?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn given_a_later_non_fixture_def_inside_a_class_then_the_module_fixture_is_still_attached()
+-> Result<(), String> {
+    let test = SAME_MODULE.replace(
+        "\n\ndef test_short(out):",
+        "\n\nclass Helper:\n    def out(self):\n        return 'abc'\n\n\ndef test_short(out):",
+    );
+    assert_eq!(
+        relations(&[("src/utils.py", UTILS_PY), ("tests/test_utils.py", &test)])?,
+        vec![("test_short".to_string(), "fixture_owner_call")]
+    );
+    Ok(())
+}
+
+#[test]
+fn given_a_test_module_plain_def_then_the_conftest_fixture_is_still_attached() -> Result<(), String>
+{
+    let conftest = "import pytest\nfrom src.utils import _short\n\n\n@pytest.fixture\ndef out():\n    return _short('abcd', 3)\n";
+    let test = "def out():\n    return 'abc'\n\n\ndef test_short(out):\n    assert out == 'abc'\n";
+    assert_eq!(
+        relations(&[
+            ("src/utils.py", UTILS_PY),
+            ("tests/conftest.py", conftest),
+            ("tests/test_utils.py", test),
+        ])?,
+        vec![("test_short".to_string(), "fixture_owner_call")]
+    );
+    Ok(())
+}

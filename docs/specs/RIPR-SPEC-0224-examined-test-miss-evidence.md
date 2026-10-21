@@ -1,5 +1,9 @@
 # RIPR-SPEC-0224: Examined-test miss evidence
 
+This spec is the one language-neutral contract for `RelatedTest.miss` and its
+rendered `why` (#5566, parent #5445). The sections below that name Rust,
+Python, TypeScript or Perl describe each adapter's slice of it.
+
 Status: proposed
 
 Owner: analysis
@@ -13,18 +17,20 @@ Linked issues:
 - #5356 (`ripr explain` repeats the human-full block)
 - #5508 (`observation_unconfirmed` read as an established miss)
 - #5498 (Perl findings list tests without a reason)
+- #5566 (promote to a language-neutral related-test miss contract)
+- #5445 (Python, TypeScript and Perl related tests without a reason)
 
 Support-tier impact:
 
-- None. No language support claim changes; the slice discloses facts the Rust
-  classifier already computes.
+- None. No language support claim changes; the contract discloses facts a
+  producer already computes and promotes no adapter tier.
   [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md)
 
 Policy impact:
 
-- Adds the controlled output enum `related_test_miss` to
-  `policy/output_contracts.txt` and `docs/OUTPUT_SCHEMA.md`. No gate, badge,
-  or report file changes.
+- The controlled output enum `related_test_miss` is registered in
+  `policy/output_contracts.txt` and `docs/OUTPUT_SCHEMA.md` by the Rust slice.
+  This revision adds no policy entry and changes no gate, badge or report file.
 
 ## Problem
 
@@ -34,6 +40,145 @@ could say "Related tests were found" and `reach: yes` while listing no test
 (16 findings across 4 of 12 shared-corpus repos, #5344). Where tests were
 listed, the finding did not say why each one fails to catch the change, so a
 developer who disagreed had to re-derive the analysis.
+
+## Language-neutral contract
+
+`miss` explains one related-test row. It is evidence, not a verdict, and a
+renderer never decides it.
+
+### Producer and renderer responsibility
+
+A language producer owns, per test row: which test is related; relation
+certainty and provenance; assertion admission state; the assertion judged for
+the changed behavior family; row-local activation or boundary evidence;
+row-local owner/sink observation state; row-owned discriminator support; and
+the final typed miss, if one is established. Renderers, transports and policy
+facades own none of these.
+
+### Class gate
+
+- `exposed`: no class-derived row miss. Row-level facts such as a
+  `no_call_path` on a matched row whose relation does not establish reach may
+  still appear.
+- `static_unknown` and every other explicitly unknown, blocked or partial
+  state: no speculative row miss. A withheld `static_unknown` finding may
+  restore the misses its reveal pass established for its rows.
+- A concrete gap class may carry a miss only on a row for which the producer
+  established it. A row inside a concrete gap stays `miss: null` when its own
+  evidence is unresolved.
+- A producer never changes the finding class to obtain a more satisfying
+  explanation. Language deviations follow the existing classification
+  taxonomy; no cross-language class exists for this feature.
+
+### Explanation is non-decisional
+
+`miss` and `why` cannot determine gate, actionability or fix-site eligibility
+(#5563). A row's decision or evidence role is a separate producer-owned fact,
+so changing only the explanation changes no decision field.
+
+### Row-owned support
+
+- `missing_input` requires a typed predicate-activation or boundary fact that
+  applies to the same row.
+- `missing_exact_assertion` requires a typed changed-observable or
+  discriminator fact that applies to the same row.
+- A finding-wide fact is never attached to one test by renderer convention. A
+  row without its own support falls back to `observation_unconfirmed` or no
+  miss; it never borrows another row's fact (#5564).
+
+### Assertion admission
+
+Three states stay distinct: a recognized assertion; established absence of any assertion-like
+construct after complete extraction; and an assertion-like, refused, custom or
+dynamic form whose admission is unresolved. An empty recognized-assertion
+vector is not by itself `no_assertion`. `assertion_not_credited` is not a
+bucket for unsupported syntax; only a typed established refusal (#5446) may use it. Rust's current
+emission on a refused row predates this rule and stays a documented exception
+until #5446 lands.
+
+### Minimum evidence per miss
+
+| miss | Minimum evidence |
+| --- | --- |
+| `no_call_path` | no established path to the changed owner under the producer's relation model |
+| `no_assertion` | path established, extraction complete, no executable assertion-like construct |
+| `assertion_not_observing` | affirmative evidence the admitted assertion observes another owner, value or sink |
+| `assertion_not_credited` | a typed established refusal accepted by #5446 |
+| `weak_assertion` | an admitted, family-relevant oracle at a weak or smoke tier, below the producer's strong or exact threshold |
+| `missing_input` | a row-owned predicate-activation or boundary omission |
+| `missing_exact_assertion` | a row-owned observed-surface or exact-discriminator omission |
+| `observation_unconfirmed` | a path/assertion relationship exists but observation can be neither proved nor refuted |
+
+The typed `ProbeFamily` is authoritative for behavior-family prose; source
+text such as ` == ` never decides whether a fact is a boundary, return value,
+field, error variant, effect, call deletion or match arm.
+
+### Adapter capability table
+
+This table documents which propositions each adapter may emit today. It is
+normative documentation, not a second capability registry; once #5531 lands it
+is validated against or derived from that registry (which has no `miss` field yet;
+adding one is a follow-up). An adapter that reports an
+unsupported state as unknown and fabricates no reason conforms.
+
+| miss | Rust | Python | TypeScript | Perl v1 |
+| --- | --- | --- | --- | --- |
+| `no_call_path` | yes | pending #5491 | pending #5495 | no |
+| `no_assertion` | yes | pending #5491 | pending #5495 | no |
+| `assertion_not_observing` | yes | pending #5491 | pending #5495 | no (#3223) |
+| `assertion_not_credited` | yes, unsplit until #5446 | no (#5446) | no (#5446) | no |
+| `weak_assertion` | yes | pending #5491 | pending #5495 | no |
+| `missing_input` | yes | pending #5491 | pending #5495 | no (#4061, perl-lsp-swarm#17237, #5562) |
+| `missing_exact_assertion` | yes | pending #5491 | pending #5495 | no |
+| `observation_unconfirmed` | yes | pending #5491 | pending #5495 | yes |
+
+Rust "yes" means the reason is emitted; it does not claim conformance with every
+law above (see Current Rust conformance gaps).
+
+"Pending" means the producer has not mapped that reason yet; the row-evidence
+prerequisites for it are specified in this document. Perl's narrower coverage is
+a capability difference, not a parity failure.
+
+### Projection law
+
+Every surface that carries related tests derives from the stored enum and the
+shared renderer: human and human-full, JSON/context/JSONL, explain, LSP, MCP,
+applicable agent and repair projections, and single-row TypeScript preview
+cards or packets. No transport defines its own miss semantics.
+
+### Compatibility
+
+`miss` is optional; artifacts that predate it read as no miss. The enum is
+controlled in `policy/output_contracts.txt`. Additions are additive and bump
+the schema only as `docs/OUTPUT_SCHEMA.md` requires. Explanatory prose is
+excluded from deterministic identity.
+
+### Current Rust conformance gaps
+
+The contract above is the target. The Rust slice described under Behavior does
+not yet satisfy all of it, and these gaps are tracked rather than claimed away:
+
+- Decision independence (#5563): `RelatedTest::is_unmatched()` is derived from
+  `miss == assertion_not_observing`, and `Finding::oracle_related_tests`,
+  `exact_oracle_gap_next_step` and the diagnostic witness read it, and
+  `exact_oracle_gap_next_step` also branches directly on
+  `miss == missing_exact_assertion`, and the Rust oracle pass reads
+  `assertion_not_credited` when choosing the macro-wrapped-assertion limit and
+  its next step. Changing a row's miss can therefore change triage ordering,
+  next step, limit kind or fix-site selection. These readers are examples, not
+  a complete inventory; #5563 owns the inventory and the decoupling.
+- Row-owned support (#5564): the annotation pass computes boundary and
+  exact-assertion presence once from the finding-wide `missing_discriminators`
+  list and assigns `missing_input` or `missing_exact_assertion` to eligible
+  rows, so a row can carry a fact that belongs to another test.
+- Family-typed rendering (#5493): the reason renderer ignores the finding's
+  `ProbeFamily` and hard-codes its fact lookups, and `input_boundary_fact`
+  selects predicate facts by ` == ` text.
+
+Until those land, Rust is listed as supported in the capability table only for
+the vocabulary it emits, not as conforming to decision independence, row
+ownership or typed-family rendering. New adapters must meet the contract as
+written and must not copy these gaps.
 
 ## Behavior
 
@@ -53,7 +198,8 @@ developer who disagreed had to re-derive the analysis.
   RIPR-SPEC-0229 unselected-arm facts),
   `missing_exact_assertion` (error-variant and field facts) and
   `observation_unconfirmed` for `weakly_exposed` and `reachable_unrevealed`.
-  `exposed` findings and the unknown classes get no class-level miss.
+  `exposed` findings and the unknown classes get no class-derived miss; row-level
+  facts such as `no_call_path` can still appear on them.
 - `observation_unconfirmed` is an unknown, not an established miss: its sentence
   says ripr could not confirm that the assertion observes the changed
   behavior (#5508). Only `assertion_not_observing` claims the assertion
@@ -66,8 +212,10 @@ developer who disagreed had to re-derive the analysis.
   that row. Unequal sink text stays unconfirmed. Every other Perl row keeps no
   miss: advisory relations, weak or missing oracles, partial or blocked
   packets, and the finding-wide discriminator, which has no test identity.
-- `miss` is evidence only. No stage, class, confidence, stop reason, or next
-  step reads it. Post-classification gates that asked whether any related
+- `miss` is evidence only (target; the Rust exceptions are listed under
+  Current Rust conformance gaps). The target is that no stage, class,
+  confidence, stop reason, limit or next step reads it; the Rust readers are
+  those gaps. Post-classification gates that asked whether any related
   test survived oracle matching use `Finding::oracle_related_tests`, which
   skips `assertion_not_observing` rows, so their decisions are unchanged.
 - Oracle rows are ranked and packed into the eight-row window exactly as
@@ -87,14 +235,31 @@ developer who disagreed had to re-derive the analysis.
   the reason: `unconfirmed` for `observation_unconfirmed`, `misses` otherwise.
   Human-full, `ripr explain`, LSP hover and LSP related information use it;
   JSON, MCP and the context packet carry no label.
+- `output::related_test_miss::oracle_projection` owns the oracle phrase of a
+  related-test row, after "uses" (#8388): `<strength> <kind> oracle` for a
+  graded row (a multi-word kind that already leads with the strength word is
+  not doubled: `smoke_only` with strength `smoke` reads `smoke only oracle`,
+  #8711; the shared `output::oracle_phrase` helper owns that join); `<kind> oracle, not graded against this probe` when the
+  strength is `unknown` (the probe family has no typed oracle relationships,
+  so the assertion is not graded, not of unknown quality); `an unclassified
+  oracle, not graded against this probe` when the kind is also `unknown` and
+  an assertion was selected; and `no oracle` when no assertion was selected.
+  Pinned by `oracle_projection_separates_ungraded_assertions_from_absent_ones`
+  and the fixture-honesty matcher test
+  `evidence_promotion_human_oracle_line_accepts_deduplicated_smoke_only_wording`.
+  Finding hover, fix-site diagnostic links, seam diagnostic links and targeted
+  agent briefs use this same phrase (#8951). The diagnostic witness owns the
+  selected test; prose does not reselect a stronger row. Finding hover retains
+  its reason-only form when no assertion is recorded. Compact seam-hover
+  metadata and structured oracle kind/strength fields retain their raw tags.
 - `ripr explain` adds a "Why this verdict" section: every retained examined
   test with its verdict and checked assertion, what a test would need to change
   the verdict (gap classes only), and the meaning of each stop reason.
 
 ### Assertion admission prerequisite (Python, TypeScript)
 
-Python and TypeScript record no miss yet. Before a producer (#5491, #5495)
-may write a `no_assertion` miss, each extracted test carries an assertion
+Which adapters write a miss is stated in the capability table above. Before a
+producer may write a `no_assertion` miss, each extracted test carries an assertion
 admission state, computed fail-closed from the test's syntax:
 
 - `recognized_assertion_present`: the oracle extractor credited an assertion.
@@ -274,9 +439,11 @@ actionability or rendered output.
 - Changing any verdict. Whether a self-contradicting gap should become an
   unknown is RIPR-SPEC-0221's admission rule.
 - Splitting `assertion_not_credited` into proven-inert and admission-unproven
-  cases; that needs the typed admission refusal from #5359.
-- Python and TypeScript miss producers (#5491, #5495); only their admission
-  prerequisite is specified here. Richer Perl reasons that need row-owned facts (#5562).
+  cases; that needs the typed admission refusal tracked by #5446 (see #5359).
+- Per-adapter miss mappings: the capability table states which reasons each
+  adapter writes, and each producer PR owns its own column. Richer Perl reasons that need row-owned facts (#5562).
+- Any producer implementation, parser, call-graph or oracle expansion,
+  support-tier promotion, or runtime or mutation-kill claim.
 
 ## Acceptance Examples
 
@@ -292,6 +459,10 @@ actionability or rendered output.
 
 ## Test Mapping
 
+- The `oracle_wording` controls in `lsp/tests.rs`, the seam diagnostic tests and
+  `output/agent_seam_packets.rs` pin ungraded classified and unclassified rows,
+  graded rows, reason-only absent-assertion hover and producer-owned fix-site
+  selection beside a stronger row.
 - `crates/ripr/src/analysis/classify/reveal.rs::tests` — examined misses are
   listed and rank after matched tests.
 - `crates/ripr/src/output/related_test_miss.rs::tests` — reason prose.
@@ -308,7 +479,8 @@ actionability or rendered output.
   `crates/ripr/src/mcp/gaps.rs::tests` — the same packet-backed row, token and
   shared sentence in check JSON, the context packet, human-full, `ripr
   explain`, the human digest, LSP hover, related information and diagnostic
-  data, and MCP gap evidence; no projected decision reads `miss`.
+  data, and MCP gap evidence; no projected surface adds a decision that reads
+  `miss` beyond the Rust gaps listed above.
 - `crates/ripr/src/output/human/explain.rs::tests` — an unconfirmed row is not
   labelled a miss.
 - `crates/ripr/src/analysis/language/python/python_tests.rs` and
@@ -348,6 +520,8 @@ actionability or rendered output.
 | `crates/ripr/src/analysis/language/perl/mod.rs` | Perl v1 `observation_unconfirmed` rows |
 | `crates/ripr/src/analysis/language/{python,typescript}/admission.rs` | fail-closed assertion admission state per extracted test |
 | `crates/ripr/src/output/related_test_miss.rs` | the one prose and label owner |
+| `crates/ripr/src/domain/diagnostic_witness.rs` | selected typed fix-site test shared with diagnostic prose |
+| `crates/ripr/src/output/agent_seam_packets.rs` | targeted brief oracle prose |
 | `crates/ripr/src/analysis/language/python/assertion_selection.rs` | family-relevant assertion selection per related test |
 | `crates/ripr/src/analysis/language/python/{classify,related_tests,boundary,no_behavior,static_limits}.rs`, `python/repo/evidence.rs` | consumers of the one selection; non-delegatable alignment reasons |
 | `crates/ripr/src/output/gap_decision_ledger.rs` | never delegates `no_family_relevant_assertion` or `other_behavior_assertion_passed_over` |

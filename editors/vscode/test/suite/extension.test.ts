@@ -945,6 +945,55 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('refreshDiagnostics acknowledges immediately while analysis is running', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1',
+        kind: 'analysis_status',
+        state: 'running',
+        attempt_id: '9'
+      });
+
+      await context.controller.refreshDiagnostics();
+
+      assert.ok(
+        context.infoMessages.some((message) => message.includes('queued')),
+        `expected a queued acknowledgement, got: ${context.infoMessages.join(' | ')}`
+      );
+      assert.deepStrictEqual(context.client.requests, [{
+        method: 'workspace/executeCommand',
+        params: {
+          command: 'ripr.refresh',
+          arguments: []
+        }
+      }]);
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('refreshDiagnostics stays quiet when no analysis is in flight', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+
+      await context.controller.refreshDiagnostics();
+
+      assert.deepStrictEqual(context.infoMessages, []);
+      assert.deepStrictEqual(context.client.requests, [{
+        method: 'workspace/executeCommand',
+        params: {
+          command: 'ripr.refresh',
+          arguments: []
+        }
+      }]);
+    } finally {
+      await context.dispose();
+    }
+  });
+
   test('copyContext with no active editor completes', async () => {
     await vscode.commands.executeCommand('workbench.action.closeAllEditors');
     // Should resolve without throwing even when no editor is open.
@@ -1714,6 +1763,61 @@ suite('Extension Smoke', () => {
         'The run input was incomplete',
         'Next safe action: Run ripr: Refresh Diagnostics'
       ]);
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('typed unavailable_languages status names the language in the status bar, not message text (#8585)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+
+      const emit = (extra: Record<string, unknown>) => {
+        context.client.emitNotification('ripr/analysisStatus', {
+          schema_version: '0.1',
+          tool: 'ripr',
+          kind: 'analysis_status',
+          state: 'succeeded',
+          run_status: 'limited_incomplete_input',
+          attempt_id: 'run-lang',
+          snapshot_id: 'snapshot:run-lang',
+          ...extra
+        });
+      };
+
+      emit({
+        unavailable_languages: [
+          {
+            language: 'python',
+            file_count: 2,
+            recovery: 'add "python" to [languages] enabled in ripr.toml, then restart the language server'
+          }
+        ]
+      });
+      assert.ok(context.status.text.includes('$(warning) ripr: language off'), context.status.text);
+      assert.ok(!context.status.text.includes('ripr: limited'), context.status.text);
+      const tooltip = String(context.status.tooltip);
+      assert.ok(tooltip.includes('did not analyze changed python (2 files)'), tooltip);
+      assert.ok(tooltip.includes('not an all-clear'), tooltip);
+      assert.ok(tooltip.includes('Add "python" to [languages] enabled in ripr.toml'), tooltip);
+
+      // Without the typed row the same run status keeps the generic
+      // incomplete-input presentation: nothing is parsed out of message text.
+      emit({ unavailable_languages: [], limitations: ['python changed 2 file(s), but the preview adapter was not enabled'] });
+      assert.ok(context.status.text.includes('$(warning) ripr: limited'), context.status.text);
+      assert.ok(!context.status.text.includes('language off'), context.status.text);
+
+      // A malformed row fails closed to the generic presentation.
+      emit({ unavailable_languages: [{ language: 7 }] });
+      assert.ok(context.status.text.includes('$(warning) ripr: limited'), context.status.text);
+
+      // Stale evidence keeps its own presentation over the language row.
+      emit({
+        run_status: 'stale',
+        unavailable_languages: [{ language: 'python', file_count: 1 }]
+      });
+      assert.ok(context.status.text.includes('ripr: stale'), context.status.text);
     } finally {
       await context.dispose();
     }
@@ -3952,6 +4056,7 @@ suite('Extension Smoke', () => {
       analysisRunning: true,
       analysisReady: true,
       analysisLimited: true,
+      languageNotEnabled: true,
       gapActionable: true,
       gapNoAction: true,
       gapArtifactWarning: true,
@@ -4210,6 +4315,65 @@ suite('Extension Smoke', () => {
       assert.ok(!String(context.status.tooltip).includes('Unsaved routed files'));
       await context.controller.showStatus();
       assert.ok(context.infoMessages.at(-1)?.includes('ripr analysis completed'));
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('closing an unsaved buffer restores the typed language-not-enabled status (#8585)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      const document = await vscode.workspace.openTextDocument(workspaceFileUri('src/lib.rs'));
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'succeeded',
+        run_status: 'limited_incomplete_input',
+        attempt_id: 'run-lang-close', snapshot_id: 'snapshot:run-lang-close',
+        unavailable_languages: [{ language: 'python', file_count: 1 }]
+      });
+      assert.ok(context.status.text.includes('ripr: language off'), context.status.text);
+
+      context.controller.markWorkspaceStale(document);
+      assert.ok(context.status.text.includes('ripr: stale'), context.status.text);
+      context.controller.markWorkspaceClosed(document);
+      // The restored status is the typed one, not a log-derived form that
+      // carries no unavailable-language rows.
+      assert.ok(context.status.text.includes('ripr: language off'), context.status.text);
+      assert.ok(String(context.status.tooltip).includes('did not analyze changed python'));
+      assert.ok(String(context.status.tooltip).includes('without saving'));
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('language-not-enabled status keeps degraded component recovery and trust warning (#8585)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'succeeded',
+        run_status: 'limited_incomplete_input',
+        attempt_id: 'run-mixed', snapshot_id: 'snapshot:run-mixed',
+        unavailable_languages: [{ language: 'python', file_count: 1, recovery: 'enable python in ripr.toml' }],
+        components: [
+          {
+            component: 'gap_ledger',
+            state: 'failed',
+            kind: 'artifact_derived',
+            message: 'gap ledger unreadable',
+            findings_trustworthy: false,
+            recovery: 'run ripr check to regenerate the gap decision ledger',
+            snapshot_identity: 'snapshot:run-mixed'
+          }
+        ]
+      });
+      assert.ok(context.status.text.includes('ripr: language off'), context.status.text);
+      const tooltip = String(context.status.tooltip);
+      assert.ok(tooltip.includes('did not analyze changed python'), tooltip);
+      assert.ok(tooltip.includes('Enable python in ripr.toml'), tooltip);
+      assert.ok(tooltip.includes('Run ripr check to regenerate the gap decision ledger'), tooltip);
+      assert.ok(tooltip.includes('not trustworthy evidence'), tooltip);
     } finally {
       await context.dispose();
     }

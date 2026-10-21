@@ -31,6 +31,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/assertion_shaped_oracle_test_file/input --diff <cwd>/fixtures/assertion_shaped_oracle_test_file/diff.patch --mode fast probe:src_fragment_checks.rs:predicate:41d9e03a
   ripr context --root <cwd>/fixtures/assertion_shaped_oracle_test_file/input --diff <cwd>/fixtures/assertion_shaped_oracle_test_file/diff.patch --mode fast --at probe:src_fragment_checks.rs:predicate:41d9e03a
+  no repair start offered: repair route not ready; run `ripr repair probe:src_fragment_checks.rs:predicate:41d9e03a --root <cwd>/fixtures/assertion_shaped_oracle_test_file/input` for the full gate's answer
 No test stub here: the owner returns no value to assert on
 
 More:

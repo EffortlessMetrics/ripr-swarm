@@ -513,6 +513,50 @@ pub fn should_ignore_changed_line(text: &str) -> bool {
         || text.starts_with("#")
 }
 
+/// An `impl` header (`impl Tr for K where Self: Sized {`; other item headers
+/// such as `trait` or `struct` are not covered) holds no expression:
+/// its `Self: Sized` text only looks like a field `name: Type`, so a
+/// constructed-field probe on it reports a gap that does not exist (#8389).
+/// The header itself stays probed as `static_unknown`, so a changed bound is
+/// never silently dropped. A one-line `impl` whose body holds a `fn` is not a
+/// header.
+pub(crate) fn is_item_header(text: &str) -> bool {
+    // A trailing comment (`// fn go`) must not read as a body.
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let text = masked.trim();
+    let text = text
+        .strip_prefix("unsafe")
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+        .map_or(text, str::trim_start);
+    let word_after = |word: &str| {
+        text.strip_prefix(word).is_some_and(|rest| {
+            rest.is_empty() || rest.starts_with('<') || rest.starts_with(char::is_whitespace)
+        })
+    };
+    // A `;` inside brackets (`where [u8; 4]: Copy`) is an array type, not a body.
+    let mut depth = 0usize;
+    let body_semicolon = text.chars().any(|c| match c {
+        '[' | '(' => {
+            depth += 1;
+            false
+        }
+        ']' | ')' => {
+            depth = depth.saturating_sub(1);
+            false
+        }
+        ';' => depth == 0,
+        _ => false,
+    });
+    if text.contains("fn ") || body_semicolon {
+        return false;
+    }
+    // Text after the opening `{` is a one-line body, not a header.
+    if text.contains('{') && !text.ends_with('{') {
+        return false;
+    }
+    word_after("impl") && (text.ends_with('{') || text.contains(" where"))
+}
+
 /// A line that only opens or closes a block (`}`, `});`, `} else {`,
 /// `else {`) carries no expression of its own (#4216 row 5). Opening `(`
 /// and `[` are not delimiters here, so a unit `()` or empty `[]` value is
@@ -535,6 +579,50 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+
+    /// #8389: an `impl` header is not a behavior line, but a one-line `impl`,
+    /// a `fn` signature, an expression that merely contains the word and a
+    /// function `where` bound stay probed.
+    #[test]
+    fn impl_headers_are_item_headers_but_behavior_is_not() {
+        for header in [
+            "impl Tr for K {",
+            "impl<T: Debug> Tr for K<T> where Self: Sized {",
+            "impl Tr for K where Self: Sized",
+            "impl Tr for K where Self: Sized { // fn go",
+            "impl Tr for K where Self: Sized { // x;",
+            "impl<T: Fn(u8)> Tr for K<T> where Self: Sized {",
+            "impl\tTr for K where Self: Sized {",
+            "unsafe\timpl Tr for K where [u8; 4]: Copy {",
+            "unsafe impl Send for K {",
+            "impl<T: Iterator<Item = u32>> Tr for K<T> {",
+        ] {
+            assert!(is_item_header(header), "`{header}`");
+            assert_eq!(
+                super::super::lexical::classify_changed_line(header),
+                vec![ProbeFamily::StaticUnknown],
+                "`{header}` must not classify as a field"
+            );
+        }
+        for behavior in [
+            "impl K { fn go(&self) -> u32 { 1 } }",
+            "fn go() -> impl Iterator<Item = u32> {",
+            "implement(x);",
+            "let impl_len = 3;",
+            "where T: Debug,",
+            "impl Tr for K where Self: Sized;",
+            "impl_len += 1",
+            // A multi-line header's generic bound stays probed as
+            // `static_unknown` (`inline_impl_bound_added_stays_unknown`).
+            "impl<T: Debug> Tr for K<T>",
+            "impl K { const A: u32 = 1; }",
+            "impl K where Self: Sized { const A: u32 = 1; }",
+            "impl K where Self: Sized { Foo { a: 1 } }",
+            "T: Debug + Clone,",
+        ] {
+            assert!(!is_item_header(behavior), "`{behavior}`");
+        }
+    }
 
     #[test]
     fn classify_functions_are_callable() {

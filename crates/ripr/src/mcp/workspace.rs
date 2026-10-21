@@ -41,6 +41,12 @@ pub(crate) const CODE_NO_SNAPSHOT: &str = "no_snapshot";
 pub(crate) const CODE_ANALYSIS_IN_FLIGHT: &str = "analysis_in_flight";
 pub(crate) const CODE_STALE_SNAPSHOT: &str = "stale_snapshot";
 pub(crate) const CODE_ITEM_NOT_FOUND: &str = "item_not_found";
+/// #8736 review follow-up: one raw resource-id segment can resolve both as
+/// captured (legacy raw URI for a literal-`%` file) and as its percent-
+/// decoded form (a URI-emitting client addressing the decoded file) when
+/// both files exist; the wire form is then ambiguous and the route fails
+/// closed instead of silently picking one item.
+pub(crate) const CODE_ID_AMBIGUOUS: &str = "id_ambiguous";
 pub(crate) const CODE_RESULT_TOO_LARGE: &str = "result_too_large";
 /// #7462: `ripr_get_gap` is already one item. Retrying it cannot shrink the
 /// document. The recovery names `--committed` because the snapshot analyzed
@@ -2941,6 +2947,37 @@ mod tests {
                 "equivalent roots must preserve one portable snapshot identity".to_string(),
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn related_test_totals_change_snapshot_identity_without_changing_rows() -> Result<(), String> {
+        let mut before = output(AnalysisOutcomeKind::CompleteWithFindings, 1, Vec::new())?;
+        let mut finding = gaps::test_finding()?;
+        finding.related_tests = vec![finding.related_tests[0].clone(); 8];
+        finding.related_tests_matched_total = Some(12);
+        before.findings.push(finding);
+        let mut after = before.clone();
+        after.findings[0].related_tests_matched_total = Some(13);
+        let twelve =
+            Snapshot::from_output(&before, Some("root:sha256:test")).map_err(|f| f.detail)?;
+        let thirteen =
+            Snapshot::from_output(&after, Some("root:sha256:test")).map_err(|f| f.detail)?;
+        assert_eq!(twelve.items.len(), 1);
+        assert_eq!(thirteen.items.len(), 1);
+        assert_eq!(
+            twelve.items[0].evidence_core["related_tests"],
+            thirteen.items[0].evidence_core["related_tests"]
+        );
+        assert_eq!(
+            twelve.items[0].evidence_bytes,
+            thirteen.items[0].evidence_bytes
+        );
+        assert_ne!(
+            twelve.items[0].evidence_sha256,
+            thirteen.items[0].evidence_sha256
+        );
+        assert_ne!(twelve.snapshot_id, thirteen.snapshot_id);
         Ok(())
     }
 

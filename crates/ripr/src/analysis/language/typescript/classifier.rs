@@ -1035,7 +1035,8 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
             // Handled before the match: flags are masked, then code resumes.
             Mode::RegexFlags => out.push(c),
             Mode::LineComment => {
-                if c == '\n' {
+                // ECMAScript line comments end at all four LineTerminators.
+                if matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}') {
                     mode = Mode::Code;
                     out.push(c);
                 } else {
@@ -3257,6 +3258,9 @@ pub(crate) fn ts_predicate_boundary_limitation(
         Some(boundary) => format!(
             "Related tests reach `{owner_name}` with a strong oracle, but no strong assertion observes a `{owner_name}(...)` call at the changed predicate boundary `{boundary}`; inputs on one side of the boundary do not discriminate the changed comparison."
         ),
+        None if !probe_shape.specific => format!(
+            "Related tests reach `{owner_name}` with a strong oracle, but the TypeScript preview adapter does not recognise the shape of the changed line, so static evidence cannot tie an assertion to it."
+        ),
         None => format!(
             "Related tests reach `{owner_name}` with a strong oracle, but the changed line has no statically comparable predicate boundary; static evidence cannot tie an assertion to the changed branch."
         ),
@@ -3335,6 +3339,31 @@ pub(crate) fn owner_namespace_receivers(
         })
         .map(|import| import.local.clone())
         .collect();
+    // RIPR-SPEC-0243 rule 5: a default import of a module whose `export
+    // default { owner }` object holds the owner is the receiver of
+    // `local.owner(...)`, exactly as a namespace import is.
+    if owner.default_object_member {
+        receivers.extend(
+            test.imports_in_file
+                .iter()
+                .filter(|import| {
+                    !import.namespace
+                        && import.imported.as_deref() == Some("default")
+                        && test
+                            .default_member_only_locals_in_file
+                            .iter()
+                            .any(|(local, member)| *local == import.local && *member == owner.name)
+                        && import_source_matches_owner(
+                            import,
+                            &test.file,
+                            owner,
+                            alias_map,
+                            workspace_root,
+                        )
+                })
+                .map(|import| import.local.clone()),
+        );
+    }
     // A dynamic import binds the same module namespace a static
     // `import * as` would, but as a local declaration, so it never reaches
     // `imports_in_file`. Without it the member-call gate below would
@@ -5324,8 +5353,10 @@ pub(crate) fn classify_change_with_alias_state(
         )
     } else if strongest_strength >= OracleStrength::Strong.rank() && !boundary_witnessed {
         // RIPR-SPEC-0027: strong oracle exists but no assertion reaches the
-        // changed predicate boundary.
+        // changed predicate boundary. An unrecognised line shape has no
+        // predicate to witness, so it must not claim one (#8672).
         match missing_discriminators.first() {
+            _ if !probe_shape.specific => "TypeScript preview adapter: strong oracle found but the preview adapter does not recognise the shape of the changed line; discriminate unknown.".to_string(),
             Some(discriminator) => format!(
                 "TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `{}`.",
                 discriminator.value
