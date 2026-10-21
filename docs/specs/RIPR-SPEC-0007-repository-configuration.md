@@ -451,6 +451,11 @@ Current tests:
 - `crates/ripr/src/output/suppressions.rs::audit_controls::unsupported_literal_values_and_quoted_keys_still_fail`
 - `crates/ripr/src/output/suppressions.rs::audit_controls::repeated_malformed_assignment_preserves_the_original_location`
 - `crates/ripr/src/config.rs::tests::missing_config_uses_behavior_preserving_defaults`
+- `crates/ripr/src/config.rs::tests::config_load_parse_error_strips_windows_verbatim_prefix`
+- `crates/ripr/src/config.rs::tests::parse_error_hint_matches_discovery_after_the_broken_file_is_removed`
+- `crates/ripr/src/config.rs::tests::unreadable_config_error_ends_with_a_recovery_line`
+- `crates/ripr/tests/cli_smoke.rs::check_json_malformed_config_emits_redacted_refusal`
+- `crates/ripr/tests/cli_smoke.rs::doctor_verbose_malformed_config_omits_the_loader_recovery_line`
 - `crates/ripr/src/workspace_status.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`
 - `crates/ripr/src/app/python_repair_binding.rs::tests::dangling_ripr_toml_symlink_is_subject_config_not_defaults`
 - `crates/ripr/src/app/python_repair_verification.rs::python_repair_verification_semantics::dangling_ripr_toml_symlink_is_subject_config_not_defaults`
