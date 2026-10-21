@@ -20,6 +20,13 @@ const ATOMIC_ORDERING_VARIANTS: &[&str] = &["Relaxed", "Release", "Acquire", "Ac
 /// True when the edit from `before` to `after` changes only atomic
 /// `Ordering` variant arguments.
 pub(super) fn only_atomic_ordering_differs(before: &str, after: &str) -> bool {
+    // Fail closed: literals and comments are not code, so a changed string
+    // or comment must never read as an ordering swap.
+    let opaque =
+        |text: &str| text.contains(['"', '\'']) || text.contains("//") || text.contains("/*");
+    if opaque(before) || opaque(after) {
+        return false;
+    }
     let before = tokens(before);
     let after = tokens(after);
     if before.len() != after.len() {
@@ -43,7 +50,11 @@ fn is_atomic_ordering_path(token: &str) -> bool {
     let Some(variant) = segments.next() else {
         return false;
     };
-    segments.next() == Some("Ordering") && ATOMIC_ORDERING_VARIANTS.contains(&variant)
+    // Bare `Ordering::X` or `atomic::Ordering::X` only; `cmp::Ordering` and
+    // user-defined `my::Ordering` are other types.
+    segments.next() == Some("Ordering")
+        && matches!(segments.next(), None | Some("atomic"))
+        && ATOMIC_ORDERING_VARIANTS.contains(&variant)
 }
 
 /// Splits into `::`-joined path tokens and single punctuation characters,
@@ -104,6 +115,35 @@ mod tests {
         assert!(!differs("f(Release)", "f(Acquire)"));
         assert!(!differs("f(Mode::Release)", "f(Mode::Acquire)"));
         assert!(!differs("f(a)", "f(a)"));
+        assert!(!differs(
+            "s(cmp::Ordering::Less)",
+            "s(cmp::Ordering::Release)"
+        ));
+        assert!(!differs(
+            "f(my::Ordering::Release)",
+            "f(my::Ordering::Acquire)"
+        ));
+        assert!(!differs("x.store(1, Release)", "x.store(2, Release)"));
+        assert!(!differs(
+            "x.store(1, Ordering::Release)",
+            "x.store(2, Ordering::Release)"
+        ));
+    }
+
+    #[test]
+    fn given_literals_or_comments_then_it_fails_closed() {
+        assert!(!differs(
+            "log(\"Ordering::AcqRel\")",
+            "log(\"Ordering::Release\")"
+        ));
+        assert!(!differs(
+            "x.swap(1, Ordering::AcqRel); // a",
+            "x.swap(1, Ordering::Release); // b"
+        ));
+        assert!(!differs(
+            "f(Ordering::AcqRel, 'a')",
+            "f(Ordering::Release, 'a')"
+        ));
         assert!(!differs("f(Ordering::Release)", "f(Ordering::Release, 1)"));
     }
 }

@@ -1293,7 +1293,7 @@ fn build_probe(
     // #9080: no value or effect assertion observes a memory-ordering swap, so
     // a call whose only edit is an atomic `Ordering` variant has no honest
     // value/effect family; it stays an explicit unknown.
-    let family = if family != ProbeFamily::StaticUnknown
+    let family = if matches!(family, ProbeFamily::CallDeletion | ProbeFamily::SideEffect)
         && before
             .as_deref()
             .zip(after.as_deref())
@@ -4126,6 +4126,14 @@ mod tests {
         assert!(
             value.contains(&ProbeFamily::CallDeletion),
             "a value argument change keeps its call family: {value:?}"
+        );
+        let cmp = call_family(
+            "self.sort(a, b, cmp::Ordering::Less);",
+            "self.sort(a, b, cmp::Ordering::Greater);",
+        );
+        assert!(
+            cmp.contains(&ProbeFamily::CallDeletion),
+            "cmp::Ordering is not an atomic ordering: {cmp:?}"
         );
     }
 
