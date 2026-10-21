@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- `ripr mcp --stdio` `ripr://workspace/status` resource now carries the same restart recovery sentence as the `ripr_workspace_status` tool result as a second text content entry when the workspace root is unavailable — naming the cause and the `ripr mcp --stdio --root <repository>` restart route — instead of only the bare `workspace_state: unavailable` document with an opaque `error_code` (#8737).

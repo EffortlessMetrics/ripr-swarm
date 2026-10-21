@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- TypeScript/JavaScript preview no longer reads a changed exported module-level value (`export const stop = Symbol('stop')`) as `no_static_path` when a test imports the binding and uses it as a value outside a direct `expect(IMPORTED)` subject. The test is related through the heuristic `module_value_use` relation: uncertain, no oracle credit, `weakly_exposed` at most, repair packet not ready. An unused import, a shadowed local, a comment or string mention, a foreign-module import and a mocked owner module still do not relate (#8568).
