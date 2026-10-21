@@ -4303,13 +4303,40 @@ fn same_named_function_in_unimported_module_is_not_related() -> Result<(), Strin
     // An aliased import of the other module is still the other module.
     let aliased = "from pkg.a import quote as q\n\ndef test_a():\n    assert q(100.0) == 107.0\n";
     assert_eq!(related(owner_b, aliased)?, 0);
-    // Importing the owner's module as well keeps the relation.
-    let both = format!("from pkg.a import quote\nimport pkg.b\n{call}");
-    assert_eq!(related(owner_b, &both)?, 1);
+    // Calling the owner through its imported module keeps the relation.
+    let both = "from pkg.a import quote\nimport pkg.b\n\ndef test_a():\n    assert quote(100.0) == 107.0\n    assert pkg.b.quote(100.0) == 107.0\n";
+    assert_eq!(related(owner_b, both)?, 1);
     // No import of the name (local definition) and a star import stay
     // name-related: only affirmative evidence withholds the relation.
     assert_eq!(related(owner_b, call.trim_start())?, 1);
     assert_eq!(related(owner_b, &format!("from pkg.a import *{call}"))?, 1);
+    // An unused import of the owner's module, or of another name from it, is
+    // no evidence the test exercises the owner.
+    assert_eq!(
+        related(
+            owner_b,
+            &format!("from pkg.a import quote\nfrom pkg.b import helper{call}")
+        )?,
+        0
+    );
+    assert_eq!(
+        related(
+            owner_b,
+            &format!("from pkg.a import quote\nimport pkg.b{call}")
+        )?,
+        0
+    );
+    // A star import from the owner's module can bind the owner's name even
+    // when the foreign function is imported under another alias.
+    assert_eq!(
+        related(
+            owner_b,
+            &format!("from pkg.b import *\nfrom pkg.a import quote as q{call}")
+        )?,
+        1
+    );
+    // The independently established fixture relation does not depend on the
+    // imported name.
     // A package or facade that is not itself a defining module cannot be told
     // from the owner's module: the relation stays.
     assert_eq!(
@@ -4411,5 +4438,30 @@ fn workspace_pass_withholds_relation_for_same_named_function_in_unimported_modul
         ));
     };
     assert_eq!(imported_finding.related_tests.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn same_name_import_gate_keeps_independent_route_relation() -> Result<(), String> {
+    let route = "api = object()\n\n@api.post(\"/checkout\")\ndef quote(payload):\n    return {\"detail\": \"coupon expired\"}\n";
+    let rival = "def quote(payload):\n    return payload\n";
+    let mut owners: Vec<PythonOwner> = extract_owners(Path::new("app/checkout.py"), route)
+        .into_iter()
+        .chain(extract_owners(Path::new("pkg/a.py"), rival))
+        .filter(|owner| owner.name == "quote")
+        .collect();
+    super::related_tests::apply_rival_definition_modules(&mut owners);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.file == Path::new("app/checkout.py"))
+        .ok_or_else(|| "expected route owner".to_string())?;
+    let tests = extract_tests(
+        Path::new("tests/test_checkout.py"),
+        "from pkg.a import quote\n\ndef test_expired(client):\n    assert quote({}) == {}\n    response = client.post(\"/checkout\", json={})\n    assert response\n",
+    );
+    let relation = related_test_candidates(owner, &tests)
+        .first()
+        .map(|candidate| candidate.relation);
+    assert_eq!(relation, Some(PythonRelationKind::ApiClientRouteCall));
     Ok(())
 }

@@ -467,7 +467,15 @@ pub(super) fn related_test_relation(
     if let Some(class) = dunder_method_class(owner) {
         return dunder_method_relation(test, owner, class);
     }
+    // The bare-name relations below key on call text alone; a route literal
+    // or a fixture's own call does not depend on the name the test imported.
     if bare_name_bound_to_other_module(test, owner) {
+        if api_client_route_calls_owner(test, owner) {
+            return Some(PythonRelationKind::ApiClientRouteCall);
+        }
+        if fixture_owner_call(test, owner) {
+            return Some(PythonRelationKind::FixtureOwnerCall);
+        }
         return None;
     }
     if body_calls_owner(&test.body_text, owner) || exception_assertion_calls_owner(test, owner) {
@@ -563,12 +571,25 @@ fn bare_name_bound_to_other_module(test: &PythonTest, owner: &PythonOwner) -> bo
                 .contains(&import.source_module)
             && !may_be_owners_module(&import.source_module)
     });
+    // An import only counts as reaching the owner when it binds the owner's
+    // name (or everything) from its module, or the test calls the owner
+    // through the imported module: an unused import of the owner's module, or
+    // of another name from it, is no evidence the test exercises the owner.
+    let calls_through = |receiver: &str| {
+        !receiver.is_empty()
+            && !test_binds_local(test, receiver)
+            && contains_attribute_call(&test.body_text, receiver, &owner.name)
+    };
     imports_name_from_rival
         && !test.imports.iter().any(|import| {
-            import_source_module_matches_owner(import, owner, &test.file)
-                || imported_module_matches_owner(import, owner, &test.file)
-                || imports_owner_module(import, owner)
-                || !submodule_receivers(import, owner, &test.file).is_empty()
+            (import_source_module_matches_owner(import, owner, &test.file)
+                && (import.imported == owner.name || import.imported == "*"))
+                || ((imported_module_matches_owner(import, owner, &test.file)
+                    || imports_owner_module(import, owner))
+                    && (calls_through(&import.alias) || calls_through(&import.imported)))
+                || submodule_receivers(import, owner, &test.file)
+                    .iter()
+                    .any(|receiver| calls_through(receiver))
         })
 }
 
