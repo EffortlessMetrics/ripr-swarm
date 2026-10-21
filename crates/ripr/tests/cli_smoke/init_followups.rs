@@ -183,8 +183,15 @@ fn init_followups_replay_the_selected_root_from_foreign_cwd() -> TestResult {
                 .filter(|text| text.starts_with("ripr doctor") || text.starts_with("ripr check"))
                 .collect();
             assert_eq!(commands.len(), 2, "{stdout}");
+            // Init in the current directory prints rootless follow-ups that
+            // are only valid from that directory; an explicit root must
+            // survive a paste from any other directory.
+            let implicit = !args.contains(&"--root");
             for command in commands {
-                let replay = replay_printed_ripr(command, &decoy)?;
+                assert_eq!(command.contains("--root"), !implicit, "{command}");
+                assert!(!command.trim_end_matches('\'').ends_with("/."), "{command}");
+                let replay =
+                    replay_printed_ripr(command, if implicit { &selected } else { &decoy })?;
                 assert!(replay.status.success(), "{command}: {replay:?}");
                 let text = String::from_utf8(replay.stdout)?;
                 if command.starts_with("ripr doctor") {
@@ -196,13 +203,17 @@ fn init_followups_replay_the_selected_root_from_foreign_cwd() -> TestResult {
                 } else {
                     assert!(text.contains("\nmode: draft\n"), "{text}");
                     assert!(text.contains("Changed behavior: 17"), "{text}");
-                    assert!(
-                        text.contains(&format!("root: {}", selected_arg.replace('\\', "/"))),
-                        "{text}"
-                    );
+                    let expected_root = if implicit {
+                        ".".to_string()
+                    } else {
+                        selected_arg.replace('\\', "/")
+                    };
+                    assert!(text.contains(&format!("root: {expected_root}")), "{text}");
                 }
-                let replay = replay_printed_ripr(command, &empty)?;
-                assert!(replay.status.success(), "{command}: {replay:?}");
+                if !implicit {
+                    let replay = replay_printed_ripr(command, &empty)?;
+                    assert!(replay.status.success(), "{command}: {replay:?}");
+                }
             }
         }
         // The plausible root-dot substitute exits 0 in the decoy yet must

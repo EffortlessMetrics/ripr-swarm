@@ -254,6 +254,10 @@ fn collect_no_eligible_reasons<'a>(
     (reasons, distinct.len())
 }
 
+/// How to widen the seam budget, named once so every truncation refusal gives
+/// the same actionable recovery. The cap is an environment variable, not a flag.
+pub(crate) const WIDEN_SEAM_BUDGET: &str = "rerun with a wider seam budget (set RIPR_REPO_EXPOSURE_SEAM_LIMIT to a larger count, or 0 to remove the cap)";
+
 /// Gather the live authorities and decide one repair start. A truncated seam
 /// inventory fails closed: selecting from a partial list could hide
 /// candidates and silently pick first.
@@ -265,7 +269,7 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
         && info.analyzed < info.total
     {
         return Err(format!(
-            "repair start refused: the seam inventory is truncated ({} of {} seams); rerun with a wider seam budget",
+            "repair start refused: the seam inventory is truncated ({} of {} seams); {WIDEN_SEAM_BUDGET}",
             info.analyzed, info.total
         ));
     }
@@ -373,7 +377,7 @@ pub(crate) fn resolve_repair_subject_outcome(
         && info.analyzed < info.total
     {
         return Err(format!(
-            "repair item refused: the seam inventory is truncated ({} of {} seams); rerun with a wider seam budget",
+            "repair item refused: the seam inventory is truncated ({} of {} seams); {WIDEN_SEAM_BUDGET}",
             info.analyzed, info.total
         ));
     }

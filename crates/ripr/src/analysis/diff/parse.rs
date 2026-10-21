@@ -83,8 +83,9 @@ pub(crate) struct ParsedDiff {
     /// misclaiming a line-endings-only change.
     pub(crate) raw_line1_bom_paths: Vec<PathBuf>,
     /// Typed record of diff regions this parser deliberately refused to read as
-    /// ordinary source (#2828). An empty vector means the parser read the whole
-    /// input; it never means "no such region existed but we said nothing".
+    /// ordinary source (#2828). Truncated textual sections are recorded
+    /// separately in `truncated_file_sections`, so this vector alone cannot
+    /// establish that the input was read completely.
     pub(crate) limitations: Vec<AnalysisLimitation>,
 }
 
