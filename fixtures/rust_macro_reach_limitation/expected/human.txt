@@ -27,6 +27,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_macro_reach_limitation/input --diff <cwd>/fixtures/rust_macro_reach_limitation/diff.patch --mode fast probe:src_internal.rs:predicate:114f2322
   ripr context --root <cwd>/fixtures/rust_macro_reach_limitation/input --diff <cwd>/fixtures/rust_macro_reach_limitation/diff.patch --mode fast --at probe:src_internal.rs:predicate:114f2322
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_internal.rs:predicate:114f2322 --root <cwd>/fixtures/rust_macro_reach_limitation/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

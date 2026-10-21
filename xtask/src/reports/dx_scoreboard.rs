@@ -143,6 +143,14 @@ pub(crate) struct MetricDef {
     /// "1.5x plus 0.5 s" rule).
     #[serde(default)]
     pub(crate) regression_additive: bool,
+    /// A lower-is-better pooled count of picks (for example refuted picks)
+    /// may also rise by the number of picks the run admitted beyond the
+    /// baseline's. A bigger judged set adds picks of every verdict, so an
+    /// absolute count trips on growth that improves precision; the margin
+    /// stays zero when the pick count is flat or falls, and the precision
+    /// and share gates still judge the mix of the new picks.
+    #[serde(default)]
+    pub(crate) pick_growth_allowance: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -446,6 +454,14 @@ pub(crate) fn parse_config(text: &str) -> Result<Config, String> {
         if metric.direction != "lower_is_better" && metric.direction != "higher_is_better" {
             return Err(format!(
                 "metric `{}` direction must be lower_is_better or higher_is_better",
+                metric.id
+            ));
+        }
+        if metric.pick_growth_allowance
+            && (metric.direction != "lower_is_better" || !metric.source.starts_with("ingest:"))
+        {
+            return Err(format!(
+                "metric `{}` pick_growth_allowance needs a lower_is_better ingested metric",
                 metric.id
             ));
         }
@@ -2131,7 +2147,8 @@ fn repo_regressions(def: &MetricDef, row: &Value, base_row: &Value) -> Vec<Value
         .into_iter()
         .filter_map(|(repo, current)| {
             let (_, before) = base.iter().find(|(id, _)| *id == repo)?;
-            let allowed = allowed_worsening(def, *before);
+            let allowed =
+                allowed_worsening(def, *before) + repo_pick_growth(def, row, base_row, &repo);
             (worsening(def, *before, current) > allowed).then(|| {
                 json!({
                     "repo": repo,
@@ -2142,6 +2159,56 @@ fn repo_regressions(def: &MetricDef, row: &Value, base_row: &Value) -> Vec<Value
             })
         })
         .collect()
+}
+
+/// The pick count a pilot-ranking row's evidence carries
+/// (`... refuted of 39 picks ...`), the one place the run records how many
+/// picks its counts were taken over.
+pub(crate) fn evidence_picks(detail: &str) -> Option<u64> {
+    let rest = detail.split_once(" refuted of ")?.1;
+    let digits = rest.chars().take_while(char::is_ascii_digit).count();
+    if !rest[digits..].starts_with(" picks") {
+        return None;
+    }
+    rest[..digits].parse().ok()
+}
+
+/// Picks one repository's sample was counted over, when its evidence says.
+fn sample_picks(row: &Value, repo: &str) -> Option<u64> {
+    row["samples"]
+        .as_array()?
+        .iter()
+        .find(|s| s["repo"].as_str() == Some(repo) && s["status"] != "incomplete")
+        .and_then(|s| evidence_picks(s["detail"].as_str()?))
+}
+
+/// How many more picks this run counted than the baseline for one
+/// repository, for a `pick_growth_allowance` metric. Zero when either side
+/// does not say or the pick count did not grow, so legacy evidence stays
+/// strict.
+fn repo_pick_growth(def: &MetricDef, row: &Value, base_row: &Value, repo: &str) -> f64 {
+    if !def.pick_growth_allowance {
+        return 0.0;
+    }
+    match (sample_picks(row, repo), sample_picks(base_row, repo)) {
+        (Some(now), Some(before)) => now.saturating_sub(before) as f64,
+        _ => 0.0,
+    }
+}
+
+/// The growth margin shown for the metric's compared worst: the smallest
+/// growth over the repositories both runs completed. `None` when no
+/// repository completed in both, so no per-repository verdict exists. The
+/// margin is for display only; a metric with `pick_growth_allowance` fails on
+/// its own repositories' verdicts, so an unchanged repository cannot revoke
+/// another's allowance.
+fn pick_growth(def: &MetricDef, row: &Value, base_row: &Value) -> Option<f64> {
+    let base = completed_repo_values(base_row);
+    completed_repo_values(row)
+        .iter()
+        .filter(|(repo, _)| base.iter().any(|(id, _)| id == repo))
+        .map(|(repo, _)| repo_pick_growth(def, row, base_row, repo))
+        .reduce(f64::min)
 }
 
 /// Per-repository values of the samples that completed. An incomplete
@@ -2390,15 +2457,24 @@ pub(crate) fn compare_with_baseline(
             "recovered_repos": recovered,
         });
     };
-    let allowed = allowed_worsening(def, base);
+    let growth = pick_growth(def, row, base_row);
+    let allowed = allowed_worsening(def, base) + growth.unwrap_or(0.0);
     let by_repo = repo_regressions(def, row, base_row);
+    // Each repository's own verdict decides a growth-allowance metric: the
+    // worst values compared above can come from different repositories.
+    let aggregate_regressed = worsening(def, base, current) > allowed;
+    let regressed = if def.pick_growth_allowance && growth.is_some() {
+        !by_repo.is_empty()
+    } else {
+        aggregate_regressed || !by_repo.is_empty()
+    };
     let missing = missing_repos(row, base_row);
     json!({
         "comparable": true,
         "value": round(base),
         "delta": round(current - base),
         "allowed_worsening": round(allowed),
-        "regressed": worsening(def, base, current) > allowed || !by_repo.is_empty(),
+        "regressed": regressed,
         "regressed_repos": by_repo,
         "new_repos": new_repos,
         "missing_repos": missing,

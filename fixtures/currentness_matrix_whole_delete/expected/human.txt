@@ -28,6 +28,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/currentness_matrix_whole_delete/input --diff <cwd>/fixtures/currentness_matrix_whole_delete/diff.patch --mode fast probe:src_lib.rs:predicate:b2a56519
   ripr context --root <cwd>/fixtures/currentness_matrix_whole_delete/input --diff <cwd>/fixtures/currentness_matrix_whole_delete/diff.patch --mode fast --at probe:src_lib.rs:predicate:b2a56519
+  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:predicate:b2a56519 --root <cwd>/fixtures/currentness_matrix_whole_delete/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

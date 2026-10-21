@@ -176,16 +176,20 @@ impl MockCallFacts {
         payload: &TypeScriptMockPayload,
         test: &TypeScriptTest,
     ) -> bool {
-        self.credits_with_factories(payload, &test.body_text, &test.mock_factories_in_file)
-            || (payload.kind == TypeScriptMockPayloadKind::CalledWith
-                && !ts_mask_literals_and_comments(&payload.expected).contains('{')
-                && spy::credits_spy(
-                    &self.spy_targets,
-                    &self.owner_name,
-                    &payload.target,
-                    &test.file,
-                    &test.body_text,
-                ))
+        self.credits_with_factories(
+            payload,
+            &test.body_text,
+            &test.mock_factories_in_file,
+            &test.mock_spread_sources_in_file,
+        ) || (payload.kind == TypeScriptMockPayloadKind::CalledWith
+            && !ts_mask_literals_and_comments(&payload.expected).contains('{')
+            && spy::credits_spy(
+                &self.spy_targets,
+                &self.owner_name,
+                &payload.target,
+                &test.file,
+                &test.body_text,
+            ))
     }
 
     /// `true` when `payload` is a primitive-literal `toHaveBeenCalledWith`
@@ -194,7 +198,7 @@ impl MockCallFacts {
     /// mentioned nowhere else but `expect(...)`.
     #[cfg(test)]
     pub(crate) fn credits(&self, payload: &TypeScriptMockPayload, test_body: &str) -> bool {
-        self.credits_with_factories(payload, test_body, &[])
+        self.credits_with_factories(payload, test_body, &[], &[])
     }
 
     /// [`Self::credits`], also reading `const p = f();` through the test
@@ -204,6 +208,7 @@ impl MockCallFacts {
         payload: &TypeScriptMockPayload,
         test_body: &str,
         factories: &[(String, String)],
+        spread_sources: &[(String, String)],
     ) -> bool {
         // Jest's recursive equality treats a property set to `undefined` as
         // absent, so an object payload does not pin every field.
@@ -241,7 +246,9 @@ impl MockCallFacts {
         };
         let made_in_test = match &call.method {
             None => test_local_mock_binding(scope, local),
-            Some(method) => test_local_mock_property(scope, local, method, factories),
+            Some(method) => {
+                test_local_mock_property(scope, local, method, factories, spread_sources)
+            }
         };
         made_in_test
             && identifier_mentions_outside_expect(test_body, local) == 2
@@ -552,6 +559,7 @@ fn test_local_mock_property(
     object: &str,
     property: &str,
     factories: &[(String, String)],
+    spread_sources: &[(String, String)],
 ) -> bool {
     let masked = ts_mask_literals_and_comments(body);
     ["const", "let", "var"].iter().any(|keyword| {
@@ -574,7 +582,7 @@ fn test_local_mock_property(
                 // `{ ... }.inner` or `{ ... } && other` binds something else.
                 return literal_body(literal).is_some_and(|body| {
                     ends_statement(&literal[body.len() + 1..])
-                        && keys_mock_once(body, property, is_closed_mock_call)
+                        && keys_mock_once(body, property, is_closed_mock_call, spread_sources)
                 });
             }
             factories.iter().any(|(name, returned)| {
@@ -583,7 +591,7 @@ fn test_local_mock_property(
                         .strip_prefix('{')
                         .and_then(literal_body)
                         .is_some_and(|literal| {
-                            keys_mock_once(literal, property, is_bare_mock_factory)
+                            keys_mock_once(literal, property, is_bare_mock_factory, &[])
                         })
             })
         })
@@ -625,9 +633,23 @@ fn is_closed_mock_call(value: &str) -> bool {
 
 /// `true` when every entry of a flat literal body is `key: value` with a
 /// plain key and `property` is keyed exactly once, to a mock factory call.
-fn keys_mock_once(literal: &str, property: &str, is_mock: fn(&str) -> bool) -> bool {
+/// An entry `...name` is allowed when `name` is a test-file spread source
+/// (`TypeScriptTest::mock_spread_sources_in_file`) that is itself flat and
+/// has no `property` key, so the copy cannot replace the mock.
+fn keys_mock_once(
+    literal: &str,
+    property: &str,
+    is_mock: fn(&str) -> bool,
+    spread_sources: &[(String, String)],
+) -> bool {
     let mut entries = Vec::new();
     for entry in top_level_entries(literal) {
+        if let Some(name) = entry.trim().strip_prefix("...") {
+            if !spread_source_lacks(name.trim(), property, spread_sources) {
+                return false;
+            }
+            continue;
+        }
         let Some((key, value)) = entry.split_once(':') else {
             return false;
         };
@@ -642,6 +664,30 @@ fn keys_mock_once(literal: &str, property: &str, is_mock: fn(&str) -> bool) -> b
         (keyed.next(), keyed.next()),
         (Some((_, value)), None) if is_mock(value)
     )
+}
+
+/// `true` when `name` is a test-file spread source whose literal is flat,
+/// plain-keyed, spread-free and has neither a `property` key nor `__proto__`.
+fn spread_source_lacks(name: &str, property: &str, spread_sources: &[(String, String)]) -> bool {
+    spread_sources
+        .iter()
+        .find(|(source, _)| source == name)
+        .and_then(|(_, literal)| {
+            ts_mask_literals_and_comments(literal)
+                .strip_prefix('{')
+                .and_then(|rest| literal_body(rest).map(str::to_string))
+        })
+        .is_some_and(|body| {
+            top_level_entries(&body).into_iter().all(|entry| {
+                entry.split_once(':').is_some_and(|(key, _)| {
+                    let key = key.trim();
+                    key.starts_with(is_identifier_start)
+                        && key.chars().all(is_identifier_part)
+                        && key != property
+                        && key != "__proto__"
+                })
+            })
+        })
 }
 
 /// The text after a mock factory call `jest.fn(...)` / `vi.fn<T>(...)` that

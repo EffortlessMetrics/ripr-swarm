@@ -379,8 +379,9 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
         // renderer doctor's root line uses, so a backslash-typed or
         // drive-letter verbatim `\\?\`-prefixed root does not leak raw
         // `Path::display` bytes here while every sibling surface renders the
-        // forward-slash form. UNC and volume verbatim prefixes keep their
-        // raw spelling by design (`human_path_text`).
+        // forward-slash form. UNC verbatim prefixes fold to `\\server\share`
+        // and volume GUID prefixes keep their raw spelling, per the shared
+        // `human_path_text` owner (#8754).
         crate::output::path::human_path(&output.root)
     ));
     // RIPR-SPEC-0255 (#7536): name the ripr.toml that governed the run, in
@@ -2059,12 +2060,13 @@ mod tests {
         };
         let config = crate::config::RiprConfig::default();
         let routed = crate::app::FindingDrillIn::Commands(
-            crate::app::FindingNavigation::legacy().with_repair_route(Some(
-                crate::app::RepairRoute {
+            crate::app::FindingNavigation::legacy().with_repair_route_outcome(
+                crate::app::CheckRepairRoute::Route(crate::app::RepairRoute {
                     finding_id: finding_id.clone(),
                     seam_id: "67fc764ba37d77bd".to_string(),
-                },
-            )),
+                    uncommitted_target: None,
+                }),
+            ),
         );
         let rendered = super::render_bounded_with_config_and_navigation(
             &output,
@@ -2084,12 +2086,13 @@ mod tests {
         );
 
         let other = crate::app::FindingDrillIn::Commands(
-            crate::app::FindingNavigation::legacy().with_repair_route(Some(
-                crate::app::RepairRoute {
+            crate::app::FindingNavigation::legacy().with_repair_route_outcome(
+                crate::app::CheckRepairRoute::Route(crate::app::RepairRoute {
                     finding_id: "probe:other".to_string(),
                     seam_id: "67fc764ba37d77bd".to_string(),
-                },
-            )),
+                    uncommitted_target: None,
+                }),
+            ),
         );
         let rendered_other = super::render_bounded_with_config_and_navigation(
             &output,
@@ -2106,6 +2109,38 @@ mod tests {
         assert!(
             !full.contains("ripr repair"),
             "human-full keeps its existing drill-in contract:\n{full}"
+        );
+
+        // A route whose production-file target has uncommitted changes would
+        // be refused by `ripr repair`; the screen states the requirement and
+        // never lists the command as a bare runnable action.
+        let held = crate::app::FindingDrillIn::Commands(
+            crate::app::FindingNavigation::legacy().with_repair_route_outcome(
+                crate::app::CheckRepairRoute::Route(crate::app::RepairRoute {
+                    finding_id: finding_id.clone(),
+                    seam_id: "67fc764ba37d77bd".to_string(),
+                    uncommitted_target: Some("src/lib.rs".to_string()),
+                }),
+            ),
+        );
+        let rendered_held = super::render_bounded_with_config_and_navigation(
+            &output,
+            &config,
+            Some(&held),
+            crate::app::CheckDiffProvenance::CommittedHistory,
+        );
+        assert!(
+            rendered_held.contains("Repair start (needs a committed `src/lib.rs`;")
+                && rendered_held.contains("commit or stash it first"),
+            "a dirty inline target must state the commit-or-stash requirement:\n{rendered_held}"
+        );
+        assert!(
+            !rendered_held.contains("test route below"),
+            "no stub is rendered here, so the test route must not be named:\n{rendered_held}"
+        );
+        assert!(
+            !rendered_held.contains("\n  ripr repair 67fc764ba37d77bd\n"),
+            "a refused start must not be a bare runnable line:\n{rendered_held}"
         );
     }
 
@@ -5049,6 +5084,30 @@ mod tests {
         assert!(rendered.contains("Add assertion for disabled path result"));
     }
 
+    /// #8744: `unknown sink` is the one unglossed internal term in the
+    /// evidence window; the human render states its meaning beside the row
+    /// while the JSON evidence strings stay raw.
+    #[test]
+    fn render_finding_glosses_the_unknown_sink_row() {
+        let mut finding = sample_finding();
+        finding.flow_sinks = vec![FlowSinkFact {
+            kind: FlowSinkKind::Unknown,
+            text: "unknown sink".to_string(),
+            line: 3,
+            owner: None,
+        }];
+
+        let rendered = render_finding(&finding);
+
+        assert!(
+            rendered.contains(
+                "local flow reaches unknown sink (line 3) — ripr could not classify \
+                 where the changed value ends up; propagation confidence is limited"
+            ),
+            "{rendered}"
+        );
+    }
+
     /// #4320: the 5-related-test window must disclose the total — the number
     /// of reaching tests is core exposure evidence, and an unmarked cap reads
     /// as the whole evidence.
@@ -5092,6 +5151,7 @@ mod tests {
         // sample_finding already carries one observed value; 13 more make 14.
         for index in 0..13 {
             finding.activation.observed_values.push(ValueFact {
+                file: None,
                 line: 200 + index,
                 text: format!("sample({index})"),
                 value: format!("arg{index} = {index}"),
@@ -5108,9 +5168,58 @@ mod tests {
             "only the windowed observed values render:\n{rendered}"
         );
         assert!(
-            rendered.contains("source values (showing 8 of 14; full list in --format json)"),
+            rendered.contains("source values (showing 8 of 14 read from related tests; full list in --format json)"),
             "expected the observed-values window disclosure; got:\n{rendered}"
         );
+    }
+
+    /// #8389: a bare `at line N` is ambiguous once the shown window mixes
+    /// related-test files, so each line then names its file; a window from one
+    /// file keeps `at line N`.
+    #[test]
+    fn source_value_lines_name_the_test_file_only_when_files_differ() {
+        let fact = |file: &str, line: usize, value: &str, context| ValueFact {
+            file: Some(std::path::PathBuf::from(file)),
+            line,
+            text: "assert!(true);".to_string(),
+            value: value.to_string(),
+            context,
+        };
+        let mut finding = sample_finding();
+        finding.activation.observed_values = vec![
+            fact(
+                "tests/pricing.rs",
+                7,
+                "true",
+                ValueContext::AssertionArgument,
+            ),
+            fact("tests/other.rs", 9, "3", ValueContext::FunctionArgument),
+        ];
+        let rendered = render_finding(&finding);
+        assert!(
+            rendered.contains("source assertion argument value true at tests/pricing.rs:7"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("source function argument value 3 at tests/other.rs:9"),
+            "{rendered}"
+        );
+
+        finding.activation.observed_values = vec![
+            fact(
+                "tests/pricing.rs",
+                7,
+                "true",
+                ValueContext::AssertionArgument,
+            ),
+            fact("tests/pricing.rs", 9, "3", ValueContext::FunctionArgument),
+        ];
+        let rendered = render_finding(&finding);
+        assert!(
+            rendered.contains("source assertion argument value true at line 7"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("tests/pricing.rs:"), "{rendered}");
     }
 
     /// #4320 review: beyond JSON's own ranked 32-value cap, both formats are
@@ -5123,6 +5232,7 @@ mod tests {
         // (over the 8-value human window and the 32-value ranked JSON cap).
         for index in 0..41 {
             finding.activation.observed_values.push(ValueFact {
+                file: None,
                 line: 300 + index,
                 text: format!("sample({index})"),
                 value: format!("arg{index} = {index}"),
@@ -5134,7 +5244,7 @@ mod tests {
         let rendered = render_finding(&finding);
 
         assert!(
-            rendered.contains("source values (showing 8 of 42; --format json keeps a ranked 32)"),
+            rendered.contains("source values (showing 8 of 42 read from related tests; --format json keeps a ranked 32)"),
             "the pointer must disclose JSON's ranked cap; got:\n{rendered}"
         );
         assert!(
@@ -5165,6 +5275,7 @@ mod tests {
         }
         for index in 0..13 {
             finding.activation.observed_values.push(ValueFact {
+                file: None,
                 line: 200 + index,
                 text: format!("sample({index})"),
                 value: format!("arg{index} = {index}"),
@@ -5180,7 +5291,7 @@ mod tests {
         );
         assert!(
             explained.contains(
-                "source values (showing 8 of 14; full list via ripr check, using its JSON format)"
+                "source values (showing 8 of 14 read from related tests; full list via ripr check, using its JSON format)"
             ),
             "{explained}"
         );
@@ -5197,7 +5308,7 @@ mod tests {
 
         let checked = super::render_finding(&finding);
         assert!(
-            checked.contains("source values (showing 8 of 14; full list in --format json)"),
+            checked.contains("source values (showing 8 of 14 read from related tests; full list in --format json)"),
             "{checked}"
         );
         assert!(
@@ -5207,6 +5318,7 @@ mod tests {
 
         for index in 0..28 {
             finding.activation.observed_values.push(ValueFact {
+                file: None,
                 line: 400 + index,
                 text: format!("extra({index})"),
                 value: format!("extra{index} = {index}"),
@@ -5221,7 +5333,7 @@ mod tests {
         );
         assert!(
             over_cap.contains(
-                "source values (showing 8 of 42; ripr check, using its JSON format, keeps a ranked 32)"
+                "source values (showing 8 of 42 read from related tests; ripr check, using its JSON format, keeps a ranked 32)"
             ),
             "{over_cap}"
         );
@@ -5246,6 +5358,7 @@ mod tests {
         }
         for index in 0..13 {
             finding.activation.observed_values.push(ValueFact {
+                file: None,
                 line: 200 + index,
                 text: format!("sample({index})"),
                 value: format!("arg{index} = {index}"),
@@ -5274,7 +5387,7 @@ mod tests {
         // Only the window pointer carries the explain wording.
         assert!(
             explained.contains(
-                "source values (showing 8 of 14; full list via ripr check, using its JSON format)"
+                "source values (showing 8 of 14 read from related tests; full list via ripr check, using its JSON format)"
             ),
             "{explained}"
         );
@@ -5287,7 +5400,7 @@ mod tests {
             "{checked}"
         );
         assert!(
-            checked.contains("source values (showing 8 of 14; full list in --format json)"),
+            checked.contains("source values (showing 8 of 14 read from related tests; full list in --format json)"),
             "{checked}"
         );
     }
@@ -6268,6 +6381,7 @@ mod tests {
             }],
             activation: ActivationEvidence {
                 observed_values: vec![ValueFact {
+                    file: None,
                     line: 22,
                     text: "sample(false)".to_string(),
                     value: "enabled = false".to_string(),

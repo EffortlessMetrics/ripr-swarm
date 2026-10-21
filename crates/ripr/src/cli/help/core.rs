@@ -56,8 +56,12 @@ pub(super) const PILOT_HELP: &str = r#"Find the top test gap in this repo and wr
 Usage: ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N] [--timeout-ms MS] [--format json] [--quiet]
 
 Options:
-  --root PATH       Workspace root to analyze. Defaults to current directory.
-  --out PATH        Output directory for the pilot packet. Defaults to target/ripr/pilot under --root.
+  --root PATH       Workspace root. Defaults to the current directory, then
+                    walks up to the enclosing workspace or package, or the git
+                    top level; `--root .` pins this directory.
+  --out PATH        Output directory for the pilot packet. Defaults to
+                    target/ripr/pilot under the resolved root (`--root .` pins
+                    this directory).
   --mode MODE       instant, draft, fast, deep, or ready. Defaults to draft unless ripr.toml sets one.
   --max-seams N     Maximum ranked seams in the pilot summary. Defaults to 5.
   --timeout-ms MS   Maximum analysis budget before writing a partial summary. Defaults to
@@ -415,7 +419,9 @@ pub(super) const DIFF_HELP: &str = r#"Analyze the changed surface first and repo
 Usage: ripr diff [--root PATH] [--base REV] [--head REV] [--mode MODE] [--format FORMAT] [--json]
 
 Options:
-  --root PATH              Workspace root. Defaults to current directory.
+  --root PATH              Workspace root. Defaults to the current directory, then
+                           walks up to the enclosing workspace or package, or the git
+                           top level; `--root .` pins this directory.
   --base REV               Base revision for git diff. When omitted, resolved
                            like check: the local origin/HEAD ref, then
                            origin/main, origin/master, main, and master.
@@ -442,6 +448,15 @@ pub(super) const EXPLAIN_HELP: &str = r#"Print why ripr flagged a specific chang
 Usage: ripr explain [--root PATH] [--base REV] [--worktree|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] [--quiet] <finding-id|file:line>
 
 Options:
+  --root PATH  Workspace root. Defaults to the current directory, then
+               walks up to the enclosing workspace or package, or the git
+               top level; `--root .` pins this directory. A member-relative
+               `file:line` selector binds to the directory you ran from and
+               is refused when a workspace-root file with the same path
+               suffix exists, even without a root finding there (use
+               `--root .` or a finding ID; with
+               --from or --diff, a selector naming no file is anchored to that
+               directory).
   --quiet      Suppress analysis progress and heartbeats on stderr, like
                `ripr check --quiet`. Does not change stdout, exit codes, or
                error reporting.
@@ -470,6 +485,10 @@ Options:
                Use the explicit Perl facts packet for replay.
   --suppression-policy PATH
                Apply the explicit suppression policy for replay.
+
+Filesystem effects:
+  Fresh analysis may create or refresh disposable cache files under
+  target/ripr/cache/ (or RIPR_CACHE_DIR when set).
 
 Performance:
   Use --from to skip re-analysis when you already ran
@@ -513,6 +532,10 @@ Options:
                Use the explicit Perl facts packet for replay.
   --suppression-policy PATH
                Apply the explicit suppression policy for replay.
+
+Filesystem effects:
+  Fresh analysis may create or refresh disposable cache files under
+  target/ripr/cache/ (or RIPR_CACHE_DIR when set).
 
 Performance:
   Use --from to skip re-analysis when you already ran

@@ -11,7 +11,7 @@ use crate::output::agent_seam_packets::{
 use crate::output::human::terminal_safe;
 use crate::output::json::escape as json_escape;
 use crate::output::markdown::{PowershellForm, code_span, powershell_form};
-use crate::output::path::{display_path, display_path_text};
+use crate::output::path::{display_path, display_path_text, human_path};
 use crate::output::pilot::commands::{
     PilotCommands, python_card_first_pr_command, repair_edit_scope, repair_start_command,
 };
@@ -226,7 +226,10 @@ pub(crate) fn render_pilot_summary_md(
     out.push_str(&format!("- Mode: `{}`\n", context.mode.as_str()));
     out.push_str(&format!("- Timeout: {} ms\n", context.timeout_ms));
     match context.config_path {
-        Some(path) => out.push_str(&format!("- Config: loaded `{}`\n", display_path(path))),
+        // #8696: the stored config path is canonical (#7652), which on
+        // Windows carries the verbatim `\\?\` prefix; human surfaces route
+        // through `human_path` like the check header and doctor lines.
+        Some(path) => out.push_str(&format!("- Config: loaded `{}`\n", human_path(path))),
         None => out.push_str("- Config: missing; using built-in defaults\n"),
     }
     if let Some(scope) = scope_line(context, true) {
@@ -564,7 +567,9 @@ pub(crate) fn render_pilot_terminal(
     out.push_str(&format!("  root: {}\n", display_path(context.root)));
     out.push_str(&format!("  mode: {}\n", context.mode.as_str()));
     match context.config_path {
-        Some(path) => out.push_str(&format!("  config: loaded {}\n", display_path(path))),
+        // #8696: same human-path rule as the markdown summary — the
+        // canonical `source_path` must not leak the verbatim `\\?\` prefix.
+        Some(path) => out.push_str(&format!("  config: loaded {}\n", human_path(path))),
         None => out.push_str("  config: missing, using built-in defaults\n"),
     }
     out.push_str(&format!("  timeout: {} ms\n", context.timeout_ms));
@@ -811,7 +816,12 @@ pub(crate) fn render_pilot_terminal(
             "Next, by hand: add the focused test named above, then compare against this run:\n",
         );
     } else {
-        out.push_str("Run after adding the focused test:\n");
+        // #8766: nothing was ranked, so no focused test was named and there
+        // is nothing to run "after adding" yet.
+        out.push_str(
+            "No seam was ranked, so there is no focused test to add; rerun `ripr pilot` after the code or its tests change.\n",
+        );
+        return out;
     }
     out.push_str(&format!("  {}\n", commands.after_snapshot));
     out.push_str(&format!("  {}\n", commands.outcome));

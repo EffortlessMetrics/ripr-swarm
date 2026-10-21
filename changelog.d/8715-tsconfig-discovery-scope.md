@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- The `typescript_path_alias_unresolved` advice no longer implies a project lacks TypeScript config when only package-level tsconfigs exist: the `ConfigMissing` cause now states that discovery reads only `<workspace-root>/tsconfig.json` and `<workspace-root>/jsconfig.json` (package-level tsconfigs are out of scope), and the `ExtendsUnsupported` recovery names the same workspace-root-only scope instead of pointing at a config discovery never read (#8715).

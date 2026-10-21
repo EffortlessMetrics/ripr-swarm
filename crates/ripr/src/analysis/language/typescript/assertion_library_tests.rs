@@ -1022,7 +1022,7 @@ fn node_test_context_assert_follows_the_registration_binding() {
                 "t.assert.equal(...)",
             );
         } else {
-            assert_eq!(tests.len(), 1, "{label}: {tests:?}");
+            assert!(tests.is_empty(), "{label}: {tests:?}");
             assert!(read.is_empty(), "{label}: {read:?}");
         }
     }
@@ -1095,6 +1095,10 @@ fn node_test_context_assert_needs_the_runner_receiver_and_a_known_method() {
             "{imports}\nimport {{ lateFee }} from \"../src/latefee\";\n\ntest(\"late fee\", (t) => {{\n  {body}\n}});\n"
         );
         let tests = extract_tests(Path::new("test/latefee.test.ts"), &source);
+        if label == "registered through another runner" {
+            assert!(tests.is_empty(), "{label}: {tests:?}");
+            continue;
+        }
         assert_eq!(tests.len(), 1, "{label}: {tests:?}");
         assert!(
             tests[0].assertions.is_empty(),

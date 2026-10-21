@@ -1,0 +1,11 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -2,7 +2,7 @@
+ impl Order {
+     pub fn new() -> Self { Self { log: Vec::new() } }
+     pub fn add(&mut self, qty: u32) {
+-        self.log.push(qty);
++        self.log.push(qty + 0);
+     }
+     pub fn reset_to(&mut self, values: &[u32]) { self.log = values.to_vec(); }
+     pub fn entries(&self) -> &[u32] { &self.log }
