@@ -14,7 +14,7 @@ use super::classify::{
 };
 use super::expectations::{expected_sinks, required_oracles};
 use super::family::delta_for_family;
-use super::ids::{diff_probe_id, normalize_expression};
+use super::ids::diff_probe_id;
 use super::lexical::{classify_changed_line, is_accumulator_rewrite_of};
 use crate::analysis::diagnostic_origin::ParserByteSpan;
 use crate::analysis::extract::mask_comments_and_strings;
@@ -1145,7 +1145,23 @@ fn changed_line_is_test_evidence(
     test_module_ranges: &[InlineModuleRange],
 ) -> bool {
     if let Some(function) = find_owner_function(index, path, line) {
-        return function.source_role.is_evidence_role();
+        // Ownership is line-granular: a production fn and a `#[test]` fn
+        // opening on one physical line both own it, and the later-listed
+        // one wins `find_owner_function`. Without columns the line cannot be
+        // attributed to the test, so it stays production-eligible (fail
+        // closed) rather than silently dropping the production candidate.
+        // Only the shared opening line is ambiguous; later lines inside the
+        // nested evidence fn's body are unambiguously test evidence.
+        let shares_line_with_production = line == function.start_line
+            && find_file_facts(index, path).is_some_and(|facts| {
+                facts.functions.iter().any(|other| {
+                    other.start_line == function.start_line
+                        && other.start_line <= line
+                        && line <= other.end_line
+                        && !other.source_role.is_evidence_role()
+                })
+            });
+        return function.source_role.is_evidence_role() && !shares_line_with_production;
     }
     // Lines outside functions but inside an inline `#[cfg(test)]` module
     // (fixture constants, raw-string data) are test evidence even when the
@@ -1357,7 +1373,7 @@ fn parse_inline_module(
 /// (whitespace between `pub` and the qualifier is legal Rust).
 /// Text without a qualifier passes through unchanged; unrecognized shapes
 /// fall through so the module parse fails closed below.
-fn strip_visibility(text: &str) -> &str {
+pub(super) fn strip_visibility(text: &str) -> &str {
     let Some(after_pub) = text.strip_prefix("pub") else {
         return text;
     };
@@ -1415,15 +1431,8 @@ fn build_probe(
             find_owner_function(context.index, &context.changed.path, new_line)
                 .map(|function| function.id.clone())
         });
-    let norm_expr = normalize_expression(text);
     // Ordinal 1 here; post-hoc dedup in probes_for_file handles collisions.
-    let id = diff_probe_id(
-        &context.changed.path,
-        &family,
-        owner.as_ref(),
-        &norm_expr,
-        1,
-    );
+    let id = diff_probe_id(&context.changed.path, &family, owner.as_ref(), text, 1);
     let expected_sinks = expected_sinks(text, &family);
     let required_oracles = required_oracles(text, &family);
 
@@ -5222,6 +5231,63 @@ mod source_currentness_tests {
             resolve_probe_source_currentness(&changed, &bare),
             SourceCurrentness::UnresolvedSubject
         );
+    }
+
+    /// A production fn and a `#[test]` fn opening on one physical line must
+    /// not turn the production candidate into test evidence; a line owned
+    /// only by the test fn still is evidence.
+    #[test]
+    fn same_line_production_and_test_fn_keeps_production_eligible() -> Result<(), String> {
+        let path = PathBuf::from("src/lib.rs");
+        let source = "pub fn g(x: i32) -> bool { x > 2 } #[test] fn t() { assert!(true); }\n\
+                      #[test]\n\
+                      fn only_test() { assert!(true); }\n";
+        let mut index = RustIndex::default();
+        index.insert_file_only(
+            path.clone(),
+            crate::analysis::rust_index::summarize_file(path.clone(), source.to_string()),
+        );
+        let facts = find_file_facts(&index, &path).ok_or("file facts missing")?;
+        let test_fn = facts
+            .functions
+            .iter()
+            .find(|f| f.name == "t")
+            .ok_or("fn t not indexed")?;
+        assert!(
+            test_fn.source_role.is_evidence_role(),
+            "fixture: t is a test"
+        );
+        assert!(!changed_line_is_test_evidence(&index, &path, 1, &[]));
+        assert!(changed_line_is_test_evidence(&index, &path, 3, &[]));
+        Ok(())
+    }
+
+    /// A test fn nested on its enclosing production fn's opening line owns
+    /// only that shared line ambiguously; its later body lines stay evidence.
+    #[test]
+    fn nested_same_line_test_fn_body_lines_stay_test_evidence() -> Result<(), String> {
+        let path = PathBuf::from("src/lib.rs");
+        let source = "fn outer() { #[cfg(test)] fn helper() {\n\
+                      assert!(true);\n\
+                      } }\n";
+        let mut index = RustIndex::default();
+        index.insert_file_only(
+            path.clone(),
+            crate::analysis::rust_index::summarize_file(path.clone(), source.to_string()),
+        );
+        let facts = find_file_facts(&index, &path).ok_or("file facts missing")?;
+        let helper = facts
+            .functions
+            .iter()
+            .find(|f| f.name == "helper")
+            .ok_or("fn helper not indexed")?;
+        assert!(
+            helper.source_role.is_evidence_role(),
+            "fixture: helper is test"
+        );
+        assert!(!changed_line_is_test_evidence(&index, &path, 1, &[]));
+        assert!(changed_line_is_test_evidence(&index, &path, 2, &[]));
+        Ok(())
     }
 
     /// #3718: lines inside an inline `#[cfg(test)]` module are test

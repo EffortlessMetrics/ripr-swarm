@@ -12623,6 +12623,7 @@ fn generic_client_analysis_failure_is_shown_once_and_only_to_generic_clients() -
 
 /// A committed fixture whose working tree adds one Python file that the
 /// default configuration does not enable (#8585).
+#[cfg(feature = "lang-python")]
 fn disabled_python_change_fixture(name: &str) -> Result<TempLspRoot, String> {
     let root = boundary_gap_git_fixture_root(name)?;
     std::fs::create_dir_all(root.path().join("zpy"))
@@ -12636,6 +12637,7 @@ fn disabled_python_change_fixture(name: &str) -> Result<TempLspRoot, String> {
     Ok(root)
 }
 
+#[cfg(feature = "lang-python")]
 fn unavailable_language_notices(shown: &[serde_json::Value]) -> Vec<&serde_json::Value> {
     shown
         .iter()
@@ -12647,6 +12649,7 @@ fn unavailable_language_notices(shown: &[serde_json::Value]) -> Vec<&serde_json:
         .collect()
 }
 
+#[cfg(feature = "lang-python")]
 #[test]
 fn generic_client_is_told_once_when_a_changed_language_is_not_enabled() -> Result<(), String> {
     // #8585: a generic editor renders neither the log nor

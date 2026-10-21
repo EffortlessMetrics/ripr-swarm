@@ -1,4 +1,4 @@
-# RIPR-SPEC-0286: A wrapped function signature seeds one probe, not one per physical line
+# RIPR-SPEC-0300: A wrapped function signature seeds one probe, not one per physical line
 
 Status: proposed
 
