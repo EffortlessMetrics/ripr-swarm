@@ -112,7 +112,7 @@ pub(crate) fn fn_call_has_local_binding(source: &str, offset: usize, name: &str)
         node.descendants()
             .filter_map(ast::IdentPat::cast)
             .filter_map(|pattern| pattern.name())
-            .any(|bound| same_name(bound.text().as_str()))
+            .any(|bound| same_name(bound.text()))
     };
     if binds_name(function.param_list()?.syntax()) {
         return Some(true);
