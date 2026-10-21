@@ -1290,6 +1290,22 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
             "assert_eq!(Some::<(u8, u8)>((1, 2)).unwrap(), (1, 2));",
             &exact,
         ),
+        // Review of 2136bbda8: a field read need not select the test.
+        (
+            "assert_eq!(Foo { ok: score(x) == 1, other: true }.other, true);",
+            &weak,
+        ),
+        ("assert_eq!(Wrapper(x == 1, true).1, true);", &weak),
+        ("assert_eq!(Foo { ok: x == 1 }.ok, true);", &whole),
+        (
+            "assert_eq!(custom::Option::Some(x == 3).unwrap(), true);",
+            &weak,
+        ),
+        ("assert_eq!(MyOption::Some(x == 3).unwrap(), true);", &weak),
+        (
+            "assert_eq!(std::option::Option::Some(x == 3).unwrap(), true);",
+            &exact,
+        ),
         // Path spellings of the standard wrappers.
         (
             "assert_eq!(Box::<bool>::new(x == 3), Box::new(true));",

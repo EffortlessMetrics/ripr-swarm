@@ -645,7 +645,8 @@ fn holds_wrapped_test(side: &str) -> bool {
 /// (`Wrapper(x == 1).0`, `Some(x == 3).unwrap_or(false)`). The result need
 /// not be the test: a method may invert it, and a field may hold another
 /// element. A plain field read compared with `true` still pins the held
-/// test (#8615).
+/// test (#8615) unless the wrapper holds other elements, one of which the
+/// read may select instead.
 fn holds_member_test(side: &str, other_is_true: bool) -> bool {
     let mut text = side.trim();
     let mut called = false;
@@ -659,7 +660,21 @@ fn holds_member_test(side: &str, other_is_true: bool) -> bool {
             break;
         }
     }
-    accessed && holds_wrapped_test(text) && (called || !other_is_true)
+    accessed && holds_wrapped_test(text) && (called || !other_is_true || holds_other_elements(text))
+}
+
+/// Whether `text`, a wrapper or struct literal, holds more than one
+/// element, so a field read need not select the test it carries
+/// (`Foo { ok: x == 1, other: true }.other`).
+fn holds_other_elements(text: &str) -> bool {
+    let contents = wrapper_contents(text).or_else(|| record_contents(text));
+    contents.is_some_and(|contents| {
+        split_top_level_commas(contents)
+            .iter()
+            .filter(|element| !element.trim().is_empty())
+            .nth(1)
+            .is_some()
+    })
 }
 
 /// The receiver of a trailing `.field`, `.0` or `.method(..)` access, and
@@ -807,10 +822,21 @@ fn unwrapped_wrapper_argument(text: &str) -> Option<&str> {
     let callee = callee.trim_start();
     let path = callee.get(..final_group_open(callee)?)?;
     let path = strip_path_generics(path.trim());
-    let mut segments = path.rsplit("::").map(str::trim);
+    // A longer path is standard only under `std::` or `core::`
+    // (`custom::Option::Some` may unwrap to something else).
+    let path = path.trim_start_matches("::");
+    let path = path
+        .strip_prefix("std::")
+        .or_else(|| path.strip_prefix("core::"))
+        .unwrap_or(path);
     let standard = matches!(
-        (segments.next(), segments.next()),
-        (Some("Some"), None | Some("Option")) | (Some("Ok"), None | Some("Result"))
+        path.split("::").map(str::trim).collect::<Vec<_>>()[..],
+        ["Some"]
+            | ["Option", "Some"]
+            | ["option", "Option", "Some"]
+            | ["Ok"]
+            | ["Result", "Ok"]
+            | ["result", "Result", "Ok"]
     );
     if !standard {
         return None;
