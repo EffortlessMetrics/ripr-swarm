@@ -157,6 +157,9 @@ pub(crate) enum CommandExitContract {
     /// `ripr receipt check`: `orphan_receipt` / `receipt_gap_mismatch` are
     /// could-not-complete (`2`), not a decision (`3`).
     ReceiptCheck,
+    /// `ripr doctor`: a completed diagnosis with failed checks is `3`
+    /// (#5102); usage/operational failures before a report are `2`.
+    DoctorFindings,
 }
 
 /// What stdout carries when a command exits `3`.
@@ -197,6 +200,7 @@ const EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT: CommandExitContract =
         stdout_on_refusal: RefusalStdout::JsonOptional,
     };
 const EXIT_RECEIPT_CHECK: CommandExitContract = CommandExitContract::ReceiptCheck;
+const EXIT_DOCTOR_FINDINGS: CommandExitContract = CommandExitContract::DoctorFindings;
 
 /// Implemented mapping an orchestrator actually branches on. A metadata row
 /// whose `exit` field disagrees is a catalog integrity failure (#5066).
@@ -213,6 +217,7 @@ fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
         "cmd:agent.verify-execute" => Some(EXIT_TYPED_REFUSAL_STDOUT_DOCUMENT),
         "cmd:agent.repair" => Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
         "cmd:receipt.check" => Some(EXIT_RECEIPT_CHECK),
+        "cmd:doctor" => Some(EXIT_DOCTOR_FINDINGS),
         _ => None,
     }
 }
@@ -2175,7 +2180,7 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr doctor",
         next_routes: &["init", "config validate"],
         stop_states: &["missing tools print as skipped with the reason and do not fail the run"],
-        exit: EXIT_COMPLETED_OR_FAILED,
+        exit: EXIT_DOCTOR_FINDINGS,
         limitations: "reports environment readiness; it does not run verification.",
         not_applicable_reason: None,
     },

@@ -671,10 +671,14 @@ impl WorkspaceSession {
                 "repair_packet_ready": false,
                 "ineligibility": {
                     "reason": reason,
-                    "detail": readiness.reason(),
+                    "detail": readiness.detail(),
                 },
                 "attempt": Value::Null,
-                "recovery": "re-run ripr_refresh after the producer establishes the missing fact; ripr_prepare_repair never guesses a missing field",
+                "recovery": if reason.starts_with("seam_") {
+                    "the shared repair gate refused this seam; ripr_prepare_repair does not override it. Change the code or tests, then re-run ripr_refresh"
+                } else {
+                    "re-run ripr_refresh after the producer establishes the missing fact; ripr_prepare_repair never guesses a missing field"
+                },
                 "limitations": [
                     "a route that lacks a safe target, discriminator, fix site, or command stays a typed limitation",
                     "no attempt was created: the tool must not create a misleading transaction",

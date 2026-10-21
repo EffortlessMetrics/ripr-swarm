@@ -1,8 +1,9 @@
 use super::evidence::{AssertionRefusalNote, ClassifiedProbeEvidence};
 use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ProbeContext, body_contains_owner_call,
-    ensure_unknown_stop_reason, exact_error_variant, exact_oracle_gap_next_step, missing_evidence,
-    recommended_next_step, stop_reasons, wrapper_error_seam_expression,
+    ensure_unknown_stop_reason, exact_error_variant, exact_oracle_gap_next_step,
+    is_partial_eq_method, missing_evidence, recommended_next_step, stop_reasons,
+    wrapper_error_seam_expression,
 };
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::*;
@@ -23,7 +24,29 @@ pub(in crate::analysis) fn build_finding(
         &evidence.discriminate,
         &evidence.activation,
     );
-    let test_summaries = context.related_test_summaries();
+    // #8999: for a user `PartialEq::eq`/`ne` owner only, a fixture/builder
+    // word in a test that merely shares a file or a name token with the owner
+    // says nothing about the inputs that reach it. When some related test
+    // establishes reach, only those tests can make the fixture opaque; with
+    // none, and for every other owner, every related test is read as before.
+    let owner_is_function = context.owner_fn.is_some();
+    let narrow_fixture_scan = context
+        .owner_fn
+        .is_some_and(|owner| is_partial_eq_method(owner, context.index));
+    let reaching_summaries: Vec<&TestSummary> = context
+        .related_tests
+        .iter()
+        .filter(|(_, reason)| {
+            reason.establishes_reach(owner_is_function)
+                || *reason == crate::domain::RelationReason::FixtureOwnerAffinity
+        })
+        .map(|(test, _)| *test)
+        .collect();
+    let test_summaries = if !narrow_fixture_scan || reaching_summaries.is_empty() {
+        context.related_test_summaries()
+    } else {
+        reaching_summaries
+    };
     let mut stop_reasons = stop_reasons(context.probe, context.owner_fn, &test_summaries);
     ensure_unknown_stop_reason(&class, &mut stop_reasons);
     let exact_oracle_covers_direct_sink = evidence.discriminate.state == StageState::Yes

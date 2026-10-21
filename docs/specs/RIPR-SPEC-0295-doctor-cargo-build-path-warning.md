@@ -1,4 +1,4 @@
-# RIPR-SPEC-0293: Doctor suppresses the PATH-mismatch warning for Cargo build outputs
+# RIPR-SPEC-0295: Doctor suppresses the PATH-mismatch warning for Cargo build outputs
 
 Status: proposed
 

@@ -1606,7 +1606,7 @@ fn help_json_is_deterministic_across_roots_env_and_side_effect_free() -> Result<
         // sha256 hex digest. A partial document must not pass as complete.
         let value: serde_json::Value = serde_json::from_slice(&baseline_stdout)
             .map_err(|error| format!("help --json is not valid JSON: {error}"))?;
-        if value["schema_version"] != serde_json::json!(2) {
+        if value["schema_version"] != serde_json::json!(3) {
             return Err(format!(
                 "help --json schema_version moved: {}",
                 value["schema_version"]
@@ -11608,6 +11608,53 @@ fn make_temp_workspace(report: Option<&str>) -> Result<PathBuf, String> {
     make_temp_workspace_with_suppressions(report, None)
 }
 
+/// #5102: a completed doctor diagnosis with failed checks exits 3 (typed
+/// decision), a usage error exits 2 (could not complete, no check ran), and
+/// a clean doctor exits 0. Error text stays `doctor found issues`.
+#[test]
+fn doctor_exit_codes_distinguish_findings_usage_and_clean() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let root = workspace.display().to_string();
+
+    let clean = run_ripr(&["doctor", "--root", &root]);
+    assert_eq!(
+        clean.status.code(),
+        Some(0),
+        "clean doctor must exit 0; stderr:\n{}",
+        String::from_utf8_lossy(&clean.stderr)
+    );
+
+    let missing = workspace.join("missing-root");
+    let missing_arg = missing.display().to_string();
+    for args in [
+        vec!["doctor", "--root", missing_arg.as_str()],
+        vec!["doctor", "--root", missing_arg.as_str(), "--json"],
+    ] {
+        let findings = run_ripr(&args);
+        assert_eq!(
+            findings.status.code(),
+            Some(3),
+            "completed doctor with findings must exit 3: {args:?}; stderr:\n{}",
+            String::from_utf8_lossy(&findings.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&findings.stderr).contains("doctor found issues"),
+            "findings exit must keep the stable error text: {args:?}"
+        );
+    }
+
+    let usage = run_ripr(&["doctor", "--bogus"]);
+    assert_eq!(
+        usage.status.code(),
+        Some(2),
+        "doctor usage error must exit 2; stderr:\n{}",
+        String::from_utf8_lossy(&usage.stderr)
+    );
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
 #[test]
 fn doctor_json_from_cargo_build_output_suppresses_path_mismatch_warning() -> Result<(), String> {
     // #9097: the harness runs the Cargo-built binary; a different installed
@@ -14439,8 +14486,8 @@ fn doctor_without_git_names_the_fix_and_recommends_the_diff_route() -> Result<()
     assert_failure(&output);
     assert_eq!(
         output.status.code(),
-        Some(2),
-        "doctor without git stays exit 2; stderr:\n{}",
+        Some(3),
+        "doctor without git completes with findings and exits 3 (#5102); stderr:\n{}",
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
