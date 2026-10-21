@@ -29,6 +29,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_transitive_reach_negative/input --diff <cwd>/fixtures/python_transitive_reach_negative/diff.patch --mode fast probe:src_table.py:python_preview:6c6d80d7
   ripr context --root <cwd>/fixtures/python_transitive_reach_negative/input --diff <cwd>/fixtures/python_transitive_reach_negative/diff.patch --mode fast --at probe:src_table.py:python_preview:6c6d80d7
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_table.py:python_preview:6c6d80d7 --root <cwd>/fixtures/python_transitive_reach_negative/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

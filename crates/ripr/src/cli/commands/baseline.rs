@@ -9,9 +9,9 @@ use crate::cli::commands_options::{
     BaselineCreateOptions, BaselineDiffOptions, BaselineUpdateOptions,
 };
 use crate::cli::help;
-use crate::cli::suggest::unknown_argument;
+use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::{
     baseline_created_at, non_empty_path_arg, read_optional_text_for_report, write_text_file,
@@ -30,8 +30,10 @@ pub(in crate::cli) fn baseline(args: &[String]) -> Result<(), String> {
         "create" => baseline_create(rest),
         "diff" => baseline_diff(rest),
         "update" => baseline_update(rest),
-        _ => Err(format!(
-            "unknown baseline subcommand {subcommand:?}; expected `create`, `diff`, or `update`"
+        _ => Err(unknown_value(
+            "baseline subcommand",
+            subcommand,
+            &["create", "diff", "update"],
         )),
     }
 }
@@ -58,9 +60,10 @@ fn baseline_create(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     if options.out.exists() && !options.force {
-        return Err(format!(
-            "{} already exists; rerun `ripr baseline create --force` to overwrite it",
-            options.out.display()
+        return Err(baseline_create_overwrite_error(
+            &options.from,
+            &options.out,
+            cfg!(windows),
         ));
     }
     write_text_file(&options.out, &rendered)?;
@@ -80,6 +83,20 @@ fn baseline_create(args: &[String]) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn baseline_create_overwrite_error(from: &Path, out: &Path, windows: bool) -> String {
+    let quoted_from = crate::agent::loop_commands::shell_arg_for(&from.to_string_lossy(), windows);
+    let quoted_out = crate::agent::loop_commands::shell_arg_for(&out.to_string_lossy(), windows);
+    let shell_hint = if windows {
+        ". On Windows, use Git Bash (not WSL) if a path contains $, backticks or %, or this command uses printf escape fragments. Command Prompt does not support those forms."
+    } else {
+        ""
+    };
+    format!(
+        "{} already exists; rerun `ripr baseline create --from {quoted_from} --out {quoted_out} --force` to overwrite it{shell_hint}",
+        out.display()
+    )
 }
 
 fn baseline_diff(args: &[String]) -> Result<(), String> {
@@ -345,6 +362,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn baseline_create_overwrite_discloses_windows_shell_routing() {
+        for (from, quoted_from) in [
+            (r"fixtures\gate$it's.json", r"'fixtures\gate$it'\''s.json'"),
+            (r"fixtures\gate`it's.json", r"'fixtures\gate`it'\''s.json'"),
+            (r"fixtures\gate%it's.json", r#""fixtures\gate%it's.json""#),
+            (r"fixtures\gate.json", r#""fixtures\gate.json""#),
+            (
+                "fixtures\\gate\u{202e}.json",
+                r#"'fixtures\gate'"$(printf '\342\200\256')"'.json'"#,
+            ),
+        ] {
+            assert_eq!(
+                baseline_create_overwrite_error(
+                    Path::new(from),
+                    Path::new(r"fixtures\chosen baseline.json"),
+                    true,
+                ),
+                format!(
+                    "fixtures\\chosen baseline.json already exists; rerun `ripr baseline create --from {quoted_from} --out \"fixtures\\chosen baseline.json\" --force` to overwrite it. On Windows, use Git Bash (not WSL) if a path contains $, backticks or %, or this command uses printf escape fragments. Command Prompt does not support those forms."
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn baseline_create_overwrite_keeps_posix_retry_without_windows_hint() {
+        assert_eq!(
+            baseline_create_overwrite_error(
+                Path::new("gate $it's.json"),
+                Path::new("chosen baseline.json"),
+                false,
+            ),
+            r"chosen baseline.json already exists; rerun `ripr baseline create --from 'gate $it'\''s.json' --out 'chosen baseline.json' --force` to overwrite it"
+        );
+    }
+
+    #[test]
     fn baseline_create_parses_option_surface() {
         assert_eq!(
             parse_baseline_create_options(&args(&[
@@ -379,7 +433,7 @@ mod tests {
         assert_eq!(
             baseline(&args(&["unknown"])),
             Err(
-                "unknown baseline subcommand \"unknown\"; expected `create`, `diff`, or `update`"
+                "unknown baseline subcommand \"unknown\". Accepted: create, diff, update."
                     .to_string()
             )
         );
@@ -395,6 +449,17 @@ mod tests {
             parse_baseline_create_options(&args(&["--bad"])),
             Err(
                 "unknown baseline create argument \"--bad\". Run `ripr baseline create --help`."
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn unknown_baseline_subcommand_suggests_create_for_creat() {
+        assert_eq!(
+            baseline(&args(&["creat"])),
+            Err(
+                "unknown baseline subcommand \"creat\". Did you mean `create`? Accepted: create, diff, update."
                     .to_string()
             )
         );

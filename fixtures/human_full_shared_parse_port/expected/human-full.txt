@@ -50,7 +50,7 @@ Drill in:
   ripr explain --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast probe:src_lib.rs:match_arm:6b71a4f5
   ripr context --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast --at probe:src_lib.rs:match_arm:6b71a4f5
 
-Finding 2: WARNING ./src/lib.rs:3
+Finding 2: NOTE ./src/lib.rs:3
   id: probe:src_lib.rs:match_arm:35759cb1
 Changed
   before: Ok(p) => Ok(p),
@@ -62,7 +62,7 @@ Probe
   owner:  src/lib.rs::parse_port
   canonical gap: gap:rust:src/lib.rs:parse_port:match_arm:match_arm:ok_p=>ok_p
 Static exposure
-  weakly_exposed (warning, confidence 0.92)
+  weakly_exposed (note, confidence 0.92)
 Evidence
   shared evidence: E8, E9
   - propagation yes: Changed behavior appears to influence match arm result: Ok(p)
@@ -133,7 +133,7 @@ Drill in:
   ripr explain --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast probe:src_lib.rs:return_value:d9dae5de
   ripr context --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast --at probe:src_lib.rs:return_value:d9dae5de
 
-Finding 5: WARNING ./src/lib.rs:3
+Finding 5: NOTE ./src/lib.rs:3
   id: probe:src_lib.rs:return_value:a207aa93
 Changed
   before: Ok(p) => Ok(p),
@@ -145,7 +145,7 @@ Probe
   owner:  src/lib.rs::parse_port
   canonical gap: gap:rust:src/lib.rs:parse_port:return_value:return_value:ok_p=>ok_p
 Static exposure
-  weakly_exposed (warning, confidence 0.66)
+  weakly_exposed (note, confidence 0.66)
 Evidence
   shared evidence: E8, E9
   - propagation weak: Propagation witness is incomplete for returned value: Ok(p) if p > 0 => Ok(p)

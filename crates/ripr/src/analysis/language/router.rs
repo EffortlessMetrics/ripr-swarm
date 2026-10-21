@@ -77,6 +77,20 @@ const SNAPSHOT_RUNNER_CONFIG_PREFIXES: [&str; 4] = [
     "vitest.workspace.",
 ];
 
+/// `true` for `<stem>.config.<ext>` where a `.`, `-` or `_` separated part of
+/// the stem is exactly `jest`, `vitest` or `vite` (`jest.unit.config.js`,
+/// `unit-vitest.config.ts`), and not for a name that merely contains those
+/// letters (`invited.config.json`).
+fn custom_runner_config(name: &str) -> bool {
+    name.split_once(".config.")
+        .is_some_and(|(stem, extension)| {
+            !extension.is_empty()
+                && stem
+                    .split(['.', '-', '_'])
+                    .any(|part| matches!(part, "jest" | "vitest" | "vite"))
+        })
+}
+
 /// Whether `path` is a file the TypeScript committed-snapshot reading
 /// (RIPR-SPEC-0258) depends on although no adapter routes it: a `.snap`
 /// file, a `package.json`, or a Jest/Vitest runner config. The
@@ -91,6 +105,10 @@ pub(crate) fn snapshot_input(path: &Path) -> bool {
         || SNAPSHOT_RUNNER_CONFIG_PREFIXES
             .iter()
             .any(|prefix| name.starts_with(prefix))
+        // A config named for a runner but not at its default name
+        // (`jest.unit.config.js`) is only read when a script passes it by
+        // path; the committed-snapshot walk reads it as well.
+        || custom_runner_config(name)
 }
 
 /// Programming-language source extensions no ripr adapter reads, with the

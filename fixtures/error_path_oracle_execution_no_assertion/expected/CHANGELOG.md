@@ -1,5 +1,4 @@
 # Golden Output Changes
-
 ## Pending — error_path_oracle_execution_no_assertion (1)
 
 Reason:
@@ -28,19 +27,6 @@ Updated:
 ## Pending — error_path_oracle_execution_no_assertion (3)
 
 Reason:
-RIPR-SPEC-0197 #5027: retain JSON/human/full projections of independently compiled effective and ineffective equality controls; shared execution provenance and static confidence agree.
-
-Command:
-`cargo xtask goldens bless error_path_oracle_execution_no_assertion --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
-- `expected/human-full.txt`
-
-## Pending — error_path_oracle_execution_no_assertion (4)
-
-Reason:
 RIPR-SPEC-0122: check names the one-step ripr agent stub route for Rust value gaps (#5355)
 
 Command:
@@ -50,7 +36,7 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
-## Pending — error_path_oracle_execution_no_assertion (5)
+## Pending — error_path_oracle_execution_no_assertion (4)
 
 Reason:
 RIPR-SPEC-0224: related tests ripr examined stay listed and each names why it misses the change (#5344); verdicts unchanged
@@ -63,7 +49,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — error_path_oracle_execution_no_assertion (6)
+## Pending — error_path_oracle_execution_no_assertion (5)
 
 Reason:
 RIPR-SPEC-0224: a matched related test keeps its oracle kind and strength in full output and adds why it still misses; verdicts unchanged
@@ -76,7 +62,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — error_path_oracle_execution_no_assertion (7)
+## Pending — error_path_oracle_execution_no_assertion (6)
 
 Reason:
 RIPR-SPEC-0002: issue #5996 routes finding locations through the shared workspace-relative owner (analysis::finding_location_text); the fixture-input root prefix (fixtures/<name>/input/...) no longer appears in check.json/human location fields, matching the root-relative form the LSP and MCP surfaces already emitted. The three inherited config_identity drifts in wrapper_seam_callee_call_attribution reproduce on the base and are not part of this blessing.
@@ -89,7 +75,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — error_path_oracle_execution_no_assertion (8)
+## Pending — error_path_oracle_execution_no_assertion (7)
 
 Reason:
 RIPR-SPEC-0002: issue #5996 routes finding locations through the shared workspace-relative owner (analysis::finding_location_text); the fixture-input root prefix (fixtures/<name>/input/...) no longer appears in check.json/human location fields, matching the root-relative form the LSP and MCP surfaces already emitted.
@@ -103,7 +89,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — error_path_oracle_execution_no_assertion (9)
+## Pending — error_path_oracle_execution_no_assertion (8)
 
 Reason:
 RIPR-SPEC-0002: merge of origin/main (#5268 canonical_gap for Rust and sibling updates) onto the #5996 workspace-relative location owner — expected files regenerate through the merged tree
@@ -116,7 +102,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — error_path_oracle_execution_no_assertion (10)
+## Pending — error_path_oracle_execution_no_assertion (9)
 
 Reason:
 RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
@@ -129,7 +115,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — error_path_oracle_execution_no_assertion (11)
+## Pending — error_path_oracle_execution_no_assertion (10)
 
 Reason:
 RIPR-SPEC-0122 #5471: stub route printed only when the resolver yields a stub, with --kind; refusal or nothing otherwise (merge re-bless)
@@ -142,7 +128,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — error_path_oracle_execution_no_assertion (12)
+## Pending — error_path_oracle_execution_no_assertion (11)
 
 Reason:
 RIPR-SPEC-0003: #7477 gives reason-specific uncertainty-resolution actions without verdict-change promises or unsupported deep/fixture-config routes; classifications, evidence, and decidable guidance unchanged.
@@ -155,7 +141,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — error_path_oracle_execution_no_assertion (13)
+## Pending — error_path_oracle_execution_no_assertion (12)
 
 Reason:
 RIPR-SPEC-0003: #7477 conditional assertion inspection and actual configured runner guidance; whole JSON evidence and classifications independently preserved.
@@ -168,7 +154,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — error_path_oracle_execution_no_assertion (14)
+## Pending — error_path_oracle_execution_no_assertion (13)
 
 Reason:
 RIPR-SPEC-0002: re-bless human render copy/grammar fixes #7755 (double-colon labels), #7752 (a/an oracle articles), #7756 (trailing-period rule); formatting-only drift
@@ -181,7 +167,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — error_path_oracle_execution_no_assertion (15)
+## Pending — error_path_oracle_execution_no_assertion (14)
 
 Reason:
 RIPR-SPEC-0001: output contract changed - 7798 collapse tautological unknown-sink flow row when sink text restates the kind label
@@ -194,7 +180,7 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — error_path_oracle_execution_no_assertion (16)
+## Pending — error_path_oracle_execution_no_assertion (15)
 
 Reason:
 RIPR-SPEC-0122: default human output speaks plain language (#8165)
@@ -207,10 +193,73 @@ Updated:
 - `expected/human.txt`
 - `expected/human-full.txt`
 
-## Pending — error_path_oracle_execution_no_assertion (17)
+## Pending — error_path_oracle_execution_no_assertion (16)
 
 Reason:
 RIPR-SPEC-0122: #8389 Summary names base-side findings, Hidden total equals listed bullets, all-unknown footer no longer claims a found absence
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_no_assertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_no_assertion (17)
+
+Reason:
+RIPR-SPEC-0268: human evidence window glosses the unknown-sink row with its meaning (#8744)
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_no_assertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+## Pending — error_path_oracle_execution_no_assertion (18)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_no_assertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+## Pending — error_path_oracle_execution_no_assertion (19)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_no_assertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_no_assertion (20)
+
+Reason:
+RIPR-SPEC-0224: human output words a test with no assertion 'uses no oracle' (#8747)
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_no_assertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_no_assertion (21)
+
+Reason:
+RIPR-SPEC-0224: JSON evidence_path words a test with no assertion 'uses no oracle' (#8747)
 
 Command:
 `cargo xtask goldens bless error_path_oracle_execution_no_assertion --reason "..."`

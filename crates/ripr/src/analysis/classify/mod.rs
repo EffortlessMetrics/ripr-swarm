@@ -10,6 +10,7 @@ mod diff_touched;
 mod effect_carrier;
 mod element_field_pin;
 mod flow;
+mod framework_oracle;
 mod gap_admission;
 mod helper_transfer;
 mod infection;
@@ -56,9 +57,10 @@ pub(in crate::analysis) use diff_touched::DiffTouchedTests;
 pub(in crate::analysis) use effect_carrier::EffectStateCarrier;
 pub(in crate::analysis) use element_field_pin::observes_returned_element_field;
 pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_witness};
+pub(in crate::analysis) use framework_oracle::withhold_framework_oracle_gap;
 pub(in crate::analysis) use gap_admission::{
-    REFUSALS_ARE_ANALYZER_LIMITS, withhold_log_capture_gap, withhold_should_panic_gap,
-    withhold_unsupported_gap,
+    CALL_BUDGET_SATURATED, REFUSALS_ARE_ANALYZER_LIMITS, withhold_call_budget_gap,
+    withhold_log_capture_gap, withhold_should_panic_gap, withhold_unsupported_gap,
 };
 pub(in crate::analysis) use helper_transfer::{FieldProjectionReceipt, field_projection_receipt};
 pub(in crate::analysis) use helper_transfer::{
@@ -70,6 +72,8 @@ pub(in crate::analysis) use helper_transfer::{
 };
 pub(in crate::analysis) use infection::infection_evidence_for_owner;
 pub(in crate::analysis) use operand_pin::operand_only_pin;
+#[cfg(test)]
+pub(in crate::analysis) use owner_pin::nested_parallelism_allowed;
 pub(in crate::analysis) use owner_pin::{
     AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, direct_call_name,
     expected_operand_value, helper_pins_owner_call, owner_builds_declared_error_variant,
@@ -98,8 +102,8 @@ pub(in crate::analysis) use reach::{
 pub(in crate::analysis) use related_tests::{
     DependencyEdgeContext, RelatedTestCandidateIndex, body_contains_owner_call,
     call_text_may_call_free_function, find_related_tests_with_candidate_index, impl_self_type_name,
-    manifests_with_unindexed_files, method_call_resolves_to_impl, module_stem, owner_call_text,
-    owner_dispatch_trait, package_prefix, test_calls_free_function,
+    is_partial_eq_method, manifests_with_unindexed_files, method_call_resolves_to_impl,
+    module_stem, owner_call_text, owner_dispatch_trait, package_prefix, test_calls_free_function,
 };
 pub(in crate::analysis) use reveal::is_inline_expect_snapshot;
 pub(in crate::analysis) use reveal::reveal_outcome;
@@ -121,7 +125,7 @@ pub(in crate::analysis) use text::{
 // RIPR-SPEC-0115: the walk now returns a witness so the limitation can name the
 // witnessing test (file:line) and the entry public-API symbol.
 pub(in crate::analysis) use transitive_reach::{
-    MAX_TRANSITIVE_DEPTH, MacroReachWitness, RUST_MACRO_REACH_MESSAGE,
+    InheritedGraphCounter, MAX_TRANSITIVE_DEPTH, MacroReachWitness, RUST_MACRO_REACH_MESSAGE,
     RUST_TRANSITIVE_REACH_MESSAGE, TransitiveReachIndex, TransitiveWitness, calls_after_definition,
     macro_reach_limit_kind, macro_reach_limitation_detail_lines, macro_reach_witness_pointer,
     transitive_reach_limit_kind, transitive_reach_limitation_detail_lines,

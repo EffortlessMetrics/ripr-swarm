@@ -1,0 +1,11 @@
+diff --git a/src/sentinel.ts b/src/sentinel.ts
+index 0000000..1111111 100644
+--- a/src/sentinel.ts
++++ b/src/sentinel.ts
+@@ -1,5 +1,5 @@
+ export const skip = Symbol('skip');
+-export const stop = skip;
++export const stop = Symbol('stop');
+ 
+ export function collect(values: unknown[]): unknown[] {
+     const out: unknown[] = [];

@@ -198,6 +198,33 @@ pub(crate) fn string_literal_spans(text: &str) -> Vec<(usize, usize, bool)> {
     scan(text).string_spans
 }
 
+/// Source spans whose whitespace affects Rust expression identity.
+pub(crate) struct RustIdentitySpans {
+    /// Inclusive quote ranges whose contents remain literal data.
+    pub literal_ranges: Vec<(usize, usize)>,
+    /// Byte offsets of LF characters ending actual line comments.
+    pub line_comment_ends: Vec<usize>,
+}
+
+/// Inclusive literal quote ranges and LF offsets ending actual line comments,
+/// from the shared lexical scanner. Quotes or `//` inside another comment or
+/// literal cannot introduce an identity boundary.
+pub(crate) fn rust_identity_spans(text: &str) -> RustIdentitySpans {
+    let scanned = scan(text);
+    let mut ranges = scanned.char_literals;
+    ranges.extend(
+        scanned
+            .string_spans
+            .into_iter()
+            .map(|(open, close, _)| (open, close)),
+    );
+    ranges.sort_unstable();
+    RustIdentitySpans {
+        literal_ranges: ranges,
+        line_comment_ends: scanned.line_comment_ends,
+    }
+}
+
 /// What one [`scan`] pass reads from a text.
 struct Scanned {
     /// The masked text, byte layout preserved.
@@ -209,15 +236,19 @@ struct Scanned {
     /// Delimiter offsets of every terminated string literal, and whether
     /// it is raw.
     string_spans: Vec<(usize, usize, bool)>,
+    /// LF offsets at which a line comment returns to code.
+    line_comment_ends: Vec<usize>,
 }
 
 /// One pass over `text` producing the masked output, the byte ranges of
 /// the character literals it masked, the string-delimiter quote count and
-/// the delimiter offsets of every terminated string literal.
+/// the delimiter offsets of every terminated string literal and the LF offsets
+/// at which line comments return to code.
 fn scan(text: &str) -> Scanned {
     let mut char_literals = Vec::new();
     let mut string_quotes = 0usize;
     let mut string_spans = Vec::new();
+    let mut line_comment_ends = Vec::new();
     let mut string_open = 0usize;
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(text.len());
@@ -274,6 +305,7 @@ fn scan(text: &str) -> Scanned {
             }
             MaskState::LineComment => {
                 if byte == b'\n' {
+                    line_comment_ends.push(index);
                     state = MaskState::Code;
                     out.push(b'\n');
                 } else {
@@ -344,13 +376,13 @@ fn scan(text: &str) -> Scanned {
                     while let Some(&b'#') = bytes.get(index + 1 + closing) {
                         closing += 1;
                     }
-                    if closing == raw_hashes {
-                        // Consume the closing quote and its hashes
-                        // (closing + 1 bytes).
+                    if closing >= raw_hashes {
+                        // Only the opening delimiter's hash count belongs
+                        // to this literal; surplus hashes remain code.
                         string_spans.push((string_open, index, true));
                         string_quotes += 1;
-                        out.extend(std::iter::repeat_n(b' ', closing + 1));
-                        index += closing + 1;
+                        out.extend(std::iter::repeat_n(b' ', raw_hashes + 1));
+                        index += raw_hashes + 1;
                         state = MaskState::Code;
                         continue;
                     }
@@ -372,6 +404,7 @@ fn scan(text: &str) -> Scanned {
         char_literals,
         string_quotes,
         string_spans,
+        line_comment_ends,
     }
 }
 
@@ -415,6 +448,37 @@ mod tests {
             4 + MEMO_CAPACITY,
             "evicted file rescanned"
         );
+    }
+
+    /// The memo covers exactly `MEMO_MIN_BYTES..=MEMO_MAX_BYTES`: a text one
+    /// byte outside either end is scanned every time without touching it,
+    /// and a text at either end is remembered.
+    #[test]
+    fn memo_bounds_are_inclusive_and_outside_texts_bypass_it() {
+        let misses = || MASK_MEMO_MISSES.with(std::cell::Cell::get);
+        let sized = |len: usize| "y".repeat(len);
+        for len in [MEMO_MIN_BYTES - 1, MEMO_MAX_BYTES + 1] {
+            let text = sized(len);
+            let before = misses();
+            for _ in 0..2 {
+                assert_eq!(
+                    mask_comments_and_strings(&text),
+                    mask_with_char_literals(&text).0
+                );
+            }
+            assert_eq!(misses(), before, "{len} bytes bypasses the memo");
+        }
+        for len in [MEMO_MIN_BYTES, MEMO_MAX_BYTES] {
+            let text = sized(len);
+            let before = misses();
+            for _ in 0..2 {
+                assert_eq!(
+                    mask_comments_and_strings(&text),
+                    mask_with_char_literals(&text).0
+                );
+            }
+            assert_eq!(misses() - before, 1, "{len} bytes is remembered");
+        }
     }
 
     #[test]
@@ -497,6 +561,55 @@ mod tests {
         let masked = mask_comments_and_strings(text);
         assert!(masked.contains("live(4);"), "{masked}");
         assert_eq!(masked.lines().count(), text.lines().count());
+    }
+
+    #[test]
+    fn raw_string_termination_keeps_surplus_hashes_as_code() -> Result<(), String> {
+        for prefix in ["r", "br", "cr"] {
+            for count in [0, 1, 3] {
+                for surplus in [1, 2] {
+                    let hashes = "#".repeat(count);
+                    let extra = "#".repeat(surplus);
+                    let text = format!("{prefix}{hashes}\"a  b\"{hashes}{extra} + live()");
+                    let open = text.find('"').ok_or("raw fixture has no opening quote")?;
+                    let close = text.rfind('"').ok_or("raw fixture has no closing quote")?;
+                    assert_eq!(
+                        rust_identity_spans(&text).literal_ranges,
+                        vec![(open, close)],
+                        "raw literal must end before surplus tokens: {text:?}"
+                    );
+                    assert!(
+                        mask_comments_and_strings(&text).ends_with(&format!("{extra} + live()")),
+                        "surplus hashes and following code must remain visible: {text:?}"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn raw_string_termination_requires_the_opening_hash_count() -> Result<(), String> {
+        for prefix in ["r", "br", "cr"] {
+            for count in [1, 3] {
+                let hashes = "#".repeat(count);
+                let short = "#".repeat(count - 1);
+                let text = format!("{prefix}{hashes}\"a \"{short} b\"{hashes}# + live()");
+                let open = text.find('"').ok_or("raw fixture has no opening quote")?;
+                let close = text.rfind('"').ok_or("raw fixture has no closing quote")?;
+                assert_eq!(
+                    rust_identity_spans(&text).literal_ranges,
+                    vec![(open, close)],
+                    "a shorter delimiter belongs to the raw contents: {text:?}"
+                );
+                assert!(mask_comments_and_strings(&text).ends_with("# + live()"));
+
+                let unclosed = format!("{prefix}{hashes}\"a \"{short} + hidden()");
+                assert!(rust_identity_spans(&unclosed).literal_ranges.is_empty());
+                assert!(!mask_comments_and_strings(&unclosed).contains("hidden"));
+            }
+        }
+        Ok(())
     }
 
     #[test]
