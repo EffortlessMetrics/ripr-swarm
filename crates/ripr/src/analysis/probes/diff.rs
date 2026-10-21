@@ -4196,8 +4196,8 @@ mod tests {
     }
 
     /// #8999 negative: grouping stops at the signature. A changed body line
-    /// of the same function, and a signature line separated from the group by
-    /// the body, keep their own probes.
+    /// of the same function keeps its own probe beside the changed signature
+    /// line's probe.
     #[test]
     fn probes_for_file_keeps_body_probe_beside_changed_wrapped_signature() {
         let (index, changed) =
