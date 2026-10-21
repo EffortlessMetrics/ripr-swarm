@@ -938,6 +938,13 @@ to `amount - 20`, and `tests/lib.test.ts` has
   and the `tests/` modules beside it: `mock_form_tests.rs`,
   `scope_receiver_tests.rs`, `reexport_chain_tests.rs`.
 - Existing: fixture `fixtures/typescript_tape_equal_oracle`.
+- #8569: `crates/ripr/src/analysis/language/typescript/tests/guard_entry_tests.rs`
+  and `guard_entry_guard.rs` unit tests pin the unentered-guard rule: an
+  `exposed` non-predicate result whose changed line sits under an `if` /
+  `else if` / `else` arm that every related test call provably leaves untaken
+  reads `weakly_exposed`, and every unreadable shape (spread, defaulted or
+  rebound parameter, helper or member call, file-level call, CRLF, deleted
+  line) keeps the ladder verdict.
 - Planned: one unit test per changed example (5, 6, 7, 8, 13, 14, 16, 18,
   19, 22, 23, 24, 31, 32, 33, 34, 35), and a verdict corpus holding all
   35 examples, each with
@@ -973,6 +980,10 @@ to `amount - 20`, and `tests/lib.test.ts` has
 - `crates/ripr/src/analysis/language/typescript/oracle.rs`:
   `collect_related_mock_paths`, unchanged for the advisory limit; rule 8
   reads mock paths per test file.
+- #8569: `crates/ripr/src/analysis/language/typescript/guard_entry_guard.rs`
+  reads the enclosing conditions and evaluates literal call inputs;
+  `ts_unentered_guard` in `classifier.rs` applies it as a post-ladder rule in
+  `ts_apply_post_ladder_rules`, withdrawing the credit only on proof.
 - `crates/ripr/src/analysis/language/typescript/actionability.rs`:
   unchanged.
 

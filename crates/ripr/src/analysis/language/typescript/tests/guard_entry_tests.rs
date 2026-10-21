@@ -217,3 +217,125 @@ fn unreadable_entries_keep_exposed() -> Result<(), String> {
     );
     Ok(())
 }
+
+#[test]
+fn file_level_and_hook_calls_keep_exposed() -> Result<(), String> {
+    // A file-level call enters the arm even though the test body does not.
+    let top = "import { price } from \"../src/price\";\nconst entered = price(3, 'HALF');\ntest(\"price\", () => {\n  expect(price(2)).toBe(20);\n  expect(entered).toBe(15);\n});\n";
+    let finding = then_arm("guard-file-level", top)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    let hook = "import { price } from \"../src/price\";\nlet entered: number;\nbeforeAll(() => {\n  entered = price(3, 'HALF');\n});\ntest(\"price\", () => {\n  expect(price(2)).toBe(20);\n  expect(entered).toBe(15);\n});\n";
+    let finding = then_arm("guard-hook", hook)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    // An indexed or parenthesized receiver is not a framework object.
+    let indexed = "import { price } from \"../src/price\";\nconst helpers = [{ run: (c: string) => price(3, c) }];\ntest(\"price\", () => {\n  expect(price(2)).toBe(20);\n  expect(helpers[0].run('HALF')).toBe(15);\n});\n";
+    let finding = then_arm("guard-indexed", indexed)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    Ok(())
+}
+
+#[test]
+fn a_deleted_line_is_not_located_by_content() -> Result<(), String> {
+    // The deleted `return null;` is gone from the new side; the identical
+    // line in the `b` arm must not stand in for it.
+    let source = "export function f(mode: string): null | number {\n  if (mode === 'a') {\n    // deleted line was here\n  } else if (mode === 'b') {\n    return null;\n  }\n  return 1;\n}\n";
+    let test = "import { f } from \"../src/price\";\ntest(\"f\", () => {\n  expect(f('a')).toBe(1);\n});\n";
+    let root = ts_unique_tempdir("guard-deleted")?;
+    ts_write_file(&root.join("src/price.ts"), source)?;
+    ts_write_file(&root.join("tests/price.test.ts"), test)?;
+    let changed = ChangedFile {
+        path: PathBuf::from("src/price.ts"),
+        added_lines: Vec::new(),
+        removed_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 3,
+            text: "    return null;".to_string(),
+            new_side_line: 3,
+        }],
+    };
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    for finding in result?.findings {
+        assert!(
+            !finding
+                .missing
+                .iter()
+                .any(|line| line.contains("no related test call enters")),
+            "{:?}",
+            finding.missing
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn arrow_owner_locates_by_position_or_fails_open() -> Result<(), String> {
+    let source = "export const price = (qty: number, coupon?: string): number => {\n  let total = qty * 10;\n  if (coupon === 'HALF') {\n    total = total / 2;\n  }\n  return total;\n};\n";
+    let finding = finding_at(
+        "guard-arrow",
+        source,
+        4,
+        "    total = total / 3;",
+        "    total = total / 2;",
+        &test_with(&[("price(2)", "20")]),
+    )?;
+    // Located by position the arm is unentered; if location fails the
+    // verdict must stay with the ladder. Either way never a wrong guard.
+    if finding.class == ExposureClass::WeaklyExposed {
+        assert!(
+            finding
+                .missing
+                .iter()
+                .any(|line| line.contains("`coupon === 'HALF'`")),
+            "{:?}",
+            finding.missing
+        );
+    }
+    // An entering call still keeps the credit for an arrow owner.
+    let entered = finding_at(
+        "guard-arrow-entered",
+        source,
+        4,
+        "    total = total / 3;",
+        "    total = total / 2;",
+        &test_with(&[("price(3, 'HALF')", "15")]),
+    )?;
+    assert_eq!(
+        entered.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        entered.missing
+    );
+    Ok(())
+}
+
+#[test]
+fn a_file_level_getter_that_calls_the_owner_keeps_exposed() -> Result<(), String> {
+    let getter = "import { price } from \"../src/price\";\nconst h = { get value() { return price(3, 'HALF'); } };\ntest(\"price\", () => {\n  void h.value;\n  expect(price(2)).toBe(20);\n});\n";
+    let finding = then_arm("guard-getter", getter)?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    Ok(())
+}

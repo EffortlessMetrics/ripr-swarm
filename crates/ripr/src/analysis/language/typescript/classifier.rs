@@ -5180,6 +5180,7 @@ pub(crate) fn classify_change_with_alias_state(
         &mut verdict,
         &mut static_limit,
         &TsPostLadderContext {
+            all_tests,
             line,
             probe_shape: &probe_shape,
             line_text,
@@ -5563,6 +5564,8 @@ struct TsLadderVerdict {
 
 /// What the post-ladder rules read besides the verdict.
 struct TsPostLadderContext<'a> {
+    /// Every parsed test, so a file-level reader can blank its test bodies.
+    all_tests: &'a [TypeScriptTest],
     /// The changed line's number in the owner's file.
     line: usize,
     probe_shape: &'a TypeScriptProbeShape,
@@ -5762,6 +5765,39 @@ fn ts_unentered_guard(context: &TsPostLadderContext<'_>) -> Option<TsUnenteredGu
             context.workspace_root,
         );
         let callback = test_callback_block(&test.body_text).unwrap_or(&test.body_text);
+        // Calls outside the test bodies (a hook, a file-level binding) and
+        // imports that are not the owner or a test framework could enter the
+        // arm with inputs this reader never sees.
+        let root = context.workspace_root?;
+        for import in &test.imports_in_file {
+            if import.namespace {
+                if !receivers.contains(&import.local) {
+                    return None;
+                }
+            } else if import.imported.as_deref() == Some(owner.name.as_str())
+                || import.local == owner.name
+            {
+                if !import_source_matches_owner(
+                    import,
+                    &test.file,
+                    owner,
+                    context.alias_map,
+                    context.workspace_root,
+                ) {
+                    return None;
+                }
+            } else if !is_test_framework_source(&import.source) {
+                return None;
+            }
+        }
+        let file_names: Vec<&str> = names
+            .iter()
+            .copied()
+            .chain(receivers.iter().map(String::as_str))
+            .collect();
+        if !test_file_names_owner_only_in_test_bodies(test, context.all_tests, &file_names, root) {
+            return None;
+        }
         // A file-local helper (`check = (c) => price(3, c)`) could enter the
         // arm with an input the test text does not show: only the owner and
         // the test framework's own calls are readable.

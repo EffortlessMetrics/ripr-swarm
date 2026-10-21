@@ -16001,6 +16001,14 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/guard_entry_tests.rs::a_guard_no_test_input_enters_withdraws_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests/guard_entry_tests.rs::a_guard_some_test_input_can_enter_keeps_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests/guard_entry_tests.rs::an_else_arm_is_entered_by_the_inputs_that_fail_the_guard",
+  "crates/ripr/src/analysis/language/typescript/tests/guard_entry_tests.rs::unreadable_entries_keep_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests/guard_entry_tests.rs::file_level_and_hook_calls_keep_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests/guard_entry_tests.rs::a_deleted_line_is_not_located_by_content",
+  "crates/ripr/src/analysis/language/typescript/tests/guard_entry_tests.rs::arrow_owner_locates_by_position_or_fails_open",
+  "crates/ripr/src/analysis/language/typescript/tests/guard_entry_tests.rs::a_file_level_getter_that_calls_the_owner_keeps_exposed",
   "crates/ripr/tests/cli_smoke/typescript_finally_completion.rs::completion_replacing_finalizers_cannot_confirm_the_changed_throw",
   "crates/ripr/tests/cli_smoke/typescript_finally_completion.rs::benign_and_independent_finalizers_keep_credit",
   "crates/ripr/src/analysis/language/typescript/tests.rs::extract_tests_withholds_assertions_a_finalizer_completion_can_replace",

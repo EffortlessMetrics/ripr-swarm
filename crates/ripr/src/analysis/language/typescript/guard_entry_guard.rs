@@ -80,24 +80,11 @@ pub(crate) fn enclosing_conditions(
         return None;
     }
     let lines: Vec<&str> = owner_source.lines().collect();
-    let by_position = changed_line
+    // Located by position only: a deleted line's text is gone from the new
+    // side, and another identical line elsewhere is not the changed one.
+    let index = changed_line
         .checked_sub(start_line)
-        .filter(|at| lines.get(*at).is_some_and(|line| line.trim() == wanted));
-    let index = match by_position {
-        Some(at) => at,
-        None => {
-            let mut matches = lines
-                .iter()
-                .enumerate()
-                .filter(|(_, line)| line.trim() == wanted)
-                .map(|(at, _)| at);
-            let first = matches.next()?;
-            if matches.next().is_some() {
-                return None;
-            }
-            first
-        }
-    };
+        .filter(|at| lines.get(*at).is_some_and(|line| line.trim() == wanted))?;
     let line_start: usize = lines[..index].iter().map(|line| line.len() + 1).sum();
 
     let masked = ts_mask_literals_and_comments(owner_source);
@@ -441,7 +428,7 @@ pub(crate) fn calls_only_allowed(test_text: &str, allowed: &[&str], receivers: &
             let calls = chars.get(next) == Some(&'(');
             let before = chars[..at].iter().rev().find(|c| !c.is_whitespace());
             let is_member = before == Some(&'.');
-            if calls && is_member && !member_receiver_is_readable(&chars, at, receivers) {
+            if calls && is_member && !member_receiver_is_readable(&chars, at, receivers, allowed) {
                 return false;
             }
             let keyword = matches!(
@@ -474,7 +461,12 @@ pub(crate) fn calls_only_allowed(test_text: &str, allowed: &[&str], receivers: &
 /// Whether the member call whose name starts at `at` is on a receiver whose
 /// root is a test-framework object or an owner namespace, or on the result of
 /// a call/index the scan checks separately (`expect(x).toBe(`).
-fn member_receiver_is_readable(chars: &[char], at: usize, receivers: &[String]) -> bool {
+fn member_receiver_is_readable(
+    chars: &[char],
+    at: usize,
+    receivers: &[String],
+    allowed: &[&str],
+) -> bool {
     const FRAMEWORK: [&str; 7] = ["expect", "assert", "jest", "vi", "test", "it", "describe"];
     let mut end = at;
     loop {
@@ -497,8 +489,34 @@ fn member_receiver_is_readable(chars: &[char], at: usize, receivers: &[String]) 
         if i == 0 {
             return false;
         }
-        if matches!(chars[i - 1], ')' | ']') {
-            return true;
+        if chars[i - 1] == ']' {
+            return false;
+        }
+        if chars[i - 1] == ')' {
+            // Step to the call's callee: `expect(x).toBe(` roots at `expect`.
+            let mut depth = 0usize;
+            let mut open = None;
+            for k in (0..i).rev() {
+                match chars[k] {
+                    ')' => depth += 1,
+                    '(' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            open = Some(k);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let Some(open) = open else {
+                return false;
+            };
+            let mut k = open;
+            while k > 0 && chars[k - 1].is_whitespace() {
+                k -= 1;
+            }
+            i = k;
         }
         let stop = i;
         while i > 0 && is_identifier_char(chars[i - 1]) {
@@ -516,7 +534,9 @@ fn member_receiver_is_readable(chars: &[char], at: usize, receivers: &[String]) 
             end = i;
             continue;
         }
-        return FRAMEWORK.contains(&word.as_str()) || receivers.iter().any(|r| *r == word);
+        return FRAMEWORK.contains(&word.as_str())
+            || allowed.contains(&word.as_str())
+            || receivers.contains(&word);
     }
 }
 
@@ -596,6 +616,10 @@ fn parse_literal(text: &str) -> Option<Lit> {
         }
     }
     let digits = text.strip_prefix('-').unwrap_or(text);
+    // Legacy octal (`010`) is not decimal.
+    if digits.len() > 1 && digits.starts_with('0') && !digits.starts_with("0.") {
+        return None;
+    }
     let well_formed = !digits.is_empty()
         && digits.chars().next().is_some_and(|c| c.is_ascii_digit())
         && digits.chars().all(|c| c.is_ascii_digit() || c == '.')
@@ -948,5 +972,56 @@ mod tests {
         ] {
             assert!(!calls_only_allowed(refused, &allowed, &ns), "{refused}");
         }
+    }
+
+    #[test]
+    fn comparison_boundaries_precedence_nullish_and_octal() {
+        let params = vec!["a".to_string()];
+        let defaults = vec![false];
+        let src = "function f(a) {\n  return a;\n}\n";
+        let excludes = |guard: &str, argument: &str| {
+            let arguments = vec![argument.to_string()];
+            let call = CallInputs {
+                owner_source: src,
+                params: &params,
+                defaults: &defaults,
+                arguments: &arguments,
+            };
+            call_excludes_arm(
+                &call,
+                &[GuardCondition {
+                    text: guard.to_string(),
+                    want: true,
+                }],
+            )
+        };
+        assert!(!excludes("a >= 5", "5"));
+        assert!(excludes("a > 5", "5"));
+        assert!(!excludes("a <= 5", "5"));
+        assert!(excludes("a < 5", "5"));
+        // `&&` binds tighter than `||`: `a===1 || (a===2 && a===3)` holds for 1.
+        assert!(!excludes("a === 1 || a === 2 && a === 3", "1"));
+        assert!(excludes("a === 1 || a === 2 && a === 3", "2"));
+        // `??` is unreadable.
+        assert!(!excludes("a ?? 1", "undefined"));
+        assert!(!excludes("a === 10", "010"));
+    }
+
+    #[test]
+    fn indexed_and_parenthesized_receivers_are_not_readable() {
+        let allowed = ["price", "expect"];
+        let ns: Vec<String> = Vec::new();
+        for refused in [
+            "helpers[0].run('HALF');",
+            "(cart).checkout('HALF');",
+            "other(1).run('HALF');",
+        ] {
+            assert!(!calls_only_allowed(refused, &allowed, &ns), "{refused}");
+        }
+        assert!(calls_only_allowed(
+            "expect(price(2)).resolves.toBe(1);",
+            &allowed,
+            &ns
+        ));
     }
 }
