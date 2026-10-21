@@ -8357,6 +8357,8 @@ id = "RIPR-SPEC-0108"
 name = "evidence-promotion honesty meta-gate"
 spec = "docs/specs/RIPR-SPEC-0108-evidence-promotion-honesty-meta-gate.md"
 tests = [
+  "crates/ripr/src/analysis/classify/reach.rs::tests::a_workspace_trait_impl_method_gets_no_unseen_reach_allowance",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::name_only_test_cannot_supply_the_oracle_for_reach_from_another_test",
   "crates/ripr/tests/snapshot_field_admission.rs::snapshot_of_another_receiver_cannot_close_the_owner_field",
   "crates/ripr/tests/snapshot_field_admission.rs::snapshot_without_an_expected_file_cannot_close_the_owner_field",
   "crates/ripr/tests/owner_pin_execution.rs::trait_shadow_corpus_matches_compiled_owner_dispatch",
@@ -8463,6 +8465,7 @@ fixtures = [
   "fixtures/evidence-promotion-honesty-corpus/reports/perl-preview-advisory-no-packet.json",
   "fixtures/evidence-promotion-honesty-corpus/reports/scope-unanalyzed-worktree-empty-not-clean.json",
   "fixtures/python_adversarial_buffer_token",
+  "fixtures/unreached_workspace_trait_impl_borrows_no_oracle",
   "fixtures/python_adversarial_mock_call_not_value",
   "fixtures/typescript_broad_tothrow",
   "fixtures/typescript_negated_t_oracle",

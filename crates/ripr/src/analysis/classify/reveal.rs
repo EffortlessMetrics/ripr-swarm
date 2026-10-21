@@ -4625,7 +4625,9 @@ fn related_test_rank(test: &RelatedTest) -> u8 {
 
 /// Which relations may supply a credited oracle: a name-only relation
 /// (`WeakTokenSubstring`, `OwnerNamedTest`) may not while any related test
-/// bears reach. Shared with the RIPR-SPEC-0240 refusal scope, which must judge
+/// bears reach, and a `WeakTokenSubstring` relation (a test whose name merely
+/// shares a token with the changed code) never may, even alone: with no
+/// reaching test its assertions belong to other functions (#9169). Shared with the RIPR-SPEC-0240 refusal scope, which must judge
 /// exactly the tests that could have credited the refused assertions.
 pub(in crate::analysis) fn oracle_crediting_relations(
     related_tests: &[(&TestSummary, RelationReason)],
@@ -4633,7 +4635,10 @@ pub(in crate::analysis) fn oracle_crediting_relations(
     let reach_bearing_related = related_tests
         .iter()
         .any(|(_, reason)| !is_name_only_relation(*reason) && !is_proximity_only(*reason));
-    move |reason| !(reach_bearing_related && is_name_only_relation(reason))
+    move |reason| {
+        reason != RelationReason::WeakTokenSubstring
+            && !(reach_bearing_related && is_name_only_relation(reason))
+    }
 }
 
 /// A relation made only by the test's name or path (a changed token, the
@@ -6797,11 +6802,7 @@ mod tests {
         // reach either, so it must not switch the rule on.
         let bystander = test_with_assertions("same_file_bystander", Vec::new());
         for related in [
-            vec![(&proximity_test, RelationReason::WeakTokenSubstring)],
-            vec![
-                (&bystander, RelationReason::SameTestFile),
-                (&proximity_test, RelationReason::WeakTokenSubstring),
-            ],
+            vec![(&proximity_test, RelationReason::OwnerNamedTest)],
             vec![
                 (&bystander, RelationReason::SameModule),
                 (&proximity_test, RelationReason::OwnerNamedTest),
@@ -6811,6 +6812,23 @@ mod tests {
             if discriminate.state != StageState::Yes {
                 return Err(format!(
                     "relation with no reach-bearing test lost its oracle reading: {discriminate:?}"
+                ));
+            }
+        }
+        // #9169: a name-token neighbour (`count_test` beside a changed
+        // `count_zero`) pins other functions, so it never credits an oracle,
+        // reach-bearing test or not.
+        for related in [
+            vec![(&proximity_test, RelationReason::WeakTokenSubstring)],
+            vec![
+                (&bystander, RelationReason::SameTestFile),
+                (&proximity_test, RelationReason::WeakTokenSubstring),
+            ],
+        ] {
+            let (_, discriminate, _) = reveal_evidence(&probe, &related);
+            if discriminate.state == StageState::Yes {
+                return Err(format!(
+                    "a name-token relation credited an oracle: {discriminate:?}"
                 ));
             }
         }
@@ -7967,8 +7985,8 @@ return Err(\"typed pin\".into());
         );
     }
 
-    /// A name-token-only link (`WeakTokenSubstring`) is proximity too, so the
-    /// summary must not claim the test shares the file or module.
+    /// A file-only link is proximity: the summary names no assertion kind
+    /// (a name-token-only link no longer credits at all, #9169).
     #[test]
     fn name_token_proximity_error_variant_assertion_names_no_kind_or_location() {
         let probe = probe(ProbeFamily::Predicate, "should_remove_con_len");
@@ -7978,8 +7996,7 @@ return Err(\"typed pin\".into());
             OracleStrength::Strong,
         );
         let test = test_with_assertions("max_header_size", vec![exact_error]);
-        let (_, proximity, _) =
-            reveal_evidence(&probe, &[(&test, RelationReason::WeakTokenSubstring)]);
+        let (_, proximity, _) = reveal_evidence(&probe, &[(&test, RelationReason::SameTestFile)]);
         assert_eq!(proximity.state, StageState::Yes, "{proximity:?}");
         assert_eq!(
             proximity.summary,
@@ -11097,6 +11114,8 @@ return Err(\"typed pin\".into());
         let name_only = [(&named, RelationReason::OwnerNamedTest)];
         let credits = oracle_crediting_relations(&name_only);
         assert!(credits(RelationReason::OwnerNamedTest));
+        // #9169: a token-in-the-name relation never credits, even alone.
+        assert!(!credits(RelationReason::WeakTokenSubstring));
 
         let proximity_only = [
             (&direct, RelationReason::SameTestFile),

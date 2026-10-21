@@ -1,3 +1,4 @@
+use super::super::facts::FunctionContainer;
 use super::super::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use crate::domain::{
     CALLEE_ONLY_REACH_PREFIX, Confidence, RelationReason, StageEvidence, StageState,
@@ -129,11 +130,18 @@ pub(in crate::analysis) fn reach_evidence(
 /// `#![doc = include_str!(..)]`), or a macro block such as `proptest!`. So
 /// when no workspace source names the owner outside its own `fn` line,
 /// nothing can reach it; when anything does, reach stays undecided.
+///
+/// The trait-impl allowance covers a trait the workspace does not declare
+/// (`Display`, `Add`, `Deref`): the language dispatches those without
+/// spelling the method. A method of a workspace-declared trait is called
+/// only by spelling its name (`step.process(..)`, `Step::process`), so it
+/// gets no allowance (#9169): an unnamed one has no path, and tests that
+/// merely sit beside it cannot lend it their oracle.
 pub(in crate::analysis) fn owner_may_be_reached_unseen(
     owner: &FunctionSummary,
     index: &RustIndex,
 ) -> bool {
-    is_trait_impl_method(owner)
+    (is_trait_impl_method(owner) && !implements_workspace_trait(owner, index))
         || index.files().values().any(|file| {
             names_identifier_outside_fn_definition(&file.source, &owner.name)
                 || includes_external_docs(&file.source)
@@ -145,6 +153,8 @@ pub(in crate::analysis) fn owner_may_be_reached_unseen(
 /// owner whose related tests are all proximity).
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct UnseenReachNames {
+    /// Name of every trait some workspace source declares.
+    workspace_traits: HashSet<String>,
     /// Every identifier some source names other than directly after `fn`.
     named: HashSet<String>,
     /// Some file pulls external docs in as doctests.
@@ -191,13 +201,14 @@ impl UnseenReachNames {
                 .fold(HashSet::new(), |names, source| collect_names(names, source))
         };
         Self {
+            workspace_traits: workspace_trait_names(index),
             named: named.into_iter().map(str::to_string).collect(),
             external_docs,
         }
     }
 
     pub(in crate::analysis) fn may_reach_unseen(&self, owner: &FunctionSummary) -> bool {
-        is_trait_impl_method(owner)
+        (is_trait_impl_method(owner) && !implements_trait_in(owner, &self.workspace_traits))
             || self.external_docs
             || (!owner.name.is_empty() && self.named.contains(&owner.name))
     }
@@ -290,6 +301,43 @@ fn external_docs_uncached(source: &str) -> bool {
                 })
             })
         })
+}
+
+fn workspace_trait_names(index: &RustIndex) -> HashSet<String> {
+    index
+        .functions()
+        .iter()
+        .filter_map(|function| match &function.item.container {
+            FunctionContainer::Trait { trait_name } => Some(trait_name.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn implements_workspace_trait(owner: &FunctionSummary, index: &RustIndex) -> bool {
+    matches!(owner.item.container, FunctionContainer::TraitImpl { .. })
+        && implements_trait_in(owner, &workspace_trait_names(index))
+}
+
+/// Whether `owner` is a method of `impl <Trait> for ..` where `Trait` is a
+/// bare, `crate::`, `self::` or `super::` path naming one of `traits`. A
+/// path through any other crate (`fmt::Display`, `std::ops::Add`) names a
+/// foreign trait even when the workspace declares one of the same name; an
+/// unestablished container keeps the foreign-trait reading.
+fn implements_trait_in(owner: &FunctionSummary, traits: &HashSet<String>) -> bool {
+    let FunctionContainer::TraitImpl { trait_path, .. } = &owner.item.container else {
+        return false;
+    };
+    let path = trait_path.split('<').next().unwrap_or(trait_path).trim();
+    let mut segments = path.split("::").map(str::trim);
+    let mut last = segments.next();
+    for segment in segments {
+        if !matches!(last, Some("crate" | "self" | "super")) {
+            return false;
+        }
+        last = Some(segment);
+    }
+    last.is_some_and(|name| traits.contains(name))
 }
 
 /// Parser-backed owner ids carry their impl segment
@@ -663,6 +711,93 @@ mod tests {
         assert!(names.may_reach_unseen(&function("fragile_fee")));
         assert!(!names.may_reach_unseen(&function("lonely")));
         assert!(UnseenReachNames::build(&docs_index).may_reach_unseen(&function("lonely")));
+    }
+
+    /// #9169: a foreign trait's method runs through language dispatch that
+    /// never spells its name, so it keeps the unseen-reach allowance; a
+    /// workspace-declared trait's method does not.
+    #[test]
+    fn a_workspace_trait_impl_method_gets_no_unseen_reach_allowance() {
+        let silent = "pub fn lonely() {}\n";
+        let impl_method = |name: &str, id: &str, trait_path: &str| {
+            let mut owner = function(name);
+            owner.id = SymbolId(id.to_string());
+            owner.item.container = FunctionContainer::TraitImpl {
+                trait_path: trait_path.to_string(),
+                self_ty: "Inc".to_string(),
+            };
+            owner
+        };
+        let mut declared = function("process");
+        declared.item.container = FunctionContainer::Trait {
+            trait_name: "Step".to_string(),
+        };
+        let workspace_impl =
+            impl_method("process", "src/lib.rs::impl Step for Inc::process", "Step");
+        let crate_path_impl = impl_method(
+            "process",
+            "src/lib.rs::impl crate::Step for Inc::process",
+            "crate::Step",
+        );
+        let generic_impl = impl_method(
+            "process",
+            "src/lib.rs::impl Step<u8> for Inc::process",
+            "Step<u8>",
+        );
+        let foreign_impl = impl_method("fmt", "src/lib.rs::impl Display for Inc::fmt", "Display");
+        // A same-named workspace trait does not make a path through another
+        // crate the workspace's own.
+        let mut shadowed = function("fmt");
+        shadowed.item.container = FunctionContainer::Trait {
+            trait_name: "Display".to_string(),
+        };
+        let std_path_impl = impl_method(
+            "fmt",
+            "src/lib.rs::impl fmt::Display for Inc::fmt",
+            "fmt::Display",
+        );
+        let functions = vec![
+            declared,
+            workspace_impl.clone(),
+            crate_path_impl.clone(),
+            generic_impl.clone(),
+            foreign_impl.clone(),
+            shadowed,
+            std_path_impl.clone(),
+        ];
+        let index = RustIndex::from_owned(OwnedRustIndex {
+            files: BTreeMap::from([(
+                PathBuf::from("src/silent.rs"),
+                FileFacts {
+                    path: PathBuf::from("src/silent.rs"),
+                    source: silent.into(),
+                    ..FileFacts::default()
+                },
+            )]),
+            functions,
+            ..Default::default()
+        });
+        let names = UnseenReachNames::build(&index);
+        for owner in [&workspace_impl, &crate_path_impl, &generic_impl] {
+            assert!(
+                !owner_may_be_reached_unseen(owner, &index),
+                "{}",
+                owner.id.0
+            );
+            assert!(!names.may_reach_unseen(owner), "{}", owner.id.0);
+        }
+        // `Display` is declared in the workspace here, so the bare path is the
+        // workspace's; only the path through `fmt::` stays foreign.
+        assert!(!owner_may_be_reached_unseen(&foreign_impl, &index));
+        assert!(owner_may_be_reached_unseen(&std_path_impl, &index));
+        assert!(names.may_reach_unseen(&std_path_impl));
+        // With no workspace declaration, the same bare name is a foreign trait.
+        let foreign_only = RustIndex::from_owned(OwnedRustIndex {
+            functions: vec![foreign_impl.clone()],
+            ..Default::default()
+        });
+        assert!(owner_may_be_reached_unseen(&foreign_impl, &foreign_only));
+        assert!(UnseenReachNames::build(&foreign_only).may_reach_unseen(&foreign_impl));
     }
 
     #[test]

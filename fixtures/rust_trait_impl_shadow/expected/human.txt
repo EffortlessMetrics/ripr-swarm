@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_trait_impl_shadow/input
 
-Summary: 1 probe (0 exposed, 1 weak, 0 unrevealed, 0 no path); 1 of 1 finding unsuppressed
+Summary: 1 probe (0 exposed, 0 weak, 1 unrevealed, 0 no path); 1 of 1 finding unsuppressed
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
@@ -11,12 +11,14 @@ Start here:
   State: a test gap to inspect or repair
   Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:7
-  Static exposure: weak (severity: warning, confidence 0.66)
-  Why weak: a related test reaches this change, but the static evidence path is partially complete — see full form for details
+  Static exposure: unrevealed (severity: warning, confidence 0.66)
+  Why unrevealed: a related test reaches this change, but no assertion observes the changed behavior
   Canonical gap: gap:rust:src/lib.rs:impl Render for Sample::render:return_value:return_value:string_from_lit
   Changed behavior: String::from("")
-  Related test: src/lib.rs:28 render_is_empty
-  Evidence: reach weak · infection yes · propagation yes · observation yes · discriminator not established
+  Missing discriminator (1 of 3): No detected assertion observes the changed value, error, field, or effect
+  Related test: src/lib.rs:28 render_is_empty (no call to the changed code found; linked by name only)
+  Next step: Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect
+  Evidence: reach weak · infection yes · propagation yes · observation no · discriminator no
     - reach weak: No test is seen calling render; tests share only its file or a name token: render_is_empty
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 6 more detail line(s) in --format human-full
