@@ -521,11 +521,11 @@ impl AnalysisProgressTracker {
             tokens.remove(&generation)
         };
         if let Some(record) = record {
-            self.end_record(record, end).await;
+            self.end_record(record, &end).await;
         }
     }
 
-    async fn end_record(&self, record: TokenRecord, end: AnalysisProgressEnd) {
+    async fn end_record(&self, record: TokenRecord, end: &AnalysisProgressEnd) {
         // Only this token's sender can delay its End. Registry removal already
         // prevents late announcements/reports and gives this owner sole custody.
         let notifications = record.notifications.lock().await;
@@ -565,7 +565,7 @@ impl AnalysisProgressTracker {
                 .collect::<Vec<_>>()
         };
         for record in drained {
-            self.end_record(record, end).await;
+            self.end_record(record, &end).await;
         }
     }
 
@@ -583,7 +583,7 @@ impl AnalysisProgressTracker {
                 .collect::<Vec<_>>()
         };
         for record in drained {
-            self.end_record(record, end).await;
+            self.end_record(record, &end).await;
         }
     }
 }
