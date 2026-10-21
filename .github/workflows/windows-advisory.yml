@@ -462,6 +462,14 @@ jobs:
                   with self.assertRaisesRegex(RuntimeError, 'frozen root/diff/JSON scope'):
                       self.ns['printed_recovery'](stderr.replace(b'"', b"'"), root, diff, windows=True)
 
+              def test_windows_recovery_keeps_single_quotes_for_dollar_paths(self):
+                  drive = 'Q' + ':'
+                  root = drive + r'\synthetic $selector literal'
+                  diff = root + r'\fixture change.diff'
+                  expected = f"ripr check --root '{drive}/synthetic $selector literal' --diff '{drive}/synthetic $selector literal/fixture change.diff' --json"
+                  self.assertEqual(self.ns['recovery_command'](root, diff, windows=True), expected)
+                  self.assertEqual(self.ns['printed_recovery'](('`' + expected + '`').encode(), root, diff, windows=True), expected)
+
               def test_posix_recovery_keeps_single_quotes(self):
                   root = '/synthetic-selector-fixture literal'
                   diff = root + '/fixture change.diff'
@@ -1072,8 +1080,11 @@ jobs:
               paths = [str(fixture), str(diff)]
               if windows:
                   paths = [p.removeprefix("\\\\?\\").replace("\\", "/") for p in paths]
-              quote = '"' if windows else "'"
-              return f"ripr check --root {quote}{paths[0]}{quote} --diff {quote}{paths[1]}{quote} --json"
+              def arg(path):
+                  # Mirror shell_arg_for: Windows console double quotes, except a path with $ or a backtick keeps single quotes.
+                  quote = '"' if windows and not any(c in path for c in '$' + chr(96)) else "'"
+                  return quote + path + quote
+              return f"ripr check --root {arg(paths[0])} --diff {arg(paths[1])} --json"
 
           def printed_recovery(stderr, fixture, diff, windows=None):
               matches = re.findall(chr(96) + r"(ripr check [^\x60]+)" + chr(96), stderr.decode())
