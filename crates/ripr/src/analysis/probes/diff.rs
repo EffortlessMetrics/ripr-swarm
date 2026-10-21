@@ -5183,13 +5183,28 @@ mod source_currentness_tests {
         let index = macro_source_index(&path, source);
         let both = ChangedFile {
             path: path.clone(),
-            added_lines: vec![macro_line(3, "#[derive(Clone, Debug)]")],
-            removed_lines: vec![macro_line(3, "#[derive(Clone)]")],
+            // Faithful diff text keeps the source indentation, so the old
+            // file can be reconstructed and the removed side is macro-owned.
+            added_lines: vec![macro_line(3, "        #[derive(Clone, Debug)]")],
+            removed_lines: vec![macro_line(3, "        #[derive(Clone)]")],
         };
         let probes = probes_for_file(Path::new("workspace"), &both, &index);
-        // A positionally paired edit reads as one probe carrying both sides.
-        assert_eq!(probes.len(), 1, "{probes:?}");
-        assert_eq!(probes[0].before.as_deref(), Some("#[derive(Clone)]"));
+        // One probe per diff side: the added probe pairs its old line as
+        // `before`, and the removed side seeds its own.
+        assert_eq!(probes.len(), 2, "{probes:?}");
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.before.as_deref() == Some("#[derive(Clone)]")
+                    && probe.after.is_some()),
+            "{probes:?}"
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.before.is_some() && probe.after.is_none()),
+            "{probes:?}"
+        );
         assert!(
             probes
                 .iter()
