@@ -9188,7 +9188,7 @@ tests = [
   "crates/ripr/src/analysis/extract/calls.rs::tests::alias_bound_inside_a_macro_token_tree_is_not_resolved",
   "crates/ripr/src/analysis/extract/calls.rs::tests::ambiguous_or_non_function_aliases_are_not_resolved",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::given_free_fn_when_test_calls_it_through_a_local_alias_then_direct_owner_call",
-  "crates/ripr/src/analysis/classify/activation.rs::tests::value_facts_for_test_reads_alias_call_arguments_not_quoted_target_text",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::value_facts_for_test_reads_alias_call_arguments_not_quoted_owner_text",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::proc_macro_derive_entries_skip_a_non_ascii_identifier",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::derive_witness_through_the_real_syntax_adapter",
   "crates/ripr/src/analysis/test_grip_evidence/reach_limit.rs::tests::transitive_summary_names_a_derive_entry_without_claiming_a_call",

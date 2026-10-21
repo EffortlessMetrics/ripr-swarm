@@ -5722,9 +5722,9 @@ assert_eq!(input.amount, 100);"#
     /// #8999: a call through a local alias reads the alias call's own
     /// arguments, never a target-looking quoted substring on the same line.
     #[test]
-    fn value_facts_for_test_reads_alias_call_arguments_not_quoted_target_text() {
-        let owner = function("pub fn target(limit: u32) -> bool {\n    limit > 5\n}");
-        let body = "let f = crate::gate::target;\nassert_eq!(f(7), \"target(100)\");";
+    fn value_facts_for_test_reads_alias_call_arguments_not_quoted_owner_text() {
+        let owner = function("pub fn score(limit: u32) -> bool {\n    limit > 5\n}");
+        let body = "let f = crate::gate::score;\nassert_eq!(f(7), \"score(100)\");";
         let test = TestSummary {
             name: "alias_call".to_string(),
             file: PathBuf::from("tests/value.rs"),

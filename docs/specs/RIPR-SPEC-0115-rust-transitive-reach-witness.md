@@ -286,7 +286,7 @@ requirements in this spec remain unchanged.
   — local function alias calls (#8999): positive, path-spelled fact text, and fail-closed negatives
 - `crates/ripr/src/analysis/classify/related_tests.rs::tests::given_free_fn_when_test_calls_it_through_a_local_alias_then_direct_owner_call`
   — the alias fact drives the real related-test relation for a free-function owner
-- `crates/ripr/src/analysis/classify/activation.rs::tests::value_facts_for_test_reads_alias_call_arguments_not_quoted_target_text`
+- `crates/ripr/src/analysis/classify/activation.rs::tests::value_facts_for_test_reads_alias_call_arguments_not_quoted_owner_text`
   — alias calls read their own arguments, not a quoted target-looking substring
 - `crates/ripr/src/analysis/test_grip_evidence/reach_limit.rs::tests::transitive_summary_names_a_derive_entry_without_claiming_a_call`
   — the grip summary does not say the test calls a derive entry
