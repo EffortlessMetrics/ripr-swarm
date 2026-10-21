@@ -192,6 +192,16 @@ cannot be read. With no observed whole-result call the ladder result
 stands. Rule 3 runs after RIPR-SPEC-0243 rule 8 and before RIPR-SPEC-0248
 rule 1, on the same value seams.
 
+**Rule 4. A refused nested callback holding an `expect(` is unknown, not a gap.**
+(Added 2026-10-21.) When every oracle-eligible related test collects no
+assertion, has assertion admission `assertion_like_present_but_unresolved`,
+and its body holds an `expect(` inside a `.then(` handler or an async
+`forEach` callback (the forms rule 2 refuses), the finding reads
+`static_unknown` instead of `weakly_exposed`, with a missing note saying the
+discriminator is not established either way. Any other unresolved cause (a
+shadowed `expect`, a no-op helper) stays `weakly_exposed`. Rule 4 removes an
+actionable gap and credits nothing.
+
 ### Decisions
 
 The owner delegated these choices on 2026-10-04 ("make reasonable
@@ -283,12 +293,14 @@ and the rejected alternative.
    assertion observing `(total([10, 20]))`.
 7. `total([10, 20]).then(...)` as a bare statement, with a rejection
    handler, after another `.then` step, or with a body that re-declares a
-   receiver name: no assertion.
+   receiver name: no assertion; the finding reads `static_unknown` when
+   the body holds an `expect(` (rule 4).
 8. `await t.test("x", () => { assert.strictEqual(memberPrice(30), 25); })`:
    one assertion, also with `{ timeout: 50 }` options; without `await`, on
    another object, or with `{ skip: true }` or `{ todo: true }`, none.
 9. `[150].forEach(async (v) => { await tick(); expect(price(v)).toBe(140); })`
-   or `[150].forEach((v) => { return load(v).then(...); })`: no assertion.
+   or `[150].forEach((v) => { return load(v).then(...); })`: no assertion;
+   the first reads `static_unknown` (rule 4).
 10. `return cfg` becomes `return { ...cfg }`, test
     `expect(ready(cfg).ok).toBe(true); expect(ready(cfg)).toEqual(cfg)`:
     `weakly_exposed`. So too with `ready(cfg)["ok"]`, `ready(cfg)?.ok`, or
@@ -317,7 +329,9 @@ and the rejected alternative.
 - `crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs`
   pins examples 1 to 14; `spread_override_guard.rs` unit tests pin the
   rule 3 shape, input reads and member-write detection.
-- `fixtures/typescript-verdict-corpus` pins the four Problem rows.
+- `fixtures/typescript-verdict-corpus` pins the four Problem rows; cases
+  `jest-spec0246-ex07-then-rejection-handler` and
+  `jest-spec0246-ex09-async-foreach` pin rule 4 (`limited`).
 
 ## Implementation Mapping
 
@@ -334,6 +348,8 @@ and the rejected alternative.
   `SpreadOverride`, `ts_test_local_object`; `dropped_term_guard.rs`:
   `ts_members_written`; `classifier.rs`: `ts_spread_override_unseen`,
   `ts_owner_call_member_arguments` (rule 3).
+- `crates/ripr/src/analysis/language/typescript/classifier.rs`:
+  `unresolved_assertions_only`, `body_asserts_in_unmodeled_callback` (rule 4).
 - `crates/ripr/src/analysis/language/typescript/table_rows.rs`:
   `callback_case_assertions`, shared with RIPR-SPEC-0243 rule 11.
 - `crates/ripr/src/analysis/language/typescript/literal_matcher_guard.rs`:

@@ -780,3 +780,31 @@ fn identity_copy_subject_reads_both_directions() {
         );
     }
 }
+
+#[test]
+fn refused_nested_callback_assertion_reads_static_unknown() -> Result<(), String> {
+    let head = "import { ready } from \"../src/settings\";\ntest(\"ready\", () => {\n  const cfg = { ok: true };\n";
+    // Rule 4: an `expect(` the rule 2 refusals leave uncollected is unknown.
+    for (label, body) in [
+        (
+            "refused-then-rejection-handler",
+            "  return Promise.resolve(ready(cfg)).then((r) => { expect(r).toEqual(cfg); }, () => {});\n",
+        ),
+        (
+            "refused-async-foreach",
+            "  [cfg].forEach(async (c) => { await Promise.resolve(); expect(ready(c)).toEqual(c); });\n",
+        ),
+    ] {
+        let test = format!("{head}{body}}});\n");
+        let finding = settings_finding(label, &test, "  return cfg;")?;
+        assert_eq!(finding.class, ExposureClass::StaticUnknown, "{label}");
+    }
+    // Discriminating negative: an unresolved test with no such callback (a
+    // shadowed `expect` helper) stays an actionable gap.
+    let shadowed = format!(
+        "{head}  const expect = (v: unknown) => ({{ toEqual: (_w: unknown) => v }});\n  expect(ready(cfg)).toEqual(cfg);\n}});\n"
+    );
+    let finding = settings_finding("unresolved-shadowed-expect", &shadowed, "  return cfg;")?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    Ok(())
+}

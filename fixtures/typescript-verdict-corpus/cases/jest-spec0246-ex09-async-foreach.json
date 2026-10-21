@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "`return amount - 10` becomes `return amount - 20`. The test runs `[150].forEach(async (v) => { await tick(); expect(tickPrice(v)).toBe(140); })` with `tick = () => Promise.resolve()`. `forEach` discards the callback's promise, so jest reports no failing test, but the failed `expect` becomes an unhandled rejection that ends the jest process with exit code 1, so the test command fails on the edit. RIPR-SPEC-0246 example 9: an `async` `forEach` callback collects no assertion. ripr reads no oracle in the test (`unknown`) and reports `weakly_exposed`, as the spec states; against the command-level truth that is a false actionable gap the spec accepts.",
+  "reasoning": "`return amount - 10` becomes `return amount - 20`. The test runs `[150].forEach(async (v) => { await tick(); expect(tickPrice(v)).toBe(140); })` with `tick = () => Promise.resolve()`. `forEach` discards the callback's promise, so jest reports no failing test, but the failed `expect` becomes an unhandled rejection that ends the jest process with exit code 1, so the test command fails on the edit. RIPR-SPEC-0246 example 9: an `async` `forEach` callback collects no assertion. ripr reads no oracle in the test (`unknown`) and reported `weakly_exposed` when labeled; since RIPR-SPEC-0246 rule 4 (2026-10-21) the finding reads `static_unknown` (`limited`), an abstention the case accepts, because the unresolved assertion-like callback leaves the discriminator unestablished.",
   "labeling_observation": {
     "ripr_commit": "3480fb2",
     "full_checkout_verdict": "gap",

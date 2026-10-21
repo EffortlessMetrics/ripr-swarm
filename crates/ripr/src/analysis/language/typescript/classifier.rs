@@ -4412,6 +4412,29 @@ impl Folder<'_> {
 
 // ── Family↔oracle-kind matching (RIPR-SPEC-0104) ─────────────────────────────
 
+/// True when every oracle-eligible related test holds assertion-like code the
+/// extractor could not resolve, so the absence of a discriminator is unproven.
+fn unresolved_assertions_only(candidates: &[TypeScriptRelatedCandidate<'_>]) -> bool {
+    let mut eligible = candidates
+        .iter()
+        .filter(|candidate| candidate.relation.uses_oracle())
+        .peekable();
+    eligible.peek().is_some()
+        && eligible.all(|candidate| {
+            candidate.test.assertions.is_empty()
+                && candidate.test.assertion_admission == TypeScriptAssertionAdmission::Unresolved
+                && body_asserts_in_unmodeled_callback(&candidate.test.body_text)
+        })
+}
+
+/// An `expect(` inside a `.then(` handler or an async `forEach` callback: the
+/// two shapes RIPR-SPEC-0246 rule 2 refuses to collect although the assertion
+/// still runs. Other `Unresolved` causes (a shadowed `expect`, a no-op helper)
+/// stay actionable gaps.
+fn body_asserts_in_unmodeled_callback(body: &str) -> bool {
+    body.contains("expect(") && (body.contains(".then(") || body.contains("forEach(async"))
+}
+
 /// Returns `true` when `oracle_kind` can observe the seam identified by
 /// `probe_family`.
 ///
@@ -5181,6 +5204,20 @@ pub(crate) fn classify_change_with_alias_state(
             StageState::Weak,
             StageState::Weak,
             vec![named_limitation],
+        )
+    } else if unresolved_assertions_only(&related_candidates) {
+        // Every oracle-eligible test holds assertion-like code the extractor
+        // could not resolve, so "no discriminator" is not established. Say
+        // unknown, not an actionable gap (RIPR-SPEC-0246 examples 7 and 9).
+        (
+            ExposureClass::StaticUnknown,
+            StageState::Yes,
+            StageState::Unknown,
+            StageState::Unknown,
+            vec![format!(
+                "Related tests reach `{}` but hold assertion-like code the TypeScript extractor could not resolve (a `.then` with a rejection handler or an async `forEach` callback); the discriminator is not established either way.",
+                owner.name
+            )],
         )
     } else {
         (

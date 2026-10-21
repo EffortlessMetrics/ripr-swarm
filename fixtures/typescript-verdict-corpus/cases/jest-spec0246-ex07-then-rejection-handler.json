@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "`items.reduce((sum, item) => sum + item, 0)` becomes `..., 1)`. The test returns `orderSum([10, 20]).then((sum) => { expect(sum).toBe(30); }, () => {})`; the rejection handler only handles a rejection of `orderSum`, so the failing `expect` in the fulfilment handler rejects the returned promise and jest fails the test on 31. RIPR-SPEC-0246 example 7: a `.then` with a rejection handler collects no assertion. ripr reads no oracle in the test (`unknown`) and reports `weakly_exposed`, as the spec states; against the discriminated truth that is a false actionable gap the spec accepts.",
+  "reasoning": "`items.reduce((sum, item) => sum + item, 0)` becomes `..., 1)`. The test returns `orderSum([10, 20]).then((sum) => { expect(sum).toBe(30); }, () => {})`; the rejection handler only handles a rejection of `orderSum`, so the failing `expect` in the fulfilment handler rejects the returned promise and jest fails the test on 31. RIPR-SPEC-0246 example 7: a `.then` with a rejection handler collects no assertion. ripr reads no oracle in the test (`unknown`) and reported `weakly_exposed` when labeled; since RIPR-SPEC-0246 rule 4 (2026-10-21) the finding reads `static_unknown` (`limited`), an abstention the case accepts, because the unresolved assertion-like callback leaves the discriminator unestablished.",
   "labeling_observation": {
     "ripr_commit": "3480fb2",
     "full_checkout_verdict": "gap",
