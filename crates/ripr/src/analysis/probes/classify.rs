@@ -511,16 +511,17 @@ pub fn should_ignore_changed_line(text: &str) -> bool {
         || text.starts_with("pub use ")
         || text.starts_with("mod ")
         || text.starts_with("#")
-        || is_visible_module_or_use_declaration(text)
+        || is_visible_module_declaration(text)
 }
 
-/// A visibility-qualified out-of-line `mod name;` or `use path;` declaration
-/// (`pub mod new;`, `pub(crate) use a::b;`) names an item or import and holds
-/// no behavior to check. The bare and `pub use` spellings are already
-/// ignored; this covers the remaining visibility spellings. Only the
-/// `;`-terminated form qualifies, so an inline module body or any trailing
-/// code stays probed.
-fn is_visible_module_or_use_declaration(text: &str) -> bool {
+/// A visibility-qualified out-of-line `mod name;` declaration
+/// (`pub mod new;`, `pub(crate) mod x;`) names a module and holds no behavior
+/// to check. Visibility-qualified `use` lines are deliberately not covered: a
+/// retargeted re-export (`pub(crate) use fast::selected;` to
+/// `pub(crate) use slow::selected;`) changes which implementation existing call
+/// sites use. Only the `;`-terminated form qualifies, so an inline module body
+/// or any trailing code stays probed.
+fn is_visible_module_declaration(text: &str) -> bool {
     let rest = super::diff::strip_visibility(text);
     if rest.len() == text.len() {
         return false;
@@ -531,13 +532,10 @@ fn is_visible_module_or_use_declaration(text: &str) -> bool {
     if body.contains(['{', '}', ';', '=']) {
         return false;
     }
-    let after_keyword = |keyword: &str| {
-        body.strip_prefix(keyword)
-            .filter(|tail| tail.starts_with(char::is_whitespace))
-            .map(str::trim)
-    };
-    after_keyword("use").is_some_and(|path| !path.is_empty())
-        || after_keyword("mod").is_some_and(|name| {
+    body.strip_prefix("mod")
+        .filter(|tail| tail.starts_with(char::is_whitespace))
+        .map(str::trim)
+        .is_some_and(|name| {
             let name = name.strip_prefix("r#").unwrap_or(name);
             !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         })
@@ -654,16 +652,16 @@ mod tests {
         }
     }
 
-    /// #9033: a visibility-qualified module or import declaration has no
-    /// behavior; inline module bodies, trailing code and other items stay probed.
+    /// #9033: a visibility-qualified `mod name;` declaration has no behavior;
+    /// inline module bodies, trailing code, and every visibility-qualified
+    /// `use` (a retargeted re-export changes behavior) stay probed.
     #[test]
-    fn visible_module_and_use_declarations_are_ignored_but_behavior_is_not() {
+    fn visible_module_declarations_are_ignored_but_behavior_is_not() {
         for ignored in [
             "pub mod new;",
-            "pub(crate) mod new;",
+            "pub(crate) mod x;",
+            "pub(in crate::a) mod y;",
             "pub ( super ) mod r#raw;",
-            "pub(crate) use a::b;",
-            "pub use a::{b, c};",
             "mod new;",
         ] {
             assert!(should_ignore_changed_line(ignored), "`{ignored}`");
@@ -676,10 +674,55 @@ mod tests {
             "pub const MODE: u8 = 1;",
             "pub modx;",
             "pub mod ;",
+            "pub(crate) mod",
+            "pub( mod x;",
             "pub(crate) static X: u8 = 1;",
+            "pub(crate) use a::b;",
+            "pub(crate) use fast::selected;",
+            "pub(in crate::a) use slow::selected;",
         ] {
-            assert!(!should_ignore_changed_line(kept), "`{kept}`");
+            assert!(!is_visible_module_declaration(kept), "`{kept}`");
         }
+        // `pub use` keeps its pre-existing ignore; the new helper must not
+        // be what claims it.
+        assert!(!is_visible_module_declaration("pub use a::b;"));
+    }
+
+    /// Producer level: an added `pub mod new;` yields no probe, while a
+    /// retargeted `pub(crate) use` re-export still yields one.
+    #[test]
+    fn diff_producer_ignores_visible_mod_but_probes_retargeted_use() -> Result<(), String> {
+        use crate::analysis::diff::{ChangedFile, ChangedLine};
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let source = "pub mod new;\npub(crate) use slow::selected;\n";
+        let path = PathBuf::from("src/lib.rs");
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: BTreeMap::from([(path.clone(), facts)]),
+            ..Default::default()
+        });
+        let probes_for = |line: usize| {
+            let text = source.lines().nth(line - 1).unwrap_or_default().to_string();
+            let changed = ChangedFile {
+                path: path.clone(),
+                added_lines: vec![ChangedLine {
+                    line,
+                    new_side_line: line,
+                    text,
+                }],
+                removed_lines: Vec::new(),
+            };
+            super::super::diff::probes_for_file(std::path::Path::new("."), &changed, &index)
+        };
+        assert!(
+            probes_for(1).is_empty(),
+            "`pub mod new;` must yield no probe"
+        );
+        assert!(
+            !probes_for(2).is_empty(),
+            "a retargeted `pub(crate) use` must still be probed"
+        );
+        Ok(())
     }
 
     #[test]
