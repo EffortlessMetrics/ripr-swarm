@@ -108,7 +108,88 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     if let Some(chain) = resolved_chain.as_ref() {
         withhold_helper_uniqueness_as_unknown(&mut finding, chain, index, &reveal_misses);
     }
+    withhold_proc_macro_no_path_as_unknown(&mut finding, index, &reveal_misses);
     finding
+}
+
+/// Whether the changed code is proc-macro code: its package builds a
+/// `proc-macro = true` library, or its file declares a `proc_macro`,
+/// `proc_macro_derive` or `proc_macro_attribute` entry point.
+fn is_proc_macro_code(index: &RustIndex, file: &std::path::Path) -> bool {
+    index.member_crates.is_proc_macro_crate(file)
+        || index.files().get(file).is_some_and(|facts| {
+            ["proc_macro]", "proc_macro_derive(", "proc_macro_attribute]"]
+                .iter()
+                .any(|marker| facts.source.contains(&format!("#[{marker}")))
+        })
+}
+
+/// Proc-macro code is exercised through `#[derive]`/attribute expansion in
+/// another crate, so a name scan finding no test call proves nothing about
+/// reach. `no_static_path` there is an unsupported claim (serde_derive,
+/// #8999): the honest state is `static_unknown` with a stop reason naming
+/// the expansion boundary. Fail closed: only `no_static_path` is rewritten,
+/// to the non-actionable unknown; no other class is touched or promoted.
+fn withhold_proc_macro_no_path_as_unknown(
+    finding: &mut Finding,
+    index: &RustIndex,
+    reveal_misses: &[Option<RelatedTestMiss>],
+) {
+    if finding.class != ExposureClass::NoStaticPath
+        || !is_proc_macro_code(index, &finding.probe.location.file)
+    {
+        return;
+    }
+    finding.class = ExposureClass::StaticUnknown;
+    finding.ripr.reach = StageEvidence::new(
+        StageState::Unknown,
+        Confidence::Low,
+        "ripr cannot see whether tests reach this proc-macro code because they exercise it through derive or attribute expansion".to_string(),
+    );
+    let ripr = &finding.ripr;
+    finding.confidence = finding.confidence.min(confidence_score(
+        &ripr.reach,
+        &ripr.infect,
+        &ripr.propagate,
+        &ripr.reveal.observe,
+        &ripr.reveal.discriminate,
+        &finding.class,
+    ));
+    finding.stop_reasons.retain(|reason| {
+        !matches!(
+            reason,
+            StopReason::StaticProbeUnknown
+                | StopReason::TransitiveReachUnresolved
+                | StopReason::MacroReachUnresolved
+        )
+    });
+    if !finding.stop_reasons.contains(&StopReason::ProcMacroOpaque) {
+        finding.stop_reasons.push(StopReason::ProcMacroOpaque);
+    }
+    finding.missing = vec![
+        "proc-macro reach abstains: tests exercise this code through derive or attribute expansion, which ripr does not follow".to_string(),
+    ];
+    finding.activation.missing_discriminators.clear();
+    finding.recommended_next_step = Some(
+        "This is proc-macro code, which tests normally reach through `#[derive]` or an attribute in another crate; ripr does not expand macros, so it does not claim that no test reaches this change. Inspect the tests that apply the macro, and add one only if none already does.".to_string(),
+    );
+    finding
+        .evidence
+        .retain(|line| !line.contains("No static test path"));
+    finding.evidence.push(
+        "proc_macro_expansion: changed code is in a proc-macro crate; tests reach it through derive or attribute expansion".to_string(),
+    );
+    finding.evidence.extend([
+        format!("{LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX}changed proc-macro code"),
+        format!(
+            "{LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX}the derive or attribute expansion that tests exercise"
+        ),
+        format!("{LIMITATION_ANALYZER_ROUTE_PREFIX}analysis/classifier"),
+        format!(
+            "{LIMITATION_NON_CLAIM_PREFIX}no missing test is established; expansion-based reach is not modelled"
+        ),
+    ]);
+    restore_reveal_misses(&mut finding.related_tests, reveal_misses);
 }
 
 /// #7080: a helper chain refused only because an entry name is not unique
@@ -3075,6 +3156,51 @@ fn far_above_threshold_discounts() {
         assert_ne!(finding.ripr.infect.state, StageState::Yes);
         assert_eq!(finding.ripr.reveal.observe.state, StageState::No);
         assert_eq!(finding.ripr.reveal.discriminate.state, StageState::No);
+    }
+
+    #[test]
+    fn given_uncalled_owner_in_proc_macro_derive_file_when_classified_then_static_unknown() {
+        let index = uncalled_owner_index(
+            "#[proc_macro_derive(Fee)]\npub fn derive_fee(i: TokenStream) -> TokenStream { i }\n",
+        );
+        let probe = fragile_fee_probe(ProbeFamily::Predicate, "fragile_fee");
+
+        let finding = classify_probe(&probe, &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert_eq!(finding.class.severity(), "note");
+        assert_eq!(finding.ripr.reach.state, StageState::Unknown);
+        assert!(finding.stop_reasons.contains(&StopReason::ProcMacroOpaque));
+        assert!(
+            !finding
+                .stop_reasons
+                .contains(&StopReason::TransitiveReachUnresolved)
+        );
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.starts_with("proc_macro_expansion:")),
+            "{:?}",
+            finding.evidence
+        );
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .all(|test| test.miss != Some(RelatedTestMiss::NoCallPath))
+        );
+    }
+
+    #[test]
+    fn given_uncalled_owner_in_ordinary_lib_file_when_classified_then_still_no_static_path() {
+        let index = uncalled_owner_index("pub fn proc_macro_derive_helper() {}\n");
+        let probe = fragile_fee_probe(ProbeFamily::Predicate, "fragile_fee");
+
+        let finding = classify_probe(&probe, &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+        assert!(!finding.stop_reasons.contains(&StopReason::ProcMacroOpaque));
     }
 
     // A changed line inside a `macro_rules!` template has no resolved owner,

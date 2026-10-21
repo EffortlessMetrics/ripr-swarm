@@ -424,6 +424,32 @@ impl MemberCrates {
     }
 }
 
+impl MemberCrates {
+    /// Whether `file` (root-relative) belongs to a package whose library is
+    /// a proc-macro crate (`[lib] proc-macro = true`). Tests reach such code
+    /// only through derive/attribute expansion, which ripr does not follow.
+    /// Without manifest authority, or with any value it cannot read, the
+    /// answer is no.
+    pub(crate) fn is_proc_macro_crate(&self, file: &Path) -> bool {
+        let Some(root) = &self.root else {
+            return false;
+        };
+        let root = lexical(root);
+        let file = lexical(&root.join(file));
+        let Some(directory) = file.parent() else {
+            return false;
+        };
+        nearest_package(&root, directory).is_some_and(|(package, _)| {
+            package
+                .manifest
+                .get("lib")
+                .and_then(|lib| lib.get("proc-macro").or_else(|| lib.get("proc_macro")))
+                .and_then(toml::Value::as_bool)
+                == Some(true)
+        })
+    }
+}
+
 /// One package manifest: its directory and parsed table.
 struct Package {
     directory: PathBuf,
@@ -691,6 +717,29 @@ mod tests {
         let default = MemberCrates::new(&root).is_default_target_root(Path::new(crate_root));
         let _ = std::fs::remove_dir_all(&root);
         Ok(default)
+    }
+
+    #[test]
+    fn only_a_proc_macro_library_package_is_a_proc_macro_crate() -> Result<(), String> {
+        let root = temp_workspace(
+            "proc-macro-crate",
+            &[
+                (
+                    "derive/Cargo.toml",
+                    "[package]\nname = \"derive\"\nversion = \"0.1.0\"\n[lib]\nproc-macro = true\n",
+                ),
+                ("plain/Cargo.toml", PRICING),
+            ],
+        )?;
+        let members = MemberCrates::new(&root);
+        let derive = members.is_proc_macro_crate(Path::new("derive/src/lib.rs"));
+        let plain = members.is_proc_macro_crate(Path::new("plain/src/lib.rs"));
+        let none = MemberCrates::default().is_proc_macro_crate(Path::new("derive/src/lib.rs"));
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(derive);
+        assert!(!plain);
+        assert!(!none);
+        Ok(())
     }
 
     #[test]
