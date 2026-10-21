@@ -32,9 +32,9 @@ fn json_registry_carries_the_documented_fields() {
     assert_eq!(doc["schema_version"], "0.1");
     assert_eq!(doc["absent_cell_meaning"], "not_proven");
     assert!(
-        doc["semantic_digest"]
-            .as_str()
-            .is_some_and(|digest| digest.starts_with("sha256:")),
+        doc["semantic_digest"].as_str().is_some_and(
+            |digest| digest.len() == "sha256:".len() + 64 && digest.starts_with("sha256:")
+        ),
         "{doc}"
     );
     let languages = doc["languages"].as_array().cloned().unwrap_or_default();

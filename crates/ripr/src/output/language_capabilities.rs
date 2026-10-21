@@ -24,7 +24,9 @@ fn selected(language: Option<LanguageId>) -> Vec<&'static CapabilityCell> {
 fn language_status(language: LanguageId) -> &'static str {
     match language {
         LanguageId::Rust => "stable",
-        _ => "preview",
+        LanguageId::TypeScript | LanguageId::JavaScript | LanguageId::Python | LanguageId::Perl => {
+            "preview"
+        }
     }
 }
 
