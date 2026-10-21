@@ -8,8 +8,11 @@
 //! This module recognises that dispatch conservatively. It admits a test only
 //! when every link is established from syntax alone:
 //!
-//! - the owner is `fmt` of a non-generic `Display` or `Debug` impl for `T`;
-//! - exactly one indexed `fmt` carries that trait and self type;
+//! - the owner is `fmt` of a `Display` or `Debug` impl for `T` (generic
+//!   arguments of the self type are ignored, as `impl_self_type_name` does);
+//! - exactly one indexed `fmt` carries that trait and self type, and exactly
+//!   one `struct`/`enum`/`union`/`type` named `T` is declared in the index (a
+//!   same-named type elsewhere, possibly with a derived `Debug`, fails closed);
 //! - a formatting macro (or `.to_string()` for `Display`) in the test has a
 //!   placeholder whose trait matches (`{}` vs `{:?}`), and
 //! - the placeholder's argument is typed `T` by a constructor head or a
@@ -24,7 +27,7 @@ use super::{
     is_ident_byte, let_binding_mentions_type, method_call_resolves_to_impl,
 };
 use crate::analysis::extract::mask_comments_and_strings;
-use crate::analysis::rust_index::{FunctionSummary, TestSummary};
+use crate::analysis::rust_index::{FunctionSummary, RustIndex, TestSummary};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum FmtTrait {
@@ -45,7 +48,7 @@ const FORMAT_MACROS: &[(&str, usize)] = &[
     ("writeln", 1),
 ];
 
-/// Trait and self type of a non-generic `Display`/`Debug` `fmt` owner.
+/// Trait and self type of a `Display`/`Debug` `fmt` owner.
 fn fmt_owner(owner: &FunctionSummary) -> Option<(FmtTrait, String)> {
     if owner.name != "fmt" {
         return None;
@@ -77,10 +80,14 @@ pub(super) fn test_dispatches_to_fmt(
     test: &TestSummary,
     owner: &FunctionSummary,
     same_name_ids: &[&str],
+    index: &RustIndex,
 ) -> bool {
     let Some((fmt_trait, self_type)) = fmt_owner(owner) else {
         return false;
     };
+    if !body_may_dispatch_fmt(&test.body) {
+        return false;
+    }
     let same_fmt_impls = same_name_ids
         .iter()
         .filter(|id| {
@@ -92,12 +99,42 @@ pub(super) fn test_dispatches_to_fmt(
         return false;
     }
     let masked = mask_comments_and_strings(&test.body);
-    if fmt_trait == FmtTrait::Display
-        && method_call_resolves_to_impl(test, "to_string", &self_type, None)
-    {
-        return true;
+    let dispatches = (fmt_trait == FmtTrait::Display
+        && method_call_resolves_to_impl(test, "to_string", &self_type, None))
+        || macro_dispatch(&test.body, &masked, fmt_trait, &self_type);
+    dispatches && type_declared_once(index, &self_type)
+}
+
+/// Whether exactly one `struct`/`enum`/`union`/`type` named `name` is
+/// declared across the indexed files (comments and strings masked).
+fn type_declared_once(index: &RustIndex, name: &str) -> bool {
+    let mut declared = 0usize;
+    for file in index.files().values() {
+        if !file.source.contains(name) {
+            continue;
+        }
+        let masked = mask_comments_and_strings(&file.source);
+        declared += declarations_in(&masked, name);
+        if declared > 1 {
+            return false;
+        }
     }
-    macro_dispatch(&test.body, &masked, fmt_trait, &self_type)
+    declared == 1
+}
+
+fn declarations_in(masked: &str, name: &str) -> usize {
+    let mut tokens = masked
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|token| !token.is_empty());
+    let mut previous = "";
+    let mut count = 0usize;
+    for token in &mut tokens {
+        if token == name && matches!(previous, "struct" | "enum" | "union" | "type") {
+            count += 1;
+        }
+        previous = token;
+    }
+    count
 }
 
 fn trait_of(name: &str) -> Option<FmtTrait> {
@@ -306,12 +343,7 @@ fn matching_close(bytes: &[u8], open: usize) -> Option<usize> {
 
 /// Split `masked[start..end]` at top-level commas, pairing each piece with the
 /// same byte range of `raw` (masking preserves length).
-fn split_top_level<'a>(
-    masked: &'a str,
-    raw: &'a str,
-    start: usize,
-    end: usize,
-) -> Vec<Arg<'a>> {
+fn split_top_level<'a>(masked: &'a str, raw: &'a str, start: usize, end: usize) -> Vec<Arg<'a>> {
     let mut args = Vec::new();
     let mut depth = 0usize;
     let mut piece = start;
@@ -327,8 +359,9 @@ fn split_top_level<'a>(
             _ => {}
         }
     }
-    if !masked[piece..end].trim().is_empty() {
-        args.push((&masked[piece..end], raw.get(piece..end).unwrap_or("")));
+    let tail = raw.get(piece..end).unwrap_or("");
+    if !tail.trim().is_empty() {
+        args.push((&masked[piece..end], tail));
     }
     args
 }
@@ -336,7 +369,7 @@ fn split_top_level<'a>(
 #[cfg(test)]
 mod tests {
     use super::super::find_related_tests;
-    use crate::analysis::facts::{FunctionSourceRole, OwnedRustIndex};
+    use crate::analysis::facts::{FileFacts, FunctionSourceRole, OwnedRustIndex};
     use crate::analysis::rust_index::{FunctionSummary, RustIndex, TestSummary};
     use crate::domain::{
         DeltaKind, Probe, ProbeFamily, ProbeId, RelationReason, SourceLocation, SymbolId,
@@ -397,6 +430,45 @@ mod tests {
 
     /// Reasons the tests relate through for the given `fmt` impl owners.
     fn reasons(impls: &[&str], owner: usize, bodies: &[&str]) -> Vec<(String, RelationReason)> {
+        reasons_with(impls, owner, bodies, &[])
+    }
+
+    /// Like `reasons`, with extra source files (type declarations elsewhere).
+    fn reasons_with(
+        impls: &[&str],
+        owner: usize,
+        bodies: &[&str],
+        extra_sources: &[&str],
+    ) -> Vec<(String, RelationReason)> {
+        // Each distinct self type is declared once in the owner's file.
+        let mut declared: Vec<&str> = impls
+            .iter()
+            .filter_map(|header| header.rsplit_once(" for ").map(|(_, ty)| ty))
+            .collect();
+        declared.sort_unstable();
+        declared.dedup();
+        let owner_source: String = declared
+            .iter()
+            .map(|ty| format!("pub struct {ty};\n"))
+            .collect();
+        let mut files = std::collections::BTreeMap::new();
+        for (path, source) in std::iter::once(("src/error.rs".to_string(), owner_source.as_str()))
+            .chain(
+                extra_sources
+                    .iter()
+                    .enumerate()
+                    .map(|(at, source)| (format!("src/extra{at}.rs"), *source)),
+            )
+        {
+            files.insert(
+                PathBuf::from(&path),
+                FileFacts {
+                    path: PathBuf::from(&path),
+                    source: source.into(),
+                    ..FileFacts::default()
+                },
+            );
+        }
         let functions: Vec<FunctionSummary> = impls
             .iter()
             .map(|header| fmt_function("src/error.rs", header))
@@ -410,6 +482,7 @@ mod tests {
         let index = RustIndex::from_owned(OwnedRustIndex {
             functions,
             tests,
+            files,
             ..Default::default()
         });
         find_related_tests(&probe(), Some(&owner), &index, true, None, None)
@@ -502,5 +575,70 @@ mod tests {
             &["let e = DecodeError::InvalidByte(0, 1);\nformat!(\"{:?}\", e);"],
         );
         assert!(related.is_empty(), "{related:?}");
+    }
+
+    #[test]
+    fn same_named_type_declared_elsewhere_fails_closed() {
+        // Another `DecodeError` (say with a derived `Debug`) makes the bare
+        // type name ambiguous, so the formatted value may be that one.
+        let related = reasons_with(
+            &["fmt::Debug for DecodeError"],
+            0,
+            &["let e = DecodeError::InvalidByte(0, 1);\nformat!(\"{:?}\", e);"],
+            &["#[derive(Debug)]\npub enum DecodeError { A }\n"],
+        );
+        assert!(related.is_empty(), "{related:?}");
+        // A mention in a comment or string is not a declaration.
+        let related = reasons_with(
+            &["fmt::Debug for DecodeError"],
+            0,
+            &["let e = DecodeError::InvalidByte(0, 1);\nformat!(\"{:?}\", e);"],
+            &["// pub struct DecodeError;\nconst S: &str = \"enum DecodeError\";\n"],
+        );
+        assert!(direct(&related, "t0"), "{related:?}");
+    }
+
+    #[test]
+    fn display_and_debug_impls_of_one_type_are_told_apart() {
+        let impls = ["fmt::Display for DecodeError", "fmt::Debug for DecodeError"];
+        let display_only = "let e = DecodeError::InvalidByte(0, 1);\nformat!(\"{}\", e);";
+        let debug_only = "let e = DecodeError::InvalidByte(0, 1);\nformat!(\"{:?}\", e);";
+        let display_owner = reasons(&impls, 0, &[display_only, debug_only]);
+        assert!(direct(&display_owner, "t0"), "{display_owner:?}");
+        assert!(!display_owner.iter().any(|(name, _)| name == "t1"));
+        let debug_owner = reasons(&impls, 1, &[display_only, debug_only]);
+        assert!(direct(&debug_owner, "t1"), "{debug_owner:?}");
+        assert!(!debug_owner.iter().any(|(name, _)| name == "t0"));
+    }
+
+    #[test]
+    fn placeholder_and_macro_forms_are_parsed() {
+        let display = |body: &str| {
+            let related = reasons(&["fmt::Display for DecodeError"], 0, &[body]);
+            direct(&related, "t0")
+        };
+        let ctor = "let e = DecodeError::InvalidByte(0, 1);\n";
+        // Positional index, named argument, width spec, escaped braces.
+        assert!(display(&format!("{ctor}format!(\"{{1}} {{0}}\", 1, e);")));
+        assert!(display(&format!("{ctor}format!(\"{{v}}\", v = e);")));
+        assert!(display(&format!("{ctor}format!(\"{{:>8}}\", e);")));
+        assert!(display(&format!("{ctor}format!(\"{{{{}}}} {{}}\", e);")));
+        assert!(display(&format!("{ctor}println!(\"{{}}\", e);")));
+        assert!(display(&format!(
+            "{ctor}let mut s = String::new();\nwriteln!(s, \"{{}}\", e).unwrap();"
+        )));
+        assert!(display("format!(\"{}\", DecodeError);"));
+        // The Display placeholder takes the other argument; hex ignores `e`.
+        assert!(!display(&format!("{ctor}format!(\"{{0}}\", 1, e);")));
+        assert!(!display(&format!("{ctor}format!(\"{{:x}}\", e);")));
+        assert!(!display(&format!("{ctor}format!(\"{{{{}}}}\", e);")));
+        assert!(!display(&format!(
+            "{ctor}format!(\"{{v}}\", v = 1, w = e);"
+        )));
+        // Not a formatting macro, or destination mistaken for the value.
+        assert!(!display(&format!(
+            "{ctor}assert!(matches!(e, DecodeError::A), \"{{}}\", 1);"
+        )));
+        assert!(!display(&format!("{ctor}write!(e, \"{{}}\", 1);")));
     }
 }

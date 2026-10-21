@@ -894,7 +894,7 @@ fn find_related_tests_with_candidates<'a>(
         // self type runs a changed `Display`/`Debug` `fmt` without naming it.
         let dispatches_to_fmt = !calls_owner_by_name
             && owner_fn.is_some_and(|owner| {
-                fmt_dispatch::test_dispatches_to_fmt(test, owner, &indexed_same_name_ids)
+                fmt_dispatch::test_dispatches_to_fmt(test, owner, &indexed_same_name_ids, index)
             });
         let calls_owner = calls_owner_by_name || dispatches_to_fmt;
         // #3714: captured `calls` facts only — the same authority as
