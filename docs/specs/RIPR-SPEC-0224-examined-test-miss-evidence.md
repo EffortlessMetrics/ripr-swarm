@@ -123,9 +123,9 @@ evidence line `test_assertion_admission: <state> (<test>)` to its finding.
 The line is evidence only: it changes no verdict, ranking, miss or
 actionability. For Python, a `conftest.py` on the test's directory chain that
 declares an `autouse` fixture, a `pytest_runtest_*` hook or `pytest_plugins`,
-or that could not be read, withholds `extraction_complete_no_assertion` from
+or that star-imports or aliases implicit setup, or that could not be read, withholds `extraction_complete_no_assertion` from
 every test in its scope (#6657). Remaining blind spots (dynamically registered
-plugins, sibling-module helpers, TypeScript setup files) are tracked in #6657
+plugins, plugins or `usefixtures` set in pytest ini `addopts`, sibling-module helpers, TypeScript setup files) are tracked in #6657
 and #6889.
 
 ### Family-relevant assertion selection (Python)

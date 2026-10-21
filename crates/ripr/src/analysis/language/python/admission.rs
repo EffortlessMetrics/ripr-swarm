@@ -31,7 +31,10 @@
 //! run_case` beside the test), a `conftest.py` that overrides a built-in
 //! fixture such as `tmp_path`, a plugin registered dynamically
 //! (`config.pluginmanager.register`), and a plugin installed by entry point
-//! can still fail a `NoAssertionLike` test (#6657). A module imported from
+//! can still fail a `NoAssertionLike` test, as can pytest configuration
+//! outside any conftest (`-p` or `usefixtures` in an ini file's `addopts`)
+//! (#6657). A conftest that re-exports implicit setup (a star import, a
+//! hook-named import or alias, an autouse-fixture factory) is tainted. A module imported from
 //! the test file's own directory or below is treated as test support; for a
 //! test file at the repository root, a relative import is treated as test
 //! support by alias. A `no_assertion` miss must account for the rest before
@@ -96,6 +99,10 @@ pub(super) struct PythonAdmissionContext {
     /// A `pytest_plugins = [...]` declaration: it loads plugin modules whose
     /// hooks and autouse fixtures RIPR cannot read (#6657).
     has_plugins: bool,
+    /// A conftest star import, hook-named import or autouse-fixture factory:
+    /// it may re-export implicit setup defined elsewhere. Read only for
+    /// `conftest_installs_implicit_setup`.
+    has_conftest_reexport: bool,
     /// Aliases bound by a relative import, tracked only for a test file at
     /// the repository root (empty `module_dir`), where the resolved source
     /// module carries no directory prefix to recognise as test support.
@@ -244,6 +251,27 @@ impl PythonAdmissionContext {
                 Stmt::Assign(assign) if assign.targets.iter().any(is_pytest_plugins_target) => {
                     self.has_plugins = true;
                 }
+                // `autouse_fix = pytest.fixture(autouse=True)` or a hook alias
+                // (`pytest_runtest_call = other.hook`) is a later decorator or
+                // hook the def-based scan does not see.
+                Stmt::Assign(assign)
+                    if builds_autouse_fixture(&assign.value)
+                        || assign.targets.iter().any(is_runtest_hook_target) =>
+                {
+                    self.has_conftest_reexport = true;
+                }
+                Stmt::ImportFrom(import)
+                    if import.names.iter().any(|alias| {
+                        alias.name.as_str() == "*"
+                            || is_runtest_hook_name(alias.name.as_str())
+                            || alias
+                                .asname
+                                .as_ref()
+                                .is_some_and(|name| is_runtest_hook_name(name.as_str()))
+                    }) =>
+                {
+                    self.has_conftest_reexport = true;
+                }
                 Stmt::AnnAssign(assign) if is_pytest_plugins_target(&assign.target) => {
                     self.has_plugins = true;
                 }
@@ -315,12 +343,7 @@ impl PythonAdmissionContext {
         if decorators.iter().any(is_autouse_fixture) {
             self.has_implicit_fixture = true;
         }
-        if name.starts_with("pytest_runtest_")
-            || matches!(
-                name,
-                "pytest_pyfunc_call" | "pytest_fixture_setup" | "pytest_fixture_post_finalizer"
-            )
-        {
+        if is_runtest_hook_name(name) {
             self.has_runtest_hook = true;
         }
         self.defined_names.insert(name.to_string());
@@ -333,7 +356,45 @@ impl PythonAdmissionContext {
 pub(super) fn conftest_installs_implicit_setup(statements: &[Stmt]) -> bool {
     let mut context = PythonAdmissionContext::default();
     context.collect(statements, &mut Vec::new());
-    context.has_implicit_fixture || context.has_runtest_hook || context.has_plugins
+    context.has_implicit_fixture
+        || context.has_runtest_hook
+        || context.has_plugins
+        || context.has_conftest_reexport
+}
+
+fn is_runtest_hook_name(name: &str) -> bool {
+    name.starts_with("pytest_runtest_")
+        || matches!(
+            name,
+            "pytest_pyfunc_call" | "pytest_fixture_setup" | "pytest_fixture_post_finalizer"
+        )
+}
+
+fn is_runtest_hook_target(target: &Expr) -> bool {
+    matches!(target, Expr::Name(name) if is_runtest_hook_name(name.id.as_str()))
+}
+
+/// A value that builds an autouse fixture decorator for later use:
+/// `pytest.fixture(autouse=True)` or `functools.partial(pytest.fixture,
+/// autouse=True)`.
+fn builds_autouse_fixture(value: &Expr) -> bool {
+    let Expr::Call(call) = value else {
+        return false;
+    };
+    if is_autouse_fixture(value) {
+        return true;
+    }
+    let is_partial =
+        expr_full_name(call.func.as_ref()).is_some_and(|name| name.ends_with("partial"));
+    is_partial
+        && call
+            .args
+            .iter()
+            .any(|arg| expr_full_name(arg).is_some_and(|name| name.ends_with("fixture")))
+        && call
+            .keywords
+            .iter()
+            .any(|keyword| keyword.arg.as_ref().is_none_or(|arg| arg == "autouse"))
 }
 
 fn is_pytest_plugins_target(target: &Expr) -> bool {
@@ -939,12 +1000,14 @@ fn is_autouse_fixture(decorator: &Expr) -> bool {
     // A non-literal `autouse=` value cannot be ruled out, so it counts.
     is_fixture
         && call.keywords.iter().any(|keyword| {
-            keyword.arg.as_ref().is_some_and(|arg| arg == "autouse")
-                && !matches!(
-                    &keyword.value,
-                    Expr::Constant(constant)
-                        if matches!(constant.value, ast::Constant::Bool(false))
-                )
+            // `**options` may carry `autouse=True`.
+            keyword.arg.is_none()
+                || keyword.arg.as_ref().is_some_and(|arg| arg == "autouse")
+                    && !matches!(
+                        &keyword.value,
+                        Expr::Constant(constant)
+                            if matches!(constant.value, ast::Constant::Bool(false))
+                    )
         })
 }
 

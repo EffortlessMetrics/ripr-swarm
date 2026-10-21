@@ -330,7 +330,7 @@ fn root_level_test_file_treats_relative_imports_as_test_support() -> Result<(), 
 
 #[test]
 fn repo_mode_withholds_no_assertion_under_a_conftest_autouse() -> Result<(), String> {
-    let run = |label: &str, conftest: Option<&str>| -> Result<Vec<String>, String> {
+    let run = |label: &str, conftest: Option<(&str, &str)>| -> Result<Vec<String>, String> {
         let root = std::env::temp_dir().join(format!(
             "ripr-py-conftest-{label}-{}-{}",
             std::process::id(),
@@ -351,8 +351,8 @@ fn repo_mode_withholds_no_assertion_under_a_conftest_autouse() -> Result<(), Str
             "def tax_band(amount):\n    if amount > 50:\n        return 2\n    return 1\n",
         )?;
         write("tests/test_tax.py", CALL_ONLY)?;
-        if let Some(conftest) = conftest {
-            write("tests/conftest.py", conftest)?;
+        if let Some((path, conftest)) = conftest {
+            write(path, conftest)?;
         }
         let adapter = PythonAdapter;
         let options = AnalysisOptions {
@@ -387,11 +387,18 @@ fn repo_mode_withholds_no_assertion_under_a_conftest_autouse() -> Result<(), Str
         clean.iter().any(|line| line.contains(NONE)),
         "without a conftest the call-only test is assertion-free, got {clean:?}"
     );
-    let tainted = run("autouse", Some(AUTOUSE_LEAK_CHECK))?;
+    let tainted = run("autouse", Some(("tests/conftest.py", AUTOUSE_LEAK_CHECK)))?;
     assert!(
         tainted.iter().any(|line| line.contains(UNRESOLVED))
             && !tainted.iter().any(|line| line.contains(NONE)),
         "a conftest autouse must withhold the no-assertion state, got {tainted:?}"
+    );
+    // A conftest at the repository root is on the chain too.
+    let ancestor = run("ancestor", Some(("conftest.py", AUTOUSE_LEAK_CHECK)))?;
+    assert!(
+        ancestor.iter().any(|line| line.contains(UNRESOLVED))
+            && !ancestor.iter().any(|line| line.contains(NONE)),
+        "a root conftest autouse must withhold the state in repo mode, got {ancestor:?}"
     );
     // Keep the enum import exercised by the state mapping.
     assert_eq!(A::NoAssertionLike.as_str(), NONE);
@@ -403,7 +410,7 @@ fn repo_mode_withholds_no_assertion_under_a_conftest_autouse() -> Result<(), Str
 /// no-assertion state.
 #[test]
 fn diff_mode_withholds_no_assertion_under_a_conftest_autouse() -> Result<(), String> {
-    let run = |label: &str, conftest: Option<&str>| -> Result<Vec<String>, String> {
+    let run = |label: &str, conftest: Option<(&str, &str)>| -> Result<Vec<String>, String> {
         let root = std::env::temp_dir().join(format!(
             "ripr-py-conftest-diff-{label}-{}-{}",
             std::process::id(),
@@ -422,8 +429,8 @@ fn diff_mode_withholds_no_assertion_under_a_conftest_autouse() -> Result<(), Str
         };
         write("src/tax.py", source)?;
         write("tests/test_tax.py", CALL_ONLY)?;
-        if let Some(conftest) = conftest {
-            write("tests/conftest.py", conftest)?;
+        if let Some((path, conftest)) = conftest {
+            write(path, conftest)?;
         }
         let options = AnalysisOptions {
             root: root.clone(),
@@ -466,11 +473,54 @@ fn diff_mode_withholds_no_assertion_under_a_conftest_autouse() -> Result<(), Str
         clean.iter().any(|line| line.contains(NONE)),
         "without a conftest the call-only test is assertion-free, got {clean:?}"
     );
-    let tainted = run("autouse", Some(AUTOUSE_LEAK_CHECK))?;
+    let tainted = run("autouse", Some(("tests/conftest.py", AUTOUSE_LEAK_CHECK)))?;
     assert!(
         tainted.iter().any(|line| line.contains(UNRESOLVED))
             && !tainted.iter().any(|line| line.contains(NONE)),
         "a conftest autouse must withhold the no-assertion state in diff mode, got {tainted:?}"
     );
+    // A conftest at the repository root is on the chain too.
+    let ancestor = run("ancestor", Some(("conftest.py", AUTOUSE_LEAK_CHECK)))?;
+    assert!(
+        ancestor.iter().any(|line| line.contains(UNRESOLVED))
+            && !ancestor.iter().any(|line| line.contains(NONE)),
+        "a root conftest autouse must withhold the state in diff mode, got {ancestor:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn conftest_reexports_option_splats_and_autouse_factories_make_admission_unresolved()
+-> Result<(), String> {
+    let cases = [
+        // `**options` may carry `autouse=True`
+        "import pytest\n\nOPTS = {\"autouse\": True}\n\n\n@pytest.fixture(**OPTS)\ndef leak_check():\n    yield\n    assert not LEAKS\n",
+        // an autouse decorator built once and applied by name
+        "import pytest\n\nautouse_fix = pytest.fixture(autouse=True)\n\n\n@autouse_fix\ndef leak_check():\n    yield\n    assert not LEAKS\n",
+        "import functools\nimport pytest\n\nautouse_fix = functools.partial(pytest.fixture, autouse=True)\n",
+        // implicit setup re-exported from another module
+        "from .plugins import *\n",
+        "from tests.hooks import pytest_runtest_call\n",
+        "pytest_runtest_call = other.hook\n",
+    ];
+    for conftest in cases {
+        let got = tax_admission(&[
+            ("tests/conftest.py", conftest),
+            ("tests/test_tax.py", CALL_ONLY),
+        ])?;
+        assert_eq!(got, UNRESOLVED, "must taint:\n{conftest}");
+    }
+    // Controls: an ordinary fixture module and plain imports do not taint.
+    for inert in [
+        "import pytest\n\n\n@pytest.fixture\ndef db():\n    return 1\n",
+        "from tests.helpers import make_db\n",
+        "from .plugins import hook_helper\n",
+    ] {
+        let got = tax_admission(&[
+            ("tests/conftest.py", inert),
+            ("tests/test_tax.py", CALL_ONLY),
+        ])?;
+        assert_eq!(got, NONE, "must not taint:\n{inert}");
+    }
     Ok(())
 }
