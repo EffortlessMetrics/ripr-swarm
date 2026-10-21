@@ -193,8 +193,28 @@ pub(crate) fn collect_callback_assertions(
     let mut out = Vec::new();
     for stmt in statements {
         collect_expect_assertions_in_statement(stmt, source, &context, &mut out);
+        if statement_completes_abruptly(stmt) {
+            break;
+        }
     }
     out
+}
+
+/// `true` when control can never fall through `stmt` to the statement after it:
+/// an unconditional `return`, `throw`, `break` or `continue`, or a block whose
+/// own statements contain one. Statements after it in the same list are dead
+/// code, so an assertion there never runs and cannot discriminate; collection
+/// withholds it, fail closed like a constant-falsy branch (#8714). Conditional
+/// exits (`if (x) return;`) are not decidable and keep the later credit.
+fn statement_completes_abruptly(stmt: &Statement<'_>) -> bool {
+    match stmt {
+        Statement::ReturnStatement(_)
+        | Statement::ThrowStatement(_)
+        | Statement::BreakStatement(_)
+        | Statement::ContinueStatement(_) => true,
+        Statement::BlockStatement(block) => block.body.iter().any(statement_completes_abruptly),
+        _ => false,
+    }
 }
 
 /// `true` when the statement list collects at least one assertion under
@@ -874,6 +894,9 @@ pub(crate) fn collect_expect_assertions_from_statement_vec(
 ) {
     for stmt in statements {
         collect_expect_assertions_in_statement(stmt, source, context, out);
+        if statement_completes_abruptly(stmt) {
+            break;
+        }
     }
 }
 

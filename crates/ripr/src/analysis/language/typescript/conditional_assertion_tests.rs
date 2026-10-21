@@ -445,3 +445,62 @@ fn ts_single_line_branch_holding_the_assertion_discloses() -> Result<(), String>
     );
     Ok(())
 }
+
+/// Statements after an unconditional `return`/`throw`/`break`/`continue` are
+/// dead: their assertions never run, so collection withholds them and the
+/// finding cannot reach `exposed` on them. Everything before the exit stays
+/// credited.
+#[test]
+fn ts_assertion_after_unconditional_exit_is_withheld() {
+    for exit in ["return;", "throw new Error(\"x\");", "{ return; }"] {
+        let body =
+            format!("  expect(price(150)).toBe(130);\n  {exit}\n  expect(price(150)).toBe(130);");
+        let assertions = extracted_assertions(&body);
+        assert_eq!(
+            assertions.len(),
+            1,
+            "only the assertion before `{exit}` may be credited: {assertions:?}"
+        );
+    }
+    for exit in ["break;", "continue;"] {
+        let body = format!(
+            "  for (const n of [1]) {{\n    {exit}\n    expect(price(150)).toBe(130);\n  }}"
+        );
+        assert!(
+            extracted_assertions(&body).is_empty(),
+            "assertion after `{exit}` is dead and must be withheld"
+        );
+    }
+}
+
+/// A conditional exit is not decidable, so the later assertion keeps its
+/// credit; and `return expect(..)` keeps its own returned assertion.
+#[test]
+fn ts_assertion_after_conditional_exit_stays_credited() {
+    let guarded =
+        extracted_assertions("  if (skip) {\n    return;\n  }\n  expect(price(150)).toBe(130);");
+    assert_eq!(
+        guarded.len(),
+        1,
+        "conditional exit keeps credit: {guarded:?}"
+    );
+    let returned = extracted_assertions("  return expect(price(150)).resolves.toBe(130);");
+    assert_eq!(
+        returned.len(),
+        1,
+        "returned assertion is credited: {returned:?}"
+    );
+}
+
+/// End to end: the only strong oracle sits after `return;`, so the changed
+/// predicate must not classify `exposed`.
+#[test]
+fn ts_dead_assertion_after_return_does_not_expose() -> Result<(), String> {
+    let got = finding_for_body("  return;\n  expect(price(150)).toBe(130);")?;
+    assert_ne!(
+        got.class,
+        ExposureClass::Exposed,
+        "an unreachable assertion must not expose the change: {got:?}"
+    );
+    Ok(())
+}
