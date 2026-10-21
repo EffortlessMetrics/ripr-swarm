@@ -1516,11 +1516,27 @@ fn identifier_segments(identifier: &str) -> impl Iterator<Item = String> + '_ {
 
 pub(super) fn is_custom_assertion_helper(line: &str) -> bool {
     let trimmed = line.trim_start();
-    !trimmed.contains('!')
-        && (trimmed.starts_with("assert_")
+    if !trimmed.contains('(') {
+        return false;
+    }
+    if !trimmed.contains('!') {
+        return trimmed.starts_with("assert_")
             || trimmed.contains("::assert_")
-            || trimmed.contains(".assert_"))
-        && trimmed.contains('(')
+            || trimmed.contains(".assert_");
+    }
+    // #9122: a macro among the arguments (`common::assert_matches(
+    // snapbox::file![..], cmd)`) is still a helper call when the callee
+    // itself, the text before the first `(`, is the `assert_*` path. A macro
+    // invocation (`assert_eq!(..)`) or a macro before the helper keeps a `!`
+    // in the callee and stays refused. The shape stays name-only evidence:
+    // `is_clear_exact_custom_assertion_helper` never grades it exact.
+    let Some((callee, _)) = trimmed.split_once('(') else {
+        return false;
+    };
+    !callee.contains('!')
+        && (callee.starts_with("assert_")
+            || callee.contains("::assert_")
+            || callee.contains(".assert_"))
 }
 
 /// Whether a custom `assert_*` helper call has the argument count of a value
@@ -1539,7 +1555,12 @@ pub(super) fn is_comparison_shaped_custom_assertion(line: &str) -> bool {
 
 pub(super) fn is_clear_exact_custom_assertion_helper(line: &str) -> bool {
     // Inequality wins: `assert_noteq` ends with `eq` but pins nothing.
-    if !is_custom_assertion_helper(line) || is_inequality_named_assertion_helper(line) {
+    // A macro among the arguments hides what the call compares (#9122), so
+    // the name alone never earns the exact grade there.
+    if !is_custom_assertion_helper(line)
+        || line.contains('!')
+        || is_inequality_named_assertion_helper(line)
+    {
         return false;
     }
     let Some(name) = custom_assertion_helper_name(line) else {

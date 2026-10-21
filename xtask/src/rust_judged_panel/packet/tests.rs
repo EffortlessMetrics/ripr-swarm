@@ -522,6 +522,23 @@ fn projected(
     Ok((packet, attestation, entry))
 }
 
+#[test]
+fn bounded_check_document_is_not_a_complete_report() -> Result<(), String> {
+    let bounded = serde_json::json!({"analysis_outcome": {
+        "analysis_complete": true, "document_complete": false}});
+    if super::require_complete_report(&bounded, "case").is_ok() {
+        return Err("a bounded document must not be a complete report".to_string());
+    }
+    let legacy = serde_json::json!({
+        "analysis_outcome": {"analysis_complete": true},
+        "run_limitations": [{"category": "limited_findings_bound"}]});
+    if super::require_complete_report(&legacy, "case").is_ok() {
+        return Err("a legacy bounded document must not be a complete report".to_string());
+    }
+    let control = serde_json::json!({"analysis_outcome": {"analysis_complete": true}});
+    super::require_complete_report(&control, "case")
+}
+
 fn rejects_reseal(fixture: &Fixture, mutate: fn(&mut PortablePacket)) -> Result<(), String> {
     rejects_structured_validate_at_reseal(
         "authority",
