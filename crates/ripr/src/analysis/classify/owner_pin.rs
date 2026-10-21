@@ -138,11 +138,17 @@ struct StdRootedCalls {
     unrebound: BTreeSet<String>,
 }
 
-const STD_ROOTED_ASSERT_EQ: [&str; 4] = [
+/// The rooted spellings of `assert_eq!` and, for the boolean owner pins and
+/// effect probes, `assert!` (#8927): each needs the same root proof.
+const STD_ROOTED_ASSERT_EQ: [&str; 8] = [
     "std::assert_eq",
     "core::assert_eq",
     "::std::assert_eq",
     "::core::assert_eq",
+    "std::assert",
+    "core::assert",
+    "::std::assert",
+    "::core::assert",
 ];
 
 impl StdRootedCalls {
@@ -590,7 +596,22 @@ impl OwnerPinSyntax {
             ),
             _ => false,
         };
-        !gated || self.admits(test, assertion, index)
+        if !gated {
+            return true;
+        }
+        match self.refusal(test, assertion, index) {
+            None => true,
+            // Identical spellings on one line, one of which provably runs
+            // (`A; return; A;`): the effect oracle is that same check, so it
+            // keeps its credit. The return family keeps refusing (#8927).
+            Some(AssertionRefusal::Syntax(AssertionContextRefusal::DuplicateSpellingOneRuns)) => {
+                matches!(
+                    probe.family,
+                    ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+                )
+            }
+            Some(_) => false,
+        }
     }
 
     /// The outer assertion's identity, shared by admission and its refusal note.
@@ -1204,6 +1225,7 @@ impl OwnerPinSyntax {
             .clone();
         let qualified: BTreeSet<String> = std_rooted_macro_path(&assertion.text, "assert_eq")
             .into_iter()
+            .chain(std_rooted_macro_path(&assertion.text, "assert"))
             .chain(rooted.calls)
             .collect();
         if let Some(path) = qualified.into_iter().find(|path| {
@@ -1329,6 +1351,7 @@ impl OwnerPinSyntax {
             .map(|(name, _)| name),
         );
         if let Some(path) = std_rooted_macro_path(&assertion.text, "assert_eq")
+            .or_else(|| std_rooted_macro_path(&assertion.text, "assert"))
             .or_else(|| StdRootedCalls::of(source).calls.into_iter().next())
         {
             return Some(AssertionRefusal::Syntax(
@@ -1668,6 +1691,7 @@ impl AssertionRefusal {
                 | AssertionContextRefusal::UnidentifiedTest
                 | AssertionContextRefusal::AsyncTest
                 | AssertionContextRefusal::DuplicateSpelling
+                | AssertionContextRefusal::DuplicateSpellingOneRuns
                 | AssertionContextRefusal::StaleSource => true,
                 AssertionContextRefusal::TestAttribute(attribute) => {
                     !attribute_settles_test_outcome(attribute)
@@ -1748,7 +1772,8 @@ impl AssertionRefusal {
                 AssertionContextRefusal::ClosureExit => {
                     "a closure in the test can return early, or the test yields".into()
                 }
-                AssertionContextRefusal::DuplicateSpelling => {
+                AssertionContextRefusal::DuplicateSpelling
+                | AssertionContextRefusal::DuplicateSpellingOneRuns => {
                     "the same assertion text appears twice on one line".into()
                 }
                 AssertionContextRefusal::ConditionalPath(construct) => {

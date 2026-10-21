@@ -13,13 +13,13 @@ Shared evidence and guidance
   E3 [findings 1, 2]: propagation yes: Changed behavior appears to influence event or outbound call: notifier.send(order_id)
   E4 [findings 1, 2]: observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   E5 [findings 1, 2]: discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
-  E6 [findings 1, 2]: local flow reaches event or outbound call: notifier.send(order_id) (line 17)
-  E7 [findings 1, 2]: related test src/lib.rs:26 process_order_sends_exact_order_id uses none unknown oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
-  E8 [findings 1, 2]: source function argument value order_id = "order-42" at line 28
-  E9 [findings 1, 2]: source assertion argument value "order-42" at line 30
+  E6 [findings 1, 2]: local flow reaches event or outbound call: notifier.send(order_id) (line 18)
+  E7 [findings 1, 2]: related test src/lib.rs:27 process_order_sends_exact_order_id uses none unknown oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
+  E8 [findings 1, 2]: source function argument value order_id = "order-42" at line 29
+  E9 [findings 1, 2]: source assertion argument value "order-42" at line 31
   N1 [findings 1, 2]: Establish that the test is collected and enabled, that the assertion runs on its executed path, and that it resolves to the intended standard macro, then check the changed effect
 
-Finding 1: WARNING ./src/lib.rs:17
+Finding 1: WARNING ./src/lib.rs:18
   id: probe:src_lib.rs:call_deletion:934aa430
 Changed
   before: notifier.send("static_msg")
@@ -42,7 +42,7 @@ Drill in:
   ripr explain --root <cwd>/fixtures/effect_assertion_uncalled_closure/input --diff <cwd>/fixtures/effect_assertion_uncalled_closure/diff.patch --mode fast probe:src_lib.rs:call_deletion:934aa430
   ripr context --root <cwd>/fixtures/effect_assertion_uncalled_closure/input --diff <cwd>/fixtures/effect_assertion_uncalled_closure/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:934aa430
 
-Finding 2: WARNING ./src/lib.rs:17
+Finding 2: WARNING ./src/lib.rs:18
   id: probe:src_lib.rs:side_effect:95da2a37
 Changed
   before: notifier.send("static_msg")

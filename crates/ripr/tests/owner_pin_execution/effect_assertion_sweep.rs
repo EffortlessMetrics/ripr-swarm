@@ -4,10 +4,15 @@
 
 use super::*;
 
+/// Aligned standalone stimulus: the changed statement is the semicolon call at
+/// line 18 (`@@ -16,5 +16,5 @@`), followed by a trailing `true` at line 19. It
+/// yields exactly a `call_deletion` and a `side_effect` finding at line 18, so
+/// no family is fabricated by a shifted hunk.
+pub(super) const ALIGNED_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -16,5 +16,5 @@ impl Notifier {\n \n pub fn process_order(notifier: &Notifier, order_id: &str) -> bool {\n-    notifier.send(\"static_msg\");\n+    notifier.send(order_id);\n     true\n }\n";
+pub(super) const ALIGNED_LIB: &str = "use std::cell::RefCell;\n\npub struct Notifier {\n    pub sent: RefCell<Vec<String>>,\n}\n\nimpl Notifier {\n    pub fn new() -> Self {\n        Notifier { sent: RefCell::new(Vec::new()) }\n    }\n    pub fn send(&self, payload: &str) -> bool {\n        self.sent.borrow_mut().push(payload.to_string());\n        true\n    }\n}\n\npub fn process_order(notifier: &Notifier, order_id: &str) -> bool {\n    notifier.send(order_id);\n    true\n}\n";
+
 #[test]
 fn effect_assertion_dead_context_sweep_refuses_every_never_run_assertion() -> Result<(), String> {
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/observation_verified_side_effect");
     let eq = "*notifier.sent.borrow(), vec![\"order-42\".to_string()]";
     let forms: Vec<(String, String)> = vec![
         ("assert_eq".into(), format!("assert_eq!({eq});")),
@@ -15,10 +20,21 @@ fn effect_assertion_dead_context_sweep_refuses_every_never_run_assertion() -> Re
         ("assert_matches".into(), "assert!(matches!(notifier.sent.borrow().first().map(String::as_str), Some(\"order-42\")));".into()),
         ("assert_eqexpr".into(), "assert!(*notifier.sent.borrow() == vec![\"order-42\".to_string()]);".into()),
         ("std::assert".into(), "std::assert!(*notifier.sent.borrow() == vec![\"order-42\".to_string()]);".into()),
+        // No nested operand macro: the standard-rooted boolean forms a live
+        // test really runs (#8927 review).
+        ("std::assert_vecfrom".into(), "std::assert!(*notifier.sent.borrow() == Vec::from([\"order-42\".to_string()]));".into()),
+        ("core::assert_vecfrom".into(), "::core::assert!(*notifier.sent.borrow() == Vec::from([\"order-42\".to_string()]));".into()),
+        ("std::assert_eq_novec".into(), "std::assert_eq!(notifier.sent.borrow().first().map(String::as_str), Some(\"order-42\"));".into()),
     ];
     let dead = |a: &str| -> Vec<(&'static str, String)> {
         vec![
             ("after_return", format!("return;\n{a}")),
+            // Identical spellings on one line, none of which can run.
+            ("compact_twins_after_return", format!("return; {a} {a}")),
+            (
+                "compact_twins_if_false",
+                format!("if false {{ {a} }} if false {{ {a} }}"),
+            ),
             ("after_panic", format!("panic!(\"stop\");\n{a}")),
             ("after_block_return", format!("{{ return; }}\n{a}")),
             ("after_loop_return", format!("loop {{ return; }}\n{a}")),
@@ -100,6 +116,8 @@ fn effect_assertion_dead_context_sweep_refuses_every_never_run_assertion() -> Re
         }
         // Mixed: a dead assertion beside a live one keeps the live credit.
         for (c, o) in [
+            // Compact: the first assertion runs before the `return`.
+            ("mixed_compact_return", format!("{a} return; {a}")),
             ("mixed_if_false", format!("if false {{\n{a}\n}}\n{a}")),
             (
                 "mixed_uncalled_closure",
@@ -113,20 +131,25 @@ fn effect_assertion_dead_context_sweep_refuses_every_never_run_assertion() -> Re
             n += 1;
             let src = format!(
                 "{}\n#[cfg(test)]\nmod tests {{\nuse super::*;\n#[test]\nfn process_order_sends_exact_order_id() {{\nlet notifier = Notifier::new();\nprocess_order(&notifier, \"order-42\");\n{oracle}\n}}\n}}\n",
-                std::fs::read_to_string(fixture.join("input/src/lib.rs"))
-                    .map_err(|e| e.to_string())?
+                ALIGNED_LIB
             );
             let scratch = Scratch::create()?;
             std::fs::create_dir(scratch.0.join("src")).map_err(|e| e.to_string())?;
-            std::fs::copy(
-                fixture.join("input/Cargo.toml"),
+            std::fs::write(
                 scratch.0.join("Cargo.toml"),
+                std::fs::read_to_string(
+                    Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("../../fixtures/observation_verified_side_effect/input/Cargo.toml"),
+                )
+                .map_err(|e| e.to_string())?,
             )
             .map_err(|e| e.to_string())?;
             std::fs::write(scratch.0.join("src/lib.rs"), src).map_err(|e| e.to_string())?;
+            let diff_path = scratch.0.join("diff.patch");
+            std::fs::write(&diff_path, ALIGNED_DIFF).map_err(|e| e.to_string())?;
             let report = check_workspace(CheckInput {
                 root: scratch.0.clone(),
-                diff_file: Some(fixture.join("diff.patch")),
+                diff_file: Some(diff_path),
                 mode: Mode::Fast,
                 format: OutputFormat::Json,
                 include_unchanged_tests: true,
@@ -136,29 +159,39 @@ fn effect_assertion_dead_context_sweep_refuses_every_never_run_assertion() -> Re
                 serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
                     .map_err(|e| e.to_string())?;
             let mut effect_findings = 0;
+            let mut seen: Vec<String> = Vec::new();
             for f in json["findings"].as_array().ok_or("f")? {
                 let fam = f["probe"]["family"].as_str().unwrap_or("");
                 if fam != "side_effect" && fam != "call_deletion" {
                     continue;
                 }
                 effect_findings += 1;
+                if f["probe"]["line"] != 18 {
+                    bad.push(format!("wrong subject line {name}/{ctx}/{fam}"));
+                }
+                seen.push(fam.to_string());
                 let cls = f["classification"].as_str().unwrap_or("").to_string();
                 let credited = cls == "exposed" || cls == "weakly_exposed";
                 if !is_live && credited {
                     bad.push(format!("DEAD-CREDITED {name}/{ctx}/{fam} {cls}"));
                 }
-                // Direct and mixed live assertions of the unqualified forms are
-                // the discriminating controls. Other live contexts (`if true`,
-                // a called closure or fn, a conditional return before) are
-                // refused conservatively, and a qualified `std::` form with
-                // `vec!` operands reads `static_unknown` even in direct
-                // position (fail-closed, as for the return family).
+                // Direct and mixed live assertions are the discriminating
+                // controls, including the standard-rooted forms without a
+                // nested operand macro. Other live contexts (`if true`, a
+                // called closure or fn, a conditional return before) are
+                // refused conservatively, and a qualified form whose operands
+                // hold a nested `vec!` reads `static_unknown` (fail-closed).
                 let must_credit = ctx == "direct" || ctx.starts_with("mixed");
-                if is_live && must_credit && !credited && !name.starts_with("std::") {
+                let nested_macro = matches!(name.as_str(), "std::assert_eq" | "std::assert");
+                if is_live && must_credit && !credited && !nested_macro {
                     bad.push(format!(
                         "direct control uncredited {name}/{ctx}/{fam} {cls}"
                     ));
                 }
+            }
+            seen.sort();
+            if seen != ["call_deletion", "side_effect"] {
+                bad.push(format!("wrong effect inventory {name}/{ctx}: {seen:?}"));
             }
             if effect_findings != 2 {
                 bad.push(format!(

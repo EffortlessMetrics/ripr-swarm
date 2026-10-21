@@ -6,7 +6,7 @@
   "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":2,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
   "analysis_outcome": {
     "analysis_complete": true,
-    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:d28ae4f60d80479f219de56dcb0bd81d2b42b577f5f69c63eef89a7a9fd35d27","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:12e1b21d04f264edcedca77f9704ffc842463e5f6ab7238281eca742c45bd400","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
   },
   "findings": [
     {
@@ -31,7 +31,7 @@
         "family": "call_deletion",
         "delta": "effect",
         "file": "./src/lib.rs",
-        "line": 17,
+        "line": 18,
         "expression": "notifier.send(order_id)"
        },
       "ripr": {
@@ -41,25 +41,25 @@
         "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach process_order: process_order_sends_exact_order_id", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: notifier.send(order_id)", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches event or outbound call: notifier.send(order_id) (line 17)", "related test src/lib.rs:26 process_order_sends_exact_order_id uses none unknown oracle", "source function argument value order_id = \"order-42\" at line 28", "source assertion argument value \"order-42\" at line 30"],
+      "evidence_path": ["reach yes: Related tests appear to reach process_order: process_order_sends_exact_order_id", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: notifier.send(order_id)", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches event or outbound call: notifier.send(order_id) (line 18)", "related test src/lib.rs:27 process_order_sends_exact_order_id uses none unknown oracle", "source function argument value order_id = \"order-42\" at line 29", "source assertion argument value \"order-42\" at line 31"],
       "flow_sinks": [
-        {"kind":"event_call","text":"notifier.send(order_id)","line":17}
+        {"kind":"event_call","text":"notifier.send(order_id)","line":18}
       ],
-      "evidence": ["Changed behavior appears to influence event or outbound call: notifier.send(order_id)", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach process_order: process_order_sends_exact_order_id", "assertion not credited: `assert!` in process_order_sends_exact_order_id at src/lib.rs:30: the assertion is inside an `if` branch"],
+      "evidence": ["Changed behavior appears to influence event or outbound call: notifier.send(order_id)", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach process_order: process_order_sends_exact_order_id", "assertion not credited: `assert!` in process_order_sends_exact_order_id at src/lib.rs:31: the assertion is inside an `if` branch"],
       "missing": ["No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No strong discriminator was detected"],
       "assertion_texts": {
-        "28": "process_order(&notifier, \"order-42\");",
-        "30": "assert!(matches!(notifier.sent.borrow().first().map(String::as_str), Some(\"order-42\")));"
+        "29": "process_order(&notifier, \"order-42\");",
+        "31": "assert!(matches!(notifier.sent.borrow().first().map(String::as_str), Some(\"order-42\")));"
       },
       "activation": {
         "observed_values": [
           {
-            "line": 28,
+            "line": 29,
             "value": "order_id = \"order-42\"",
             "context": "function_argument"
           },
           {
-            "line": 30,
+            "line": 31,
             "value": "\"order-42\"",
             "context": "assertion_argument"
           }
@@ -69,12 +69,12 @@
       },
       "observed_values": [
         {
-          "line": 28,
+          "line": 29,
           "value": "order_id = \"order-42\"",
           "context": "function_argument"
         },
         {
-          "line": 30,
+          "line": 31,
           "value": "\"order-42\"",
           "context": "assertion_argument"
         }
@@ -86,7 +86,7 @@
         {
           "name": "process_order_sends_exact_order_id",
           "file": "src/lib.rs",
-          "line": 26,
+          "line": 27,
           "oracle_strength": "none",
           "oracle_kind": "unknown",
           "oracle": "",
@@ -126,7 +126,7 @@
         "family": "side_effect",
         "delta": "effect",
         "file": "./src/lib.rs",
-        "line": 17,
+        "line": 18,
         "expression": "notifier.send(order_id)"
        },
       "ripr": {
@@ -136,25 +136,25 @@
         "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach process_order: process_order_sends_exact_order_id", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: notifier.send(order_id)", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches event or outbound call: notifier.send(order_id) (line 17)", "related test src/lib.rs:26 process_order_sends_exact_order_id uses none unknown oracle", "source function argument value order_id = \"order-42\" at line 28", "source assertion argument value \"order-42\" at line 30"],
+      "evidence_path": ["reach yes: Related tests appear to reach process_order: process_order_sends_exact_order_id", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: notifier.send(order_id)", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches event or outbound call: notifier.send(order_id) (line 18)", "related test src/lib.rs:27 process_order_sends_exact_order_id uses none unknown oracle", "source function argument value order_id = \"order-42\" at line 29", "source assertion argument value \"order-42\" at line 31"],
       "flow_sinks": [
-        {"kind":"event_call","text":"notifier.send(order_id)","line":17}
+        {"kind":"event_call","text":"notifier.send(order_id)","line":18}
       ],
-      "evidence": ["Changed behavior appears to influence event or outbound call: notifier.send(order_id)", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach process_order: process_order_sends_exact_order_id", "assertion not credited: `assert!` in process_order_sends_exact_order_id at src/lib.rs:30: the assertion is inside an `if` branch"],
+      "evidence": ["Changed behavior appears to influence event or outbound call: notifier.send(order_id)", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach process_order: process_order_sends_exact_order_id", "assertion not credited: `assert!` in process_order_sends_exact_order_id at src/lib.rs:31: the assertion is inside an `if` branch"],
       "missing": ["No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No strong discriminator was detected"],
       "assertion_texts": {
-        "28": "process_order(&notifier, \"order-42\");",
-        "30": "assert!(matches!(notifier.sent.borrow().first().map(String::as_str), Some(\"order-42\")));"
+        "29": "process_order(&notifier, \"order-42\");",
+        "31": "assert!(matches!(notifier.sent.borrow().first().map(String::as_str), Some(\"order-42\")));"
       },
       "activation": {
         "observed_values": [
           {
-            "line": 28,
+            "line": 29,
             "value": "order_id = \"order-42\"",
             "context": "function_argument"
           },
           {
-            "line": 30,
+            "line": 31,
             "value": "\"order-42\"",
             "context": "assertion_argument"
           }
@@ -164,12 +164,12 @@
       },
       "observed_values": [
         {
-          "line": 28,
+          "line": 29,
           "value": "order_id = \"order-42\"",
           "context": "function_argument"
         },
         {
-          "line": 30,
+          "line": 31,
           "value": "\"order-42\"",
           "context": "assertion_argument"
         }
@@ -181,7 +181,7 @@
         {
           "name": "process_order_sends_exact_order_id",
           "file": "src/lib.rs",
-          "line": 26,
+          "line": 27,
           "oracle_strength": "none",
           "oracle_kind": "unknown",
           "oracle": "",

@@ -1,0 +1,199 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/effect_assertion_std_qualified_live/input",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":2,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:12e1b21d04f264edcedca77f9704ffc842463e5f6ab7238281eca742c45bd400","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:call_deletion:934aa430",
+      "canonical_gap_id": "gap:rust:src/lib.rs:process_order:call_deletion:call_deletion:notifier.send_order_id",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:process_order:call_deletion:call_deletion:notifier.send_order_id",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "process_order",
+        "behavior_kind": "call_deletion",
+        "probe_kind": "call_deletion",
+        "normalized_discriminator": "notifier.send_order_id"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:call_deletion:934aa430",
+        "family": "call_deletion",
+        "delta": "effect",
+        "file": "./src/lib.rs",
+        "line": 18,
+        "expression": "notifier.send(order_id)"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach process_order: process_order_sends_exact_order_id"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence event or outbound call: notifier.send(order_id)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Medium oracle found: mock or expectation observes the changed behavior"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach process_order: process_order_sends_exact_order_id", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: notifier.send(order_id)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Medium oracle found: mock or expectation observes the changed behavior", "local flow reaches event or outbound call: notifier.send(order_id) (line 18)", "related test src/lib.rs:27 process_order_sends_exact_order_id uses medium mock expectation oracle: std::assert!(*notifier.sent.borrow() == Vec::from([\"order-42\".to_string()]));", "source function argument value order_id = \"order-42\" at line 29", "source assertion argument value \"order-42\" at line 30"],
+      "flow_sinks": [
+        {"kind":"event_call","text":"notifier.send(order_id)","line":18}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence event or outbound call: notifier.send(order_id)", "Medium oracle found: mock or expectation observes the changed behavior", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach process_order: process_order_sends_exact_order_id"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "29": "process_order(&notifier, \"order-42\");",
+        "30": "std::assert!(*notifier.sent.borrow() == Vec::from([\"order-42\".to_string()]));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 29,
+            "value": "order_id = \"order-42\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 30,
+            "value": "\"order-42\"",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 29,
+          "value": "order_id = \"order-42\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 30,
+          "value": "\"order-42\"",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "process_order_sends_exact_order_id",
+          "file": "src/lib.rs",
+          "line": 27,
+          "oracle_strength": "medium",
+          "oracle_kind": "mock_expectation",
+          "oracle": "std::assert!(*notifier.sent.borrow() == Vec::from([\"order-42\".to_string()]));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "mock_expectation",
+      "oracle_strength": "medium",
+      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:side_effect:95da2a37",
+      "canonical_gap_id": "gap:rust:src/lib.rs:process_order:side_effect:side_effect:notifier.send_order_id",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:process_order:side_effect:side_effect:notifier.send_order_id",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "process_order",
+        "behavior_kind": "side_effect",
+        "probe_kind": "side_effect",
+        "normalized_discriminator": "notifier.send_order_id"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:side_effect:95da2a37",
+        "family": "side_effect",
+        "delta": "effect",
+        "file": "./src/lib.rs",
+        "line": 18,
+        "expression": "notifier.send(order_id)"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach process_order: process_order_sends_exact_order_id"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence event or outbound call: notifier.send(order_id)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Medium oracle found: mock or expectation observes the changed behavior"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach process_order: process_order_sends_exact_order_id", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence event or outbound call: notifier.send(order_id)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Medium oracle found: mock or expectation observes the changed behavior", "local flow reaches event or outbound call: notifier.send(order_id) (line 18)", "related test src/lib.rs:27 process_order_sends_exact_order_id uses medium mock expectation oracle: std::assert!(*notifier.sent.borrow() == Vec::from([\"order-42\".to_string()]));", "source function argument value order_id = \"order-42\" at line 29", "source assertion argument value \"order-42\" at line 30"],
+      "flow_sinks": [
+        {"kind":"event_call","text":"notifier.send(order_id)","line":18}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence event or outbound call: notifier.send(order_id)", "Medium oracle found: mock or expectation observes the changed behavior", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach process_order: process_order_sends_exact_order_id"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "29": "process_order(&notifier, \"order-42\");",
+        "30": "std::assert!(*notifier.sent.borrow() == Vec::from([\"order-42\".to_string()]));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 29,
+            "value": "order_id = \"order-42\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 30,
+            "value": "\"order-42\"",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 29,
+          "value": "order_id = \"order-42\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 30,
+          "value": "\"order-42\"",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "process_order_sends_exact_order_id",
+          "file": "src/lib.rs",
+          "line": 27,
+          "oracle_strength": "medium",
+          "oracle_kind": "mock_expectation",
+          "oracle": "std::assert!(*notifier.sent.borrow() == Vec::from([\"order-42\".to_string()]));",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "mock_expectation",
+      "oracle_strength": "medium",
+      "recommended_next_step": "Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect.",
+      "suggested_next_action": "Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

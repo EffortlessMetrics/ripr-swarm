@@ -13169,6 +13169,8 @@ tests = [
 fixtures = [
   "fixtures/effect_assertion_after_return",
   "fixtures/effect_assertion_in_false_block",
+  "fixtures/effect_assertion_runs_compact_mixed",
+  "fixtures/effect_assertion_std_qualified_live",
   "fixtures/effect_assertion_uncalled_closure",
   "fixtures/rust_trait_default_import",
   "fixtures/rust_trait_default_shadow",

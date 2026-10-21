@@ -129,9 +129,22 @@ otherwise):
   `use std::process::exit; exit(0);` before the assertion. Only the `use` alias
   is named above; the other two are equally undetected.
 
+Reachable-oracle preservation (#8927, review of #8934). A `std::` / `core::`
+qualified `assert!` is admitted exactly like a qualified `assert_eq!`: the root
+must be provably unrebound and the invocation on an eager path, so an unconditional
+`std::assert!(.. == Vec::from([..]))` keeps its `weakly_exposed` effect credit,
+while the same assertion after `return`, in a literal-false block or in an
+uncalled closure is still refused. Identical assertion spellings on one line
+(`assert_eq!(..); return; assert_eq!(..);`) share one admission key: the key is
+admitted when some invocation of it provably runs and refused when none does, so
+the first assertion keeps its `exposed` credit and a pair that cannot run
+(`return; A A`) stays uncredited. A dead copy beside a live one adds no credit the
+live copy does not already carry. This shared reading also governs the return
+family.
+
 The admission also over-refuses, failing closed and matching the return family:
-qualified `std::` / `core::` `assert_eq!` / `assert!` whose arguments contain
-`vec!` read `static_unknown` even in direct position, and `if true { assert_eq!(..) }`,
+qualified `std::` / `core::` assertions whose arguments contain a nested `vec!`
+(or other macro) read `static_unknown` even in direct position, and `if true { assert_eq!(..) }`,
 a called nested fn, a conditional `return` before the assertion and a called
 closure containing `return` are uncredited. These are missed advisories, not
 wrong credits.

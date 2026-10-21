@@ -15,7 +15,8 @@ impl Notifier {
 }
 
 pub fn process_order(notifier: &Notifier, order_id: &str) -> bool {
-    notifier.send(order_id)
+    notifier.send(order_id);
+    true
 }
 
 #[cfg(test)]

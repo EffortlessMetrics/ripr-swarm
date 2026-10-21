@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — effect_assertion_uncalled_closure (3)
+
+Reason:
+RIPR-SPEC-0197: aligned semicolon effect stimulus and qualified/compact live controls (#8927)
+
+Command:
+`cargo xtask goldens bless effect_assertion_uncalled_closure --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

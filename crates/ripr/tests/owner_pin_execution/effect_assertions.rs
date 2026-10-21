@@ -3,15 +3,15 @@
 use super::*;
 
 fn effect_source(assertion: &str, context: &str) -> Result<String, String> {
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/observation_verified_side_effect/input/src/lib.rs");
-    let production = std::fs::read_to_string(fixture).map_err(|error| error.to_string())?;
+    let production = super::effect_assertion_sweep::ALIGNED_LIB;
     let oracle = match context {
         "direct" => assertion.to_string(),
         "after_return" => format!("return;\n{assertion}"),
         "if_false" => format!("if false {{\n{assertion}\n}}"),
         "uncalled_closure" => format!("let _check = || {{\n{assertion}\n}};"),
         "mixed" => format!("{assertion}\nreturn;\n{assertion}"),
+        // One line: the first assertion runs before the `return`.
+        "compact_mixed" => format!("{assertion} return; {assertion}"),
         _ => return Err(format!("unknown effect assertion context {context}")),
     };
     Ok(format!(
@@ -19,7 +19,7 @@ fn effect_source(assertion: &str, context: &str) -> Result<String, String> {
     ))
 }
 
-const ASSERTIONS: [(&str, &str, &str, &str); 3] = [
+const ASSERTIONS: [(&str, &str, &str, &str); 6] = [
     (
         "assert_eq",
         "assert_eq!(*notifier.sent.borrow(), vec![\"order-42\".to_string()]);",
@@ -37,6 +37,25 @@ const ASSERTIONS: [(&str, &str, &str, &str); 3] = [
         "assert!(*notifier.sent.borrow() == vec![\"order-42\".to_string()]);",
         "mock_expectation",
         "medium",
+    ),
+    // Standard-rooted live controls without a nested operand macro (#8927).
+    (
+        "assert",
+        "std::assert!(*notifier.sent.borrow() == Vec::from([\"order-42\".to_string()]));",
+        "mock_expectation",
+        "medium",
+    ),
+    (
+        "assert",
+        "::core::assert!(*notifier.sent.borrow() == Vec::from([\"order-42\".to_string()]));",
+        "mock_expectation",
+        "medium",
+    ),
+    (
+        "assert_eq",
+        "std::assert_eq!(notifier.sent.borrow().first().map(String::as_str), Some(\"order-42\"));",
+        "exact_value",
+        "strong",
     ),
 ];
 
@@ -59,6 +78,7 @@ fn effect_assertions_require_execution_but_keep_reachable_oracles() -> Result<()
             ("if_false", false),
             ("uncalled_closure", false),
             ("mixed", true),
+            ("compact_mixed", true),
         ] {
             let scratch = Scratch::create()?;
             std::fs::create_dir(scratch.0.join("src")).map_err(|error| error.to_string())?;
@@ -72,9 +92,12 @@ fn effect_assertions_require_execution_but_keep_reachable_oracles() -> Result<()
                 effect_source(assertion, context)?,
             )
             .map_err(|error| error.to_string())?;
+            let diff_path = scratch.0.join("diff.patch");
+            std::fs::write(&diff_path, super::effect_assertion_sweep::ALIGNED_DIFF)
+                .map_err(|error| error.to_string())?;
             let report = check_workspace(CheckInput {
                 root: scratch.0.clone(),
-                diff_file: Some(fixture.join("diff.patch")),
+                diff_file: Some(diff_path),
                 mode: Mode::Fast,
                 format: OutputFormat::Json,
                 include_unchanged_tests: true,
@@ -190,6 +213,7 @@ fn effect_assertion_contexts_match_executed_mutant_controls() -> Result<(), Stri
             ("if_false", false),
             ("uncalled_closure", false),
             ("mixed", true),
+            ("compact_mixed", true),
         ] {
             let source = effect_source(assertion, context)?;
             let wrong = source.replace("notifier.send(order_id)", "notifier.send(\"wrong\")");

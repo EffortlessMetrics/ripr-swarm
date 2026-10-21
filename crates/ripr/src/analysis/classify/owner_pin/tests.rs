@@ -7419,6 +7419,7 @@ fn analyzer_limit_refusals_are_limits_of_ripr_reading() {
         syntax(AssertionContextRefusal::UnidentifiedTest),
         syntax(AssertionContextRefusal::AsyncTest),
         syntax(AssertionContextRefusal::DuplicateSpelling),
+        syntax(AssertionContextRefusal::DuplicateSpellingOneRuns),
         syntax(AssertionContextRefusal::StaleSource),
         syntax(AssertionContextRefusal::TestAttribute(
             "#[cfg(any(feature = \"std\", not(no_core_net)))]".to_string(),

@@ -17,9 +17,9 @@ probes.
 
 Neither effect probe may be credited from the assertion that never runs:
 classification stays `reachable_unrevealed`, observe and discriminate are `no`,
-and the oracle is `unknown`/`none`. The reachable control is
-`observation_verified_side_effect`, where the same assertion runs and the probes
-stay `exposed` (#8927).
+and the oracle is `unknown`/`none`. The reachable controls are
+`effect_assertion_runs_compact_mixed` and `effect_assertion_std_qualified_live`,
+where a same-spelling assertion runs and the probes keep their credit (#8927).
 
 ## Must Not
 
