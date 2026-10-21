@@ -155,9 +155,11 @@ jobs:
                 "$ROOT/uv-bootstrap/bin/python" -m uv tool install --offline "$WHEEL"'
             executable="${RUNNER_TEMP}/uv-bin/ripr"
           fi
-          sudo unshare --net -- sudo -u "${me}" env "HOME=${HOME}" "ROOT=${RUNNER_TEMP}" "WHEEL=${WHEEL}" \
-            "PIP_VERSION=${PIP_VERSION}" "UV_VERSION=${UV_VERSION}" "NATIVE_VERSION=${NATIVE_VERSION}" "PATH=${PATH}" \
-            bash -ec "${script}"
+          # Same minimal PATH the probes used, and the namespace is checked before any install runs.
+          guard='if python3 -c "import urllib.request; urllib.request.urlopen(\"https://pypi.org\", timeout=5)" 2>/dev/null; then echo "network still reachable" >&2; exit 1; fi; '
+          sudo unshare --net -- sudo -u "${me}" env -i "HOME=${HOME}" "ROOT=${RUNNER_TEMP}" "WHEEL=${WHEEL}" \
+            "PIP_VERSION=${PIP_VERSION}" "UV_VERSION=${UV_VERSION}" "NATIVE_VERSION=${NATIVE_VERSION}" "PATH=/usr/bin:/bin" \
+            bash -ec "${guard}${script}"
           { echo "EXECUTABLE=${executable}"; echo "CONSUMER_PATH=${consumer_path}"; } >> "${state}/flags.env"
           test "$(sha256sum "${executable}" | awk '{print $1}')" = "${EXPECTED_PAYLOAD_SHA256}"
 
