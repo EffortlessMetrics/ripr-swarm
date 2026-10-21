@@ -147,7 +147,10 @@ static limit, one row at a time, in `python/row_miss.rs`:
   constant or module-level owner is read, not called, so it keeps no such
   claim. `dunder_protocol` rows reach the owner through an implicit protocol
   call, so they keep no miss, as do fixture-owner, helper-owner and
-  activation-limited rows.
+  activation-limited rows. A row whose test body uses the owner name, or an
+  import alias of it, in any non-trivial position (anything but
+  `callable(owner)`, `owner.__name__`-style attributes or a lone unused
+  `ident = owner`) gets no miss: the call may use a shape not modeled.
 - `weak_assertion`: the family-selected assertion is weak or smoke. A medium
   assertion (a mock that may pin the changed call) keeps no miss.
 - `observation_unconfirmed`: a strong family-selected assertion that the row,

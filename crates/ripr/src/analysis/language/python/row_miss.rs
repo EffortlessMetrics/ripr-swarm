@@ -13,11 +13,11 @@
 //!   `test_name_similarity`, `fixture_name`). `dunder_protocol` is excluded:
 //!   the test builds the owner's class and reaches the method through an
 //!   implicit protocol call, so "no call to the changed code" would be false.
-//!   A body that uses the owner name in any way other than a recognized
-//!   non-invoking reference (`callable(owner)`, an alias never used again,
-//!   `owner is ...`, `owner.__name__`) may still invoke it through a shape the
-//!   call extractor does not model (`map(owner, ...)`, `f = owner; f(0)`), so
-//!   it keeps no miss.
+//!   A body that uses the owner name or an import alias of it in any position
+//!   other than `callable(owner)`, `owner.__name__` (and `__qualname__`,
+//!   `__module__`, `__doc__`) or a lone `ident = owner` never read again may
+//!   still invoke it through a shape the call extractor does not model
+//!   (`map(owner, ...)`, `f = owner; f(0)`), so it keeps no miss.
 //! - `weak_assertion`: the family-selected assertion (#5572) is weak or smoke.
 //! - `observation_unconfirmed`: a strong family-selected assertion that this
 //!   row alone does not credit as observing the changed sink. Python's
@@ -98,9 +98,20 @@ fn row_miss(
         return match candidate.relation {
             PythonRelationKind::SameStem
             | PythonRelationKind::TestNameSimilarity
-            | PythonRelationKind::FixtureName => (callable_owner(change.owner)
-                && !body_may_invoke_owner(&candidate.test.body_text, &change.owner.name))
-            .then_some(RelatedTestMiss::NoCallPath),
+            | PythonRelationKind::FixtureName => {
+                let mut names = vec![change.owner.name.as_str()];
+                names.extend(
+                    candidate
+                        .test
+                        .imports
+                        .iter()
+                        .filter(|import| import.imported == change.owner.name)
+                        .map(|import| import.alias.as_str()),
+                );
+                (callable_owner(change.owner)
+                    && !body_may_invoke_owner(&candidate.test.body_text, &names))
+                .then_some(RelatedTestMiss::NoCallPath)
+            }
             // A fixture or same-module caller does call the owner, a dunder
             // protocol row reaches it implicitly, and a skip / xfail row is
             // `activation_limited`: no path claim.
@@ -142,52 +153,71 @@ fn callable_owner(owner: &PythonOwner) -> bool {
     )
 }
 
-/// Fail-closed: true unless every occurrence of `name` in `body` is a
-/// recognized non-invoking reference. A body with no occurrence at all (a
-/// fixture-name or stem relation) has nothing that could invoke the owner.
-fn body_may_invoke_owner(body: &str, name: &str) -> bool {
+/// Fail-closed: true unless every occurrence of the owner name (or an import
+/// alias local of it) in `body` is one of three trivial, non-invoking forms:
+/// exactly `callable(<name>)`, `<name>.__name__` (or `__qualname__`,
+/// `__module__`, `__doc__`) not followed by `(`, or a whole statement
+/// `ident = <name>` whose single plain identifier appears nowhere else. A body
+/// with no occurrence at all (a fixture-name or stem relation) has nothing that
+/// could invoke the owner.
+fn body_may_invoke_owner(body: &str, names: &[&str]) -> bool {
     let bytes = body.as_bytes();
     let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
-    let mut from = 0;
-    while let Some(rel) = body[from..].find(name) {
-        let start = from + rel;
-        let end = start + name.len();
-        from = end;
-        if (start > 0 && is_ident(bytes[start - 1])) || (end < bytes.len() && is_ident(bytes[end]))
-        {
-            continue;
-        }
-        let before = body[..start].trim_end();
-        let after = body[end..].trim_start_matches([' ', '\t']);
-        if after.starts_with("is ") || after.starts_with(".__") {
-            continue;
-        }
-        if before.ends_with('(') && enclosing_callee(&body[..start]) == "callable" {
-            continue;
-        }
-        if let Some(lhs) = before
-            .strip_suffix('=')
-            .filter(|l| !l.ends_with(['=', '!', '<', '>']))
-        {
-            let alias: String = lhs
-                .trim_end()
-                .chars()
-                .rev()
-                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect();
-            if !alias.is_empty()
-                && word_count(body, &alias) == 1
-                && (after.is_empty() || after.starts_with(['\n', '#', ';']))
+    for name in names {
+        for (start, _) in body.match_indices(name) {
+            let end = start + name.len();
+            if (start > 0 && is_ident(bytes[start - 1]))
+                || (end < bytes.len() && is_ident(bytes[end]))
             {
                 continue;
             }
+            let before = &body[..start];
+            let after = &body[end..];
+            if before.ends_with("callable(")
+                && !before[..before.len() - "callable(".len()]
+                    .ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+                && after.starts_with(')')
+            {
+                continue;
+            }
+            if let Some(attr) = after.strip_prefix('.') {
+                let word: String = attr
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect();
+                let rest = attr[word.len()..].trim_start_matches([' ', '\t']);
+                if matches!(
+                    word.as_str(),
+                    "__name__" | "__qualname__" | "__module__" | "__doc__"
+                ) && !rest.starts_with('(')
+                {
+                    continue;
+                }
+            }
+            if trivial_alias_statement(body, start, end, name) {
+                continue;
+            }
+            return true;
         }
-        return true;
     }
     false
+}
+
+/// The line holding `body[start..end]` is exactly `ident = name`.
+fn trivial_alias_statement(body: &str, start: usize, end: usize, name: &str) -> bool {
+    let line_start = body[..start].rfind('\n').map_or(0, |i| i + 1);
+    let line_end = body[end..].find('\n').map_or(body.len(), |i| end + i);
+    let line = body[line_start..line_end].trim();
+    let Some((lhs, rhs)) = line.split_once('=') else {
+        return false;
+    };
+    let (lhs, rhs) = (lhs.trim(), rhs.trim());
+    rhs == name
+        && lhs != name
+        && !lhs.is_empty()
+        && lhs.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && !lhs.starts_with(|c: char| c.is_ascii_digit())
+        && word_count(body, lhs) == 1
 }
 
 fn word_count(body: &str, word: &str) -> usize {
@@ -199,24 +229,4 @@ fn word_count(body: &str, word: &str) -> usize {
             (*i == 0 || !is_ident(bytes[i - 1])) && (end >= bytes.len() || !is_ident(bytes[end]))
         })
         .count()
-}
-
-/// The identifier before the innermost unclosed `(` ending `prefix`.
-fn enclosing_callee(prefix: &str) -> &str {
-    let mut depth = 0usize;
-    for (i, c) in prefix.char_indices().rev() {
-        match c {
-            ')' => depth += 1,
-            '(' if depth == 0 => {
-                let head = &prefix[..i];
-                let start = head
-                    .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-                    .map_or(0, |p| p + 1);
-                return &head[start..];
-            }
-            '(' => depth -= 1,
-            _ => {}
-        }
-    }
-    ""
 }

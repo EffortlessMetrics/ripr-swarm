@@ -190,6 +190,40 @@ fn owner_used_as_callback_or_alias_is_not_a_no_call_path() -> Result<(), String>
             "{body}"
         );
     }
+    // F1-F4: import alias locals, annotated or chained aliases, dunder
+    // invocations and a call nested in `callable(...)`.
+    for body in [
+        "from src.subject import score as s\n\ndef test_alias_map():\n    assert list(map(s, [0, 1])) == [8, 8]\n",
+        "from src.subject import score as s\n\ndef test_alias_assign():\n    f = s\n    assert [f(0)] == [8]\n",
+        "def test_annotated():\n    x: Callable = score\n    assert [x(0)] == [8]\n",
+        "def test_chained():\n    a = b = score\n    assert [a(0)] == [8]\n",
+        "def test_dunder_call():\n    assert score.__call__(0) == 8\n",
+        "def test_wrapped():\n    assert score.__wrapped__(0) == 8\n",
+        "def test_nested():\n    assert callable(score(0))\n",
+    ] {
+        let finding = score_case(body)?;
+        assert!(!finding.related_tests.is_empty(), "{body}");
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .all(|row| row.miss != Some(RelatedTestMiss::NoCallPath)),
+            "{body}: {:?}",
+            misses(&finding)
+        );
+    }
+    // Positive controls: trivial forms still carry no_call_path.
+    for body in [
+        "from src.subject import score as s\n\ndef test_alias_callable():\n    assert callable(s)\n",
+        "def test_name_only():\n    assert score.__doc__ is None\n",
+    ] {
+        let finding = score_case(body)?;
+        assert_eq!(
+            finding.related_tests[0].miss,
+            Some(RelatedTestMiss::NoCallPath),
+            "{body}"
+        );
+    }
     // Positive control: an alias that is never used again is still no call.
     let finding = score_case("def test_score_alias_unused():\n    f = score\n    assert 8 == 8\n")?;
     assert_eq!(
