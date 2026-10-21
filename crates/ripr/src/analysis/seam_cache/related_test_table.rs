@@ -51,6 +51,7 @@ struct EvidenceRef<'a> {
     #[serde(serialize_with = "serialize_values")]
     observed_values: &'a [ValueFact],
     missing_discriminators: &'a [MissingDiscriminatorFact],
+    statically_contradicted_related_tests: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     new_test_target: Option<&'a NewTestTargetAdmission>,
 }
@@ -80,6 +81,9 @@ struct EvidenceOwned {
     #[serde(deserialize_with = "deserialize_values")]
     observed_values: Vec<ValueFact>,
     missing_discriminators: Vec<MissingDiscriminatorFact>,
+    /// No serde default: an entry written before the cache carried this count
+    /// must miss rather than decode as a silent zero (#9110).
+    statically_contradicted_related_tests: usize,
     #[serde(default)]
     new_test_target: Option<NewTestTargetAdmission>,
 }
@@ -246,7 +250,7 @@ fn seam_ref(classified: &ClassifiedSeam, related_tests: Vec<u32>) -> SeamRef<'_>
         discriminate,
         observed_values,
         missing_discriminators,
-        statically_contradicted_related_tests: _,
+        statically_contradicted_related_tests,
         new_test_target,
     } = evidence;
     SeamRef {
@@ -261,6 +265,7 @@ fn seam_ref(classified: &ClassifiedSeam, related_tests: Vec<u32>) -> SeamRef<'_>
             discriminate,
             observed_values,
             missing_discriminators,
+            statically_contradicted_related_tests: *statically_contradicted_related_tests,
             new_test_target: new_test_target.as_ref(),
         },
         class,
@@ -430,6 +435,7 @@ pub(super) fn deserialize<'de, D: Deserializer<'de>>(
             discriminate,
             observed_values,
             missing_discriminators,
+            statically_contradicted_related_tests,
             new_test_target,
         } = evidence;
         let mut related_tests = Vec::with_capacity(indices.len());
@@ -457,7 +463,7 @@ pub(super) fn deserialize<'de, D: Deserializer<'de>>(
                 discriminate,
                 observed_values,
                 missing_discriminators,
-                statically_contradicted_related_tests: 0,
+                statically_contradicted_related_tests,
                 new_test_target,
             },
             class,
@@ -660,6 +666,37 @@ pub(super) mod tests {
         ]);
         let decoded: Body = serde_json::from_value(encoded).map_err(|err| err.to_string())?;
         assert_eq!(decoded.seams[0].evidence.observed_values[0].file, None);
+        Ok(())
+    }
+
+    /// #9198: the contradiction count is the contradiction gate's completeness
+    /// authority and feeds the repair-card id, so a warm load must equal the
+    /// cold evidence, and an entry without the count must not decode as zero.
+    #[test]
+    fn statically_contradicted_count_survives_the_cache_round_trip() -> Result<(), String> {
+        let mut contradicted = seam(1, vec![related("a", RelationReason::SameModule)]);
+        contradicted.evidence.statically_contradicted_related_tests = 2;
+        let encoded = serde_json::to_value(Body {
+            seams: vec![contradicted],
+        })
+        .map_err(|err| err.to_string())?;
+        let stored = &encoded["seams"]["seams"][0]["evidence"];
+        assert_eq!(stored["statically_contradicted_related_tests"], 2);
+        let decoded: Body =
+            serde_json::from_value(encoded.clone()).map_err(|err| err.to_string())?;
+        assert_eq!(
+            decoded.seams[0]
+                .evidence
+                .statically_contradicted_related_tests,
+            2,
+            "a warm seam must carry the cold contradiction count"
+        );
+        let mut stale = encoded;
+        let Some(evidence) = stale["seams"]["seams"][0]["evidence"].as_object_mut() else {
+            return Err("missing evidence object".to_owned());
+        };
+        evidence.remove("statically_contradicted_related_tests");
+        assert!(serde_json::from_value::<Body>(stale).is_err());
         Ok(())
     }
 
