@@ -17076,6 +17076,30 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0286"
+name = "empty-diff base candidate must be analyzable"
+spec = "docs/specs/RIPR-SPEC-0286-empty-diff-base-candidate.md"
+tests = [
+  "crates/ripr/src/analysis/diff/load.rs::tests::another_base_candidate_rejects_a_diff_over_the_changed_line_guard",
+  "crates/ripr/src/analysis/diff/load.rs::tests::another_base_candidate_rejects_a_diff_over_the_changed_file_guard",
+  "crates/ripr/src/analysis/diff/load.rs::tests::another_base_candidate_counts_renamed_rust_lines",
+  "crates/ripr/src/analysis/diff/load.rs::tests::another_base_candidate_prefers_the_smallest_analyzable_diff",
+  "crates/ripr/src/analysis/diff/load.rs::tests::numstat_new_path_unwraps_rename_and_quote_forms",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/diff/load.rs",
+  "crates/ripr/src/analysis/diff/parse.rs",
+  "crates/ripr/src/analysis/language/rust/mod.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0286-empty-diff-base-candidate.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0292"
 name = "Mutation spot check calibration-schema admission"
 spec = "docs/specs/RIPR-SPEC-0292-spot-check-schema-admission.md"
