@@ -265,7 +265,13 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
 
 #[test]
 fn typescript_without_enabling_config_is_not_a_clean_result() -> Result<(), String> {
-    let (root, decoy) = materialize("blind_journey_installed_typescript", "head", "tsoff", None)?;
+    // Pinned to Rust only so no-config project detection cannot enable TypeScript.
+    let (root, decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "tsoff",
+        Some("[languages]\nenabled = [\"rust\"]\n"),
+    )?;
     let root_arg = root.to_string_lossy().into_owned();
     let (_, out) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
     need(&out, "analysis incomplete", "incomplete analysis")?;
