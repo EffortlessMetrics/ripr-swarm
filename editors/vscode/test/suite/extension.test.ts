@@ -1561,11 +1561,20 @@ suite('Extension Smoke', () => {
       });
       assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
 
-      // Wording alone is not the contract: the old phrases under another kind stay generic.
+      // Legacy servers send analysis_error for a missing base: only that
+      // kind keeps the old wording fallback (documented in client.ts).
       context.client.emitNotification('ripr/analysisStatus', {
         schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
         retry_command: 'ripr.refresh',
-        failure: { kind: 'analysis_error', message: 'the base `origin/main` does not resolve to a commit. could not resolve a default base' }
+        failure: { kind: 'analysis_error', message: 'the base `origin/main` does not resolve to a commit' }
+      });
+      assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
+
+      // Wording under any other kind is never reclassified.
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
+        retry_command: 'ripr.refresh',
+        failure: { kind: 'deadline_exceeded', message: 'the base `origin/main` does not resolve to a commit' }
       });
       assert.ok(!String(context.status.tooltip).includes('Set ripr.baseRef'));
       assert.ok(String(context.status.tooltip).includes('Run ripr: Refresh Diagnostics to retry'));

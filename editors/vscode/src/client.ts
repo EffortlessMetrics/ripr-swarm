@@ -1890,7 +1890,7 @@ export class RiprClientController {
           kind: 'analysisFailed',
           summary: 'ripr analysis failed; last-known-good evidence is retained.',
           detail: `${analysisStatusDetail(status)}\n${failureMessage}${retained}`,
-          nextStep: failure?.kind === BASE_UNRESOLVABLE_FAILURE_KIND
+          nextStep: isBaseUnresolvableFailure(failure?.kind, failureMessage)
             ? 'Set ripr.baseRef to a ref this repository has (for example main), then run ripr: Refresh Diagnostics.'
             : `Run ${retry} to retry the saved-workspace analysis.`
         });
@@ -3933,6 +3933,22 @@ function serverLogMessage(params: unknown): string | undefined {
 // `ripr/analysisStatus` payload (#6740). The extension branches on it rather
 // than on message wording; all of those cases are fixed by ripr.baseRef.
 const BASE_UNRESOLVABLE_FAILURE_KIND = 'base_unresolvable';
+
+// LEGACY: servers that predate the typed kind (still admitted by the server
+// resolver, which only probes LSP compatibility) report these failures as
+// `analysis_error`. For that kind alone, keep recognising the two old
+// wordings so those users still get the ripr.baseRef step. A server that
+// sends any other kind, including `base_unresolvable`, is never reclassified
+// by message text. Remove once the minimum supported server sends the kind.
+function isBaseUnresolvableFailure(kind: unknown, message: string): boolean {
+  if (kind === BASE_UNRESOLVABLE_FAILURE_KIND) {
+    return true;
+  }
+  return (
+    kind === 'analysis_error' &&
+    /the base `[^`]+` does not resolve to a commit|could not resolve a default base/.test(message)
+  );
+}
 
 /**
  * One typed per-component outcome record from the server's

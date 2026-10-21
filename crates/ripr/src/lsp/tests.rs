@@ -12565,6 +12565,16 @@ fn generic_client_analysis_failure_is_shown_once_and_only_to_generic_clients() -
                 "the forced failure must reach the status payload: {statuses:?}"
             ));
         }
+        // #6740: the wire payload itself, not only the in-process carrier,
+        // names the unresolvable base with the stable kind the editor reads.
+        if !statuses
+            .iter()
+            .any(|status| status["state"] == "failed" && status["failure"]["kind"] == "base_unresolvable")
+        {
+            return Err(format!(
+                "the missing-base failure must carry failure.kind=base_unresolvable on the wire: {statuses:?}"
+            ));
+        }
         if shown.len() != 1 {
             return Err(format!(
                 "an unchanged failure must be shown exactly once to a generic client: {shown:?}"
