@@ -28,6 +28,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_dep_edge_cross_crate_ambiguity/input --diff <cwd>/fixtures/rust_dep_edge_cross_crate_ambiguity/diff.patch --mode fast probe:crates_b_src_lib.rs:return_value:daf98d2c
   ripr context --root <cwd>/fixtures/rust_dep_edge_cross_crate_ambiguity/input --diff <cwd>/fixtures/rust_dep_edge_cross_crate_ambiguity/diff.patch --mode fast --at probe:crates_b_src_lib.rs:return_value:daf98d2c
+  no repair start offered: repair route not ready; run `ripr repair probe:crates_b_src_lib.rs:return_value:daf98d2c --root <cwd>/fixtures/rust_dep_edge_cross_crate_ambiguity/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_dep_edge_cross_crate_ambiguity/input --at crates/b/src/lib.rs:4 --kind return_value
 

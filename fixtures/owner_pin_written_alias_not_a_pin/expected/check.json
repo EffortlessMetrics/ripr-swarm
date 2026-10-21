@@ -1,0 +1,333 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/owner_pin_written_alias_not_a_pin/input",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":1,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:c60a47c04a4528c60e181ecb5aa02e628188cb4a276857623396fcf8dc4a52bd","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:return_value:c70c15c1",
+      "canonical_gap_id": "gap:rust:src/lib.rs:weight:return_value:return_value:x*3",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:weight:return_value:return_value:x*3",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "weight",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "x*3"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:c70c15c1",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "x * 3"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach weight: braced_tuple_element_ref_mut_alias_is_not_independent, nested_braced_tuple_element_ref_mut_alias_is_not_independent, tuple_ref_mut_alias_is_not_independent"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: x * 3"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach weight: braced_tuple_element_ref_mut_alias_is_not_independent, nested_braced_tuple_element_ref_mut_alias_is_not_independent, tuple_ref_mut_alias_is_not_independent", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: x * 3", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: x * 3 (line 2)", "related test src/lib.rs:31 braced_tuple_element_ref_mut_alias_is_not_independent uses strong exact value oracle: assert_eq!(weight(4), EXPECTED);", "related test src/lib.rs:45 nested_braced_tuple_element_ref_mut_alias_is_not_independent uses strong exact value oracle: assert_eq!(weight(4), EXPECTED);", "related test src/lib.rs:18 tuple_ref_mut_alias_is_not_independent uses strong exact value oracle: assert_eq!(weight(4), EXPECTED);", "source function argument value x = 4 at line 22", "source function argument value x = 4 at line 25", "source function argument value x = 4 at line 35", "source function argument value x = 4 at line 38", "source function argument value x = 4 at line 49", "source function argument value x = 4 at line 52"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"x * 3","line":2}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: x * 3", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach weight: braced_tuple_element_ref_mut_alias_is_not_independent, nested_braced_tuple_element_ref_mut_alias_is_not_independent, tuple_ref_mut_alias_is_not_independent"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "22": "*r = weight(4);",
+        "25": "assert_eq!(weight(4), EXPECTED);",
+        "35": "*r = weight(4);",
+        "38": "assert_eq!(weight(4), EXPECTED);",
+        "49": "*r = weight(4);",
+        "52": "assert_eq!(weight(4), EXPECTED);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 22,
+            "value": "x = 4",
+            "context": "function_argument"
+          },
+          {
+            "line": 25,
+            "value": "x = 4",
+            "context": "function_argument"
+          },
+          {
+            "line": 35,
+            "value": "x = 4",
+            "context": "function_argument"
+          },
+          {
+            "line": 38,
+            "value": "x = 4",
+            "context": "function_argument"
+          },
+          {
+            "line": 49,
+            "value": "x = 4",
+            "context": "function_argument"
+          },
+          {
+            "line": 52,
+            "value": "x = 4",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 22,
+          "value": "x = 4",
+          "context": "function_argument"
+        },
+        {
+          "line": 25,
+          "value": "x = 4",
+          "context": "function_argument"
+        },
+        {
+          "line": 35,
+          "value": "x = 4",
+          "context": "function_argument"
+        },
+        {
+          "line": 38,
+          "value": "x = 4",
+          "context": "function_argument"
+        },
+        {
+          "line": 49,
+          "value": "x = 4",
+          "context": "function_argument"
+        },
+        {
+          "line": 52,
+          "value": "x = 4",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 3,
+      "related_tests": [
+        {
+          "name": "braced_tuple_element_ref_mut_alias_is_not_independent",
+          "file": "src/lib.rs",
+          "line": 31,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(weight(4), EXPECTED);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "nested_braced_tuple_element_ref_mut_alias_is_not_independent",
+          "file": "src/lib.rs",
+          "line": 45,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(weight(4), EXPECTED);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        },
+        {
+          "name": "tuple_ref_mut_alias_is_not_independent",
+          "file": "src/lib.rs",
+          "line": 18,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(weight(4), EXPECTED);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "The related test `tuple_ref_mut_alias_is_not_independent` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
+      "suggested_next_action": "The related test `tuple_ref_mut_alias_is_not_independent` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:static_unknown:d4d97882",
+      "canonical_gap_id": "gap:rust:src/lib.rs:weight:static_unknown:static_unknown:x*2",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:weight:static_unknown:static_unknown:x*2",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "weight",
+        "behavior_kind": "static_unknown",
+        "probe_kind": "static_unknown",
+        "normalized_discriminator": "x*2"
+
+      },
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.50,
+      "probe": {
+        "id": "probe:src_lib.rs:static_unknown:d4d97882",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/lib.rs",
+        "line": 2,
+        "expression": "x * 2"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach weight: braced_tuple_element_ref_mut_alias_is_not_independent, nested_braced_tuple_element_ref_mut_alias_is_not_independent, tuple_ref_mut_alias_is_not_independent"},
+        "infect": {"state":"unknown","confidence":"unknown","summary":"Changed syntax is not mapped to a high-confidence probe family"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"No propagation model is available for this changed syntax"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"unknown","confidence":"low","summary":"Assertions exist, but oracle strength is unknown"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach weight: braced_tuple_element_ref_mut_alias_is_not_independent, nested_braced_tuple_element_ref_mut_alias_is_not_independent, tuple_ref_mut_alias_is_not_independent", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 2)", "related test src/lib.rs:31 braced_tuple_element_ref_mut_alias_is_not_independent uses exact value oracle, not graded against this probe: assert_eq!(weight(4), EXPECTED);", "related test src/lib.rs:45 nested_braced_tuple_element_ref_mut_alias_is_not_independent uses exact value oracle, not graded against this probe: assert_eq!(weight(4), EXPECTED);", "related test src/lib.rs:18 tuple_ref_mut_alias_is_not_independent uses exact value oracle, not graded against this probe: assert_eq!(weight(4), EXPECTED);", "source function argument value x = 4 at line 22", "source function argument value x = 4 at line 25", "source function argument value x = 4 at line 35", "source function argument value x = 4 at line 38", "source function argument value x = 4 at line 49", "source function argument value x = 4 at line 52"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"unknown sink","line":2}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Assertions exist, but oracle strength is unknown", "Changed syntax is not mapped to a high-confidence probe family", "No propagation model is available for this changed syntax", "Related tests appear to reach weight: braced_tuple_element_ref_mut_alias_is_not_independent, nested_braced_tuple_element_ref_mut_alias_is_not_independent, tuple_ref_mut_alias_is_not_independent"],
+      "missing": ["No strong discriminator was detected", "Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests"],
+      "assertion_texts": {
+        "22": "*r = weight(4);",
+        "25": "assert_eq!(weight(4), EXPECTED);",
+        "35": "*r = weight(4);",
+        "38": "assert_eq!(weight(4), EXPECTED);",
+        "49": "*r = weight(4);",
+        "52": "assert_eq!(weight(4), EXPECTED);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 22,
+            "value": "x = 4",
+            "context": "function_argument"
+          },
+          {
+            "line": 25,
+            "value": "x = 4",
+            "context": "function_argument"
+          },
+          {
+            "line": 35,
+            "value": "x = 4",
+            "context": "function_argument"
+          },
+          {
+            "line": 38,
+            "value": "x = 4",
+            "context": "function_argument"
+          },
+          {
+            "line": 49,
+            "value": "x = 4",
+            "context": "function_argument"
+          },
+          {
+            "line": 52,
+            "value": "x = 4",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 22,
+          "value": "x = 4",
+          "context": "function_argument"
+        },
+        {
+          "line": 25,
+          "value": "x = 4",
+          "context": "function_argument"
+        },
+        {
+          "line": 35,
+          "value": "x = 4",
+          "context": "function_argument"
+        },
+        {
+          "line": 38,
+          "value": "x = 4",
+          "context": "function_argument"
+        },
+        {
+          "line": 49,
+          "value": "x = 4",
+          "context": "function_argument"
+        },
+        {
+          "line": 52,
+          "value": "x = 4",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 3,
+      "related_tests": [
+        {
+          "name": "braced_tuple_element_ref_mut_alias_is_not_independent",
+          "file": "src/lib.rs",
+          "line": 31,
+          "oracle_strength": "unknown",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(weight(4), EXPECTED);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "nested_braced_tuple_element_ref_mut_alias_is_not_independent",
+          "file": "src/lib.rs",
+          "line": 45,
+          "oracle_strength": "unknown",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(weight(4), EXPECTED);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        },
+        {
+          "name": "tuple_ref_mut_alias_is_not_independent",
+          "file": "src/lib.rs",
+          "line": 18,
+          "oracle_strength": "unknown",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(weight(4), EXPECTED);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["static_probe_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "unknown",
+      "recommended_next_step": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "suggested_next_action": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "language": "rust",
+      "source_currentness": "base_deleted"
+    }
+  ]
+}

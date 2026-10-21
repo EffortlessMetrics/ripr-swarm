@@ -253,13 +253,10 @@ pub(crate) fn ts_changed_value_is_observed(
             // read; the effect branch below confirms it by kind.
             let credited_mock = !value_family
                 && matches!(assertion.oracle_kind, OracleKind::MockExpectation)
-                && assertion.mock_payload.as_ref().is_some_and(|payload| {
-                    mock_facts.credits_with_factories(
-                        payload,
-                        &candidate.test.body_text,
-                        &candidate.test.mock_factories_in_file,
-                    )
-                });
+                && assertion
+                    .mock_payload
+                    .as_ref()
+                    .is_some_and(|payload| mock_facts.credits_in_test(payload, candidate.test));
             // RIPR-SPEC-0250: a credited `toMatchObject` pin lists the changed
             // field and observes the whole owner result, so it sees the sink.
             if value_family && pin_facts.credits(&candidate.test.file, assertion) {
@@ -317,34 +314,31 @@ pub(crate) fn ts_changed_value_is_observed(
                 // owners keep the legacy member-segment reading: their honest
                 // needle IS `receiver.method(...)`.
                 let observed_code = ts_mask_literals_and_comments(observed);
-                // #7507: `expect(typeof cost)` observes the type string, not
-                // the changed value — never a value witness.
-                if ts_observed_is_typeof_name(&observed_code, &owner_names) {
-                    continue;
-                }
+                // #7507/#7815: `typeof cost` observes the type string, not
+                // the changed value. [`ts_masked_observes_owner`] excludes
+                // only those consumed occurrences, so a mixed assertion
+                // (`typeof price === 'function' ? price(150) : 0`) can
+                // still witness the later value check.
                 let owner_is_method =
                     matches!(owner.owner_kind, OwnerKind::Method | OwnerKind::ClassMethod);
                 // Method owners keep the legacy member-segment reading: their
                 // honest needle IS `receiver.method(...)`.
-                let observes_owner = if owner_is_method {
-                    owner_names
-                        .iter()
-                        .any(|name| ts_references_identifier(&observed_code, name))
+                let namespace_receivers = if owner_is_method {
+                    Vec::new()
                 } else {
-                    let receivers = unshadowed_owner_namespace_receivers(
+                    unshadowed_owner_namespace_receivers(
                         candidate.test,
                         owner,
                         alias_map,
                         workspace_root,
-                    );
-                    owner_names
-                        .iter()
-                        .any(|name| ts_observed_bare_reference(&observed_code, name))
-                        || owner_names.iter().any(|name| {
-                            ts_observed_namespaced_owner_call(&observed_code, name, &receivers)
-                        })
+                    )
                 };
-                if observes_owner {
+                if ts_masked_observes_owner(
+                    &observed_code,
+                    &owner_names,
+                    owner_is_method,
+                    &namespace_receivers,
+                ) {
                     return true;
                 }
                 if changed_tokens
@@ -364,6 +358,8 @@ pub(crate) fn ts_changed_value_is_observed(
                     &owner_names,
                     &changed_tokens,
                     candidate.test,
+                    owner_is_method,
+                    &namespace_receivers,
                 ) {
                     return true;
                 }
@@ -471,11 +467,19 @@ pub(crate) fn ts_changed_value_is_observed(
 ///
 /// #7497: a local the test rewrites or escapes ([`ts_test_local_is_mutated`])
 /// observes the test's own write, so the one-hop credit stays unavailable.
+///
+/// #7813: the initializer uses the same owner-reference rule as the #7507
+/// value guard. For a bare-call owner, `const r = helper.price(150)` is not
+/// an observation of `export function price` — only a bare occurrence or a
+/// call through an unshadowed owner-module namespace receiver confirms.
+/// Method owners keep the legacy member-segment reading.
 fn ts_observed_local_aliases_owner(
     observed: &str,
     owner_names: &[&str],
     changed_tokens: &[String],
     test: &TypeScriptTest,
+    owner_is_method: bool,
+    namespace_receivers: &[String],
 ) -> bool {
     fn is_ident_byte(b: u8) -> bool {
         b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
@@ -514,16 +518,21 @@ fn ts_observed_local_aliases_owner(
                     .map(|p| rhs_start + p)
                     .unwrap_or(test_body.len());
                 let rhs = &test_body[rhs_start..rhs_end];
-                // RIPR-SPEC-0243 rules 6 and 7: the same whole-identifier
+                // RIPR-SPEC-0243 rules 6 and 7, plus the #7507/#7813
+                // bare-call owner exception: the same whole-identifier
                 // test, over the owner name and its alias-rename locals
-                // (in code, not in a string or comment).
+                // (in code, not in a string or comment). Member segments
+                // credit only method owners; a bare-call owner needs a
+                // bare occurrence or an owner-module namespace call.
                 let rhs_code = ts_mask_literals_and_comments(rhs);
-                if owner_names
+                if ts_masked_observes_owner(
+                    &rhs_code,
+                    owner_names,
+                    owner_is_method,
+                    namespace_receivers,
+                ) || changed_tokens
                     .iter()
-                    .any(|name| ts_references_identifier(&rhs_code, name))
-                    || changed_tokens
-                        .iter()
-                        .any(|tok| ts_references_identifier(rhs, tok))
+                    .any(|tok| ts_references_identifier(rhs, tok))
                 {
                     // #7497: a local the test rewrites or escapes observes
                     // the test's own write, so the one-hop credit stays
@@ -540,9 +549,42 @@ fn ts_observed_local_aliases_owner(
     false
 }
 
+/// Shared owner-name observation for the value guard and the one-hop alias
+/// initializer (#7507, #7813, #7815). Method owners still match member
+/// segments; bare-call owners require a bare occurrence or an owner-module
+/// namespace call. Typeof-consumed occurrences are not value witnesses.
+fn ts_masked_observes_owner(
+    masked: &str,
+    owner_names: &[&str],
+    owner_is_method: bool,
+    namespace_receivers: &[String],
+) -> bool {
+    let masked = ts_mask_typeof_consumed_owner_names(
+        masked,
+        owner_names,
+        owner_is_method,
+        namespace_receivers,
+    );
+    if owner_is_method {
+        owner_names
+            .iter()
+            .any(|name| ts_references_identifier(&masked, name))
+    } else {
+        owner_names
+            .iter()
+            .any(|name| ts_observed_bare_reference(&masked, name))
+            || owner_names
+                .iter()
+                .any(|name| ts_observed_namespaced_owner_call(&masked, name, namespace_receivers))
+    }
+}
+
 /// `true` when `text` contains `ident` as a whole identifier: the characters
 /// on both sides of the occurrence are not `[A-Za-z0-9_$]` (RIPR-SPEC-0243
-/// rule 6). A member segment counts (`ns.price(` references `price`);
+/// rule 6). A member segment counts for method owners (`c.total(`
+/// references `total`). For a bare-call owner the value and alias guards
+/// use [`ts_observed_bare_reference`] instead (#7507, #7813), so
+/// `helper.price(` is not an observation of `export function price`.
 /// `address` does not reference `add`. An empty `ident` never matches.
 pub(crate) fn ts_references_identifier(text: &str, ident: &str) -> bool {
     // JavaScript identifiers may hold non-ASCII letters, so the boundary
@@ -637,45 +679,139 @@ fn ts_observed_namespaced_owner_call(
         })
     })
 }
-/// `true` when the masked observed expression observes an owner name only
-/// through `typeof` (`typeof cost`, `typeof(cost)`; #7507). A type string is
-/// not the changed value, so such an assertion never witnesses a
-/// ReturnValue / FieldConstruction sink.
-fn ts_observed_is_typeof_name(masked_observed: &str, owner_names: &[&str]) -> bool {
-    owner_names.iter().any(|name| {
-        let mut from = 0usize;
-        while let Some(rel) = masked_observed[from..].find("typeof") {
-            let at = from + rel;
-            let before_ok = masked_observed[..at]
-                .chars()
-                .next_back()
-                .is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '$'));
-            // The keyword must also end on a word boundary: without this, an
-            // identifier that merely starts with `typeof` (such as
-            // `typeofprice`) reads as a `typeof` operator observation.
-            let after_ok = masked_observed[at + "typeof".len()..]
-                .chars()
-                .next()
-                .is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '$'));
-            if !before_ok || !after_ok {
-                from = at + "typeof".len();
-                continue;
+/// Blank owner-name occurrences that are the operand of `typeof`
+/// (`typeof cost`, `typeof(cost)`, `typeof ns.price`; #7507, #7815). A type
+/// string is not the changed value, but a later non-typeof occurrence in
+/// the same expression still can be. Identifiers that merely start with
+/// `typeof` (`typeofprice`) are not the operator. Receiver-qualified
+/// operands mask only the owner segment, and only when a later matcher
+/// would otherwise treat that same operand as a value witness: a
+/// namespace receiver for bare-call owners, or an identifier receiver
+/// chain for method owners.
+fn ts_mask_typeof_consumed_owner_names(
+    masked_observed: &str,
+    owner_names: &[&str],
+    owner_is_method: bool,
+    namespace_receivers: &[String],
+) -> String {
+    fn is_ident_char(c: char) -> bool {
+        c.is_alphanumeric() || c == '_' || c == '$'
+    }
+    fn first_ident(s: &str) -> Option<&str> {
+        let mut end = 0usize;
+        for (i, c) in s.char_indices() {
+            if is_ident_char(c) {
+                end = i + c.len_utf8();
+            } else {
+                break;
             }
-            let rest = masked_observed[at + "typeof".len()..].trim_start();
-            let rest = rest
-                .strip_prefix('(')
-                .map_or(rest, |inner| inner.trim_start());
-            if rest.strip_prefix(name).is_some_and(|tail| {
+        }
+        (end > 0).then_some(&s[..end])
+    }
+    fn member_punct(s: &str) -> Option<&str> {
+        if s.starts_with("?.") {
+            Some("?.")
+        } else if s.starts_with("!.") {
+            Some("!.")
+        } else if s.starts_with("...") {
+            None
+        } else if s.starts_with('.') {
+            Some(".")
+        } else {
+            None
+        }
+    }
+    fn owner_name_len(s: &str, owner_names: &[&str]) -> Option<usize> {
+        owner_names.iter().copied().find_map(|name| {
+            if name.is_empty() {
+                return None;
+            }
+            s.strip_prefix(name).and_then(|tail| {
                 tail.chars()
                     .next()
-                    .is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '$'))
-            }) {
-                return true;
+                    .is_none_or(|c| !is_ident_char(c))
+                    .then_some(name.len())
+            })
+        })
+    }
+    fn qualified_owner_span(
+        inner: &str,
+        owner_names: &[&str],
+        owner_is_method: bool,
+        namespace_receivers: &[String],
+    ) -> Option<(usize, usize)> {
+        let receiver = first_ident(inner)?;
+        let after_recv = &inner[receiver.len()..];
+        if owner_is_method {
+            let mut cursor = after_recv;
+            let mut last = None;
+            loop {
+                let punct = member_punct(cursor)?;
+                cursor = &cursor[punct.len()..];
+                let ident_start = inner.len() - cursor.len();
+                let ident = first_ident(cursor)?;
+                if owner_names.contains(&ident) {
+                    last = Some((ident_start, ident.len()));
+                }
+                cursor = &cursor[ident.len()..];
+                if member_punct(cursor).is_none() {
+                    break;
+                }
             }
-            from = at + "typeof".len();
+            last
+        } else if namespace_receivers.iter().any(|name| name == receiver) {
+            let punct = member_punct(after_recv)?;
+            let after_punct = &after_recv[punct.len()..];
+            let name_len = owner_name_len(after_punct, owner_names)?;
+            Some((receiver.len() + punct.len(), name_len))
+        } else {
+            None
         }
-        false
-    })
+    }
+    let mut out = masked_observed.to_string();
+    let mut from = 0usize;
+    while let Some(rel) = out[from..].find("typeof") {
+        let at = from + rel;
+        let before_ok = out[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !is_ident_char(c));
+        let after_ok = out[at + "typeof".len()..]
+            .chars()
+            .next()
+            .is_none_or(|c| !is_ident_char(c));
+        if !before_ok || !after_ok {
+            from = at + "typeof".len();
+            continue;
+        }
+        let after_kw = at + "typeof".len();
+        let consumed = {
+            let rest = &out[after_kw..];
+            let trimmed = rest.trim_start();
+            let leading_ws = rest.len() - trimmed.len();
+            let (inner, extra) = trimmed
+                .strip_prefix('(')
+                .map(|after_paren| {
+                    let inner = after_paren.trim_start();
+                    (inner, 1 + (after_paren.len() - inner.len()))
+                })
+                .unwrap_or((trimmed, 0));
+            let inner_at = after_kw + leading_ws + extra;
+            owner_name_len(inner, owner_names)
+                .map(|name_len| (inner_at, name_len))
+                .or_else(|| {
+                    qualified_owner_span(inner, owner_names, owner_is_method, namespace_receivers)
+                        .map(|(rel, len)| (inner_at + rel, len))
+                })
+        };
+        if let Some((name_at, name_len)) = consumed {
+            out.replace_range(name_at..name_at + name_len, &" ".repeat(name_len));
+            from = name_at + name_len;
+        } else {
+            from = after_kw;
+        }
+    }
+    out
 }
 /// `text` with string-literal contents, template-literal text, regular
 /// expression literals and comments replaced by spaces, so an identifier
@@ -899,7 +1035,8 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
             // Handled before the match: flags are masked, then code resumes.
             Mode::RegexFlags => out.push(c),
             Mode::LineComment => {
-                if c == '\n' {
+                // ECMAScript line comments end at all four LineTerminators.
+                if matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}') {
                     mode = Mode::Code;
                     out.push(c);
                 } else {
@@ -3199,6 +3336,31 @@ pub(crate) fn owner_namespace_receivers(
         })
         .map(|import| import.local.clone())
         .collect();
+    // RIPR-SPEC-0243 rule 5: a default import of a module whose `export
+    // default { owner }` object holds the owner is the receiver of
+    // `local.owner(...)`, exactly as a namespace import is.
+    if owner.default_object_member {
+        receivers.extend(
+            test.imports_in_file
+                .iter()
+                .filter(|import| {
+                    !import.namespace
+                        && import.imported.as_deref() == Some("default")
+                        && test
+                            .default_member_only_locals_in_file
+                            .iter()
+                            .any(|(local, member)| *local == import.local && *member == owner.name)
+                        && import_source_matches_owner(
+                            import,
+                            &test.file,
+                            owner,
+                            alias_map,
+                            workspace_root,
+                        )
+                })
+                .map(|import| import.local.clone()),
+        );
+    }
     // A dynamic import binds the same module namespace a static
     // `import * as` would, but as a local declaration, so it never reaches
     // `imports_in_file`. Without it the member-call gate below would
@@ -4402,11 +4564,7 @@ pub(crate) fn strongest_family_matching_oracle(
                 (_, Some(payload))
                     if effect_family
                         && matches!(assertion.oracle_kind, OracleKind::MockExpectation)
-                        && mock_facts.credits_with_factories(
-                            payload,
-                            &candidate.test.body_text,
-                            &candidate.test.mock_factories_in_file,
-                        ) =>
+                        && mock_facts.credits_in_test(payload, candidate.test) =>
                 {
                     (OracleKind::MockExpectation, OracleStrength::Strong)
                 }
@@ -4451,13 +4609,10 @@ fn project_credited_mock_rows(
         }
         let credited = candidate.test.assertions.iter().find(|assertion| {
             matches!(assertion.oracle_kind, OracleKind::MockExpectation)
-                && assertion.mock_payload.as_ref().is_some_and(|payload| {
-                    mock_facts.credits_with_factories(
-                        payload,
-                        &candidate.test.body_text,
-                        &candidate.test.mock_factories_in_file,
-                    )
-                })
+                && assertion
+                    .mock_payload
+                    .as_ref()
+                    .is_some_and(|payload| mock_facts.credits_in_test(payload, candidate.test))
         });
         if let Some(assertion) = credited {
             row.oracle_kind = OracleKind::MockExpectation;
@@ -4775,7 +4930,40 @@ pub(crate) fn classify_change_with_alias_state(
     let owner_body = reads_mock_payload
         .then_some(owner.source_text.as_deref())
         .flatten();
-    let mock_facts = MockCallFacts::read(line_text, owner_body, &owner.name, &owner.params);
+    let mut mock_facts = MockCallFacts::read(line_text, owner_body, &owner.name, &owner.params);
+    // RIPR-SPEC-0247 rule 4: a spy on an exported module object the changed
+    // line calls. The module and the test files are read as the owner was
+    // (committed history reads HEAD), so the file checks see the same text
+    // as the test bodies.
+    if let (true, Some(root)) = (reads_mock_payload, workspace_root) {
+        let module_source = crate::analysis::committed_source::read_source_bytes(root, &owner.file)
+            .ok()
+            .flatten()
+            .and_then(|bytes| String::from_utf8(bytes).ok());
+        mock_facts.read_module_object_calls(
+            line_text,
+            owner_body,
+            &owner.name,
+            &owner.params,
+            owner.start_line,
+            module_source.as_deref(),
+        );
+        mock_facts.admit_spy_files(
+            related_candidates
+                .iter()
+                .filter(|candidate| candidate.relation.uses_oracle())
+                .map(|candidate| candidate.test),
+            |test_file| {
+                crate::analysis::committed_source::read_source_bytes(root, test_file)
+                    .ok()
+                    .flatten()
+                    .and_then(|bytes| String::from_utf8(bytes).ok())
+            },
+            |import, test_file| {
+                import_source_matches_owner(import, test_file, owner, alias_map, workspace_root)
+            },
+        );
+    }
     if reads_mock_payload {
         project_credited_mock_rows(&mut related, &related_candidates, &mock_facts);
     }

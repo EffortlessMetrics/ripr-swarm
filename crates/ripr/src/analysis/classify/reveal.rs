@@ -492,6 +492,10 @@ fn field_collection_observer_confirms(
     let Some(owner) = owner else {
         return false;
     };
+    // A `#[should_panic]` test passes when the values differ (#7976).
+    if test_is_should_panic(test) {
+        return false;
+    }
     let plain_reads = assertion_field_collection_reads(&assertion.text, path, false, append_write);
     assertion_field_collection_reads(&assertion.text, path, count_reads, append_write)
         .into_iter()
@@ -512,12 +516,13 @@ fn field_collection_observer_confirms(
                         assertion.line,
                     )
                 }))
-                && owner_call_precedes_read(
-                    &test.body,
-                    test.start_line,
+                && owner_call_reaches_read_unrewritten(
+                    test,
                     &read.binding,
                     owner.name(),
                     assertion.line,
+                    read.getter.as_deref(),
+                    path,
                 )
                 && read.getter.as_deref().is_none_or(|getter| {
                     owner
@@ -658,6 +663,154 @@ fn insert_keys_match(key: &str, seed: &str) -> bool {
     }
 }
 
+/// Whether `test` is a `#[should_panic]` test, by attribute or by body text.
+fn test_is_should_panic(test: &TestSummary) -> bool {
+    test.attrs
+        .iter()
+        .map(String::as_str)
+        .chain(std::iter::once(test.body.as_str()))
+        .any(|text| text.contains("should_panic"))
+}
+
+/// RIPR-SPEC-0228 rule 3 for argument-free field reads (#7976): whether some
+/// accepted `binding.method(..)` call precedes the read on `read_line` with
+/// no later mention of `binding` that may rewrite what the read sees. In
+/// masked text between that call and the read, `binding` may appear only as
+/// `binding.getter(..)` through the read's own getter, or as a read-only
+/// access of the written field (`binding.path`, `binding.path.len()`, ...).
+/// `o.add(3); o.reset_to(&[4]); assert_eq!(o.entries(), &[4])` credits
+/// nothing: `reset_to` replaces what `add` stored.
+fn owner_call_reaches_read_unrewritten(
+    test: &TestSummary,
+    binding: &str,
+    method: &str,
+    read_line: usize,
+    getter: Option<&str>,
+    path: &str,
+) -> bool {
+    let masked = mask_comments_and_strings(&test.body);
+    let Some(skipped_lines) = read_line.checked_sub(test.start_line) else {
+        return false;
+    };
+    let read_at = match skipped_lines {
+        0 => 0,
+        lines => match masked.match_indices('\n').nth(lines - 1) {
+            Some((at, _)) => at + 1,
+            None => return false,
+        },
+    };
+    // The window also covers the part of the read line before the assertion
+    // macro (`o.log.clear(); assert_eq!(..)`).
+    let line_end = masked[read_at..]
+        .find('\n')
+        .map_or(masked.len(), |found| read_at + found);
+    let read_end = masked[read_at..line_end]
+        .rfind("assert")
+        .map_or(line_end, |found| read_at + found);
+    let call = format!("{binding}.{method}(");
+    owner_calls_before_read(&test.body, test.start_line, binding, method, read_line)
+        .into_iter()
+        .any(|at| {
+            // A bare call statement only: a chained or bound result
+            // (`o.add(4).clear_log()`, `let r = o.add(4)`) may be `&mut Self`
+            // and rewrite the field without naming `binding`. `.unwrap()`,
+            // `.expect(..)` and `?` consume the result and are allowed.
+            let statement_start = masked[..at].rfind([';', '{', '}']).map_or(0, |i| i + 1);
+            masked[statement_start..at].trim().is_empty()
+                && bare_call_end(&masked, at, call.len()).is_some_and(|end| {
+                    only_field_reads_between(&masked, end, read_end, binding, getter, path)
+                })
+        })
+}
+
+/// Whether the masked `code` between `from` and `to` mentions `binding`
+/// only as a read of the collection under test: `binding.getter(..)` for the
+/// read's own `getter`, or `binding.path` followed by a read-only method
+/// (`len`, `is_empty`, `iter`, `first`, `last`, `get`, `contains`) or by no
+/// method at all. Anything else (`o.reset_to(..)`, `&mut o`,
+/// `o.log.clear()`, `o.log = ..`) may rewrite the field.
+fn only_field_reads_between(
+    code: &str,
+    from: usize,
+    to: usize,
+    binding: &str,
+    getter: Option<&str>,
+    path: &str,
+) -> bool {
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let Some(window) = code.get(from..to.max(from)) else {
+        return false;
+    };
+    let getter_call = getter.map(|getter| format!(".{getter}("));
+    let field = format!(".{path}");
+    window.match_indices(binding).all(|(at, name)| {
+        let after = &window[at + name.len()..];
+        if window[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ident(ch) || ch == '.')
+            || after.starts_with(ident)
+        {
+            return true;
+        }
+        if getter_call
+            .as_deref()
+            .is_some_and(|read| after.starts_with(read))
+        {
+            return true;
+        }
+        let Some(rest) = after.strip_prefix(field.as_str()) else {
+            return false;
+        };
+        if rest.starts_with(ident) {
+            return false;
+        }
+        match rest.strip_prefix('.') {
+            Some(method) => [
+                "len(",
+                "is_empty(",
+                "iter(",
+                "first(",
+                "last(",
+                "get(",
+                "contains(",
+            ]
+            .iter()
+            .any(|read| method.starts_with(read)),
+            None => {
+                // Allowlist what may follow a bare `binding.path`, and what
+                // may precede it. Indexing, assignment, compound assignment,
+                // `&mut` / `ref mut` borrows (possibly parenthesized) and
+                // place-taking macros (`write!(o.log, ..)`) may rewrite it;
+                // only a statement end, a comparison, a shared borrow or an
+                // assertion argument is a read.
+                let pre = window[..at].trim_end();
+                let next = rest.trim_start();
+                let shared_borrow = pre.ends_with('&') && !pre.ends_with("&&");
+                let assert_argument = pre.strip_suffix('(').is_some_and(|before| {
+                    before.trim_end().strip_suffix('!').is_some_and(|name| {
+                        let name = name.rsplit(|ch: char| !ident(ch)).next().unwrap_or("");
+                        name.starts_with("assert") || name.starts_with("debug_assert")
+                    })
+                });
+                let compared = next.starts_with("==")
+                    || next.starts_with("!=")
+                    || ((next.starts_with('<') || next.starts_with('>'))
+                        && !next.starts_with("<<")
+                        && !next.starts_with(">>")
+                        && !next.starts_with("<=")
+                        && !next.starts_with(">="));
+                !pre.ends_with("ref mut")
+                    && !pre.ends_with("&mut")
+                    && ((next.starts_with(';') && !pre.ends_with('='))
+                        || compared
+                        || ((shared_borrow || assert_argument)
+                            && [",", ")", "}"].iter().any(|ok| next.starts_with(ok))))
+            }
+        }
+    })
+}
+
 /// RIPR-SPEC-0228 keyed reads: whether `assertion` reads back the entry the
 /// owner inserted into the field map `path` under its argument number
 /// `key_index`. One compared side must be `binding.getter(key)` on the
@@ -685,13 +838,7 @@ fn keyed_field_read_confirms(
         return false;
     };
     // A `#[should_panic]` test passes when the values differ.
-    if test
-        .attrs
-        .iter()
-        .map(String::as_str)
-        .chain(std::iter::once(test.body.as_str()))
-        .any(|text| text.contains("should_panic"))
-    {
+    if test_is_should_panic(test) {
         return false;
     }
     assertion_keyed_getter_reads(&assertion.text)
@@ -3883,11 +4030,14 @@ fn crate_identifier(name: &str) -> String {
 /// `ripr check` on this repository. The memo must not outlive the index it was filled from.
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct FileUseStatements {
-    by_file: std::cell::RefCell<std::collections::BTreeMap<std::path::PathBuf, Vec<String>>>,
+    by_file: crate::analysis::sync_memo::SyncMemo<
+        std::collections::BTreeMap<std::path::PathBuf, Vec<String>>,
+    >,
     /// #7985: per file and name, whether a macro invocation may define an
     /// item of that name.
-    macro_defined:
-        std::cell::RefCell<std::collections::BTreeMap<(std::path::PathBuf, String), bool>>,
+    macro_defined: crate::analysis::sync_memo::SyncMemo<
+        std::collections::BTreeMap<(std::path::PathBuf, String), bool>,
+    >,
 }
 
 impl FileUseStatements {
@@ -3949,6 +4099,8 @@ fn all_use_statements(masked: &str) -> Vec<String> {
             && bytes.get(index + 1) == Some(&b's')
             && bytes.get(index + 2) == Some(&b'e')
             && (index == 0 || !is_ident_byte(bytes[index - 1]))
+            // A raw identifier `r#use` is not the keyword (#7936).
+            && !(index >= 2 && bytes[index - 1] == b'#' && bytes[index - 2] == b'r')
             && bytes[index + 3..]
                 .first()
                 .is_some_and(|byte| byte.is_ascii_whitespace());
@@ -5056,6 +5208,131 @@ mod tests {
         assert!(!confirms(true, "assert_eq!(other.len(), 1);"));
         assert!(!confirms(false, "assert_eq!(other, vec![7]);"));
     }
+    /// #7976, RIPR-SPEC-0228 rule 3 for argument-free reads: a call on the
+    /// binding between the owner call and the read may rewrite the field,
+    /// and a `#[should_panic]` test passes when the values differ.
+    #[test]
+    fn field_collection_read_refuses_rewrites_and_should_panic() {
+        let confirms = |attrs: Vec<String>, lines: &str, assertion_text: &str| {
+            let body = format!("fn t() {{\n{lines}\n    {assertion_text}\n}}");
+            let line = 2 + lines.lines().count();
+            let test = TestSummary {
+                start_line: 1,
+                attrs,
+                ..test_with_body_assertions(
+                    "t",
+                    &body,
+                    vec![OracleFact {
+                        line,
+                        ..oracle(
+                            assertion_text,
+                            OracleKind::ExactValue,
+                            OracleStrength::Strong,
+                        )
+                    }],
+                )
+            };
+            field_collection_observer_confirms(
+                "log",
+                false,
+                true,
+                None,
+                OwnerCall::from_symbol("src/lib.rs::impl Ob::add"),
+                &test,
+                &test.assertions[0],
+                &|_, getter, field| getter == "entries" && field == "log",
+            )
+        };
+        let read = "assert_eq!(o.entries(), &[4]);";
+        let setup = "    let mut o = Ob::new();\n    o.add(4);";
+        assert!(confirms(Vec::new(), setup, read));
+        // Reads of the collection between the call and the assertion are fine.
+        let peek = format!("{setup}\n    let n = o.entries().len();\n    let m = o.log.len();");
+        assert!(confirms(Vec::new(), &peek, read));
+        for rewrite in [
+            "o.reset_to(&[4]);",
+            "o.log = vec![4];",
+            "o.log.clear();",
+            "o.log += 1;",
+            "touch(&mut o);",
+        ] {
+            let lines = format!("{setup}\n    {rewrite}");
+            assert!(!confirms(Vec::new(), &lines, read), "{rewrite}");
+        }
+        for rewrite in [
+            "let v = &mut o.log; v.clear(); v.push(4);",
+            "write!(o.log, \"x\").unwrap();",
+            "(o.log).clear();",
+            "(o.log)[0] = 4;",
+            "let ref mut v = o.log; v.clear();",
+            "o.log <<= 1;",
+            "assert!(o.reset_to(&[4]).is_ok()); assert_eq!(1, 1);",
+            "std::mem::take(&mut o.log);",
+            "o.log[0] = 4;",
+            "o.log[0] += 1;",
+        ] {
+            let lines = format!("{setup}\n    {rewrite}");
+            assert!(!confirms(Vec::new(), &lines, read), "{rewrite}");
+        }
+        // Chained or bound owner results, a write earlier on the read line,
+        // and a parenthesized `&mut` borrow (#8866 review).
+        for lines in [
+            "    let mut o = Ob::new();\n    o.add(4).clear_log();".to_string(),
+            "    let mut o = Ob::new();\n    let r = o.add(4);\n    r.log.clear();".to_string(),
+            format!("{setup}\n    let r = &mut (o.log); *r = vec![4];"),
+        ] {
+            assert!(!confirms(Vec::new(), &lines, read), "{lines}");
+        }
+        assert!(!confirms(
+            Vec::new(),
+            &format!("{setup}\n    o.reset_to(&[4]);"),
+            "assert_eq!(o.entries(), &[4]);"
+        ));
+        let test = TestSummary {
+            start_line: 1,
+            ..test_with_body_assertions(
+                "t",
+                "fn t() {\n    let mut o = Ob::new();\n    o.add(4);\n    o.reset_to(&[4]); assert_eq!(o.entries(), &[4]);\n}",
+                Vec::new(),
+            )
+        };
+        assert!(!owner_call_reaches_read_unrewritten(
+            &test,
+            "o",
+            "add",
+            4,
+            Some("entries"),
+            "log"
+        ));
+        assert!(confirms(
+            Vec::new(),
+            "    let mut o = Ob::new();\n    o.add(4).unwrap();",
+            read
+        ));
+        // An owner call on the assertion's own line is never accepted
+        // (`owner_calls_before_read` needs an earlier line), so a rewrite
+        // between them cannot be credited either (#8866 review).
+        let on_line = |middle: &str| {
+            let test = TestSummary {
+                start_line: 1,
+                ..test_with_body_assertions(
+                    "t",
+                    &format!(
+                        "fn t() {{\n    let mut o = Ob::new(); o.add(4); {middle}assert_eq!(o.entries(), &[4]);\n}}"
+                    ),
+                    Vec::new(),
+                )
+            };
+            owner_call_reaches_read_unrewritten(&test, "o", "add", 2, Some("entries"), "log")
+        };
+        assert!(!on_line(""));
+        assert!(!on_line("o.reset_to(&[4]); "));
+        // A second owner call after the rewrite is observed again.
+        let again = format!("{setup}\n    o.reset_to(&[]);\n    o.add(4);");
+        assert!(confirms(Vec::new(), &again, read));
+        assert!(!confirms(vec!["#[should_panic]".to_string()], setup, read));
+    }
+
     /// RIPR-SPEC-0228 keyed reads: a `#[should_panic]` test passes when the
     /// compared values differ, so it never confirms a keyed read.
     #[test]

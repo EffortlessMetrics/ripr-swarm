@@ -821,7 +821,7 @@ class CheckoutTests(unittest.TestCase):
 
     assert_eq!(pytest_test.qualified_name, "TestCheckout.test_pytest_route");
     assert_eq!(
-        verify_command_for_test(pytest_test).as_deref(),
+        verify_command_for_test_on(pytest_test, false).as_deref(),
         Some("python -m pytest tests/test_checkout.py::TestCheckout::test_pytest_route")
     );
     assert_eq!(
@@ -829,7 +829,7 @@ class CheckoutTests(unittest.TestCase):
         "CheckoutTests.test_unittest_route"
     );
     assert_eq!(
-        verify_command_for_test(unittest_test).as_deref(),
+        verify_command_for_test_on(unittest_test, false).as_deref(),
         Some("python -m unittest tests.test_checkout.CheckoutTests.test_unittest_route")
     );
     Ok(())
@@ -845,15 +845,16 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
         .find(|test| test.name == "test_ok")
         .ok_or_else(|| "missing hostile pytest".to_string())?;
     assert_eq!(
-        verify_command_for_test(hostile_test).as_deref(),
+        verify_command_for_test_on(hostile_test, false).as_deref(),
         Some("python -m pytest 'tests/foo$(id).py'::test_ok")
     );
-    let placement = python_repair_placement(
+    let placement = python_repair_placement_on(
         &ExposureClass::WeaklyExposed,
         &[PythonRelatedCandidate {
             test: hostile_test,
             relation: PythonRelationKind::SyntacticCall,
         }],
+        false,
     )
     .ok_or_else(|| "weak pytest relation should still place a repair".to_string())?;
     assert_eq!(
@@ -876,7 +877,7 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
         .find(|test| test.name == "test_ok")
         .ok_or_else(|| "missing spaced pytest".to_string())?;
     assert_eq!(
-        verify_command_for_test(spaced_test).as_deref(),
+        verify_command_for_test_on(spaced_test, false).as_deref(),
         Some("python -m pytest 'tests/my file.py'::test_ok")
     );
 
@@ -886,7 +887,7 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
         .find(|test| test.name == "test_ok")
         .ok_or_else(|| "missing quoted pytest".to_string())?;
     assert_eq!(
-        verify_command_for_test(quoted_test).as_deref(),
+        verify_command_for_test_on(quoted_test, false).as_deref(),
         Some("python -m pytest 'tests/o'\\''brien.py'::test_ok")
     );
 
@@ -896,7 +897,7 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
         .find(|test| test.name == "test_ok")
         .ok_or_else(|| "missing plain pytest".to_string())?;
     assert_eq!(
-        verify_command_for_test(plain_test).as_deref(),
+        verify_command_for_test_on(plain_test, false).as_deref(),
         Some("python -m pytest tests/test_checkout.py::test_ok"),
         "a plain relative path must stay unquoted"
     );
@@ -907,15 +908,16 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
         .find(|test| test.name == "test_ok")
         .ok_or_else(|| "missing hostile unittest".to_string())?;
     assert_eq!(
-        verify_command_for_test(hostile_unit_test).as_deref(),
+        verify_command_for_test_on(hostile_unit_test, false).as_deref(),
         Some("python -m unittest 'tests.foo$(id)'.T.test_ok")
     );
-    let unit_placement = python_repair_placement(
+    let unit_placement = python_repair_placement_on(
         &ExposureClass::WeaklyExposed,
         &[PythonRelatedCandidate {
             test: hostile_unit_test,
             relation: PythonRelationKind::SyntacticCall,
         }],
+        false,
     )
     .ok_or_else(|| "weak unittest relation should still place a repair".to_string())?;
     assert_eq!(unit_placement.suggested_test_node_id, None);
@@ -1138,6 +1140,7 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
     };
@@ -1589,6 +1592,7 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
     };
@@ -1645,6 +1649,7 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
     };
@@ -1723,6 +1728,7 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
     };
@@ -1768,10 +1774,13 @@ fn same_stem_related_handles_missing_stems() {
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
     };
     let test = PythonTest {
+        fixture_defs: Vec::new(),
+        direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_x".to_string(),
         qualified_name: "test_x".to_string(),
@@ -3292,6 +3301,8 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
 #[test]
 fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     let mocked = PythonTest {
+        fixture_defs: Vec::new(),
+        direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_x".to_string(),
         qualified_name: "test_x".to_string(),
@@ -3313,6 +3324,8 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     };
     assert!(test_has_mocked_module(&mocked));
     let bare = PythonTest {
+        fixture_defs: Vec::new(),
+        direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_y".to_string(),
         qualified_name: "test_y".to_string(),
@@ -3332,6 +3345,8 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     };
     assert!(test_has_mocked_module(&bare));
     let clean = PythonTest {
+        fixture_defs: Vec::new(),
+        direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_z".to_string(),
         qualified_name: "test_z".to_string(),
@@ -3749,6 +3764,7 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
     };
@@ -3820,6 +3836,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
     };
@@ -3840,6 +3857,8 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
 
     // With `apply_tax as taxed`, the oracle's `taxed(...)` observes the owner.
     let alias_test = PythonTest {
+        fixture_defs: Vec::new(),
+        direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_alias".to_string(),
         qualified_name: "test_alias".to_string(),
@@ -3888,6 +3907,7 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         ambiguous_src_modules: Vec::new(),
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
+        module_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
     }
@@ -3914,6 +3934,8 @@ fn align_strong(oracle: &str) -> RelatedTest {
 fn align_importing_test(imported: &str, module: &str) -> PythonTest {
     PythonTest {
         activation_controls: Vec::new(),
+        fixture_defs: Vec::new(),
+        direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),
         name: "t".to_string(),
         qualified_name: "t".to_string(),
@@ -3958,6 +3980,8 @@ fn sink_alignment_is_alias_when_oracle_uses_import_alias() {
     let line = "return amount + 2";
     let related = [align_strong("assert taxed(10) == 12")];
     let alias_test = PythonTest {
+        fixture_defs: Vec::new(),
+        direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_alias".to_string(),
         qualified_name: "test_alias".to_string(),

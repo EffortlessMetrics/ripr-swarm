@@ -35,35 +35,77 @@ include staged and unstaged tracked edits (for example `ripr check --worktree`).
 /// review, #5398 review).
 fn unanalyzed_working_tree_note(output: &CheckOutput) -> String {
     let untracked = &output.untracked_working_tree_source_paths;
-    if untracked.is_empty() {
-        return UNANALYZED_WORKING_TREE_NOTE.to_string();
+    let ignored = &output.ignored_working_tree_source_paths;
+    // #7467: the ignored sentence is appended, never interleaved, so the
+    // untracked-only render below stays byte-identical.
+    if ignored.is_empty() {
+        if untracked.is_empty() {
+            return UNANALYZED_WORKING_TREE_NOTE.to_string();
+        }
+        let listing =
+            crate::output::analyzed_revisions::name_paths(untracked, escape_terminal_display);
+        return format!(
+            "\nNote: uncommitted source and test changes were not analyzed; this run read each \
+              file as committed at HEAD, and `--worktree` adds staged and unstaged tracked edits only. \
+              Untracked files ({listing}) are invisible to both; stage them first (`git add <paths>`, \
+              or `git add -N <paths>` intent-to-add makes a new file visible to `--worktree`) and \
+              rerun `ripr check --worktree`, or pass `--diff PATH`.\n"
+        );
     }
-    let listing = crate::output::analyzed_revisions::name_paths(untracked, escape_terminal_display);
-    format!(
+    let mut note = String::from(
         "\nNote: uncommitted source and test changes were not analyzed; this run read each \
-         file as committed at HEAD, and `--worktree` adds staged and unstaged tracked edits only. \
-         Untracked files ({listing}) are invisible to both; stage them first (`git add <paths>`, \
-         or `git add -N <paths>` intent-to-add makes a new file visible to `--worktree`) and \
+         file as committed at HEAD, and `--worktree` adds staged and unstaged tracked edits only. ",
+    );
+    if !untracked.is_empty() {
+        let listing =
+            crate::output::analyzed_revisions::name_paths(untracked, escape_terminal_display);
+        note.push_str(&format!(
+            "Untracked files ({listing}) are invisible to both; stage them first (`git add <paths>`, \
+             or `git add -N <paths>` intent-to-add makes a new file visible to `--worktree`) and \
+             rerun `ripr check --worktree`, or pass `--diff PATH`. "
+        ));
+    }
+    let listing = crate::output::analyzed_revisions::name_paths(ignored, escape_terminal_display);
+    note.push_str(&format!(
+        "Gitignored files ({listing}) are invisible to both; stage them first with `git add -f` \
+         (`git add -f -N <paths>` force intent-to-add makes a new file visible to `--worktree`) and \
          rerun `ripr check --worktree`, or pass `--diff PATH`.\n"
-    )
+    ));
+    note
 }
 
 /// The working-tree disclosure for this run, if any: the RIPR-SPEC-0112
-/// note on a committed-history run with unanalyzed edits, or, on a
-/// working-tree read (RIPR-SPEC-0116), the untracked-files note naming the
-/// routed files the working-tree diff does not contain. The second never
-/// offers `--worktree`, which is already in effect.
+/// note on a committed-history run with unanalyzed edits, the untracked-
+/// and gitignored-files notes on a working-tree read (RIPR-SPEC-0116), or
+/// the gitignored-files note on a committed-history run whose only excluded
+/// files are gitignored (#7467: ignored files never raise the
+/// uncommitted-edits note, but a result over them must still not read as
+/// covering them). The working-tree arms never offer `--worktree`, which is
+/// already in effect.
 fn render_working_tree_disclosure(out: &mut String, output: &CheckOutput) {
     if output.unanalyzed_working_tree {
         out.push_str(&unanalyzed_working_tree_note(output));
         return;
     }
-    if crate::output::analyzed_revisions::is_working_tree_read(output)
-        && let Some(message) = crate::output::analyzed_revisions::working_tree_untracked_message(
+    if crate::output::analyzed_revisions::is_working_tree_read(output) {
+        if let Some(message) = crate::output::analyzed_revisions::working_tree_untracked_message(
             &output.untracked_working_tree_source_paths,
             escape_terminal_display,
-        )
-    {
+        ) {
+            out.push_str(&format!("\nNote: {message}\n"));
+        }
+        if let Some(message) = crate::output::analyzed_revisions::working_tree_ignored_message(
+            &output.ignored_working_tree_source_paths,
+            escape_terminal_display,
+        ) {
+            out.push_str(&format!("\nNote: {message}\n"));
+        }
+        return;
+    }
+    if let Some(message) = crate::output::analyzed_revisions::committed_history_ignored_message(
+        &output.ignored_working_tree_source_paths,
+        escape_terminal_display,
+    ) {
         out.push_str(&format!("\nNote: {message}\n"));
     }
 }
@@ -337,8 +379,9 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
         // renderer doctor's root line uses, so a backslash-typed or
         // drive-letter verbatim `\\?\`-prefixed root does not leak raw
         // `Path::display` bytes here while every sibling surface renders the
-        // forward-slash form. UNC and volume verbatim prefixes keep their
-        // raw spelling by design (`human_path_text`).
+        // forward-slash form. UNC verbatim prefixes fold to `\\server\share`
+        // and volume GUID prefixes keep their raw spelling, per the shared
+        // `human_path_text` owner (#8754).
         crate::output::path::human_path(&output.root)
     ));
     // RIPR-SPEC-0255 (#7536): name the ripr.toml that governed the run, in
@@ -1187,6 +1230,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -1229,6 +1273,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -1273,6 +1318,7 @@ mod tests {
                 no_scope_provided: false,
                 unanalyzed_working_tree: false,
                 untracked_working_tree_source_paths: Vec::new(),
+                ignored_working_tree_source_paths: Vec::new(),
                 unlinked_python_tests: None,
                 suppression: None,
                 analysis_outcome: None,
@@ -1315,6 +1361,7 @@ mod tests {
                 "Cargo.toml".to_string(),
                 "src/other.rs".to_string(),
             ],
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -1362,6 +1409,7 @@ mod tests {
             unanalyzed_working_tree: true,
             analyzed_revisions: None,
             untracked_working_tree_source_paths: vec!["src/\u{1b}[31mevil.rs".to_string()],
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -1399,6 +1447,7 @@ mod tests {
             unanalyzed_working_tree: true,
             analyzed_revisions: None,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -1413,6 +1462,100 @@ mod tests {
             "{rendered}"
         );
         assert!(!rendered.contains("Untracked files"), "{rendered}");
+    }
+
+    /// #7467: an ignored-only tree never raises the uncommitted-edits note
+    /// (ignored files are not uncommitted edits), but a committed-history
+    /// result over them must still not read as covering them: the
+    /// committed-history ignored note names the files and the force
+    /// intent-to-add repair (`git add -N` refuses ignored paths).
+    #[test]
+    fn ignored_only_committed_read_names_force_intent_to_add() {
+        let output = CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: Some("main".to_string()),
+            summary: Summary::default(),
+            findings: vec![],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            analyzed_revisions: None,
+            untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: vec![
+                "crates/alpha/src/ignored_gen.rs".to_string(),
+                "crates/alpha/target/bgen.rs".to_string(),
+            ],
+            unlinked_python_tests: None,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+        };
+
+        let rendered = render(&output);
+
+        assert!(
+            rendered.contains(
+                "Gitignored files (crates/alpha/src/ignored_gen.rs, crates/alpha/target/bgen.rs) are not in the committed-history diff"
+            ),
+            "{rendered}"
+        );
+        assert!(rendered.contains("git add -f -N <path>"), "{rendered}");
+        assert!(rendered.contains("git add -f"), "{rendered}");
+        assert!(!rendered.contains("Untracked files"), "{rendered}");
+        assert!(
+            !rendered.contains("uncommitted source and test changes were not analyzed"),
+            "an ignored-only tree must not raise the uncommitted-edits note: {rendered}"
+        );
+    }
+
+    /// #7467: a mixed tree names both the untracked subset (plain staging
+    /// repair) and the ignored subset (force intent-to-add repair) in one
+    /// unanalyzed-working-tree note, with the untracked sentence first so
+    /// the untracked-only render stays byte-identical.
+    #[test]
+    fn combined_untracked_and_ignored_note_names_both_repairs() {
+        let output = CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: Some("main".to_string()),
+            summary: Summary::default(),
+            findings: vec![],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: true,
+            analyzed_revisions: None,
+            untracked_working_tree_source_paths: vec!["src/new.rs".to_string()],
+            ignored_working_tree_source_paths: vec!["src/ignored_gen.rs".to_string()],
+            unlinked_python_tests: None,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+        };
+
+        let rendered = render(&output);
+
+        assert!(
+            rendered.contains(
+                "Untracked files (src/new.rs) are invisible to both; stage them first (`git add <paths>`"
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "Gitignored files (src/ignored_gen.rs) are invisible to both; stage them first with `git add -f`"
+            ),
+            "{rendered}"
+        );
+        assert!(rendered.contains("git add -f -N <paths>"), "{rendered}");
     }
 
     /// #8165: on the bounded surface the three unknown classes share the
@@ -1441,6 +1584,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -1499,6 +1643,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: Some(CheckSuppressionOutcome {
                 policy_path: "policy/ripr-suppressions.toml".to_string(),
@@ -1554,6 +1699,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -1651,6 +1797,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: Some(outcome),
@@ -1786,6 +1933,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: Some(outcome),
@@ -1857,6 +2005,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -1902,6 +2051,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -1910,12 +2060,13 @@ mod tests {
         };
         let config = crate::config::RiprConfig::default();
         let routed = crate::app::FindingDrillIn::Commands(
-            crate::app::FindingNavigation::legacy().with_repair_route(Some(
-                crate::app::RepairRoute {
+            crate::app::FindingNavigation::legacy().with_repair_route_outcome(
+                crate::app::CheckRepairRoute::Route(crate::app::RepairRoute {
                     finding_id: finding_id.clone(),
                     seam_id: "67fc764ba37d77bd".to_string(),
-                },
-            )),
+                    uncommitted_target: None,
+                }),
+            ),
         );
         let rendered = super::render_bounded_with_config_and_navigation(
             &output,
@@ -1935,12 +2086,13 @@ mod tests {
         );
 
         let other = crate::app::FindingDrillIn::Commands(
-            crate::app::FindingNavigation::legacy().with_repair_route(Some(
-                crate::app::RepairRoute {
+            crate::app::FindingNavigation::legacy().with_repair_route_outcome(
+                crate::app::CheckRepairRoute::Route(crate::app::RepairRoute {
                     finding_id: "probe:other".to_string(),
                     seam_id: "67fc764ba37d77bd".to_string(),
-                },
-            )),
+                    uncommitted_target: None,
+                }),
+            ),
         );
         let rendered_other = super::render_bounded_with_config_and_navigation(
             &output,
@@ -1957,6 +2109,38 @@ mod tests {
         assert!(
             !full.contains("ripr repair"),
             "human-full keeps its existing drill-in contract:\n{full}"
+        );
+
+        // A route whose production-file target has uncommitted changes would
+        // be refused by `ripr repair`; the screen states the requirement and
+        // never lists the command as a bare runnable action.
+        let held = crate::app::FindingDrillIn::Commands(
+            crate::app::FindingNavigation::legacy().with_repair_route_outcome(
+                crate::app::CheckRepairRoute::Route(crate::app::RepairRoute {
+                    finding_id: finding_id.clone(),
+                    seam_id: "67fc764ba37d77bd".to_string(),
+                    uncommitted_target: Some("src/lib.rs".to_string()),
+                }),
+            ),
+        );
+        let rendered_held = super::render_bounded_with_config_and_navigation(
+            &output,
+            &config,
+            Some(&held),
+            crate::app::CheckDiffProvenance::CommittedHistory,
+        );
+        assert!(
+            rendered_held.contains("Repair start (needs a committed `src/lib.rs`;")
+                && rendered_held.contains("commit or stash it first"),
+            "a dirty inline target must state the commit-or-stash requirement:\n{rendered_held}"
+        );
+        assert!(
+            !rendered_held.contains("test route below"),
+            "no stub is rendered here, so the test route must not be named:\n{rendered_held}"
+        );
+        assert!(
+            !rendered_held.contains("\n  ripr repair 67fc764ba37d77bd\n"),
+            "a refused start must not be a bare runnable line:\n{rendered_held}"
         );
     }
 
@@ -2075,6 +2259,7 @@ mod tests {
                 no_scope_provided: false,
                 unanalyzed_working_tree: false,
                 untracked_working_tree_source_paths: Vec::new(),
+                ignored_working_tree_source_paths: Vec::new(),
                 unlinked_python_tests: None,
                 suppression: None,
                 analysis_outcome: None,
@@ -2121,6 +2306,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -2167,6 +2353,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -2825,6 +3012,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -2871,6 +3059,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -2924,6 +3113,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -2977,6 +3167,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -3008,6 +3199,7 @@ mod tests {
             no_scope_provided: true,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -3172,6 +3364,7 @@ mod tests {
             no_scope_provided,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -3308,6 +3501,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -3639,6 +3833,79 @@ mod tests {
         Ok(())
     }
 
+    // #8630: named limitations refuse packet projection before validation.
+    // Internal missing fields are not operator inputs, even for a weak class.
+    #[test]
+    fn preview_limited_named_limitation_has_terminal_observation_check() -> Result<(), String> {
+        const WHY: &str = "typescript_dynamic_assertion_unresolved — the expected value comes from a helper the adapter cannot resolve";
+        for language in [LanguageId::TypeScript, LanguageId::JavaScript] {
+            for class in [
+                ExposureClass::WeaklyExposed,
+                ExposureClass::ReachableUnrevealed,
+                ExposureClass::NoStaticPath,
+                ExposureClass::StaticUnknown,
+                ExposureClass::InfectionUnknown,
+                ExposureClass::PropagationUnknown,
+            ] {
+                for missing_fields in [false, true] {
+                    let mut finding = typescript_preview_finding(true);
+                    finding.language = Some(language);
+                    finding.class = class.clone();
+                    finding.evidence.push(
+                        "typescript_limitation: typescript_dynamic_assertion_unresolved"
+                            .to_string(),
+                    );
+                    finding
+                        .evidence
+                        .push(format!("typescript_limitation_why: {WHY}"));
+                    if !missing_fields {
+                        finding
+                            .evidence
+                            .retain(|line| !line.starts_with("missing_actionability_fields: "));
+                    }
+                    let actionability =
+                        crate::output::preview_actionability::preview_actionability_for(&finding)
+                            .ok_or_else(|| "fixture must project preview actionability".to_string())?;
+                    assert!(!actionability.repair_packet_ready, "{language:?} {class:?}");
+                    assert_eq!(
+                        !actionability.missing_actionability_fields.is_empty(),
+                        missing_fields,
+                        "fixture must exercise the intended missing-field state"
+                    );
+                    assert!(
+                        crate::output::typescript_packet_projection::typescript_gap_record_for(
+                            &finding
+                        )
+                        .is_none(),
+                        "named limitation must withhold the repair record"
+                    );
+                    let rendered = render(&single_finding_output(finding));
+                    let line = rendered
+                        .lines()
+                        .find(|line| line.starts_with("  Safe next action:"))
+                        .ok_or_else(|| format!("missing safe action:\n{rendered}"))?;
+                    assert!(line.contains(WHY), "producer reason was lost: {line}");
+                    assert!(
+                        line.contains("`ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it"),
+                        "closed route must be explicit: {line}"
+                    );
+                    assert!(
+                        line.ends_with("check by hand whether a test observes this change, then rerun `ripr check`"),
+                        "limitation must name a manual observation check: {line}"
+                    );
+                    for misleading in [
+                        "complete the missing",
+                        "resolve the limitation",
+                        "add or strengthen a test",
+                    ] {
+                        assert!(!line.contains(misleading), "{line}");
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     // #4216 review: an unknown-class closed packet (for example a Bun-bridge
     // cross-language visibility limit: StaticUnknown, no static_limit_kind,
     // missing fields present) is not a known weak test, so the manual step is
@@ -3740,7 +4007,7 @@ mod tests {
     fn preview_limited_safe_action_says_no_repair_for_exposed_typescript() {
         let mut finding = typescript_preview_finding(false);
         finding.class = ExposureClass::Exposed;
-        let output = single_finding_output(finding);
+        let output = single_finding_output(finding.clone());
 
         let rendered = render(&output);
 
@@ -3753,6 +4020,24 @@ mod tests {
         ), "{rendered}");
         assert!(!rendered.contains("complete the missing repair-packet fields"));
         assert!(!rendered.contains("repair packet is not ready"));
+
+        // A named limitation must not hide the already-observed control
+        // behind the manual-inspection branch (#8630).
+        finding
+            .evidence
+            .push("typescript_limitation: typescript_dynamic_assertion_unresolved".to_string());
+        finding.evidence.push(
+            "typescript_limitation_why: typescript_dynamic_assertion_unresolved — an additional assertion is opaque".to_string(),
+        );
+        let rendered = render(&single_finding_output(finding));
+        assert!(
+            rendered.contains("so there is no repair to make"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("check by hand whether a test observes"),
+            "{rendered}"
+        );
     }
 
     #[test]
@@ -3867,6 +4152,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -3968,6 +4254,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -4015,6 +4302,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -4133,6 +4421,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -4204,6 +4493,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -4259,6 +4549,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -4322,6 +4613,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: Some(CheckSuppressionOutcome {
                 policy_path: "policy/ripr-suppressions.toml".to_string(),
@@ -4432,6 +4724,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: Some(CheckSuppressionOutcome {
                 policy_path: "policy/ripr-suppressions.toml".to_string(),
@@ -4484,6 +4777,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: Some(CheckSuppressionOutcome {
                 policy_path: "policy/ripr-suppressions.toml".to_string(),
@@ -4522,6 +4816,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -4610,6 +4905,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -4719,6 +5015,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -4787,6 +5084,30 @@ mod tests {
         assert!(rendered.contains("Add assertion for disabled path result"));
     }
 
+    /// #8744: `unknown sink` is the one unglossed internal term in the
+    /// evidence window; the human render states its meaning beside the row
+    /// while the JSON evidence strings stay raw.
+    #[test]
+    fn render_finding_glosses_the_unknown_sink_row() {
+        let mut finding = sample_finding();
+        finding.flow_sinks = vec![FlowSinkFact {
+            kind: FlowSinkKind::Unknown,
+            text: "unknown sink".to_string(),
+            line: 3,
+            owner: None,
+        }];
+
+        let rendered = render_finding(&finding);
+
+        assert!(
+            rendered.contains(
+                "local flow reaches unknown sink (line 3) — ripr could not classify \
+                 where the changed value ends up; propagation confidence is limited"
+            ),
+            "{rendered}"
+        );
+    }
+
     /// #4320: the 5-related-test window must disclose the total — the number
     /// of reaching tests is core exposure evidence, and an unmarked cap reads
     /// as the whole evidence.
@@ -4830,6 +5151,7 @@ mod tests {
         // sample_finding already carries one observed value; 13 more make 14.
         for index in 0..13 {
             finding.activation.observed_values.push(ValueFact {
+                file: None,
                 line: 200 + index,
                 text: format!("sample({index})"),
                 value: format!("arg{index} = {index}"),
@@ -4846,9 +5168,58 @@ mod tests {
             "only the windowed observed values render:\n{rendered}"
         );
         assert!(
-            rendered.contains("source values (showing 8 of 14; full list in --format json)"),
+            rendered.contains("source values (showing 8 of 14 read from related tests; full list in --format json)"),
             "expected the observed-values window disclosure; got:\n{rendered}"
         );
+    }
+
+    /// #8389: a bare `at line N` is ambiguous once the shown window mixes
+    /// related-test files, so each line then names its file; a window from one
+    /// file keeps `at line N`.
+    #[test]
+    fn source_value_lines_name_the_test_file_only_when_files_differ() {
+        let fact = |file: &str, line: usize, value: &str, context| ValueFact {
+            file: Some(std::path::PathBuf::from(file)),
+            line,
+            text: "assert!(true);".to_string(),
+            value: value.to_string(),
+            context,
+        };
+        let mut finding = sample_finding();
+        finding.activation.observed_values = vec![
+            fact(
+                "tests/pricing.rs",
+                7,
+                "true",
+                ValueContext::AssertionArgument,
+            ),
+            fact("tests/other.rs", 9, "3", ValueContext::FunctionArgument),
+        ];
+        let rendered = render_finding(&finding);
+        assert!(
+            rendered.contains("source assertion argument value true at tests/pricing.rs:7"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("source function argument value 3 at tests/other.rs:9"),
+            "{rendered}"
+        );
+
+        finding.activation.observed_values = vec![
+            fact(
+                "tests/pricing.rs",
+                7,
+                "true",
+                ValueContext::AssertionArgument,
+            ),
+            fact("tests/pricing.rs", 9, "3", ValueContext::FunctionArgument),
+        ];
+        let rendered = render_finding(&finding);
+        assert!(
+            rendered.contains("source assertion argument value true at line 7"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("tests/pricing.rs:"), "{rendered}");
     }
 
     /// #4320 review: beyond JSON's own ranked 32-value cap, both formats are
@@ -4861,6 +5232,7 @@ mod tests {
         // (over the 8-value human window and the 32-value ranked JSON cap).
         for index in 0..41 {
             finding.activation.observed_values.push(ValueFact {
+                file: None,
                 line: 300 + index,
                 text: format!("sample({index})"),
                 value: format!("arg{index} = {index}"),
@@ -4872,7 +5244,7 @@ mod tests {
         let rendered = render_finding(&finding);
 
         assert!(
-            rendered.contains("source values (showing 8 of 42; --format json keeps a ranked 32)"),
+            rendered.contains("source values (showing 8 of 42 read from related tests; --format json keeps a ranked 32)"),
             "the pointer must disclose JSON's ranked cap; got:\n{rendered}"
         );
         assert!(
@@ -4903,6 +5275,7 @@ mod tests {
         }
         for index in 0..13 {
             finding.activation.observed_values.push(ValueFact {
+                file: None,
                 line: 200 + index,
                 text: format!("sample({index})"),
                 value: format!("arg{index} = {index}"),
@@ -4918,7 +5291,7 @@ mod tests {
         );
         assert!(
             explained.contains(
-                "source values (showing 8 of 14; full list via ripr check, using its JSON format)"
+                "source values (showing 8 of 14 read from related tests; full list via ripr check, using its JSON format)"
             ),
             "{explained}"
         );
@@ -4935,7 +5308,7 @@ mod tests {
 
         let checked = super::render_finding(&finding);
         assert!(
-            checked.contains("source values (showing 8 of 14; full list in --format json)"),
+            checked.contains("source values (showing 8 of 14 read from related tests; full list in --format json)"),
             "{checked}"
         );
         assert!(
@@ -4945,6 +5318,7 @@ mod tests {
 
         for index in 0..28 {
             finding.activation.observed_values.push(ValueFact {
+                file: None,
                 line: 400 + index,
                 text: format!("extra({index})"),
                 value: format!("extra{index} = {index}"),
@@ -4959,7 +5333,7 @@ mod tests {
         );
         assert!(
             over_cap.contains(
-                "source values (showing 8 of 42; ripr check, using its JSON format, keeps a ranked 32)"
+                "source values (showing 8 of 42 read from related tests; ripr check, using its JSON format, keeps a ranked 32)"
             ),
             "{over_cap}"
         );
@@ -4984,6 +5358,7 @@ mod tests {
         }
         for index in 0..13 {
             finding.activation.observed_values.push(ValueFact {
+                file: None,
                 line: 200 + index,
                 text: format!("sample({index})"),
                 value: format!("arg{index} = {index}"),
@@ -5012,7 +5387,7 @@ mod tests {
         // Only the window pointer carries the explain wording.
         assert!(
             explained.contains(
-                "source values (showing 8 of 14; full list via ripr check, using its JSON format)"
+                "source values (showing 8 of 14 read from related tests; full list via ripr check, using its JSON format)"
             ),
             "{explained}"
         );
@@ -5025,7 +5400,7 @@ mod tests {
             "{checked}"
         );
         assert!(
-            checked.contains("source values (showing 8 of 14; full list in --format json)"),
+            checked.contains("source values (showing 8 of 14 read from related tests; full list in --format json)"),
             "{checked}"
         );
     }
@@ -5960,6 +6335,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -6005,6 +6381,7 @@ mod tests {
             }],
             activation: ActivationEvidence {
                 observed_values: vec![ValueFact {
+                    file: None,
                     line: 22,
                     text: "sample(false)".to_string(),
                     value: "enabled = false".to_string(),
@@ -6120,6 +6497,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -6165,6 +6543,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -6214,6 +6593,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -6256,6 +6636,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -6296,6 +6677,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -6389,6 +6771,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -6464,6 +6847,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -6537,6 +6921,7 @@ mod tests {
             no_scope_provided: true,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -6591,6 +6976,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -6630,6 +7016,7 @@ mod tests {
             no_scope_provided: true,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -6671,6 +7058,7 @@ mod tests {
             no_scope_provided: true,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -6715,6 +7103,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -6764,6 +7153,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: python,
             suppression: None,
             analysis_outcome: None,
@@ -6916,6 +7306,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -6980,6 +7371,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -7034,6 +7426,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -7077,6 +7470,7 @@ mod tests {
             harness_projections: Vec::new(),
             unlinked_python_tests: None,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
             mode: Mode::Draft,
@@ -7184,6 +7578,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -7229,6 +7624,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -7268,6 +7664,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -7304,6 +7701,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -7337,6 +7735,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -7375,6 +7774,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -7412,6 +7812,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -7460,6 +7861,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             analysis_outcome: None,
@@ -7525,6 +7927,7 @@ mod tests {
                 no_scope_provided: false,
                 unanalyzed_working_tree: false,
                 untracked_working_tree_source_paths: Vec::new(),
+                ignored_working_tree_source_paths: Vec::new(),
                 unlinked_python_tests: None,
                 suppression: None,
                 analysis_outcome: None,

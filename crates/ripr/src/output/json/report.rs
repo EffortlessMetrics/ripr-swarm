@@ -506,6 +506,24 @@ pub(crate) fn render_with_config(
             false,
         );
     }
+    // Additive advisory field: emitted when routed source or test files are
+    // gitignored in the live repository (#7467), on both committed-history
+    // and working-tree reads, since neither read analyzes them — and plain
+    // `git add -N` refuses them, so the human/GitHub notes name the force
+    // intent-to-add repair. Absent when the list is empty. This is the
+    // machine-readable form of the human/GitHub gitignored-files notes;
+    // without it a zero-finding JSON report reads as complete while routed
+    // files were silently excluded.
+    if !output.ignored_working_tree_source_paths.is_empty() {
+        out.push_str(",\n");
+        array_field(
+            &mut out,
+            1,
+            "ignored_working_tree_source_paths",
+            &output.ignored_working_tree_source_paths,
+            false,
+        );
+    }
     // Additive advisory field — emitted only when preview-language files were
     // in scope. Absent for pure-Rust diffs (RIPR-SPEC-0082).
     if !output.preview_language_advisories.is_empty() {
@@ -1128,14 +1146,16 @@ fn evidence_path_values(finding: &Finding) -> Vec<String> {
     );
 
     values.extend(finding.related_tests.iter().take(5).map(|test| {
-        let oracle_kind = display_label(test.oracle_kind.as_str());
         let mut value = format!(
-            "related test {}:{} {} uses {} {} oracle",
+            "related test {}:{} {} uses {}",
             crate::output::path::display_path(&test.file),
             test.line,
             test.name,
-            test.oracle_strength.as_str(),
-            oracle_kind
+            crate::output::related_test_miss::oracle_projection(
+                &test.oracle_strength,
+                &test.oracle_kind,
+                test.oracle.is_some()
+            )
         );
         if let Some(oracle) = &test.oracle {
             value.push_str(&format!(": {oracle}"));
@@ -1162,10 +1182,6 @@ fn evidence_path_values(finding: &Finding) -> Vec<String> {
     );
 
     values
-}
-
-fn display_label(value: &str) -> String {
-    value.replace('_', " ")
 }
 
 fn strongest_related_test(finding: &Finding) -> Option<&RelatedTest> {
@@ -1721,6 +1737,7 @@ mod provenance_tests {
 
     fn fact(line: usize, value: &str, text: &str) -> ValueFact {
         ValueFact {
+            file: None,
             line,
             text: text.to_string(),
             value: value.to_string(),
@@ -1828,6 +1845,7 @@ mod harness_projection_tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             partial_scope: None,

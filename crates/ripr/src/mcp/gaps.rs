@@ -385,6 +385,7 @@ fn gap_evidence_core(finding: &Finding, canonical_id: &str, root: &Path) -> Resu
         },
         "causal_attribution": canonical_gap,
         "discriminator_availability": activation,
+        "related_tests_total": finding.related_tests_total(),
         "related_tests": related_tests,
         "evidence": finding.evidence,
         "missing": finding.missing,
@@ -454,6 +455,53 @@ pub(crate) fn gap_resource_id(uri: &str) -> Option<&str> {
 pub(crate) fn snapshot_resource_id(uri: &str) -> Option<&str> {
     uri.strip_prefix("ripr://snapshot/")
         .filter(|id| !id.is_empty() && !id.contains('/'))
+}
+
+/// Percent-decode a captured resource-id segment (#8736). Canonical ids
+/// embed workspace-relative file paths raw — spaces, `#`, and non-ASCII
+/// characters are literal — while URI-emitting clients must percent-encode
+/// those characters to form a valid URI. Each `%XX` with two hex digits
+/// (either case) decodes to its byte; a stray `%` or a short tail stays
+/// literal, so a capture that is already raw decodes to itself. Returns
+/// `None` when nothing decoded or the decode is not UTF-8: the resource
+/// route then keeps the raw capture and its ordinary miss mapping.
+pub(crate) fn percent_decode_resource_id(segment: &str) -> Option<String> {
+    if !segment.contains('%') {
+        return None;
+    }
+    let bytes = segment.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    let mut changed = false;
+    while index < bytes.len() {
+        let rest = &bytes[index..];
+        if rest[0] == b'%'
+            && rest.len() >= 3
+            && let (Some(high), Some(low)) = (hex_value(rest[1]), hex_value(rest[2]))
+        {
+            decoded.push(high * 16 + low);
+            index += 3;
+            changed = true;
+        } else {
+            decoded.push(rest[0]);
+            index += 1;
+        }
+    }
+    if !changed {
+        return None;
+    }
+    String::from_utf8(decoded)
+        .ok()
+        .filter(|decoded| decoded != segment)
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn serialized_bytes(value: &Value) -> Result<usize, String> {
@@ -591,6 +639,93 @@ mod tests {
         test_finding()
     }
 
+    #[test]
+    fn related_test_totals_bind_equal_windows_to_distinct_evidence() -> Result<(), String> {
+        let mut source = finding()?;
+        let row = source.related_tests[0].clone();
+        source.related_tests = (0..8)
+            .map(|index| {
+                let mut row = row.clone();
+                row.name = format!("checkout_{index}");
+                row.line += index;
+                row
+            })
+            .collect();
+        source.related_tests_matched_total = Some(12);
+        let twelve = GapItem::from_finding(&source, Path::new("."))?;
+        source.related_tests_matched_total = Some(13);
+        let thirteen = GapItem::from_finding(&source, Path::new("."))?;
+        assert_eq!(twelve.evidence_core["related_tests_total"], 12);
+        assert_eq!(thirteen.evidence_core["related_tests_total"], 13);
+        assert_eq!(
+            twelve.evidence_core["related_tests"],
+            thirteen.evidence_core["related_tests"]
+        );
+        assert_eq!(
+            twelve.evidence_core["related_tests"]
+                .as_array()
+                .map(Vec::len),
+            Some(8)
+        );
+        let mut only_total_changed = twelve.evidence_core.clone();
+        only_total_changed["related_tests_total"] = json!(13);
+        assert_eq!(only_total_changed, thirteen.evidence_core);
+        assert_eq!(twelve.evidence_bytes, thirteen.evidence_bytes);
+        assert_ne!(twelve.evidence_sha256, thirteen.evidence_sha256);
+        assert_eq!(twelve.repair_readiness, thirteen.repair_readiness);
+        assert_eq!(twelve.list_summary, thirteen.list_summary);
+
+        for (total, retained) in [(1, 1), (0, 0)] {
+            source.related_tests.truncate(retained);
+            source.related_tests_matched_total = Some(total);
+            let item = GapItem::from_finding(&source, Path::new("."))?;
+            assert_eq!(item.evidence_core["related_tests_total"], json!(total));
+            assert_eq!(
+                item.evidence_core["related_tests"].as_array().map(Vec::len),
+                Some(retained)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_serialized_findings_project_retained_totals_without_digest_drift()
+    -> Result<(), String> {
+        let mut source = finding()?;
+        let row = source.related_tests[0].clone();
+        source.related_tests = (0..3)
+            .map(|index| {
+                let mut row = row.clone();
+                row.name = format!("checkout_{index}");
+                row.line += index;
+                row
+            })
+            .collect();
+        source.related_tests_matched_total = Some(3);
+        let explicit = GapItem::from_finding(&source, Path::new("."))?;
+        let serialized = serde_json::to_value(&source).map_err(|error| error.to_string())?;
+        for metadata in [None, Some(Value::Null), Some(json!(0))] {
+            let mut legacy = serialized.clone();
+            let object = legacy
+                .as_object_mut()
+                .ok_or("Finding must serialize as an object")?;
+            object.remove("related_tests_matched_total");
+            if let Some(metadata) = metadata {
+                object.insert("related_tests_matched_total".to_string(), metadata);
+            }
+            let decoded: Finding =
+                serde_json::from_value(legacy).map_err(|error| error.to_string())?;
+            assert_eq!(decoded.related_tests.len(), 3);
+            let projected = GapItem::from_finding(&decoded, Path::new("."))?;
+            assert_eq!(projected.evidence_core["related_tests_total"], 3);
+            assert_eq!(projected.evidence_core, explicit.evidence_core);
+            assert_eq!(projected.evidence_bytes, explicit.evidence_bytes);
+            assert_eq!(projected.evidence_sha256, explicit.evidence_sha256);
+            assert_eq!(projected.repair_readiness, explicit.repair_readiness);
+        }
+        Ok(())
+    }
+
     /// #5996: one finding, one location string on every surface. The MCP
     /// item file must join byte-for-byte with the check JSON `probe.file`,
     /// the context packet `probe.file` and the human finding header for the
@@ -598,8 +733,17 @@ mod tests {
     /// path (the MCP server's root spelling), which previously leaked the
     /// raw `//?/` producer join no other surface produced and no editor
     /// resolves.
+    ///
+    /// #8743 scope note: the packet here is rendered with the default
+    /// configuration, and this test claims parity only for fields that are
+    /// configuration-independent — the location strings above. `severity`
+    /// is config-resolved on the packet since 1.1, so the production MCP
+    /// route (which renders with the session's repo config) may legitimately
+    /// carry a different `severity` value under a user override; full-packet
+    /// parity is only claimed when the effective configurations match.
     #[test]
-    fn one_finding_renders_one_location_string_on_every_surface() -> Result<(), String> {
+    fn one_finding_renders_one_location_string_on_every_surface_under_default_config()
+    -> Result<(), String> {
         // check-local-context forbids drive-letter path literals; assemble
         // the verbatim root from parts (the `//?/` text lives in the owner's
         // own unit tests).
@@ -652,6 +796,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             partial_scope: None,
@@ -668,7 +813,10 @@ mod tests {
         }
 
         let packet: Value = serde_json::from_str(&crate::output::json::render_context_packet(
-            &finding, 5, &root,
+            &finding,
+            5,
+            &crate::config::RiprConfig::default(),
+            &root,
         ))
         .map_err(|error| format!("parse context packet: {error}"))?;
         if packet.pointer("/probe/file").and_then(Value::as_str) != Some(expected) {
@@ -1150,6 +1298,46 @@ mod tests {
         );
         // A snapshot id never carries a path, so its grammar stays strict.
         assert_eq!(snapshot_resource_id("ripr://snapshot/a/b"), None);
+    }
+
+    /// #8736: canonical ids embed raw workspace-relative paths (spaces,
+    /// `#`, and non-ASCII are literal), so URI-emitting clients must
+    /// percent-encode those characters. The decoder inverts valid `%XX`
+    /// escapes (either hex case), keeps stray `%` and short tails literal,
+    /// and reports no change when nothing decoded — the resource route
+    /// retries the decoded segment only when it differs from the capture.
+    #[test]
+    fn percent_decoding_resource_id_segments() {
+        assert_eq!(
+            percent_decode_resource_id("gap%3Arust%3Asrc%2Flib.rs"),
+            Some("gap:rust:src/lib.rs".to_string())
+        );
+        assert_eq!(
+            percent_decode_resource_id("gap:rust:my%20file%23name.rs"),
+            Some("gap:rust:my file#name.rs".to_string())
+        );
+        assert_eq!(
+            percent_decode_resource_id("%E2%98%83"),
+            Some("☃".to_string())
+        );
+        assert_eq!(
+            percent_decode_resource_id("gap%3arust"),
+            Some("gap:rust".to_string())
+        );
+        // A raw stable-path id (`%25` is a literal percent) must decode to
+        // the raw spelling, and the server falls back to the raw capture
+        // when the decoded form misses.
+        assert_eq!(
+            percent_decode_resource_id("pricing_%25FF.rs"),
+            Some("pricing_%FF.rs".to_string())
+        );
+        // Nothing to decode: no `%`, no valid escape, or no change.
+        assert_eq!(percent_decode_resource_id("gap:rust:src/lib.rs"), None);
+        assert_eq!(percent_decode_resource_id("gap:rust:100%.rs"), None);
+        assert_eq!(percent_decode_resource_id("gap:rust:trailing%"), None);
+        // Invalid UTF-8 after decoding refuses the retry instead of
+        // manufacturing an unmatchable id.
+        assert_eq!(percent_decode_resource_id("%FF%FE"), None);
     }
 
     /// #5510: the MCP gap evidence carries the packet-backed Perl rows with

@@ -1638,9 +1638,12 @@ fn bind_portable_command_for(root: &Path, command: &str, windows: bool) -> Optio
     // The bash token scan does not decode `\` escapes (a producer's `'\''` for
     // an apostrophe reopens a quote), so a body carrying one is not split: its
     // `--root .` route, if any, is withheld rather than guessed at. The
-    // Windows console form treats `\` as a literal separator, so this
-    // withhold stays bash-only (#8153).
-    if !windows && body.contains('\\') {
+    // Windows console form treats `\` as a literal separator, so a plain
+    // separator backslash does not trigger this withhold there (#8153). The
+    // `'\''` apostrophe escape is a bash quoting construct no Windows console
+    // reads either, and the scan cannot follow it on any host, so a body
+    // carrying it is withheld on both (#8509).
+    if body.contains('\\') && (!windows || body.contains("'\\''")) {
         // Literal forms catch producer `--root .` / simply quoted `.`. Mixed-quote
         // spellings such as `"--root"'' .` are not those substrings, so also
         // consult the same unquoted tokens `command_payload_is_safe` uses.
@@ -2255,6 +2258,8 @@ fn known_static_limit_kind(kind: &str) -> bool {
         StaticLimitKind::RustAssertionContextUnresolved,
         StaticLimitKind::RustLogCaptureUnresolved,
         StaticLimitKind::RustPanicOutcomeUnresolved,
+        StaticLimitKind::RustCallFactBudget,
+        StaticLimitKind::RustFrameworkOracleUnresolved,
     ]
     .iter()
     .any(|known| known.as_str() == kind)
@@ -3912,15 +3917,31 @@ mod tests {
             "cargo test foo\0bar",
             // Unterminated span: the `(` is not quoted.
             "cargo test 'foo (id",
-            // A `"` or `\\` elsewhere can end or escape the span in some shell.
-            "ripr receipt write --gap 'gap:len(x)' --out \"target/r.json\"",
-            "ripr receipt write --gap 'gap:len(x)' --out target\\r.json",
             // PowerShell closes a `'` span on U+2019, exposing `$(id)`.
             "ripr receipt write --gap 'gap:len(x)\u{2019} $(id) \u{2018}'",
         ] {
+            for windows in [false, true] {
+                assert!(
+                    !command_payload_is_safe_for(&workspace, command, windows),
+                    "windows={windows} accepted {command:?}"
+                );
+            }
+        }
+        // On the bash form a `"` or `\` elsewhere can end or escape the span.
+        // The Windows console form reads both literally (a double-quoted span
+        // is the renderer's own form, and `\` is a separator), so neither can
+        // substitute there (#8509).
+        for command in [
+            "ripr receipt write --gap 'gap:len(x)' --out \"target/r.json\"",
+            "ripr receipt write --gap 'gap:len(x)' --out target\\r.json",
+        ] {
             assert!(
-                !command_payload_is_safe(&workspace, command),
-                "accepted {command:?}"
+                !command_payload_is_safe_for(&workspace, command, false),
+                "bash accepted {command:?}"
+            );
+            assert!(
+                command_payload_is_safe_for(&workspace, command, true),
+                "windows refused {command:?}"
             );
         }
         for command in [
@@ -4544,7 +4565,6 @@ mod tests {
             "ripr receipt write --gap gap:amount>=threshold",
             "ripr receipt write --gap gap:amount<threshold",
             "ripr receipt write --gap 'gap:amount>=threshold",
-            "ripr receipt write --gap \"gap:amount>=threshold\"",
             "ripr receipt write --gap 'gap:amount>=threshold’'",
             "ripr receipt write --gap 'gap:amount>=threshold'\\\"",
             "ripr receipt write --gap \"$(echo injected)\"",
@@ -4556,11 +4576,19 @@ mod tests {
             "ripr agent verify --root . --json>target/ripr/verify.json",
             "ripr agent verify --root . --json > ../outside.json",
         ] {
-            assert!(
-                !command_payload_is_safe(root, command),
-                "active/ambiguous input must remain refused: {command:?}"
-            );
+            for windows in [false, true] {
+                assert!(
+                    !command_payload_is_safe_for(root, command, windows),
+                    "windows={windows}: active/ambiguous input must remain refused: {command:?}"
+                );
+            }
         }
+        // A `>` inside a double-quoted span is data on the Windows console
+        // form (it stays one argument in PowerShell and cmd) but an active
+        // redirect on the bash form (#8509).
+        let quoted = "ripr receipt write --gap \"gap:amount>=threshold\"";
+        assert!(!command_payload_is_safe_for(root, quoted, false));
+        assert!(command_payload_is_safe_for(root, quoted, true));
         assert!(!known_static_limit_kind("runtime_magic"));
         assert!(!known_static_limit_kind("python_arbitrary_new_limit"));
     }
@@ -4608,9 +4636,16 @@ mod tests {
             if let Some(target) = target {
                 // This is a lexical in-root target. No file is created, and
                 // it makes no claim that this filename is valid on Windows.
+                // The binder re-renders the anchored target with the host
+                // renderer, so the expected ending is that rendering, not a
+                // hard-coded quoting style (#8509).
+                let bound_root = crate::agent::loop_commands::bound_root(&root.to_string_lossy());
+                let rendered = crate::agent::loop_commands::shell_arg_for(
+                    &crate::agent::loop_commands::anchored_redirect_target(&bound_root, target),
+                    cfg!(windows),
+                );
                 assert!(
-                    bound.ends_with(&format!("/{target}'"))
-                        || (!target.contains('>') && bound.ends_with(&format!("/{target}"))),
+                    bound.ends_with(&format!("> {rendered}")),
                     "binding must preserve and anchor the whole target: {bound:?}"
                 );
             }
@@ -4761,6 +4796,27 @@ mod tests {
             ));
         }
         Ok(())
+    }
+
+    /// #8509: the bash apostrophe escape `'\''` is withheld on both host
+    /// forms (no Windows console reads it, and the token scan cannot follow
+    /// it), while a plain separator backslash still binds on Windows (#8153).
+    #[test]
+    fn bind_portable_command_for_withholds_apostrophe_escape_on_both_hosts() {
+        let root = std::env::temp_dir().join("ripr-escape-root");
+        let escaped = "ripr receipt write --verify-command 'ripr check --note it'\\''s --root . --json' --root . --json";
+        for windows in [false, true] {
+            assert_eq!(
+                bind_portable_command_for(&root, escaped, windows),
+                None,
+                "windows={windows}"
+            );
+        }
+        let plain = "ripr agent verify --note 'path\\file' --root sub --json";
+        assert_eq!(
+            bind_portable_command_for(&root, plain, true),
+            Some(plain.to_string())
+        );
     }
 
     /// #8153: substring decode of a simple Windows console token; `""`

@@ -11,7 +11,7 @@ use crate::output::agent_seam_packets::{
 use crate::output::human::terminal_safe;
 use crate::output::json::escape as json_escape;
 use crate::output::markdown::{PowershellForm, code_span, powershell_form};
-use crate::output::path::{display_path, display_path_text};
+use crate::output::path::{display_path, display_path_text, human_path};
 use crate::output::pilot::commands::{
     PilotCommands, python_card_first_pr_command, repair_edit_scope, repair_start_command,
 };
@@ -24,6 +24,14 @@ use crate::output::pilot::{
     PilotLanguageRoutes, PilotPythonFirstUse, PilotSummaryContext, RUST_EXCLUDED_GUIDANCE,
 };
 use crate::output::python_repair_card::PythonRepairCard;
+
+/// Pilot picks are ordered by static evidence (grip class, a missing
+/// value, a related test, a suggested assertion), not by measured mutant
+/// yield: published pilot precision is well below the ranking bar in
+/// `docs/PUBLIC_PROOF.md`. Human output must say so where it presents a
+/// pick as a recommendation, so the order is not read as "highest-value
+/// test first". Structured (JSON) output is unchanged.
+const EXPLORATORY_SEAMS_NOTE: &str = "Exploratory seams, not ranked by expected mutant yield: this order groups seams by static evidence and by whether a focused test can be suggested. It has not been shown to put the seams most likely to catch a wrong result first, so treat each pick as a place to inspect, not as the highest-value test to add.";
 
 const PYTHON_PREVIEW_SUPPORTED_FEATURES: &[&str] = &[
     "project_detection",
@@ -218,7 +226,10 @@ pub(crate) fn render_pilot_summary_md(
     out.push_str(&format!("- Mode: `{}`\n", context.mode.as_str()));
     out.push_str(&format!("- Timeout: {} ms\n", context.timeout_ms));
     match context.config_path {
-        Some(path) => out.push_str(&format!("- Config: loaded `{}`\n", display_path(path))),
+        // #8696: the stored config path is canonical (#7652), which on
+        // Windows carries the verbatim `\\?\` prefix; human surfaces route
+        // through `human_path` like the check header and doctor lines.
+        Some(path) => out.push_str(&format!("- Config: loaded `{}`\n", human_path(path))),
         None => out.push_str("- Config: missing; using built-in defaults\n"),
     }
     if let Some(scope) = scope_line(context, true) {
@@ -293,6 +304,8 @@ pub(crate) fn render_pilot_summary_md(
         }
     } else {
         out.push_str("## Top Recommendation\n\n");
+        out.push_str(EXPLORATORY_SEAMS_NOTE);
+        out.push_str("\n\n");
         if let Some(label) = current_change_label(context, top[0]) {
             out.push_str(&format!("- Current change: {}\n", label.markdown()));
         }
@@ -307,8 +320,10 @@ pub(crate) fn render_pilot_summary_md(
             .any(|entry| repair_start_command(context.root, entry).is_some())
         {
             out.push_str("## Ranked Actionable Seams\n\n");
+            out.push_str("Exploratory seams, not ranked by expected mutant yield.\n\n");
         } else {
             out.push_str("## Ranked Seams\n\n");
+            out.push_str("Exploratory seams, not ranked by expected mutant yield.\n\n");
             out.push_str(
                 "None of these seams can start a repair attempt (`ripr agent repair`); they are ranked for inspection by hand. Repair scope: `ripr agent repair --help`.\n\n",
             );
@@ -552,7 +567,9 @@ pub(crate) fn render_pilot_terminal(
     out.push_str(&format!("  root: {}\n", display_path(context.root)));
     out.push_str(&format!("  mode: {}\n", context.mode.as_str()));
     match context.config_path {
-        Some(path) => out.push_str(&format!("  config: loaded {}\n", display_path(path))),
+        // #8696: same human-path rule as the markdown summary — the
+        // canonical `source_path` must not leak the verbatim `\\?\` prefix.
+        Some(path) => out.push_str(&format!("  config: loaded {}\n", human_path(path))),
         None => out.push_str("  config: missing, using built-in defaults\n"),
     }
     out.push_str(&format!("  timeout: {} ms\n", context.timeout_ms));
@@ -585,6 +602,7 @@ pub(crate) fn render_pilot_terminal(
     let no_repair_target = if let Some(entry) = top.first() {
         let outline = targeted_test_brief_outline_for_classified_seam(entry);
         out.push_str("Top recommendation:\n");
+        out.push_str(&format!("  {EXPLORATORY_SEAMS_NOTE}\n"));
         if let Some(label) = current_change_label(context, entry) {
             out.push_str(&format!("  current change: {}\n", label.terminal()));
         }
@@ -798,7 +816,12 @@ pub(crate) fn render_pilot_terminal(
             "Next, by hand: add the focused test named above, then compare against this run:\n",
         );
     } else {
-        out.push_str("Run after adding the focused test:\n");
+        // #8766: nothing was ranked, so no focused test was named and there
+        // is nothing to run "after adding" yet.
+        out.push_str(
+            "No seam was ranked, so there is no focused test to add; rerun `ripr pilot` after the code or its tests change.\n",
+        );
+        return out;
     }
     out.push_str(&format!("  {}\n", commands.after_snapshot));
     out.push_str(&format!("  {}\n", commands.outcome));

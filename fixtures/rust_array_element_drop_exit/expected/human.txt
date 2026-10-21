@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_array_element_drop_exit/input
 
-Summary: 2 probes (1 exposed, 1 weak, 0 unrevealed, 0 no path); 2 of 2 findings unsuppressed
+Summary: 2 probes (0 exposed, 2 weak, 0 unrevealed, 0 no path); 2 of 2 findings unsuppressed
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
@@ -26,9 +26,10 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_array_element_drop_exit/input --diff <cwd>/fixtures/rust_array_element_drop_exit/diff.patch --mode fast probe:src_lib.rs:field_construction:d6d7c327
   ripr context --root <cwd>/fixtures/rust_array_element_drop_exit/input --diff <cwd>/fixtures/rust_array_element_drop_exit/diff.patch --mode fast --at probe:src_lib.rs:field_construction:d6d7c327
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:field_construction:d6d7c327 --root <cwd>/fixtures/rust_array_element_drop_exit/input` for the full gate's answer
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:12 (exposed)
+    - ./src/lib.rs:12 (weak)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

@@ -1549,7 +1549,8 @@ proptest! {
             "perllsp".to_string(),
             "perl-lsp".to_string(),
         ])),
-        executable in any::<String>(),
+        executable in any::<String>()
+            .prop_filter("usable executable path", |value| !value.is_empty() && !value.contains('\0')),
         timeout_ms in 1u64..,
         cache_dir in valid_repository_paths(),
     ) {
@@ -1966,6 +1967,100 @@ fn an_unknown_key_gets_no_table_hint() -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+#[test]
+fn a_recorded_retired_key_names_its_release_and_replacement() -> Result<(), String> {
+    // #7453: no released key is retired yet, so the production table is empty
+    // and the lookup is proved through an injected table.
+    let retired = [
+        RetiredKey {
+            key: "old_mode",
+            retired_in: "9.9.0",
+            replacement: Some("analysis.mode"),
+        },
+        RetiredKey {
+            key: "gone_key",
+            retired_in: "9.9.0",
+            replacement: None,
+        },
+    ];
+    let err = "TOML parse error at line 1, column 1\n  |\n1 | old_mode = 1\n  | ^^^^^^^^\nunknown field `old_mode`, expected one of `analysis`";
+    let hint = retired_key_hint_in(&retired, err)
+        .ok_or_else(|| "a recorded retired key must produce a hint".to_string())?;
+    assert_eq!(
+        hint,
+        "\n`old_mode` was retired in ripr 9.9.0; use `analysis.mode` instead"
+    );
+    let removed = retired_key_hint_in(&retired, &err.replace("old_mode", "gone_key"))
+        .ok_or_else(|| "a removed key must produce a hint".to_string())?;
+    assert!(removed.ends_with("`gone_key` was retired in ripr 9.9.0; remove it from ripr.toml"));
+    // A key that is not recorded keeps the plain serde error.
+    assert_eq!(
+        retired_key_hint_in(&retired, &err.replace("old_mode", "typo_key")),
+        None
+    );
+    // The shipped table records nothing, so today's errors are unchanged.
+    assert_eq!(retired_key_hint(err), None);
+    // An error that is not an unknown-field refusal never yields a hint.
+    assert_eq!(
+        retired_key_hint_in(&retired, "invalid type: integer `1`, expected a string"),
+        None
+    );
+    // The hint also reads the error the real parser produces, so the lookup is
+    // tied to serde's wording and not only to a hand-built string.
+    let Err(real) = parse_config("old_mode = 1\n") else {
+        return Err("an unknown top-level key must be refused".to_string());
+    };
+    assert_eq!(
+        retired_key_hint_in(&retired, &real),
+        Some("\n`old_mode` was retired in ripr 9.9.0; use `analysis.mode` instead".to_string()),
+        "real parser error: {real}"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_real_parse_path_keeps_the_misplaced_hint_and_adds_no_retirement_note() -> Result<(), String>
+{
+    // A valid key in the wrong table still gets its table hint, and the
+    // retirement lookup contributes nothing while no key is retired.
+    let Err(misplaced) = parse_config_diagnostic("mode = \"fast\"\n") else {
+        return Err("a top-level `mode` must be refused".to_string());
+    };
+    assert!(
+        misplaced
+            .message
+            .contains(&misplaced_key_hint_line("mode", "analysis")),
+        "misplaced hint must win: {}",
+        misplaced.message
+    );
+    assert!(!misplaced.message.contains("was retired in"));
+    // A key matching neither list keeps the plain serde error.
+    let Err(typo) = parse_config_diagnostic("zzz_not_a_key = 1\n") else {
+        return Err("an unknown key must be refused".to_string());
+    };
+    assert!(!typo.message.contains("is a valid key"), "{}", typo.message);
+    assert!(!typo.message.contains("was retired in"), "{}", typo.message);
+    assert_eq!(retired_key_hint(&typo.message), None);
+    Ok(())
+}
+
+#[test]
+fn a_config_error_summary_keeps_a_recorded_retirement_but_drops_forged_lines() {
+    let retired = [RetiredKey {
+        key: "old_mode",
+        retired_in: "9.9.0",
+        replacement: Some("analysis.mode"),
+    }];
+    let line = retired_key_hint_line(&retired[0]);
+    let error = format!("TOML parse error\n{line}");
+    assert_eq!(
+        config_error_summary_with(&retired, &error),
+        format!("TOML parse error; {line}")
+    );
+    // Without the record the same text is file content and is dropped.
+    assert_eq!(config_error_summary_with(&[], &error), "TOML parse error");
 }
 
 #[test]
@@ -2465,9 +2560,11 @@ fn config_load_parse_error_strips_windows_verbatim_prefix() -> Result<(), String
     let unc = Path::new(r"\\?\UNC\server\share\ripr.toml");
     let unc_windows =
         config_load_parse_error_for_host(unc, "invalid ripr.toml: expected table", true);
-    if !unc_windows.starts_with(r"\\?\UNC\server\share\ripr.toml: invalid ripr.toml:") {
+    // #8754: the UNC verbatim form folds to its plain spelling at the shared
+    // human path owner, like the drive-letter form above.
+    if !unc_windows.starts_with("//server/share/ripr.toml: invalid ripr.toml:") {
         return Err(format!(
-            "Windows UNC verbatim form must render exactly as given: {unc_windows}"
+            "Windows UNC verbatim form must render its plain spelling: {unc_windows}"
         ));
     }
     let notice = crate::core_error::CoreError::config_invalid(windows.clone()).refusal_notice();

@@ -319,6 +319,7 @@ async fn oversized_gap_item_leaves_mcp_through_the_real_routes() -> Result<(), S
         no_scope_provided: false,
         unanalyzed_working_tree: false,
         untracked_working_tree_source_paths: Vec::new(),
+        ignored_working_tree_source_paths: Vec::new(),
         unlinked_python_tests: None,
         suppression: None,
         partial_scope: None,
@@ -427,6 +428,7 @@ async fn window_sized_gap_item_refuses_typed_instead_of_dropping_structured_cont
         no_scope_provided: false,
         unanalyzed_working_tree: false,
         untracked_working_tree_source_paths: Vec::new(),
+        ignored_working_tree_source_paths: Vec::new(),
         unlinked_python_tests: None,
         suppression: None,
         partial_scope: None,
@@ -1211,6 +1213,120 @@ async fn repair_tools_reject_bad_arguments_at_the_dispatch_edge() -> Result<(), 
         );
         if !rejected {
             return Err(format!("{call} with invalid params"));
+        }
+    }
+    Ok(())
+}
+
+/// #8736 review follow-up: one captured resource-id segment must resolve
+/// deterministically. Raw-first keeps legacy raw URIs working; the decoded
+/// retry serves URI-emitting clients; and when both the raw spelling and
+/// its decoded form name two distinct existing items, the route fails
+/// closed with `id_ambiguous` instead of silently picking one.
+#[test]
+fn resource_id_document_resolves_raw_decoded_and_ambiguous_spellings() -> Result<(), String> {
+    let item_not_found = |_id: &str| {
+        Err(workspace::AttemptFailure::new(
+            workspace::CODE_ITEM_NOT_FOUND,
+            "no such item",
+            "list the current canonical ids, then retry",
+        ))
+    };
+
+    // Raw hit with nothing to decode: returned as captured.
+    match resource_id_document("gap:rust:src/lib.rs:owner", |id| {
+        if id == "gap:rust:src/lib.rs:owner" {
+            return Ok(serde_json::json!({"id": id}));
+        }
+        item_not_found(id)
+    }) {
+        Ok(document) => assert_eq!(
+            document["id"],
+            serde_json::json!("gap:rust:src/lib.rs:owner")
+        ),
+        Err(_failure) => return Err("raw id must resolve as captured".into()),
+    }
+
+    // Raw hit whose decoded form misses: a legacy raw URI for a literal-`%`
+    // file stays unambiguous.
+    match resource_id_document("gap:python:src/a%20b.py:owner", |id| {
+        if id == "gap:python:src/a%20b.py:owner" {
+            return Ok(serde_json::json!({"id": id}));
+        }
+        item_not_found(id)
+    }) {
+        Ok(document) => assert_eq!(
+            document["id"],
+            serde_json::json!("gap:python:src/a%20b.py:owner")
+        ),
+        Err(_failure) => return Err("raw literal-percent id must resolve as captured".into()),
+    }
+
+    // Raw miss, decoded hit: the URI-emitting client is served.
+    match resource_id_document("gap:python:src/a%2520b.py:owner", |id| {
+        if id == "gap:python:src/a%20b.py:owner" {
+            return Ok(serde_json::json!({"id": id}));
+        }
+        item_not_found(id)
+    }) {
+        Ok(document) => assert_eq!(
+            document["id"],
+            serde_json::json!("gap:python:src/a%20b.py:owner")
+        ),
+        Err(_failure) => return Err("encoded id must resolve through the decoded retry".into()),
+    }
+
+    // Both spellings name two distinct items: fail closed, never pick one.
+    match resource_id_document("gap:python:src/a%20b.py:owner", |id| {
+        if id == "gap:python:src/a%20b.py:owner" || id == "gap:python:src/a b.py:owner" {
+            return Ok(serde_json::json!({"id": id}));
+        }
+        item_not_found(id)
+    }) {
+        Ok(document) => {
+            return Err(format!(
+                "ambiguous id must not silently resolve: {document}"
+            ));
+        }
+        Err(failure) => {
+            if failure.code != workspace::CODE_ID_AMBIGUOUS {
+                return Err(format!(
+                    "ambiguous id must fail closed as id_ambiguous: {failure:?}"
+                ));
+            }
+            if !failure.recovery.contains("plain JSON string") {
+                return Err(format!(
+                    "ambiguous recovery must name the JSON-string tool route: {failure:?}"
+                ));
+            }
+        }
+    }
+
+    // Raw miss with no decodable escape keeps the ordinary miss mapping.
+    match resource_id_document("gap:rust:src/missing.rs:owner", item_not_found) {
+        Ok(document) => return Err(format!("missing id must not resolve: {document}")),
+        Err(failure) => {
+            if failure.code != workspace::CODE_ITEM_NOT_FOUND {
+                return Err(format!("plain miss must keep item_not_found: {failure:?}"));
+            }
+        }
+    }
+
+    // Non-miss failures pass through untouched.
+    match resource_id_document("gap:rust:src/lib.rs:owner", |_id| {
+        Err(workspace::AttemptFailure::new(
+            workspace::CODE_ANALYSIS_FAILED,
+            "instrument failure",
+            "retry",
+        ))
+    }) {
+        Ok(document) => {
+            return Err(format!("instrument failure must not resolve: {document}"));
+        }
+        Err(failure) => {
+            if failure.code != workspace::CODE_ANALYSIS_FAILED {
+                return Err(format!("instrument failure must pass through: {failure:?}"));
+            }
         }
     }
     Ok(())

@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/match_arm_tuple_terminal_generated_constructor/input
 
-Summary: 2 probes (0 exposed, 2 weak, 0 unrevealed, 0 no path); 2 of 2 findings unsuppressed
+Summary: 2 probes (0 exposed, 2 weak, 0 unrevealed, 0 no path); 2 of 2 findings unsuppressed (1 base-side evidence, not candidate edit targets)
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
@@ -26,6 +26,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/match_arm_tuple_terminal_generated_constructor/input --diff <cwd>/fixtures/match_arm_tuple_terminal_generated_constructor/diff.patch --mode fast probe:src_work_queue.rs:match_arm:e2ddad8e
   ripr context --root <cwd>/fixtures/match_arm_tuple_terminal_generated_constructor/input --diff <cwd>/fixtures/match_arm_tuple_terminal_generated_constructor/diff.patch --mode fast --at probe:src_work_queue.rs:match_arm:e2ddad8e
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_work_queue.rs:match_arm:e2ddad8e --root <cwd>/fixtures/match_arm_tuple_terminal_generated_constructor/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/match_arm_tuple_terminal_generated_constructor/input --at src/work_queue.rs:30 --kind match_arm
 

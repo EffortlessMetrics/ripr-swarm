@@ -9,7 +9,8 @@ mod shadow;
 mod text;
 
 pub(crate) use calls::{
-    attribute_ranges, call_name_bounds_before_paren, extract_call_facts, runs_its_arguments,
+    MAX_CALL_FACTS_PER_LINE, attribute_ranges, call_name_bounds_before_paren, extract_call_facts,
+    has_saturated_line, line_at_call_budget, runs_its_arguments,
 };
 pub(crate) use groups::{delimiters_balance, group_end};
 pub(crate) use literals::{extract_literal_facts, extract_literals};
@@ -22,11 +23,12 @@ pub(crate) use mask::{
 #[cfg(test)]
 pub(crate) use oracles::contains_macro_invocation;
 pub(crate) use oracles::{
-    OracleTextShape, assertion_oracle_text, classify_assertion, equality_assertion_arguments,
-    err_return_guard_oracles, err_return_guard_twin, extract_assertions,
-    extract_line_scanned_oracles, guarded_result_match_scan_with_shadow_authority,
-    has_oracle_text_shape, is_inequality_assertion, is_unwrap_err_bound_error_assertion,
-    outer_assertion_condition, terminal_err_return_guard_oracle, uncompared_unwrap_err,
+    OracleTextShape, assertion_oracle_text, classify_assertion, classify_assertion_in,
+    equality_assertion_arguments, err_return_guard_oracles, err_return_guard_twin,
+    extract_assertions, extract_assertions_in, extract_line_scanned_oracles,
+    guarded_result_match_scan_with_shadow_authority, has_oracle_text_shape,
+    is_inequality_assertion, is_unwrap_err_bound_error_assertion, outer_assertion_condition,
+    retain_reached_oracles, terminal_err_return_guard_oracle, uncompared_unwrap_err,
     unwrap_err_bound_variables,
 };
 pub(crate) use returns::extract_return_facts;

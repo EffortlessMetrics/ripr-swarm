@@ -228,6 +228,136 @@ fn non_cargo_workspace_marker(dir: &Path) -> Option<ImplicitRootReason> {
     None
 }
 
+/// Shared by every command that takes `--root` and defaults to `.`: without a
+/// typed `--root`, resolve the workspace root exactly as `ripr check` does
+/// (#8767), with the same stderr disclosure. A typed `--root` is kept as given.
+///
+/// Returns the invocation directory relative to the widened root (`crates/app`)
+/// when the root moved, so callers can bind member-relative file selectors with
+/// [`bind_member_selector_file`]; `None` when the root did not change.
+pub(in crate::cli) fn resolve_implicit_command_root(
+    root: &mut PathBuf,
+    root_explicit: bool,
+) -> Result<Option<String>, String> {
+    if root_explicit {
+        return Ok(None);
+    }
+    let mut input = CheckInput {
+        root: root.clone(),
+        ..CheckInput::default()
+    };
+    resolve_implicit_workspace_root(&mut input)?;
+    // #7468 parity: a closer member-level ripr.toml is skipped by the walk.
+    if input.root != *root
+        && let Some(warning) = skipped_closer_config_warning(Path::new("."), &input.root)
+    {
+        eprintln!("{}", terminal_safe(warning));
+    }
+    let moved = input.root != *root;
+    let prefix = if moved {
+        // Fail closed: without the invocation prefix, relative file selectors
+        // could silently resolve against a sibling member.
+        let relate = || -> Option<String> {
+            let cwd = std::fs::canonicalize(".").ok()?;
+            let base = std::fs::canonicalize(&input.root).ok()?;
+            let relative = cwd.strip_prefix(base).ok()?;
+            let text = relative
+                .components()
+                .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/");
+            (!text.is_empty()).then_some(text)
+        };
+        Some(relate().ok_or_else(|| {
+            "cannot relate the current directory to the resolved workspace root; pass --root PATH to select the analysis root explicitly"
+                .to_string()
+        })?)
+    } else {
+        None
+    };
+    *root = input.root;
+    Ok(prefix)
+}
+
+/// #8767: when the root was implicitly widened, a relative file selector that
+/// names an existing file under the invocation directory means that file, so it
+/// is rewritten to its workspace-relative path before resolution; otherwise the
+/// suffix matcher could pick a sibling member's `src/lib.rs`. When the selector
+/// also exists workspace-relative, the invocation-directory file wins (the
+/// operator typed it from that directory). A selector that is neither an
+/// existing invocation-directory file nor an exact workspace-relative file is
+/// refused rather than left to repo-wide suffix matching, which could land on a
+/// sibling member. Absolute paths and an unmoved root pass through unchanged.
+pub(in crate::cli) fn bind_member_selector_file(
+    prefix: Option<&str>,
+    root: &Path,
+    file: &str,
+) -> Result<String, String> {
+    let Some(prefix) = prefix else {
+        return Ok(file.to_string());
+    };
+    let path = Path::new(file);
+    if path.is_absolute() {
+        return Ok(file.to_string());
+    }
+    if Path::new(".").join(path).is_file() {
+        return Ok(format!("{prefix}/{}", file.trim_start_matches("./")));
+    }
+    if root.join(path).is_file() {
+        return Ok(file.to_string());
+    }
+    Err(format!(
+        "`{file}` names no file under the invocation directory `{prefix}` or the workspace root; pass `--root .` to select this directory, or the full workspace-relative path (for example `{prefix}/{}`)",
+        file.trim_start_matches("./")
+    ))
+}
+
+/// [`bind_member_selector_file`] for a `file:line` repair item. Seam ids and
+/// structured ids (`gap:rust:...:3`, `repo-probe:src/lib.rs:predicate:12345678`)
+/// are not file selectors: a file path never contains `:`, so any item whose
+/// pre-line part does is passed through unchanged for the id resolvers.
+pub(super) fn bind_member_selector_item(
+    prefix: Option<&str>,
+    root: &Path,
+    item: &str,
+) -> Result<String, String> {
+    match item.rsplit_once(':') {
+        Some((file, line))
+            if line.parse::<usize>().is_ok()
+                && !file.contains(':')
+                && (file.contains('/') || file.contains('.')) =>
+        {
+            let bound = bind_member_selector_file(prefix, root, file)?;
+            if bound != file {
+                refuse_root_shadowed_selector(root, &bound)?;
+            }
+            Ok(format!("{bound}:{line}"))
+        }
+        _ => Ok(item.to_string()),
+    }
+}
+
+/// The shared `file:line` matcher also accepts a path suffix (`wanted` ends
+/// with the stored path), so a selector bound to `pkg/src/lib.rs` would match
+/// a workspace-root package's `src/lib.rs` at the same line. When a proper
+/// suffix of the bound path names a real file under the root, the path cannot
+/// distinguish the two, so the bound selector is refused instead of risking a
+/// seam of another package. `--root .` analyzes the invocation directory alone.
+pub(super) fn refuse_root_shadowed_selector(root: &Path, bound: &str) -> Result<(), String> {
+    for (index, _) in bound.match_indices('/') {
+        let suffix = &bound[index + 1..];
+        if suffix.is_empty() || suffix.split('/').any(|part| part == "..") {
+            continue;
+        }
+        if root.join(suffix).is_file() {
+            return Err(format!(
+                "`{bound}` also matches the workspace-root file `{suffix}` by path suffix, and a file:line selector cannot tell them apart; pass `--root .` to analyze this directory alone, or select the gap by its seam or gap ID"
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn resolve_implicit_workspace_root(input: &mut CheckInput) -> Result<(), String> {
     let resolved = resolve_project_root(Path::new(".")).map_err(|error| {
         format!("{error}; pass --root PATH to select the analysis root explicitly")
@@ -290,6 +420,7 @@ const CHECK_VALUE_OPTIONS: &[&str] = &[
     "--output-dir",
     "--write-artifact",
     "--git-timeout",
+    "--timeout",
 ];
 
 /// Value-taking options whose values are enumerated names (never flag-shaped).
@@ -340,6 +471,32 @@ fn parse_git_timeout_from(
         ));
     }
     Ok((secs > 0).then_some(timeout))
+}
+
+/// `--timeout` / `RIPR_CHECK_TIMEOUT`: the whole-run analysis wall-clock
+/// budget in seconds, `0` disabling it (#5369). Same shape as the git
+/// deadline, so a typo never runs with a silently different bound.
+fn parse_check_timeout_from(
+    source: &str,
+    value: &str,
+) -> Result<Option<std::time::Duration>, String> {
+    parse_git_timeout_from(source, value)
+}
+
+fn check_timeout_from_env(
+    explicit: bool,
+    env_value: Result<String, std::env::VarError>,
+) -> Result<Option<Option<std::time::Duration>>, String> {
+    if explicit {
+        return Ok(None);
+    }
+    match env_value {
+        Ok(value) => parse_check_timeout_from("RIPR_CHECK_TIMEOUT", &value).map(Some),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err("RIPR_CHECK_TIMEOUT must be valid UTF-8".to_string())
+        }
+    }
 }
 
 pub(super) fn git_timeout_from_env(
@@ -472,6 +629,23 @@ pub(super) fn machine_refusal_document(
 }
 
 pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
+    check_inner(args, None)
+}
+
+#[cfg(unix)]
+pub(in crate::cli) fn check_with_interrupt_flags(
+    args: &[String],
+    flags: crate::cli::interrupt::InterruptFlags,
+) -> Result<(), String> {
+    check_inner(args, Some(flags))
+}
+
+fn check_inner(
+    args: &[String],
+    interrupt_flags: Option<crate::cli::interrupt::InterruptFlags>,
+) -> Result<(), String> {
+    #[cfg(not(unix))]
+    let _ = interrupt_flags;
     let mut input = CheckInput {
         git_timeout: Some(app::default_cli_git_timeout()),
         ..CheckInput::default()
@@ -504,6 +678,8 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // pair. No implicit cache: the user names the artifact path.
     let mut write_artifact: Option<PathBuf> = None;
     let mut git_timeout_explicitly_provided = false;
+    let mut check_timeout = super::check_budget::default_check_timeout();
+    let mut check_timeout_explicitly_provided = false;
     let mut candidate_tree: Option<String> = None;
     let mut candidate_base: Option<String> = None;
     let mut quiet = false;
@@ -619,6 +795,12 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                 input.git_timeout = parse_git_timeout(value)?;
                 git_timeout_explicitly_provided = true;
             }
+            "--timeout" => {
+                i += 1;
+                let value = expect_value(args, i, "--timeout")?;
+                check_timeout = parse_check_timeout_from("--timeout", value)?;
+                check_timeout_explicitly_provided = true;
+            }
             "--quiet" => {
                 quiet = true;
             }
@@ -723,6 +905,23 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         )
     })? {
         input.git_timeout = timeout;
+    }
+    if let Some(timeout) = check_timeout_from_env(
+        check_timeout_explicitly_provided,
+        std::env::var("RIPR_CHECK_TIMEOUT"),
+    )
+    .map_err(|err| {
+        super::check_fanout::refuse(
+            super::check_fanout::refusal_destination(
+                fanout_custody.as_ref(),
+                output_dir.as_deref(),
+            ),
+            &envelope_input,
+            effective_format,
+            err,
+        )
+    })? {
+        check_timeout = timeout;
     }
     if worktree_explicitly_provided && input.diff_file.is_some() {
         return Err(super::check_fanout::refuse(
@@ -1093,6 +1292,22 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             )
         })?;
     }
+    // Blocking diff readers and separate file/fanout publication paths retain
+    // native interruption. Only ordinary resolved regular-file/live-Git input
+    // opts into cooperative analysis settlement (#7618).
+    #[cfg(unix)]
+    let _interrupt = if output_dir.is_none()
+        && write_artifact.is_none()
+        && gap_ledger.is_none()
+        && input.diff_file.as_deref().is_none_or(|path| {
+            path != Path::new("-") && std::fs::metadata(path).is_ok_and(|meta| meta.is_file())
+        }) {
+        interrupt_flags
+            .map(crate::cli::interrupt::SignalRegistration::create)
+            .transpose()?
+    } else {
+        None
+    };
     // #2644: `fast` is currently behaviorally identical to `draft`. The notice
     // fires on the EFFECTIVE mode after `apply_to_check_input`, not on argv
     // position, so a repo `ripr.toml` with `mode = "fast"` is disclosed too,
@@ -1231,14 +1446,14 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // throttled heartbeats included). Both the audit-path disclosure and the
     // stage lines are stderr-only and cannot change machine stdout.
     let progress = (!quiet).then(|| {
-        crate::cli::progress::CliProgressSink::for_stderr(
+        std::sync::Arc::new(crate::cli::progress::CliProgressSink::for_stderr(
             std::io::stderr().is_terminal(),
             crate::cli::progress::ProgressPolicy::STANDARD,
-        )
+        ))
     });
     let progress_sink = progress
         .as_ref()
-        .map(|sink| sink as &dyn crate::app::AnalysisProgressSink);
+        .map(|sink| &**sink as &dyn crate::app::AnalysisProgressSink);
     // #4945: invocation-time cost disclosure for the full-repo audit-path
     // formats. One line, before the run begins, naming the expected cost
     // class (cold full-corpus walk; the warm-rerun clause is honest per
@@ -1279,6 +1494,7 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                         &config,
                     )?
                     .with_rust_corpus_key(report.corpus_key.as_ref());
+                analysis::cancellation::begin_cli_publication()?;
                 let stdout = std::io::stdout();
                 let mut handle = stdout.lock();
                 output::repo_exposure::write_repo_exposure_json_with_context(
@@ -1365,7 +1581,28 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         // `CheckOutput` carries only the fields these renderers read.
         Ok(app::repo_seam_inventory_input(input))
     } else {
-        app::check_with_progress_core(input, &config, progress_scope, progress_sink)
+        // #5369: bound the diff/worktree analysis by the wall-clock budget.
+        let worker_config = config.clone();
+        let worker_sink = progress.clone();
+        let abandon_sink = progress.clone();
+        super::check_budget::run_with_budget(
+            check_timeout,
+            move || {
+                if let Some(sink) = &abandon_sink {
+                    sink.abandon();
+                }
+            },
+            move || {
+                app::check_with_progress_core(
+                    input,
+                    &worker_config,
+                    progress_scope,
+                    worker_sink
+                        .as_ref()
+                        .map(|sink| &**sink as &dyn crate::app::AnalysisProgressSink),
+                )
+            },
+        )
     };
     let mut output = match output_result {
         Ok(output) => output,
@@ -1519,9 +1756,12 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
         // mode that is neither committed history nor a working-tree read
         // must not inherit it. A working-tree read keeps it: its diff covers
         // tracked files only, so the untracked routed files are named in a
-        // note of their own (RIPR-SPEC-0116).
+        // note of their own (RIPR-SPEC-0116). #7467: the gitignored list
+        // drives the same family and follows the same rule — neither diff
+        // analyzes it.
         if !worktree_run {
             output.untracked_working_tree_source_paths.clear();
+            output.ignored_working_tree_source_paths.clear();
         }
     }
     // A working-tree run (explicit `--worktree`, or the dirty-tree default)
@@ -1553,8 +1793,11 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             // #8166 Slice C: the repair line reuses the producer-owned
             // admission gate over the live seam inventory, for the same
             // live-files reason as the stub route above. Other formats
-            // keep their existing next-step contracts unchanged.
-            .with_repair_route(crate::app::task_first::check_repair_route(
+            // keep their existing next-step contracts unchanged. #8729:
+            // the outcome carries the named refusal so a finding offered
+            // no repair start renders one advisory line naming why,
+            // instead of a silent gap on the triage screen.
+            .with_repair_route_outcome(crate::app::task_first::check_repair_route(
                 &limited_check_input.root,
                 &config,
                 &output,

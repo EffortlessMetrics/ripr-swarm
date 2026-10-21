@@ -78,6 +78,8 @@ mod match_object_guard;
 mod mock_payload_guard;
 mod module_entries;
 #[cfg(test)]
+mod negated_jest_assertion_tests;
+#[cfg(test)]
 mod new_declaration_tests;
 mod oracle;
 #[cfg(test)]
@@ -89,6 +91,8 @@ mod predicate_activation_tests;
 pub(crate) use package::detect_framework_for_root;
 #[cfg(test)]
 mod ambient_declaration_tests;
+#[cfg(test)]
+mod conditional_assertion_tests;
 mod parse;
 mod paths;
 mod probe_shape;
@@ -97,11 +101,21 @@ mod rejection_equality_tests;
 mod related_tests;
 #[cfg(test)]
 mod replaced_block_tests;
+#[cfg(test)]
+mod self_comparing_assertion_tests;
 mod spread_override_guard;
 mod static_limit;
 mod table_rows;
 #[cfg(test)]
 mod tests;
+// Declared here, not in `tests.rs`, so #7813/#7815 do not collide with #8476.
+#[cfg(test)]
+#[path = "tests/issue7813_alias_member_tests.rs"]
+mod issue7813_alias_member_tests;
+#[cfg(test)]
+#[path = "tests/issue7815_typeof_mixed_tests.rs"]
+mod issue7815_typeof_mixed_tests;
+mod suite_factory;
 mod tests_extract;
 #[cfg(test)]
 mod tests_extract_tests;
@@ -141,6 +155,7 @@ pub(crate) use probe_shape::*;
 pub(crate) use related_tests::*;
 pub(crate) use spread_override_guard::*;
 pub(crate) use static_limit::*;
+use suite_factory::SuiteFactoryExpansion;
 pub(crate) use table_rows::*;
 pub(crate) use tests_extract::*;
 #[cfg(test)]
@@ -292,6 +307,10 @@ impl TypeScriptAdapter {
         let mut parse_limits: Vec<TypeScriptParseLimit> = Vec::new();
         let mut read_failures: Vec<TypeScriptReadFailure> = Vec::new();
         let mut extraction_gaps: Vec<TypeScriptTestExtractionGap> = Vec::new();
+        // Assertions credited under a condition static analysis cannot
+        // evaluate (#8714): the credit stands, the disclosure carries the
+        // "may never execute" caveat.
+        let mut conditional_credit_gaps: Vec<TypeScriptConditionalCreditGap> = Vec::new();
         // Owner shapes the extractor does not index, detected on CHANGED
         // production files only (#4104-A): their changed lines produce no
         // finding today, so the disclosure is the only honest signal.
@@ -355,16 +374,41 @@ impl TypeScriptAdapter {
                 continue;
             }
             if is_test_file(relative) {
-                let mut tests = extract_tests(relative, source);
+                let (mut tests, conditional_credit_gap, expansion) =
+                    extract_tests_with_expansion(relative, source);
                 // RIPR-SPEC-0258: a committed snapshot entry pins the value.
-                promote_committed_snapshots(&options.root, relative, source, &mut tests);
+                // The tests of a suite-factory call carry the factory's
+                // snapshot call once per expansion, so the file's calls are
+                // counted the same way.
+                let counted = expansion
+                    .as_ref()
+                    .map(SuiteFactoryExpansion::snapshot_source);
+                promote_committed_snapshots(
+                    &options.root,
+                    relative,
+                    counted.as_deref().unwrap_or(source),
+                    &mut tests,
+                );
                 // A recognized test file that parses but registers test
                 // shapes the extractor drops (template-literal titles,
                 // tagged-template `.each`, tests generated in loops or
                 // callbacks) gets a partial-extraction disclosure so a
                 // confident `no_static_path` is known to be possibly false.
-                if let Some(gap) = detect_partial_test_extraction(relative, source, &tests) {
+                if let Some(gap) = detect_partial_test_extraction_expanded(
+                    relative,
+                    source,
+                    &tests,
+                    expansion.as_ref(),
+                ) {
                     extraction_gaps.push(gap);
+                }
+                // #8714: an extracted assertion sitting under an unevaluated
+                // branch condition keeps its credit; the disclosure records
+                // that the branch (and the oracle) may never execute. The gap
+                // came out of the same parse as the extraction (one parse per
+                // file, not two).
+                if let Some(gap) = conditional_credit_gap {
+                    conditional_credit_gaps.push(gap);
                 }
                 all_tests.extend(tests);
             } else {
@@ -772,6 +816,26 @@ impl TypeScriptAdapter {
         if let Some(limitation) = test_extraction_partial_summary(consulted_gaps)? {
             limitations.push(limitation);
         }
+        // Conditional assertion credit (#8714): the consultation gate is the
+        // same as partial extraction, but the scope is the test files this
+        // diff's findings actually credited (review): the credit consumption
+        // happens in the test file holding the related test, which the diff
+        // usually does not touch, so changed-path scoping would kill the
+        // disclosure exactly where it matters. A gap in a test file no
+        // finding relates to must not mark this analysis partial.
+        let consulted_test_files: std::collections::BTreeSet<String> = findings
+            .iter()
+            .flat_map(|finding| finding.related_tests.iter())
+            .map(|related| normalized_path(&related.file))
+            .collect();
+        let consulted_credit_gaps: Vec<&TypeScriptConditionalCreditGap> = if test_index_consumed {
+            consulted_credit_gaps(&conditional_credit_gaps, &consulted_test_files)
+        } else {
+            Vec::new()
+        };
+        if let Some(limitation) = conditional_assertion_credit_summary(&consulted_credit_gaps)? {
+            limitations.push(limitation);
+        }
         // Partial owner extraction (#4104-A): changed lines inside owner
         // shapes the extractor does not index produce no finding, so this
         // typed limitation replaces the silent skip.
@@ -990,4 +1054,104 @@ fn test_extraction_partial_summary(
             ))
         }
     }
+}
+
+/// Recovery for conditional assertion credit. Static analysis cannot decide
+/// the branch condition, so the reader resolves the caveat with runtime
+/// coverage, not a re-run.
+const CONDITIONAL_ASSERTION_CREDIT_RECOVERY: &str = "Static analysis cannot evaluate the branch condition; runtime coverage establishes whether the discriminator executes.";
+
+/// Samples named in a multi-file conditional-credit summary.
+const CONDITIONAL_ASSERTION_CREDIT_SAMPLES: usize = 3;
+
+/// Collapse per-file conditional-credit gaps into one typed limitation,
+/// mirroring `test_extraction_partial_summary`: a single gap keeps its path;
+/// several gaps carry the file count, the first few samples and the
+/// remainder count. The credited oracle is unchanged — this only discloses
+/// that the branch holding it may never execute (#8714). Callers pass only
+/// diff-scoped gaps (`diff_scoped_credit_gaps`).
+fn conditional_assertion_credit_summary(
+    gaps: &[&TypeScriptConditionalCreditGap],
+) -> Result<Option<AnalysisLimitation>, String> {
+    let recovery = || {
+        AnalysisRecovery::new(
+            AnalysisRecoveryKind::InspectFailure,
+            CONDITIONAL_ASSERTION_CREDIT_RECOVERY,
+        )
+    };
+    match gaps {
+        [] => Ok(None),
+        [gap] => {
+            let gap = *gap;
+            let limitation = conditional_assertion_credit_limitation(gap);
+            Ok(Some(
+                AnalysisLimitation::new(
+                    AnalysisLimitationKind::UnevaluatedCondition,
+                    AnalysisStage::LanguageAdapter,
+                    recovery()?,
+                )
+                .with_path(gap.file.to_string_lossy())?
+                .with_affected_items(1)?
+                .with_detail(format!(
+                    "typescript_conditional_assertion_credit: `{}` at {}",
+                    gap.condition, limitation.sample_source
+                ))?,
+            ))
+        }
+        _ => {
+            let files = gaps
+                .iter()
+                .map(|gap| normalized_path(&gap.file))
+                .collect::<std::collections::BTreeSet<_>>();
+            let samples = gaps
+                .iter()
+                .take(CONDITIONAL_ASSERTION_CREDIT_SAMPLES)
+                .map(|gap| {
+                    format!(
+                        "`{}` at {}",
+                        gap.condition,
+                        conditional_assertion_credit_limitation(gap).sample_source
+                    )
+                })
+                .collect::<Vec<_>>();
+            let remainder = gaps.len().saturating_sub(samples.len());
+            let head = format!(
+                "typescript_conditional_assertion_credit: {} test file(s) credit assertions under conditions static analysis cannot evaluate",
+                files.len()
+            );
+            let mut detail = format!("{head}; e.g. {}", samples.join("; "));
+            if remainder > 0 {
+                detail.push_str(&format!(" (+{remainder} more)"));
+            }
+            if detail.chars().count()
+                > crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS
+            {
+                detail = head;
+            }
+            Ok(Some(
+                AnalysisLimitation::new(
+                    AnalysisLimitationKind::UnevaluatedCondition,
+                    AnalysisStage::LanguageAdapter,
+                    recovery()?,
+                )
+                .with_affected_items(u64::try_from(files.len()).unwrap_or(u64::MAX))?
+                .with_detail(detail)?,
+            ))
+        }
+    }
+}
+
+/// Conditional-credit gaps scoped to the test files a set of findings
+/// actually credited (review on #8714): the credit consumption happens in
+/// the test file holding the related test, which the diff usually does not
+/// touch; a gap in a test file no finding relates to must not mark this
+/// analysis partial. Normalization matches the related-test path
+/// convention so separator spelling cannot split a match.
+fn consulted_credit_gaps<'a>(
+    gaps: &'a [TypeScriptConditionalCreditGap],
+    consulted_test_files: &std::collections::BTreeSet<String>,
+) -> Vec<&'a TypeScriptConditionalCreditGap> {
+    gaps.iter()
+        .filter(|gap| consulted_test_files.contains(&normalized_path(&gap.file)))
+        .collect()
 }

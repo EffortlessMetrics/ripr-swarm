@@ -524,6 +524,204 @@ fn detect_python_test_framework_is_fail_closed_for_empty_root() -> Result<(), St
     std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
     Ok(())
 }
+
+#[test]
+fn detect_python_test_frameworks_scan_is_starvation_free_and_deterministic() -> Result<(), String> {
+    // #8706: the per-directory cap must count only admitted `.py` test
+    // candidates, not every raw directory entry. 64 non-test entries in a
+    // scanned directory must not starve the only test file in it, and the
+    // answer must not depend on unspecified `read_dir` enumeration order.
+    let root = unique_test_root("starvation-free");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    // Sort-first names so a raw-entry cap in any enumeration that surfaces
+    // them ahead of the test file starves the scan on the old code path.
+    for index in 0..64 {
+        std::fs::write(root.join(format!("a-notes-{index:02}.md")), "notes\n")
+            .map_err(|err| format!("write notes: {err}"))?;
+    }
+    std::fs::write(root.join("test_evidence.py"), "import unittest\n")
+        .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    // Same starvation shape inside a `tests/` directory.
+    let root = unique_test_root("starvation-free-tests-dir");
+    let tests_dir = root.join("tests");
+    std::fs::create_dir_all(&tests_dir).map_err(|err| format!("create tests dir: {err}"))?;
+    for index in 0..64 {
+        std::fs::write(tests_dir.join(format!("a-fixture-{index:02}.json")), "{}\n")
+            .map_err(|err| format!("write fixture: {err}"))?;
+    }
+    std::fs::write(tests_dir.join("test_core.py"), "import pytest\n")
+        .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_frameworks_ignores_imports_inside_string_literals() -> Result<(), String> {
+    // #8707: `tests.py` / `test.py` modules are admitted by file name alone
+    // (#7706), so a helper module whose docstring shows a usage example must
+    // not report the example's `import unittest` as framework evidence.
+    let root = unique_test_root("docstring-unittest");
+    let blog = root.join("blog");
+    std::fs::create_dir_all(&blog).map_err(|err| format!("create blog dir: {err}"))?;
+    std::fs::write(
+        blog.join("tests.py"),
+        "\"\"\"Blog helpers.\n\nUsage example:\n    import unittest\n\"\"\"\n",
+    )
+    .map_err(|err| format!("write tests.py: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        Vec::<&str>::new()
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    // The same discipline for pytest-shaped example text.
+    let root = unique_test_root("docstring-pytest");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test_example.py"),
+        "'''Example:\nimport pytest\n'''\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        Vec::<&str>::new()
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    // Positive control: a real import after the docstring still counts — the
+    // scan must resume at code when the string closes.
+    let root = unique_test_root("docstring-then-import");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test_pricing.py"),
+        "\"\"\"Pricing tests.\"\"\"\nimport unittest\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_frameworks_ignores_comment_and_string_quote_delimiters() -> Result<(), String>
+{
+    // PR #8901 review (graphite #2 / devin #5): a `"""` or `'''` inside a
+    // comment or an ordinary single-line string must not open a phantom
+    // triple-quoted string that swallows later real imports — the exact
+    // false negative the #8707 string-awareness work exists to prevent.
+    let root = unique_test_root("commented-delimiter");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test_comment.py"),
+        "# use \"\"\" for docstrings\nimport pytest\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    // A bare quoted delimiter in a comment alone is not evidence either.
+    let root = unique_test_root("commented-delimiter-only");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(root.join("test_note.py"), "# \"\"\" example\n")
+        .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        Vec::<&str>::new()
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+
+    // A triple-quote-looking literal inside an ordinary single-line string
+    // is content, not a delimiter.
+    let root = unique_test_root("string-literal-delimiter");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test_literal.py"),
+        "x = \"'''\"\nimport unittest\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"]
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_frameworks_pins_backslash_continuation_limitation() -> Result<(), String> {
+    // PR #8901 review (coderabbit): an ordinary single-line string ending in
+    // a backslash continuation is treated as closed at end of line — line
+    // continuations are a documented non-goal of this bounded heuristic
+    // (RIPR-SPEC-0285), and carrying string state across lines would move
+    // the scan toward full tokenization. This test pins the known
+    // limitation so an accidental "fix" must update the contract instead of
+    // silently widening the parser: the `'''` on the line after a
+    // backslash-continued string opens a phantom triple-quoted string, so
+    // the real import on the following line is hidden. A file that relies
+    // on line continuations inside string literals near evidence markers
+    // is adversarial for every bounded scan; the honest answer is the
+    // documented gap, not a silent reclassification.
+    let root = unique_test_root("backslash-continuation-limitation");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test_continuation.py"),
+        "x = \"abc \\\n'''\nimport unittest\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        Vec::<&str>::new(),
+        "the backslash-continuation limitation is pinned: the phantom triple string hides the import"
+    );
+    // Positive control: the identical import counts when the string line
+    // does not end in a continuation backslash — the limitation is the
+    // continuation, not the parser's ordinary string handling.
+    let root = unique_test_root("backslash-continuation-control");
+    std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+    std::fs::write(
+        root.join("test_control.py"),
+        "x = \"abc\"\nimport unittest\n",
+    )
+    .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(
+        super::detect_python_test_frameworks(&root),
+        vec!["unittest"],
+        "without the continuation backslash the line-1 string closes and the import is code"
+    );
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn detect_python_test_frameworks_test_named_directories_do_not_starve_the_scan()
+-> Result<(), String> {
+    // PR #8901 review (devin #6): directories named `test_*.py` pass the
+    // name and test-path admission filters but can never yield evidence;
+    // counting them toward the per-directory cap starves real test files
+    // behind them. Only files count.
+    let root = unique_test_root("dir-starvation");
+    let tests_dir = root.join("tests");
+    std::fs::create_dir_all(&tests_dir).map_err(|err| format!("create tests dir: {err}"))?;
+    for index in 0..64 {
+        std::fs::create_dir_all(tests_dir.join(format!("test_{index:02}.py")))
+            .map_err(|err| format!("create test-named directory: {err}"))?;
+    }
+    std::fs::write(tests_dir.join("test_z.py"), "import pytest\n")
+        .map_err(|err| format!("write test file: {err}"))?;
+    assert_eq!(super::detect_python_test_frameworks(&root), vec!["pytest"]);
+    std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+    Ok(())
+}
 use super::super::super::diff::ChangedLine;
 use super::bounded_read::{
     DEFAULT_PYTHON_MAX_FILE_READ_BYTES, DEFAULT_PYTHON_MAX_WORKSPACE_FILES,
@@ -1728,6 +1926,92 @@ fn nested_helper_local_shadow_keeps_outer_owner_credit() -> Result<(), String> {
         "from src.shop import fee\n\n\ndef test_fee():\n    def helper():\n        fee = lambda amount: 30\n        return fee(10)\n    assert fee(10) == 30\n",
     )?;
     assert_shop_fee_exposed(&finding);
+    Ok(())
+}
+
+#[test]
+fn walrus_match_and_module_level_replacements_withhold_owner_credit() -> Result<(), String> {
+    // #8247 residuals: each form rebinds `fee` before the assertion reads it.
+    let walrus = classify_shop_fee(
+        "from src.shop import fee\n\n\ndef test_fee():\n    if (fee := (lambda amount: 30)):\n        assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_withholds_stand_in_credit(&walrus, "walrus target");
+
+    let capture = classify_shop_fee(
+        "from src.shop import fee\n\n\ndef test_fee():\n    match (lambda amount: 30):\n        case fee:\n            pass\n    assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_withholds_stand_in_credit(&capture, "match capture");
+
+    let nested_capture = classify_shop_fee(
+        "from src.shop import fee\n\n\ndef test_fee():\n    match [lambda amount: 30]:\n        case [fee]:\n            pass\n    assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_withholds_stand_in_credit(&nested_capture, "match sequence capture");
+
+    let reassigned = classify_shop_fee(
+        "from src.shop import fee\n\nfee = lambda amount: 30\n\n\ndef test_fee():\n    assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_withholds_stand_in_credit(&reassigned, "module-level reassignment");
+
+    let redefined = classify_shop_fee(
+        "from src.shop import fee\n\n\ndef fee(amount):\n    return 30\n\n\ndef test_fee():\n    assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_withholds_stand_in_credit(&redefined, "module-level def");
+
+    // Controls: a match that captures another name, a walrus on another
+    // name, and an unrelated module-level binding keep the owner credit.
+    let other_capture = classify_shop_fee(
+        "from src.shop import fee\n\n\ndef test_fee():\n    match 1:\n        case other:\n            pass\n    assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_exposed(&other_capture);
+    let other_walrus = classify_shop_fee(
+        "from src.shop import fee\n\nrate = 3\n\n\ndef test_fee():\n    if (feed := 1):\n        assert fee(10) == 30\n",
+    )?;
+    assert_shop_fee_exposed(&other_walrus);
+    Ok(())
+}
+
+#[test]
+fn assertion_on_a_receiver_not_bound_to_the_owner_class_is_not_owner_identity() -> Result<(), String>
+{
+    // #8247: the test body binds `TokenValidator` elsewhere, but the asserted
+    // `.validate(` runs on an unrelated class.
+    let owners = extract_owners(Path::new("src/auth.py"), AUTH_SOURCE);
+    let classify = |source: &str| -> Result<crate::domain::Finding, String> {
+        let tests = extract_tests(Path::new("tests/test_auth.py"), source);
+        classify_change(
+            Path::new("src/auth.py"),
+            6,
+            AUTH_CHANGED_LINE,
+            &owners,
+            &tests,
+        )
+        .ok_or_else(|| "changed return inside validate should classify".to_string())
+    };
+    for (label, source) in [
+        (
+            "local receiver",
+            "from src.auth import TokenValidator\nfrom src.billing import PaymentProcessor\n\n\ndef test_validate():\n    validator = TokenValidator([\"a\"])\n    validator.validate(\"a\")\n    proc = PaymentProcessor()\n    assert proc.validate(\"a\") == True\n",
+        ),
+        (
+            "inline receiver",
+            "from src.auth import TokenValidator\nfrom src.billing import PaymentProcessor\n\n\ndef test_validate():\n    TokenValidator([\"a\"]).validate(\"a\")\n    assert PaymentProcessor().validate(\"a\") == True\n",
+        ),
+    ] {
+        let finding = classify(source)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "{label}: an unbound asserted receiver must not credit exposed"
+        );
+    }
+    // Controls: the bound receiver asserted beside a foreign one, and the
+    // bound receiver alone, keep exposed credit.
+    for source in [
+        "from src.auth import TokenValidator\nfrom src.billing import PaymentProcessor\n\n\ndef test_validate():\n    validator = TokenValidator([\"a\"])\n    proc = PaymentProcessor()\n    assert proc.validate(\"a\") == True\n    assert validator.validate(\"a\") == True\n",
+        "from src.auth import TokenValidator\n\n\ndef test_validate():\n    assert TokenValidator([\"a\"]).validate(\"a\") == True\n",
+    ] {
+        assert_eq!(classify(source)?.class, ExposureClass::Exposed);
+    }
     Ok(())
 }
 
@@ -6923,5 +7207,218 @@ fn empty_sink_tokens_keep_ordinary_module_imports_conservative() -> Result<(), S
             Some("no_strong_oracle")
         );
     }
+    Ok(())
+}
+
+/// Classify the `if not dims:` guard of a generator owner against `test_src`.
+fn classify_generator_guard(test_src: &str) -> Result<crate::domain::Finding, String> {
+    let file = Path::new("src/gen.py");
+    let owners = extract_owners(
+        file,
+        "def interleave_evenly(dims):\n    if not dims:\n        return\n    yield dims[0]\n",
+    );
+    let tests = extract_tests(Path::new("tests/test_gen.py"), test_src);
+    assert_eq!(tests.len(), 1, "the fixture must parse exactly one test");
+    classify_change_with_old(
+        file,
+        2,
+        "    if not dims:",
+        Some("    if dims:"),
+        &owners,
+        &tests,
+    )
+    .ok_or_else(|| "the generator guard change must yield a finding".to_string())
+}
+
+#[test]
+fn materializer_around_module_owner_call_is_transparent_to_sink_alignment() -> Result<(), String> {
+    let finding = classify_generator_guard(
+        "import src.gen as mi\n\n\ndef test_empty():\n    assert list(mi.interleave_evenly([])) == []\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert_eq!(finding.oracle_alignment.as_deref(), Some("direct"));
+    Ok(())
+}
+
+#[test]
+fn materializer_around_owner_call_local_is_transparent_to_sink_alignment() -> Result<(), String> {
+    let finding = classify_generator_guard(
+        "from src.gen import interleave_evenly\n\n\ndef test_empty():\n    actual = list(interleave_evenly([]))\n    assert actual == []\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert_eq!(finding.oracle_alignment.as_deref(), Some("direct"));
+    Ok(())
+}
+
+#[test]
+fn opaque_wrapper_around_owner_call_stays_unaligned() -> Result<(), String> {
+    for test_src in [
+        "import src.gen as mi\n\n\ndef test_empty():\n    assert always_true(list(mi.interleave_evenly([]))) == True\n",
+        "import src.gen as mi\n\n\ndef test_empty():\n    assert list(always_true(mi.interleave_evenly([]))) == []\n",
+        "from src.gen import interleave_evenly\n\n\ndef test_empty():\n    actual = always_true(interleave_evenly([]))\n    assert actual == True\n",
+        "from src.gen import interleave_evenly\n\n\ndef test_empty():\n    actual = list(interleave_evenly([]), 1)\n    assert actual == []\n",
+        "import src.gen as mi\n\n\ndef test_empty():\n    assert list(mi.interleave_evenly([]), 1) == []\n",
+        "import src.gen as mi\n\n\ndef test_empty():\n    assert sorted(mi.interleave_evenly([]), key=str) == []\n",
+    ] {
+        let finding = classify_generator_guard(test_src)?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{test_src}");
+        assert_eq!(
+            finding.oracle_alignment.as_deref(),
+            Some("orthogonal"),
+            "{test_src}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn every_materializing_wrapper_is_transparent_to_sink_alignment() -> Result<(), String> {
+    for wrapper in ["list", "tuple", "set", "frozenset", "sorted"] {
+        for test_src in [
+            format!(
+                "import src.gen as mi\n\n\ndef test_empty():\n    assert {wrapper}(mi.interleave_evenly([])) == []\n"
+            ),
+            format!(
+                "from src.gen import interleave_evenly\n\n\ndef test_empty():\n    actual = {wrapper}(interleave_evenly([]))\n    assert actual == []\n"
+            ),
+        ] {
+            let finding = classify_generator_guard(&test_src)?;
+            assert_eq!(finding.class, ExposureClass::Exposed, "{test_src}");
+            assert_eq!(
+                finding.oracle_alignment.as_deref(),
+                Some("direct"),
+                "{test_src}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Classifies a changed `x > 5` predicate of `price(x, k)` against one pytest
+/// test whose body is `body`, importing `price` from its package.
+fn classify_price_boundary_with_test_body(body: &str) -> Result<crate::domain::Finding, String> {
+    let owner_file = "src/pkg/mod.py";
+    let owners = extract_owners(
+        Path::new(owner_file),
+        "def price(x, k):\n    if x > 5:\n        return 1\n    return 0\n",
+    );
+    let tests = extract_tests(
+        Path::new("tests/test_mod.py"),
+        &format!("from pkg.mod import price\n\n\ndef test_price():\n{body}\n"),
+    );
+    assert_eq!(tests.len(), 1, "fixture must parse exactly one pytest test");
+    classify_change(Path::new(owner_file), 2, "    if x > 5:", &owners, &tests)
+        .ok_or_else(|| "changed predicate should classify".to_string())
+}
+
+#[test]
+fn boundary_call_row_keeps_an_ordinary_assert_line_whole() -> Result<(), String> {
+    let line = "    assert price(5, 2) == 0";
+    let finding = classify_price_boundary_with_test_body(line)?;
+    assert!(
+        finding
+            .activation
+            .observed_values
+            .iter()
+            .any(|fact| fact.text == line.trim()),
+        "an ordinary line is shown whole: {:?}",
+        finding.activation.observed_values
+    );
+    Ok(())
+}
+
+#[test]
+fn boundary_call_rows_of_one_long_assert_chain_stay_linear() -> Result<(), String> {
+    // A single `assert price(0,2)==1 and price(1,2)==1 and ...` line holds one
+    // owner call per term. Each call is a boundary row and each row's text is
+    // cloned into the value facts of its bindings, so keeping the whole physical
+    // line made the evidence O(calls x line length): ~1 GB at 4000 terms. The
+    // structural bound is per fact, so the total scales with the term count.
+    const TERMS: usize = 1500;
+    let chain = (0..TERMS)
+        .map(|index| format!("price({index},2)==1"))
+        .collect::<Vec<_>>()
+        .join(" and ");
+    let finding = classify_price_boundary_with_test_body(&format!("    assert {chain}"))?;
+    assert!(
+        finding.activation.observed_values.len() >= TERMS,
+        "fixture must bind a row per term, got {}",
+        finding.activation.observed_values.len()
+    );
+    let longest = finding
+        .activation
+        .observed_values
+        .iter()
+        .map(|fact| fact.text.len())
+        .max()
+        .unwrap_or(0);
+    assert!(
+        longest <= 400, // 246-byte excerpt plus the bounded provenance suffix
+        "a fact's text must not carry the whole {}-byte line, longest was {longest}",
+        chain.len()
+    );
+    // The window still names the call it is evidence for.
+    assert!(
+        finding
+            .activation
+            .observed_values
+            .iter()
+            .any(|fact| fact.text.contains("price(700,2)==1")),
+        "the window keeps the call it evidences"
+    );
+    Ok(())
+}
+
+#[test]
+fn boundary_call_row_window_counts_whitespace_before_the_paren() -> Result<(), String> {
+    // `price   (5, ...)`: the call extent runs from the name through the gap to
+    // the closing parenthesis. A length that ignored the gap would shrink the
+    // lead too little and cut the closing parenthesis out of the excerpt.
+    let gap = " ".repeat(30);
+    let argument = "x".repeat(170);
+    let lead = "price(0,2)==1 and ".repeat(10);
+    let line = format!("    assert {lead}price{gap}(5,'{argument}')==1");
+    let call = format!("price{gap}(5,'{argument}')");
+    assert!(line.len() > 240, "fixture line must be cut: {}", line.len());
+    assert!(
+        (181..=240).contains(&call.len()),
+        "fixture call length {}",
+        call.len()
+    );
+    let finding = classify_price_boundary_with_test_body(&line)?;
+    assert!(
+        finding
+            .activation
+            .observed_values
+            .iter()
+            .any(|fact| fact.text.contains(&call)),
+        "the excerpt keeps the whole call including the gap"
+    );
+    Ok(())
+}
+
+#[test]
+fn boundary_call_row_window_keeps_a_call_that_fits_whole() -> Result<(), String> {
+    // A 181-240 byte call on a cut line must keep its closing parenthesis, or
+    // the value facts would name bindings the excerpt does not show.
+    let argument = "x".repeat(200);
+    let lead = "price(0,2)==1 and ".repeat(10);
+    let line = format!("    assert {lead}price(5,'{argument}')==1");
+    assert!(line.len() > 240, "fixture line must be cut: {}", line.len());
+    let finding = classify_price_boundary_with_test_body(&line)?;
+    let call = format!("price(5,'{argument}')");
+    assert!(
+        (181..=240).contains(&call.len()),
+        "fixture call length {}",
+        call.len()
+    );
+    assert!(
+        finding
+            .activation
+            .observed_values
+            .iter()
+            .any(|fact| fact.text.contains(&call)),
+        "the excerpt keeps the whole call"
+    );
     Ok(())
 }

@@ -1,0 +1,22 @@
+{
+  "case_id": "jest-spec0246-ex14-second-assertion-pins-field",
+  "subject_id": "authored-ts-jest-mined",
+  "origin": "authored",
+  "anchor": "src/settingsBoth.ts:7",
+  "behavior_family": "field_construction",
+  "test_shape": "jest_toequal_input_plus_member_pin_on_fresh_input",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

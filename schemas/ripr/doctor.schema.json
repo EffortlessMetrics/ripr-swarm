@@ -43,6 +43,16 @@
     },
     "binary": { "$ref": "#/$defs/binary_identity" },
     "canonical_next_action": { "$ref": "#/$defs/canonical_next_action" },
+    "elapsed_ms": {
+      "description": "How long the whole doctor run took, in milliseconds, measured by the command adapter (additive, #8540). Omitted when the report was produced without a clock.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "segments": {
+      "description": "Named timings for doctor work the total covers that is neither a check nor a runtime probe: language detection and the environment probe's expensive computations (additive, #8540 follow-up). Omitted when no segment was measured.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/segment" }
+    },
     "detected_languages": {
       "description": "Languages the root marker scan found, whether or not the configuration enables them (schema 0.4). Omitted when no marker was found.",
       "type": "array",
@@ -68,6 +78,16 @@
     "perl_preview": { "$ref": "#/$defs/perl_preview" }
   },
   "$defs": {
+    "segment": {
+      "description": "One named segment timing (additive, #8540 follow-up). Neither field is required by the schema, so a segment carrying only a name or only a duration stays within the contract.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "elapsed_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
     "canonical_next_action": {
       "description": "Canonical next action (canonical_next_action.v1, #6986) for a precise doctor recovery, produced by the same decision the human `- Safe next action:` line follows. Additive, no schema_version bump. Omitted when the first-command state names a runnable command rather than a recovery, and for the source-build profile; `stop.check_name` names the failing check.",
       "type": "object",
@@ -193,7 +213,12 @@
       "properties": {
         "name": { "type": "string", "minLength": 1 },
         "status": { "$ref": "#/$defs/check_status" },
-        "evidence": { "$ref": "#/$defs/nullable_string" }
+        "evidence": { "$ref": "#/$defs/nullable_string" },
+        "elapsed_ms": {
+          "description": "How long this check's computation took, in milliseconds (additive, #8540). Omitted for skipped checks.",
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "runtime_probe": {
@@ -207,7 +232,12 @@
         "status": { "$ref": "#/$defs/doctor_status" },
         "evidence": { "type": "string" },
         "required": { "type": "boolean" },
-        "hint": { "type": "string" }
+        "hint": { "type": "string" },
+        "elapsed_ms": {
+          "description": "How long this probe took, in milliseconds (additive, #8540).",
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "detected_language": {

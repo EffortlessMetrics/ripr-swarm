@@ -910,6 +910,75 @@ fn post_initialize_ping_with_handshake_meta_returns_an_empty_result() -> Result<
 }
 
 #[test]
+fn malformed_params_of_a_served_method_answer_invalid_params_and_the_session_recovers()
+-> Result<(), String> {
+    let root = workspace_root()?;
+    let request_bytes = [
+        line(json!({
+            "jsonrpc": "2.0", "id": "discover", "method": "server/discover",
+            "params": { "_meta": current_meta() }
+        }))?,
+        line(json!({
+            "jsonrpc": "2.0", "id": "string-arguments", "method": "tools/call",
+            "params": { "_meta": current_meta(), "name": "ripr_workspace_status", "arguments": "oops" }
+        }))?,
+        line(json!({
+            "jsonrpc": "2.0", "id": "no-name", "method": "tools/call",
+            "params": { "_meta": current_meta() }
+        }))?,
+        line(json!({
+            "jsonrpc": "2.0", "id": "unserved", "method": "nope/never",
+            "params": { "_meta": current_meta() }
+        }))?,
+        line(json!({
+            "jsonrpc": "2.0", "id": "recovered-status", "method": "resources/read",
+            "params": { "_meta": current_meta(), "uri": "ripr://workspace/status" }
+        }))?,
+    ]
+    .concat();
+    let output = run_mcp(&root, &[&request_bytes])?;
+    let responses = response_lines(&output)?;
+    let expected: [(&str, i64); 3] = [
+        ("string-arguments", -32602),
+        ("no-name", -32602),
+        ("unserved", -32601),
+    ];
+    if responses.len() != 5 {
+        return Err(format!("expected 5 MCP responses, got {}", responses.len()));
+    }
+    for (index, (id, code)) in expected.iter().enumerate() {
+        let response = &responses[index + 1];
+        if response.pointer("/id").and_then(Value::as_str) != Some(id) {
+            return Err(format!(
+                "rejection for {id} must echo the request id: {response}"
+            ));
+        }
+        if response.pointer("/error/code").and_then(Value::as_i64) != Some(*code) {
+            return Err(format!(
+                "rejection for {id} must use code {code}: {response}"
+            ));
+        }
+    }
+    if !responses[1]
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .is_some_and(|message| message.contains("tools/call"))
+    {
+        return Err(format!(
+            "invalid-params message must name the method: {}",
+            responses[1]
+        ));
+    }
+    if responses[4].get("result").is_none() {
+        return Err(format!(
+            "session must recover after rejections: {}",
+            responses[4]
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn rejection_arms_survive_the_stdio_transport() -> Result<(), String> {
     let root = workspace_root()?;
     let request_bytes = [
@@ -1324,14 +1393,18 @@ fn unavailable_workspace_evidence_names_restart_before_any_refresh() -> Result<(
             }
         }
         requests.push(line(json!({
+            "jsonrpc": "2.0", "id": "status-resource", "method": "resources/read",
+            "params": { "_meta": current_meta(), "uri": "ripr://workspace/status" }
+        }))?);
+        requests.push(line(json!({
             "jsonrpc": "2.0", "id": "survivor", "method": "tools/call",
             "params": { "_meta": current_meta(), "name": "ripr_workspace_status", "arguments": {} }
         }))?);
         let output = run_mcp(root, &[&requests.concat()])?;
         let responses = response_lines(&output)?;
-        if responses.len() != 18 {
+        if responses.len() != 19 {
             return Err(format!(
-                "expected 18 replies for {root_error}, got {}",
+                "expected 19 replies for {root_error}, got {}",
                 responses.len()
             ));
         }
@@ -1344,9 +1417,9 @@ fn unavailable_workspace_evidence_names_restart_before_any_refresh() -> Result<(
                     .map(|id| (id, response))
             })
             .collect();
-        if by_id.len() != 18 {
+        if by_id.len() != 19 {
             return Err(format!(
-                "expected 18 unique reply ids for {root_error}, got {}",
+                "expected 19 unique reply ids for {root_error}, got {}",
                 by_id.len()
             ));
         }
@@ -1387,6 +1460,32 @@ fn unavailable_workspace_evidence_names_restart_before_any_refresh() -> Result<(
                     "fixture or survivor state lost {root_error}: {reply}"
                 ));
             }
+        }
+        // #8737: the status resource carries the same restart recovery as the
+        // tool result, not only the bare `workspace_state: unavailable`
+        // document with its opaque error code.
+        let status_resource = by_id
+            .get("status-resource")
+            .ok_or_else(|| "missing status-resource reply".to_string())?;
+        if status_resource.pointer("/result/contents/0/text").is_none() {
+            return Err(format!(
+                "status resource lost its document payload: {status_resource}"
+            ));
+        }
+        let resource_recovery = status_resource
+            .pointer("/result/contents/1/text")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                format!(
+                    "unavailable status resource must carry the restart recovery: {status_resource}"
+                )
+            })?;
+        if !resource_recovery.contains("Workspace unavailable")
+            || !resource_recovery.contains("ripr mcp --stdio --root")
+        {
+            return Err(format!(
+                "status resource recovery must name the cause and restart route: {status_resource}"
+            ));
         }
         let recovery = "restart the server with `ripr mcp --stdio --root <repository>`";
         let refresh = by_id
@@ -3021,6 +3120,168 @@ fn read_resource_document(
 /// resource has no tool twin, so it pins its envelope instead
 /// (`ripr-mcp-snapshot-v1`, identity, typed outcome). A drift in URI
 /// parsing, resource envelopes, or error mapping fails this control (#7145).
+/// #8736 review follow-up: with both `src/a b.py` and `src/a%20b.py`
+/// carrying matching Python gaps, one raw `ripr://gap/` segment resolves as
+/// both the literal-percent file and the decoded space file. The routes
+/// must fail closed with `id_ambiguous` on that collision instead of
+/// silently returning one item, while the unambiguous spellings (raw space,
+/// fully encoded `%2520`) keep resolving to their own files, and the tool
+/// route with a plain JSON string id works for both.
+#[cfg(feature = "lang-python")]
+#[test]
+fn encoded_resource_ids_fail_closed_when_raw_and_decoded_both_exist() -> Result<(), String> {
+    const REFRESH_TIMEOUT: Duration = Duration::from_mins(3);
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("clock before Unix epoch: {error}"))?
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-mcp-stdio-id-collision-{}-{stamp}",
+        std::process::id()
+    ));
+    let _guard = FixtureGuard { root: root.clone() };
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"id-collision-fixture\"\nversion = \"0.0.0\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[languages]\nenabled = [\"python\"]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join(".gitignore"), ".ripr/\ntarget/\n")
+        .map_err(|error| error.to_string())?;
+    let open_boundary = "def accepts(amount, threshold):\n    if amount >= threshold:\n        return amount - 1\n    return amount\n";
+    let closed_boundary = open_boundary.replace(">=", ">");
+    for file in ["a b.py", "a%20b.py"] {
+        std::fs::write(root.join("src").join(file), open_boundary)
+            .map_err(|error| error.to_string())?;
+    }
+    fixture_git_ok(&root, &["-c", "init.defaultBranch=main", "init", "-q"])?;
+    fixture_git_ok(&root, &["config", "core.autocrlf", "false"])?;
+    commit_fixture(&root, "open boundary")?;
+    fixture_git_ok(&root, &["checkout", "-q", "-b", "journey"])?;
+    for file in ["a b.py", "a%20b.py"] {
+        std::fs::write(root.join("src").join(file), &closed_boundary)
+            .map_err(|error| error.to_string())?;
+    }
+    commit_fixture(&root, "closed boundary")?;
+
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    let refresh = structured_tool_success(&refresh, "ripr_refresh")?;
+    if refresh
+        .pointer("/snapshot/finding_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        != 2
+    {
+        return Err(format!(
+            "collision fixture must yield exactly two gaps: {refresh}"
+        ));
+    }
+    let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    let list = structured_tool_success(&list, "ripr_list_gaps")?;
+    let items = list
+        .pointer("/items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("ripr_list_gaps omitted items: {list}"))?;
+    let mut space_id: Option<String> = None;
+    let mut percent_id: Option<String> = None;
+    for item in items {
+        let id = item
+            .pointer("/canonical_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("list item lost its canonical id: {item}"))?;
+        if id.contains("src/a b.py") {
+            space_id = Some(id.to_string());
+        } else if id.contains("src/a%20b.py") {
+            percent_id = Some(id.to_string());
+        }
+    }
+    let (space_id, percent_id) = match (space_id, percent_id) {
+        (Some(space), Some(percent)) => (space, percent),
+        _ => {
+            return Err(format!(
+                "collision fixture must list both file spellings: {list}"
+            ));
+        }
+    };
+
+    // Ground truth through the tool route (plain JSON string ids).
+    let gap_for = |session: &mut SequentialStdio, label: &str, id: &str| -> Result<Value, String> {
+        let reply = session.call_tool(
+            label,
+            "ripr_get_gap",
+            json!({ "canonical_id": id }),
+            REPLY_TIMEOUT,
+        )?;
+        structured_tool_success(&reply, "ripr_get_gap")
+    };
+    let space_document = gap_for(&mut session, "space-tool", &space_id)?;
+    let percent_document = gap_for(&mut session, "percent-tool", &percent_id)?;
+
+    // The raw percent spelling is ambiguous between the literal-percent
+    // file and the decoded space file. The gap route resolves both lookups
+    // and fails closed with `id_ambiguous`. The repair-card route shares
+    // the same resolution helper; until Python items bind card seams it
+    // fails earlier with `seam_not_found` — either way it must never
+    // silently return the other file's card.
+    let reply = session.call(
+        "gap-ambiguous",
+        "resources/read",
+        json!({ "uri": format!("ripr://gap/{percent_id}") }),
+        REPLY_TIMEOUT,
+    )?;
+    if reply.pointer("/error/data/code").and_then(Value::as_str) != Some("id_ambiguous") {
+        return Err(format!(
+            "raw percent id must fail closed as id_ambiguous on the gap route: {reply}"
+        ));
+    }
+    let reply = session.call(
+        "card-ambiguous",
+        "resources/read",
+        json!({ "uri": format!("ripr://repair-card/{percent_id}") }),
+        REPLY_TIMEOUT,
+    )?;
+    if reply.pointer("/error").is_none() {
+        return Err(format!(
+            "raw percent id must fail closed on the repair-card route: {reply}"
+        ));
+    }
+
+    // The fully encoded spelling names only the literal-percent file.
+    let encoded_percent = percent_id.replace('%', "%25");
+    let resolved = read_resource_document(
+        &mut session,
+        "gap-encoded",
+        &format!("ripr://gap/{encoded_percent}"),
+        REPLY_TIMEOUT,
+    )?;
+    if resolved != percent_document {
+        return Err(
+            "fully encoded percent id must resolve to the percent file's document".to_string(),
+        );
+    }
+
+    // The raw space spelling has no decodable escape and stays legacy-raw.
+    let resolved = read_resource_document(
+        &mut session,
+        "gap-space",
+        &format!("ripr://gap/{space_id}"),
+        REPLY_TIMEOUT,
+    )?;
+    if resolved != space_document {
+        return Err("raw space id must resolve to the space file's document".to_string());
+    }
+    Ok(())
+}
+
 #[test]
 fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
     const REFRESH_TIMEOUT: Duration = Duration::from_mins(3);
@@ -3130,6 +3391,42 @@ fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
         ));
     }
 
+    // Encoded id reads (#8736): canonical ids embed raw workspace-relative
+    // paths, so a URI-emitting client percent-encodes characters like `:`,
+    // `/`, space, and `#`. The resource route must decode the captured
+    // segment once and resolve to the same documents the raw id addressed.
+    let encoded_id = canonical_id
+        .replace('%', "%25")
+        .replace(':', "%3A")
+        .replace('/', "%2F")
+        .replace(' ', "%20")
+        .replace('#', "%23");
+    if encoded_id == canonical_id {
+        return Err("B4 canonical id must contain encodable characters".into());
+    }
+    let gap_encoded = read_resource_document(
+        &mut session,
+        "gap-resource-encoded",
+        &format!("ripr://gap/{encoded_id}"),
+        REPLY_TIMEOUT,
+    )?;
+    if gap_encoded != gap_tool {
+        return Err(format!(
+            "encoded gap resource id did not decode to the same document:\nencoded={gap_encoded}\ntool={gap_tool}"
+        ));
+    }
+    let card_encoded = read_resource_document(
+        &mut session,
+        "card-resource-encoded",
+        &format!("ripr://repair-card/{encoded_id}"),
+        REPLY_TIMEOUT,
+    )?;
+    if card_encoded != card_tool {
+        return Err(format!(
+            "encoded repair-card resource id did not decode to the same document:\nencoded={card_encoded}\ntool={card_tool}"
+        ));
+    }
+
     // Attempt pair: prepare the B4 item, then read both routes.
     let prepared = session.call_tool(
         "prepare",
@@ -3197,5 +3494,163 @@ fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
             return Err(format!("{kind} resource miss lost item_not_found: {miss}"));
         }
     }
+    Ok(())
+}
+
+/// #8847: literal producer totals survive both gap routes and refreshes.
+/// The equal-window digest discriminator lives beside the shared projection;
+/// this control reaches the analyzer, committed refresh and actual stdio server.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn gap_details_disclose_pre_cap_related_test_totals_across_refreshes() -> Result<(), String> {
+    let timeout = Duration::from_mins(3);
+    let root = install_b4_repair_ready_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    std::fs::write(root.join(".gitignore"), ".ripr/\ntarget/\n")
+        .map_err(|error| error.to_string())?;
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), timeout)?;
+    let tools = session.call("tools", "tools/list", json!({}), timeout)?;
+    let mut previous_snapshot: Option<String> = None;
+    let mut first_rows: Option<Value> = None;
+    let mut first_id: Option<String> = None;
+    for (total, retained) in [(12, 8), (13, 8), (1, 1), (0, 0)] {
+        let mut tests = "use mcp_journey_fixture::discounted_total;\n".to_string();
+        for index in 0..total {
+            tests.push_str(&format!(
+                "#[test]\nfn discounted_total_{index:02}() {{\n    assert_eq!(discounted_total(50, 100), 50);\n}}\n"
+            ));
+        }
+        std::fs::write(root.join("tests/pricing.rs"), tests).map_err(|error| error.to_string())?;
+        commit_fixture(&root, &format!("retain {total} related tests"))?;
+        let cli = worktree_ripr()
+            .args(["check", "--committed", "--format", "json", "--root"])
+            .arg(&root)
+            .output()
+            .map_err(|error| error.to_string())?;
+        if !cli.status.success() {
+            return Err(format!(
+                "CLI fixture failed: {}",
+                String::from_utf8_lossy(&cli.stderr)
+            ));
+        }
+        let cli: Value = serde_json::from_slice(&cli.stdout).map_err(|error| error.to_string())?;
+        let findings = cli["findings"].as_array().ok_or("CLI omitted findings")?;
+        assert_eq!(
+            findings.len(),
+            1,
+            "fixture must analyze one changed predicate"
+        );
+        let finding = &findings[0];
+        assert_eq!(
+            finding["related_tests_total"],
+            json!(total),
+            "literal CLI total"
+        );
+        assert_eq!(
+            finding["related_tests"].as_array().map(Vec::len),
+            Some(retained)
+        );
+        let canonical_id = finding
+            .pointer("/canonical_gap/id")
+            .or_else(|| finding.get("id"))
+            .and_then(Value::as_str)
+            .ok_or("CLI finding omitted its identity")?;
+        if total == 12 {
+            first_id = Some(canonical_id.to_string());
+        } else if total == 13 {
+            assert_eq!(
+                Some(canonical_id),
+                first_id.as_deref(),
+                "count alone preserves item identity"
+            );
+        }
+        let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), timeout)?;
+        let refresh = structured_tool_success(&refresh, "count refresh")?;
+        assert_eq!(refresh.pointer("/attempt/state"), Some(&json!("completed")));
+        let reply = session.call_tool(
+            "gap",
+            "ripr_get_gap",
+            json!({"canonical_id": canonical_id}),
+            timeout,
+        )?;
+        let reply_bytes = serde_json::to_vec(&reply).map_err(|error| error.to_string())?;
+        assert!(reply_bytes.len() < 128 * 1024);
+        let gap = structured_tool_success(&reply, "count gap")?;
+        assert_eq!(
+            gap.pointer("/item/related_tests_total"),
+            Some(&json!(total)),
+            "MCP must disclose literal pre-cap total {total} beside {retained} rows"
+        );
+        let rows = gap
+            .pointer("/item/related_tests")
+            .ok_or("gap omitted retained rows")?;
+        assert_eq!(rows.as_array().map(Vec::len), Some(retained));
+        if total == 12 {
+            first_rows = Some(rows.clone());
+        } else if total == 13 {
+            assert_eq!(
+                Some(rows),
+                first_rows.as_ref(),
+                "12/8 and 13/8 must retain identical rows"
+            );
+        }
+        let resource = read_resource_document(
+            &mut session,
+            "gap-resource",
+            &format!("ripr://gap/{canonical_id}"),
+            timeout,
+        )?;
+        assert_eq!(gap, resource);
+        let repeated = session.call_tool(
+            "repeat",
+            "ripr_get_gap",
+            json!({"canonical_id": canonical_id}),
+            timeout,
+        )?;
+        assert_eq!(
+            gap,
+            structured_tool_success(&repeated, "repeated count gap")?
+        );
+        let snapshot = gap["snapshot_id"]
+            .as_str()
+            .ok_or("gap omitted snapshot identity")?;
+        if let Some(old) = previous_snapshot {
+            assert_ne!(snapshot, old);
+            let stale = session.call_tool(
+                "stale",
+                "ripr_get_gap",
+                json!({"canonical_id": canonical_id, "snapshot_id": old}),
+                timeout,
+            )?;
+            assert_eq!(stale.pointer("/result/isError"), Some(&json!(true)));
+            assert_eq!(
+                stale.pointer("/result/structuredContent/failure/code"),
+                Some(&json!("stale_snapshot"))
+            );
+        }
+        previous_snapshot = Some(snapshot.to_string());
+    }
+    let tool = tools
+        .pointer("/result/tools")
+        .and_then(Value::as_array)
+        .and_then(|tools| tools.iter().find(|tool| tool["name"] == "ripr_get_gap"))
+        .ok_or("tools/list omitted ripr_get_gap")?;
+    let item = tool
+        .pointer("/outputSchema/oneOf/0/properties/item")
+        .ok_or("gap schema omitted item")?;
+    assert_eq!(
+        item.pointer("/properties/related_tests_total/type"),
+        Some(&json!("integer"))
+    );
+    assert_eq!(
+        item.pointer("/properties/related_tests_total/minimum"),
+        Some(&json!(0))
+    );
+    assert!(
+        item["required"]
+            .as_array()
+            .is_some_and(|fields| fields.contains(&json!("related_tests_total")))
+    );
     Ok(())
 }

@@ -25,7 +25,7 @@ pub(crate) fn related_test_miss_reason(
             "asserts, but not on the changed value".to_string()
         }
         RelatedTestMiss::AssertionNotCredited => {
-            "assertion not credited: ripr could not establish that it runs as the standard macro"
+            "assertion not credited: ripr could not establish that this assertion counts here"
                 .to_string()
         }
         RelatedTestMiss::WeakAssertion => {
@@ -71,6 +71,35 @@ pub(crate) fn related_test_miss_reason(
     })
 }
 
+/// The oracle phrase of a related-test row, after "uses". A strength of
+/// `unknown` means the assertion was not graded against this probe (the
+/// probe family has no typed oracle relationships), not that the assertion
+/// itself is of unknown quality (#8388); `none` means the test has no oracle
+/// at all (#8747).
+pub(crate) fn oracle_projection(
+    strength: &crate::domain::OracleStrength,
+    kind: &crate::domain::OracleKind,
+    has_assertion: bool,
+) -> String {
+    use crate::domain::{OracleKind, OracleStrength};
+    match (strength, kind) {
+        // A row with no selected assertion has no oracle to describe.
+        (OracleStrength::Unknown, OracleKind::Unknown) if !has_assertion => "no oracle".to_string(),
+        (OracleStrength::Unknown, OracleKind::Unknown) => {
+            "an unclassified oracle, not graded against this probe".to_string()
+        }
+        (OracleStrength::Unknown, kind) => format!(
+            "{} oracle, not graded against this probe",
+            kind.as_str().replace('_', " ")
+        ),
+        (strength, kind) => format!(
+            "{} {} oracle",
+            strength.as_str(),
+            kind.as_str().replace('_', " ")
+        ),
+    }
+}
+
 /// The word placed before the reason. An unconfirmed observation is an
 /// unknown, so it is not introduced as a miss (#5508).
 pub(crate) fn related_test_miss_label(test: &RelatedTest) -> &'static str {
@@ -108,6 +137,25 @@ mod tests {
     use crate::domain::{MissingDiscriminatorFact, OracleKind, OracleStrength};
     use crate::output::perl_preview_card::tests::sample_perl_finding as sample_finding;
     use std::path::PathBuf;
+
+    #[test]
+    fn oracle_projection_separates_ungraded_assertions_from_absent_ones() {
+        let unknown = (&OracleStrength::Unknown, &OracleKind::Unknown);
+        assert_eq!(
+            oracle_projection(unknown.0, unknown.1, true),
+            "an unclassified oracle, not graded against this probe"
+        );
+        assert_eq!(oracle_projection(unknown.0, unknown.1, false), "no oracle");
+        assert_eq!(
+            oracle_projection(&OracleStrength::Unknown, &OracleKind::ExactValue, true),
+            "exact value oracle, not graded against this probe"
+        );
+        // A graded pair keeps the "<strength> <kind> oracle" spelling.
+        assert_eq!(
+            oracle_projection(&OracleStrength::Strong, &OracleKind::ExactValue, true),
+            "strong exact value oracle"
+        );
+    }
 
     fn test_with(miss: Option<RelatedTestMiss>, reason: Option<RelationReason>) -> RelatedTest {
         RelatedTest {
@@ -289,6 +337,7 @@ mod tests {
                 no_scope_provided: false,
                 unanalyzed_working_tree: false,
                 untracked_working_tree_source_paths: Vec::new(),
+                ignored_working_tree_source_paths: Vec::new(),
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
@@ -347,10 +396,14 @@ mod tests {
             let json: serde_json::Value =
                 serde_json::from_str(&crate::output::json::render(&output))
                     .map_err(|error| format!("parse check JSON: {error}"))?;
-            let context: serde_json::Value = serde_json::from_str(
-                &crate::output::json::render_context_packet(&finding, 8, std::path::Path::new(".")),
-            )
-            .map_err(|error| format!("parse context packet: {error}"))?;
+            let context: serde_json::Value =
+                serde_json::from_str(&crate::output::json::render_context_packet(
+                    &finding,
+                    8,
+                    &crate::config::RiprConfig::default(),
+                    std::path::Path::new("."),
+                ))
+                .map_err(|error| format!("parse context packet: {error}"))?;
             for rows in [
                 &json["findings"][0]["related_tests"],
                 &context["related_tests"],
@@ -431,6 +484,7 @@ mod tests {
                     serde_json::from_str(&crate::output::json::render_context_packet(
                         finding,
                         8,
+                        &crate::config::RiprConfig::default(),
                         std::path::Path::new("."),
                     ))
                     .map_err(|error| format!("parse context packet: {error}"))?;

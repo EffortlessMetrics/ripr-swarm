@@ -15,8 +15,8 @@ use super::probe_shape::{
     python_infection_evidence, python_propagation_evidence,
 };
 use super::related_tests::{
-    python_repair_placement, related_test_candidates, related_tests_for_candidates,
-    verify_command_for_test,
+    helper_owner_call_candidates, python_repair_placement, related_test_candidates,
+    related_tests_for_candidates, verify_command_for_test,
 };
 use super::sink_alignment::{SinkAlignment, classify_sink_alignment_with_old};
 use super::static_limits::{implicit_dunder_dispatch_limit, static_limit_for_focused_change};
@@ -288,7 +288,16 @@ pub(super) fn classify_change_for_owner(
     // error-path / boundary / changed-default gates and the `test_oracle`
     // evidence — reads that one selection.
     let focus = PythonAssertionFocus::for_change(family.clone(), line_text, old_line_text);
-    let related_candidates = related_test_candidates(owner, all_tests);
+    let mut related_candidates = related_test_candidates(owner, all_tests);
+    // Only when no test relates to the owner itself: a test that calls a
+    // same-module caller of the owner earns a weak `helper_owner_call` row
+    // (#4568), never an oracle.
+    let helper_callers = if related_candidates.is_empty() {
+        helper_owner_call_candidates(owner, owners, all_tests)
+    } else {
+        Vec::new()
+    };
+    related_candidates.extend(helper_callers.iter().map(|helper| helper.candidate));
     let related = related_tests_for_candidates(&related_candidates, Some(&focus));
     let alignment =
         classify_sink_alignment_with_old(owner, line_text, old_line_text, &related, all_tests);
@@ -382,16 +391,21 @@ pub(super) fn classify_change_for_owner(
     // A changed relational predicate (`qty > on_hand` -> `qty >= on_hand`) only
     // behaves differently when its operands are equal, so a strong exact-value
     // oracle that calls the owner away from that boundary still passes after
-    // the change. Mirror the Rust activation rule: once a strong related test
-    // calls the owner with literal arguments, `exposed` requires one of those
-    // calls to bind both operands to equal values. Unresolved operands
-    // (attributes, computed expressions) never count as observed, so this fails
-    // closed to `weakly_exposed` and names the missing `left == right`
-    // boundary. With no literal owner inputs at all the gate cannot see the
-    // activation either way; that case keeps the oracle verdict and carries a
-    // named `boundary_activation_unresolved` limitation instead.
+    // the change. The same fail-closed rule covers an equality-to-equality
+    // constant change (`n == 11` -> `n == 10`): input 20 takes the else branch
+    // both ways. `!=` and `is` stay outside the gate. Mirror the Rust
+    // activation rule: once a strong related test calls the owner with literal
+    // arguments, `exposed` requires one of those calls to bind both operands
+    // to equal values (or, for `==` -> `==`, either compared literal).
+    // Unresolved operands never count as observed, so this fails closed to
+    // `weakly_exposed` and names the missing `left == right` boundary. With no
+    // literal owner inputs at all the gate cannot see the activation either
+    // way; that case keeps the oracle verdict and carries a named
+    // `boundary_activation_unresolved` limitation instead.
     let boundary = (static_limit.is_none() && matches!(family, ProbeFamily::Predicate))
-        .then(|| python_boundary_evidence(line_text, owner, &related_candidates, &focus))
+        .then(|| {
+            python_boundary_evidence(line_text, old_line_text, owner, &related_candidates, &focus)
+        })
         .flatten();
     let boundary_gap = boundary
         .as_ref()
@@ -445,10 +459,15 @@ pub(super) fn classify_change_for_owner(
     let mut guarded_arm_downgraded = false;
     // Table-driven expected values that never vary the changed returned
     // operand cannot discriminate `return default` -> `return None` (#6651).
-    // A non-table strong test, or a row that varies the operand, keeps the
-    // existing oracle verdict.
+    // The same gate evaluates simple integer arithmetic per row so a 20xx
+    // year table cannot credit `year % 100` -> `year % 1000`. A non-table
+    // strong test, a row that distinguishes the arithmetic, or an unreadable
+    // table keeps the existing oracle verdict.
     let unvaried_table = (static_limit.is_none()
-        && matches!(family, ProbeFamily::ReturnValue)
+        && matches!(
+            family,
+            ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction | ProbeFamily::Predicate
+        )
         && boundary_gap.is_none()
         && inactive_term.is_none()
         && guarded_arm_gap.is_none())
@@ -777,7 +796,7 @@ pub(super) fn classify_change_for_owner(
             "Related tests reach the changed term, but every strong related test call gives it the value 0.".to_string()
         } else if table_downgraded {
             format!(
-                "Related tests reach the changed return, but {}.",
+                "Related tests reach the changed operand, but {}.",
                 unvaried_table
                     .as_ref()
                     .map(|gap| gap.reason.as_str())
@@ -1028,6 +1047,15 @@ pub(super) fn classify_change_for_owner(
                 "related_test_uncertain: {} ({})",
                 candidate.relation.as_str(),
                 test.name
+            ));
+        }
+        if let Some(helper) = helper_callers
+            .iter()
+            .find(|helper| std::ptr::eq(helper.candidate.test, test))
+        {
+            evidence.push(format!(
+                "helper_owner_call: {} calls {} ({})",
+                helper.caller, owner.name, test.name
             ));
         }
         let selection = candidate

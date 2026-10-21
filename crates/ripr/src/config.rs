@@ -13,6 +13,8 @@ use std::path::{Component, Path, PathBuf};
 
 mod diagnostic;
 mod model;
+#[cfg(test)]
+mod perl_executable_tests;
 mod python;
 mod toolchain_file;
 #[cfg(feature = "lang-typescript")]
@@ -465,7 +467,9 @@ pub(crate) fn parse_config_diagnostic(text: &str) -> Result<RiprConfig, Box<Conf
         // A valid key in the wrong table names its table (#4534). The hint is
         // built from the fixed KEY_HOME_TABLES allowlist, never from file text.
         let err = err.to_string();
-        let hint = misplaced_key_hint(&err).unwrap_or_default();
+        let hint = misplaced_key_hint(&err)
+            .or_else(|| retired_key_hint(&err))
+            .unwrap_or_default();
         Box::new(ConfigDiagnostic::structural(format!(
             "invalid ripr.toml: {err}{hint}"
         )))
@@ -509,6 +513,59 @@ fn misplaced_key_hint_line(key: &str, table: &str) -> String {
     format!("`{key}` is a valid key, but it belongs under [{table}]")
 }
 
+/// A `ripr.toml` key an earlier release accepted and a later release removed
+/// or renamed (#7453). Every raw table denies unknown fields, so without a
+/// record a retired key reads as a typo; with one, the load error names the
+/// release that retired it and what replaces it.
+///
+/// Retiring a key is a three-step change under `docs/CHANGELOG_POLICY.md`:
+/// keep the old spelling working with a named warning for at least one minor
+/// release, then add the key here when it stops parsing, then list it under
+/// `Removed`.
+struct RetiredKey {
+    /// The key as the earlier release spelled it.
+    key: &'static str,
+    /// The release that stopped accepting it, such as `0.12.0`.
+    retired_in: &'static str,
+    /// The key that replaces it, or `None` when it was removed outright.
+    replacement: Option<&'static str>,
+}
+
+/// Retired keys. Empty until the first key is retired: no released key has
+/// been renamed or removed yet, so nothing is claimed here.
+const RETIRED_KEYS: &[RetiredKey] = &[];
+
+fn retired_key_hint(error: &str) -> Option<String> {
+    retired_key_hint_in(RETIRED_KEYS, error)
+}
+
+/// The retirement note for the key serde rejected, when it is a recorded
+/// retirement. Only a recorded key produces text; every other unknown key
+/// keeps the plain serde error.
+///
+/// The lookup matches the bare key only: serde's unknown-field message names
+/// no table, so a typo that equals a key retired from a different table could
+/// be labelled with that retirement.
+fn retired_key_hint_in(retired: &[RetiredKey], error: &str) -> Option<String> {
+    let (_, rest) = error.split_once("unknown field `")?;
+    let (key, _) = rest.split_once('`')?;
+    let entry = retired.iter().find(|entry| entry.key == key)?;
+    Some(format!("\n{}", retired_key_hint_line(entry)))
+}
+
+fn retired_key_hint_line(entry: &RetiredKey) -> String {
+    match entry.replacement {
+        Some(replacement) => format!(
+            "`{}` was retired in ripr {}; use `{replacement}` instead",
+            entry.key, entry.retired_in
+        ),
+        None => format!(
+            "`{}` was retired in ripr {}; remove it from ripr.toml",
+            entry.key, entry.retired_in
+        ),
+    }
+}
+
 /// A source-free summary of a config load error for surfaces that must not
 /// carry the TOML parser's source excerpt (doctor JSON, editor
 /// notifications; RIPR-SPEC-0007): the first line (path, parse location),
@@ -516,11 +573,18 @@ fn misplaced_key_hint_line(key: &str, table: &str) -> String {
 /// only when it equals one built from the fixed key/table allowlist, so no
 /// file content passes through.
 pub(crate) fn config_error_summary(error: &str) -> String {
+    config_error_summary_with(RETIRED_KEYS, error)
+}
+
+fn config_error_summary_with(retired: &[RetiredKey], error: &str) -> String {
     let first = error.lines().next().unwrap_or(error).trim();
     let hint = error.lines().skip(1).map(str::trim).find(|line| {
         KEY_HOME_TABLES
             .iter()
             .any(|(key, table)| *line == misplaced_key_hint_line(key, table))
+            || retired
+                .iter()
+                .any(|entry| *line == retired_key_hint_line(entry))
     });
     match hint {
         Some(hint) => format!("{first}; {hint}"),
@@ -738,6 +802,16 @@ impl RiprConfig {
                 }
                 None => None,
             };
+            if let Some(executable) = &perl.executable {
+                if executable.contains('\0') {
+                    return Err("perl.executable must not contain NUL characters"
+                        .to_string()
+                        .into());
+                }
+                if executable.is_empty() {
+                    return Err("perl.executable must not be empty; remove the key to use the default exporter".to_string().into());
+                }
+            }
             config.perl = PerlConfig {
                 producer,
                 executable: perl.executable.map(PathBuf::from),

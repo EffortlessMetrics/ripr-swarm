@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/match_arm_tuple_terminal_imported_formatter/input
 
-Summary: 2 probes (0 exposed, 2 weak, 0 unrevealed, 0 no path); 2 of 2 findings unsuppressed
+Summary: 2 probes (0 exposed, 2 weak, 0 unrevealed, 0 no path); 2 of 2 findings unsuppressed (1 base-side evidence, not candidate edit targets)
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
@@ -26,6 +26,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/match_arm_tuple_terminal_imported_formatter/input --diff <cwd>/fixtures/match_arm_tuple_terminal_imported_formatter/diff.patch --mode fast probe:src_lib.rs:match_arm:802442a0
   ripr context --root <cwd>/fixtures/match_arm_tuple_terminal_imported_formatter/input --diff <cwd>/fixtures/match_arm_tuple_terminal_imported_formatter/diff.patch --mode fast --at probe:src_lib.rs:match_arm:802442a0
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:match_arm:802442a0 --root <cwd>/fixtures/match_arm_tuple_terminal_imported_formatter/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/match_arm_tuple_terminal_imported_formatter/input --at src/lib.rs:34 --kind match_arm
 

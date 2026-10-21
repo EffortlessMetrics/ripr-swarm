@@ -1259,11 +1259,11 @@ fn select_from_gap_ledger(gap_ledger: &Value, root: &Path, options: &FirstPrOpti
         // blocked state offers; the ledger's own warning names the coverage.
         let message = first_string_array_item(gap_ledger, &["warnings"]).map_or_else(
             || {
-                "The check-output gap ledger parsed but projected no records for this PR's language; regenerate the ledger from the workspace evidence.".to_string()
+                "The check-output gap ledger parsed but projected no records. The --check-output route covers presentation/output-text and Python/TypeScript/Perl findings only; if this PR changes Rust behavior, use `ripr check` to read the Rust findings and `ripr repair` to start a repair, otherwise regenerate the ledger from the workspace evidence.".to_string()
             },
             |warning| {
                 format!(
-                    "The check-output gap ledger parsed but projected no records: {warning}. Regenerate the ledger from the workspace evidence."
+                    "The check-output gap ledger parsed but projected no records: {warning}. If the warning points to `ripr check`/`ripr repair`, follow it; otherwise regenerate the ledger from the workspace evidence."
                 )
             },
         );
@@ -3363,7 +3363,7 @@ mod tests {
                 "status": status,
                 "inputs": {"source_kind": source_kind},
                 "records": [],
-                "warnings": ["check output contained 3 findings, but the --check-output route projects Python/TypeScript/Perl findings only; no gap records were derived from them"]
+                "warnings": ["check output contained 3 findings, but the --check-output route projects presentation/output-text and Python/TypeScript/Perl findings only; no gap records were derived from them. For Rust findings, use `ripr check` to read them and `ripr repair` to start a repair"]
             })
         };
         let root = temp_repo("first-pr-no-records-recovery")?;
@@ -3375,15 +3375,43 @@ mod tests {
             Selection::Blocked {
                 state,
                 next_command,
+                message,
                 ..
             } => {
                 assert_eq!(state, "blocked_artifact");
+                assert!(
+                    message.contains("ripr check") && message.contains("ripr repair"),
+                    "the projection-miss message must point Rust findings to the working commands: {message}"
+                );
                 let command = next_command
                     .as_deref()
                     .ok_or("the projection-miss recovery must carry a next command")?;
                 assert!(
                     command.contains("repo-exposure"),
                     "the Rust-root recovery compound regenerates repo-exposure evidence: {command}"
+                );
+            }
+            other => return Err(format!("expected a blocked recovery, got {other:?}")),
+        }
+
+        // A valid check output with zero findings yields `no_records` with no
+        // warning; the fallback must not claim Rust findings went unprojected.
+        let no_warning = select_from_gap_ledger(
+            &serde_json::json!({
+                "status": "no_records",
+                "inputs": {"source_kind": "check_output"},
+                "records": [],
+                "warnings": []
+            }),
+            &root,
+            &options,
+        );
+        match &no_warning {
+            Selection::Blocked { message, .. } => {
+                assert!(
+                    message.contains("if this PR changes Rust behavior")
+                        && !message.contains("Rust-only predicate findings are not projected"),
+                    "the no-warning fallback must stay conditional: {message}"
                 );
             }
             other => return Err(format!("expected a blocked recovery, got {other:?}")),
@@ -6540,6 +6568,18 @@ mod tests {
                     "{markdown}"
                 );
                 assert!(markdown.contains("--base HEAD~1"), "{markdown}");
+                let next = check["next_command"]
+                    .as_str()
+                    .ok_or("git_diff next_command missing")?;
+                let suggested_base = shell_arg(&format!("{head}~1"));
+                assert!(
+                    next.contains(&format!("--base {suggested_base}")),
+                    "no-diff next_command must shell_arg <head>~1, got {next}"
+                );
+                assert!(
+                    next.contains(&format!("--head {}", shell_arg(head))),
+                    "no-diff next_command must shell_arg --head, got {next}"
+                );
             }
             for (index, command) in commands.iter().enumerate() {
                 let bash = command.as_str().ok_or("recovery command is not a string")?;
@@ -7277,6 +7317,12 @@ mod tests {
         use crate::testing::unwritable_output::OutputDirFixture;
 
         let env = OutputDirFixture::unwritable("first-pr-ro", "reports")?;
+        if crate::testing::access_denial::skip_unless_denied(
+            "unwritable_out_dir_names_out_dir_not_out",
+            env.denies_creation()?,
+        ) {
+            return Ok(());
+        }
         let root = OutputDirFixture::path_arg(&env.root)?;
         let out = OutputDirFixture::path_arg(&env.target)?;
         let error = match first_pr(&first_pr_args(root, out)) {

@@ -7,9 +7,9 @@ use crate::analysis_outcome::{
 
 use super::model::{ChangedFile, ChangedLine};
 use super::path::{
-    is_dev_null_new_path_marker, is_new_path_marker, parse_git_old_path, parse_new_path_marker,
-    parse_old_path_for_confinement, parse_old_path_marker, parse_rename_from_path,
-    parse_rename_to_path,
+    MAX_DIFF_PATH_COMPONENTS, is_dev_null_new_path_marker, is_new_path_marker, parse_git_old_path,
+    parse_new_path_marker, parse_old_path_for_confinement, parse_old_path_marker,
+    parse_rename_from_path, parse_rename_to_path, path_marker_exceeds_depth_bound,
 };
 
 mod stream;
@@ -83,8 +83,9 @@ pub(crate) struct ParsedDiff {
     /// misclaiming a line-endings-only change.
     pub(crate) raw_line1_bom_paths: Vec<PathBuf>,
     /// Typed record of diff regions this parser deliberately refused to read as
-    /// ordinary source (#2828). An empty vector means the parser read the whole
-    /// input; it never means "no such region existed but we said nothing".
+    /// ordinary source (#2828). Truncated textual sections are recorded
+    /// separately in `truncated_file_sections`, so this vector alone cannot
+    /// establish that the input was read completely.
     pub(crate) limitations: Vec<AnalysisLimitation>,
 }
 

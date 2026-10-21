@@ -43,6 +43,7 @@ pub(in crate::analysis) fn refine_slice_boundary(
             let equality = format!("{} == {}", values.operand, values.boundary);
             if let Some((line, source)) = values.witness {
                 gathered.activation.observed_values.push(ValueFact {
+                    file: None,
                     line,
                     text: format!(
                         "{source} | {} = {} via immutable literal slice table cardinality",
@@ -125,6 +126,11 @@ fn boundary_values(
             context.index,
             syntax,
         ) {
+            return Some(Err(unresolved()));
+        }
+        // A line at the call-fact budget may have lost the owner's call, so
+        // the single-call absence proof below cannot be trusted.
+        if crate::analysis::extract::has_saturated_line(test.body_calls()) {
             return Some(Err(unresolved()));
         }
         let calls: Vec<_> = test

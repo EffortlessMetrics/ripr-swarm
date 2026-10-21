@@ -35,6 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_adversarial_default_value_overridden/input --diff <cwd>/fixtures/python_adversarial_default_value_overridden/diff.patch --mode fast probe:src_render.py:python_preview:bc1138cb
   ripr context --root <cwd>/fixtures/python_adversarial_default_value_overridden/input --diff <cwd>/fixtures/python_adversarial_default_value_overridden/diff.patch --mode fast --at probe:src_render.py:python_preview:bc1138cb
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_render.py:python_preview:bc1138cb --root <cwd>/fixtures/python_adversarial_default_value_overridden/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full
