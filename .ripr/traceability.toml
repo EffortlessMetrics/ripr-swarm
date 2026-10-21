@@ -9,6 +9,7 @@ id = "RIPR-SPEC-0001"
 name = "static exposure loop"
 spec = "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md"
 tests = [
+  "crates/ripr/src/analysis/classify/reach.rs::given_mixed_reaching_and_proximity_relations_when_building_reach_evidence_then_only_reaching_tests_are_named",
   "crates/ripr/tests/finding_identity_contract.rs",
   "crates/ripr/src/analysis/input_boundary.rs::fanout_boundary_rejects_excluded_aliases_to_captured_files",
   "crates/ripr/tests/cli_smoke/native_fanout.rs::fanout_excluded_alias_in_git_refuses_captured_target",
@@ -8237,6 +8238,9 @@ tests = [
   "crates/ripr/src/analysis/classify/reveal.rs::tests::error_path_matches_variant_oracle_keeps_discriminate_yes",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::error_path_is_not_effect_family",
   "crates/ripr/src/analysis/classifier.rs::tests::given_broad_is_err_assertion_when_error_variant_changes_then_oracle_is_weak",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::proximity_only_error_variant_assertion_is_not_named_for_a_predicate",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::name_token_proximity_error_variant_assertion_names_no_kind_or_location",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::proximity_only_strong_oracle_names_no_kind",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -8244,6 +8248,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/analysis/classify/reveal.rs",
+  "crates/ripr/src/analysis/classify/reveal.rs::build_discriminate_evidence",
   "crates/ripr/src/analysis/classifier.rs",
 ]
 outputs = [
@@ -17065,6 +17070,30 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0282-repair-attempt-after-refusal-retry-budget.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0286"
+name = "empty-diff base candidate must be analyzable"
+spec = "docs/specs/RIPR-SPEC-0286-empty-diff-base-candidate.md"
+tests = [
+  "crates/ripr/src/analysis/diff/load.rs::tests::another_base_candidate_rejects_a_diff_over_the_changed_line_guard",
+  "crates/ripr/src/analysis/diff/load.rs::tests::another_base_candidate_rejects_a_diff_over_the_changed_file_guard",
+  "crates/ripr/src/analysis/diff/load.rs::tests::another_base_candidate_counts_renamed_rust_lines",
+  "crates/ripr/src/analysis/diff/load.rs::tests::another_base_candidate_prefers_the_smallest_analyzable_diff",
+  "crates/ripr/src/analysis/diff/load.rs::tests::numstat_new_path_unwraps_rename_and_quote_forms",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/diff/load.rs",
+  "crates/ripr/src/analysis/diff/parse.rs",
+  "crates/ripr/src/analysis/language/rust/mod.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0286-empty-diff-base-candidate.md",
 ]
 metrics = [
   "unit_test_pass_rate",
