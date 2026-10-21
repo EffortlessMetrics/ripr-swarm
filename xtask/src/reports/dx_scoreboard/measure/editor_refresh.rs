@@ -321,7 +321,9 @@ impl Session {
                 Err(RecvTimeoutError::Disconnected) => return Err(()),
             };
             if let Some(response) = server_request_reply(&message, &self.base, self.reply) {
-                self.send(&response).map_err(|_| ())?;
+                if self.send(&response).is_err() {
+                    return Err(());
+                }
                 continue;
             }
             return Ok(Some(message));
