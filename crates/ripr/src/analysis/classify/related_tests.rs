@@ -1602,7 +1602,21 @@ fn file_may_bind_name(stripped: &str, name: &str) -> bool {
         while index < bytes.len() && is_ident_char(char::from(bytes[index])) {
             index += 1;
         }
-        let word = &stripped[start..index];
+        let mut word = &stripped[start..index];
+        // `r#name` is the identifier `name`: read it as one word.
+        if word == "r"
+            && bytes.get(index) == Some(&b'#')
+            && bytes
+                .get(index + 1)
+                .is_some_and(|byte| is_ident_char(char::from(*byte)))
+        {
+            index += 1;
+            let raw_start = index;
+            while index < bytes.len() && is_ident_char(char::from(bytes[index])) {
+                index += 1;
+            }
+            word = &stripped[raw_start..index];
+        }
         if word == name {
             let before = stripped[..start].trim_end().chars().next_back();
             let after = stripped[index..].trim_start();
@@ -1651,9 +1665,25 @@ fn own_crate_qualified_entry_call(
     if !is_library_root_item {
         return false;
     }
+    // Only a test-crate root (`tests/<name>.rs`, `tests/<name>/main.rs`):
+    // a module child (`tests/api/child.rs`, `tests/common/mod.rs`) resolves
+    // paths from a parent file whose bindings this scan does not read.
+    let normalized_test = normalize_path(&test.file);
+    let test_segments: Vec<&str> = normalized_test.split('/').collect();
+    let is_test_crate_root = match test_segments.as_slice() {
+        ["tests", file] => file.ends_with(".rs"),
+        ["tests", _, "main.rs"] => true,
+        _ => false,
+    };
+    if !is_test_crate_root {
+        return false;
+    }
     let Some(facts) = index.files().get(&test.file) else {
         return false;
     };
+    if facts.source.contains("include!") {
+        return false;
+    }
     // The one identifier the package's library is imported as: `[lib] name`
     // when set, else the package name (hyphens folded). The package name is
     // not a second spelling when `[lib] name` differs.
@@ -1672,7 +1702,11 @@ fn own_crate_qualified_entry_call(
                 import.path.ends_with('*') || import.path.rsplit("::").next() == Some(crate_name)
             })
     };
-    is_qualified_owner_call(call_text, &format!("{crate_name}::{}", caller.name))
+    // The call fact's text is the whole source line: match the own-crate
+    // spelling only in code, never in a string or comment beside a foreign
+    // call of the same name.
+    let code_line = mask_comments_and_strings(call_text);
+    is_qualified_owner_call(&code_line, &format!("{crate_name}::{}", caller.name))
         && !file_may_bind_name(&stripped_file, crate_name)
         && !body_binds_owner_name(&test.body, crate_name)
         && !super::owner_pin::file_renames_to(&facts.source, crate_name)

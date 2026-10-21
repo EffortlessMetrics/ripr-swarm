@@ -248,7 +248,11 @@ can only hint that a caller "may lead here" without changing anything.
   moved `[lib] path` admits nothing). It is refused for a longer path,
   another crate name, a test file that declares any item, `let`, closure
   or typed parameter named like the crate, aliases anything to that name
-  (`use x as <lib>`), imports a path ending in it, or has any glob import, a unit test inside `src/`, a workspace member's entry, a
+  (`use x as <lib>`), imports a path ending in it (raw `r#` spellings
+  included), or has any glob import or `include!`; a unit test inside
+  `src/`; a test module child (only `tests/<name>.rs` and
+  `tests/<name>/main.rs` roots qualify); a call spelled only in a string
+  or comment on the line; a workspace member's entry; a
   `src/main.rs` entry, and an entry inside an inline `mod`. The edge
   carries relation only: argument rows and entry pairing still read a
   direct call site, so a qualified call earns no value credit it cannot

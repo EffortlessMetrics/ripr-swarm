@@ -11181,6 +11181,8 @@ tests = [
   "crates/ripr/tests/crate_qualified_entry_reach.rs::an_entry_in_a_binary_crate_does_not_link",
   "crates/ripr/tests/crate_qualified_entry_reach.rs::a_hyphenated_package_links_through_its_underscored_name",
   "crates/ripr/tests/crate_qualified_entry_reach.rs::a_lib_name_is_the_only_admitted_spelling",
+  "crates/ripr/tests/crate_qualified_entry_reach.rs::a_quoted_own_crate_call_beside_a_foreign_call_does_not_link",
+  "crates/ripr/tests/crate_qualified_entry_reach.rs::a_test_module_child_does_not_link",
   "crates/ripr/src/analysis/facts/build.rs::tests::root_library_name_reads_lib_name_then_package_and_refuses_moved_roots",
 ]
 fixtures = [

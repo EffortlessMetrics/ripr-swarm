@@ -203,6 +203,8 @@ fn a_rebindable_crate_name_does_not_link() -> Result<(), String> {
         "use qual_reach_inner::order_discount as qual_reach;\n",
         "fn qual_reach() {}\n",
         "const qual_reach: u32 = 1;\n",
+        "mod r#qual_reach {\n    pub fn order_discount(_: u32) -> u32 { 5 }\n}\n",
+        "fn r#qual_reach() {}\n",
     ];
     for rebind in rebinds {
         let tests = format!("{rebind}{}", test_file(&qualified("qual_reach")));
@@ -337,5 +339,51 @@ fn a_lib_name_is_the_only_admitted_spelling() -> Result<(), String> {
     };
     assert_eq!(with_lib("shared_lib").relation()?.as_deref(), LINKED);
     assert_eq!(with_lib("qual_reach").relation()?, None);
+    Ok(())
+}
+
+/// The call fact carries the whole source line: an own-crate spelling quoted
+/// in a string or comment beside a foreign call must not stand in for a real
+/// own-crate call.
+#[test]
+fn a_quoted_own_crate_call_beside_a_foreign_call_does_not_link() -> Result<(), String> {
+    let quoted = [
+        "    let r = other::order_discount(10); let n = \"qual_reach::order_discount(10)\";",
+        "    let r = other::order_discount(10); // qual_reach::order_discount(10)",
+    ];
+    for line in quoted {
+        assert_eq!(root_relation(LIB, false, &test_file(line))?, None, "{line}");
+    }
+    // Control: a real own-crate call beside a quoted foreign one still links.
+    let control =
+        "    let r = qual_reach::order_discount(10); let n = \"other::order_discount(10)\";";
+    assert_eq!(
+        root_relation(LIB, false, &test_file(control))?.as_deref(),
+        LINKED
+    );
+    Ok(())
+}
+
+/// A test in a module child resolves paths from a parent file this scan does
+/// not read: `tests/api.rs` declares `mod qual_reach`, and the child's
+/// `qual_reach::order_discount` names that module.
+#[test]
+fn a_test_module_child_does_not_link() -> Result<(), String> {
+    let package = Package {
+        files: vec![
+            ("src/lib.rs", LIB.to_string()),
+            (
+                "tests/api.rs",
+                "mod child;\nmod qual_reach {\n    pub fn order_discount(_: u32) -> u32 { 5 }\n}\n"
+                    .to_string(),
+            ),
+            ("tests/api/child.rs", test_file(&qualified("qual_reach"))),
+        ],
+        ..Package::root("", false, "")
+    };
+    assert_ne!(package.relation()?.as_deref(), LINKED);
+    // Control: the same test as a test-crate root links.
+    let root = Package::root(LIB, false, &test_file(&qualified("qual_reach")));
+    assert_eq!(root.relation()?.as_deref(), LINKED);
     Ok(())
 }
