@@ -14186,7 +14186,8 @@ Field contract:
   strengthening the oracle of the related test by hand (or that the seam
   could not be verified, naming `ripr check`), and the matching
   `repair_attempts[].command` is `null`. The withheld warning names `target/ripr/pilot/repo-exposure.md`; when that
-  run's `repo-exposure.json` reports `run_status: seam_limit_applied` it
+  run's `repo-exposure.json` reports `run_status: seam_limit_applied` or
+  `limited_declined_files` it
   reads the count as "at least N" and names raising the seam limits and
   rerunning pilot, since seams past the cut may hold gaps. The last names the recorded check command and the
   hand step (add or strengthen a test, then rerun that check) for an enabled
