@@ -1088,7 +1088,10 @@ fn disambiguate_duplicate_symbol_ids(functions: &mut [FunctionFact]) {
     }
 }
 
-fn has_test_attribute(function: &ast::Fn) -> bool {
+/// Whether a function carries a test-framework attribute (`#[test]`,
+/// `#[tokio::test]`, `#[async_std::test]`, `#[rstest]`). Parser-backed, so
+/// commented-out or string-embedded lookalikes never count.
+pub(crate) fn has_test_attribute(function: &ast::Fn) -> bool {
     function.attrs().any(|attr| {
         let compact = attr
             .syntax()

@@ -27,10 +27,13 @@ use super::syntax::fn_signature::{
     OwnerContainer, OwnerParam, OwnerReceiver, OwnerSignature, field_init_is_returned,
     identifier_offsets, owner_signature_at, single_comparison,
 };
-use super::syntax::{GovernedCfgTestModule, governed_cfg_test_modules, parse_clean_source_file};
+use super::syntax::{
+    GovernedCfgTestModule, governed_cfg_test_modules, has_test_attribute, parse_clean_source_file,
+};
 use super::test_grip_evidence::TestKind;
 use ra_ap_syntax::AstNode;
 use ra_ap_syntax::ast::{self, HasName, HasVisibility};
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 /// Where the stub text goes.
@@ -84,12 +87,35 @@ impl TestStubPlacement {
     }
 }
 
+/// The test-name uniqueness scope a stub is checked and written against: the
+/// text it parses from (the whole owner file, or the whole existing
+/// integration file) plus the byte range of the scope inside that text (the
+/// chosen inline module's body, the whole file, or an empty range at the end
+/// of the file for a new inline module). Carrying the parse unit and the
+/// range together lets the presence and name-collision checks stay
+/// parser-backed instead of searching raw text (#8990 review).
+#[derive(Clone, Debug)]
+struct StubScope<'a> {
+    parse_unit: &'a str,
+    range: Range<usize>,
+}
+
+impl StubScope<'_> {
+    fn text(&self) -> &str {
+        self.parse_unit.get(self.range.clone()).unwrap_or_default()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RustTestStub {
     pub(crate) placement: TestStubPlacement,
     pub(crate) test_name: String,
     /// Exact text to insert at the placement offset, or the whole new file.
     pub(crate) text: String,
+    /// The uniqueness scope already holds the identical test function: a
+    /// second run for the same seam recomputed byte-identical text (#8891).
+    /// The CLI reports "already written" instead of writing a duplicate.
+    pub(crate) already_present: bool,
     /// Each `todo!()` the developer still fills, in source order.
     pub(crate) fill_ins: Vec<String>,
     /// Inputs ripr wrote from the seam's own comparison, as `name = value`.
@@ -289,7 +315,7 @@ fn rust_test_stub_for_target(
         Some(IntegrationTarget::Existing { crate_name, .. }) => Some(crate_name.as_str()),
         None => None,
     };
-    let (placement, indent, existing_source) = match (&integration, integration_crate) {
+    let (placement, indent, scope) = match (&integration, integration_crate) {
         (Some(IntegrationTarget::New(proposal)), Some(_))
             if matches!(signature.container, OwnerContainer::Free) =>
         {
@@ -298,7 +324,12 @@ fn rust_test_stub_for_target(
                     file: proposal.file.clone(),
                 },
                 String::new(),
-                None,
+                // A new integration file is empty; the owner file is only the
+                // parse unit the (empty) scope range points into.
+                StubScope {
+                    parse_unit: source,
+                    range: source.len()..source.len(),
+                },
             )
         }
         // A crate-root `pub fn` is the only free owner an integration test
@@ -318,7 +349,11 @@ fn rust_test_stub_for_target(
             (
                 TestStubPlacement::ExistingIntegrationFile { file: file.clone() },
                 String::new(),
-                Some(target_source.as_str()),
+                // The whole integration file is the uniqueness scope.
+                StubScope {
+                    parse_unit: target_source.as_str(),
+                    range: 0..target_source.len(),
+                },
             )
         }
         _ => inline_placement(seam.file(), source, &signature, seam.byte_offset())?,
@@ -339,14 +374,54 @@ fn rust_test_stub_for_target(
         snake_case(&signature.name),
         name_suffix(seam.kind())
     );
-    let test_name = unique_test_name(&base_name, existing_source.unwrap_or(source));
     let path_scope = if integration_placement {
         PathScope::Integration(integration_crate.unwrap_or("crate"))
     } else {
         PathScope::ChildModule
     };
     let body = stub_body(seam, &signature, &scope_import, source, path_scope)?;
-    let test_fn = render_test_fn(seam, &signature, &test_name, &body, &indent);
+    // #8891: a second run for the same seam recomputes byte-identical text.
+    // When the name collision is that earlier stub, the CLI reports "already
+    // written" instead of suffixing a `_2` duplicate; a different test that
+    // happens to share the name still suffixes as before.
+    let unique_name = unique_test_name(&base_name, &scope);
+    // #8990 review X1: ripr's own earlier write can sit under a suffixed name
+    // (`_2`) when another test owns the base. Every candidate name up to the
+    // first free one is searched for the identical rendering; the first
+    // candidate whose on-disk `#[test]` fn is byte-identical reports
+    // `already_present` under the matched name. A different body under a
+    // candidate name does not match, so that case still suffixes.
+    let mut matched: Option<(String, String)> = None;
+    let mut candidate_number = 1usize;
+    loop {
+        let candidate = if candidate_number == 1 {
+            base_name.clone()
+        } else {
+            format!("{base_name}_{candidate_number}")
+        };
+        if candidate == unique_name {
+            break;
+        }
+        let rendered = render_test_fn(seam, &signature, &candidate, &body, &indent);
+        if scope_contains_test_fn(&scope, &rendered, &candidate) {
+            matched = Some((candidate, rendered));
+            break;
+        }
+        candidate_number += 1;
+    }
+    let (test_name, test_fn, already_present) = match matched {
+        Some((name, rendered)) => (name, rendered, true),
+        None if unique_name == base_name => (
+            base_name.clone(),
+            render_test_fn(seam, &signature, &base_name, &body, &indent),
+            false,
+        ),
+        None => (
+            unique_name.clone(),
+            render_test_fn(seam, &signature, &unique_name, &body, &indent),
+            false,
+        ),
+    };
 
     let text = match &placement {
         TestStubPlacement::ExistingInlineModule { .. } => format!("\n{test_fn}"),
@@ -361,9 +436,56 @@ fn rust_test_stub_for_target(
         placement,
         test_name,
         text,
+        already_present,
         fill_ins: body.fill_ins,
         derived_inputs: body.derived_inputs,
     })
+}
+
+/// Whether the uniqueness scope already holds an actual `#[test]` function
+/// identical to `rendered` — same `name`, same rendered text, modulo line
+/// endings and indentation. Parser-backed (#8990 review X2): a copy of the
+/// stub inside a block comment or a raw string is not a test Cargo runs, so
+/// comment and string text never counts; only parsed `#[test]` fn items in
+/// the scope compare. `false` when the parse unit does not parse cleanly, so
+/// an unparseable scope never claims a write it cannot verify.
+fn scope_contains_test_fn(scope: &StubScope<'_>, rendered: &str, name: &str) -> bool {
+    let Some(parse) = parse_clean_source_file(scope.parse_unit) else {
+        return false;
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .any(|function| {
+            if !has_test_attribute(&function) || function.name().is_none_or(|n| n.text() != name) {
+                return false;
+            }
+            let range = function.syntax().text_range();
+            let start = usize::from(range.start());
+            let end = usize::from(range.end());
+            // The whole fn item — attributes, signature, and body — sits inside
+            // the uniqueness scope.
+            start >= scope.range.start
+                && end <= scope.range.end
+                && normalize_test_fn_text(&function.syntax().text().to_string())
+                    == normalize_test_fn_text(rendered)
+        })
+}
+
+/// Comparison text for a rendered or parsed test fn: line endings, per-line
+/// indentation, blank lines, and pure comment lines normalized away, so the
+/// check depends neither on the file's CRLF/LF choice nor on whether the
+/// parser attaches leading comments to the fn item. The executable text —
+/// attributes, signature, and body — is what identifies ripr's stub.
+fn normalize_test_fn_text(text: &str) -> String {
+    text.replace("\r\n", "\n")
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Whether the innermost `fn` at `offset` is declared with plain `pub` (not
@@ -432,7 +554,7 @@ fn inline_placement<'a>(
     source: &'a str,
     signature: &OwnerSignature,
     owner_offset: usize,
-) -> Result<(TestStubPlacement, String, Option<&'a str>), TestStubRefusal> {
+) -> Result<(TestStubPlacement, String, StubScope<'a>), TestStubRefusal> {
     let modules = governed_cfg_test_modules(source).ok_or(TestStubRefusal::SourceUnparsed)?;
     let siblings = modules
         .iter()
@@ -470,9 +592,18 @@ fn inline_placement<'a>(
                 .close_brace_start
                 .ok_or(TestStubRefusal::AmbiguousTestModule)?;
             let module_indent = line_indent(source, module.item_start);
-            let module_body = module
-                .body_start
-                .and_then(|start| source.get(start..offset));
+            // The uniqueness scope is the module body; the parse unit is the
+            // whole file, so presence and name checks see real fn items only.
+            let scope = match module.body_start {
+                Some(start) => StubScope {
+                    parse_unit: source,
+                    range: start..offset,
+                },
+                None => StubScope {
+                    parse_unit: source,
+                    range: 0..source.len(),
+                },
+            };
             Ok((
                 TestStubPlacement::ExistingInlineModule {
                     file: file.to_path_buf(),
@@ -480,7 +611,7 @@ fn inline_placement<'a>(
                     offset,
                 },
                 format!("{module_indent}    "),
-                module_body,
+                scope,
             ))
         }
         None if signature.parent_modules.is_empty() => Ok((
@@ -489,7 +620,10 @@ fn inline_placement<'a>(
                 offset: source.len(),
             },
             "    ".to_string(),
-            Some(""),
+            StubScope {
+                parse_unit: source,
+                range: source.len()..source.len(),
+            },
         )),
         None => Err(TestStubRefusal::OwnerInNestedModule),
     }
@@ -1452,17 +1586,13 @@ fn name_suffix(kind: SeamKind) -> &'static str {
     }
 }
 
-fn unique_test_name(base: &str, scope_source: &str) -> String {
-    let taken = |name: &str| {
-        scope_source
-            .match_indices(&format!("fn {name}"))
-            .any(|(index, matched)| {
-                scope_source[index + matched.len()..]
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c == '(' || c == '<' || c.is_whitespace())
-            })
-    };
+/// The first free spelling of `base` in the uniqueness scope: `base`, then
+/// `base_2`, `base_3`, ... Parser-backed (#8990 review X2): a `fn` spelled
+/// inside a block comment or a string literal is not a test and does not
+/// occupy the name. Scopes that do not parse cleanly keep the previous
+/// lexical search, which errs toward suffixing rather than shadowing.
+fn unique_test_name(base: &str, scope: &StubScope<'_>) -> String {
+    let taken = |name: &str| scope_contains_fn_named(scope, name);
     if !taken(base) {
         return base.to_string();
     }
@@ -1470,6 +1600,33 @@ fn unique_test_name(base: &str, scope_source: &str) -> String {
         .map(|n| format!("{base}_{n}"))
         .find(|name| !taken(name))
         .unwrap_or_else(|| base.to_string())
+}
+
+/// Whether an actual `fn` item named `name` sits in the uniqueness scope.
+/// Falls back to the raw-text search when the scope does not parse cleanly.
+fn scope_contains_fn_named(scope: &StubScope<'_>, name: &str) -> bool {
+    if let Some(parse) = parse_clean_source_file(scope.parse_unit) {
+        return parse
+            .tree()
+            .syntax()
+            .descendants()
+            .filter_map(ast::Fn::cast)
+            .any(|function| {
+                let range = function.syntax().text_range();
+                function.name().is_some_and(|n| n.text() == name)
+                    && usize::from(range.start()) >= scope.range.start
+                    && usize::from(range.end()) <= scope.range.end
+            });
+    }
+    let scope_source = scope.text();
+    scope_source
+        .match_indices(&format!("fn {name}"))
+        .any(|(index, matched)| {
+            scope_source[index + matched.len()..]
+                .chars()
+                .next()
+                .is_some_and(|c| c == '(' || c == '<' || c.is_whitespace())
+        })
 }
 
 fn snake_case(name: &str) -> String {

@@ -10,9 +10,10 @@ use crate::analysis::seams::SeamGripClass;
 use crate::analysis::test_stub::TestStubPlacement;
 use crate::app::agent_brief::AgentBriefPolicy;
 use crate::app::test_stub::{
-    StubNextRepair, StubPlacementDivergence, TargetLookup, TestStubError, TestStubSelector,
-    integration_target_lookup, line_of_offset, package_manifest_for, resolve_test_stub,
-    run_command, write_test_stub,
+    AlreadyPresentRevalidation, StubNextRepair, StubPlacementDivergence, TargetLookup,
+    TestStubError, TestStubSelector, integration_target_lookup, line_of_offset,
+    package_manifest_for, resolve_test_stub, revalidate_already_present_stub, run_command,
+    write_test_stub,
 };
 use crate::cli::CommandError;
 use crate::cli::agent::AgentStubOptions;
@@ -32,7 +33,7 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
     }
     ensure_command_root(&options.root, "agent stub")?;
     let config = load_for_root(&options.root).map_err(CommandError::Failure)?;
-    let resolution = match resolve_test_stub(&options.root, &config, &options.selector) {
+    let mut resolution = match resolve_test_stub(&options.root, &config, &options.selector) {
         Ok(resolution) => resolution,
         Err(error) => {
             let (refusal_kind, message) = match error {
@@ -61,6 +62,26 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
             )));
         }
     };
+    // #8990 review X3: `already_present` was read from the placement file
+    // before this moment; a concurrent edit can add or remove the stub in
+    // between. Re-resolve from current bytes before the write gate trusts
+    // the skip: a stub that vanished falls through to the normal guarded
+    // write, and a workspace that no longer resolves the seam refuses with
+    // the rerun message instead of reporting success from stale bytes.
+    if options.write
+        && resolution
+            .outcome
+            .as_ref()
+            .is_ok_and(|stub| stub.already_present)
+    {
+        match revalidate_already_present_stub(&options.root, &config, &options.selector) {
+            Ok(AlreadyPresentRevalidation::Current) => {}
+            Ok(AlreadyPresentRevalidation::Rewrite(fresh)) => {
+                resolution = *fresh;
+            }
+            Err(message) => return Err(CommandError::Failure(message)),
+        }
+    }
     let mut disclosure = stub_grip_disclosure(&resolution.seam_id, resolution.grip_class, &config);
     if let Some(note) = &resolution.at_note {
         disclosure.warnings.insert(0, note.clone());
@@ -121,7 +142,8 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
         }
         return Err(CommandError::Failure(message));
     }
-    let written = if options.write {
+    // #8891: retain the already-present skip after the divergence guard.
+    let written = if options.write && !stub.already_present {
         Some(write_test_stub(&options.root, &resolution, stub).map_err(CommandError::Failure)?)
     } else {
         None
@@ -172,6 +194,7 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
             "fill_ins": stub.fill_ins,
             "derived_inputs": stub.derived_inputs,
             "written": written.is_some(),
+            "already_present": stub.already_present,
             "run_command": run,
             "grip_class": disclosure.grip_class,
             "classification": disclosure.classification,
@@ -204,7 +227,9 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
     for warning in &disclosure.warnings {
         println!("{warning}");
     }
-    if written.is_some() {
+    if stub.already_present {
+        println!("Stub already written at {place}.");
+    } else if written.is_some() {
         println!("Wrote test stub `{}` to {place}.", stub.test_name);
     } else {
         println!("Test stub `{}` for {place}:", stub.test_name);
@@ -221,7 +246,7 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
     for fill_in in &stub.fill_ins {
         println!("Fill in: {fill_in}");
     }
-    if written.is_none() {
+    if written.is_none() && !stub.already_present {
         println!("Write it: {}", write_command(&options));
     }
     println!(
@@ -411,8 +436,7 @@ fn stub_grip_disclosure(
     config: &RiprConfig,
 ) -> StubGripDisclosure {
     let warnings = grip_class
-        .and_then(|class| AgentBriefPolicy::from_config(config).omission_reason_for_class(class))
-        .map(|reason| format!("seam {seam_id} {reason}"))
+        .and_then(|class| stub_grip_omission_reason(seam_id, class, config))
         .into_iter()
         .collect();
     let grip_class = grip_class.map(|class| class.as_str());
@@ -421,6 +445,28 @@ fn stub_grip_disclosure(
         grip_class,
         warnings,
     }
+}
+
+/// The stub path's omission wording names the real reason. For
+/// `strongly_gripped` the default `Off` seam severity is the agent-brief
+/// rendering policy, not something the user configured, so the packet/brief
+/// "configured off" wording is false here (#8891): the seam is exposed
+/// because its tests already discriminate it, which is also why a second
+/// `--write` has nothing to add. A class a user severity actually disables
+/// keeps the packet wording.
+fn stub_grip_omission_reason(
+    seam_id: &str,
+    class: SeamGripClass,
+    config: &RiprConfig,
+) -> Option<String> {
+    if class == SeamGripClass::StronglyGripped {
+        return Some(format!(
+            "seam {seam_id} is strongly_gripped: existing tests already discriminate it, so a stub would add nothing"
+        ));
+    }
+    AgentBriefPolicy::from_config(config)
+        .omission_reason_for_class(class)
+        .map(|reason| format!("seam {seam_id} {reason}"))
 }
 
 #[cfg(test)]
@@ -607,8 +653,13 @@ mod tests {
         Ok(())
     }
 
+    /// #8891: on the stub path a strongly_gripped seam is exposed because its
+    /// tests already discriminate it. The default `Off` severity for the
+    /// class is the agent-brief rendering policy, not user configuration, so
+    /// the disclosure names the real reason instead of reusing the
+    /// packet/brief "configured off" wording.
     #[test]
-    fn strongly_gripped_stub_reuses_the_packet_omission_reason() {
+    fn strongly_gripped_stub_names_the_real_reason() {
         let disclosure = stub_grip_disclosure(
             "clamp-seam",
             Some(SeamGripClass::StronglyGripped),
@@ -619,10 +670,39 @@ mod tests {
         assert_eq!(
             disclosure.warnings,
             vec![
-                "seam clamp-seam is configured off for strongly_gripped seams and is not included in agent results"
+                "seam clamp-seam is strongly_gripped: existing tests already discriminate it, so a stub would add nothing"
                     .to_string()
             ]
         );
+        for warning in &disclosure.warnings {
+            assert!(
+                !warning.contains("configured off"),
+                "nothing was configured off: {warning}"
+            );
+        }
+    }
+
+    /// A class a user severity actually disables keeps the packet
+    /// "configured off" wording on the stub path: there the config is the
+    /// real reason.
+    #[test]
+    fn config_disabled_class_stub_keeps_the_configured_off_wording() -> Result<(), String> {
+        let config = crate::config::tests_only_parse(
+            r#"
+[severity.seams]
+weakly_gripped = "off"
+"#,
+        )?;
+        let disclosure =
+            stub_grip_disclosure("clamp-seam", Some(SeamGripClass::WeaklyGripped), &config);
+        assert_eq!(
+            disclosure.warnings,
+            vec![
+                "seam clamp-seam is configured off for weakly_gripped seams and is not included in agent results"
+                    .to_string()
+            ]
+        );
+        Ok(())
     }
 
     #[test]
@@ -679,6 +759,154 @@ mod tests {
             write: false,
             json: false,
         })
+    }
+
+    fn stub_write_at(root: &std::path::Path, at: &str, kind: &str) -> Result<(), CommandError> {
+        let selector = TestStubSelector::parse_at(at)
+            .and_then(|selector| selector.with_kind(kind))
+            .map_err(CommandError::Failure)?;
+        run_agent_stub(AgentStubOptions {
+            root: root.to_path_buf(),
+            root_explicit: true,
+            selector,
+            write: true,
+            json: false,
+        })
+    }
+
+    /// #8891: the second `--write` for the same seam recomputes the identical
+    /// test function. The command must leave the file alone (no `_2`
+    /// duplicate appended) and the resolution must flag the stub as already
+    /// present so the CLI reports "already written".
+    #[test]
+    fn second_write_for_the_same_seam_reports_already_written() -> Result<(), String> {
+        const OPEN_GAP: &str =
+            "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n";
+        let root = scratch_crate("rewrite-clarity", OPEN_GAP)?;
+        stub_write_at(&root, "src/lib.rs:2", "predicate")
+            .map_err(|error| format!("first write must succeed: {error:?}"))?;
+        let written =
+            std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
+        if written
+            .matches("fn clamp_to_boundary_discriminator(")
+            .count()
+            != 1
+        {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err(format!(
+                "first write must add exactly one base-named stub:\n{written}"
+            ));
+        }
+
+        // The recomputed stub for the same seam is byte-identical to the one
+        // on disk, so the name collision is ripr's own earlier write, not a
+        // genuinely different test: it must be flagged already present.
+        let selector = TestStubSelector::parse_at("src/lib.rs:2")
+            .and_then(|selector| selector.with_kind("predicate"))
+            .map_err(|error| error.to_string())?;
+        let resolution = resolve_test_stub(&root, &RiprConfig::default(), &selector)
+            .map_err(|error| format!("{error:?}"))?;
+        let already_present = resolution
+            .outcome
+            .as_ref()
+            .map_err(|refusal| format!("the second lookup must stay ready: {refusal:?}"))?
+            .already_present;
+
+        // The CLI's second `--write` must stay a ready exit 0 and leave the
+        // single base-named stub in place instead of suffixing a `_2`.
+        let second = stub_write_at(&root, "src/lib.rs:2", "predicate");
+        let rewritten =
+            std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
+        let _ = std::fs::remove_dir_all(&root);
+        second.map_err(|error| format!("second write must stay ready: {error:?}"))?;
+        assert!(
+            already_present,
+            "the byte-identical recompute must be detected as already present"
+        );
+        if rewritten
+            .matches("fn clamp_to_boundary_discriminator(")
+            .count()
+            != 1
+            || rewritten.contains("_2(")
+        {
+            return Err(format!(
+                "second write must not append a `_2` duplicate:\n{rewritten}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #8990 review X3: `already_present` is read before the CLI reports the
+    /// idempotent write. When the placement file changes after resolution so
+    /// the stub is gone, the revalidation hands back a fresh not-present
+    /// stub and the write proceeds; when nothing changed, the write stays a
+    /// no-op.
+    #[test]
+    fn already_present_write_revalidates_the_placement_file() -> Result<(), String> {
+        const OPEN_GAP: &str =
+            "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n";
+        let root = scratch_crate("rewrite-stale", OPEN_GAP)?;
+        stub_write_at(&root, "src/lib.rs:2", "predicate")
+            .map_err(|error| format!("first write must succeed: {error:?}"))?;
+        let selector = TestStubSelector::parse_at("src/lib.rs:2")?.with_kind("predicate")?;
+        // Resolve while the stub is on disk: already_present.
+        let resolution = resolve_test_stub(&root, &RiprConfig::default(), &selector)
+            .map_err(|error| format!("{error:?}"))?;
+        let present = resolution
+            .outcome
+            .as_ref()
+            .map_err(|refusal| format!("the stub on disk must resolve as ready: {refusal:?}"))?;
+        if !present.already_present {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err("fixture: the stub on disk must resolve as already present".to_string());
+        }
+        // Unchanged bytes: the skip survives the re-read.
+        match revalidate_already_present_stub(&root, &RiprConfig::default(), &selector) {
+            Ok(AlreadyPresentRevalidation::Current) => {}
+            other => {
+                let _ = std::fs::remove_dir_all(&root);
+                return Err(format!(
+                    "an unchanged placement file must revalidate as current: {other:?}"
+                ));
+            }
+        }
+        // A concurrent edit removes the stub after resolution: the
+        // revalidation must not report success from the stale read; it
+        // returns a fresh resolution whose stub writes through the guarded
+        // path.
+        std::fs::write(root.join("src/lib.rs"), OPEN_GAP).map_err(|error| error.to_string())?;
+        let outcome = revalidate_already_present_stub(&root, &RiprConfig::default(), &selector);
+        let AlreadyPresentRevalidation::Rewrite(fresh) = outcome.inspect_err(|_| {
+            let _ = std::fs::remove_dir_all(&root);
+        })?
+        else {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err("a removed stub must not revalidate as current".to_string());
+        };
+        let stub = fresh.outcome.as_ref().map_err(|refusal| {
+            let _ = std::fs::remove_dir_all(&root);
+            format!("the fresh resolution must stay ready: {refusal:?}")
+        })?;
+        if stub.already_present {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err("the fresh stub after removal must not flag already_present".to_string());
+        }
+        write_test_stub(&root, &fresh, stub).inspect_err(|_| {
+            let _ = std::fs::remove_dir_all(&root);
+        })?;
+        let rewritten =
+            std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
+        let _ = std::fs::remove_dir_all(&root);
+        if rewritten
+            .matches("fn clamp_to_boundary_discriminator(")
+            .count()
+            != 1
+        {
+            return Err(format!(
+                "the rewritten stub must be back in the file:\n{rewritten}"
+            ));
+        }
+        Ok(())
     }
 
     /// Same fixture as `at_kind_stub_discloses_a_strongly_gripped_inventory_class`

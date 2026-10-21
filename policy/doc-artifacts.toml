@@ -1708,6 +1708,14 @@ owner = "agent-loop"
 standalone_reason = "States the agent stub repair-journey pointer (#8727): the rust_test_stub document (schema 0.3, additive on 0.2) may carry a next_repair block naming the ripr agent repair --seam-id start command and the repair packet's admitted allowed_edit_surface, with a placement_divergence naming both files when the stub's owner-shape-driven placement differs from the packet's recommended-test surface, so the divergence is stated at generation time instead of refusing later at the before phase's dirty-premise gate; the block uses the same fail-closed eligibility flip as the pilot's offered repair start and is omitted entirely when the route cannot be established, so no route is invented."
 
 [[artifact]]
+id = "RIPR-SPEC-0288"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0288-agent-stub-rewrite-clarity.md"
+status = "proposed"
+owner = "product-cli"
+standalone_reason = "Issue #8891 records the agent stub rewrite clarity contract: a second ripr agent stub --write for the same seam reports the stub already written at the file (with the run command; additive JSON already_present, written stays false) instead of suffixing a _2 duplicate, where only a byte-identical recompute counts as already written and a genuinely different test sharing the generated name still suffixes; and the strongly_gripped disclosure on the stub path names the real reason (existing tests already discriminate it, so a stub would add nothing) instead of reusing the packet/brief 'configured off' wording, which stays only for classes a user severity actually disables."
+
+[[artifact]]
 id = "RIPR-SPEC-0285"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0285-python-framework-scan-bounded-deterministic-string-aware.md"

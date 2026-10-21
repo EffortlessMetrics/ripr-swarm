@@ -64,6 +64,20 @@ fn stub_options(
         .map_err(|error| format!("spawn ripr agent stub: {error}"))
 }
 
+fn stub_write(root: &Path, at: &str, kind: &str, json: bool) -> Result<Output, String> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command
+        .args(["agent", "stub", "--root"])
+        .arg(root)
+        .args(["--at", at, "--kind", kind, "--write"]);
+    if json {
+        command.arg("--json");
+    }
+    command
+        .output()
+        .map_err(|error| format!("spawn ripr agent stub --write: {error}"))
+}
+
 fn split_refusal_envelope(stderr: &str) -> Result<(serde_json::Value, &str), String> {
     let prose_at = stderr
         .find("ripr: agent stub: ")
@@ -315,8 +329,13 @@ fn off_line_predicate_note_precedes_the_grip_class_warning() -> Result<(), Strin
     let grip = warnings[1]
         .as_str()
         .ok_or_else(|| format!("warnings[1] must be the grip omission: {warnings:?}"))?;
-    if !grip.contains("strongly_gripped") || !grip.contains("configured off") {
-        return Err(format!("grip-class warning must follow the note: {grip}"));
+    if !grip.contains("strongly_gripped")
+        || !grip.contains("existing tests already discriminate it")
+        || grip.contains("configured off")
+    {
+        return Err(format!(
+            "grip-class warning must name the real reason, not 'configured off': {grip}"
+        ));
     }
 
     let human = stub(&scratch.0, "src/lib.rs:3", "predicate", false)?;
@@ -373,6 +392,192 @@ fn off_line_at_that_refuses_keeps_the_note_first_in_json_warnings() -> Result<()
     note_names_substitution(note, "src/lib.rs:3", "src/lib.rs:2")?;
     if !prose.contains("owner_async") {
         return Err(format!("human tail must still name the refusal: {prose}"));
+    }
+    Ok(())
+}
+
+/// An open-gap seam owns the stub ripr writes; the stub's own seam is then
+/// strongly gripped. #8891: the second `--write` must report the existing
+/// stub ("already written", with the run command) instead of suffixing a
+/// `_2` duplicate, and its disclosure must name the real reason (the seam is
+/// exposed) rather than claiming it is "configured off".
+#[test]
+fn second_write_reports_already_written_instead_of_a_duplicate() -> Result<(), String> {
+    const OPEN_GAP: &str =
+        "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n";
+    let scratch = Scratch::create("rewrite-clarity", OPEN_GAP)?;
+    let root = &scratch.0;
+
+    let first = stub_write(root, "src/lib.rs:2", "predicate", false)?;
+    if !first.status.success() {
+        return Err(format!(
+            "first --write must succeed: {}",
+            String::from_utf8_lossy(&first.stderr)
+        ));
+    }
+
+    let second = stub_write(root, "src/lib.rs:2", "predicate", false)?;
+    let stdout = String::from_utf8_lossy(&second.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&second.stderr).to_string();
+    if !second.status.success() {
+        return Err(format!("second --write must stay exit 0: {stderr}"));
+    }
+    if !stdout.contains("Stub already written at") {
+        return Err(format!(
+            "second --write must report the existing stub: {stdout}"
+        ));
+    }
+    if stdout.contains("Wrote test stub") || stdout.contains("_2") {
+        return Err(format!(
+            "second --write must not write or name a `_2` duplicate: {stdout}"
+        ));
+    }
+    if !stdout.contains("Run it:") {
+        return Err(format!(
+            "the already-written report must still carry the run command: {stdout}"
+        ));
+    }
+    if stdout.contains("configured off") {
+        return Err(format!(
+            "nothing was configured off; the disclosure must name the real reason: {stdout}"
+        ));
+    }
+    if !stdout.contains("strongly_gripped") {
+        return Err(format!(
+            "the disclosure must still name the grip class: {stdout}"
+        ));
+    }
+
+    let written = std::fs::read_to_string(root.join("src/lib.rs"))
+        .map_err(|error| format!("read back the written file: {error}"))?;
+    let occurrences = written
+        .matches("fn clamp_to_boundary_discriminator(")
+        .count();
+    if occurrences != 1 || written.contains("_2(") {
+        return Err(format!(
+            "the file must hold exactly one base-named stub, no `_2` duplicate:\n{written}"
+        ));
+    }
+
+    // The JSON document reports the same state for machine consumers.
+    let json = stub_write(root, "src/lib.rs:2", "predicate", true)?;
+    let document: serde_json::Value = serde_json::from_slice(&json.stdout)
+        .map_err(|error| format!("ready stub JSON did not parse: {error}"))?;
+    if document["state"] != "ready"
+        || document["already_present"] != true
+        || document["written"] != false
+    {
+        return Err(format!(
+            "the second write document must be ready, already present, not rewritten: {document}"
+        ));
+    }
+    let warnings = document["warnings"]
+        .as_array()
+        .ok_or_else(|| format!("warnings must be an array: {document}"))?;
+    let warning = warnings
+        .first()
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("the disclosure warning must be present: {document}"))?;
+    if !warning.contains("strongly_gripped")
+        || !warning.contains("existing tests already discriminate it")
+        || warning.contains("configured off")
+    {
+        return Err(format!(
+            "the disclosure must name the real reason, not 'configured off': {warning}"
+        ));
+    }
+    Ok(())
+}
+
+/// The first write must change the source; repeated writes must leave every
+/// byte alone, including when a different test owns the base name. Comparing
+/// metadata also catches an unnecessary rewrite of identical bytes. Analysis
+/// may populate target caches; this contract covers the source file.
+#[test]
+fn repeated_writes_preserve_source_bytes_and_metadata_with_name_collisions() -> Result<(), String> {
+    const OPEN_GAP: &str =
+        "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n";
+    const COLLISION: &str = "\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn clamp_to_boundary_discriminator() {\n        assert_eq!(super::clamp_to(80), 80);\n    }\n}\n";
+    for collision in [false, true] {
+        for crlf in [false, true] {
+            let mut source = OPEN_GAP.to_string();
+            if collision {
+                source.push_str(COLLISION);
+            }
+            if crlf {
+                source = source.replace('\n', "\r\n");
+            }
+            let scratch = Scratch::create("rewrite-collision", &source)?;
+            let path = scratch.0.join("src/lib.rs");
+            let expected_name = if collision {
+                "clamp_to_boundary_discriminator_2"
+            } else {
+                "clamp_to_boundary_discriminator"
+            };
+            let first = stub_write(&scratch.0, "src/lib.rs:2", "predicate", true)?;
+            assert!(first.status.success(), "first write: {first:?}");
+            let document: serde_json::Value = serde_json::from_slice(&first.stdout)
+                .map_err(|error| format!("first write JSON: {error}: {first:?}"))?;
+            assert_eq!(document["state"], "ready");
+            assert_eq!(document["test_name"], expected_name);
+            assert_eq!(document["already_present"], false);
+            assert_eq!(document["written"], true);
+            let written = std::fs::read(&path).map_err(|error| error.to_string())?;
+            assert_ne!(
+                written,
+                source.as_bytes(),
+                "first write must reach the file"
+            );
+            let text = std::str::from_utf8(&written).map_err(|error| error.to_string())?;
+            assert_eq!(text.matches(&format!("fn {expected_name}(")).count(), 1);
+            assert!(!text.contains("fn clamp_to_boundary_discriminator_3("));
+            if crlf {
+                assert!(!text.replace("\r\n", "").contains('\n'));
+            }
+            let before = std::fs::metadata(&path).map_err(|error| error.to_string())?;
+            for json in [false, true] {
+                let repeat = stub_write(&scratch.0, "src/lib.rs:2", "predicate", json)?;
+                assert!(repeat.status.success(), "repeat write: {repeat:?}");
+                if json {
+                    let document: serde_json::Value = serde_json::from_slice(&repeat.stdout)
+                        .map_err(|error| format!("repeat JSON: {error}: {repeat:?}"))?;
+                    assert_eq!(document["state"], "ready");
+                    assert_eq!(document["test_name"], expected_name);
+                    assert_eq!(document["already_present"], true);
+                    assert_eq!(document["written"], false);
+                } else {
+                    let stdout = String::from_utf8_lossy(&repeat.stdout);
+                    assert!(stdout.contains("Stub already written at"), "{stdout}");
+                    assert!(stdout.contains("Run it:"), "{stdout}");
+                    assert!(stdout.contains(expected_name), "{stdout}");
+                    assert!(!stdout.contains("Wrote test stub"), "{stdout}");
+                }
+                assert_eq!(
+                    std::fs::read(&path).map_err(|error| error.to_string())?,
+                    written
+                );
+                let after = std::fs::metadata(&path).map_err(|error| error.to_string())?;
+                assert_eq!(after.len(), before.len());
+                assert_eq!(
+                    after.modified().map_err(|error| error.to_string())?,
+                    before.modified().map_err(|error| error.to_string())?
+                );
+                assert_eq!(after.permissions(), before.permissions());
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    assert_eq!((after.dev(), after.ino()), (before.dev(), before.ino()));
+                    assert_eq!(
+                        (after.mtime(), after.mtime_nsec()),
+                        (before.mtime(), before.mtime_nsec())
+                    );
+                    assert_eq!(
+                        (after.ctime(), after.ctime_nsec()),
+                        (before.ctime(), before.ctime_nsec())
+                    );
+                }
+            }
+        }
     }
     Ok(())
 }

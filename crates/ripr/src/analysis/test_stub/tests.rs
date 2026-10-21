@@ -87,6 +87,158 @@ fn boundary_stub_inserts_into_the_existing_inline_module_and_stops_at_the_expect
     Ok(())
 }
 
+/// #8891: a second run for the same seam recomputes byte-identical text. The
+/// name collision is ripr's own earlier write, so the stub is flagged
+/// already present instead of suffixing a `_2` duplicate.
+#[test]
+fn recomputed_stub_for_the_same_seam_is_flagged_already_present() -> Result<(), String> {
+    let seam = seam_at(
+        "src/lib.rs",
+        PRICE,
+        "amount >= threshold",
+        SeamKind::PredicateBoundary,
+        boundary("amount == threshold"),
+    )?;
+    let first = rust_test_stub(&seam, None, PRICE).map_err(|r| r.reason().to_string())?;
+    assert!(!first.already_present);
+    assert_eq!(first.test_name, "price_boundary_discriminator");
+    // Simulate the first `--write`: the insertion is the stub text at the
+    // placement offset.
+    let close = PRICE.rfind('}').ok_or("module close brace")?;
+    let (head, tail) = PRICE.split_at(close);
+    let rewritten = format!("{head}{}{tail}", first.text.trim_start_matches('\n'));
+    let seam = seam_at(
+        "src/lib.rs",
+        &rewritten,
+        "amount >= threshold",
+        SeamKind::PredicateBoundary,
+        boundary("amount == threshold"),
+    )?;
+    let second = rust_test_stub(&seam, None, &rewritten).map_err(|r| r.reason().to_string())?;
+    assert!(
+        second.already_present,
+        "the byte-identical recompute must be detected as already present"
+    );
+    assert_eq!(
+        second.test_name, "price_boundary_discriminator",
+        "no `_2` suffix for ripr's own earlier write"
+    );
+    Ok(())
+}
+
+/// A different test that happens to share the base name is not ripr's stub:
+/// the `--write` semantics are unchanged and the name still suffixes.
+/// Recomputing after insertion must find ripr's own `_2` function instead of
+/// proposing `_3`. The command-level no-write contract is exercised through
+/// the binary in `agent_stub_at_disclosure.rs`.
+#[test]
+fn same_named_but_different_test_still_suffixes() -> Result<(), String> {
+    let with_other_test = "pub fn price(amount: u32, threshold: u32) -> u32 {
+    if amount >= threshold { amount - 10 } else { amount }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn price_boundary_discriminator() {
+        assert_eq!(price(100, 100), 90);
+    }
+}
+";
+    let seam = seam_at(
+        "src/lib.rs",
+        with_other_test,
+        "amount >= threshold",
+        SeamKind::PredicateBoundary,
+        boundary("amount == threshold"),
+    )?;
+    let stub = rust_test_stub(&seam, None, with_other_test).map_err(|r| r.reason().to_string())?;
+    assert_eq!(stub.test_name, "price_boundary_discriminator_2");
+    assert!(
+        !stub.already_present,
+        "a genuinely different test with the same name is not an already-written stub"
+    );
+
+    // Simulate the first `--write`: the `_2` stub text lands inside the
+    // inline module, after the user's same-named test.
+    let close = with_other_test.rfind('}').ok_or("module close brace")?;
+    let (head, tail) = with_other_test.split_at(close);
+    let rewritten = format!("{head}{}{tail}", stub.text.trim_start_matches('\n'));
+    let seam = seam_at(
+        "src/lib.rs",
+        &rewritten,
+        "amount >= threshold",
+        SeamKind::PredicateBoundary,
+        boundary("amount == threshold"),
+    )?;
+    let second = rust_test_stub(&seam, None, &rewritten).map_err(|r| r.reason().to_string())?;
+    assert!(
+        second.already_present,
+        "the second run must find ripr's own `_2` write under the suffixed name, not suffix a `_3`"
+    );
+    assert_eq!(
+        second.test_name, "price_boundary_discriminator_2",
+        "the already-written report names the test on disk"
+    );
+    // The resolver retains the full rendered function even when present;
+    // the CLI's write guard, rather than an empty insertion, makes it a no-op.
+    assert_eq!(second.text, stub.text);
+    assert_eq!(
+        rewritten
+            .matches("fn price_boundary_discriminator_2(")
+            .count(),
+        1
+    );
+    assert!(!rewritten.contains("fn price_boundary_discriminator_3("));
+    Ok(())
+}
+
+/// #8990 review X2: a copy of the rendered stub inside a block comment or a
+/// raw string is not a test Cargo discovers. The name-collision check and the
+/// already-written detection parse the module, so the commented stub neither
+/// occupies the base name nor flags the stub present: `--write` inserts the
+/// real test under the base name.
+#[test]
+fn commented_stub_does_not_count_as_written_or_named() -> Result<(), String> {
+    let seam = seam_at(
+        "src/lib.rs",
+        PRICE,
+        "amount >= threshold",
+        SeamKind::PredicateBoundary,
+        boundary("amount == threshold"),
+    )?;
+    let rendered = rust_test_stub(&seam, None, PRICE).map_err(|r| r.reason().to_string())?;
+    let anchor = "    #[test]\n    fn price_works() {";
+    for embedded in [
+        // Block comment holding the exact proposed function.
+        format!("    /*\n{}    */", rendered.text.trim_start_matches('\n')),
+        // Raw string holding the exact proposed function.
+        format!(
+            "    const COMMENTED: &str = r##\"\n{}\"##;",
+            rendered.text.trim_start_matches('\n')
+        ),
+    ] {
+        let source = PRICE.replacen(anchor, &format!("{embedded}\n{anchor}"), 1);
+        let seam = seam_at(
+            "src/lib.rs",
+            &source,
+            "amount >= threshold",
+            SeamKind::PredicateBoundary,
+            boundary("amount == threshold"),
+        )?;
+        let stub = rust_test_stub(&seam, None, &source).map_err(|r| r.reason().to_string())?;
+        assert_eq!(
+            stub.test_name, "price_boundary_discriminator",
+            "a commented-out stub does not occupy the base name: {embedded}"
+        );
+        assert!(
+            !stub.already_present,
+            "a commented-out stub is not an already-written test: {embedded}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn method_owner_uses_receiver_syntax_not_a_free_call() -> Result<(), String> {
     // #5357: a method owner was suggested as `as_whole_units(...)`.

@@ -154,15 +154,18 @@ Options:
   --write          Apply the stub: insert it into the owner file's inline
                    `#[cfg(test)]` module (or a new one), or create the
                    proposed `tests/` file. Refuses when the file changed
-                   since the stub was computed or the new file exists.
+                   since the stub was computed or the new file exists. A
+                   second --write for the same seam reports the stub already
+                   written instead of suffixing a `_2` duplicate.
   --json           Emit one `rust_test_stub` JSON document (schema_version
                    `0.3`) with the placement, test name, exact text, the
                    `todo!()` fill-ins, derived inputs, run command, and
                    inventory `grip_class` plus check `classification`
                    when known. A strongly_gripped seam stays `state:
-                   ready` (exit 0) and discloses the packet/repair
-                   omission reason in `warnings` and human output. When
-                   the seam's repair route is established, the ready
+                   ready` (exit 0) and discloses the real reason in
+                   `warnings` and human output: its tests already
+                   discriminate it.
+                   When the seam's repair route is established, the ready
                    document also carries `next_repair`: the
                    `ripr agent repair --seam-id <id>` start command, the
                    repair packet's admitted edit surface, and — when the
@@ -176,11 +179,12 @@ fails until that value is written; ripr never invents the expected value.
 `--at --kind` still selects from that one file's seams without using
 classification to pick the seam; after selection it looks up the inventory
 grip so the stub can disclose it. A strongly_gripped seam is still a
-scaffold (`state: ready`, exit 0) and reuses the packet/repair wording
-("configured off for strongly_gripped seams and is not included in agent
-results"). Side-effect and call-presence gaps, async, unsafe, and generic
-owners are refused with a named reason (exit `3`); stdout stays empty on a
-refusal.
+scaffold (`state: ready`, exit 0): nothing is "configured off" — the seam is
+exposed because existing tests already discriminate it, so the disclosure
+says a stub would add nothing (only a class a user severity actually
+disables is described as "configured off"). Side-effect and call-presence
+gaps, async, unsafe, and generic owners are refused with a named reason
+(exit `3`); stdout stays empty on a refusal.
 "#;
 
 pub(super) const AGENT_VERIFY_HELP: &str = r#"Verify static-evidence movement between a before and after snapshot.
