@@ -51,24 +51,7 @@ pub(super) fn equality_owner<'a>(
     owner: &'a FunctionSummary,
     index: &RustIndex,
 ) -> Option<EqualityOwner<'a>> {
-    if !matches!(owner.name.as_str(), "eq" | "ne") {
-        return None;
-    }
-    let rest = owner.id.0.split("::impl ").nth(1)?;
-    let head = rest.rsplit_once("::")?.0;
-    let (trait_ty, self_ty) = head.rsplit_once(" for ")?;
-    if !matches!(
-        trait_ty.trim(),
-        "PartialEq" | "cmp::PartialEq" | "std::cmp::PartialEq" | "core::cmp::PartialEq"
-    ) {
-        return None;
-    }
-    let impl_type = plain_type_name(self_ty.trim())?;
-    // A second `::impl ` segment means the impl is nested in another impl or
-    // a fn body; the id no longer names one type unambiguously.
-    if rest.contains("::impl ") {
-        return None;
-    }
+    let impl_type = partial_eq_impl_type(owner)?;
     let block_prefix = owner.id.0.strip_suffix(owner.name.as_str())?;
     let custom_ne = index.functions().iter().any(|function| {
         function.name == "ne" && function.id.0.strip_suffix("ne") == Some(block_prefix)
@@ -83,6 +66,35 @@ pub(super) fn equality_owner<'a>(
         via_eq,
         via_ne,
     })
+}
+
+/// The self type of the plain `impl PartialEq for T` whose `eq`/`ne` is
+/// `owner`; `None` for any other function.
+fn partial_eq_impl_type(owner: &FunctionSummary) -> Option<&str> {
+    if !matches!(owner.name.as_str(), "eq" | "ne") {
+        return None;
+    }
+    let rest = owner.id.0.split("::impl ").nth(1)?;
+    let head = rest.rsplit_once("::")?.0;
+    let (trait_ty, self_ty) = head.rsplit_once(" for ")?;
+    if !matches!(
+        trait_ty.trim(),
+        "PartialEq" | "cmp::PartialEq" | "std::cmp::PartialEq" | "core::cmp::PartialEq"
+    ) {
+        return None;
+    }
+    // A second `::impl ` segment means the impl is nested in another impl or
+    // a fn body; the id no longer names one type unambiguously.
+    if rest.contains("::impl ") {
+        return None;
+    }
+    plain_type_name(self_ty.trim())
+}
+
+/// Whether `owner` is `eq`/`ne` of a plain `impl PartialEq for T`: the only
+/// owners the equality reading (and its prefilter bucket) applies to.
+pub(in crate::analysis) fn is_partial_eq_method(owner: &FunctionSummary) -> bool {
+    partial_eq_impl_type(owner).is_some()
 }
 
 /// The identifier of a single-segment type, with at most lifetime
@@ -155,6 +167,9 @@ pub(super) fn test_asserts_equality_through_owner(
         return false;
     }
     let masked_source = mask_comments_and_strings(source);
+    if imports_other_type(&masked_source, impl_type) {
+        return false;
+    }
     ![
         "assert_eq",
         "assert_ne",
@@ -165,11 +180,92 @@ pub(super) fn test_asserts_equality_through_owner(
     .any(|name| defines_macro(&masked_source, name))
 }
 
+/// Whether the file may bring a different `T` into scope by `use`: a path
+/// naming `T` other than `super::T`/`self::T`/`crate::T`, or a glob other
+/// than `super::*`/`self::*`/`crate::*` and the standard library's. The owner
+/// id carries no module path, so `use super::b::Key;` beside `a::Key`'s impl
+/// cannot be told from the owner's own type; over-refusal only withholds the
+/// relation.
+fn imports_other_type(masked_source: &str, impl_type: &str) -> bool {
+    use_paths(masked_source).into_iter().any(|path| {
+        let words: Vec<&str> = path
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '*'))
+            .filter(|word| !word.is_empty())
+            .collect();
+        let local_root = matches!(words.first(), Some(&("super" | "self" | "crate")));
+        let std_root = matches!(words.first(), Some(&("std" | "core" | "alloc")));
+        let names_type = words.contains(&impl_type);
+        let glob = words.contains(&"*");
+        if std_root {
+            return false;
+        }
+        if names_type {
+            return !(words.len() == 2 && local_root && !glob);
+        }
+        glob && !(words.len() == 2 && local_root)
+    })
+}
+
+/// The text of every `use` item up to its `;`, from the masked source.
+fn use_paths(masked: &str) -> Vec<&str> {
+    let bytes = masked.as_bytes();
+    let mut paths = Vec::new();
+    let mut from = 0usize;
+    while let Some(relative) = masked[from..].find("use ") {
+        let at = from + relative;
+        from = at + 4;
+        if at > 0 && is_ident_byte(bytes[at - 1]) {
+            continue;
+        }
+        let rest = &masked[at + 4..];
+        paths.push(rest.split(';').next().unwrap_or(rest).trim());
+    }
+    paths
+}
+
+/// Whether `name` is bound by something other than a plain `let name`
+/// before `before` ends: a `for`/`if let`/`while let`/`let` pattern holding
+/// it with other tokens (tuple or variant patterns), or a closure parameter.
+/// Binding resolution is flow-insensitive, so any such rebinding makes the
+/// last plain `let` unreliable. Match-arm patterns are not read.
+fn rebound_by_pattern(before: &str, name: &str) -> bool {
+    let bytes = before.as_bytes();
+    let mut from = 0usize;
+    while let Some(relative) = before[from..].find(name) {
+        let at = from + relative;
+        from = at + name.len();
+        if !ident_boundary(bytes, at, at + name.len()) {
+            continue;
+        }
+        let line_start = before[..at].rfind([';', '{', '}']).map_or(0, |i| i + 1);
+        let prefix = before[line_start..at].trim_start();
+        // Text between the keyword and the name is the pattern so far: an
+        // `=` (let) or ` in ` (for) before the name puts it in the
+        // initializer or iterator instead.
+        let in_pattern = |lead: &str| {
+            prefix
+                .strip_prefix(lead)
+                .is_some_and(|pattern| !pattern.contains('=') && !pattern.contains(" in "))
+        };
+        let plain_let = prefix == "let " || prefix == "let mut ";
+        if !plain_let
+            && (in_pattern("for ")
+                || in_pattern("if let ")
+                || in_pattern("while let ")
+                || in_pattern("let ")
+                || prefix.matches('|').count() % 2 == 1)
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Whether a `macro_rules! name` definition appears in the masked source.
 fn defines_macro(masked: &str, name: &str) -> bool {
     let needle = "macro_rules!";
     let mut search = 0usize;
-    while let Some(relative) = masked[search..].find(&needle) {
+    while let Some(relative) = masked[search..].find(needle) {
         let after = masked[search + relative + needle.len()..].trim_start();
         if after
             .strip_prefix(name)
@@ -280,7 +376,9 @@ fn operand_has_type(operand: &str, impl_type: &str, before: &str) -> bool {
     }
     if operand.bytes().all(is_ident_byte) {
         // A unit struct is its own value; any other bare name is a binding.
-        return operand == impl_type || let_binding_mentions_type(before, operand, impl_type);
+        return operand == impl_type
+            || (!rebound_by_pattern(before, operand)
+                && let_binding_mentions_type(before, operand, impl_type));
     }
     initializer_is_one_head_expr(operand)
         && !operand.contains("::<")
@@ -394,6 +492,57 @@ mod tests {
             "Key<'a",
         ] {
             assert_eq!(plain_type_name(other), None, "{other:?}");
+        }
+    }
+
+    #[test]
+    fn a_format_message_with_commas_never_changes_the_operands() {
+        let masked = mask_comments_and_strings("assert_eq!(a, b, \"x,y,{}\", z);");
+        let found = comparison_macros(&masked);
+        assert_eq!(found.len(), 1);
+        assert_eq!(&found[0].operands[..2], ["a", "b"]);
+    }
+
+    #[test]
+    fn imports_that_may_name_another_key_are_refused() {
+        for refused in [
+            "use super::b::Key;",
+            "use crate::b::Key;",
+            "use other::Key;",
+            "use super::{Key, X};",
+            "use super::b::*;",
+            "use other::*;",
+        ] {
+            assert!(imports_other_type(refused, "Key"), "{refused}");
+        }
+        for allowed in [
+            "use super::*;",
+            "use super::Key;",
+            "use crate::Key;",
+            "use std::collections::HashMap;",
+            "use super::other::Thing;",
+        ] {
+            assert!(!imports_other_type(allowed, "Key"), "{allowed}");
+        }
+    }
+
+    #[test]
+    fn pattern_and_closure_rebindings_make_a_let_unreliable() {
+        for rebound in [
+            "let a = Key::new(1); for a in xs { ",
+            "let a = Key::new(1); if let Some(a) = f() { ",
+            "let a = Key::new(1); let (a, c) = f(); ",
+            "let a = Key::new(1); xs.map(|a| a + 1); ",
+        ] {
+            assert!(rebound_by_pattern(rebound, "a"), "{rebound}");
+            assert!(!operand_has_type("a", "Key", rebound), "{rebound}");
+        }
+        for plain in [
+            "let a = Key::new(1); let b = Key::new(a); ",
+            "let mut a = Key::new(1); f(a); ",
+            "let a: Key = make(); for x in a.items() { ",
+        ] {
+            assert!(!rebound_by_pattern(plain, "a"), "{plain}");
         }
     }
 }

@@ -23,6 +23,8 @@ use std::path::Path;
 
 mod equality_dispatch;
 
+pub(in crate::analysis) use equality_dispatch::is_partial_eq_method;
+
 /// Per-pass workspace dependency context for the #2972 cross-crate admit.
 /// Built once per classification pass in the Rust adapter and shared by
 /// every probe; `None` (no workspace root, narrower diff passes) disables
@@ -292,7 +294,7 @@ impl RelatedTestCandidateIndex {
             }
         }
 
-        if matches!(owner_name, "eq" | "ne") {
+        if owner_fn.is_some_and(equality_dispatch::is_partial_eq_method) {
             extend_bucket(&mut selected, Some(self.by_equality_assert.as_slice()));
         }
 

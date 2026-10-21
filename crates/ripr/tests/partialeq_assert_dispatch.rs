@@ -12,6 +12,10 @@ use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, check_workspa
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+const EXPECTED_CLASSES: [&str; 2] = [
+    "Predicate:InfectionUnknown",
+    "ReturnValue:PropagationUnknown",
+];
 const OLD_EQ: &str = "        self.name == other.name\n";
 const NEW_EQ: &str = "        self.name == other.name && self.id == other.id\n";
 
@@ -49,6 +53,12 @@ struct TempRepo {
 
 impl TempRepo {
     fn create(make: impl Fn(&str) -> String) -> Result<Self, String> {
+        Self::create_changed(make, OLD_EQ, NEW_EQ)
+    }
+
+    /// A repo whose `src/lib.rs` is `make(new)` and whose diff replaces the
+    /// source line `old` with `new`.
+    fn create_changed(make: impl Fn(&str) -> String, old: &str, new: &str) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "ripr-partialeq-assert-{}-{}",
@@ -62,10 +72,10 @@ impl TempRepo {
             "[package]\nname = \"keyed\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
         )
         .map_err(|error| format!("write Cargo.toml failed: {error}"))?;
-        let lib = make(NEW_EQ);
+        let lib = make(new);
         let eq_line = lib
             .lines()
-            .position(|line| line == NEW_EQ.trim_end_matches('\n'))
+            .position(|line| line == new.trim_end_matches('\n'))
             .map(|index| index + 1)
             .ok_or("premise: the changed eq body is in the source")?;
         std::fs::write(root.join("src/lib.rs"), &lib)
@@ -78,7 +88,7 @@ index 1111111..2222222 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -{eq_line},1 +{eq_line},1 @@
--{OLD_EQ}+{NEW_EQ}"
+-{old}+{new}"
             ),
         )
         .map_err(|error| format!("write diff failed: {error}"))?;
@@ -112,6 +122,16 @@ impl Drop for TempRepo {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.root);
     }
+}
+
+/// Sorted `family:class` pairs of every finding.
+fn classes(findings: &[Finding]) -> Vec<String> {
+    let mut pairs: Vec<String> = findings
+        .iter()
+        .map(|finding| format!("{:?}:{:?}", finding.probe.family, finding.class))
+        .collect();
+    pairs.sort();
+    pairs
 }
 
 /// Names of the tests some finding relates to the owner by a direct call.
@@ -344,6 +364,147 @@ fn a_fixture_word_in_the_reaching_test_still_stops_the_reading() -> Result<(), S
             .iter()
             .any(|finding| finding.stop_reasons.contains(&StopReason::FixtureOpaque)),
         "{findings:?}"
+    );
+    Ok(())
+}
+
+const THREE_KEY_TESTS: &str = "    #[test]
+    fn keys_equal_by_name() {
+        let a = Key::new(\"a\", 1);
+        let b = Key::new(\"a\", 2);
+        assert_eq!(a, b);
+    }
+";
+
+/// The wiring only relates a test to the owner; the verdict classes must
+/// equal what an explicit `a.eq(&b)` call (already a direct owner call on
+/// main) produces, and the pinned list is the same fixture's classes on main.
+#[test]
+fn reaching_eq_through_assert_eq_moves_no_class_beyond_an_explicit_eq_call() -> Result<(), String> {
+    let by_macro = plain(THREE_KEY_TESTS)?.findings()?;
+    assert_eq!(direct_tests(&by_macro), ["keys_equal_by_name"]);
+    // The same test spelling the call out is a direct owner call on main
+    // already; crediting the macro must land on exactly its classes.
+    let by_call = plain(
+        "    #[test]
+    fn keys_equal_by_name() {
+        let a = Key::new(\"a\", 1);
+        let b = Key::new(\"a\", 2);
+        assert!(a.eq(&b));
+    }
+",
+    )?
+    .findings()?;
+    assert_eq!(direct_tests(&by_call), ["keys_equal_by_name"]);
+    assert_eq!(classes(&by_macro), classes(&by_call), "{by_macro:?}");
+    assert_eq!(classes(&by_macro), EXPECTED_CLASSES, "{by_macro:?}");
+    Ok(())
+}
+
+#[test]
+fn a_user_assert_eq_macro_is_not_the_std_comparison() -> Result<(), String> {
+    let repo = TempRepo::create(|body| {
+        source(
+            "impl PartialEq for Key",
+            "",
+            "    macro_rules! assert_eq {
+        ($left:expr, $right:expr) => {
+            let _ = ($left, $right);
+        };
+    }
+",
+            THREE_KEY_TESTS,
+            body,
+        )
+    })?;
+    let findings = repo.findings()?;
+    assert_eq!(
+        direct_tests(&findings),
+        Vec::<String>::new(),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_import_that_may_name_another_key_is_not_credited() -> Result<(), String> {
+    let repo = TempRepo::create(|body| {
+        source(
+            "impl PartialEq for Key",
+            "",
+            "    use super::other::Key;\n",
+            THREE_KEY_TESTS,
+            body,
+        )
+    })?;
+    let findings = repo.findings()?;
+    assert_eq!(
+        direct_tests(&findings),
+        Vec::<String>::new(),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_pattern_rebinding_of_an_operand_is_not_credited() -> Result<(), String> {
+    let repo = plain(
+        "    #[test]
+    fn rebound_by_a_loop() {
+        let a = Key::new(\"a\", 1);
+        let b = Key::new(\"a\", 2);
+        for a in [1, 2] {
+            let _ = a;
+        }
+        assert_eq!(a, b);
+    }
+",
+    )?;
+    let findings = repo.findings()?;
+    assert_eq!(
+        direct_tests(&findings),
+        Vec::<String>::new(),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_non_partial_eq_owner_keeps_the_fixture_stop_reason_from_every_related_test()
+-> Result<(), String> {
+    let repo = TempRepo::create_changed(
+        |line| {
+            format!(
+                "pub fn score(x: u32) -> u32 {{
+{line}}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    #[test]
+    fn score_is_three() {{
+        assert_eq!(score(1), 3);
+    }}
+
+    #[test]
+    fn unrelated_builder_check() {{
+        let builder = String::from(\"builder\");
+        assert_eq!(builder.len(), 7);
+    }}
+}}
+"
+            )
+        },
+        "    x + 1\n",
+        "    x + 2\n",
+    )?;
+    let findings = repo.findings()?;
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.stop_reasons.contains(&StopReason::FixtureOpaque)),
+        "the scoped change must not touch other owners: {findings:?}"
     );
     Ok(())
 }
