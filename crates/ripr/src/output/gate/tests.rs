@@ -1316,7 +1316,6 @@ fn gate_baseline_fallback_only_match_discloses_warning_and_match_kind() -> Resul
               "entries": [
                 {
                   "identity": {
-                    "canonical_gap_id": "gap:stale-reviewed-debt",
                     "fallback": "src/pricing.rs:88:weakly_gripped"
                   }
                 }
@@ -1369,6 +1368,38 @@ fn gate_baseline_fallback_only_match_discloses_warning_and_match_kind() -> Resul
         markdown.contains("matched baseline evidence by fallback path/line/static_class"),
         "fallback disclosure must be visible in human output"
     );
+    ignore_remove_dir_all(dir);
+    Ok(())
+}
+
+#[test]
+fn gate_baseline_fallback_match_with_divergent_canonical_id_blocks() -> Result<(), String> {
+    // Issue #1964 / audit B1-F1: a canonical-bearing entry whose canonical id
+    // differs from the candidate's must not suppress it through the shared
+    // `path:line:class` fallback. Same gate/delta divergence rule.
+    let dir = temp_dir("gate-baseline-fallback-divergent")?;
+    let with_fallback = write_temp_json(
+        &dir,
+        "with-fallback.json",
+        r#"{"schema_version":"0.1","kind":"gate_baseline","entries":[{"identity":{
+              "canonical_gap_id":"gap:stale-reviewed-debt",
+              "fallback":"src/pricing.rs:88:weakly_gripped"}}]}"#,
+    )?;
+    let stripped = write_temp_json(
+        &dir,
+        "stripped.json",
+        r#"{"schema_version":"0.1","kind":"gate_baseline","entries":[{"identity":{
+              "canonical_gap_id":"gap:stale-reviewed-debt"}}]}"#,
+    )?;
+    for baseline in [with_fallback, stripped] {
+        let (_fixture_input, mut input) = fixture_input(GateMode::BaselineCheck)?;
+        input.baseline = Some(baseline);
+        let report = build_gate_decision_report(&input)?;
+        assert!(report.decisions[0].is_baseline_new);
+        assert_eq!(report.decisions[0].baseline_match_kind, None);
+        assert_eq!(report.status, "blocked");
+        assert_eq!(report.summary.blocking, 1);
+    }
     ignore_remove_dir_all(dir);
     Ok(())
 }

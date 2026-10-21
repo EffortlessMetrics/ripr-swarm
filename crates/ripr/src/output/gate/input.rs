@@ -531,7 +531,28 @@ pub(super) fn baseline_index_from_value(value: &Value) -> BaselineIndex {
         collect_identity(&mut index.identities, item.pointer("/identity/source_id"));
         collect_identity(&mut index.identities, item.pointer("/identity/id"));
         collect_identity(&mut index.identities, item.pointer("/identity/dedupe_key"));
-        collect_identity(&mut index.identities, item.pointer("/identity/fallback"));
+        let entry_canonical = item
+            .pointer("/identity/canonical_gap_id")
+            .or_else(|| item.get("canonical_gap_id"))
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty());
+        match (
+            item.pointer("/identity/fallback")
+                .and_then(Value::as_str)
+                .filter(|text| !text.is_empty()),
+            entry_canonical,
+        ) {
+            // Canonical-bearing entry: the fallback is compatibility
+            // evidence only and cannot join on its own (issue #1964).
+            (Some(fallback), Some(canonical)) => {
+                index
+                    .fallback_canonical
+                    .entry(fallback.to_string())
+                    .or_default()
+                    .insert(canonical.to_string());
+            }
+            _ => collect_identity(&mut index.identities, item.pointer("/identity/fallback")),
+        }
         collect_identity(
             &mut index.identities,
             item.pointer("/evidence_record/canonical_gap_id"),

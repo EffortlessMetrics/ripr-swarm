@@ -12,13 +12,13 @@ The corpus is exercised by
 Scenarios:
 
 - `fallback-only-new-canonical` — same path/line/static_class as a stale
-  baseline entry but a genuinely different canonical gap: the fallback-only
-  match keeps `is_baseline_new = false` during the compatibility window and
-  must be disclosed (warning + `baseline_match_kind`).
+  baseline entry but a genuinely different canonical gap: the canonical ids
+  diverge, so the fallback join is refused (issue #1964, same rule as
+  `ripr baseline diff`) and the gap is new and blocks.
 - `line-moved-canonical-match` — the line moved but the canonical identity is
   unchanged: a canonical match, so no warning and no `baseline_match_kind`.
 - `two-gaps-one-line-same-class` — two gaps share one line and static class:
-  the canonical match stays clean; the fallback-only collision is disclosed.
+  the canonical match stays clean; the colliding gap with a different canonical id is new and blocks.
 - `missing-canonical-identity` — the candidate carries no canonical or seam
   identity: the fallback-only match is disclosed.
 - `mixed-canonical-and-legacy-entries` — a baseline mixing canonical and

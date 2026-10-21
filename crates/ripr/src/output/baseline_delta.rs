@@ -1124,10 +1124,19 @@ fn match_current_decision(identity: &Identity, indexes: &CurrentIndexes) -> Matc
 /// canonical identity change (issue #1964). `None` unless both sides carry a
 /// canonical gap id and they differ.
 fn canonical_divergence(baseline: &BaselineRecord, current: &CurrentDecision) -> Option<String> {
-    match (
+    canonical_identity_divergence(
         baseline.identity.canonical_gap_id.as_deref(),
         current.identity.canonical_gap_id.as_deref(),
-    ) {
+    )
+}
+
+/// The single owner of the fallback-join divergence rule, shared by the delta
+/// and by the gate's baseline comparison so they cannot disagree (issue #1964).
+pub(super) fn canonical_identity_divergence(
+    baseline: Option<&str>,
+    current: Option<&str>,
+) -> Option<String> {
+    match (baseline, current) {
         (Some(old), Some(new)) if old != new => Some(format!("{old} -> {new}")),
         _ => None,
     }
