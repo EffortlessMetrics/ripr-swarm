@@ -38,6 +38,32 @@ workflow shell with the production policy binary and real Git histories, and
 exercise the checked-in job predicates and dependency wiring; they do not claim
 hosted Actions or wheel qualification.
 
+The wheel's package source-contract step selects the complete
+`policy::distribution::` test namespace, including sibling guidance, wheelhouse,
+version and archive-contract modules. The compiled-inventory regression compares
+the workflow filter through libtest with that complete nonempty inventory and
+rejects the former root-tests-only selection, a zero-match filter and an
+overbroad policy filter. Enumeration is separate from the step's test execution;
+these source controls do not qualify a built wheel or guard every possible
+zero-test command.
+
+## Merge queue request (cutover)
+
+`routed-rust.yml` also subscribes to `merge_group` (`checks_requested`), so the
+required `Ripr Rust Small Result` can be earned once per merge-queue entry, on
+the exact queued merge commit, instead of by a label. The queue run reads the
+queued PR's claim and scope (#8192) through the same admission job: the PR
+number comes from the merge-group branch name
+(`gh-readonly-queue/<base>/pr-<n>-<sha>`) and the PR's labels are forwarded to
+the gate (`full-ci` still selects the advisory reports, `ripr-waive` still
+reaches the PR-evidence step). The exact-head binding is the head SHA in the
+queue branch name, so a push after enqueue fails admission. Admission is per
+PR, so the queue must use a group size of 1; the queued commit must be a single
+squash commit of the queued PR sitting directly on the group's `base_sha`, or
+admission refuses it, so a batch fails closed even if the ruleset is misconfigured. Batching needs per-PR admission (#8082) and is a follow-up. The
+`merge-ready` label request below still works until the label request is
+retired in a follow-up, after the repository's merge queue is enabled.
+
 ## Merge-ready label flow
 
 The non-required lanes gated by `merge-ready` do not run on a Draft or plain Ready
@@ -740,6 +766,16 @@ failed, or skipped provider remains missing review evidence after Ready; no
 synthetic success replaces it. Runner-minute savings remain unmeasured until a
 natural lifecycle is observed. `xtask/tests/pr_readiness_workflow_contract.rs`
 checks parsed event/config contracts, not hosted provider execution.
+
+The reusable required Rust gates prepare both locked owner-return fixtures,
+`owner_return_pin_fallible_literal/input` and
+`owner_return_pin_json_real_literal/input`, before repository policy and tests.
+Their independent lockfiles remain authoritative: a workspace dependency update
+does not prepare the JSON fixture's pinned `serde_json` version. Both fetches
+must succeed in the same Cargo home the offline test probes use. For a workflow
+repair, verify the executed reusable-workflow revision and preparation-step
+result; a checked-out workflow blob in the test context alone does not prove
+which controller executed.
 
 UB Review prepares the locked `owner_return_pin_fallible_literal/input` fixture
 before invoking the action, matching required Rust CI. Its offline identity
