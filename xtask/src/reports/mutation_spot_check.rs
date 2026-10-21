@@ -54,7 +54,7 @@ const SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v2";
 /// `crates/ripr/src/output/mutation_calibration.rs`; xtask is a separate crate
 /// and cannot import it, so the supported set is duplicated here with this
 /// pointer at the owner (RIPR-SPEC-0292). 0.2 carries the span-containment
-/// join and explicit span-overlap and unmatched reasons; 0.3 (RIPR-SPEC-0286,
+/// join and explicit span-overlap and unmatched reasons; 0.3 (RIPR-SPEC-0294,
 /// PR #8988) adds provenance and how_to_read without changing that shape.
 const SUPPORTED_CALIBRATION_SCHEMA_VERSIONS: &[&str] = &["0.2", "0.3"];
 const CANONICAL_PRECISE: &str = "canonical_precise";
@@ -798,7 +798,7 @@ fn classify_records(
         .unwrap_or("missing");
     if !SUPPORTED_CALIBRATION_SCHEMA_VERSIONS.contains(&schema) {
         return Err(format!(
-            "mutation calibration schema `{schema}` is not one the spot check classifies; supported calibration schema versions: {}. The renderer's current schema version is owned by `MUTATION_CALIBRATION_SCHEMA_VERSION` in crates/ripr/src/output/mutation_calibration.rs (0.2 before RIPR-SPEC-0286, 0.3 after it); rebuild ripr and re-run `cargo xtask mutation-spot-check` so the calibration JSON it feeds the harness carries a supported schema",
+            "mutation calibration schema `{schema}` is not one the spot check classifies; supported calibration schema versions: {}. The renderer's current schema version is owned by `MUTATION_CALIBRATION_SCHEMA_VERSION` in crates/ripr/src/output/mutation_calibration.rs (0.2 before RIPR-SPEC-0294, 0.3 after it); rebuild ripr and re-run `cargo xtask mutation-spot-check` so the calibration JSON it feeds the harness carries a supported schema",
             SUPPORTED_CALIBRATION_SCHEMA_VERSIONS.join(", ")
         ));
     }
