@@ -109,7 +109,10 @@ operands typed through any other expression. Any such case yields no relation.
 
 ## Test Mapping
 
-See `.ripr/traceability.toml` entry `RIPR-SPEC-0286`.
+- `crates/ripr/tests/partialeq_assert_dispatch.rs` (all controls named
+  in Required Evidence; registered in `.ripr/traceability.toml`)
+- `crates/ripr/src/analysis/classify/related_tests/equality_dispatch.rs`
+  unit tests (operand typing, import refusal, rebinding, macro splitting)
 
 ## Acceptance Examples
 
@@ -118,3 +121,23 @@ let a = Key::new("a", 1);
 let b = Key::new("a", 2);
 assert_eq!(a, b); // related to the changed `impl PartialEq for Key::eq`
 ```
+
+## Non-Goals
+
+- No new exposure class, relation reason, oracle vocabulary or output field.
+- No type inference beyond the syntactic and declared-return forms above.
+- No reading of match-arm patterns, `cfg`-gated impls or generic impls.
+
+## Implementation Mapping
+
+- `crates/ripr/src/analysis/classify/related_tests/equality_dispatch.rs`
+  owns the reading: owner shape, std-trait check, operand typing, shadow,
+  import, macro and rebinding refusals.
+- `crates/ripr/src/analysis/classify/related_tests.rs` wires the relation as
+  an independent signal beside `calls_owner` and gates the prefilter bucket.
+- `crates/ripr/src/analysis/classifier/finding.rs` scopes the
+  `fixture_opaque` scan for `PartialEq` owners.
+
+## Metrics
+
+- `unit_test_pass_rate` on the registered tests.
