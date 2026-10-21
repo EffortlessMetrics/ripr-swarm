@@ -14,7 +14,9 @@ use literal_json::{
 };
 mod slice_table;
 pub(crate) use fallible_check::{decimal_u8, literal_check_syntax, literal_owner_syntax};
-pub(crate) use slice_table::{constant_table_call_column, owner_reference_count};
+pub(crate) use slice_table::{
+    constant_table_call_column, direct_literal_call_column, owner_reference_count,
+};
 
 use super::parse_clean_source_file;
 use super::ra::{
