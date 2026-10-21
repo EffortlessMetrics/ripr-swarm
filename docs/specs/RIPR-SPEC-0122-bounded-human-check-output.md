@@ -238,7 +238,12 @@ whose probe family is `predicate`, `return_value`, `error_path`, or
 `ripr agent stub --root <root> --at <file>:<line> --kind <family>` (#5355,
 #5471), where `<family>` is the finding's probe family. That command
 resolves the finding location to the gap in the same function and prints a
-compiling test stub, or a named refusal. Side-effect, call-deletion,
+compiling test stub, or a named refusal. When the finding line holds no seam
+of its own, `--at` stubs the nearest gap, so the printed `<line>` is that
+seam's own line rather than the finding line, and only when asking for that
+line resolves to the same seam with no substitution note; otherwise no route
+is printed. A changed constant routed through a consuming function follows the
+same rule for the consumer's seam line (#8444). Side-effect, call-deletion,
 field-construction, and static-unknown families never get the block, because
 the stub producer refuses them.
 
