@@ -535,6 +535,14 @@ fn ts_assertion_after_always_exiting_try_is_withheld() {
         "try { x(); } catch (e) { return; } finally { return; }",
         "try { x(); } finally { throw new Error(\"x\"); }",
         "try { return; } catch (e) { throw e; } finally { cleanup(); }",
+        // A bare non-throwing exit first: the catch can never run (#9150).
+        "try { return; } catch (e) {}",
+        "try { return; } catch (e) { log(e); }",
+        "try { return 1; } catch (e) { if (y) { return; } }",
+        "try { return \"ok\"; } catch (e) {}",
+        "try { break; } catch (e) {}",
+        "try { continue; } catch (e) {}",
+        "try { return; } catch (e) {} finally { cleanup(); }",
     ] {
         let body = format!("  {dead}\n  expect(price(150)).toBe(130);");
         assert!(
@@ -551,12 +559,18 @@ fn ts_assertion_after_always_exiting_try_is_withheld() {
 fn ts_assertion_after_try_that_can_complete_stays_credited() {
     for live in [
         "try { if (x) { return; } } finally { cleanup(); }",
-        "try { return; } catch (e) {}",
+        "try { throw new Error(\"x\"); } catch (e) {}",
         "try { throw new Error(\"x\"); } catch (e) { log(e); }",
+        // Something can throw into the catch before the exit completes.
+        "try { work(); return; } catch (e) {}",
+        "try { return f(); } catch (e) {}",
+        "try { return a.b; } catch (e) {}",
+        "try { if (x) { return; } } catch (e) {}",
+        "try { { return; } } catch (e) {}",
         "try { x(); } catch (e) { return; }",
         "try { x(); } finally { cleanup(); }",
         "try { x(); } finally { if (y) { return; } }",
-        "try { return; } catch (e) { if (y) { return; } }",
+        "try { work(); return; } catch (e) { if (y) { return; } }",
     ] {
         let body = format!("  {live}\n  expect(price(150)).toBe(130);");
         assert_eq!(
@@ -610,12 +624,71 @@ fn ts_dead_assertion_after_try_finally_return_does_not_expose() -> Result<(), St
         ExposureClass::Exposed,
         "an unreachable assertion must not expose the change: {got:?}"
     );
+    // A bare non-throwing exit first makes an empty catch unreachable (#9150).
+    let bare = finding_for_body("  try { return; } catch (e) {}\n  expect(price(150)).toBe(130);")?;
+    assert_ne!(
+        bare.class,
+        ExposureClass::Exposed,
+        "the catch cannot run, so the assertion is dead: {bare:?}"
+    );
+    // Live control: work() can throw into the catch, so the assertion may run.
+    let live = finding_for_body(
+        "  try { work(); return; } catch (e) {}\n  expect(price(150)).toBe(130);",
+    )?;
+    assert_eq!(
+        live.class,
+        ExposureClass::Exposed,
+        "a throwing-capable try keeps the credited assertion: {live:?}"
+    );
     let control =
         finding_for_body("  try { x(); } finally { cleanup(); }\n  expect(price(150)).toBe(130);")?;
     assert_eq!(
         control.class,
         ExposureClass::Exposed,
         "a completing try keeps the credited assertion: {control:?}"
+    );
+    Ok(())
+}
+
+/// An assertion inside a provably unreachable `catch` (the `try` block opens
+/// with a non-throwing exit) never runs, so it earns no credit and raises no
+/// conditional-credit gap (#9150); a live catch keeps both.
+#[test]
+fn ts_assertion_inside_unreachable_catch_is_withheld() -> Result<(), String> {
+    let assertion = "expect(price(150)).toBe(130);";
+    for dead in ["return;", "return 1;", "break;", "continue;"] {
+        let body = format!("  try {{ {dead} }} catch (e) {{ {assertion} }}");
+        assert!(
+            extracted_assertions(&body).is_empty(),
+            "assertion in the catch after `{dead}` is dead and must be withheld"
+        );
+    }
+    let gap = "  try { return; } catch (e) {\n    if (flag) {\n      expect(price(150)).toBe(130);\n    }\n  }";
+    assert!(
+        credit_gap_for_body(gap).is_none(),
+        "a conditional inside an unreachable catch must not disclose"
+    );
+    for live in ["work(); return;", "return f();", "throw e;"] {
+        let body = format!("  try {{ {live} }} catch (e) {{ {assertion} }}");
+        assert_eq!(
+            extracted_assertions(&body).len(),
+            1,
+            "catch after `{live}` can run and stays credited"
+        );
+    }
+    let dead = finding_for_body(&format!("  try {{ return; }} catch (e) {{ {assertion} }}"))?;
+    assert_ne!(
+        dead.class,
+        ExposureClass::Exposed,
+        "an exact assertion solely in a dead catch must not expose: {dead:?}"
+    );
+    let live = finding_for_body(&format!(
+        "  try {{ work(); return; }} catch (e) {{ {assertion} }}"
+    ))?;
+    assert_eq!(
+        live.class,
+        ExposureClass::Exposed,
+        "a reachable catch keeps its credited assertion: {live:?}"
     );
     Ok(())
 }

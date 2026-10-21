@@ -453,3 +453,89 @@ fn bracket_calls_and_loaders_keep_exposed() -> Result<(), String> {
     }
     Ok(())
 }
+
+const OPTIONS_PRICE: &str = "export function price(qty: number, { preserveOrder = true } = {}): string {\n  let out = \"\";\n  if (preserveOrder) {\n    out = \"ordered\";\n  } else {\n    out = \"unordered\";\n  }\n  return out + qty;\n}\n";
+
+fn options_else_arm(label: &str, test: &str) -> Result<Finding, String> {
+    let source = OPTIONS_PRICE.replace("\"unordered\"", "\"loose\"");
+    finding_at(
+        label,
+        &source,
+        6,
+        "    out = \"unordered\";",
+        "    out = \"loose\";",
+        test,
+    )
+}
+
+#[test]
+fn an_options_object_guard_no_test_input_enters_withdraws_exposed() -> Result<(), String> {
+    for (label, calls) in [
+        ("options-omitted", vec![("price(2)", "\"ordered2\"")]),
+        (
+            "options-other-key",
+            vec![
+                ("price(2)", "\"ordered2\""),
+                ("price(3, { other: 1 })", "\"ordered3\""),
+            ],
+        ),
+        (
+            "options-explicit-true",
+            vec![("price(2, { preserveOrder: true })", "\"ordered2\"")],
+        ),
+    ] {
+        let finding = options_else_arm(label, &test_with(&calls))?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+        assert!(
+            finding
+                .missing
+                .iter()
+                .any(|line| line.contains("!(preserveOrder)")
+                    && line.contains("no related test call enters")),
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_options_object_guard_some_test_input_can_enter_keeps_exposed() -> Result<(), String> {
+    // Positive control: the call that turns the option off keeps the credit.
+    let entering = options_else_arm(
+        "options-entered",
+        &test_with(&[("price(2, { preserveOrder: false })", "\"unordered2\"")]),
+    )?;
+    assert_eq!(
+        entering.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        entering.missing
+    );
+    let mixed = options_else_arm(
+        "options-mixed",
+        &test_with(&[
+            ("price(2)", "\"ordered2\""),
+            ("price(3, { preserveOrder: false })", "\"unordered3\""),
+        ]),
+    )?;
+    assert_eq!(mixed.class, ExposureClass::Exposed, "{:?}", mixed.missing);
+    // Options the reader cannot read may turn the option off.
+    for (label, call) in [
+        ("options-variable", "price(2, opts)"),
+        ("options-spread", "price(2, { ...base })"),
+        (
+            "options-computed-value",
+            "price(2, { preserveOrder: pick() })",
+        ),
+    ] {
+        let finding = options_else_arm(label, &test_with(&[(call, "\"x\"")]))?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
+    Ok(())
+}

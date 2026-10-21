@@ -59,8 +59,9 @@ pub(in crate::analysis) use element_field_pin::observes_returned_element_field;
 pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_witness};
 pub(in crate::analysis) use framework_oracle::withhold_framework_oracle_gap;
 pub(in crate::analysis) use gap_admission::{
-    CALL_BUDGET_SATURATED, REFUSALS_ARE_ANALYZER_LIMITS, withhold_call_budget_gap,
-    withhold_log_capture_gap, withhold_should_panic_gap, withhold_unsupported_gap,
+    CALL_BUDGET_SATURATED, DEBUG_ASSERT_EQ_PIN_PREFIX, REFUSALS_ARE_ANALYZER_LIMITS, is_ignored,
+    withhold_call_budget_gap, withhold_debug_assertion_gap, withhold_log_capture_gap,
+    withhold_should_panic_gap, withhold_unsupported_gap,
 };
 pub(in crate::analysis) use helper_transfer::{FieldProjectionReceipt, field_projection_receipt};
 pub(in crate::analysis) use helper_transfer::{
@@ -111,6 +112,9 @@ pub(in crate::analysis) use reveal::unconditional_owner_insert_field;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;
 pub(in crate::analysis) use reveal::{
     ASSERTION_CONTEXT_UNESTABLISHED, FileUseStatements, oracle_crediting_relations,
+};
+pub(in crate::analysis) use reveal::{
+    NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY, NO_REACHABLE_TEST_OBSERVE_SUMMARY,
 };
 pub(in crate::analysis) use reveal::{ReturnOracleAdmission, contains_as_whole_word};
 pub(in crate::analysis) use slice_boundary::refine_slice_boundary;

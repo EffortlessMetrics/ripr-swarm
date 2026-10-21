@@ -323,7 +323,24 @@ identity, an empty `command_routes` list with the typed limitation (concrete
 typed `CommandSpec` routes are published only by the durable CLI before
 phase), the shared non-claims, and the resource links. An ineligible item
 returns `repair_packet_ready: false` with the typed ineligibility reason and
-`attempt: null` — no attempt is created and no field is guessed.
+`attempt: null` — no attempt is created and no field is guessed. The reasons
+the shared seam-level repair gate behind `ripr repair` contributes are
+`seam_already_gripped` (the seam's existing tests already grip it),
+`seam_gate_refused` (route not ready, cross-language limits or policy
+omission), `seam_ambiguous` (several seams name the item), `seam_not_found`
+(no classified seam names it) and `seam_inventory_truncated` (the repo-wide
+seam inventory is truncated by the seam limit, or its completeness could not
+be established, so `ripr repair` refuses every item; widen the budget with
+`RIPR_REPO_EXPOSURE_SEAM_LIMIT`).
+
+The truncation refusal covers repair readiness (`ripr_list_gaps`,
+`ripr_get_gap`, `ripr_prepare_repair`). `ripr_get_repair_card` is a read-only
+card projection of the shared card producer over the refresh's diff-scoped
+inventory and is out of scope for #9108 (tracked in #9231): it does not start an attempt, and it
+does not yet mirror `ripr agent card`'s own incomplete-inventory refusal. Read
+readiness from `repair_packet_ready` and `repair_ineligibility`, not from the
+card's `readiness.repair_ready`, when the seam limit may have truncated the
+inventory.
 
 `ripr_get_repair_attempt` (and `ripr://repair-attempt/{attempt_id}`) reads
 one transaction by identity: session transactions answer first; otherwise
@@ -408,6 +425,10 @@ store is plain filesystem state and is re-read live at card-read time, so the
 card's attempt block matches `ripr agent status` at that moment; in-memory
 session transactions never ride a card. The next-action display binds the
 portable root `.` and is presentation only, never execution authority.
+The card's `subject.canonical_gap_id` is the bound finding's own id, the same
+readable id `ripr_list_gaps` and `ripr_get_gap` return (#8638), so it can be passed back
+to those tools (they do not accept the seam-side hash); that hash rides additively as
+`subject.seam_content_gap_id`.
 
 ## Typed failures
 
@@ -439,7 +460,12 @@ workspace identity, a card over its detail budget); `policy_omitted` and
 cannot reach them; the rest stay reserved for the slices that own those
 states (they are named now so the wire contract
 stays stable). Tool argument shape violations use standard Invalid Params;
-unknown tools use Method Not Found with the available names in `error.data`.
+unknown tools use Invalid Params (MCP: the `tools/call` method exists; the
+name argument is wrong) with the available names in `error.data`. Unknown
+methods use Method Not Found (`Method not found: <method>`). `ripr_list_gaps`
+rejects a `language` filter that is not a language wire string (`rust`,
+`typescript`, `javascript`, `python`, `perl`) with Invalid Params listing the
+allowed values, instead of returning an indistinguishable empty page.
 
 ## What it does not do
 
@@ -473,8 +499,14 @@ The instructions (returned by both `initialize` and `server/discover`) and the
 tool descriptions state positively what each tool returns, its bounds, and
 what it does not do. Protocol errors keep standard JSON-RPC codes. The pinned
 official Rust SDK owns negotiation, dispatch, correlation and cancellation.
-Syntax-invalid JSON is ignored; well-formed messages with invalid typed
-shapes receive Invalid Request and the transport can read the next frame.
+Every message that cannot be typed is answered, so a client never waits on
+silence: syntax-invalid JSON (including nesting past the parser limit) receives
+Parse error (`-32700`, null id) and well-formed JSON that is not a request the
+SDK can type (null or fractional id, wrong `jsonrpc` version, missing method)
+receives Invalid Request (`-32600`); the transport then reads the next frame.
+The reply carries the request id when a string or integer one is readable. An
+over-cap message is answered `-32600` with its id when a top-level string or
+integer `id` member lies within its first 4 KiB, otherwise null.
 Unknown request IDs are omitted in SDK-dispatched error responses, while
 transport-level protocol errors (well-formed messages with invalid typed
 shapes) carry an explicit null id per JSON-RPC; readable IDs remain

@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-debug-assert-test-oracle",
+  "origin": "authored",
+  "version_label": "authored 2026-10-17 for a test whose only check is debug_assert_eq! (#8051, RIPR-SPEC-0240)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "e59ce2cadf1deba0993e89274ccbcd43a650793108cdfdd15792c7225ee68087"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "749e940e809004f8375cbc8fa6480638097ba8a4a1ffab7662486094a89f4868"
+    }
+  ]
+}

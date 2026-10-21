@@ -14,7 +14,9 @@ use literal_json::{
 };
 mod slice_table;
 pub(crate) use fallible_check::{decimal_u8, literal_check_syntax, literal_owner_syntax};
-pub(crate) use slice_table::{constant_table_call_column, owner_reference_count};
+pub(crate) use slice_table::{
+    constant_table_call_column, direct_literal_call_column, owner_reference_count,
+};
 
 use super::parse_clean_source_file;
 use super::ra::{
@@ -1873,6 +1875,40 @@ pub(crate) fn empty_local_macro_invocation_ranges(
         .collect()
 }
 
+/// #8051: every bare `debug_assert_eq!` call in `source`, as (line, text) in
+/// the same spelling [`owner_pin_assertions`] keys its context by. Empty when
+/// the file does not parse cleanly. The caller keeps the per-file result and
+/// filters it to a test's lines.
+pub(crate) fn debug_assert_eq_calls(source: &str) -> Vec<(usize, String)> {
+    let Some(parse) = parse_clean_source_file(source) else {
+        return Vec::new();
+    };
+    let lines = LineIndex::new(source);
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+        .filter(|call| {
+            call.path().is_some_and(|path| {
+                path.syntax()
+                    .text()
+                    .to_string()
+                    .split_whitespace()
+                    .collect::<String>()
+                    == "debug_assert_eq"
+            })
+        })
+        .map(|call| {
+            let range = call.syntax().text_range();
+            (
+                lines.line(range.start()),
+                slice_macro_call_text(source, range.start(), range.end()),
+            )
+        })
+        .collect()
+}
+
 pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAssertions {
     let mut result = OwnerPinAssertions::default();
     let Some(parse) = parse_clean_source_file(source) else {
@@ -2000,12 +2036,13 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             .descendants()
             .filter_map(ast::MacroCall::cast)
         {
-            // `assert!` is collected for the bool-owner pin; the classify
+            // `assert!` is collected for the bool-owner pin and
+            // `debug_assert_eq!` for its profile limit (#8051); the classify
             // side decides which spelling a pin may use.
             if call.path().is_none_or(|path| {
                 !names_candidate_assertion(
                     &path.syntax().text().to_string(),
-                    &["assert_eq", "assert"],
+                    &["assert_eq", "assert", "debug_assert_eq"],
                 )
             }) {
                 continue;

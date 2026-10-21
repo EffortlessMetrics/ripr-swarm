@@ -1337,6 +1337,9 @@ fn apply_probe_and_oracle_limits(
     // RIPR-SPEC-0240: a `#[should_panic]` test's panic outcome is an oracle
     // ripr does not resolve, not a missing assertion.
     classify::withhold_should_panic_gap(finding, index);
+    // #8051: a `debug_assert_eq!` the owner pin admits discriminates only in
+    // a profile with debug assertions, which ripr does not resolve.
+    classify::withhold_debug_assertion_gap(finding);
     // #8600: a related test line at the call-fact budget may hide a call, so
     // a negative claim over that test's calls is a named limit.
     classify::withhold_call_budget_gap(finding, index);
@@ -2499,6 +2502,9 @@ impl RustAdapter {
                         }
                     }
                 }
+                // #8999: after the witness searches, so a concrete pointer
+                // they found stays; proc-macro `no_static_path` is unknown.
+                classifier::withhold_proc_macro_no_path_as_unknown(&mut finding, &index);
                 // Name unresolved custom assertion macros only after reach has
                 // already been established and no recognized oracle observes
                 // the seam. This is an oracle limitation, not macro expansion
@@ -2957,6 +2963,7 @@ impl RustAdapter {
                     &property_macro_mentions,
                     &transitive_reach,
                 );
+                classifier::withhold_proc_macro_no_path_as_unknown(&mut finding, &index);
                 apply_probe_and_oracle_limits(&mut finding, &probe, &index, None);
                 // #5268: same producer-owned canonical gap identity as the
                 // diff loop, behind the same typed static-limitation gate.

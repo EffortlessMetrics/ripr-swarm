@@ -79,6 +79,12 @@ probes. An inline bound may use its enclosing struct, impl or type-alias item
 as declaration authority only when the whole changed line is contained by that
 item and the item has no expression or macro descendants. Const expressions
 and macro types retain existing fallback evidence.
+A named field declared inside an enum variant, or a whole one-line variant with
+named fields, is likewise a type declaration (#8999): it stays one
+`static_unknown` probe, while a variant constructed in a body keeps
+`field_construction`. A discriminant, macro syntax or expression inside the
+variant, or a shared line, withholds that authority. Deleted-only struct and
+enum field declarations keep their removed-side lexical probe.
 Real expressions on a shared line
 keep their existing parser-owned runtime probes. Comments, strings and macro
 token trees cannot establish declaration authority. Removed bounds require
@@ -397,6 +403,17 @@ parameter it could not read. A test input literal that merely equals a
 literal in the comparison does not credit such a boundary; only an exact
 observed equality does. Exact inputs that all sit off the boundary keep
 the missing equality discriminator.
+
+A second bounded source for the same family is direct literal slice arguments:
+every related test calls the owner only inside its standard assertion macros,
+straight-line, with a literal `&[..]` at the measured parameter (array-repeat
+forms excluded). The call result must reach the assertion unchanged, as the
+whole compared operand or one side of a top-level comparison; arithmetic,
+branches, short-circuit operands, message arguments, bound or computed inputs,
+early returns and any extra owner reference leave the input set unresolved. The
+literal's length is its element count, the call's source and line are the
+witness, and the table gates above (unique free owner, eager path, admitted
+assertion context) still apply.
 
 One bounded cardinality family reads a direct immutable slice parameter's
 `.len()` compared with a plain decimal integer. Every reach-bearing related

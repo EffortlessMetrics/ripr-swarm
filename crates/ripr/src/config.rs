@@ -34,7 +34,7 @@ pub use model::{
     LspDiagnosticProfile, OraclePolicy, PerlConfig, RiprConfig, SeverityConfig, TestHarnessAdapter,
     TestHarnessKind, TestHarnessRegistration, TypescriptConfig,
 };
-pub(crate) use model::{PERL_EXECUTABLE_OPT_IN_ENV, RustLanguageConfig};
+pub(crate) use model::{PERL_EXECUTABLE_OPT_IN_ENV, RustLanguageConfig, perl_executable_opt_in};
 
 #[cfg(test)]
 pub(crate) use python::{PYTHON_EXCLUDED_DIRS, PYTHON_VENDOR_DIR};
@@ -293,8 +293,31 @@ fn config_load_error_path_for_host(path: &Path, windows: bool) -> String {
     crate::output::path::human_path_text(&path.to_string_lossy(), windows)
 }
 
+/// What a reader can do about a `ripr.toml` that failed to load (#9033). The
+/// error alone names the problem but not the way out; these trailing lines stay
+/// after the first line, which JSON refusals and `doctor` evidence keep. Removal
+/// is worded for discovery: another `ripr.toml` in a parent directory takes over
+/// before the built-in defaults do.
+macro_rules! config_removal_advice {
+    () => {
+        "removing it makes ripr use the next ripr.toml it finds in a parent directory, or the built-in defaults if there is none."
+    };
+}
+const CONFIG_LOAD_PARSE_HINT: &str = concat!(
+    "Fix the error above in ripr.toml and rerun; ",
+    config_removal_advice!()
+);
+const CONFIG_LOAD_READ_HINT: &str = concat!(
+    "Make that ripr.toml readable and rerun; ",
+    config_removal_advice!()
+);
+
 fn config_load_parse_error_for_host(path: &Path, err: &str, windows: bool) -> String {
-    format!("{}: {err}", config_load_error_path_for_host(path, windows))
+    format!(
+        "{}: {}\n{CONFIG_LOAD_PARSE_HINT}",
+        config_load_error_path_for_host(path, windows),
+        err.trim_end()
+    )
 }
 
 fn config_load_read_error_for_host(
@@ -303,7 +326,7 @@ fn config_load_read_error_for_host(
     windows: bool,
 ) -> String {
     format!(
-        "read {} failed: {err}",
+        "read {} failed: {err}\n{CONFIG_LOAD_READ_HINT}",
         config_load_error_path_for_host(path, windows)
     )
 }
@@ -656,7 +679,12 @@ pub(crate) fn config_error_display_lines(error: &str, verbose: bool) -> Vec<Stri
         return lines;
     }
     for line in error.lines().map(str::trim).filter(|line| !line.is_empty()) {
-        if is_toml_source_excerpt_line(line) {
+        // doctor prints its own `Fix:` line, so the loader's recovery line
+        // would only repeat it (#9033).
+        if is_toml_source_excerpt_line(line)
+            || line == CONFIG_LOAD_PARSE_HINT
+            || line == CONFIG_LOAD_READ_HINT
+        {
             continue;
         }
         if summary.contains(line) || lines.iter().any(|existing| existing.contains(line)) {

@@ -28,6 +28,7 @@ Linked issues:
 - #7315 (literal rejection equality observes the rejected reason)
 - #8714 (conditional-branch assertion guard and disclosure)
 - #9138 (assertion after an always-exiting try/finally)
+- #9150 (bare non-throwing exit first in a try block makes its catch unreachable)
 - #8959 (lexically bound runner registrations)
 
 Linked PRs:
@@ -938,7 +939,15 @@ to `amount - 20`, and `tests/lib.test.ts` has
     the assertion after it is withheld. Undecidable shapes keep the later
     credit: `try { if (x) { return; } } finally {}`, a `catch` that falls
     through (`try { return; } catch (e) {}`), and a finalizer whose exit is
-    conditional. Assertions before the `try` and in its finalizer stay
+    conditional. When the `try` block's FIRST statement is a non-throwing
+    exit (a bare `return;`, a `return` of a plain literal, `break` or
+    `continue`), nothing can throw into the `catch`, so the `catch` never
+    runs and the `try` exits regardless of it (`try { return; } catch (e)
+    {}`, #9150). Assertions inside that unreachable `catch` are withheld too, and
+    its conditionals raise no credit gap. Any other first statement keeps the fail-closed catch
+    requirement: `try { work(); return; } catch (e) {}`, `try { return f();
+    } catch (e) {}` and `try { throw e; } catch (e) {}` stay credited.
+    Assertions before the `try` and in its finalizer stay
     credited. The one shared predicate also bounds the conditional-credit
     probe and walker.
 12. `src/lib.ts` is `export function parse(s: string): string { if (s ===
@@ -1131,6 +1140,19 @@ to `amount - 20`, and `tests/lib.test.ts` has
   and `nested_methods_and_comments_inside_conditions`) pin the reader, and
   `bracket_calls_and_loaders_keep_exposed` is the production-path negative
   for bracket-indexed calls and `jest.requireActual(..)` chains.
+- #8569: the same rule reads a guard on a property destructured from an
+  options-object parameter (`{ preserveOrder = true } = {}`) against the
+  object-literal argument of every related test call: an omitted key or an
+  explicit `undefined` applies the literal default, and a spread, computed
+  key, accessor, method, duplicate key, shorthand or non-literal value, a
+  non-object argument, an omitted argument without a `= {}` default, or a
+  default that is not a literal keeps the ladder verdict.
+  `reads_destructured_options_parameters`,
+  `option_defaults_and_literal_objects_decide_the_guard` and
+  `a_reassigned_or_shadowed_option_local_is_not_read` pin the reader, and
+  `an_options_object_guard_no_test_input_enters_withdraws_exposed` and
+  `an_options_object_guard_some_test_input_can_enter_keeps_exposed` are the
+  production-path positive and negative.
 - Planned: one unit test per changed example (5, 6, 7, 8, 13, 14, 16, 18,
   19, 22, 23, 24, 31, 32, 33, 34, 35), and a verdict corpus holding all
   35 examples, each with
