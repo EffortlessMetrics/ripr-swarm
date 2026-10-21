@@ -273,6 +273,7 @@ fn cli_receipt_first_action_reopens_literal_unix_root_and_refuses_decoy() -> Res
     let receipt_path = root.join("target/ripr/workflow/agent-receipt.json");
     run_agent_receipt(AgentReceiptOptions {
         root: root.clone(),
+        root_explicit: true,
         verify_json: verify_path.clone(),
         seam_id,
         attempt_id: None,
@@ -474,6 +475,7 @@ fn boundary_patch_root(label: &str) -> Result<OwnedRoot, String> {
 fn patch_brief(root: &Path) -> Result<serde_json::Value, String> {
     let rendered = render_agent_brief(&AgentBriefOptions {
         root: root.to_path_buf(),
+        root_explicit: true,
         working_set: crate::cli::agent::AgentBriefWorkingSet::Diff(PathBuf::from("diff.patch")),
         json: true,
         max_seams: 3,

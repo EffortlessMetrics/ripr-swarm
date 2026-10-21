@@ -612,6 +612,12 @@ pub(crate) fn render_baseline_delta_markdown(report: &BaselineDeltaReport) -> St
         out.push_str(&format!(
             "Analysis complete: `{complete}`; analysis outcome: `{kind}`\n"
         ));
+        // #9010: a budget-bounded check document says so beside the verdict.
+        if outcome.get("document_complete").and_then(Value::as_bool) == Some(false) {
+            out.push_str(
+                "Document complete: `false` (findings array bounded by the byte budget)\n",
+            );
+        }
     }
     if let Some(scope) = report
         .analysis_scope
@@ -2925,6 +2931,32 @@ mod tests {
         assert!(markdown.contains("limited_findings_bound"), "{markdown}");
         assert!(markdown.contains("diff_scope_oversized"), "{markdown}");
         Ok(())
+    }
+
+    #[test]
+    fn baseline_delta_markdown_renders_document_complete_line_only_when_bounded() {
+        // #9010: the propagated bounded-document disclosure is visible in the
+        // human surface; the unbounded control carries no such line.
+        let render = |outcome: &str| {
+            let current = format!(
+                r#"{{"schema_version": "0.1", "decisions": [], "analysis_outcome": {outcome}}}"#
+            );
+            render_baseline_delta_markdown(&build_baseline_delta_report(BaselineDeltaInput {
+                root: ".".to_string(),
+                baseline_path: "baseline.json".to_string(),
+                current_gate_decision_path: "current.json".to_string(),
+                baseline_json: Ok(r#"{"schema_version": "0.1", "entries": []}"#.to_string()),
+                current_gate_decision_json: Ok(current),
+            }))
+        };
+        let bounded = render(
+            r#"{"analysis_complete": true, "document_complete": false, "outcome": {"kind": "complete_with_findings"}}"#,
+        );
+        assert!(bounded.contains("Analysis complete: `true`"), "{bounded}");
+        assert!(bounded.contains("Document complete: `false`"), "{bounded}");
+        let control =
+            render(r#"{"analysis_complete": true, "outcome": {"kind": "complete_with_findings"}}"#);
+        assert!(!control.contains("Document complete"), "{control}");
     }
 
     #[test]

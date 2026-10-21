@@ -522,6 +522,15 @@ pub struct ModuleDeclarationFact {
     /// A `cfg(any(test, ...))` alternative never requires test and never
     /// grants a composed role.
     pub requires_test: bool,
+    /// The declaration's only attribute-level guard when it is exactly one
+    /// simple `#[cfg(X)]` / `#[cfg(not(X))]` with `X` a bare identifier or
+    /// `name = "value"` (whitespace-normalized), as `(X, negated)`. Two
+    /// declarations of one file with `(X, false)` and `(X, true)` are
+    /// provably exclusive alternatives of one module. `None` for every other
+    /// shape (no cfg, compound predicates, `cfg_attr`, several cfgs), which
+    /// never grants exclusivity.
+    #[serde(default)]
+    pub cfg_guard: Option<(String, bool)>,
 }
 
 /// The `#[path]` target shape of one out-of-line module declaration (#3533).
