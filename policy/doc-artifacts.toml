@@ -1732,6 +1732,14 @@ owner = "product-analysis"
 standalone_reason = "Issue #8999 records the comparison-assertion contract: a same-file assert_eq!/assert_ne! over two values syntactically typed as the standard-trait impl PartialEq for T relates to the changed eq/ne as direct_owner_call, failing closed on shadowed traits, user and property macros, ambiguous imports and rebinding, and the fixture_opaque scan for such owners reads reaching and fixture-affinity tests only."
 
 [[artifact]]
+id = "RIPR-SPEC-0290"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0290-pilot-repair-root-display.md"
+status = "proposed"
+owner = "product-output"
+standalone_reason = "Issue #8992 records pilot command-root and artifact-path native spelling: start, first-pr, retry, snapshot and outcome commands target the selected checkout and packet from another working directory. Bound artifact paths keep literal Unix backslashes through root_path_display before shell quoting. Paths without literal backslashes and all Windows rendering are unchanged, following the shared CLI recovery path rule (#4287)."
+
+[[artifact]]
 id = "RIPR-SPEC-0292"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0292-spot-check-schema-admission.md"
