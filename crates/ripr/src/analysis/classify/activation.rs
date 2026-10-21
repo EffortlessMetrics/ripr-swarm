@@ -852,9 +852,9 @@ fn missing_discriminator_facts(
     // resolved gap counts: a boundary the lens cannot read leaves the
     // return-value reading as it was and sets no unresolved reason.
     let mut returned_unresolved = None;
-    if is_returned_comparison(probe)
+    if let Some(view) = returned_comparison_view(probe)
         && let Some(fact) = missing_boundary_discriminator(
-            probe,
+            &view,
             owner_fn,
             related_tests,
             flow_sinks,
@@ -864,6 +864,9 @@ fn missing_discriminator_facts(
             &mut returned_unresolved,
         )
         && returned_unresolved.is_none()
+        && !owner_fn.is_some_and(|owner| {
+            observed_input_separates_threshold_move(&view, owner, related_tests)
+        })
     {
         missing.push(fact);
     }
@@ -914,6 +917,148 @@ fn missing_discriminator_facts(
         return Vec::new();
     }
     missing
+}
+
+/// Whether the owner may compare something other than the caller's value for
+/// `name`. Coarse and fail-closed: true when `name` occurs as a token in the
+/// body before the probe line at all (any `let`, `for`, `if let`, `while let`,
+/// match-arm or closure binding, or any use that could feed a rebinding), when
+/// the probe line itself carries a binding form beside it, or when `name` is
+/// ever assigned or bound `mut`. A true result only declines the
+/// intermediate-input reading and keeps the gap (#9147).
+fn parameter_may_be_rebound(owner: &FunctionSummary, name: &str, predicate_line: usize) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let tokens = |text: &str| {
+        text.match_indices(name)
+            .filter(|(start, _)| {
+                !text[..*start].chars().next_back().is_some_and(is_word)
+                    && !text[start + name.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(is_word)
+            })
+            .map(|(start, _)| start)
+            .collect::<Vec<_>>()
+    };
+    let lines: Vec<&str> = masked.lines().collect();
+    let probe_index = predicate_line.saturating_sub(owner.start_line);
+    // The signature is everything up to the body's opening brace.
+    let body_start = masked.find('{').map_or(0, |at| at + 1);
+    let before_probe = lines
+        .iter()
+        .take(probe_index)
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n");
+    if before_probe.len() > body_start && !tokens(&before_probe[body_start..]).is_empty() {
+        return true;
+    }
+    let probe_text = if probe_index == 0 {
+        lines
+            .first()
+            .map_or("", |line| &line[body_start.min(line.len())..])
+    } else {
+        lines.get(probe_index).copied().unwrap_or("")
+    };
+    if !tokens(probe_text).is_empty()
+        && ["let ", "|", "=>", " in ", "match "]
+            .iter()
+            .any(|form| probe_text.contains(form))
+    {
+        return true;
+    }
+    tokens(&masked).into_iter().any(|start| {
+        let after = masked[start + name.len()..].trim_start();
+        let assigned =
+            after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>")
+                || ["+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="]
+                    .iter()
+                    .any(|operator| after.starts_with(operator));
+        assigned || masked[..start].trim_end().ends_with("mut")
+    })
+}
+
+/// Whether an observed exact input of the compared parameter separates the old
+/// and new returned comparison when only its integer-literal threshold moved
+/// (`x > 100` to `x > 102`: `thr(101)` is true before and false after). Such an
+/// input is a discriminator even though it equals neither threshold, so the
+/// equality-boundary gap must not be borrowed (#9147). Fail-closed: any shape
+/// this cannot read exactly (a different operand, a non-parameter or reversed
+/// left side, a suffixed or computed literal, a non-integer input) declines
+/// and leaves the gap in place.
+fn observed_input_separates_threshold_move(
+    view: &Probe,
+    owner: &FunctionSummary,
+    related_tests: &[&TestSummary],
+) -> bool {
+    fn parts(expression: &str) -> Option<(&'static str, String, i128)> {
+        for operator in [">=", "<=", "==", "!=", ">", "<"] {
+            if let Some((left, right)) = expression.split_once(operator) {
+                let (left, right) = (clean_operand(left), clean_operand(right));
+                if left.is_empty() {
+                    return None;
+                }
+                return Some((operator, left, plain_integer(&right)?));
+            }
+        }
+        None
+    }
+    fn plain_integer(text: &str) -> Option<i128> {
+        let digits = text.trim().replace('_', "");
+        let unsigned = digits.strip_prefix('-').unwrap_or(&digits);
+        if unsigned.is_empty() || !unsigned.chars().all(|ch| ch.is_ascii_digit()) {
+            return None;
+        }
+        digits.parse().ok()
+    }
+    fn holds(operator: &str, value: i128, threshold: i128) -> bool {
+        match operator {
+            ">=" => value >= threshold,
+            "<=" => value <= threshold,
+            "==" => value == threshold,
+            "!=" => value != threshold,
+            ">" => value > threshold,
+            _ => value < threshold,
+        }
+    }
+    let Some(before) = view.before.as_deref() else {
+        return false;
+    };
+    let (Some((old_op, old_left, old_threshold)), Some((new_op, new_left, new_threshold))) =
+        (parts(before), parts(&view.expression))
+    else {
+        return false;
+    };
+    let parameters = function_parameters(owner);
+    if old_left != new_left
+        || !parameters.contains(&new_left)
+        || parameter_may_be_rebound(owner, &new_left, view.location.line)
+    {
+        return false;
+    }
+    // Only unqualified owner calls count: `rival::thr(101)` or `x.thr(101)`
+    // may be another function, so a qualified call is never a separating
+    // input. Helper-transferred rows are not read.
+    let call_pattern = format!("{}(", owner.name);
+    owner_call_parameter_values_where(
+        related_tests,
+        &owner.name,
+        is_free(owner),
+        &parameters,
+        |_, call| {
+            call.text.match_indices(&call_pattern).all(|(start, _)| {
+                !call.text[..start]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|ch| ch == ':' || ch == '.')
+            })
+        },
+    )
+    .iter()
+    .filter_map(|row| parameter_value(row, &new_left))
+    .filter_map(|cell| plain_integer(&cell.value))
+    .any(|value| holds(old_op, value, old_threshold) != holds(new_op, value, new_threshold))
 }
 
 #[allow(
@@ -3658,22 +3803,133 @@ fn body_contains_direct_local_alias(body: &str, operand: &str, parameter: &str) 
     })
 }
 
-/// Whether a `return_value` probe's changed expression is one bare relational
+/// A `return_value` probe's changed expression is one bare relational
 /// comparison (`x > 101`), so the returned bool is the changed predicate and
 /// its boundary is the boundary a `predicate` probe on the same line reads.
 /// When the predicate lens resolves a missing boundary discriminator for it,
 /// the probe reads that gap too: reaching the owner with inputs that never
 /// separate the old and new threshold is not an activated change. A compound (`&&`/`||`)
 /// or non-comparison expression keeps the return-value reading.
-pub(in crate::analysis) fn is_returned_comparison(probe: &Probe) -> bool {
-    matches!(probe.family, ProbeFamily::ReturnValue)
-        && !probe.expression.contains("&&")
-        && !probe.expression.contains("||")
-        && comparison_operands(&probe.expression).is_some()
-        && probe
-            .before
-            .as_deref()
-            .is_some_and(|before| same_comparison_shape(before, &probe.expression))
+///
+/// The probe re-read as the bare comparison it returns, when it is one. An
+/// explicit `return x > 101;` is the same returned comparison as the implicit
+/// tail `x > 101`, so a leading `return ` and trailing `;` are dropped from the
+/// changed and prior text before boundary extraction (#9116). Only the
+/// comparison itself is exposed: a comparison nested in a call, index,
+/// turbofish or compound value never normalises to one and keeps the
+/// return-value reading.
+pub(in crate::analysis) fn returned_comparison_view(probe: &Probe) -> Option<Probe> {
+    if !matches!(probe.family, ProbeFamily::ReturnValue) {
+        return None;
+    }
+    let (expression, explicit) = strip_explicit_return(&probe.expression);
+    if explicit && !is_top_level_comparison(&expression) {
+        return None;
+    }
+    let before = probe.before.as_deref().map(|before| {
+        let (before, before_explicit) = strip_explicit_return(before);
+        (before, before_explicit)
+    });
+    if let Some((before, true)) = &before
+        && !is_top_level_comparison(before)
+    {
+        return None;
+    }
+    if expression.contains("&&")
+        || expression.contains("||")
+        || comparison_operands(&expression).is_none()
+        || !before
+            .as_ref()
+            .is_some_and(|(before, _)| same_comparison_shape(before, &expression))
+    {
+        return None;
+    }
+    let mut view = probe.clone();
+    view.expression = expression;
+    view.before = before.map(|(before, _)| before);
+    Some(view)
+}
+
+/// `return x > 1;` -> (`x > 1`, true); a text without a leading `return`
+/// keyword comes back unchanged and `false`. The keyword must be followed by
+/// whitespace (space, tab, newline), so `returnx > 1`, `return_x > 1` and
+/// `returned > 1` stay identifiers.
+fn strip_explicit_return(text: &str) -> (String, bool) {
+    let trimmed = text.trim();
+    match trimmed.strip_prefix("return") {
+        Some(rest) if rest.starts_with(char::is_whitespace) => {
+            (rest.trim().trim_end_matches(';').trim().to_string(), true)
+        }
+        _ => (text.to_string(), false),
+    }
+}
+
+/// One relational comparison whose operator sits outside every bracket, with
+/// no turbofish: `x > 101` and `(a + 1) > 5` qualify; `f(a > 1)`,
+/// `v[a > 1]` and `x.parse::<i32>() > 5` do not.
+fn is_top_level_comparison(expression: &str) -> bool {
+    if expression.contains("::<") {
+        return false;
+    }
+    let chars: Vec<char> = expression.chars().collect();
+    let mut depth = 0i32;
+    let mut top_level = 0usize;
+    let mut index = 0usize;
+    while index < chars.len() {
+        let ch = chars.get(index).copied().unwrap_or(' ');
+        index += 1;
+        match ch {
+            '"' => {
+                // A raw string has no escapes; its end cannot be found by this
+                // scan, so it is not a recognised comparison.
+                if matches!(
+                    index.checked_sub(2).and_then(|i| chars.get(i)),
+                    Some('r' | '#')
+                ) {
+                    return false;
+                }
+                loop {
+                    match chars.get(index) {
+                        None => return false,
+                        Some('\\') => index += 2,
+                        Some('"') => {
+                            index += 1;
+                            break;
+                        }
+                        Some(_) => index += 1,
+                    }
+                }
+            }
+            '\'' => {
+                // Only a `'x'` or `'\...'` shape is a char literal; anything
+                // else (`'a` lifetimes, labels) keeps the plain scan.
+                if chars.get(index) == Some(&'\\') {
+                    // Skip the backslash and the escaped char, then find the
+                    // closing quote (`'\n'`, `'\''`, `'\x41'`, `'\u{41}'`).
+                    match chars
+                        .get(index + 2..)
+                        .and_then(|rest| rest.iter().position(|c| *c == '\''))
+                    {
+                        Some(offset) => index += 2 + offset + 1,
+                        None => return false,
+                    }
+                } else if chars.get(index + 1) == Some(&'\'') {
+                    index += 2;
+                }
+            }
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            '<' | '>' | '=' | '!' if depth == 0 => top_level += 1,
+            '<' | '>' => return false,
+            _ => {}
+        }
+    }
+    depth == 0 && top_level > 0
 }
 
 /// Whether `before` and `after` are bare comparisons in the same operator
@@ -6384,6 +6640,82 @@ assert_eq!(input.amount, 100);"#
             expected_sinks: Vec::new(),
             required_oracles: Vec::new(),
         }
+    }
+
+    /// #9116: an explicit `return` normalises only to a top-level comparison.
+    #[test]
+    fn explicit_return_normalises_only_a_top_level_comparison() {
+        let view = |before: &str, after: &str| {
+            let mut p = probe(ProbeFamily::ReturnValue, after);
+            p.before = Some(before.to_string());
+            returned_comparison_view(&p).map(|v| (v.expression, v.before))
+        };
+        assert_eq!(
+            view("return x > 100", "return x > 101;"),
+            Some(("x > 101".to_string(), Some("x > 100".to_string())))
+        );
+        assert_eq!(
+            view("x > 100", "x > 101").map(|v| v.0),
+            Some("x > 101".to_string())
+        );
+        assert_eq!(view("return f(x > 100)", "return f(x > 101)"), None);
+        assert_eq!(view("return v[x > 1]", "return v[x > 2]"), None);
+        assert_eq!(
+            view("return x.parse::<i32>() > 5", "return x.parse::<i32>() > 6"),
+            None
+        );
+        assert_eq!(view("return x > 1 && y", "return x > 2 && y"), None);
+        assert_eq!(view("return x == 100", "return x > 101"), None);
+    }
+
+    /// #9145 keyword boundary: `return` is stripped before any whitespace, never
+    /// inside an identifier.
+    #[test]
+    fn explicit_return_keyword_needs_a_whitespace_boundary() {
+        let strip = |text: &str| strip_explicit_return(text);
+        assert_eq!(strip("return x > 1;"), ("x > 1".to_string(), true));
+        assert_eq!(strip("return\tx > 1;"), ("x > 1".to_string(), true));
+        assert_eq!(strip("return\nx > 1;"), ("x > 1".to_string(), true));
+        for identifier in ["returnx > 1", "return_x > 1", "returned > 1", "return"] {
+            assert_eq!(strip(identifier), (identifier.to_string(), false));
+        }
+        let view = |before: &str, after: &str| {
+            let mut p = probe(ProbeFamily::ReturnValue, after);
+            p.before = Some(before.to_string());
+            returned_comparison_view(&p).map(|v| v.expression)
+        };
+        assert_eq!(
+            view("return\tx > 100", "return\tx > 101;"),
+            Some("x > 101".to_string())
+        );
+        assert_eq!(
+            view("returned > 100", "returned > 101"),
+            Some("returned > 101".to_string())
+        );
+    }
+
+    /// #9145 literals: brackets and operators inside string or char literals do
+    /// not change depth or count as the comparison; lifetimes are not literals.
+    #[test]
+    fn top_level_comparison_skips_string_and_char_literals() {
+        assert!(is_top_level_comparison(r#"s == ")""#));
+        assert!(is_top_level_comparison(r#"s == "(""#));
+        assert!(is_top_level_comparison(r#"s == "a\"(" "#.trim()));
+        assert!(is_top_level_comparison("c == ')'"));
+        assert!(is_top_level_comparison("c == '('"));
+        assert!(is_top_level_comparison("c == '\\''"));
+        assert!(is_top_level_comparison("c == '\\n'"));
+        // Operators inside a literal are not the comparison.
+        assert!(!is_top_level_comparison(r#""a<b""#));
+        assert!(!is_top_level_comparison(r#"f("x", y > 1)"#));
+        // A bracket in a literal does not hide a real nested comparison.
+        assert!(!is_top_level_comparison(r#"f(")", a > 1)"#));
+        // Unterminated strings and raw strings fail closed.
+        assert!(!is_top_level_comparison(r#"s == "abc"#));
+        assert!(!is_top_level_comparison(r##"s == r#"a"#"##));
+        // Lifetimes keep the plain scan.
+        assert!(is_top_level_comparison("p(&'a x) > 1"));
+        assert!(!is_top_level_comparison("f(&'a str, a > 1)"));
     }
 
     /// RIPR-SPEC-0228 keyed reads: argument `i` of a method call is call

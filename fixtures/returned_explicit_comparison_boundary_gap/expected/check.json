@@ -1,0 +1,287 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/returned_explicit_comparison_boundary_gap/input",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":2,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:abbc424984e6b43dd4791b64552c9616a0c2abf8ab4705e625d96ae88131ab4c","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:predicate:ca3e18b4",
+      "canonical_gap_id": "gap:rust:src/lib.rs:ships_free:predicate_boundary:predicate:items==10",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:ships_free:predicate_boundary:predicate:items==10",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "ships_free",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "items==10"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:ca3e18b4",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 3,
+        "expression": "items >= 10"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach ships_free: big_order_ships_free, small_order_pays_shipping"},
+        "infect": {"state":"weak","confidence":"medium","summary":"Related tests contain input values, but the equality-boundary discriminator is missing"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: items >= 10"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach ships_free: big_order_ships_free, small_order_pays_shipping", "infection weak: Related tests contain input values, but the equality-boundary discriminator is missing", "propagation yes: Changed behavior appears to influence returned value: items >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator missing: `items == 10`; related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: items >= 10 (line 3)", "related test tests/orders.rs:4 big_order_ships_free uses strong exact value oracle: assert_eq!(shipping(20), 0);", "related test tests/orders.rs:9 small_order_pays_shipping uses strong exact value oracle: assert_eq!(shipping(2), 800);", "source assertion argument value 0 at line 5", "source assertion argument value 20 at line 5", "source assertion argument value 2 at line 10", "source assertion argument value 800 at line 10", "missing discriminator items == 10: No related test call uses items equal to 10; observed items values: 2, 20; target 10 value: 10"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"items >= 10","line":3}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence returned value: items >= 10", "Related tests appear to reach ships_free: big_order_ships_free, small_order_pays_shipping", "Related tests contain input values, but the equality-boundary discriminator is missing", "Strong oracle found: exact value or pattern assertion"],
+      "missing": ["Missing discriminator value: items == 10"],
+      "assertion_texts": {
+        "5": "assert_eq!(shipping(20), 0);",
+        "10": "assert_eq!(shipping(2), 800);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 5,
+            "value": "0",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 5,
+            "value": "20",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 10,
+            "value": "2",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 10,
+            "value": "800",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+          {
+            "value": "items == 10",
+            "reason": "No related test call uses items equal to 10; observed items values: 2, 20; target 10 value: 10",
+            "flow_sink": {"kind":"return_value","text":"items >= 10","line":3}
+          }
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 5,
+          "value": "0",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 5,
+          "value": "20",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 10,
+          "value": "2",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 10,
+          "value": "800",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+        {
+          "value": "items == 10",
+          "reason": "No related test call uses items equal to 10; observed items values: 2, 20; target 10 value: 10",
+          "flow_sink": {"kind":"return_value","text":"items >= 10","line":3}
+        }
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "big_order_ships_free",
+          "file": "tests/orders.rs",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(shipping(20), 0);",
+          "relation_reason": "helper_owner_call",
+          "relation_confidence": "high",
+          "miss": "missing_input",
+          "why": "no test input reaches `items == 10`"
+        },
+        {
+          "name": "small_order_pays_shipping",
+          "file": "tests/orders.rs",
+          "line": 9,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(shipping(2), 800);",
+          "relation_reason": "helper_owner_call",
+          "relation_confidence": "high",
+          "miss": "missing_input",
+          "why": "no test input reaches `items == 10`"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+      "suggested_next_action": "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:172fa95c",
+      "canonical_gap_id": "gap:rust:src/lib.rs:ships_free:return_value:return_value:items>=10",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:ships_free:return_value:return_value:items>=10",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "ships_free",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "items>=10"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.84,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:172fa95c",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 3,
+        "expression": "return items >= 10"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach ships_free: big_order_ships_free, small_order_pays_shipping"},
+        "infect": {"state":"weak","confidence":"medium","summary":"Related tests contain input values, but the equality-boundary discriminator is missing"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: items >= 10"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach ships_free: big_order_ships_free, small_order_pays_shipping", "infection weak: Related tests contain input values, but the equality-boundary discriminator is missing", "propagation yes: Complete propagation witness reaches returned value: items >= 10", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: items >= 10 (line 3)", "related test tests/orders.rs:4 big_order_ships_free uses strong exact value oracle: assert_eq!(shipping(20), 0);", "related test tests/orders.rs:9 small_order_pays_shipping uses strong exact value oracle: assert_eq!(shipping(2), 800);", "source assertion argument value 0 at line 5", "source assertion argument value 20 at line 5", "source assertion argument value 2 at line 10", "source assertion argument value 800 at line 10", "missing discriminator items == 10: No related test call uses items equal to 10; observed items values: 2, 20; target 10 value: 10"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"items >= 10","line":3}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: items >= 10", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Related tests appear to reach ships_free: big_order_ships_free, small_order_pays_shipping", "Related tests contain input values, but the equality-boundary discriminator is missing"],
+      "missing": ["Missing discriminator value: items == 10", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "5": "assert_eq!(shipping(20), 0);",
+        "10": "assert_eq!(shipping(2), 800);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 5,
+            "value": "0",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 5,
+            "value": "20",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 10,
+            "value": "2",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 10,
+            "value": "800",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+          {
+            "value": "items == 10",
+            "reason": "No related test call uses items equal to 10; observed items values: 2, 20; target 10 value: 10",
+            "flow_sink": {"kind":"return_value","text":"items >= 10","line":3}
+          }
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 5,
+          "value": "0",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 5,
+          "value": "20",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 10,
+          "value": "2",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 10,
+          "value": "800",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+        {
+          "value": "items == 10",
+          "reason": "No related test call uses items equal to 10; observed items values: 2, 20; target 10 value: 10",
+          "flow_sink": {"kind":"return_value","text":"items >= 10","line":3}
+        }
+      ],
+      "related_tests_total": 2,
+      "related_tests": [
+        {
+          "name": "big_order_ships_free",
+          "file": "tests/orders.rs",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(shipping(20), 0);",
+          "relation_reason": "helper_owner_call",
+          "relation_confidence": "high",
+          "miss": "missing_input",
+          "why": "no test input reaches `items == 10`"
+        },
+        {
+          "name": "small_order_pays_shipping",
+          "file": "tests/orders.rs",
+          "line": 9,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(shipping(2), 800);",
+          "relation_reason": "helper_owner_call",
+          "relation_confidence": "high",
+          "miss": "missing_input",
+          "why": "no test input reaches `items == 10`"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "The related test `small_order_pays_shipping` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion. Missing discriminator: `items == 10`.",
+      "suggested_next_action": "The related test `small_order_pays_shipping` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion. Missing discriminator: `items == 10`.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

@@ -570,11 +570,12 @@ line, then compact passing groups. `-v`/`--verbose` prints binary identity,
 config defaults, test surfaces, Perl preview, known limitations, and start-here
 detail. `--json` is unchanged and remains the complete typed report.
 
-The JSON report is machine-readable advisory setup evidence. A `fail` status or
-non-zero exit means at least one core check failed; it is not a release or gate
-decision.
+The JSON report is machine-readable advisory setup evidence. A `fail` status
+means at least one core check failed; it is not a release or gate decision.
+A completed run with failed checks exits 3; exit 2 means the run could not
+complete (for example a usage error, where no check ran).
 
-Marks: `!` is a blocking failure that fails the run (exit 2); `~` is an
+Marks: `!` is a blocking failure that fails the run (exit 3); `~` is an
 advisory (for example artifacts under target/ripr not covered by git ignore
 rules, tracked artifacts, an unwritable cache, unanalyzed languages) and never
 changes the exit status.

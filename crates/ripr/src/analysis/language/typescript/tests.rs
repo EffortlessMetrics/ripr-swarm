@@ -6065,7 +6065,7 @@ fn analyze_diff_surfaces_absolute_base_url_as_named_limitation() -> Result<(), S
 }
 
 #[test]
-fn analyze_repo_discloses_partial_run_instead_of_silent_empty() -> Result<(), String> {
+fn analyze_repo_discloses_unreadable_root_instead_of_silent_empty() -> Result<(), String> {
     let adapter = TypeScriptAdapter;
     let options = AnalysisOptions {
         root: PathBuf::from("/nonexistent_workspace"),
@@ -6087,12 +6087,15 @@ fn analyze_repo_discloses_partial_run_instead_of_silent_empty() -> Result<(), St
     let result = adapter.analyze_repo(&options, &policy)?;
     assert!(result.findings.is_empty());
     assert_eq!(result.production_files, 0);
-    // The stub discloses the partial run on the shared channel (the
-    // pipeline records a `Partial` language run from `partial_reason`),
-    // so repo-mode output is not a silently clean result.
-    assert_eq!(
-        result.partial_reason.as_deref(),
-        Some("typescript_repo_mode_not_implemented_diff_first")
+    // An unreadable workspace root can never back a complete zero: the
+    // producer discloses the partial run on the shared channel.
+    assert!(
+        result
+            .partial_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("workspace root could not be read")),
+        "{:?}",
+        result.partial_reason
     );
     Ok(())
 }
@@ -17292,6 +17295,7 @@ mod directory_specifier_tests;
 mod dropped_term_tests;
 mod error_payload_tests;
 mod function_reference_callback_tests;
+mod guard_entry_tests;
 mod instance_class_tests;
 mod issue7507_shadow_tests;
 mod literal_matcher_tests;

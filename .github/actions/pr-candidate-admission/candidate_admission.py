@@ -48,6 +48,10 @@ LABELS = {
     ),
 }
 SHA_RE = re.compile(r"[0-9a-f]{40}")
+TEMPLATE_LINES = {
+    "claim": "Governing issue or accepted claim:",
+    "delta": "Acceptance delta (one sentence):",
+}
 
 
 def normalize(value: str) -> str:
@@ -130,6 +134,21 @@ def trusted_peer(current: dict[str, Any], peer: dict[str, Any]) -> bool:
     )
 
 
+def identity_detail(fields: dict[str, str]) -> str:
+    missing = [
+        TEMPLATE_LINES[key]
+        for key in ("claim", "delta")
+        if invalid(fields.get(key, ""))
+    ]
+    if not missing:
+        return ""
+    return (
+        "missing or placeholder PR body line(s): "
+        + ", ".join(missing)
+        + "; add the line(s) from .github/pull_request_template.md with a real value"
+    )
+
+
 def refusal(
     reason: str,
     current: dict[str, Any],
@@ -137,6 +156,7 @@ def refusal(
     max_files: int,
     max_lines: int,
     peers: list[int] | None = None,
+    detail: str = "",
 ) -> dict[str, Any]:
     changed_files = int(current.get("changed_files") or 0)
     changed_lines = int(current.get("additions") or 0) + int(
@@ -145,6 +165,7 @@ def refusal(
     return {
         "status": "refused",
         "reason": reason,
+        "detail": detail,
         "claim": normalize(fields.get("claim", "")),
         "acceptance_delta": normalize(fields.get("delta", "")),
         "competing_prs": peers or [],
@@ -165,17 +186,26 @@ def decide(
 ) -> dict[str, Any]:
     fields = extract_fields(current.get("body") or "")
     actual_head = ((current.get("head") or {}).get("sha") or "")
-    refuse = lambda reason, peers=None: refusal(  # noqa: E731
-        reason, current, fields, max_files, max_lines, peers
+    refuse = lambda reason, peers=None, detail="": refusal(  # noqa: E731
+        reason, current, fields, max_files, max_lines, peers, detail
     )
     if not expected_head or not SHA_RE.fullmatch(expected_head):
-        return refuse("expected_head_missing")
+        return refuse(
+            "expected_head_missing",
+            detail="expected head is missing or is not a full 40-character commit SHA; retry admission with the exact PR head",
+        )
     if actual_head != expected_head:
-        return refuse("candidate_head_moved")
+        return refuse(
+            "candidate_head_moved",
+            detail=f"PR head is {actual_head or 'missing'} but admission was requested for {expected_head}; refresh the exact PR/head evidence and retry",
+        )
     if current.get("state") != "open" or current.get("draft") is True:
-        return refuse("candidate_not_open_ready")
+        return refuse(
+            "candidate_not_open_ready",
+            detail=f"PR state is {current.get('state')!r} and draft is {current.get('draft')!r}; admission requires an open, ready (non-draft) PR",
+        )
     if invalid(fields["claim"]) or invalid(fields["delta"]):
-        return refuse("claim_identity_missing")
+        return refuse("claim_identity_missing", detail=identity_detail(fields))
 
     claim = normalize(fields["claim"])
     delta = normalize(fields["delta"])
@@ -194,18 +224,28 @@ def decide(
             exact_peers.append(int(peer["number"]))
 
     if exact_peers:
-        return refuse("competing_candidate", sorted(exact_peers))
+        peers = sorted(exact_peers)
+        listed = ", ".join(f"#{peer}" for peer in peers)
+        return refuse(
+            "competing_candidate",
+            peers,
+            detail=f"trusted competing PR(s) {listed} share the same governing claim and acceptance delta; reconcile them and record the accepted winner/losing disposition naming the winning PR in one of the competing PR bodies (or name a listed peer as the proposed replacement in the winning PR body) before qualification",
+        )
 
     changed_files = int(current.get("changed_files") or 0)
     changed_lines = int(current.get("additions") or 0) + int(
         current.get("deletions") or 0
     )
     if not docs_only and (changed_files > max_files or changed_lines > max_lines):
-        return refuse("qualification_scope_oversized")
+        return refuse(
+            "qualification_scope_oversized",
+            detail=f"candidate changes {changed_files} files / {changed_lines} changed lines, exceeding the ordinary limit of {max_files} files / {max_lines} changed lines; split or recompose the candidate before ordinary qualification",
+        )
 
     return {
         "status": "admitted",
         "reason": "candidate_current_unique_bounded",
+        "detail": "",
         "claim": claim,
         "acceptance_delta": delta,
         "competing_prs": [],
@@ -367,8 +407,30 @@ def self_test() -> None:
     ]
     assert run(mutual_replace[0], mutual_replace)["reason"] == "competing_candidate"
     assert run(fixture(body="", head=head), [])["reason"] == "claim_identity_missing"
+    empty_detail = run(fixture(body="", head=head), [])["detail"]
+    assert "Governing issue or accepted claim:" in empty_detail
+    assert "Acceptance delta (one sentence):" in empty_detail
+    claim_only_detail = run(
+        fixture(body="Governing issue or accepted claim: #2022\n", head=head), []
+    )["detail"]
+    assert "Acceptance delta (one sentence):" in claim_only_detail
+    assert "Governing issue or accepted claim:" not in claim_only_detail
+    placeholder_detail = run(
+        fixture(
+            body=fixture_body(delta="TBD"),
+            head=head,
+        ),
+        [],
+    )["detail"]
+    assert "Acceptance delta (one sentence):" in placeholder_detail
     oversized = fixture(body=fixture_body(), head=head, changed_files=161)
     assert run(oversized, [oversized])["reason"] == "qualification_scope_oversized"
+    assert "161 files" in run(oversized, [oversized])["detail"]
+    assert "160 files" in run(oversized, [oversized])["detail"]
+    assert "#11" in run(current, [current, duplicate])["detail"]
+    competing_detail = run(current, [current, duplicate])["detail"]
+    assert "one of the competing PR bodies" in competing_detail
+    assert "both PR bodies" not in competing_detail
     assert run(oversized, [oversized], docs=True)["status"] == "admitted"
     assert run(current, [current], "b" * 40)["reason"] == "candidate_head_moved"
     assert (
@@ -376,7 +438,7 @@ def self_test() -> None:
         == "candidate_not_open_ready"
     )
     assert run(current, [], "short")["reason"] == "expected_head_missing"
-    print("candidate-admission self-test: 21 controls passed")
+    print("candidate-admission self-test: 28 controls passed")
 
 
 def load_json(path: Path) -> Any:
