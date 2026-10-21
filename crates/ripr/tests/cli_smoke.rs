@@ -11619,6 +11619,15 @@ fn doctor_json_from_cargo_build_output_suppresses_path_mismatch_warning() -> Res
     let fake_name = if cfg!(windows) { "ripr.exe" } else { "ripr" };
     std::fs::write(fake_bin.join(fake_name), b"not a real ripr\n")
         .map_err(|error| error.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            fake_bin.join(fake_name),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .map_err(|error| error.to_string())?;
+    }
     let path = std::env::join_paths(std::iter::once(fake_bin.clone()).chain(
         std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
     ))
