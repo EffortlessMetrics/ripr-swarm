@@ -400,6 +400,7 @@ tests = [
   "crates/ripr/src/app/context.rs::tests::context_unmatched_and_seam_shaped_selectors_refuse_as_no_match",
   "crates/ripr/tests/cli_smoke.rs::selector_ambiguity_and_gap_identity_route_through_explain_and_context",
   "crates/ripr/tests/cli_smoke.rs::selector_location_misses_explain_syntax_and_preserve_retry_scope",
+  "crates/ripr/tests/cli_smoke/selector_recovery_scope.rs::selector_recovery_replays_committed_worktree_and_supplied_diff_scopes",
   "crates/ripr/tests/cli_smoke/unknown_explain.rs::unknown_explain_real_reasons_have_supported_actions_in_every_mode",
   "crates/ripr/tests/cli_smoke/unknown_explain.rs::unknown_explain_repair_preserves_decidable_recipes"
 ]

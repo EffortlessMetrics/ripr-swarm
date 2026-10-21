@@ -20,7 +20,10 @@ Syntax guidance follows unsuccessful selection; it must preserve exact-ID
 matching and location matching. A well-formed missing ID or
 location remains a lookup miss. Fresh-analysis recovery must list findings
 with the requested root and diff scope so a corrected selector can be retried
-from another working directory. Misses remain exit 2 with no machine stdout.
+from another working directory. Committed-history recovery explicitly selects
+`check --committed`, including when tracked worktree edits would change the
+check default. Explicit `--worktree` and supplied `--diff` recovery retain their
+own input sources. Misses remain exit 2 with no machine stdout.
 A selector naming several findings (for example two findings at one
 `file:line`, or a canonical gap identity shared by grouped findings) refuses
 as ambiguous with the bounded candidate finding IDs instead of silently

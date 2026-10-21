@@ -64,9 +64,6 @@ mod mixed_quote_rename;
 mod native_fanout;
 #[path = "cli_smoke/next_action.rs"]
 mod next_action;
-#[cfg(feature = "lang-rust")]
-#[path = "cli_smoke/selector_recovery_scope.rs"]
-mod selector_recovery_scope;
 #[path = "cli_smoke/output_leaf_identity.rs"]
 mod output_leaf_identity;
 #[cfg(all(
@@ -116,6 +113,9 @@ mod retained_evidence_guidance;
 mod same_line_owner_tail;
 #[path = "cli_smoke/sample_output.rs"]
 mod sample_output;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/selector_recovery_scope.rs"]
+mod selector_recovery_scope;
 #[path = "cli_smoke/shell_words.rs"]
 mod shell_words;
 #[cfg(all(unix, feature = "lang-rust"))]
