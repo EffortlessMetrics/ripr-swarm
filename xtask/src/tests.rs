@@ -8401,7 +8401,10 @@ fn bound_descriptor_requires_the_receipted_manifest_digest() -> Result<(), Strin
     assert!(err.contains("64 lowercase hex"), "{err}");
     let http = br#"{"version":"1.2.3","assets":{"t":{"url":"http://x/a","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#;
     let http_digest = format!("{:x}", Sha256::digest(http));
-    assert!(super::bound_descriptor_source("1.2.3", http, &http_digest).is_err());
+    let Err(err) = super::bound_descriptor_source("1.2.3", http, &http_digest) else {
+        return Err("a non-https asset url must be refused".to_string());
+    };
+    assert!(err.contains("non-https"), "{err}");
     Ok(())
 }
 

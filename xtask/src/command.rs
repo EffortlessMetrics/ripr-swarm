@@ -2380,8 +2380,8 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "non_mutating_check",
             "none",
             false,
-            false,
-            "Reads one sealed VSIX and reuses vscode-package inventory plus license-notice checks. Local inspector only; not a publisher or release-admission gate.",
+            true,
+            "Reads one sealed VSIX and reuses vscode-package inventory plus license-notice checks. publish-extension.yml runs it on the VSIX it publishes; it does not publish.",
         ),
         command_entry(
             "vscode-test",

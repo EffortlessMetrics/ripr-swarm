@@ -675,7 +675,11 @@ pub fn repository_owned_review_thread_mutation_violations() -> Result<Vec<String
         }
         for path in collect_files(root)? {
             let normalized = normalize_path(&path);
-            if normalized.ends_with("xtask/src/tests.rs") {
+            // The scanner and its fixtures necessarily spell the token.
+            if normalized.ends_with("xtask/src/tests.rs")
+                || normalized.ends_with("tools/repo-policy/src/lib.rs")
+                || normalized.ends_with("tools/repo-policy/src/workflow_tests.rs")
+            {
                 continue;
             }
             let text = read_text_lossy(&path)?;
