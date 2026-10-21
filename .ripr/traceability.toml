@@ -404,6 +404,12 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::selector_ambiguity_and_gap_identity_route_through_explain_and_context",
   "crates/ripr/tests/cli_smoke.rs::selector_location_misses_explain_syntax_and_preserve_retry_scope",
   "crates/ripr/tests/cli_smoke/selector_recovery_scope.rs::selector_recovery_replays_committed_worktree_and_supplied_diff_scopes",
+  "crates/ripr/tests/cli_smoke/selector_recovery_scope.rs::committed_check_printed_drill_ins_preserve_unstaged_scope",
+  "crates/ripr/tests/cli_smoke/selector_recovery_scope.rs::committed_check_printed_drill_ins_preserve_staged_scope",
+  "crates/ripr/tests/cli_smoke/selector_recovery_scope.rs::committed_drill_in_scope_conflicts_refuse_before_input_reads",
+  "crates/ripr/tests/cli_smoke/selector_recovery_scope.rs::committed_context_from_nested_cwd_selects_the_check_finding",
+  "crates/ripr/tests/cli_smoke/selector_recovery_scope.rs::composed_recovery_preserves_unstaged_analysis_and_explicit_sources",
+  "crates/ripr/tests/cli_smoke/selector_recovery_scope.rs::composed_recovery_preserves_staged_analysis_and_explicit_sources",
   "crates/ripr/tests/cli_smoke/unknown_explain.rs::unknown_explain_real_reasons_have_supported_actions_in_every_mode",
   "crates/ripr/tests/cli_smoke/unknown_explain.rs::unknown_explain_repair_preserves_decidable_recipes"
 ]
@@ -1269,6 +1275,9 @@ tests = [
   "crates/ripr/tests/task_first_facade.rs::member_selector_shadowed_by_a_root_package_file_is_refused",
   "crates/ripr/tests/task_first_facade.rs::member_explain_replay_anchor_shadowed_by_a_root_directory_is_refused",
   "crates/ripr/tests/task_first_facade.rs::advanced_agent_repair_unbindable_selector_exits_2_on_both_routes",
+  "crates/ripr/tests/task_first_facade.rs::member_directory_agent_artifact_commands_use_the_resolved_workspace_root",
+  "crates/ripr/tests/task_first_facade.rs::member_directory_agent_artifact_root_failure_keeps_the_json_refusal_envelope",
+  "crates/ripr/tests/task_first_facade.rs::member_context_selector_shadowed_by_a_root_package_file_is_refused",
   "crates/ripr/src/config.rs::tests::generated_init_config_is_conservative_and_parseable",
   "crates/ripr/src/config.rs::tests::generated_init_config_matches_checked_in_example",
   "crates/ripr/src/analysis/workspace/discover.rs::tests::discover_skips_default_excluded_directories",

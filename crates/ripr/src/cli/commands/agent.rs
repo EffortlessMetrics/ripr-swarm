@@ -13,9 +13,9 @@ use crate::app::agent_brief::{
 use crate::app::{self, OutputFormat};
 use crate::cli::CommandError;
 use crate::cli::agent::{
-    AgentBriefOptions, AgentCommand, AgentPacketOptions, AgentReceiptOptions, AgentRepairOptions,
-    AgentRepairPhase, AgentReviewSummaryOptions, AgentStartOptions, AgentStatusOptions,
-    AgentVerifyExecuteOptions, AgentVerifyOptions, parse_agent_args,
+    AgentBriefOptions, AgentBriefWorkingSet, AgentCommand, AgentPacketOptions, AgentReceiptOptions,
+    AgentRepairOptions, AgentRepairPhase, AgentReviewSummaryOptions, AgentStartOptions,
+    AgentStatusOptions, AgentVerifyExecuteOptions, AgentVerifyOptions, parse_agent_args,
 };
 use crate::cli::commands_agent_support::{
     agent_identity_path, build_agent_receipt_provenance, read_agent_verify_snapshot,
@@ -34,6 +34,7 @@ use std::path::{Path, PathBuf};
 
 use super::agent_dispatch;
 use super::agent_gap_packet::render_agent_packet_from_gap_ledger;
+use super::check::{bind_member_selector_file, resolve_implicit_command_root};
 use super::write_text_file;
 
 /// Schema version of the `ripr agent repair --phase after` success envelope
@@ -88,7 +89,6 @@ pub(in crate::cli) fn resolve_agent_repair_root(
 /// `verify` snapshot paths typed from a member directory stay bound to that
 /// directory. Runs after the help short-circuit so `--help` stays inert.
 fn resolve_agent_command_root(command: &mut AgentCommand) -> Result<(), String> {
-    use super::check::{bind_member_selector_file, resolve_implicit_command_root};
     match command {
         AgentCommand::Start(options) => {
             resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
@@ -100,6 +100,72 @@ fn resolve_agent_command_root(command: &mut AgentCommand) -> Result<(), String> 
             resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
         }
         AgentCommand::Repair(options) => resolve_agent_repair_root(options)?,
+        // #8902: the artifact-consuming siblings. A `--json` run that fails to
+        // resolve the root is a post-argv failure, so it still writes the
+        // #7331 refusal envelope (keyed to the root as typed) before stderr.
+        AgentCommand::Brief(options) => {
+            let base = match &options.working_set {
+                AgentBriefWorkingSet::Base(base) => Some(base.clone()),
+                _ => None,
+            };
+            let prefix = resolve_json_command_root(
+                &mut options.root,
+                options.root_explicit,
+                output::agent_brief::AGENT_BRIEF_SCHEMA_VERSION,
+                base.as_deref(),
+                options.json,
+            )?;
+            // `--diff` and `--files` are root-relative inputs of the brief:
+            // an existing member-relative file binds to the invocation
+            // directory; a missing one is passed through so the brief's own
+            // confinement/read diagnostics stay reachable.
+            match &mut options.working_set {
+                AgentBriefWorkingSet::Diff(path) => {
+                    bind_existing_member_file(prefix.as_deref(), &options.root, path);
+                }
+                AgentBriefWorkingSet::Files(paths) => {
+                    for path in paths {
+                        bind_existing_member_file(prefix.as_deref(), &options.root, path);
+                    }
+                }
+                AgentBriefWorkingSet::Base(_) | AgentBriefWorkingSet::SeamId(_) => {}
+            }
+        }
+        AgentCommand::Packet(options) => {
+            resolve_json_command_root(
+                &mut options.root,
+                options.root_explicit,
+                app::AGENT_SEAM_PACKET_SCHEMA_VERSION,
+                None,
+                options.json,
+            )?;
+            // `--gap-ledger` is read as typed from the invocation directory,
+            // the same file the operator named, so it needs no rebinding.
+        }
+        AgentCommand::VerifyExecute(options) => {
+            let prefix =
+                match resolve_implicit_command_root(&mut options.root, options.root_explicit) {
+                    Ok(prefix) => prefix,
+                    Err(error) => {
+                        // The typed disposition is the contract on every
+                        // terminal state, so an unresolvable root answers in
+                        // that shape.
+                        print!(
+                            "{}",
+                            app::verification_execution::render_unusable_root(&error)
+                        );
+                        return Err(error);
+                    }
+                };
+            bind_existing_member_file(prefix.as_deref(), &options.root, &mut options.packet);
+        }
+        AgentCommand::Receipt(options) => {
+            let prefix = resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+            bind_existing_member_file(prefix.as_deref(), &options.root, &mut options.verify_json);
+        }
+        AgentCommand::ReviewSummary(options) => {
+            resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
+        }
         AgentCommand::Verify(options) => {
             let prefix = resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
             for path in [&mut options.before, &mut options.after] {
@@ -114,6 +180,41 @@ fn resolve_agent_command_root(command: &mut AgentCommand) -> Result<(), String> 
         _ => {}
     }
     Ok(())
+}
+
+/// #8902: bind a member-relative input file to the invocation directory when
+/// it exists there; a file that does not exist is left as typed so the
+/// command's own read/confinement diagnostic names it.
+fn bind_existing_member_file(prefix: Option<&str>, root: &Path, path: &mut PathBuf) {
+    if let Ok(bound) = bind_member_selector_file(prefix, root, &path.to_string_lossy()) {
+        *path = PathBuf::from(bound);
+    }
+}
+
+/// Resolve the implicit root for a command whose `--json` mode answers a
+/// root-resolution failure with the #7331 refusal envelope (root-unusable
+/// family), keyed to the root as typed; prose runs return the bare error.
+fn resolve_json_command_root(
+    root: &mut PathBuf,
+    root_explicit: bool,
+    schema_version: &'static str,
+    base: Option<&str>,
+    json: bool,
+) -> Result<Option<String>, String> {
+    let typed_root = root.clone();
+    resolve_implicit_command_root(root, root_explicit).map_err(|error| {
+        if !json {
+            return error;
+        }
+        refuse_json_envelope(
+            schema_version,
+            "repo",
+            None,
+            &typed_root,
+            base,
+            CoreError::repository_root_unusable(error),
+        )
+    })
 }
 
 pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
@@ -1895,6 +1996,7 @@ fn run_agent_repair_phase(
                 let receipt_result = run_agent_receipt_for_attempt(
                     AgentReceiptOptions {
                         root: root.clone(),
+                        root_explicit: true,
                         verify_json: verify_json.clone(),
                         seam_id: attempt.seam_id.clone(),
                         attempt_id: None,
