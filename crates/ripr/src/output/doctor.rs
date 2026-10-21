@@ -4713,7 +4713,7 @@ mod tests {
                 size_display: "1.00 KB".to_string(),
                 artifact_ignore: DoctorArtifactIgnore::Ignored,
                 artifact_tracking: DoctorArtifactTracking::Tracked {
-                    warning: "! tracked".to_string(),
+                    warning: "~ tracked".to_string(),
                 },
             },
             test_surfaces: vec![DoctorTestSurface {
@@ -4751,7 +4751,7 @@ mod tests {
         assert_eq!(parsed["cache"]["artifact_ignore"], "ignored");
         assert_eq!(
             parsed["cache"]["artifact_tracking"]["tracked"]["warning"],
-            "! tracked"
+            "~ tracked"
         );
         assert_eq!(parsed["test_surfaces"][0]["framework"], "pytest");
         assert_eq!(parsed["test_surfaces"][0]["evidence"], "python: pytest");
