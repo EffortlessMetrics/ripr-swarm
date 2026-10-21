@@ -317,6 +317,17 @@ fn load_review_comments_analysis_outcome(
             path.display()
         ));
     }
+    // #9010: a findings-bounded check document is a prefix, never a complete
+    // outcome; present non-`true` (including malformed) fails closed.
+    if envelope
+        .get("document_complete")
+        .is_some_and(|member| member.as_bool() != Some(true))
+    {
+        return Err(format!(
+            "review-comments --check-output {} is invalid: findings-bounded check document (document_complete is not true); re-run with RIPR_CHECK_FINDINGS_BYTES=0",
+            path.display()
+        ));
+    }
     let declared_complete = envelope
         .get("analysis_complete")
         .and_then(serde_json::Value::as_bool)
@@ -998,6 +1009,66 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn check_output_loader_rejects_bounded_document_but_admits_control() -> Result<(), String> {
+        let dir = unique_command_test_dir("review-comments-bounded-check-output");
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        let _cleanup = OwnedDeadlineFixture(dir.clone());
+        let root = dir.join("repo");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let diff_text = "diff";
+        let digest = Sha256::digest(diff_text.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let identity = crate::analysis_outcome::AnalysisIdentity {
+            input_identity: Some(format!("sha256:{digest}")),
+            base_revision: Some("main".to_string()),
+            ..crate::analysis_outcome::AnalysisIdentity::default()
+        };
+        let outcome = crate::analysis_outcome::AnalysisOutcome::new(
+            crate::analysis_outcome::AnalysisOutcomeKind::CompleteNoFindings,
+            identity,
+            crate::analysis_outcome::AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 1,
+                candidate_line_count: 1,
+                probe_count: 1,
+                finding_count: 0,
+            },
+            Vec::new(),
+        )?;
+        let write = |name: &str, bounded: bool| -> Result<PathBuf, String> {
+            let mut envelope = serde_json::json!({
+                "analysis_complete": true,
+                "outcome": outcome
+            });
+            if bounded {
+                envelope["document_complete"] = serde_json::json!(false);
+            }
+            let document = serde_json::json!({
+                "schema_version": "0.2", "tool": "ripr", "mode": "draft",
+                "root": output::outcome::display_path(&root),
+                "base": "main", "summary": {}, "findings": [],
+                "analysis_outcome": envelope
+            });
+            let path = dir.join(name);
+            std::fs::write(&path, document.to_string()).map_err(|error| error.to_string())?;
+            Ok(path)
+        };
+        let control = write("control.json", false)?;
+        assert!(
+            load_review_comments_analysis_outcome(Some(&control), &root, "main", diff_text)?
+                .is_some()
+        );
+        let bounded = write("bounded.json", true)?;
+        let error = load_review_comments_analysis_outcome(Some(&bounded), &root, "main", diff_text)
+            .err()
+            .ok_or("a bounded check document must be refused")?;
+        assert!(error.contains("findings-bounded"), "{error}");
+        Ok(())
     }
 
     #[test]

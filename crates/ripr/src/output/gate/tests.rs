@@ -853,11 +853,53 @@ fn bounded_analysis_document_is_incomplete_but_unbounded_control_is_not() {
         }
     });
     assert!(!discloses_incomplete_analysis_outcome(&unbounded));
-    // A corrupt (non-boolean) member never reads as a bound by itself here;
-    // `ripr_zero_status` rejects the malformed shape separately.
-    assert!(!discloses_incomplete_analysis_outcome(&json!({
+    // A corrupt (non-boolean) member fails closed instead of reading complete.
+    assert!(discloses_incomplete_analysis_outcome(&json!({
         "analysis_outcome": {"analysis_complete": true, "document_complete": "false"}
     })));
+    assert!(!discloses_incomplete_analysis_outcome(&json!({
+        "analysis_outcome": {"analysis_complete": true, "document_complete": true}
+    })));
+}
+
+#[test]
+fn gate_pr_guidance_refusal_names_findings_document_bounded_kind() -> Result<(), String> {
+    // #9010: a bounded PR-guidance input without run_limitations is refused by
+    // the shared predicate and labelled with the bounded kind, not the
+    // producer's `complete_with_findings` outcome kind.
+    let dir = temp_dir("gate-bounded-pr-guidance-kind")?;
+    let guidance = write_temp_json(
+        &dir,
+        "comments.json",
+        r#"{
+          "schema_version": "0.1",
+          "tool": "ripr",
+          "status": "advisory",
+          "comments": [],
+          "analysis_outcome": {
+            "analysis_complete": true,
+            "document_complete": false,
+            "findings_rendered": 1,
+            "findings_total": 3,
+            "outcome": {"kind": "complete_with_findings"}
+          }
+        }"#,
+    )?;
+    let (_fixture, mut input) = fixture_input(GateMode::VisibleOnly)?;
+    input.pr_guidance = Some(guidance);
+    let report = build_gate_decision_report(&input)?;
+    assert_eq!(report.status, "config_error");
+    assert!(
+        report
+            .config_errors
+            .iter()
+            .any(|error| error.contains("(findings_document_bounded)")
+                && !error.contains("complete_with_findings")),
+        "{:?}",
+        report.config_errors
+    );
+    ignore_remove_dir_all(dir);
+    Ok(())
 }
 
 #[test]

@@ -602,6 +602,8 @@ Initial implementation should add tests for:
   `run_limitations[]` (#9010; negative tests with unbounded controls in
   `crates/ripr/src/output/gate/tests.rs`, `output/ripr_zero_status.rs`, and
   `app/pr_summary/json.rs`).
+  A document with both `document_complete: false` and `analysis_complete:
+  false` keeps the already-incomplete typed outcome kind in refusals.
 
 ## Implementation Mapping
 

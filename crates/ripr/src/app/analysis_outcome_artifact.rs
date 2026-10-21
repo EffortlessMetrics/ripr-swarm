@@ -193,6 +193,18 @@ pub(crate) fn validate_analysis_outcome_artifact(
             "Analysis outcome artifact is missing boolean analysis_complete.",
         ));
     };
+    // #9010: the production command builder redirects `ripr check --format
+    // json` into this artifact, so a findings-bounded check document can
+    // arrive here. It holds only a prefix of the findings and is not a
+    // complete analysis outcome, whatever `analysis_complete` says.
+    if envelope
+        .get("document_complete")
+        .is_some_and(|member| member.as_bool() != Some(true))
+    {
+        return Err(invalid(
+            "Analysis outcome artifact is a findings-bounded check document (document_complete is not true); re-run with RIPR_CHECK_FINDINGS_BYTES=0 for the full set.",
+        ));
+    }
     let Some(outcome) = envelope.get("outcome") else {
         return Err(invalid(
             "Analysis outcome artifact is missing the typed outcome.",
@@ -358,6 +370,30 @@ mod tests {
                     &artifact(&outcome, declared_complete)?
                 ),
                 Ok(outcome)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_findings_bounded_check_document_but_admits_unbounded_control() -> Result<(), String>
+    {
+        let outcome = complete_outcome(AnalysisOutcomeKind::CompleteWithFindings)?;
+        let root = workspace_root()?;
+        let root_display = root.display().to_string();
+        let control = artifact(&outcome, true)?;
+        assert_eq!(
+            validate_analysis_outcome_artifact(&root, &root_display, &control),
+            Ok(outcome.clone())
+        );
+        for member in [serde_json::json!(false), serde_json::json!("false")] {
+            let mut bounded = artifact(&outcome, true)?;
+            bounded["analysis_outcome"]["document_complete"] = member;
+            let result = validate_analysis_outcome_artifact(&root, &root_display, &bounded);
+            assert!(
+                matches!(&result, Err(AnalysisOutcomeArtifactError::Invalid(reason))
+                    if reason.contains("findings-bounded")),
+                "{result:?}"
             );
         }
         Ok(())

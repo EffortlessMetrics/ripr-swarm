@@ -1472,10 +1472,7 @@ fn partial_scope_input_error(value: &Value, path: &Path) -> Option<String> {
             crate::analysis::PartialDiffScope::GATE_ELIGIBILITY,
         ))
     } else if discloses_incomplete_analysis_outcome(value) {
-        let kind = value
-            .pointer("/analysis_outcome/outcome/kind")
-            .and_then(Value::as_str)
-            .unwrap_or("incomplete");
+        let kind = incomplete_analysis_outcome_kind(value);
         Some(format!(
             "gate input {} discloses an incomplete analysis outcome ({kind}); \
              an incomplete or unsupported denominator is never a gate, baseline, \
@@ -1581,10 +1578,11 @@ pub(crate) fn discloses_incomplete_analysis_outcome(value: &Value) -> bool {
 /// Whether the check document discloses `analysis_outcome.document_complete:
 /// false` (#9010): the rendered findings are a budget-bounded prefix.
 pub(crate) fn discloses_bounded_analysis_document(value: &Value) -> bool {
+    // A present non-`true` member (including a malformed one) cannot
+    // establish a complete document.
     value
         .pointer("/analysis_outcome/document_complete")
-        .and_then(Value::as_bool)
-        == Some(false)
+        .is_some_and(|member| member.as_bool() != Some(true))
 }
 
 /// Whether a gap-ledger document discloses a blocked producer run: the

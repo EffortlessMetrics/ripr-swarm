@@ -4,5 +4,5 @@
   `findings_total`, emitted only when bounded), and the shared incomplete-outcome
   predicate, the PR evidence summary, and the xtask check-JSON readers fail
   closed on it, so a findings prefix never reads as a complete analysis. The
-  artifact-projection readers (`agent_review_summary`, packet currentness) are
-  out of scope (#9010).
+  typed analysis-outcome artifact validator (agent review summary) and the
+  `review-comments --check-output` loader refuse it too (#9010).

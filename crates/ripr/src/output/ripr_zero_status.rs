@@ -2,7 +2,7 @@ use super::first_pr::{ProofPathLabels, REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PH
 use super::gap_decision_ledger::{self, GapRecord};
 use super::gate::{
     GATE_DECISION_KNOWN_STATUSES, GATE_STATUS_CONFIG_ERROR, blocked_producer_warnings,
-    discloses_blocked_producer_outcome, discloses_incomplete_analysis_outcome,
+    discloses_blocked_producer_outcome, discloses_bounded_analysis_document,
     discloses_limited_findings_bound, discloses_limited_partial_scope,
     incomplete_analysis_outcome_kind,
 };
@@ -779,13 +779,19 @@ fn parse_delta(path: &str, text: Result<String, String>) -> DeltaParse {
             "required baseline debt delta input {path} discloses a limited_partial_scope producer run; a partial denominator can never yield achieved"
         ));
     }
-    if discloses_limited_findings_bound(&value) {
+    if discloses_limited_findings_bound(&value) || discloses_bounded_analysis_document(&value) {
         partial_denominator = true;
         warnings.push(format!(
             "required baseline debt delta input {path} discloses a findings-bounded producer run; a bounded denominator can never yield achieved"
         ));
     }
-    if discloses_incomplete_analysis_outcome(&value) {
+    // The document bound is disclosed above; only the producer's explicit
+    // analysis flag supports an incomplete-analysis warning (#9010).
+    if value
+        .pointer("/analysis_outcome/analysis_complete")
+        .and_then(Value::as_bool)
+        == Some(false)
+    {
         partial_denominator = true;
         warnings.push(format!(
             "required baseline debt delta input {path} discloses an incomplete analysis outcome ({}); an incomplete denominator can never yield achieved",
@@ -923,13 +929,19 @@ fn parse_gap_ledger(path: Option<&str>, text: Option<Result<String, String>>) ->
                 "optional gap decision ledger input {path} discloses a limited_partial_scope producer run; a partial denominator can never yield achieved"
             ));
         }
-        if discloses_limited_findings_bound(&ledger_value) {
+        if discloses_limited_findings_bound(&ledger_value)
+            || discloses_bounded_analysis_document(&ledger_value)
+        {
             partial_denominator = true;
             warnings.push(format!(
                 "optional gap decision ledger input {path} discloses a findings-bounded producer run; a bounded denominator can never yield achieved"
             ));
         }
-        if discloses_incomplete_analysis_outcome(&ledger_value) {
+        if ledger_value
+            .pointer("/analysis_outcome/analysis_complete")
+            .and_then(Value::as_bool)
+            == Some(false)
+        {
             partial_denominator = true;
             warnings.push(format!(
                 "optional gap decision ledger input {path} discloses an incomplete analysis outcome ({}); an incomplete denominator can never yield achieved",
@@ -3084,6 +3096,80 @@ mod tests {
         Ok(())
     }
 
+    /// Adapted from the #9010 adoption handoff: a bounded document keeps the
+    /// bounded-denominator refusal and never prints a false incomplete-analysis
+    /// warning while the producer's `analysis_complete` is true; an explicit
+    /// `analysis_complete: false` still prints it.
+    #[test]
+    fn zero_bounded_document_preserves_producer_analysis_disclosure() -> Result<(), String> {
+        for source in ["delta", "ledger"] {
+            for mode in ["document", "legacy", "full"] {
+                for analysis_complete in [true, false] {
+                    let mut delta = serde_json::json!({
+                        "schema_version": "0.1", "kind": "baseline_debt_delta",
+                        "delta": {"still_present": 0, "resolved": 0, "new_policy_eligible": 0,
+                            "acknowledged": 0, "suppressed": 0, "stale_baseline_entry": 0,
+                            "invalid_baseline_entry": 0, "missing_current_input": 0},
+                        "items": []
+                    });
+                    let mut ledger = serde_json::json!({"gap_records": []});
+                    let producer = if source == "delta" {
+                        &mut delta
+                    } else {
+                        &mut ledger
+                    };
+                    producer["analysis_outcome"] = serde_json::json!({
+                        "analysis_complete": analysis_complete,
+                        "outcome": {"kind": if analysis_complete {"complete_with_findings"} else {"partial_with_limitations"}}
+                    });
+                    match mode {
+                        "document" => {
+                            producer["analysis_outcome"]["document_complete"] =
+                                serde_json::json!(false);
+                        }
+                        "legacy" => {
+                            producer["run_limitations"] =
+                                serde_json::json!([{"category": "limited_findings_bound"}]);
+                        }
+                        _ => {}
+                    }
+                    let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+                        root: ".".to_string(),
+                        generated_at: "unix_ms:100000000".to_string(),
+                        baseline_path: None,
+                        delta_path: "delta.json".to_string(),
+                        gap_ledger_path: Some("ledger.json".to_string()),
+                        gate_path: None,
+                        pr_guidance_path: None,
+                        recommendation_calibration_path: None,
+                        baseline_json: None,
+                        delta_json: Ok(delta.to_string()),
+                        gap_ledger_json: Some(Ok(ledger.to_string())),
+                        gate_json: None,
+                        pr_guidance_json: None,
+                        recommendation_calibration_json: None,
+                    });
+                    for rendered in [
+                        render_ripr_zero_status_json(&report)?,
+                        render_ripr_zero_status_markdown(&report),
+                    ] {
+                        assert_eq!(
+                            rendered.contains("findings-bounded producer run"),
+                            mode != "full",
+                            "{source}/{mode}/{analysis_complete}: {rendered}"
+                        );
+                        assert_eq!(
+                            rendered.contains("incomplete analysis outcome"),
+                            !analysis_complete,
+                            "{source}/{mode}/{analysis_complete}: {rendered}"
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn ripr_zero_status_refuses_a_bounded_analysis_document_but_not_the_control()
     -> Result<(), String> {
@@ -3131,7 +3217,10 @@ mod tests {
             r#"{"analysis_complete": true, "document_complete": false, "outcome": {"kind": "complete_with_findings"}}"#,
         )?;
         assert!(!bounded.contains("\"state\": \"achieved\""), "{bounded}");
-        assert!(bounded.contains("findings_document_bounded"), "{bounded}");
+        assert!(
+            bounded.contains("findings-bounded producer run"),
+            "{bounded}"
+        );
         let control = render(
             r#"{"analysis_complete": true, "outcome": {"kind": "complete_with_findings"}}"#,
         )?;

@@ -2661,11 +2661,16 @@ is absent, and the `pr-evidence` summary reports `analysis_complete: false` and
 `run_status: incomplete` for such a document. The repository xtask readers of
 check JSON (eval-sweep refresh, release smoke, the Python and Rust judged-panel
 replay and packet readers) use `check_document_analysis_complete`, which applies
-the same rule. `agent_review_summary` and agent-packet currentness read a
-separate analysis-outcome artifact projection and are out of scope; the MCP,
-LSP, SARIF and badge surfaces do not read check-JSON `analysis_complete`. A
-non-boolean `document_complete` is a malformed disclosure that RIPR Zero reports
-as unknown.
+the same rule. The typed analysis-outcome artifact validator (shared by
+`agent review-summary` and the agent loop, whose command builder redirects
+`ripr check --format json` into `analysis-outcome.json`) and the
+`review-comments --check-output` loader reject a present non-`true`
+`document_complete`. Agent-packet currentness never reads check-JSON
+`analysis_complete`, and the MCP, LSP, SARIF and badge surfaces do not either.
+RIPR Zero keeps its bounded-denominator refusal for `document_complete: false`
+and prints an incomplete-analysis warning only when the producer's own
+`analysis_complete` is `false`. A non-boolean `document_complete` is a
+malformed disclosure that RIPR Zero reports as unknown.
 
 `summary` keeps full analysis counts (`summary.findings` is the analyzed
 total, `rendered + omitted == total`); `finding_alignment` covers the rendered

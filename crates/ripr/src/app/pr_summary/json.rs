@@ -83,11 +83,12 @@ fn build_summary(
     // stays the analysis verdict. The summary's completeness is a consumer
     // claim about the evidence it was built from, so the bounded document
     // fails closed to `false` rather than reading as a complete run.
+    // A present non-`true` member (including a malformed one) fails closed,
+    // matching the xtask helper and `ripr_zero_status`.
     let document_bounded = analysis_outcome
         .as_ref()
         .and_then(|value| value.get("document_complete"))
-        .and_then(Value::as_bool)
-        == Some(false);
+        .is_some_and(|member| member.as_bool() != Some(true));
     let analysis_complete = if document_bounded {
         Some(false)
     } else {
@@ -1308,6 +1309,18 @@ mod tests {
         );
         let markdown = super::super::render_evidence_summary_md(&summary);
         assert!(markdown.contains("**Analysis Complete**: `false`"));
+
+        let malformed = serde_json::json!({
+            "run_status": "complete",
+            "analysis_outcome": {
+                "analysis_complete": true,
+                "document_complete": "false",
+                "outcome": {"kind": "complete_with_findings"}
+            }
+        });
+        let summary = build_pr_evidence_summary(None, None, None, Some(&malformed), None, None);
+        assert_eq!(summary.run_status, "incomplete");
+        assert_eq!(summary.analysis_complete, Some(false));
 
         let control = serde_json::json!({
             "run_status": "complete",

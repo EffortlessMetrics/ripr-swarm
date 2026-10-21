@@ -1223,11 +1223,8 @@ fn classify_pass(timed_out: bool, exit_ok: bool, parsed: Option<&Value>) -> RunS
     if analysis_kind == "analysis_failed" || findings_have_parse_failure(value) {
         return RunStatus::ParseFailed;
     }
-    let complete = value
-        .get("analysis_outcome")
-        .and_then(|outcome| outcome.get("analysis_complete"))
-        .and_then(Value::as_bool);
-    if complete == Some(true) {
+    // #9010: a findings-bounded document is a prefix, never Complete.
+    if crate::check_document_analysis_complete(value) == Some(true) {
         RunStatus::Complete
     } else {
         RunStatus::Partial
@@ -1408,7 +1405,7 @@ fn run_stability_pass(
             };
         }
     };
-    if !second.status.counts_as_run() {
+    if !matches!(second.status, RunStatus::Complete) {
         return StabilityResult::NotCompared {
             limitation: format!(
                 "stability pass ended in status `{}`; a comparison needs a complete second pass",
@@ -3787,6 +3784,28 @@ mod python_eval_sweep_refresh {
             "a compared row digests the retained second-pass stderr"
         );
         Ok(())
+    }
+
+    /// #9010: a findings-bounded check document is a prefix, so it classifies
+    /// as Partial (never Complete) and therefore never reaches the repeat
+    /// phase or a `pass` summary; the unbounded control stays Complete.
+    #[test]
+    fn bounded_check_document_classifies_partial_not_complete() {
+        let bounded = json!({"analysis_outcome": {
+            "analysis_complete": true, "document_complete": false,
+            "findings_rendered": 1, "findings_total": 3,
+            "outcome": {"kind": "complete_with_findings"}}, "findings": []});
+        assert!(matches!(
+            classify_pass(false, true, Some(&bounded)),
+            RunStatus::Partial
+        ));
+        let control = json!({"analysis_outcome": {
+            "analysis_complete": true,
+            "outcome": {"kind": "complete_with_findings"}}, "findings": []});
+        assert!(matches!(
+            classify_pass(false, true, Some(&control)),
+            RunStatus::Complete
+        ));
     }
 
     /// Non-complete first results never enter the repeat phase and never
