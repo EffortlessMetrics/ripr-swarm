@@ -44,7 +44,7 @@ Evidence
   - source table row value "Bob" at line 50
   - source table row value "ada" at line 50
   - source table row value '?' at line 50
-  - source values (showing 8 of 14; full list in --format json)
+  - source values (showing 8 of 14 read from related tests; full list in --format json)
 
 Weakness
   - Changed boundary input is unresolved: slice length `samples.len()` is outside the bounded eager immutable literal table family; not every input cardinality is established; activation/infection is unknown

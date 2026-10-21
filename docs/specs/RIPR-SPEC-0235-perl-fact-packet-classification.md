@@ -200,7 +200,7 @@ For each change, the first match wins:
    never strong, whatever their label. `weak_smoke`, `weak_broad`,
    `mention_only` and `unknown` strengths are never strong. A relation
    with a bound strong oracle reads `weakly_exposed`; with any other bound
-   oracle, `reachable_unrevealed` (except rule 16).
+   oracle, `reachable_unrevealed` (except rules 16 and 17).
 7. **Relation-kind cap, per relation.** Only `direct_owner_call` supports
    positive reachability (sink-aligned `exposed`, suggested location, row
    miss). A reachable `method_receiver` or `helper_call` relation whose own
@@ -315,6 +315,21 @@ For each change, the first match wins:
     `dynamic_framework_indirection` kinds stay `reachable_unrevealed`. The
     recommended next step says the producer grades the assertion broad and that
     no change is needed if it asserts the message, class or value.
+17. **`isnt` pins nothing.** An oracle whose recorded expression begins with
+    the call `isnt` (bare, or qualified `Test::More::`, `Test2::V0::` or
+    `Test2::V1::`) is read as `weak_smoke` when the producer graded it
+    `strong_exact` or `weak_broad`, because `isnt($got, $v)` passes for
+    every wrong result but `$v` and cannot notice the changed behavior. It
+    earns no rule 6 credit and is not a rule 16 broad oracle, so its
+    relation reads `reachable_unrevealed` unless another bound oracle
+    credits it (aggregation is unchanged). Only the leading call token is
+    read (a name such as `isnt_zero` is not `isnt`); ripr does not parse the
+    argument list. The producer fix is to grade `isnt` weak at the source;
+    this keeps older packets from earning `weakly_exposed` meanwhile
+    (corpus: `perl-test2-fee-isnt-zero`, `perl-testmore-clamp-isnt` were
+    credited, truth not discriminated; since the producer pin moved to
+    07320a4 their packets arrive `weak_smoke`, and the edited `perl-0235-*`
+    packets that keep an old-style `strong_exact` `isnt` exercise this rule).
 
 ### Decisions
 
@@ -541,6 +556,8 @@ cases.
   `ingestion_*` (ingestion),
   `perl_packet_contract_migration_corpus_pins_real_producer_dispositions`
   (rule 1 unrecognized kinds, real-producer owner ids),
+  `perl_isnt_is_a_smoke_oracle_not_an_exact_one` (rule 17: `isnt` spellings,
+  the `weak_broad` grading, and `is` / `isnt_zero` controls),
   `relation_gate_rejects_file_proximity_only` (edits `relation_kind`
   without re-blessing; rule 14).
 - Existing: RIPR-SPEC-0108 byte-pinned reports under
@@ -564,7 +581,7 @@ cases.
   - `PerlFactPacket::classify_related_relation`: rules 4 to 7;
   - `PerlFactPacket::classify_change_from_related_tests`: rule 8;
   - `sink_aligned_observation`: rules 5 and 9;
-  - `OracleFact::is_strong_exact`: rule 6; `is_broad_unresolved`: rule 16;
+  - `OracleFact::is_strong_exact`: rule 6; `is_broad_unresolved`: rule 16; `effective_strength`: rule 17;
   - `RelationKind::supports_positive_reachability`: rule 7;
   - `perl_oracle_kind_to_domain`, `perl_oracle_strength_to_domain`,
     `perl_relation_to_domain`: rule 12;

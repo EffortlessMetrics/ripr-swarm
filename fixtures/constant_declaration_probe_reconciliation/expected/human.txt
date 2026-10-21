@@ -30,6 +30,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/constant_declaration_probe_reconciliation/input --diff <cwd>/fixtures/constant_declaration_probe_reconciliation/diff.patch --mode fast probe:src_lib.rs:static_unknown:c48715e6
   ripr context --root <cwd>/fixtures/constant_declaration_probe_reconciliation/input --diff <cwd>/fixtures/constant_declaration_probe_reconciliation/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:c48715e6
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:static_unknown:c48715e6 --root <cwd>/fixtures/constant_declaration_probe_reconciliation/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

@@ -14,6 +14,13 @@
 
 ### Fixed
 
+- Show `$(warning) ripr: language off` and name the language when changed
+  files of a language whose adapter is not enabled were skipped, instead of
+  the generic `limited` text. The status bar reads the typed
+  `unavailable_languages` field of `ripr/analysisStatus`, not message text;
+  generic LSP clients get one `window/showMessage` warning per language
+  ([#8585](https://github.com/EffortlessMetrics/ripr-swarm/issues/8585)).
+
 - Give the `Extension Smoke` suite setup its own generous mocha budget and
   report a suite whose before-all hook died as a named setup death instead of
   an ordinary test failure. Activation awaits full server start (a 10s

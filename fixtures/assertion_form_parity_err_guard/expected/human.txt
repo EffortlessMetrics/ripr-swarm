@@ -26,6 +26,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/assertion_form_parity_err_guard/input --diff <cwd>/fixtures/assertion_form_parity_err_guard/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
   ripr context --root <cwd>/fixtures/assertion_form_parity_err_guard/input --diff <cwd>/fixtures/assertion_form_parity_err_guard/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
+  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:predicate:c80557eb --root <cwd>/fixtures/assertion_form_parity_err_guard/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/assertion_form_parity_err_guard/input --at src/lib.rs:2 --kind predicate
 
