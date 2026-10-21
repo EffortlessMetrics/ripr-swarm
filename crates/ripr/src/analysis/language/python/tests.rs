@@ -7327,6 +7327,7 @@ fn builtin_protocol_entry_credits_the_dunder_owner() -> Result<(), String> {
         "import src.nr as mi\n\n\ndef test_empty_reversed():\n    assert list(reversed(mi.numeric_range(0))) == []\n",
         "from src.nr import numeric_range\n\n\ndef test_empty_reversed():\n    assert list(reversed(numeric_range(0))) == []\n",
         "from src.nr import numeric_range\n\n\ndef test_empty_reversed():\n    r = numeric_range(0)\n    assert list(reversed(r)) == []\n",
+        "import unittest\nfrom src.nr import numeric_range\n\n\nclass T(unittest.TestCase):\n    def test_empty_reversed(self):\n        r = numeric_range(0)\n        self.assertEqual(list(reversed(r)), [])\n",
     ] {
         let (finding, relations) = classify_reversed_guard(test_src)?;
         assert_eq!(
