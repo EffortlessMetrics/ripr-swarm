@@ -4120,6 +4120,13 @@ fn find_conditional_assertion_credit(
     if sample.is_some() {
         return;
     }
+    // Statements after an unconditional exit are dead; the collector withholds
+    // their assertions, so no live conditional credit can sit there.
+    let live_len = statements
+        .iter()
+        .position(super::oracle::statement_completes_abruptly)
+        .map_or(statements.len(), |index| index + 1);
+    let statements = &statements[..live_len];
     for stmt in statements {
         match stmt {
             Statement::BlockStatement(block) => {
