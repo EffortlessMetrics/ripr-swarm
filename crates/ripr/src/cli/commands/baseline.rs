@@ -364,23 +364,23 @@ mod tests {
     #[test]
     fn baseline_create_overwrite_discloses_windows_shell_routing() {
         for (from, quoted_from) in [
-            (r"C:\work\gate$it's.json", r"'C:\work\gate$it'\''s.json'"),
-            (r"C:\work\gate`it's.json", r"'C:\work\gate`it'\''s.json'"),
-            (r"C:\work\gate%it's.json", r#""C:\work\gate%it's.json""#),
-            (r"C:\work\gate.json", r#""C:\work\gate.json""#),
+            (r"fixtures\gate$it's.json", r"'fixtures\gate$it'\''s.json'"),
+            (r"fixtures\gate`it's.json", r"'fixtures\gate`it'\''s.json'"),
+            (r"fixtures\gate%it's.json", r#""fixtures\gate%it's.json""#),
+            (r"fixtures\gate.json", r#""fixtures\gate.json""#),
             (
-                "C:\\work\\gate\u{202e}.json",
-                r#"'C:\work\gate'"$(printf '\342\200\256')"'.json'"#,
+                "fixtures\\gate\u{202e}.json",
+                r#"'fixtures\gate'"$(printf '\342\200\256')"'.json'"#,
             ),
         ] {
             assert_eq!(
                 baseline_create_overwrite_error(
                     Path::new(from),
-                    Path::new(r"C:\work\chosen baseline.json"),
+                    Path::new(r"fixtures\chosen baseline.json"),
                     true,
                 ),
                 format!(
-                    "C:\\work\\chosen baseline.json already exists; rerun `ripr baseline create --from {quoted_from} --out \"C:\\work\\chosen baseline.json\" --force` to overwrite it. On Windows, use Git Bash (not WSL) if a path contains $, backticks or %, or this command uses printf escape fragments. Command Prompt does not support those forms."
+                    "fixtures\\chosen baseline.json already exists; rerun `ripr baseline create --from {quoted_from} --out \"fixtures\\chosen baseline.json\" --force` to overwrite it. On Windows, use Git Bash (not WSL) if a path contains $, backticks or %, or this command uses printf escape fragments. Command Prompt does not support those forms."
                 )
             );
         }
