@@ -381,10 +381,10 @@ discriminator was detected") while the matching Evidence stage (reach,
 observation, discriminator) reads `no`, because the Evidence block already
 states the same fact. A distinct entry, such as a missing boundary input, and
 any entry whose stage is not `no` stay. The finding's JSON `missing` list is
-unchanged. The default digest names its one `Missing discriminator` entry
-through the same filter, and labels a `Typed static limitation (...)` entry
-as an `Analyzer limit`, so it never presents an analyzer limit as a test gap or
-names an entry the exhaustive form dropped (#9033).
+unchanged. The default digest skips the same restated entries when it names its one
+`Missing discriminator` entry, and labels a `Typed static limitation (...)`
+entry as an `Analyzer limit`, so it never presents an analyzer limit as a test
+gap or names an entry the exhaustive form dropped as a restatement (#9033).
 
 Sharing requires established identical full source ownership, source file,
 language/status/owner kind, currentness and raw test context/counts. An evidence

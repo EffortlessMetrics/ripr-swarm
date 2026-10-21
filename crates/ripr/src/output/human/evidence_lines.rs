@@ -307,7 +307,11 @@ pub(super) fn weakness_lines(finding: &Finding) -> Vec<String> {
     let mut lines = finding
         .missing
         .iter()
-        .filter(|missing| weakness_shows_missing_entry(finding, missing, &discriminator_values))
+        .filter(|missing| {
+            !is_duplicate_discriminator_missing(missing, &discriminator_values)
+                && !is_preview_actionability_missing_summary(missing)
+                && !restates_no_static_path_evidence(finding, missing)
+        })
         .cloned()
         .collect::<Vec<_>>();
     for discriminator in &finding.activation.missing_discriminators {
@@ -317,19 +321,6 @@ pub(super) fn weakness_lines(finding: &Finding) -> Vec<String> {
         ));
     }
     lines
-}
-
-/// Whether the Weakness list prints this `missing` entry. The digest uses the
-/// same predicate so its one-line pointer never names an entry the exhaustive
-/// form dropped.
-pub(super) fn weakness_shows_missing_entry(
-    finding: &Finding,
-    missing: &str,
-    discriminator_values: &[&str],
-) -> bool {
-    !is_duplicate_discriminator_missing(missing, discriminator_values)
-        && !is_preview_actionability_missing_summary(missing)
-        && !restates_no_static_path_evidence(finding, missing)
 }
 
 /// Whether a `missing` entry only restates a stage line the Evidence block

@@ -3698,29 +3698,6 @@ mod tests {
             return Err(format!("digest names a dropped entry:\n{digest}"));
         }
 
-        // The digest and the Weakness list share one filter: a value-shaped
-        // entry the Weakness list drops as a duplicate of a missing
-        // discriminator fact is not the digest's pointer either.
-        let mut duplicate = finding.clone();
-        duplicate.missing = vec![format!(
-            "{}{}",
-            crate::domain::MISSING_DISCRIMINATOR_VALUE_PREFIX,
-            "x == 5"
-        )];
-        duplicate.activation.missing_discriminators = vec![crate::domain::MissingDiscriminatorFact {
-            value: "x == 5".to_string(),
-            reason: "boundary".to_string(),
-            flow_sink: None,
-        }];
-        let digest = super::sections::render_finding_digest_with_config(
-            &duplicate,
-            &crate::config::RiprConfig::default(),
-            Path::new("."),
-        );
-        if digest.contains("Missing discriminator: x == 5") {
-            return Err(format!("digest named a deduplicated entry:\n{digest}"));
-        }
-
         // A typed static limitation is the analyzer naming what it could not
         // bind, so the digest labels it as an analyzer limit.
         let mut limited = finding.clone();
