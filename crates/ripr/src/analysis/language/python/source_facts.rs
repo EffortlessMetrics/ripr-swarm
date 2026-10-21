@@ -1850,10 +1850,9 @@ fn typing_markers_distrusted(source: &str) -> bool {
                 || head.starts_with('.')
                 || head.ends_with('.');
         }
-        line.starts_with("from ")
-            && line.contains("import")
-            && line.contains('*')
-            && !is_typing_import_line(line)
+        // A star import anywhere on the line (`import os; from m import *`,
+        // `if x: from m import *`) may shadow a marker.
+        contains_word(line, "import") && line.contains('*') && !is_typing_import_line(line)
     })
 }
 
@@ -1880,9 +1879,11 @@ fn name_bound_outside_typing_import(source: &str, name: &str) -> bool {
         } else {
             false
         };
-        if is_typing_import_line(trimmed) && trimmed.contains('(') && !trimmed.contains(')') {
+        // Parentheses in a trailing comment must not open or close the block.
+        let code = trimmed.split('#').next().unwrap_or_default();
+        if is_typing_import_line(trimmed) && code.contains('(') && !code.contains(')') {
             in_typing_block = true;
-        } else if in_typing_block && trimmed.contains(')') {
+        } else if in_typing_block && code.contains(')') {
             in_typing_block = false;
         }
         if !allowed && contains_word(line, name) {

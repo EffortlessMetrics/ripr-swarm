@@ -889,6 +889,8 @@ mod tests {
         for plain in [
             "from typing import final\n\n@final\ndef rate(n):\n    return n + 1\n",
             "import typing\n\n@typing.final\ndef rate(n):\n    return n + 1\n",
+            "import typing as t\n\n@t.final\ndef rate(n):\n    return n + 1\n",
+            "from typing import final\n\n@final\nclass Rate:\n    pass\n",
             "from typing import (\n    final,\n    override,\n)\n\n@final\ndef rate(n):\n    return n + 1\n",
         ] {
             assert_eq!(parsed_limit(plain)?, None, "{plain}");
@@ -906,6 +908,14 @@ mod tests {
             "from typing import final\n\ntry:\n    from helpers import final\nexcept ImportError:\n    pass\n\n@final\ndef rate(n):\n    return n + 1\n",
             "from typing import final\n\nfinal, other = make()\n\n@final\ndef rate(n):\n    return n + 1\n",
             "from typing import final\nfrom helpers import *\n\n@final\ndef rate(n):\n    return n + 1\n",
+            // star imports and rebinds hidden behind other statements
+            "from typing import final\nimport os; from helpers import *\n\n@final\ndef rate(n):\n    return n + 1\n",
+            "from typing import final\ntry:\n    from helpers import *\nexcept ImportError:\n    pass\n\n@final\ndef rate(n):\n    return n + 1\n",
+            "from typing import final  # see (legacy\nfinal = wrapper\n# )\n\n@final\ndef rate(n):\n    return n + 1\n",
+            "import typing as t\n\nt = shim\n\n@t.final\ndef rate(n):\n    return n + 1\n",
+            "from typing import final as f\n\nf = wrapper\n\n@f\ndef rate(n):\n    return n + 1\n",
+            "from typing import final\n\nfor final in wrappers:\n    pass\n\n@final\ndef rate(n):\n    return n + 1\n",
+            "import typing\n\n@typing.final(wrapper)\ndef rate(n):\n    return n + 1\n",
             // class-scope rebind of the marker
             "from typing import override\n\nclass A(B):\n    def override(fn):\n        return lambda *a: 0\n\n    @override\n    def rate(self, n):\n        return n + 1\n",
             // an unreadable decorator stacked with the marker
