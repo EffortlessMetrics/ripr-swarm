@@ -243,7 +243,10 @@ written and must not copy these gaps.
   strength is `unknown` (the probe family has no typed oracle relationships,
   so the assertion is not graded, not of unknown quality); `an unclassified
   oracle, not graded against this probe` when the kind is also `unknown` and
-  an assertion was selected; and `no oracle` when no assertion was selected.
+  an assertion was selected; and `no oracle` when the strength is `none`
+  (whatever the kind, #8747) or when no assertion was selected. The JSON
+  `evidence_path` keeps the legacy `none <kind> oracle` spelling for strength
+  `none` until its own follow-up moves it.
   Pinned by `oracle_projection_separates_ungraded_assertions_from_absent_ones`
   and the fixture-honesty matcher test
   `evidence_promotion_human_oracle_line_accepts_deduplicated_smoke_only_wording`.
