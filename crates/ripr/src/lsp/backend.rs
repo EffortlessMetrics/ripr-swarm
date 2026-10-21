@@ -57,9 +57,10 @@ use crate::analysis::ClassifiedSeam;
 use crate::analysis::cancellation::AnalysisAbortKind;
 use crate::config::{
     CONFIG_FILE_NAME, LspDiagnosticProfile, PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS,
-    is_detectable_python_source_name, is_detectable_typescript_source_name,
-    is_python_excluded_dir_everywhere, is_typescript_excluded_dir_everywhere,
-    python_project_marker_name, python_source_dir_marker_name, typescript_project_marker_name,
+    TYPESCRIPT_PROJECT_MARKERS, TYPESCRIPT_SOURCE_DIR_MARKERS, is_detectable_python_source_name,
+    is_detectable_typescript_source_name, is_python_excluded_dir_everywhere,
+    is_typescript_excluded_dir_everywhere, python_project_marker_name,
+    python_source_dir_marker_name, typescript_project_marker_name,
     typescript_source_dir_marker_name,
 };
 use crate::domain::{StageEvidence, StageState};
@@ -4154,6 +4155,7 @@ fn workspace_input_watchers() -> Vec<LSPAny> {
     std::iter::once(CONFIG_FILE_NAME)
         .chain(["Cargo.toml", "Cargo.lock"])
         .chain(PYTHON_PROJECT_MARKERS.iter().copied())
+        .chain(TYPESCRIPT_PROJECT_MARKERS.iter().copied())
         .map(|name| serde_json::json!({"globPattern": format!("**/{name}")}))
         .chain(PYTHON_SOURCE_DIR_MARKERS.iter().map(|dir| {
             // Root-scoped relative glob: relative patterns resolve against
@@ -4163,6 +4165,10 @@ fn workspace_input_watchers() -> Vec<LSPAny> {
             // detectable-file events are the transport hint, and the reload
             // path's config comparison stays the semantic authority.
             serde_json::json!({"globPattern": format!("{dir}/**/*.py")})
+        }))
+        .chain(TYPESCRIPT_SOURCE_DIR_MARKERS.iter().map(|dir| {
+            // Same root-scoped shape for the TypeScript detection extensions.
+            serde_json::json!({"globPattern": format!("{dir}/**/*.{{ts,tsx,mts,cts}}")})
         }))
         .collect()
 }
@@ -4448,7 +4454,7 @@ mod workspace_input_tests {
     }
 
     #[test]
-    fn dynamic_watchers_cover_the_canonical_python_input_set() {
+    fn dynamic_watchers_cover_the_canonical_detection_input_set() {
         let actual = workspace_input_watchers()
             .into_iter()
             .filter_map(|watcher| {
@@ -4461,11 +4467,17 @@ mod workspace_input_tests {
         let expected = std::iter::once(CONFIG_FILE_NAME)
             .chain(["Cargo.toml", "Cargo.lock"])
             .chain(PYTHON_PROJECT_MARKERS.iter().copied())
+            .chain(TYPESCRIPT_PROJECT_MARKERS.iter().copied())
             .map(|name| format!("**/{name}"))
             .chain(
                 PYTHON_SOURCE_DIR_MARKERS
                     .iter()
                     .map(|dir| format!("{dir}/**/*.py")),
+            )
+            .chain(
+                TYPESCRIPT_SOURCE_DIR_MARKERS
+                    .iter()
+                    .map(|dir| format!("{dir}/**/*.{{ts,tsx,mts,cts}}")),
             )
             .collect::<BTreeSet<_>>();
 
