@@ -60,10 +60,10 @@
     }
    },
    "variant-shadowing": {
-    "commit": "c27c29c63a39dde59c8842b770c34e81ae6c83f5",
-    "tree": "cd6aef1e0edfa31d25c0aa794c86d1ba8e02da11",
+    "commit": "a840645aace33f6492fce63b2f27aa3c95fd32c5",
+    "tree": "fdad433eaea6491a6209aaefc07f7c279f658565",
     "files": {
-     "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
+     "package-lock.json": "a93951553edc81a4be8db16f3e7012d3bb06a84cddf746bcf7c4af88192f3b51",
      "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
      "src/pricing.ts": "3b2212d0addb6b2a07592aa47af5c3d9abcb3805f32dfe40fa3884f2c59a4117",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
