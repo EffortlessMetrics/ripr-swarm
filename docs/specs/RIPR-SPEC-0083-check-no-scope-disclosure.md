@@ -178,6 +178,29 @@ When changed files were analyzed (real analyzed-empty), `scope_disclosures` is a
 The `why` string is advisory prose, not an identity or a stable machine key;
 consumers use the structured `base` and `scope_status` fields instead.
 
+### Explicit base with an empty range (#9033)
+
+An explicit `--base <ref>` counts as provided scope, so `no_scope_provided`
+stays `false` and the `Note: no analysis scope was provided` guidance, the
+`missing_scope` triage state and JSON `scope_disclosures` do not appear. The
+human forms (bounded and `human-full`) still must not end on the bare
+"No diff-derived static exposure probes found." line. When the analysis
+outcome is `no_scope` with zero changed files, a base is named, no
+preview-language advisories or language runs exist, and uncommitted
+working-tree edits are not the unanalyzed subject, they add:
+
+```text
+Note: `<base>...HEAD` has no analyzable changed files, so there was nothing to analyze. Deleted files, submodule pointer changes and files ripr does not analyze are not counted, so this empty result does NOT mean no behavior changed.
+```
+
+A working-tree read (`--worktree`) names `the working tree has no analyzable
+changed files against `<base>`` instead of the range. The wording is
+deliberately narrower than the default-base note: `no_scope` with zero changed
+files also covers ranges that only delete files, change submodule pointers or
+touch ripr artifacts, so the explicit-base note never claims that no behavior
+changed. The default-base note keeps its existing wording; its wording and the
+GitHub and JSON `why` strings are tracked separately.
+
 ### Non-claims
 
 - This spec does NOT change the exit code or gate authority.
@@ -190,7 +213,7 @@ consumers use the structured `base` and `scope_status` fields instead.
 
 - Disclosure in SARIF, GitHub, badge, or repo-exposure output formats.
 - Auto-detecting which base revision to suggest.
-- Changing behavior when scope is explicitly provided (even if empty).
+- Changing JSON, exit codes, triage state or classification when scope is explicitly provided and the result is empty; only the human note above is added.
 - Runtime mutation testing, coverage measurement, or correctness claims.
 
 ## Required Evidence
@@ -249,7 +272,10 @@ consumers use the structured `base` and `scope_status` fields instead.
 - `crates/ripr/tests/cli_smoke.rs::check_mode_fast_alone_on_empty_range_names_compared_base_smoke` (#4012: empty established range names the base, never claims no scope)
 - `crates/ripr/tests/cli_smoke.rs::check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke` (#4012: bare run that analyzed changed files emits no disclosure in any form)
 - `crates/ripr/tests/cli_smoke.rs::check_default_base_with_clean_worktree_keeps_no_scope_note_only` (SPEC-0112 intent preserved: clean tree keeps disclosure-only output; wording updated to the #4012 base-naming form)
-- `crates/ripr/tests/cli_smoke.rs::check_with_base_scope_does_not_show_no_scope_disclosure_smoke` (unchanged path guard)
+- `crates/ripr/tests/cli_smoke.rs::check_with_base_scope_does_not_show_no_scope_disclosure_smoke` (explicit `--base HEAD`: no "no analysis scope was provided" disclosure, and the empty range is named as having no analyzable changed files)
+- `crates/ripr/tests/cli_smoke.rs::check_explicit_base_deletion_only_range_does_not_claim_no_behavior_changed` (#9033: a deletion-only range never gets a "no behavior changed" assurance)
+- `crates/ripr/src/output/human.rs::tests::explicit_base_with_an_empty_range_explains_the_empty_result` (#9033: range and working-tree wording, bounded and full forms)
+- `crates/ripr/src/output/human.rs::tests::empty_range_note_is_suppressed_when_it_would_be_untrue_or_redundant` (#9033: off for other outcome kinds, changed file count alone, no base, unanalyzed working tree, preview advisories and language runs)
 
 ## Implementation Mapping
 

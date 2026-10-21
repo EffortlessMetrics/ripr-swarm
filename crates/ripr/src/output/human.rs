@@ -1398,9 +1398,21 @@ mod tests {
         let config = RiprConfig::default();
         let mut cases = vec![
             (
-                "files analyzed",
+                "other outcome kind",
                 empty_range_output(Some("main"), AnalysisOutcomeKind::NoChangedLines, 1)?,
             ),
+            ("changed file count alone", {
+                // The constructor insists NoScope has zero counts, so set the
+                // count afterwards: only `changed_file_count` differs from the
+                // positive case.
+                let mut output = empty_range_output(Some("main"), AnalysisOutcomeKind::NoScope, 0)?;
+                let outcome = output
+                    .analysis_outcome
+                    .as_mut()
+                    .ok_or("fixture must carry an outcome")?;
+                outcome.counts.changed_file_count = 1;
+                output
+            }),
             (
                 "no base",
                 empty_range_output(None, AnalysisOutcomeKind::NoScope, 0)?,
