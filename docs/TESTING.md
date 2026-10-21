@@ -26,6 +26,14 @@ this locked fetch explicitly; production analyzer metadata stays offline.
 cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
 ```
 
+The literal-JSON owner-return fixture pins serde_json 1.0.151, which the audited
+expansion in `assertion_dependency.rs` requires and the workspace lock no longer
+carries. Prepare it the same way before the owner-pin JSON tests:
+
+```bash
+cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
+```
+
 Use the same Cargo home for preparation and checks. A new Cargo home or an
 installed analyzer comparison needs its own preparation against the canonical
 fixture manifest. CI's Rust, coverage, analytics and advisory test paths run
