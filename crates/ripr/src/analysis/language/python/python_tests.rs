@@ -591,6 +591,46 @@ def test_expired_coupon_response_smoke(client):
 }
 
 #[test]
+fn classify_change_relates_path_parameter_route_to_concrete_client_call() -> Result<(), String> {
+    let source = r#"
+api = object()
+
+@api.get("/items/{id}")
+def item(id):
+    return {"id": id, "ok": True}
+"#;
+    let owners = extract_owners(Path::new("app/items.py"), source);
+    let tests = extract_tests(
+        Path::new("tests/test_items.py"),
+        r#"
+def test_item_response(client):
+    response = client.get("/items/1")
+    assert response.json()["ok"] == True
+"#,
+    );
+
+    let Some(finding) = classify_change(
+        Path::new("app/items.py"),
+        6,
+        "    return {\"id\": id, \"ok\": True}",
+        &owners,
+        &tests,
+    ) else {
+        return Err("changed route return inside owner should classify".to_string());
+    };
+
+    assert_ne!(finding.class, ExposureClass::NoStaticPath);
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|entry| entry
+                == "related_test_relation: api_client_route_call (test_item_response)")
+    );
+    Ok(())
+}
+
+#[test]
 fn classify_change_uses_status_discriminator_for_route_response_constructor_assignment()
 -> Result<(), String> {
     let source = r#"

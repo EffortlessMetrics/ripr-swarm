@@ -1972,7 +1972,47 @@ fn contains_python_call_with_first_string_argument(
         ) else {
             return false;
         };
-        argument == expected
+        python_route_matches_call_path(expected, &argument)
+    })
+}
+
+/// Whether a request path written in a test call reaches a decorator route.
+/// Equal literals match; a path-parameter segment (`{id}`, `{id:int}`, `<id>`,
+/// `<int:id>`) matches any single non-empty segment. A `path` converter spans
+/// slashes, so it is left unmatched rather than guessed.
+fn python_route_matches_call_path(route: &str, call_path: &str) -> bool {
+    if route == call_path {
+        return true;
+    }
+    let call_path = call_path.split(['?', '#']).next().unwrap_or(call_path);
+    let route_segments: Vec<&str> = route.split('/').collect();
+    let call_segments: Vec<&str> = call_path.split('/').collect();
+    route_segments.len() == call_segments.len()
+        && route_segments
+            .iter()
+            .zip(&call_segments)
+            .all(|(route_segment, call_segment)| {
+                route_segment == call_segment
+                    || (!call_segment.is_empty()
+                        && is_single_segment_route_parameter(route_segment))
+            })
+}
+
+fn is_single_segment_route_parameter(segment: &str) -> bool {
+    let inner = segment
+        .strip_prefix('{')
+        .and_then(|rest| rest.strip_suffix('}'))
+        .or_else(|| {
+            segment
+                .strip_prefix('<')
+                .and_then(|rest| rest.strip_suffix('>'))
+        });
+    inner.is_some_and(|inner| {
+        !inner.is_empty()
+            && !inner
+                .split(':')
+                .any(|part| part.is_empty() || part == "path")
+            && !inner.contains(['{', '}', '<', '>', '/'])
     })
 }
 
@@ -2753,6 +2793,37 @@ mod oracle_operand_tests {
             ("assert rated == 0.15", false),
         ] {
             assert_eq!(oracle_operand_names(text, "rate"), expected, "{text}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod route_template_tests {
+    use super::python_route_matches_call_path;
+
+    #[test]
+    fn path_parameter_segments_match_one_concrete_segment() {
+        for (route, call, expected) in [
+            ("/items", "/items", true),
+            ("/items/{id}", "/items/1", true),
+            ("/items/{id:int}", "/items/1", true),
+            ("/items/<id>", "/items/1", true),
+            ("/items/<int:id>", "/items/1?verbose=1", true),
+            ("/users/{uid}/posts/{pid}", "/users/3/posts/9", true),
+            ("/items/{id}", "/items/", false),
+            ("/items/{id}", "/items", false),
+            ("/items/{id}", "/items/1/extra", false),
+            ("/items/{id}", "/orders/1", false),
+            ("/items/{rest:path}", "/items/a/b", false),
+            ("/items/<path:rest>", "/items/a", false),
+            ("/items/x{id}", "/items/x1", false),
+            ("/items/{}", "/items/1", false),
+        ] {
+            assert_eq!(
+                python_route_matches_call_path(route, call),
+                expected,
+                "{route} vs {call}"
+            );
         }
     }
 }
