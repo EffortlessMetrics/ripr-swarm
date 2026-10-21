@@ -566,7 +566,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
                     &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
                 );
                 return Err(format!(
-                    "agent repair --phase before requires --seam-id <id>; run `ripr pilot --root {pilot_root}` to list seam IDs with their exact repair commands, or pass a `ripr check` finding ID (`probe:...`), a canonical gap ID, or a `file:line` that names one seam"
+                    "agent repair --phase before requires --seam-id <id>; run `ripr pilot --root {pilot_root}` to list seam IDs with their exact repair commands, or pass a `ripr check` finding ID (`probe:...` or `repo-probe:...`), a canonical gap ID, or a `file:line` naming one repair-eligible seam"
                 ));
             }
         }

@@ -1133,31 +1133,29 @@ fn agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve() -> Resul
     if stdout.contains("are not seam IDs") {
         return Err("agent help still says finding IDs are not seam IDs".to_string());
     }
-    let dir = std::env::temp_dir().join(format!("ripr-9033-agent-seam-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).map_err(|error| format!("create temp dir: {error}"))?;
-    let output = run_ripr_in(
-        &["agent", "repair", "--phase", "before", "--root", "."],
-        Some(&dir),
-    );
-    std::fs::remove_dir_all(&dir).map_err(|error| format!("remove temp dir: {error}"))?;
-    let output = output?;
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    assert_contains(
-        "missing --seam-id refusal",
-        &stderr,
-        "requires --seam-id <id>",
-    )?;
-    assert_contains(
-        "missing --seam-id refusal",
-        &stderr,
-        "pass a `ripr check` finding ID (`probe:...`)",
-    )?;
-    if stderr.contains("are not seam IDs") {
-        return Err(format!(
-            "refusal still says finding IDs are not seam IDs: {stderr}"
-        ));
-    }
-    Ok(())
+    in_help_workspace(|root| {
+        let output = run_ripr_in(
+            &["agent", "repair", "--phase", "before", "--root", "."],
+            Some(root),
+        )?;
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert_contains(
+            "missing --seam-id refusal",
+            &stderr,
+            "requires --seam-id <id>",
+        )?;
+        assert_contains(
+            "missing --seam-id refusal",
+            &stderr,
+            "pass a `ripr check` finding ID (`probe:...` or `repo-probe:...`)",
+        )?;
+        if stderr.contains("are not seam IDs") {
+            return Err(format!(
+                "refusal still says finding IDs are not seam IDs: {stderr}"
+            ));
+        }
+        Ok(())
+    })
 }
 
 #[test]
