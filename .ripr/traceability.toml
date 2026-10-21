@@ -12759,6 +12759,7 @@ tests = [
   "crates/ripr/src/app/repair_card_handoff.rs::tests::producer_gap_with_sibling_owner_binds_no_witness",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::producer_finding_binds_only_the_twin_seam_at_its_line",
   "crates/ripr/src/app/repair_card_handoff.rs::tests::producer_finding_binds_only_the_inner_seam_when_nested",
+  "crates/ripr/src/cli/commands/agent_card.rs::tests::prose_prints_each_limitation_once",
   "crates/ripr/src/cli/commands/agent_card.rs::tests::truncated_inventory_refuses_and_complete_inventory_does_not",
   "crates/ripr/src/lsp/tests.rs::seam_repair_card_binds_only_through_the_complete_raw_candidates",
   "crates/ripr/src/lsp/tests.rs::refresh_carries_repair_card_candidates_only_for_a_complete_inventory",
