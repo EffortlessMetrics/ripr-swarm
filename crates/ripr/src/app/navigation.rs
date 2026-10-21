@@ -102,8 +102,10 @@ impl RepairRouteRefusal {
                 gate()
             ),
             Self::SeamLimit => {
-                "no repair start offered: the seam budget left the repair candidate set unreadable or truncated; rerun with a wider seam budget"
-                    .to_string()
+                format!(
+                    "no repair start offered: the seam budget left the repair candidate set unreadable or truncated; {}",
+                    super::task_first::WIDEN_SEAM_BUDGET
+                )
             }
             Self::NoBindingSeam => format!(
                 "no repair start offered: no seam in the finding's file binds this finding; {}",

@@ -3279,6 +3279,7 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
         .transpose()?;
     let config = load_for_root(&input.root)?;
     apply_to_check_input(&mut input, &config, explicit);
+    let worktree = worktree || dirty_tree_default_is_worktree(&input, from_artifact.is_some());
     let Some(selector) = selector else {
         return Err(missing_selector_error(
             "missing finding selector",
@@ -3364,6 +3365,24 @@ pub(super) fn resolve_worktree_root(
         check::resolve_implicit_workspace_root(input)?;
     }
     Ok(())
+}
+
+/// `ripr check` reads the working tree by default when it holds uncommitted
+/// tracked edits, and prints finding ids from that run. `explain`/`context`
+/// must resolve those ids against the same subject, so a live-repository
+/// drill-in without a supplied scope (`--diff`, `--from`, candidate tree)
+/// follows the shared `app::diff_source` default instead of re-analysing
+/// committed history only.
+pub(super) fn dirty_tree_default_is_worktree(input: &CheckInput, from_artifact: bool) -> bool {
+    !from_artifact
+        && input.diff_file.is_none()
+        && input.git_candidate.is_none()
+        && app::diff_source::select_live_diff_source(
+            &input.root,
+            app::diff_source::DiffSourceRequest::Default,
+            input.git_timeout,
+        )
+        .is_working_tree()
 }
 
 /// `--worktree` is its own diff source, like in `ripr check`: it cannot sit
