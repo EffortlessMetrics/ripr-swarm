@@ -4256,14 +4256,14 @@ mod include_directive_tests {
                 "{source}"
             );
         }
-        assert!(
-            rust_include_directives(
-                Path::new("src/lib.rs"),
-                "include!(r###\"fragment.rs\"##);",
-                16
-            )
-            .is_err()
-        );
+        let error = rust_include_directives(
+            Path::new("src/lib.rs"),
+            "include!(r###\"fragment.rs\"##);",
+            16,
+        )
+        .err()
+        .ok_or("malformed include should refuse parsing")?;
+        assert_eq!(error, "rust_include_parent_parse_unavailable");
         Ok(())
     }
 
