@@ -238,7 +238,14 @@ wrong credits.
    `timeout`, other async runtime tests, other parameterizing macros such as
    `test_case`) and every inner attribute refuses the pin. The
    parser must match the exact indexed function body and the assertion's
-   line/text identity uniquely. Identical same-line invocations fail closed.
+   line/text identity uniquely. Identical same-line invocations fail closed for
+   owner-value pins. Effect admission may retain the first live observer of exactly
+   two identical root statements in contiguous `A; return; A;` form: the first
+   invocation must pass the eager-path check and the intervening return must be
+   unconditional and valueless. Other duplicate shapes, including intervening
+   bindings and conditional returns, retain duplicate-spelling refusal. Qualified
+   `std`/`core` `assert!` uses the same file/root/manifest proof as `assert_eq!`;
+   this does not admit arbitrary qualified macros or waive nested-macro limits.
    The test itself must have item ancestry through modules/item lists to the
    source file, never an enclosing function, block, closure or impl. Module
    outer attributes and module/source-file inner attributes must establish

@@ -59,6 +59,9 @@ struct FunctionAssertions {
     refusal: Option<AssertionContextRefusal>,
     assertions: BTreeMap<AssertionKey, Result<(), AssertionContextRefusal>>,
     macros: BTreeSet<String>,
+    /// Effect-only live representatives for the bounded `A; return; A;`
+    /// spelling. Default unique-occurrence admission remains unchanged.
+    live_prefix_duplicates: BTreeSet<AssertionKey>,
     /// Assertions of test-local check helpers this test calls on an eager
     /// path (#6482).
     helper_assertions: BTreeMap<AssertionKey, BorrowedAssertion>,
@@ -202,6 +205,23 @@ impl OwnerPinAssertions {
                 None => Some(AssertionContextRefusal::UnidentifiedTest),
             },
         }
+    }
+
+    /// The first invocation in a compact `A; return; A;` is an independently
+    /// eager effect observer. Call only after `refusal` returns DuplicateSpelling,
+    /// so source identity, attributes and macro bindings still govern admission.
+    pub(crate) fn has_live_prefix_duplicate(
+        &self,
+        function: (usize, usize, &str),
+        assertion: (usize, &str),
+    ) -> bool {
+        self.functions
+            .get(&(function.0, function.1, function.2.to_string()))
+            .is_some_and(|facts| {
+                facts
+                    .live_prefix_duplicates
+                    .contains(&(assertion.0, assertion.1.to_string()))
+            })
     }
 
     /// Whether some `use` or `extern crate` of the file binds `test`,
@@ -2099,6 +2119,11 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             .map(|expression| expression.syntax().text_range().start())
             .chain(root_divergence_start(&function))
             .min();
+        let live_prefix_duplicates = candidates
+            .iter()
+            .filter(|(_, calls)| live_prefix_duplicate(calls, &function, first_return))
+            .map(|(key, _)| key.clone())
+            .collect();
         let assertions = admitted_assertions(candidates, &function, first_return);
         let helper_assertions = if is_test_function(&function) {
             local_helper_assertions(
@@ -2121,6 +2146,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                 refusal: None,
                 assertions,
                 macros,
+                live_prefix_duplicates,
                 helper_assertions,
             },
         );
@@ -2178,6 +2204,58 @@ fn is_test_function(function: &ast::Fn) -> bool {
 }
 
 type MacroCandidates = BTreeMap<AssertionKey, Vec<SyntaxNode>>;
+
+/// Exactly two identical calls, as contiguous root statements `A; return; A;`.
+/// No conditional, rebinding, helper loan or intervening statement can borrow
+/// the first occurrence. Its eager path is checked before recording the key.
+fn live_prefix_duplicate(
+    calls: &[SyntaxNode],
+    function: &ast::Fn,
+    first_return: Option<TextSize>,
+) -> bool {
+    let [first, last] = calls else {
+        return false;
+    };
+    if eager_path(first.clone(), function, false, first_return).is_err() {
+        return false;
+    }
+    let Some(list) = function.body().and_then(|body| body.stmt_list()) else {
+        return false;
+    };
+    let statements: Vec<_> = list.statements().collect();
+    let Some(at) = statements.iter().position(|statement| {
+        statement
+            .syntax()
+            .text_range()
+            .contains_range(first.text_range())
+    }) else {
+        return false;
+    };
+    let Some([before, middle, after]) = statements.get(at..at + 3) else {
+        return false;
+    };
+    // AST macro calls may be expression statements or macro items. Requiring
+    // their complete statement text leaves no hidden enclosing construct.
+    let is_call = |statement: &ast::Stmt, call: &SyntaxNode| {
+        statement
+            .syntax()
+            .text()
+            .to_string()
+            .trim()
+            .trim_end_matches(';')
+            .trim()
+            == call.text().to_string().trim().trim_end_matches(';').trim()
+    };
+    is_call(before, first)
+        && is_call(after, last)
+        && ast::ExprStmt::cast(middle.syntax().clone())
+            .and_then(|statement| statement.expr())
+            .and_then(|expression| match expression {
+                ast::Expr::ReturnExpr(ret) => Some(ret),
+                _ => None,
+            })
+            .is_some_and(|ret| ret.expr().is_none())
+}
 
 /// Each candidate's admission: unique at its coordinate and on an eager
 /// statement path of `function`.
@@ -3730,28 +3808,28 @@ fn is_trusted_macro(path: &str, trusted: &[&str]) -> bool {
 }
 
 /// A macro path that may be one of the `leaves` assertions: the bare name,
-/// or `assert_eq` under a `std`/`core` root (#7857). A qualified candidate
+/// or a supported leaf under a `std`/`core` root (#7857, #8927). A qualified candidate
 /// is admitted only when [`has_escape`] finds its root unrebound, so a
 /// rebinding refuses the whole test with the path named.
 fn names_candidate_assertion(path: &str, leaves: &[&str]) -> bool {
     let path: String = path.split_whitespace().collect();
     let unrooted = path.strip_prefix("::").unwrap_or(&path);
     match unrooted.split_once("::") {
-        Some(("std" | "core", "assert_eq")) => leaves.contains(&"assert_eq"),
+        Some(("std" | "core", leaf @ ("assert_eq" | "assert"))) => leaves.contains(&leaf),
         Some(_) => false,
         None => leaves.contains(&unrooted),
     }
 }
 
-/// `std::assert_eq!` or `::core::assert_eq!` under a root nothing in the
-/// file can rebind runs as the standard macro, so it is no escape (#7857).
-/// Only `assert_eq` qualifies: the pin reads no other qualified macro, and
-/// the classify side adds the workspace root proof for the credited one.
+/// Qualified `assert_eq!`/`assert!` under a root nothing in the file can
+/// rebind is no escape (#7857, #8927). The classify side adds the workspace
+/// root proof for each path before crediting the observer.
 fn is_standard_qualified_macro(path: &str, call: &ast::MacroCall, trusted: &[&str]) -> bool {
     // The parser keeps the spacing of `std :: assert_eq`.
     let path: String = path.split_whitespace().collect();
-    path.rsplit("::").next() == Some("assert_eq")
-        && trusted.contains(&"assert_eq")
+    path.rsplit("::")
+        .next()
+        .is_some_and(|leaf| matches!(leaf, "assert_eq" | "assert") && trusted.contains(&leaf))
         && std_macro_root_is_unrebound(&path, call.syntax())
 }
 

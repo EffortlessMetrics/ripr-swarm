@@ -130,8 +130,8 @@ pub(in crate::analysis) struct OwnerReturnPin {
     identity: Option<std::sync::Arc<OwnerCallIdentity>>,
 }
 
-/// A file's `std`/`core`-rooted `assert_eq!` paths and, for each of the four
-/// rooted spellings, whether the file can rebind that root.
+/// A file's `std`/`core`-rooted `assert_eq!`/`assert!` paths and, for each
+/// rooted spelling, whether the file can rebind that root.
 #[derive(Clone, Debug, Default)]
 struct StdRootedCalls {
     calls: BTreeSet<String>,
@@ -145,6 +145,17 @@ const STD_ROOTED_ASSERT_EQ: [&str; 4] = [
     "::core::assert_eq",
 ];
 
+const STD_ROOTED_ASSERTIONS: [&str; 8] = [
+    "std::assert_eq",
+    "core::assert_eq",
+    "::std::assert_eq",
+    "::core::assert_eq",
+    "std::assert",
+    "core::assert",
+    "::std::assert",
+    "::core::assert",
+];
+
 impl StdRootedCalls {
     fn of(source: &str) -> Self {
         let Some(file) = parse_clean_source_file(source) else {
@@ -152,8 +163,8 @@ impl StdRootedCalls {
         };
         let root = file.tree().syntax().clone();
         Self {
-            calls: std_rooted_assert_eq_calls(&root),
-            unrebound: STD_ROOTED_ASSERT_EQ
+            calls: std_rooted_assertion_calls(&root),
+            unrebound: STD_ROOTED_ASSERTIONS
                 .iter()
                 .filter(|path| {
                     crate::analysis::syntax::ra::std_macro_root_is_unrebound(path, &root)
@@ -590,7 +601,26 @@ impl OwnerPinSyntax {
             ),
             _ => false,
         };
-        !gated || self.admits(test, assertion, index)
+        if !gated {
+            return true;
+        }
+        match self.refusal(test, assertion, index) {
+            None => true,
+            Some(AssertionRefusal::Syntax(AssertionContextRefusal::DuplicateSpelling))
+                if matches!(
+                    probe.family,
+                    ProbeFamily::SideEffect | ProbeFamily::CallDeletion
+                ) =>
+            {
+                self.by_file.borrow().get(&test.file).is_some_and(|facts| {
+                    facts.has_live_prefix_duplicate(
+                        (test.start_line, test.end_line, &test.name),
+                        (assertion.line, &assertion.text),
+                    )
+                })
+            }
+            Some(_) => false,
+        }
     }
 
     /// The outer assertion's identity, shared by admission and its refusal note.
@@ -1204,6 +1234,7 @@ impl OwnerPinSyntax {
             .clone();
         let qualified: BTreeSet<String> = std_rooted_macro_path(&assertion.text, "assert_eq")
             .into_iter()
+            .chain(std_rooted_macro_path(&assertion.text, "assert"))
             .chain(rooted.calls)
             .collect();
         if let Some(path) = qualified.into_iter().find(|path| {
@@ -1329,6 +1360,7 @@ impl OwnerPinSyntax {
             .map(|(name, _)| name),
         );
         if let Some(path) = std_rooted_macro_path(&assertion.text, "assert_eq")
+            .or_else(|| std_rooted_macro_path(&assertion.text, "assert"))
             .or_else(|| StdRootedCalls::of(source).calls.into_iter().next())
         {
             return Some(AssertionRefusal::Syntax(
@@ -7878,9 +7910,9 @@ fn is_plain_or_std_macro(text: &str, macro_name: &str) -> bool {
     is_plain_macro(text, macro_name) || std_rooted_macro_path(text, macro_name).is_some()
 }
 
-/// The whitespace-free path of every `std`/`core`-rooted `assert_eq!` call
+/// The whitespace-free path of every `std`/`core`-rooted assertion call
 /// under `root` (#7857).
-fn std_rooted_assert_eq_calls(root: &ra_ap_syntax::SyntaxNode) -> BTreeSet<String> {
+fn std_rooted_assertion_calls(root: &ra_ap_syntax::SyntaxNode) -> BTreeSet<String> {
     root.descendants()
         .filter_map(ast::MacroCall::cast)
         .filter_map(|call| call.path())
@@ -7891,7 +7923,7 @@ fn std_rooted_assert_eq_calls(root: &ra_ap_syntax::SyntaxNode) -> BTreeSet<Strin
                 .split_whitespace()
                 .collect::<String>()
         })
-        .filter(|path| STD_ROOTED_ASSERT_EQ.contains(&path.as_str()))
+        .filter(|path| STD_ROOTED_ASSERTIONS.contains(&path.as_str()))
         .collect()
 }
 
