@@ -257,6 +257,12 @@ pub(crate) fn render_human_triage(
                     "  Safe next action: the working tree has no changed tracked files against `{base}`; make a change, or `git add -N <path>` a new file, and re-run\n"
                 ));
             } else if let Some(base) = output.base.as_deref()
+                && head_is_on_branch(&output.root, base)
+            {
+                out.push_str(&format!(
+                    "  Safe next action: you are on `{base}`, which is the comparison base; edit a tracked source file or switch to a feature branch\n"
+                ));
+            } else if let Some(base) = output.base.as_deref()
                 && let Some(candidate) = empty_diff_base_candidate(output, base)
             {
                 // The analyzed base resolved to HEAD itself, so committing
@@ -609,6 +615,20 @@ pub(crate) fn canonical_next_action_for_triage(
 /// against HEAD is non-empty, never the current `base`. `None` when the
 /// analyzed revisions do not establish base == HEAD, so the ordinary
 /// commit/`--worktree` action keeps owning those states.
+/// True when `HEAD` is the symbolic ref of local branch `base` (a detached
+/// HEAD or any other branch is not), so the empty comparison is the base
+/// compared with itself.
+fn head_is_on_branch(root: &std::path::Path, base: &str) -> bool {
+    crate::git::run_git_output_with_deadline(
+        root,
+        &["symbolic-ref", "--quiet", "--short", "HEAD"],
+        Some(std::time::Duration::from_secs(5)),
+    )
+    .ok()
+    .filter(|output| output.status.success())
+    .is_some_and(|output| String::from_utf8_lossy(&output.stdout).trim() == base)
+}
+
 fn empty_diff_base_candidate(output: &CheckOutput, base: &str) -> Option<String> {
     let revisions = output.analyzed_revisions.as_ref()?;
     match (
@@ -1501,6 +1521,7 @@ mod tests {
             git(&["add", "."])?;
             git(&["commit", "-m", "init"])?;
             git(&["branch", "base-candidate"])?;
+            git(&["checkout", "-q", "--detach"])?;
             std::fs::write(dir.join("README"), "second").map_err(|e| e.to_string())?;
             git(&["add", "."])?;
             git(&["commit", "-m", "second"])?;
@@ -1547,6 +1568,48 @@ mod tests {
             ));
         }
         Ok(())
+    }
+
+    #[test]
+    fn head_is_on_branch_matches_only_the_checked_out_branch() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-triage-on-base-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let git = |args: &[&str]| -> Result<(), String> {
+            let output = crate::git::run_git_output_with_deadline_and_env(
+                &dir,
+                args,
+                &[("GIT_CONFIG_NOSYSTEM", std::ffi::OsStr::new("1"))],
+                None,
+            )
+            .map_err(|e| e.to_string())?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(format!("git {args:?} failed"))
+            }
+        };
+        let result = (|| -> Result<(), String> {
+            git(&["init", "-b", "master"])?;
+            git(&["config", "user.email", "ripr@example.invalid"])?;
+            git(&["config", "user.name", "ripr test"])?;
+            std::fs::write(dir.join("README"), "init").map_err(|e| e.to_string())?;
+            git(&["add", "."])?;
+            git(&["commit", "-m", "init"])?;
+            if !head_is_on_branch(&dir, "master") {
+                return Err("HEAD on master must match base master".to_string());
+            }
+            if head_is_on_branch(&dir, "main") {
+                return Err("HEAD on master must not match base main".to_string());
+            }
+            git(&["checkout", "-q", "--detach"])?;
+            if head_is_on_branch(&dir, "master") {
+                return Err("a detached HEAD is not on the base branch".to_string());
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&dir);
+        result
     }
 
     #[test]

@@ -87,7 +87,7 @@ pub(crate) enum DoctorFirstCommand {
 
 impl DoctorFirstCommand {
     pub(crate) const SAVED_DIFF_LINE: &'static str = "ripr check --diff PATH";
-    pub(crate) const WORKTREE_LINE: &'static str = "ripr check --base HEAD --worktree";
+    pub(crate) const WORKTREE_LINE: &'static str = "ripr check";
     pub(crate) const DEFAULT_LINE: &'static str = "ripr check";
 
     /// `dirty_worktree` is only evaluated when git can run, so a gitless
@@ -294,7 +294,7 @@ impl DoctorFirstCommand {
                         let mut lines = vec![format!(
                             "- Recommended first command: this repository has no commits yet, \
                              so `ripr check` has no base to diff; commit once first (then \
-                             `ripr check --base HEAD --worktree` analyzes uncommitted edits), \
+                             `ripr check` analyzes uncommitted edits), \
                              or explore the repository without Git history: `{bash}`"
                         )];
                         if let crate::output::markdown::PowershellForm::Translated(powershell) =
@@ -303,7 +303,7 @@ impl DoctorFirstCommand {
                             lines.push(format!(
                                 "- Recommended first command (PowerShell): this repository has \
                                  no commits yet, so `ripr check` has no base to diff; commit \
-                                 once first (then `ripr check --base HEAD --worktree` analyzes \
+                                 once first (then `ripr check` analyzes \
                                  uncommitted edits), or explore the repository without Git history: `{powershell}`"
                             ));
                         }
@@ -1898,7 +1898,7 @@ fn evaluate_doctor_core_with_probe_for_profile(
                         "git_head",
                         "this repository has no commits yet (unborn HEAD); `ripr check` has \
                          no base to diff — commit once first, then analyze uncommitted edits \
-                         with `ripr check --base HEAD --worktree`"
+                         with `ripr check`"
                             .to_string(),
                     );
                 }
@@ -5236,7 +5236,7 @@ mod tests {
             );
             assert_eq!(
                 DoctorFirstCommand::Worktree.command_line_for_root(Path::new("/work/my app"))?,
-                "ripr check --root '/work/my app' --base HEAD --worktree"
+                "ripr check --root '/work/my app'"
             );
             assert_eq!(
                 DoctorFirstCommand::recommendation_lines(
@@ -5692,7 +5692,7 @@ mod tests {
             "no commits yet",
             "has no base to diff",
             "commit once first",
-            "--base HEAD --worktree",
+            "analyzes uncommitted edits",
             // Canonical whole-repo route (domain::next_action): pilot.
             "ripr pilot --root",
         ] {

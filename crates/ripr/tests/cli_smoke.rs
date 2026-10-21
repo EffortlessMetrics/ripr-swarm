@@ -14234,17 +14234,17 @@ fn doctor_recommends_worktree_check_on_dirty_worktree() -> Result<(), String> {
     let dirty_out = String::from_utf8_lossy(&dirty.stdout);
     assert_eq!(
         recommended_first_command_line(&dirty_out),
-        Some(first_command_at(&root_str, " --base HEAD --worktree").as_str()),
+        Some(first_command_at(&root_str, "").as_str()),
         "dirty worktree must recommend the worktree command:\n{dirty_out}"
     );
     assert!(
         dirty_out.contains("staged and unstaged tracked edits"),
         "dirty worktree must disclose the tracked-edit scope:\n{dirty_out}"
     );
-    assert_ne!(
+    assert_eq!(
         recommended_first_command_line(&dirty_out),
         Some(first_command_at(&root_str, "").as_str()),
-        "dirty worktree must NOT give the unconditional clean recommendation:\n{dirty_out}"
+        "a dirty worktree recommends plain `ripr check`, which includes tracked edits by default:\n{dirty_out}"
     );
 
     ignore_remove_dir_all(&root);
@@ -14431,7 +14431,7 @@ fn doctor_without_git_names_the_fix_and_recommends_the_diff_route() -> Result<()
         "doctor must not recommend a git-backed check:\n{stdout}"
     );
     assert!(
-        !stdout.contains("Recommended first command: ripr check --base HEAD --worktree"),
+        !stdout.contains("Recommended first command: ripr check --worktree"),
         "a gitless doctor must not recommend --worktree:\n{stdout}"
     );
     assert!(
@@ -14473,7 +14473,7 @@ fn doctor_without_git_does_not_recommend_worktree_on_a_dirty_tree() -> Result<()
     assert_success(&with_git);
     assert_eq!(
         recommended_first_command_line(&String::from_utf8_lossy(&with_git.stdout)),
-        Some(first_command_at(&root_str, " --base HEAD --worktree").as_str()),
+        Some(first_command_at(&root_str, "").as_str()),
         "control: dirty tree with git still recommends --worktree:\n{}",
         String::from_utf8_lossy(&with_git.stdout)
     );
@@ -14487,7 +14487,7 @@ fn doctor_without_git_does_not_recommend_worktree_on_a_dirty_tree() -> Result<()
         "dirty tree cannot win over a missing git binary:\n{stdout}"
     );
     assert!(
-        !stdout.contains("Recommended first command: ripr check --base HEAD --worktree"),
+        !stdout.contains("Recommended first command: ripr check --worktree"),
         "gitless doctor must not recommend --worktree:\n{stdout}"
     );
 

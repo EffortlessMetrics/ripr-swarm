@@ -549,9 +549,30 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
                 return Ok(());
             }
         };
-        let root_arg = crate::agent::loop_commands::shell_arg(&root_display);
-        let doctor = format!("ripr doctor --root {root_arg}");
-        let check = format!("ripr check --root {root_arg}");
+        // Init in the current directory needs no `--root`; otherwise name the
+        // directory without the `/.` that joining onto the cwd leaves behind.
+        let in_cwd = match (root.canonicalize(), std::env::current_dir()) {
+            (Ok(selected), Ok(cwd)) => cwd.canonicalize().is_ok_and(|cwd| cwd == selected),
+            _ => false,
+        };
+        let root_flag = if in_cwd {
+            String::new()
+        } else {
+            let trimmed = root_display
+                .strip_suffix("/.")
+                .filter(|rest| !rest.is_empty())
+                .unwrap_or(&root_display);
+            format!(
+                " --root {}",
+                crate::agent::loop_commands::shell_arg(trimmed)
+            )
+        };
+        let doctor = format!("ripr doctor{root_flag}");
+        let check = format!("ripr check{root_flag}");
+        let inside_git = matches!(
+            output::doctor::work_tree_probe(root),
+            Some(output::doctor::WorkTreeProbe::Inside)
+        );
         if plan.iter().any(|target| {
             target
                 .path
@@ -574,10 +595,21 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
             );
         }
         println!();
-        println!(
-            "Next: run `{doctor}` to verify your setup, then `{check}` to analyze your branch against its default branch."
-        );
-        for command in [&doctor, &check] {
+        if inside_git {
+            println!(
+                "Next: run `{doctor}` to verify your setup, then `{check}` to analyze your branch against its default branch."
+            );
+        } else {
+            println!(
+                "Next: run `{doctor}` to verify your setup. `ripr check` needs a Git repository, so run `git init` or choose a root inside one first."
+            );
+        }
+        let commands: &[&String] = if inside_git {
+            &[&doctor, &check]
+        } else {
+            &[&doctor]
+        };
+        for command in commands.iter().copied() {
             if let Some(powershell) = output::markdown::powershell_text_variant(command) {
                 println!("(PowerShell) {powershell}");
             }
