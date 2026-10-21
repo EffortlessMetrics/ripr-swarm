@@ -782,6 +782,23 @@ fn check_for_changed_line_two(lib: &str, old: &str, new: &str) -> Result<String,
     Ok(stdout)
 }
 
+/// #8444: the consumer's reference to a changed constant can sit on a line
+/// that holds no seam (`let cap = CAP;`); the route must name the line of the
+/// seam the stub targets, and the printed command must run with no
+/// substitution note.
+#[test]
+fn check_routes_a_changed_constant_to_the_consumer_seam_line() -> Result<(), String> {
+    const LIB: &str = "//! caps\nconst CAP: u64 = 5;\n\npub fn billed() -> u64 {\n    let cap = CAP;\n    cap + 1\n}\n";
+    let stdout = check_for_changed_line_two(LIB, "const CAP: u64 = 10;", "const CAP: u64 = 5;")?;
+    assert!(stdout.contains("Write a test for it:"), "{stdout}");
+    assert!(
+        stdout.contains("--at src/lib.rs:6 --kind return_value"),
+        "the route names the seam line, not the `let cap = CAP;` reference: {stdout}"
+    );
+    assert!(!stdout.contains("--at src/lib.rs:5 "), "{stdout}");
+    Ok(())
+}
+
 /// #8361: a changed `const` has no seam of its own, so `check` routes it to
 /// the function that consumes it, and the stub it names is the one
 /// `agent stub --at` writes for that function.
