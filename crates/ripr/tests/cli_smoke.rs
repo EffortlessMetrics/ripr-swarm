@@ -22610,6 +22610,11 @@ fn check_with_base_scope_does_not_show_no_scope_disclosure_smoke() {
         !stdout.contains("no analysis scope was provided"),
         "check --base HEAD must NOT show no-scope disclosure; got stdout:\n{stdout}"
     );
+    // #9033: the empty range is still explained, naming the compared base.
+    assert!(
+        stdout.contains("`HEAD...HEAD` contains no changed files"),
+        "check --base HEAD on an empty range must say nothing changed; got stdout:\n{stdout}"
+    );
     ignore_remove_dir_all(&root);
 }
 
