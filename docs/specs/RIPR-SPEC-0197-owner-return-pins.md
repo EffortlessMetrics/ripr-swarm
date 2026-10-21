@@ -109,7 +109,11 @@ assertion macro it contains and refused. The oracle's macro path must be the
 start of its text (optionally `std::` / `::core::` qualified); a one-line
 `if <macro-cond> { assert_eq!(..); }` (`if matches!(..)`, `if !cfg!(test)`,
 `if cfg!(any())`, `if vec![..].is_empty()`) begins with a prefix token, so it is
-compound and takes the same gate rather than reading as a plain macro path. A root `loop` with no `break` and a root
+compound and takes the same gate rather than reading as a plain macro path.
+More generally an effect oracle is ungated only when its text starts with an
+`assert_eq!` / `assert!` invocation; any other leading shape (`matches!(..) && { A }`,
+`!true && { A }`, `cfg!(..).then(|| { A })`) is compound and gated by the
+assertion macro in its tail. A root `loop` with no `break` and a root
 `std::process::exit` / `abort` call end the test like an earlier `return`, for every
 family that reads this admission. Not covered: `assert_ne!` and `debug_assert*!`
 (#8983), and `process::exit` reached through a `use` alias.

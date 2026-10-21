@@ -4384,6 +4384,8 @@ fn shared_return_admission_uses_the_outer_invocation_identity() {
         "if !cfg!(test) { assert_eq!(weight(input), 12); }",
         "if cfg!(any()) { assert_eq!(weight(input), 12); }",
         "if!cfg!(test) { assert_eq!(weight(input), 12); }",
+        "matches!(1, 2) && { assert_eq!(weight(input), 12); true };",
+        "!true && { assert_eq!(weight(input), 12); true };",
         "if ::core::matches!(1, 2) { assert_eq!(weight(input), 12); }",
         "while ::std::cfg!(any()) { assert_eq!(weight(input), 12); }",
     ] {

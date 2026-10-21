@@ -25,6 +25,8 @@ fn effect_assertion_dead_context_sweep_refuses_every_never_run_assertion() -> Re
         ("std::assert_vecfrom".into(), "std::assert!(*notifier.sent.borrow() == Vec::from([\"order-42\".to_string()]));".into()),
         ("core::assert_vecfrom".into(), "::core::assert!(*notifier.sent.borrow() == Vec::from([\"order-42\".to_string()]));".into()),
         ("std::assert_eq_novec".into(), "std::assert_eq!(notifier.sent.borrow().first().map(String::as_str), Some(\"order-42\"));".into()),
+        ("spaced_assert_eq".into(), format!("assert_eq !({eq});")),
+        ("rooted_std_assert_eq_novec".into(), "::std::assert_eq!(notifier.sent.borrow().first().map(String::as_str), Some(\"order-42\"));".into()),
     ];
     let dead = |a: &str| -> Vec<(&'static str, String)> {
         vec![
@@ -122,6 +124,24 @@ fn effect_assertion_dead_context_sweep_refuses_every_never_run_assertion() -> Re
                 "oneline_match_core_line",
                 format!("match ::core::line!() {{ 0 => {a} _ => {{}} }}"),
             ),
+            (
+                "tail_and_core_cfg",
+                format!("::core::cfg!(any()) && {{ {a} true }};"),
+            ),
+            (
+                "tail_and_matches",
+                format!("matches!(1, 2) && {{ {a} true }};"),
+            ),
+            ("tail_and_not_true", format!("!true && {{ {a} true }};")),
+            (
+                "tail_then_core_cfg",
+                format!("::core::cfg!(any()).then(|| {{ {a} }});"),
+            ),
+            (
+                "tail_for_each_empty_vec",
+                format!("vec![0; 0].iter().for_each(|_| {{ {a} }});"),
+            ),
+            ("tail_and_ne", format!("1 != 1 && {{ {a} true }};")),
         ]
     };
     let live = |a: &str| -> Vec<(&'static str, String)> {

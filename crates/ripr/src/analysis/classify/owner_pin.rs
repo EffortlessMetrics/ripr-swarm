@@ -571,12 +571,14 @@ impl OwnerPinSyntax {
         // effect oracle that merely contains an assertion macro takes the same
         // admission and is refused unless that exact invocation is
         // established (#8927).
-        let compound = outer.as_deref().is_none_or(|name| {
-            name == "macro_rules"
-                || !name
-                    .chars()
-                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == ':')
-        });
+        // Fail-closed root rule: the oracle is ungated only when its text
+        // STARTS with a recognized assertion invocation (leaf `assert_eq` or
+        // `assert`). Any other leading shape (a different macro, an empty or
+        // non-identifier path, a prefix keyword or expression) is compound and
+        // takes the context gate whenever an assertion macro sits in its tail.
+        let compound = outer
+            .as_deref()
+            .is_none_or(|name| !matches!(name, "assert_eq" | "assert"));
         let gated = match outer.as_deref() {
             _ if compound => {
                 let masked = mask_comments_and_strings(&assertion.text);
