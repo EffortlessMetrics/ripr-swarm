@@ -385,7 +385,11 @@ The JSON report uses schema version `0.1`:
   Unavailable source, exhausted disclosure budget, or unresolved attribution
   within this bounded classifier withholds `true` and
   emits a warning; it does not alter the causal analysis status or hide an open
-  recommendation. External module composition and broader test-role resolution
+  recommendation. Whole-file deletions currently retain a shared deletion count
+  without old-side test-role attribution, so any whole-file deletion (including
+  production or documentation files) conservatively takes this unresolved path.
+  No confirmed test path is inferred from that count.
+  External module composition and broader test-role resolution
   remain separate work (#3213).
 - `comments[].id` - stable report-local ID.
 - `comments[].dedupe_key` - stable key based on seam ID, path, and seam line.
@@ -564,6 +568,10 @@ separate and inline production-only edits through real Git diffs to final JSON;
 `resolved_production_edits_do_not_become_test_edits_from_filename` pins producer
 precedence for both Rust test-shaped suffixes. The Git regression also retains
 whole-test deletion with a surviving related test and shifted-coordinate controls.
+`review_comments_marks_whole_file_deletions_unresolved` separately pins complete
+test-file and production-file deletions: uncertainty is explicit, the surviving
+recommendation and complete causal receipt remain, and the fourteen surviving-file
+controls above continue to require resolved attribution.
 
 Initial implementation should add tests for:
 

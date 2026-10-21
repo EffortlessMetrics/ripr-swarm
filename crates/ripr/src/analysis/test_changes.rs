@@ -28,9 +28,16 @@ pub(crate) fn diff_test_changes(
     mut remaining_files: usize,
     mut remaining_bytes: u64,
 ) -> DiffTestChanges {
-    let mut changes = DiffTestChanges::default();
+    let parsed = super::diff::parse_unified_diff_with_metadata(diff_text);
+    // Whole-file deletions have no new-side ChangedFile. The shared parser
+    // retains their count, not test-role attribution: do not infer unchanged
+    // tests or invent a confirmed test path from that missing evidence.
+    let mut changes = DiffTestChanges {
+        unresolved: parsed.deleted_file_count > 0,
+        ..DiffTestChanges::default()
+    };
     let layout = SourceRoleContext::empty();
-    for file in super::diff::parse_unified_diff(diff_text) {
+    for file in parsed.changed_files {
         if super::cancellation::checkpoint().is_err() {
             changes.unresolved = true;
             break;

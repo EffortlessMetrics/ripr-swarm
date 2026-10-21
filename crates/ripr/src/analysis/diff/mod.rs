@@ -28,5 +28,7 @@ pub(crate) use model::lines_look_alike;
 )]
 pub use model::{ChangedFile, ChangedLine};
 pub use parse::parse_unified_diff;
-pub(crate) use parse::parse_unified_diff_bounded_with_metadata;
+pub(crate) use parse::{
+    parse_unified_diff_bounded_with_metadata, parse_unified_diff_with_metadata,
+};
 pub(crate) use path::is_ripr_artifact_path;

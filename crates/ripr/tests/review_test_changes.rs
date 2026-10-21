@@ -269,3 +269,87 @@ fn review_comments_preserves_unchanged_tests_for_test_named_production()
     }
     Ok(())
 }
+
+#[test]
+fn review_comments_marks_whole_file_deletions_unresolved() -> Result<(), Box<dyn std::error::Error>>
+{
+    for test_file in [true, false] {
+        let fixture = Fixture::new(false, "production_only")?;
+        let deleted = if test_file {
+            std::fs::write(
+                fixture.0.join("tests/retained.rs"),
+                format!("use pricing_fixture::price;\n{SECOND_TEST}"),
+            )?;
+            "tests/pricing.rs"
+        } else {
+            std::fs::write(
+                fixture.0.join("src/unused.rs"),
+                "pub const UNUSED: u32 = 0;\n",
+            )?;
+            "src/unused.rs"
+        };
+        fixture.commit("whole-file deletion baseline")?;
+        let production = fixture.0.join("src/lib.rs");
+        let source = std::fs::read_to_string(&production)?;
+        assert!(
+            source.contains("points >= 10"),
+            "nonempty production stimulus"
+        );
+        std::fs::write(&production, source.replace("points >= 10", "points > 10"))?;
+        std::fs::remove_file(fixture.0.join(deleted))?;
+        fixture.commit("whole-file deletion and production edit")?;
+        let patch = fixture_git_output(&fixture.0, &["diff", "--unified=0", "HEAD^", "HEAD"])?;
+        assert!(patch.contains(&format!("diff --git a/{deleted} b/{deleted}")));
+        assert!(
+            patch.contains("+++ /dev/null"),
+            "must delete the whole file"
+        );
+        assert!(patch.contains("diff --git a/src/lib.rs b/src/lib.rs"));
+
+        let output = fixture.0.join("review.json");
+        ripr::cli::run(vec![
+            "ripr".to_string(),
+            "review-comments".to_string(),
+            "--root".to_string(),
+            fixture.0.display().to_string(),
+            "--base".to_string(),
+            "HEAD^".to_string(),
+            "--head".to_string(),
+            "HEAD".to_string(),
+            "--out".to_string(),
+            output.display().to_string(),
+        ])?;
+        let report: Value = serde_json::from_slice(&std::fs::read(output)?)?;
+        assert_eq!(report["summary"]["unchanged_tests"], false, "{report}");
+        let warnings = report["warnings"].as_array().ok_or("missing warnings")?;
+        assert!(
+            warnings.iter().any(|warning| warning["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("Test-edit attribution is unresolved"))),
+            "the deletion count cannot establish a confirmed test change: {report}"
+        );
+        let comments = report["comments"].as_array().ok_or("missing comments")?;
+        assert_eq!(comments.len(), 1, "retain the recommendation: {report}");
+        let card = comments.first().ok_or("missing retained recommendation")?;
+        assert_eq!(card["kind"], "predicate_boundary");
+        assert_eq!(card["grip_class"], "weakly_gripped");
+        assert_eq!(
+            card["suggested_test"]["near_test"],
+            if test_file {
+                "still_above"
+            } else {
+                "above_threshold"
+            }
+        );
+        assert_eq!(card["placement"]["path"], "src/lib.rs");
+        assert_eq!(card["placement"]["side"], "RIGHT");
+        assert_eq!(card["placement"]["line"], 2);
+        assert_eq!(report["summary"]["suppressed"], 0);
+        assert_eq!(report["status"], "advisory");
+        assert_eq!(report["analysis_scope"]["downstream_consumable"], true);
+        let receipt: Value =
+            serde_json::from_slice(&std::fs::read(fixture.0.join("run-receipt.json"))?)?;
+        assert_eq!(receipt["status"], "complete");
+    }
+    Ok(())
+}
