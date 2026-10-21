@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testmore-bulk-subtest.json",
-    "sha256": "b9f4f9c248fe7a318cde3d801f0d30c21526c5f04af418de0afcbce70765ca6e",
+    "sha256": "ceacf674a659e2544f5899959367e7e2babec02acdb063f6e5a6974530c02dea",
     "provenance": "producer"
   }
 }

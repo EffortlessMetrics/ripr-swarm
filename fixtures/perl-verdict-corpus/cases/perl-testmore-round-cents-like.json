@@ -57,7 +57,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testmore-round-cents-like.json",
-    "sha256": "edeeebb8de94294cf58702c54143f5725de4eca040e11d48acd0ebab630afb54",
+    "sha256": "a72025eb7159ee329469344f0fc2310e1b36f00750f96447fcfc7a8165557db6",
     "provenance": "producer"
   }
 }
