@@ -431,7 +431,7 @@ and single-platform CI was the root cause enabling both.
   every process holding its write end exits, so one test leaking a child kept
   the step alive after cargo finished until the 90-minute job limit cancelled
   the whole lane (#9272, run 39549631529). Each cargo step also carries its
-  own `timeout-minutes` with `continue-on-error`; a step that times out leaves
+  own `timeout-minutes`, and later steps run under `!cancelled()`; a step that times out leaves
   no status file, which the summarizer reports as missing evidence.
 - **Two samples per run.** The suite runs twice on purpose: one sample cannot
   separate a reproducible failure from a load-dependent flake. The summarizer
