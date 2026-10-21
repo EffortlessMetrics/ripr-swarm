@@ -666,7 +666,9 @@ pub(crate) fn config_error_display_lines(error: &str, verbose: bool) -> Vec<Stri
         return lines;
     }
     for line in error.lines().map(str::trim).filter(|line| !line.is_empty()) {
-        if is_toml_source_excerpt_line(line) {
+        // doctor prints its own `Fix:` line, so the loader's recovery line
+        // would only repeat it (#9033).
+        if is_toml_source_excerpt_line(line) || line == CONFIG_LOAD_REPAIR_HINT {
             continue;
         }
         if summary.contains(line) || lines.iter().any(|existing| existing.contains(line)) {

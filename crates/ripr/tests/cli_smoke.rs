@@ -13413,6 +13413,28 @@ fn doctor_reports_malformed_config_error() -> Result<(), String> {
     Ok(())
 }
 
+/// #9033: the loader's recovery line is for `check`/`explain`; verbose doctor
+/// already prints its own `Fix:` line and must not repeat it as an `error:` line.
+#[test]
+fn doctor_verbose_malformed_config_omits_the_loader_recovery_line() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    std::fs::write(workspace.join("ripr.toml"), "[bogus\n")
+        .map_err(|e| format!("write ripr.toml: {e}"))?;
+    let root = workspace.display().to_string();
+    let output = run_ripr(&["doctor", "--verbose", "--root", &root]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !stdout.contains("  Fix: correct ") {
+        return Err(format!("doctor must keep its own Fix line:\n{stdout}"));
+    }
+    if !stdout.contains("error: ") || stdout.contains("built-in defaults") {
+        return Err(format!(
+            "verbose doctor must show the parser error but not the loader hint:\n{stdout}"
+        ));
+    }
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
 /// #8168: an otherwise healthy committed Cargo repo with malformed `ripr.toml`
 /// must name a config correction, not `ripr check`.
 #[test]
