@@ -24,6 +24,7 @@ use crate::cli::commands_agent_support::{
 };
 use crate::cli::commands_context::{
     config_load_refusal, ensure_command_root, load_root_input_and_config, refuse_json_envelope,
+    refuse_json_envelope_checked,
 };
 use crate::config::{RiprConfig, load_for_root};
 use crate::core_error::CoreError;
@@ -227,10 +228,11 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
     match command {
         AgentCommand::Start(options) => run_agent_start(options).map_err(CommandError::from),
         AgentCommand::Brief(options) => run_agent_brief(options).map_err(CommandError::from),
-        AgentCommand::Packet(options) => run_agent_packet(options).map_err(CommandError::from),
+        AgentCommand::Packet(options) => run_agent_packet(options),
         // #5007: `agent card` refusals are typed like its siblings: the
         // adapter classifies deliberate named refusals (rendering the
-        // versioned `agent_card_refusal` envelope on stderr under `--json`)
+        // versioned `agent_card_refusal` envelope on stdout under `--json`,
+        // with the prose on stderr)
         // and maps them to the decision exit code 3; operational failures
         // stay exit 2.
         AgentCommand::Card(options) => super::agent_card::run_agent_card(options),
@@ -493,14 +495,15 @@ fn add_agent_brief_provenance_warning(root: &Path, selection: &mut AgentBriefSel
     }
 }
 
-fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {
+fn run_agent_packet(options: AgentPacketOptions) -> Result<(), CommandError> {
     let json = options.json;
     // #7331 review: the root check is below argv parsing, so a `--json`
     // packet run with an unusable `--root` refuses through the same
     // envelope instead of exiting 2 with empty stdout.
     if let Err(err) = ensure_command_root(&options.root, "agent packet") {
         let error = CoreError::repository_root_unusable(err);
-        return Err(refuse_agent_packet(&options, error, json));
+        let message = refuse_agent_packet(&options, error, json).unwrap_or_else(|failure| failure);
+        return Err(CommandError::Failure(message));
     }
     match render_agent_packet(&options) {
         Ok(rendered) => {
@@ -512,17 +515,36 @@ fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {
         // before the prose error reaches stderr. This is the exact step
         // `agent brief`'s documented `next.inspect_packet` loop drives, so
         // the machine channel survives the failure.
-        Err(error) => Err(refuse_agent_packet(&options, error, json)),
+        //
+        // An unknown `--seam-id` is a typed refusal, not a could-not-complete
+        // failure: exit 3, like `agent card` and `agent stub` for the same
+        // cause. Every other packet failure stays exit 2.
+        Err(error) => {
+            let unknown_seam = error.check_failure_kind()
+                == Some(crate::core_error::CheckFailureKind::SeamIdUnknown);
+            match refuse_agent_packet(&options, error, json) {
+                Ok(message) if unknown_seam => Err(CommandError::Decision(message)),
+                Ok(message) | Err(message) => Err(CommandError::Failure(message)),
+            }
+        }
     }
 }
 
 /// The refusal envelope context for `agent packet --json` (#7331): the
 /// packet schema version and repo scope.
-fn refuse_agent_packet(options: &AgentPacketOptions, error: CoreError, json: bool) -> String {
+///
+/// `Err` means the envelope could not be rendered or written to stdout, so no
+/// machine answer was delivered (an operational failure even for an unknown
+/// seam); `Ok` is the prose error for stderr.
+fn refuse_agent_packet(
+    options: &AgentPacketOptions,
+    error: CoreError,
+    json: bool,
+) -> Result<String, String> {
     if !json {
-        return error.to_string();
+        return Ok(error.to_string());
     }
-    refuse_json_envelope(
+    refuse_json_envelope_checked(
         app::AGENT_SEAM_PACKET_SCHEMA_VERSION,
         "repo",
         None,
@@ -594,6 +616,7 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
         Ok(RepairSubjectOutcome::Ineligible {
             seam_id: resolved,
             reason,
+            ..
         }) => {
             let root_arg = crate::agent::loop_commands::shell_arg(
                 &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
@@ -1121,13 +1144,20 @@ pub(super) fn repair_attempt_input_error(
 pub(in crate::cli) fn run_before_repair_with_identity(
     options: AgentRepairOptions,
     identity: &crate::app::repair_attempt::BeforeRepairAttemptIdentity,
-) -> Result<(), CommandError> {
+) -> Result<(), crate::cli::BeforePhaseError> {
     if options.phase != AgentRepairPhase::Before {
         return Err(CommandError::Failure(
             "prepared before identity requires the before phase".to_string(),
-        ));
+        )
+        .into());
     }
-    run_agent_repair_with_identity(options, Some(identity))
+    let (result, start_refused) = run_agent_repair_with_identity_ctx(options, Some(identity));
+    match result {
+        Err(error) if start_refused => Err(crate::cli::BeforePhaseError::Refused(
+            error.message().to_string(),
+        )),
+        other => other.map_err(Into::into),
+    }
 }
 
 /// Shared with the task-first `ripr continue` façade (#6305): both
@@ -1137,6 +1167,16 @@ pub(in crate::cli) fn run_agent_repair_with_identity(
     options: AgentRepairOptions,
     identity: Option<&crate::app::repair_attempt::BeforeRepairAttemptIdentity>,
 ) -> Result<(), CommandError> {
+    run_agent_repair_with_identity_ctx(options, identity).0
+}
+
+/// [`run_agent_repair_with_identity`] plus whether a before phase refused to
+/// start with nothing written (#9033), so the façade can map that refusal to
+/// the decision exit code while the advanced spelling keeps its failure code.
+fn run_agent_repair_with_identity_ctx(
+    options: AgentRepairOptions,
+    identity: Option<&crate::app::repair_attempt::BeforeRepairAttemptIdentity>,
+) -> (Result<(), CommandError>, bool) {
     let json = options.json;
     let mut refusal = AfterPhaseRefusalContext::default();
     let result = run_agent_repair_phase(options, &mut refusal, identity);
@@ -1187,11 +1227,13 @@ pub(in crate::cli) fn run_agent_repair_with_identity(
             Err(render_error) => eprintln!("ripr: {render_error}"),
         }
     }
-    if refusal.selected_attempt.is_some() && refusal.typed {
+    let start_refused = refusal.start_refused;
+    let result = if refusal.selected_attempt.is_some() && refusal.typed {
         result.map_err(CommandError::Decision)
     } else {
         result.map_err(CommandError::Failure)
-    }
+    };
+    (result, start_refused)
 }
 
 /// Records a refused after phase on its attempt, choosing the authority by the
@@ -1275,6 +1317,10 @@ struct AfterPhaseRefusalContext {
     /// unreadable retained packet or manifest, a failed snapshot write,
     /// failed receipt or apply-record publication) stay exit code 2.
     typed: bool,
+    /// Set when a before phase refused to start because the selected inline
+    /// target is an uncommitted production file (#9033), before any
+    /// workflow artifact or attempt existed.
+    start_refused: bool,
     /// Set once the phase printed its one stdout document (the bare verify
     /// document on a post-verify refusal), so a refusal never prints a
     /// second document.
@@ -1587,6 +1633,20 @@ fn run_agent_repair_phase(
                 },
             )
             .map_err(|error| error.to_string())?;
+            // #9033: the selected inline target must be the committed file.
+            // Checked on the inventory loaded above, before the cage policy,
+            // the lock-protected publication or any workflow artifact, so a
+            // refused start leaves nothing for `ripr status` to read.
+            if let Some(file) = crate::app::task_first::held_inline_start_file(
+                &root,
+                &seam_id,
+                &before_report.classified,
+            ) {
+                refusal.start_refused = true;
+                return Err(crate::app::task_first::uncommitted_start_refusal_message(
+                    &root, &seam_id, &file,
+                ));
+            }
             let mut policy =
                 crate::app::repair_attempt::edit_cage_policy_from_packet(&packet, &seam_id)
                     .map_err(|error| before_phase_refusal(&seam_id, &root, &error))?;

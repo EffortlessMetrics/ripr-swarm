@@ -29,6 +29,10 @@ pub(super) struct PythonSourceFacts {
     pub(super) tests: Vec<PythonTest>,
     /// Module-level `@pytest.fixture` functions (#4563).
     pub(super) fixtures: Vec<super::PythonFixtureDef>,
+    /// The file is a `conftest.py` that installs implicit setup around the
+    /// tests in its scope (#6657). A conftest that failed to parse is not
+    /// flagged here; the workspace pass treats any limitation as unreadable.
+    pub(super) conftest_implicit_setup: bool,
     pub(super) facts: Vec<PythonSourceFact>,
     pub(super) limitations: Vec<PythonSourceLimitation>,
     pub(super) docstring_line_ranges: Vec<RangeInclusive<usize>>,
@@ -614,6 +618,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         owners: Vec::new(),
         tests: Vec::new(),
         fixtures: Vec::new(),
+        conftest_implicit_setup: false,
         facts: Vec::new(),
         limitations: Vec::new(),
         docstring_line_ranges: Vec::new(),
@@ -667,6 +672,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         &module_constants,
         &mut snapshot.owners,
     );
+    mark_rebound_decorators(source, &mut snapshot.owners);
     snapshot
         .owners
         .push(module_owner(file, source, module_range, &imports));
@@ -689,6 +695,9 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         &mut snapshot.tests,
     );
     snapshot.fixtures = super::fixtures::collect_fixture_defs(file, source, &module.body, &imports);
+    snapshot.conftest_implicit_setup = file.file_name().and_then(|name| name.to_str())
+        == Some("conftest.py")
+        && super::admission::conftest_installs_implicit_setup(&module.body);
     with_module_rebinding(source, &module.body, &mut snapshot.tests);
     super::oracles::unittest_list::withhold_modified_oracles(&mut snapshot.tests);
     collect_source_facts_from_statements(
@@ -1807,4 +1816,173 @@ fn dotted_dir(file: &Path) -> String {
                 .join(".")
         })
         .unwrap_or_default()
+}
+
+/// Records, per owner, the decorators whose first name segment the file binds
+/// anywhere other than the one typing import, so an import match is not
+/// trusted for them (`def final`, `final = ...`, a nested or class-scope
+/// rebind, a tuple or loop target, a `try`/`except` import fallback).
+///
+/// This is deliberately a lexical, fail-closed screen rather than a scope
+/// analysis: the name must occur only on `@name...` decorator lines and on
+/// `typing`/`typing_extensions` import statements. A star import from another
+/// module, or any decorator the screen cannot read as a plain dotted name
+/// (`@registry["x"]`, `@(lambda f: g)`), withholds trust for the whole file.
+fn mark_rebound_decorators(source: &str, owners: &mut [PythonOwner]) {
+    let distrust_all = typing_markers_distrusted(source);
+    for owner in owners {
+        let rebound: Vec<String> = owner
+            .decorators
+            .iter()
+            .filter(|decorator| {
+                let first = decorator.split('.').next().unwrap_or_default();
+                distrust_all || name_bound_outside_typing_import(source, first)
+            })
+            .cloned()
+            .collect();
+        owner.unplain_decorators.extend(rebound);
+    }
+}
+
+/// Whether a decorator line or star import makes any marker unprovable.
+fn typing_markers_distrusted(source: &str) -> bool {
+    // A lone carriage return is a Python line break `str::lines` does not see.
+    if source
+        .match_indices('\r')
+        .any(|(at, _)| source.as_bytes().get(at + 1) != Some(&b'\n'))
+    {
+        return true;
+    }
+    source.lines().any(|line| {
+        let line = line.trim_start();
+        if let Some(rest) = line.strip_prefix('@') {
+            return !is_plain_decorator(rest.split('#').next().unwrap_or_default().trim());
+        }
+        // A star import anywhere on the line (`import os; from m import *`,
+        // `if x: from m import *`) may shadow a marker; so may one split by a
+        // backslash continuation.
+        (contains_word(line, "import")
+            && (line.contains('*') || line.trim_end().ends_with('\\'))
+            && !is_typing_import_line(line))
+            || line.starts_with('*')
+    })
+}
+
+/// A decorator that is a dotted name, optionally followed by one call whose
+/// parentheses close at the end of the line (`name`, `a.b`, `name(...)`).
+/// Anything else (`name(x)[0]`, `name(x) if c else y`, a multi-line call, a
+/// subscript, a lambda) cannot be read, so the file is not trusted.
+fn is_plain_decorator(text: &str) -> bool {
+    let head_end = text.find('(').unwrap_or(text.len());
+    let head = &text[..head_end];
+    let plain_head = !head.is_empty()
+        && !head.starts_with('.')
+        && !head.ends_with('.')
+        && head
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '.');
+    if !plain_head {
+        return false;
+    }
+    let call = &text[head_end..];
+    if call.is_empty() {
+        return true;
+    }
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let chars: Vec<(usize, char)> = call.char_indices().collect();
+    for (at, &(index, c)) in chars.iter().enumerate() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == open {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            // Triple-quoted strings are not parsed: the line is unreadable.
+            '\'' | '"' => {
+                if chars.get(at + 1).is_some_and(|&(_, next)| next == c)
+                    && chars.get(at + 2).is_some_and(|&(_, next)| next == c)
+                {
+                    return false;
+                }
+                quote = Some(c);
+            }
+            '(' => depth += 1,
+            ')' => {
+                depth = match depth.checked_sub(1) {
+                    Some(depth) => depth,
+                    None => return false,
+                };
+                if depth == 0 && index + 1 != call.len() {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    depth == 0 && quote.is_none()
+}
+
+fn is_typing_import_line(line: &str) -> bool {
+    let module_import = ["import typing", "import typing_extensions"]
+        .iter()
+        .any(|prefix| {
+            line.strip_prefix(prefix)
+                .is_some_and(|rest| !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_'))
+        });
+    (line.starts_with("from typing import")
+        || line.starts_with("from typing_extensions import")
+        || module_import)
+        && !line.contains(';')
+}
+
+fn name_bound_outside_typing_import(source: &str, name: &str) -> bool {
+    let mut in_typing_block = false;
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        // Parentheses in a trailing comment must not open or close the block.
+        let code = trimmed.split('#').next().unwrap_or_default();
+        let mut scanned = line;
+        let allowed = if in_typing_block {
+            if let Some(close) = code.find(')') {
+                // Only text before the closing parenthesis belongs to the import.
+                in_typing_block = false;
+                scanned = &code[close + 1..];
+                false
+            } else {
+                true
+            }
+        } else if is_typing_import_line(trimmed) {
+            if code.contains('(') && !code.contains(')') {
+                in_typing_block = true;
+            }
+            true
+        } else if let Some(rest) = trimmed.strip_prefix('@') {
+            let head = rest.split('(').next().unwrap_or_default();
+            // The call arguments are scanned too: `@final(final := wrapper)`
+            // rebinds the name on its own decorator line.
+            head.split('.').next() == Some(name) && !contains_word(&rest[head.len()..], name)
+        } else {
+            false
+        };
+        if !allowed && contains_word(scanned, name) {
+            return true;
+        }
+    }
+    false
+}
+
+fn contains_word(line: &str, word: &str) -> bool {
+    line.match_indices(word).any(|(start, _)| {
+        let before = line[..start].chars().next_back();
+        let after = line[start + word.len()..].chars().next();
+        let is_ident = |c: char| c.is_alphanumeric() || c == '_';
+        !before.is_some_and(is_ident) && !after.is_some_and(is_ident)
+    })
 }

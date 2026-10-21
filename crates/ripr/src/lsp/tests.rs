@@ -219,9 +219,45 @@ fn watched_file_batch_preserves_config_and_workspace_graph_signals() -> Result<(
         WatchedFileChanges {
             config_changed: true,
             workspace_graph_changed: true,
+            typescript_input_changed: false,
             diagnostics_input_changed: false,
         }
     );
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn watched_typescript_inputs_reload_config_and_refresh_analysis() -> Result<(), String> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let backend_root = root.clone();
+    let (service, _socket) =
+        LspService::new(move |client| Backend::new(client, backend_root.clone()));
+    let backend = service.inner();
+    backend.initialize_test_workspace_root();
+
+    // (path, event type, expect a TypeScript analysis refresh)
+    let cases = [
+        ("tsconfig.json", FileChangeType::CHANGED, true),
+        ("src/cart.ts", FileChangeType::CREATED, true),
+        ("src/cart.ts", FileChangeType::DELETED, true),
+        // An ordinary save of an existing source file is not an input.
+        ("src/cart.ts", FileChangeType::CHANGED, false),
+    ];
+    for (relative, typ, refresh) in cases {
+        let uri = file_uri_for_path(&root.join(relative))
+            .map_err(|err| format!("{relative} URI failed: {err}"))?;
+        let changes = vec![FileEvent { uri, typ }];
+        assert_eq!(
+            backend.watched_file_change_kinds(&changes),
+            WatchedFileChanges {
+                config_changed: true,
+                typescript_input_changed: refresh,
+                ..WatchedFileChanges::default()
+            },
+            "{relative} {typ:?}"
+        );
+    }
     Ok(())
 }
 
@@ -12623,6 +12659,7 @@ fn generic_client_analysis_failure_is_shown_once_and_only_to_generic_clients() -
 
 /// A committed fixture whose working tree adds one Python file that the
 /// default configuration does not enable (#8585).
+#[cfg(feature = "lang-python")]
 fn disabled_python_change_fixture(name: &str) -> Result<TempLspRoot, String> {
     let root = boundary_gap_git_fixture_root(name)?;
     std::fs::create_dir_all(root.path().join("zpy"))
@@ -12636,6 +12673,7 @@ fn disabled_python_change_fixture(name: &str) -> Result<TempLspRoot, String> {
     Ok(root)
 }
 
+#[cfg(feature = "lang-python")]
 fn unavailable_language_notices(shown: &[serde_json::Value]) -> Vec<&serde_json::Value> {
     shown
         .iter()
@@ -12647,6 +12685,7 @@ fn unavailable_language_notices(shown: &[serde_json::Value]) -> Vec<&serde_json:
         .collect()
 }
 
+#[cfg(feature = "lang-python")]
 #[test]
 fn generic_client_is_told_once_when_a_changed_language_is_not_enabled() -> Result<(), String> {
     // #8585: a generic editor renders neither the log nor
