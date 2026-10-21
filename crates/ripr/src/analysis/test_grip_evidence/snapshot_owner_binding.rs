@@ -24,9 +24,14 @@ pub(super) fn snapshot_observes_owner_result(
     if call_text_contains_named_call(&snapshot, owner_name) {
         return true;
     }
-    free_identifiers(&snapshot)
-        .iter()
-        .any(|name| name_is_direct_owner_result(name, owner_name, oracle, test))
+    free_identifiers(&snapshot).iter().any(|name| {
+        // A binder in the assertion's own arguments (`{ let x = 7; x }`,
+        // `Some(x) => x`, `|x| ..`, `x = 3`) is not the local read earlier.
+        !binds_by_pattern(&snapshot, name)
+            && !borrows_mutably(&snapshot, name)
+            && !assignment_target(&snapshot).is_some_and(|target| contains_word(target, name))
+            && name_is_direct_owner_result(name, owner_name, oracle, test)
+    })
 }
 
 fn strip_oracle_text(text: &str) -> String {
@@ -63,11 +68,11 @@ fn free_identifiers(code: &str) -> Vec<String> {
 }
 
 fn is_identifier_start(byte: u8) -> bool {
-    byte.is_ascii_alphabetic() || byte == b'_'
+    byte.is_ascii_alphabetic() || byte == b'_' || byte >= 0x80
 }
 
 fn is_identifier_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_'
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte >= 0x80
 }
 
 /// How strictly a `let` initializer must name the owner call.
@@ -106,7 +111,7 @@ fn name_is_direct_owner_result(
             if test.start_line + offset < oracle_line {
                 return strip_comments_and_strings(line);
             }
-            match line.find(macro_name).filter(|_| !macro_name.is_empty()) {
+            match line.rfind(macro_name).filter(|_| !macro_name.is_empty()) {
                 Some(at) => strip_comments_and_strings(&line[..at]),
                 None => String::new(),
             }
@@ -239,11 +244,15 @@ fn walk_bindings(
                         .unwrap_or("")
                         .contains("=>");
                 let pattern_brace = in_arm_pattern || in_pattern_position(&statement.skeleton);
+                // `my_macro! { let x = 5; }`: the body is not a block.
+                let macro_brace = statement.skeleton.trim_end().ends_with('!');
                 let part_of_statement = nest > 0
                     || statement.starts_with_let()
                     || pattern_brace
-                    || struct_like_statement(&statement.skeleton);
-                let keep_text = pattern_brace || ends_with_type_like_name(&statement.skeleton);
+                    || struct_like_statement(&statement.skeleton)
+                    || macro_brace;
+                let keep_text =
+                    pattern_brace || macro_brace || ends_with_type_like_name(&statement.skeleton);
                 let in_match = contains_word(&statement.skeleton, "match");
                 let resumes = if part_of_statement {
                     // A binder in the header (a closure parameter, `if let
@@ -496,7 +505,10 @@ fn statement_binding_verdict(
             // Binders are read outside braces: a closure parameter, not a
             // pattern in the closure's body.
             let outside = trimmed.strip_prefix("let ").unwrap_or(rest);
-            return (binds_by_pattern(outside, name) || borrows_mutably(outside, name))
+            let rewrites = outside.split_once('=').is_some_and(|(_, initializer)| {
+                assignment_target(initializer).is_some_and(|target| contains_word(target, name))
+            });
+            return (binds_by_pattern(outside, name) || borrows_mutably(outside, name) || rewrites)
                 .then_some(BindingVerdict::Withdrawn);
         }
         let bound = pattern
@@ -550,6 +562,10 @@ fn binds_by_pattern(statement: &str, name: &str) -> bool {
             })
         })
     {
+        return true;
+    }
+    // A nested `fn` header binds its parameters; its body captures no local.
+    if contains_word(statement, "fn") {
         return true;
     }
     // A `let` anywhere but at the start is a let chain (`c && let Some(x) =
@@ -624,7 +640,9 @@ fn initializer_binds(skeleton: &str, name: &str) -> bool {
     let Some((_, initializer)) = trimmed.split_once('=') else {
         return false;
     };
-    binds_by_pattern(initializer, name) || borrows_mutably(initializer, name)
+    binds_by_pattern(initializer, name)
+        || borrows_mutably(initializer, name)
+        || assignment_target(initializer).is_some_and(|target| contains_word(target, name))
 }
 
 /// A binder of `name` in the header of the brace being opened. The pattern of
@@ -869,6 +887,15 @@ fn borrows_mutably(statement: &str, name: &str) -> bool {
         }
         let rest =
             rest.trim_start_matches(|ch: char| ch.is_whitespace() || matches!(ch, '(' | '*' | '&'));
+        let rest = rest.strip_prefix("r#").unwrap_or(rest);
+        rest.strip_prefix(name).is_some_and(|after| {
+            !after.starts_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_')
+        })
+    }) || statement.match_indices("addr_of_mut").any(|(at, _)| {
+        let rest = statement[at + "addr_of_mut".len()..].trim_start_matches(|ch: char| {
+            ch.is_whitespace() || matches!(ch, '!' | '(' | '*' | '&')
+        });
+        let rest = rest.strip_prefix("r#").unwrap_or(rest);
         rest.strip_prefix(name).is_some_and(|after| {
             !after.starts_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_')
         })
@@ -1288,6 +1315,31 @@ mod tests {
             "{n}.f[0] = 5;\n",
             "(*{n}).y = 5;\n",
             "let t = std::mem::take(&mut {n});\n",
+            "fn inner({n}: u8) {\n",
+            "fn f({n}: u8) { ",
+            "pub fn f<T>({n}: T) {\n",
+            "async fn f({n}: u8) {\n",
+            "unsafe fn f({n}: u8) {\n",
+            "const fn f({n}: u8) {\n",
+            "impl Foo {\n fn m({n}: u8) {\n",
+            "trait T {\n fn m({n}: u8) {\n",
+            "mod m {\n fn f({n}: u8) {\n",
+            "fn f(({n}, y): (u8, u8)) {\n",
+            "fn f(Foo { {n} }: Foo) {\n",
+            "fn f(\n a: u8,\n {n}: u8,\n) {\n",
+            "let mut inc = || {n} += 1;\n",
+            "let c = || {n} = 5;\n",
+            "let _r = || {n} = 5;\n",
+            "let c = || *{n} = 5;\n",
+            "let c = || {n}.f = 5;\n",
+            "let y = ({n} += 1);\n",
+            "let y = {n} = 5;\n",
+            "let _ = c.then(|| {n} = 5);\n",
+            "let y = foo({n} = 5,\n",
+            "f(&mut r#{n});\n",
+            "addr_of_mut!({n});\n",
+            "my_macro! { let {n} = 5; }\n",
+            "my_macro! { let {n} = 5;\n",
             "f(&mut ({n}));\n",
             "f(& mut {n});\n",
             "f(&raw mut {n});\n",
@@ -1366,5 +1418,56 @@ mod tests {
                 reach
             ));
         }
+    }
+
+    #[test]
+    fn a_binder_in_the_assertion_arguments_or_a_repeated_assertion_is_judged() {
+        let strict_args = |args: &str| {
+            let body = format!("let x = own(2);\ninsta::assert_snapshot!({args});");
+            let test = test_with(&body);
+            let oracle = super::OracleFact {
+                line: test.start_line + 1,
+                text: format!("insta::assert_snapshot!({args})"),
+                kind: crate::domain::OracleKind::Snapshot,
+                strength: crate::domain::OracleStrength::Medium,
+                observed_tokens: Vec::new(),
+                ok_value_observed: None,
+            };
+            super::snapshot_observes_owner_result("own", &oracle, &test)
+        };
+        assert!(strict_args("x"));
+        assert!(strict_args("x, 1"));
+        for args in [
+            "{ let x = 7; x }",
+            "match o { Some(x) => x, None => 0 }",
+            "if let Some(x) = o { x } else { 0 }",
+            "run(|x| x + 1)",
+            "items.iter().map(|x| x * 2).sum::<u8>()",
+            "{ x = 3; x }",
+        ] {
+            assert!(!strict_args(args), "{args}");
+        }
+        assert!(!strict_same_line(
+            "let x = own(2);",
+            "insta::assert_snapshot!(x); let x = 7; "
+        ));
+        assert!(!strict_same_line(
+            "let x = own(2);",
+            "insta::assert_snapshot!(x); run(|x| { "
+        ));
+        assert!(!strict_same_line(
+            "let x = own(2);",
+            "insta::assert_snapshot!(x); for x in v { "
+        ));
+        assert!(strict_same_line(
+            "let x = own(2);",
+            "insta::assert_snapshot!(x); let y = 7; "
+        ));
+        assert!(!strict_same_line("let x = own(2);", "fn f(x: u8) { "));
+    }
+
+    #[test]
+    fn non_ascii_neighbours_do_not_make_another_identifier_the_local() {
+        assert_eq!(super::free_identifiers("xé + éx + x"), ["xé", "éx", "x"]);
     }
 }

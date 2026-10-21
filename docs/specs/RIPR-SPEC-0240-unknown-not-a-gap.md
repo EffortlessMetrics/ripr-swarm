@@ -275,9 +275,11 @@ non-ignored related test matches one of these shapes:
   assertion runs was made by `let [mut] x = ..owner(..)`. A later `let`
   (even on the same line, in a closure or callback body the assertion sits in,
   behind an attribute, or any binder of the same name whose scope holds the
-  assertion: a closure parameter, an `if let` / `while let` / let-chain / `for`
+  assertion: a nested `fn` parameter, a closure parameter, an `if let` / `while let` / let-chain / `for`
   pattern, a match-arm pattern or guard, a struct or tuple pattern), an
-  assignment (destructuring or indexed place included) or `&mut x` borrow, a binding closed
+  assignment (destructuring, indexed place, or one inside another `let`'s
+  initializer included) or `&mut x` / `&raw mut x` / `addr_of_mut!(x)` borrow, a
+  binder inside the assertion's own arguments, a macro-brace `let`, a binding closed
   with its block, and a binding made only after the assertion do not reach it.
 - **insta**: a `direct_owner_call` test with a snapshot macro that has no
   inline `@` literal, whose snapshotted value (after an optional literal name)

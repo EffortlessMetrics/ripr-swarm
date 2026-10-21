@@ -688,7 +688,7 @@ fn a_commented_environment_write_activates_nothing() -> Result<(), String> {
 fn a_shadow_inside_a_callback_reaches_an_assertion_inside_it() -> Result<(), String> {
     // Each case is the setup, then what closes the open block after the
     // assertion (nothing when the shadow is not in a block).
-    let cases: [(&str, &str); 39] = [
+    let cases: [(&str, &str); 43] = [
         // The assertion sits in the callback block that rebinds the local.
         (
             "let tokens = tokenize(\"7\");\n        apply(|| {\n            let tokens = vec![1u32];",
@@ -851,6 +851,22 @@ fn a_shadow_inside_a_callback_reaches_an_assertion_inside_it() -> Result<(), Str
         ),
         (
             "let mut tokens = tokenize(\"7\");\n        f(&raw mut tokens);",
+            "",
+        ),
+        (
+            "let tokens = tokenize(\"7\");\n        fn inner(tokens: u8) {",
+            "\n        }",
+        ),
+        (
+            "let mut tokens = tokenize(\"7\");\n        let c = || tokens = 5;",
+            "",
+        ),
+        (
+            "let mut tokens = tokenize(\"7\");\n        let y = foo(tokens = 5,",
+            "\n        );",
+        ),
+        (
+            "let tokens = tokenize(\"7\");\n        my_macro! { let tokens = 5; }",
             "",
         ),
     ];
