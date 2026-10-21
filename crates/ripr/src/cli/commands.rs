@@ -140,6 +140,10 @@ pub(super) use check::{bind_member_selector_file, resolve_implicit_command_root}
 mod review_comments;
 pub(super) use review_comments::review_comments;
 
+#[path = "commands/capabilities.rs"]
+mod capabilities;
+pub(super) use capabilities::capabilities;
+
 #[path = "commands/doctor.rs"]
 mod doctor;
 pub(super) use doctor::doctor;

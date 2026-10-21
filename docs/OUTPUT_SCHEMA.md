@@ -424,6 +424,34 @@ PATH, symlinks resolved, or `null`), `path_ripr_is_cargo_build_output`,
 advisory: they never change `status` or the exit code, because a workspace build
 on PATH is a legitimate development setup.
 
+### Language capabilities (`ripr capabilities --json`, schema `0.1`, #5531)
+
+A read-only, static registry of what this ripr build can establish, projected
+from one closed table (`domain::language_capability`). Top-level fields:
+`schema_version`, `kind` (`ripr_language_capabilities`), `semantic_digest`
+(`sha256:` over the cells, independent of row order, over the whole table even
+when `--language` narrows `cells`), `languages[]`, `support_state_vocabulary`,
+`absent_cell_meaning` (`not_proven`), `cells[]`, `non_claims`, and
+`claim_boundary`.
+
+- `languages[]`: `language`, `language_status` (`stable` or `preview`),
+  `adapter_compiled`, `required_feature`. This is build availability only. It
+  neither implies nor limits any cell, and it is not per-repository enablement
+  (use `ripr doctor --json`).
+- `cells[]`: `id` (`language/framework/mode/family`), `language`, `framework`
+  (`any` or a named framework; a framework-specific cell never widens to
+  `any`), `mode` (`diff` or `repo`), `family` (`static_facts` or
+  `repair_routing`), `state`, `tier_ceiling` (`usable_alpha` or `preview`),
+  `limit` (the typed fallback or limitation to honor), and `proof_refs`.
+- `state` is one of `exact_supported`, `conservative_overapproximation`,
+  `supported_with_required_fallback`, `unsupported_with_typed_limit`,
+  `not_applicable_with_evidence`, `stale`, `not_proven`. There is no numeric
+  confidence score.
+
+TypeScript and JavaScript keep distinct cells under one adapter. The registry
+promotes no support tier and runs nothing; `docs/status/SUPPORT_TIERS.md`
+remains the human tier statement.
+
 ### Doctor environment fields (schema `0.4`, #5214)
 
 The published schema for this document is

@@ -85,6 +85,7 @@ Task map:
 
 Setup:
   ripr doctor
+  ripr capabilities [--language NAME] [--json]
   ripr init [--root PATH] [--ci github] [--dry-run] [--force]
   ripr config validate [--root PATH]
   ripr cache status [--json]

@@ -541,6 +541,25 @@ Performance:
   Use --from to skip re-analysis when you already ran
   `ripr check --write-artifact PATH` (see `ripr explain --help`).
 "#;
+pub(super) const CAPABILITIES_HELP: &str = r#"Show what ripr can establish per language, framework and mode.
+
+Usage: ripr capabilities [--language NAME] [--json]
+
+Options:
+  --language NAME  Narrow to one language: rust, typescript, javascript,
+                   python or perl.
+  --json           Emit the versioned machine-readable registry.
+
+Each cell names a language, framework, mode (diff or repo) and family
+(static_facts or repair_routing) with one closed support state, a tier
+ceiling, the limit or fallback to honor, and the specs that define the claim.
+A combination with no cell is not_proven.
+
+This is a static registry for this build. Adapter availability (compiled or
+not) is reported separately and never changes a cell. It does not say whether
+a language is enabled for a repository; use `ripr doctor` for that. It reads
+no repository, runs nothing and promotes no support tier.
+"#;
 pub(super) const DOCTOR_HELP: &str = r#"Diagnose the local ripr setup (workspace, config, toolchains, paths).
 
 Usage: ripr doctor [--root PATH] [--json] [--profile analysis|source-build]
