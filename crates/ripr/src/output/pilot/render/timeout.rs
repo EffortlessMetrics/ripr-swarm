@@ -1,7 +1,7 @@
 use super::render_helpers::push_path_field;
 use crate::output::json::escape as json_escape;
 use crate::output::markdown::{PowershellForm, powershell_form};
-use crate::output::path::display_path;
+use crate::output::path::{display_path, human_path};
 use crate::output::pilot::commands::{PilotCommands, suggested_retry_timeout_ms};
 use crate::output::pilot::{PILOT_SUMMARY_SCHEMA_VERSION, PilotSummaryContext};
 
@@ -129,7 +129,9 @@ pub(crate) fn render_pilot_timeout_summary_md(context: PilotSummaryContext<'_>) 
     out.push_str(&format!("- Root: `{}`\n", display_path(context.root)));
     out.push_str(&format!("- Mode: `{}`\n", context.mode.as_str()));
     match context.config_path {
-        Some(path) => out.push_str(&format!("- Config: loaded `{}`\n\n", display_path(path))),
+        // #8696: same human-path rule as the completed-run renderers — a
+        // timed-out pilot still prints the canonical config path.
+        Some(path) => out.push_str(&format!("- Config: loaded `{}`\n\n", human_path(path))),
         None => out.push_str("- Config: missing; using built-in defaults\n\n"),
     }
 
@@ -187,7 +189,9 @@ pub(crate) fn render_pilot_timeout_terminal(context: PilotSummaryContext<'_>) ->
     out.push_str(&format!("  {}\n\n", analysis_timeout_reason(context)));
     out.push_str("Config:\n");
     match context.config_path {
-        Some(path) => out.push_str(&format!("  loaded: {}\n", display_path(path))),
+        // #8696: the timed-out terminal shows the same plain spelling as
+        // the completed-run terminal.
+        Some(path) => out.push_str(&format!("  loaded: {}\n", human_path(path))),
         None => out.push_str("  missing: using built-in defaults\n"),
     }
     out.push('\n');

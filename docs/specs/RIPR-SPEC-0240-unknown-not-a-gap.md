@@ -218,9 +218,36 @@ absence claims. An `infection_unknown`, `propagation_unknown` or
 `no_static_path`, a finding with a producer-named limit, and a finding whose
 related tests have no saturated line are untouched. Exactly 256 is
 conservatively limited: it does not prove a call was dropped. Saturation is read over every matched related test before the eight-row render cap trims the rows, and a saturated test's `no_call_path`, `no_assertion`, `missing_input` and `assertion_not_observing` row misses read as `observation_unconfirmed` (`weak_assertion` and `missing_exact_assertion` describe an assertion ripr read and stay). An already-unknown finding drops its call-derived absence lines (no oracle, no discriminator, no exact variant, no boundary input, missing-discriminator values), clears its missing discriminators and replaces its next step, as a withheld gap does. The reason never
-raises a class. Scope: the finding surfaces (`check`, JSON, human, SARIF, LSP);
-the `repo-exposure-json` seam reading keeps its own generic limitations and
-non-actionable canonical item and does not yet carry the typed reason.
+raises a class. Scope: the finding surfaces (`check`, JSON, human, SARIF, LSP).
+
+The `repo-exposure-json` seam reading is a separate producer
+(`test_grip_evidence`), so it applies the same decision to its stage
+evidence through `test_grip_evidence::call_budget`, over the same shared
+predicate and the same typed `rust_call_fact_budget` kind. Saturation is read
+over every ranked related test before the compact twelve-test cap. A stage
+that read `no` or `weak` (activation, propagation, observation,
+discrimination) becomes `unknown` and names the reason, and the seam's
+missing boundary values are dropped, so a `reachable_unrevealed` or
+`weakly_gripped` seam reads as an unknown class (`discrimination_unknown`,
+`propagation_unknown`, ...) and its evidence record is `static_limitation`
+with a `limitation` canonical item, no repair command, and a
+`static_limitations[]` row whose `category` is `rust_call_fact_budget`. An
+already-unknown stage keeps its class and gains the reason in its summary.
+A strongly gripped seam (every stage `yes`, no missing value), an `ungripped`
+seam and a seam whose reach is not `yes` or `weak` are untouched. The compact
+reading behind `repo-exposure-summary-json` applies the same function, and the
+classified-seam cache generation moved to `1.85` so a warm cache cannot serve
+the pre-limit actionable record.
+
+Decision (#8600): an independent empty-slice assertion beside a saturated
+slice table stays `infection_unknown`, and ripr does not credit it. The
+unsaturated twin with the same independent assertion is also
+`infection_unknown`, because a literal-slice call is outside the eager
+slice-table family that resolves the boundary; the call-fact budget adds only
+the typed reason. Crediting the assertion would be a new table-family rule
+that also changes unsaturated inputs, and it would move a finding toward
+`exposed` (a clean claim), not toward a repair signal, so it needs its own
+corpus and decision. `call_budget_slice_positive.rs` pins the three readings.
 ### Framework oracles ripr does not evaluate
 
 Four test idioms check a changed value through machinery ripr reads only at

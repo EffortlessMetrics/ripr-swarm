@@ -1339,6 +1339,59 @@ fn evidence_promotion_human_oracle_line_accepts_unclassified_ungraded_wording() 
 }
 
 #[test]
+fn evidence_promotion_human_oracle_line_accepts_kind_ungraded_wording() {
+    let line = "- related test tests/a.rs:3 t uses exact value oracle, not graded against this probe: assert_eq!(f(), 1)";
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "exact_value",
+        "unknown"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "exact_value",
+        "strong"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "smoke_only",
+        "unknown"
+    ));
+    let stale = "- related test tests/a.rs:3 t uses unknown exact value oracle: assert_eq!(f(), 1)";
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        stale,
+        "exact_value",
+        "unknown"
+    ));
+}
+
+#[test]
+fn evidence_promotion_human_oracle_line_accepts_absent_oracle_wording() {
+    let line = "- related test tests/a.rs:3 t uses no oracle; misses: has no assertion";
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        line, "unknown", "none"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        "- related test tests/a.rs:3 t uses none unknown oracle; misses: has no assertion",
+        "unknown",
+        "none"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        "- related test tests/a.rs:3 t uses no oracles here",
+        "unknown",
+        "none"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line, "unknown", "weak"
+    ));
+    // An absent oracle carries no kind, so a concrete expected kind cannot match it.
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "exact_value",
+        "none"
+    ));
+}
+
+#[test]
 fn evidence_promotion_semantic_assertions_accept_human_oracle_projection() {
     let assertions = vec![super::EvidencePromotionSemanticAssertion::ExpectedOracle {
         kind: "exact_value".to_string(),
@@ -10679,6 +10732,11 @@ jobs:
 #[test]
 fn routed_rust_workflow_contract_accepts_swarm_shape() {
     let workflow = r#"
+on:
+  merge_group:
+    types: [checks_requested]
+env:
+  GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
 jobs:
   route:
     name: Route Ripr Rust Small
@@ -10815,6 +10873,11 @@ jobs = ["Ripr Rust Small Result"]
 #[test]
 fn routed_rust_workflow_contract_accepts_reusable_implementation_authority() {
     let workflow = r#"
+on:
+  merge_group:
+    types: [checks_requested]
+env:
+  GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
 jobs:
   route:
     name: Route Ripr Rust Small
@@ -11325,6 +11388,18 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             Some("full-ci"),
             RoutedRustEventRoute::WorkflowNotTriggered,
         ),
+        (
+            "merge_group",
+            Some("checks_requested"),
+            None,
+            RoutedRustEventRoute::LaunchFullGate,
+        ),
+        (
+            "merge_group",
+            Some("destroyed"),
+            None,
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
         ("push", None, None, RoutedRustEventRoute::LaunchFullGate),
         (
             "workflow_dispatch",
@@ -11400,6 +11475,93 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&missing_types)
     );
 
+    let no_triggers = workflow
+        .replace("  pull_request:\n    types: [labeled]\n", "")
+        .replace("  merge_group:\n", "  merge_group_removed:\n");
+    assert_ne!(no_triggers, workflow, "fixture must remove both triggers");
+    assert!(
+        routed_rust_ready_event_contract_violations(&no_triggers)
+            .iter()
+            .any(|violation| violation.contains("inline merge_group types array")),
+        "a workflow with neither trigger must still fail the queue contract: {:?}",
+        routed_rust_ready_event_contract_violations(&no_triggers)
+    );
+    let queue_dropped = workflow.replace("    types: [checks_requested]\n", "");
+    assert_ne!(
+        queue_dropped, workflow,
+        "fixture must remove the queue types"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&queue_dropped)
+            .iter()
+            .any(|violation| violation.contains("inline merge_group types array")),
+        "removing the merge-queue types must fail closed: {:?}",
+        routed_rust_ready_event_contract_violations(&queue_dropped)
+    );
+    let queue_widened = workflow.replace(
+        "    types: [checks_requested]",
+        "    types: [checks_requested, destroyed]",
+    );
+    assert_ne!(
+        queue_widened, workflow,
+        "fixture must widen the queue types"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&queue_widened)
+            .iter()
+            .any(|violation| violation.contains("merge_group types must be exactly")),
+        "extra merge_group activity types must fail: {:?}",
+        routed_rust_ready_event_contract_violations(&queue_widened)
+    );
+    let queue_unbound = workflow.replace(
+        "GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}",
+        "GROUP_HEAD_REF: ''",
+    );
+    assert_ne!(queue_unbound, workflow, "fixture must unbind the queued PR");
+    assert!(
+        routed_rust_ready_event_contract_violations(&queue_unbound)
+            .iter()
+            .any(|violation| violation.contains("resolve the queued PR")),
+        "admission must stay bound to the queued PR: {:?}",
+        routed_rust_ready_event_contract_violations(&queue_unbound)
+    );
+
+    for (needle, snippet) in [
+        (
+            "forward the queued PR's labels",
+            "pr-labels: ${{ needs.admission.outputs.labels }}",
+        ),
+        (
+            "fork guard to queued PRs",
+            "|| [ \"$EVENT_NAME\" = \"merge_group\" ]; } && [ \"$HEAD_REPO\"",
+        ),
+        (
+            "more than one queued PR",
+            "[ \"$parents\" = \"1\" ] && [ \"$parent\" = \"$GROUP_BASE_SHA\" ] && [[ \"$subject\" == *\"(#${pr})\" ]]",
+        ),
+        (
+            "bind the queue ref sha",
+            "[ \"$ref_sha\" = \"$head\" ] || [ \"$ref_sha\" = \"$GROUP_BASE_SHA\" ]",
+        ),
+        (
+            "check the live head is not newer",
+            "[ \"$ref_sha\" != \"$head\" ]",
+        ),
+        (
+            "not older than the queued commit",
+            "[[ \"$pushed_at\" < \"$queued_at\" ]] || { echo \"::error::PR #${pr} head",
+        ),
+    ] {
+        let mutated = workflow.replace(snippet, "removed");
+        assert_ne!(mutated, workflow, "fixture must remove {needle}");
+        assert!(
+            routed_rust_ready_event_contract_violations(&mutated)
+                .iter()
+                .any(|violation| violation.contains(needle)),
+            "dropping the {needle} pin must fail: {:?}",
+            routed_rust_ready_event_contract_violations(&mutated)
+        );
+    }
     let cancellation_disabled = workflow.replace(
         "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
         "  cancel-in-progress: false",
@@ -31232,12 +31394,29 @@ covered_by_windows = ["cargo test windows_second"] # keep this selector
 covered_by_unix = ["cargo test unix_second"]
 covered_by = ["cargo test common_second"]
 "#;
+        let unicode_source =
+            source.replace("is still not an entry", "café 🦀 is still not an entry");
         for (case, source, multiline_command) in [
             ("lf", source.to_string(), "cargo test first\n[[allow]]\n"),
             (
                 "crlf",
                 source.replace('\n', "\r\n"),
                 "cargo test first\r\n[[allow]]\r\n",
+            ),
+            (
+                "unicode",
+                unicode_source.clone(),
+                "cargo test first\n[[allow]]\n",
+            ),
+            (
+                "unicode-crlf",
+                unicode_source.replace('\n', "\r\n"),
+                "cargo test first\r\n[[allow]]\r\n",
+            ),
+            (
+                "no-final-newline",
+                source.trim_end_matches('\n').to_string(),
+                "cargo test first\n[[allow]]\n",
             ),
         ] {
             // Preserve the selected TOML authority's newline bytes, rather
@@ -31284,6 +31463,30 @@ covered_by = ["cargo test common_second"]
                     ),
                 ],
                 "{case}: command order and attribution must come from parsed entries"
+            );
+            // Exercise rendered field diagnostics as well as entry attribution.
+            // Multibyte text, multiline strings and CRLF must keep physical lines.
+            let invalid = format!(
+                "{}\nmystery = \"unknown field\"\n",
+                source.trim_end_matches(['\r', '\n'])
+            );
+            write(&path, &invalid);
+            assert_eq!(
+                parse_file_policy_allowlist(&path.to_string_lossy()).err(),
+                Some(format!(
+                    "{}:29 unsupported non-Rust allowlist field `mystery`",
+                    path.display()
+                )),
+                "{case}"
+            );
+            write(&path, &source.replace("glob = \"docs/*.md\"", "glob = 42"));
+            assert_eq!(
+                parse_file_policy_allowlist(&path.to_string_lossy()).err(),
+                Some(format!(
+                    "{}:20 string value must be quoted (got: 42)",
+                    path.display()
+                )),
+                "{case}"
             );
         }
         Ok(())
@@ -54583,52 +54786,74 @@ fn check_pr_bounded_error_lines_are_crlf_normalized_and_capped() {
 
 #[test]
 fn check_pr_failure_report_replaces_stale_success_report() -> Result<(), String> {
-    with_repo_cwd(|| {
-        // Preserve any pre-existing report so the test leaves no false
-        // failure artifact behind for a real check-pr reader.
-        let report_path = Path::new("target")
-            .join("ripr")
-            .join("reports")
-            .join("check-pr.md");
-        let original = fs::read(&report_path).ok();
-        let outcome = (|| -> Result<(), String> {
-            super::write_report("check-pr.md", &super::check_pr_report(None))?;
-            let run_a = || Err("stale-replacement probe".to_string());
-            let gates = [super::CheckPrGate {
-                name: "gate-a",
-                reproduce: "run a",
-                run: &run_a,
-            }];
-            let result = super::run_check_pr_gates(&gates, &|failure| {
-                super::write_report("check-pr.md", &super::check_pr_report(Some(failure)))
-            });
-            assert!(result.is_err());
+    let guard = acquire_test_cwd_write_guard();
+    let old = std::env::current_dir().map_err(|err| format!("capture report-test cwd: {err}"))?;
+    let temp = std::env::temp_dir();
+    fs::create_dir_all(&temp).map_err(|err| format!("create runtime temp parent: {err}"))?;
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|err| format!("report-test timestamp: {err}"))?
+        .as_nanos();
+    let root = temp.join(format!(
+        "ripr-check-pr-report-{}-{stamp}",
+        std::process::id()
+    ));
+    // Ownership starts only after this exclusive create succeeds. An occupied
+    // leaf must refuse, never borrow or recursively remove another test's state.
+    fs::create_dir(&root).map_err(|err| {
+        format!(
+            "create exclusive report-test scratch {}: {err}",
+            root.display()
+        )
+    })?;
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        std::env::set_current_dir(&root)
+            .map_err(|err| format!("enter report-test scratch: {err}"))?;
+        super::write_report("check-pr.md", &super::check_pr_report(None))?;
+        let run_a = || Err("stale-replacement probe".to_string());
+        let gates = [super::CheckPrGate {
+            // This synthetic ci-fast failure has no stable inherited comparison;
+            // the existing owner refuses it before creating comparison worktrees.
+            name: "ci-fast",
+            reproduce: "run a",
+            run: &run_a,
+        }];
+        let result = super::run_check_pr_gates(&gates, &|failure| {
+            super::write_report("check-pr.md", &super::check_pr_report(Some(failure)))
+        });
+        assert!(result.is_err());
 
-            let text = fs::read_to_string("target/ripr/reports/check-pr.md")
-                .map_err(|err| format!("read check-pr.md: {err}"))?;
-            assert!(
-                text.contains("Status: fail"),
-                "the failed current run must replace the stale success report"
-            );
-            assert!(!text.contains("Status: pass"));
-            Ok(())
-        })();
-        let restore = match &original {
-            Some(bytes) => fs::write(&report_path, bytes).map_err(|err| {
-                format!("failed to restore {}: {err}", normalize_path(&report_path))
-            }),
-            None => match fs::remove_file(&report_path) {
-                Ok(()) => Ok(()),
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(err) => Err(format!(
-                    "failed to clear {}: {err}",
-                    normalize_path(&report_path)
-                )),
-            },
-        };
-        restore?;
-        outcome
-    })
+        let text = fs::read_to_string("target/ripr/reports/check-pr.md")
+            .map_err(|err| format!("read check-pr.md: {err}"))?;
+        assert!(
+            text.contains("Status: fail"),
+            "the failed current run must replace the stale success report"
+        );
+        assert!(!text.contains("Status: pass"));
+        Ok(())
+    }));
+    // As with the existing cwd scopes, restore even after an assertion panic.
+    // A failed restoration retains the owned root instead of deleting a live cwd.
+    let restore = std::env::set_current_dir(&old).map_err(|err| {
+        format!(
+            "restore report-test cwd; retained {}: {err}",
+            root.display()
+        )
+    });
+    restore?;
+    let cleanup = fs::remove_dir_all(&root)
+        .map_err(|err| format!("remove report-test scratch {}: {err}", root.display()));
+    drop(guard);
+    match outcome {
+        Ok(result) => {
+            cleanup?;
+            result
+        }
+        Err(panic_payload) => {
+            let _ = cleanup;
+            std::panic::resume_unwind(panic_payload);
+        }
+    }
 }
 
 #[test]

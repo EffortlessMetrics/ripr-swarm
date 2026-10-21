@@ -5722,3 +5722,49 @@ mod recommendation_tests;
 
 #[path = "composition_tests.rs"]
 mod composition_tests;
+
+/// RIPR-SPEC-0235 rule 17: `isnt` rejects one value, so passing it does not
+/// show the changed value is the right one. The producer grades it
+/// `strong_exact`; a reading that credits it names a mutant `isnt` still
+/// passes. The corpus rows `perl-test2-fee-isnt-zero` and
+/// `perl-testmore-clamp-isnt` showed it before the producer pin moved to
+/// 07320a4; the edited `perl-0235-*` packets that keep a `strong_exact` `isnt`
+/// still exercise it.
+#[test]
+fn perl_isnt_is_a_smoke_oracle_not_an_exact_one() -> Result<(), String> {
+    use crate::domain::ExposureClass;
+    let (exact_class, _) = first_finding_misses(EXACT_RETURN_PACKET)?;
+    for spelling in [
+        "isnt($got, 10, 'discount threshold')",
+        "isnt ($got, 10, 'discount threshold')",
+        "Test::More::isnt($got, 10, 'discount threshold')",
+        "Test2::V0::isnt($got, 10, 'discount threshold')",
+        "Test2::V1::isnt($got, 10, 'discount threshold')",
+        "  isnt($got, 10)",
+    ] {
+        let packet = EXACT_RETURN_PACKET.replace("is($got, 10, 'discount threshold')", spelling);
+        let findings = findings_from_packet(&packet)?;
+        let finding = findings.first().ok_or("expected one finding")?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::ReachableUnrevealed,
+            "{spelling}"
+        );
+    }
+    // A producer that grades `isnt` broad gets the same reading, not rule 16's
+    // `static_unknown`.
+    let broad = EXACT_RETURN_PACKET
+        .replace("is($got, 10, 'discount threshold')", "isnt($got, 10)")
+        .replace("\"strong_exact\"", "\"weak_broad\"");
+    let findings = findings_from_packet(&broad)?;
+    let finding = findings.first().ok_or("expected one finding")?;
+    assert_eq!(finding.class, ExposureClass::ReachableUnrevealed);
+    // Controls: the exact reading of `is` is unchanged, and a name that only
+    // starts with `isnt` is not the negative matcher.
+    assert_eq!(exact_class, ExposureClass::WeaklyExposed);
+    let packet =
+        EXACT_RETURN_PACKET.replace("is($got, 10, 'discount threshold')", "isnt_zero($got, 10)");
+    let (class, _) = first_finding_misses(&packet)?;
+    assert_eq!(class, exact_class);
+    Ok(())
+}

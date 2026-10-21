@@ -181,3 +181,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_called (15)
+
+Reason:
+RIPR-SPEC-0224: ungraded oracle reads '<kind> oracle, not graded against this probe' (#8388)
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_called --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_called (16)
+
+Reason:
+RIPR-SPEC-0284: unknown-sink row gloss from the context-packet clarity lane lands on this golden after merging main
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_called --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -233,7 +233,8 @@ impl DoctorEnvironment {
             elapsed_ms: segment_started.elapsed().as_millis() as u64,
         });
         let segment_started = std::time::Instant::now();
-        let cache = cache_status(root);
+        let perl_cache_dir = loaded.and_then(|config| config.perl().cache_dir());
+        let cache = cache_status(root, perl_cache_dir);
         segments.push(output::doctor::DoctorSegmentTiming {
             name: "cache_status".to_string(),
             elapsed_ms: segment_started.elapsed().as_millis() as u64,
@@ -352,19 +353,24 @@ fn config_defaults(
     })
 }
 
-/// The seam cache doctor will use for `root`, with its measured size.
-fn cache_status(root: &Path) -> output::doctor::DoctorCacheStatus {
+/// The seam cache doctor will use for `root`, with its measured size. The
+/// artifact-ignore and artifact-tracking probes cover every root ripr's
+/// writers actually use — the default `target/ripr`, a relocated
+/// `RIPR_CACHE_DIR` base inside the repository, and a configured
+/// `[perl].cache_dir` — not just the default location (#8751).
+fn cache_status(root: &Path, perl_cache_dir: Option<&Path>) -> output::doctor::DoctorCacheStatus {
     let cache_dir = analysis::seam_cache::cache_base_dir(root);
     let relocated =
         std::env::var(analysis::seam_cache::CACHE_DIR_ENV).is_ok_and(|v| !v.trim().is_empty());
     let size_bytes = dir_size_bytes(&cache_dir);
+    let artifact_roots = analysis::ripr_artifact_roots(root, &cache_dir, perl_cache_dir);
     output::doctor::DoctorCacheStatus {
         cache_dir: output::path::human_path(&cache_dir),
         relocated_by_env: relocated,
         size_bytes,
         size_display: format_bytes(size_bytes),
-        artifact_ignore: ripr_artifact_ignore(root),
-        artifact_tracking: ripr_artifact_tracking(root),
+        artifact_ignore: ripr_artifact_ignore(root, &artifact_roots),
+        artifact_tracking: ripr_artifact_tracking(root, &artifact_roots),
     }
 }
 
@@ -2530,65 +2536,135 @@ fn known_limitation_lines() -> Vec<String> {
 }
 
 /// The typed evidence on whether git ignore rules cover ripr's own artifact
-/// root under the doctor root (#7663). Standard Python `.gitignore`
-/// templates cover `__pycache__/` and `.pytest_cache/` but never
-/// Rust-conventional `target/`, so a routine `git add -A` commits ripr's
-/// own reports and caches into the user's history; the next `ripr check`
-/// then diffs them. `git check-ignore --no-index` applies the full ignore
-/// semantics (nested `.gitignore` files, `.git/info/exclude`, global
-/// excludes) without letting already-tracked descendants veto the answer,
-/// so it — not a line-by-line reimplementation — decides coverage. Exit 1
-/// means the path is positively not ignored; exit 0 means covered; any
-/// other outcome (not a repository, git unavailable, deadline) keeps
-/// doctor honest by reporting `NotChecked` instead of claiming a checked
-/// fact it could not establish. Tracked descendants are a separate fact
-/// the ignore verdict deliberately does not fold in (#8257 review
-/// follow-up).
-fn ripr_artifact_ignore(root: &Path) -> output::doctor::DoctorArtifactIgnore {
+/// roots under the doctor root (#7663, relocated bases #8751). Standard
+/// Python `.gitignore` templates cover `__pycache__/` and `.pytest_cache/`
+/// but never Rust-conventional `target/`, so a routine `git add -A` commits
+/// ripr's own reports and caches into the user's history; the next `ripr
+/// check` then diffs them. The probed roots are the ones ripr's writers
+/// actually use — the default `target/ripr` plus any in-repository
+/// relocation — so a `RIPR_CACHE_DIR` or `[perl].cache_dir` move cannot
+/// silently take the reports out from under the warning (#8751).
+/// `git check-ignore --no-index` applies the full ignore semantics (nested
+/// `.gitignore` files, `.git/info/exclude`, global excludes) without letting
+/// already-tracked descendants veto the answer, so it — not a line-by-line
+/// reimplementation — decides coverage. Exit 1 means the path is positively
+/// not ignored; exit 0 means covered; any other outcome (not a repository,
+/// git unavailable, deadline) keeps doctor honest by reporting `NotChecked`
+/// instead of claiming a checked fact it could not establish. Tracked
+/// descendants are a separate fact the ignore verdict deliberately does not
+/// fold in (#8257 review follow-up).
+fn ripr_artifact_ignore(
+    root: &Path,
+    artifact_roots: &[PathBuf],
+) -> output::doctor::DoctorArtifactIgnore {
     use output::doctor::DoctorArtifactIgnore;
-    let artifact_root = root.join("target").join("ripr");
-    if !artifact_root.is_dir() {
+    let present: Vec<&Path> = artifact_roots
+        .iter()
+        .filter(|relative| root.join(relative).is_dir())
+        .map(PathBuf::as_path)
+        .collect();
+    if present.is_empty() {
         return DoctorArtifactIgnore::NoArtifacts;
     }
-    // `--no-index` asks only whether ignore RULES cover the path. Without it,
-    // a tracked descendant (the exact state #7663 addresses: ripr reports
-    // already committed into history) makes check-ignore answer "not
-    // ignored" even when `/target/ripr/` is configured, so doctor would
-    // demand a rule that already exists.
-    let probe = match crate::git::run_git_output_with_deadline(
-        root,
-        &["check-ignore", "--no-index", "-q", "--", "target/ripr"],
-        Some(std::time::Duration::from_secs(5)),
-    ) {
-        Ok(probe) => probe,
-        Err(_) => return DoctorArtifactIgnore::NotChecked,
-    };
-    match probe.status.code() {
-        Some(0) => DoctorArtifactIgnore::Ignored,
-        Some(1) => DoctorArtifactIgnore::Unignored {
-            warning: "! ripr artifacts under target/ripr are not covered by git ignore rules; \
-                      `git add -A` would commit ripr's own reports into your history. \
-                      Add this line to .gitignore: /target/ripr/"
-                .to_string(),
-        },
-        _ => DoctorArtifactIgnore::NotChecked,
+    let mut uncovered: Vec<String> = Vec::new();
+    for relative in &present {
+        let pathspec = analysis::artifact_root_pathspec(relative);
+        // The probe passes the PLAIN root: check-ignore takes pathnames,
+        // not pathspecs — its ignore-rule globs match against the literal
+        // characters of the pathname, so a rule like `/build/cache*/`
+        // covers a directory literally named `build/cache*` only when the
+        // pathname keeps its literal star. The earlier escaped form made
+        // the rule miss and doctor demand an ignore that already existed
+        // (PR #8901 review, coderabbit; verified against git 2.47:
+        // `git check-ignore -- 'build/cache\*'` answers "not ignored"
+        // while `-- 'build/cache*'` is covered). A root without glob
+        // characters is byte-identical in both forms, so ordinary configs
+        // are unaffected. `--no-index` asks only whether ignore RULES
+        // cover the path: without it, a tracked descendant (the exact
+        // state #7663 addresses: ripr reports already committed into
+        // history) makes check-ignore answer "not ignored" even when
+        // `/target/ripr/` is configured, so doctor would demand a rule
+        // that already exists. Exit 1 means the path is positively not
+        // ignored; exit 0 means covered; any other outcome (not a
+        // repository, git unavailable, deadline) keeps doctor honest by
+        // reporting `NotChecked` instead of claiming a checked fact it
+        // could not establish. Tracked descendants are a separate fact the
+        // ignore verdict deliberately does not fold in (#8257 review
+        // follow-up).
+        let probe = match crate::git::run_git_output_with_deadline(
+            root,
+            &["check-ignore", "--no-index", "-q", "--", &pathspec],
+            Some(std::time::Duration::from_secs(5)),
+        ) {
+            Ok(probe) => probe,
+            Err(_) => return DoctorArtifactIgnore::NotChecked,
+        };
+        match probe.status.code() {
+            Some(0) => {}
+            Some(1) => uncovered.push(pathspec),
+            _ => return DoctorArtifactIgnore::NotChecked,
+        }
+    }
+    if uncovered.is_empty() {
+        return DoctorArtifactIgnore::Ignored;
+    }
+    DoctorArtifactIgnore::Unignored {
+        warning: format!(
+            "! ripr artifacts under {} are not covered by git ignore rules; \
+             `git add -A` would commit ripr's own reports into your history. \
+             Add this line to .gitignore: {}",
+            artifact_roots_display(&uncovered),
+            uncovered
+                .iter()
+                .map(|root| analysis::artifact_root_gitignore_entry(Path::new(root)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
     }
 }
 
 /// The typed evidence on whether git's index tracks files under ripr's
-/// artifact root (#8276). An ignore rule never untracks files committed
-/// earlier, so a repository can cover `/target/ripr/` in `.gitignore` while
-/// `git add -A` keeps refreshing tracked reports and `ripr check` keeps
-/// diffing them. Only a positive non-empty `git ls-files --cached` answer
-/// warns; a missing repository, git failure, deadline, or output over the
-/// cap reports `NotChecked` rather than a fact doctor did not establish.
-fn ripr_artifact_tracking(root: &Path) -> output::doctor::DoctorArtifactTracking {
+/// artifact roots (#8276, relocated bases #8751). An ignore rule never
+/// untracks files committed earlier, so a repository can cover
+/// `/target/ripr/` in `.gitignore` while `git add -A` keeps refreshing
+/// tracked reports and `ripr check` keeps diffing them. Only a positive
+/// non-empty `git ls-files --cached` answer warns; a missing repository, git
+/// failure, deadline, or output over the cap reports `NotChecked` rather
+/// than a fact doctor did not establish.
+fn ripr_artifact_tracking(
+    root: &Path,
+    artifact_roots: &[PathBuf],
+) -> output::doctor::DoctorArtifactTracking {
     use output::doctor::DoctorArtifactTracking;
     // The index can name tracked files whose directory was deleted from the
-    // worktree, so this probe does not depend on `target/ripr` existing.
+    // worktree, so this probe does not depend on any artifact root existing.
+    // Configured roots are literal paths, never git pathspec globs: a root
+    // like `build/cache*` must not wildcard-match `build/cache1` (PR #8901
+    // review, owner P1). The probe therefore passes the PLAIN root under
+    // the global `--literal-pathspecs` switch, which disables all pathspec
+    // magic for every following argument. The earlier escaped form
+    // (`build/cache\*`) does not work: pathspec unescaping leaves a literal
+    // star that ls-files matches against the literal directory name only
+    // on some forms — verified against git 2.47, where neither
+    // `git ls-files --cached -- 'build/cache\*'` nor
+    // `git --literal-pathspecs ls-files --cached -- 'build/cache\*'`
+    // matches an indexed `build/cache*/a.json`, while the plain root under
+    // `--literal-pathspecs` matches both the literal-star directory and a
+    // glob-free root such as `target/ripr` (PR #8901 review, coderabbit).
+    let mut args: Vec<String> = vec![
+        "--literal-pathspecs".into(),
+        "ls-files".into(),
+        "--cached".into(),
+        "-z".into(),
+        "--".into(),
+    ];
+    for relative in artifact_roots {
+        args.push(analysis::artifact_root_pathspec(relative));
+    }
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let probe = match crate::git::run_git_output_with_deadline_and_limit(
         root,
-        &["ls-files", "--cached", "-z", "--", "target/ripr"],
+        &refs,
         std::time::Duration::from_secs(5),
         1024 * 1024,
     ) {
@@ -2601,25 +2677,76 @@ fn ripr_artifact_tracking(root: &Path) -> output::doctor::DoctorArtifactTracking
     if probe.stdout.is_empty() {
         return DoctorArtifactTracking::Untracked;
     }
-    let untrack = untrack_artifacts_command(root);
+    // Keep only the roots the index actually names: `git rm --cached`
+    // rejects a pathspec with no indexed matches, so an untracked default
+    // root in the list would make the printed remedy fail in the
+    // relocated-only case (PR #8901 review, devin #4).
+    let indexed = String::from_utf8_lossy(&probe.stdout);
+    let mut tracked_roots: Vec<PathBuf> = artifact_roots
+        .iter()
+        .filter(|relative| {
+            let pathspec = analysis::artifact_root_pathspec(relative);
+            let prefix = format!("{pathspec}/");
+            indexed
+                .split('\0')
+                .any(|path| path == pathspec || path.starts_with(prefix.as_str()))
+        })
+        .cloned()
+        .collect();
+    if tracked_roots.is_empty() {
+        tracked_roots = artifact_roots.to_vec();
+    }
+    let untrack = untrack_artifacts_command(root, &tracked_roots);
     DoctorArtifactTracking::Tracked {
         warning: format!(
-            "! ripr artifacts under target/ripr are tracked by git; `git add -A` keeps \
-             refreshing them and `ripr check` diffs them. Untrack them with: {untrack}"
+            "! ripr artifacts under {} are tracked by git; `git add -A` keeps \
+             refreshing them and `ripr check` diffs them. Untrack them with: {untrack}",
+            artifact_roots_display(
+                &tracked_roots
+                    .iter()
+                    .map(|root| analysis::artifact_root_pathspec(root))
+                    .collect::<Vec<_>>()
+            )
         ),
+    }
+}
+
+/// How the warning names the artifact roots: `a and b` for two, comma
+/// separation for more, the bare root for one (preserving the original
+/// single-root wording the #7663 tests pin).
+fn artifact_roots_display(roots: &[String]) -> String {
+    match roots {
+        [] => "the artifact roots".to_string(),
+        [only] => only.clone(),
+        [first, second] => format!("{first} and {second}"),
+        many => many.join(", "),
     }
 }
 
 /// The untrack command doctor prints, bound to the selected root: pasted from
 /// another directory, a bare `git rm --cached` would untrack files in whatever
 /// repository the shell happens to be in (#8301 review). The default `.` root
-/// keeps the short form.
-fn untrack_artifacts_command(root: &Path) -> String {
+/// keeps the short form. The command pins the global `--literal-pathspecs`
+/// switch and passes each root PLAIN: shell quoting only protects the
+/// argument from the shell, while git pathspec magic (`*`, `?`, `[`)
+/// would otherwise wildcard-match a configured root like `build/cache*`
+/// against `build/cache1` (PR #8901 review, graphite finding) — and the
+/// earlier glob-escaped form (`build/cache\*`) does not match the
+/// literal-star directory's indexed descendants at all (verified against
+/// git 2.47; the escaped form fails both with and without
+/// `--literal-pathspecs`). Plain roots under `--literal-pathspecs` match
+/// literal-star directories and glob-free roots alike.
+fn untrack_artifacts_command(root: &Path, artifact_roots: &[PathBuf]) -> String {
+    let pathspecs = artifact_roots
+        .iter()
+        .map(|root| crate::agent::loop_commands::shell_arg(&analysis::artifact_root_pathspec(root)))
+        .collect::<Vec<_>>()
+        .join(" ");
     if root == Path::new(".") {
-        "git rm --cached -r -- target/ripr".to_string()
+        format!("git --literal-pathspecs rm --cached -r -- {pathspecs}")
     } else {
         format!(
-            "git -C {} rm --cached -r -- target/ripr",
+            "git -C {} --literal-pathspecs rm --cached -r -- {pathspecs}",
             crate::agent::loop_commands::shell_arg(&output::path::human_path(root))
         )
     }
@@ -4026,6 +4153,13 @@ mod tests {
         Ok(())
     }
 
+    /// The artifact-root list the production probes build for a default
+    /// (non-relocated) workspace, without reading the process environment
+    /// (#8751 keeps the cache base a parameter so tests stay env-independent).
+    fn default_artifact_roots(root: &Path) -> Vec<PathBuf> {
+        analysis::ripr_artifact_roots(root, &root.join("target/ripr/cache"), None)
+    }
+
     #[test]
     fn ripr_artifact_ignore_names_the_gitignore_entry() -> Result<(), String> {
         use output::doctor::DoctorArtifactIgnore;
@@ -4033,7 +4167,7 @@ mod tests {
         std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
         // No artifact root: nothing to warn about, and no git probe needed.
         assert_eq!(
-            ripr_artifact_ignore(&root),
+            ripr_artifact_ignore(&root, &default_artifact_roots(&root)),
             DoctorArtifactIgnore::NoArtifacts
         );
 
@@ -4066,7 +4200,7 @@ mod tests {
         // A repository whose ignore rules do not cover target/ripr warns and
         // names the exact entry to add (#7663). The typed evidence is what
         // both the human line and the JSON report carry (#8257 review).
-        match ripr_artifact_ignore(&root) {
+        match ripr_artifact_ignore(&root, &default_artifact_roots(&root)) {
             DoctorArtifactIgnore::Unignored { warning } => {
                 assert!(warning.contains("/target/ripr/"), "{warning}");
             }
@@ -4075,7 +4209,62 @@ mod tests {
         // The covering entry silences it.
         std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
             .map_err(|error| error.to_string())?;
-        assert_eq!(ripr_artifact_ignore(&root), DoctorArtifactIgnore::Ignored);
+        assert_eq!(
+            ripr_artifact_ignore(&root, &default_artifact_roots(&root)),
+            DoctorArtifactIgnore::Ignored
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_artifact_ignore_probes_a_relocated_cache_root() -> Result<(), String> {
+        // #8751: when RIPR_CACHE_DIR moves the artifact base inside the
+        // repository (e.g. `.ripr-cache` to keep `target/` clean), the
+        // ignore verdict must probe the relocated writer layer, not the
+        // default root, and name it in the warning. PR #8901 review
+        // (devin #3): the probe targets the writer's layer directories
+        // (what ripr actually creates and owns), not the whole base.
+        use output::doctor::DoctorArtifactIgnore;
+        let root = unique_command_test_dir("artifact-relocated");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let relocated_layer = root.join(".ripr-cache").join("repo-seam-facts");
+        std::fs::create_dir_all(&relocated_layer).map_err(|error| error.to_string())?;
+        let artifact_roots = analysis::ripr_artifact_roots(&root, &root.join(".ripr-cache"), None);
+        let empty_excludes = root.join("empty-excludes");
+        std::fs::write(&empty_excludes, "").map_err(|error| error.to_string())?;
+        for args in [
+            ["init"].as_slice(),
+            ["config", "user.email", "ripr@example.invalid"].as_slice(),
+            ["config", "user.name", "ripr tests"].as_slice(),
+            [
+                "config",
+                "core.excludesFile",
+                empty_excludes.to_str().ok_or("non-utf8 excludes path")?,
+            ]
+            .as_slice(),
+        ] {
+            crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
+        }
+        // The default `target/ripr` does not exist, so only the relocated
+        // layer drives the verdict: it is uncovered, and the warning names
+        // `/.ripr-cache/repo-seam-facts/` rather than the default entry.
+        match ripr_artifact_ignore(&root, &artifact_roots) {
+            DoctorArtifactIgnore::Unignored { warning } => {
+                assert!(
+                    warning.contains("/.ripr-cache/repo-seam-facts/"),
+                    "{warning}"
+                );
+                assert!(!warning.contains("/target/ripr/"), "{warning}");
+            }
+            other => return Err(format!("expected Unignored, got {other:?}")),
+        }
+        std::fs::write(root.join(".gitignore"), "/.ripr-cache/repo-seam-facts/\n")
+            .map_err(|error| error.to_string())?;
+        assert_eq!(
+            ripr_artifact_ignore(&root, &artifact_roots),
+            DoctorArtifactIgnore::Ignored
+        );
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
@@ -4103,7 +4292,7 @@ mod tests {
         }
         // A repository with an empty index is positively untracked.
         assert_eq!(
-            ripr_artifact_tracking(&root),
+            ripr_artifact_tracking(&root, &default_artifact_roots(&root)),
             DoctorArtifactTracking::Untracked
         );
 
@@ -4113,9 +4302,12 @@ mod tests {
         std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
             .map_err(|error| error.to_string())?;
         // Ignored but never added: the ignore rule is not tracking.
-        assert_eq!(ripr_artifact_ignore(&root), DoctorArtifactIgnore::Ignored);
         assert_eq!(
-            ripr_artifact_tracking(&root),
+            ripr_artifact_ignore(&root, &default_artifact_roots(&root)),
+            DoctorArtifactIgnore::Ignored
+        );
+        assert_eq!(
+            ripr_artifact_tracking(&root, &default_artifact_roots(&root)),
             DoctorArtifactTracking::Untracked
         );
 
@@ -4123,8 +4315,11 @@ mod tests {
         // commit that predates the rule. The ignore verdict stays Ignored.
         crate::git::run_git(&root, &["add", "-f", "--", "target/ripr/pilot/report.json"])
             .map_err(|error| error.to_string())?;
-        assert_eq!(ripr_artifact_ignore(&root), DoctorArtifactIgnore::Ignored);
-        match ripr_artifact_tracking(&root) {
+        assert_eq!(
+            ripr_artifact_ignore(&root, &default_artifact_roots(&root)),
+            DoctorArtifactIgnore::Ignored
+        );
+        match ripr_artifact_tracking(&root, &default_artifact_roots(&root)) {
             DoctorArtifactTracking::Tracked { warning } => {
                 // A non-cwd root must be named in the remedy, so pasting it
                 // elsewhere cannot untrack another repository's files.
@@ -4147,7 +4342,7 @@ mod tests {
         // A root git cannot even run in establishes nothing: the spawn
         // fails and doctor reports NotChecked rather than a verdict.
         assert_eq!(
-            ripr_artifact_tracking(&root),
+            ripr_artifact_tracking(&root, &default_artifact_roots(&root)),
             DoctorArtifactTracking::NotChecked
         );
         Ok(())
@@ -4155,27 +4350,267 @@ mod tests {
 
     #[test]
     fn untrack_command_binds_non_default_roots_and_quotes_them() {
+        let default_roots = vec![PathBuf::from("target").join("ripr")];
         // The default root keeps the short form: there is no other repository
         // to confuse it with.
         assert_eq!(
-            untrack_artifacts_command(Path::new(".")),
-            "git rm --cached -r -- target/ripr"
+            untrack_artifacts_command(Path::new("."), &default_roots),
+            "git --literal-pathspecs rm --cached -r -- target/ripr"
         );
         // Any other root is named, so the command cannot act elsewhere.
         assert_eq!(
-            untrack_artifacts_command(Path::new("other-repo")),
-            "git -C other-repo rm --cached -r -- target/ripr"
+            untrack_artifacts_command(Path::new("other-repo"), &default_roots),
+            "git -C other-repo --literal-pathspecs rm --cached -r -- target/ripr"
         );
         // A root with spaces must stay one shell word.
-        let spaced = untrack_artifacts_command(Path::new("my repo"));
+        let spaced = untrack_artifacts_command(Path::new("my repo"), &default_roots);
         assert!(
             spaced.starts_with("git -C ") && !spaced.starts_with("git -C my repo "),
             "{spaced}"
         );
         assert!(
-            spaced.ends_with(" rm --cached -r -- target/ripr"),
+            spaced.ends_with(" --literal-pathspecs rm --cached -r -- target/ripr"),
             "{spaced}"
         );
+        // A relocated root joins the pathspec list (#8751).
+        let relocated = vec![
+            PathBuf::from("target").join("ripr"),
+            PathBuf::from(".ripr-cache"),
+        ];
+        assert_eq!(
+            untrack_artifacts_command(Path::new("."), &relocated),
+            "git --literal-pathspecs rm --cached -r -- target/ripr .ripr-cache"
+        );
+        // PR #8901 security review (devin #9): shell metacharacters in a
+        // configured root must stay inside one quoted shell word, so pasting
+        // the printed remedy cannot execute injected text.
+        let hostile = "build/cache;touch ripr-pwned";
+        let hostile_command = untrack_artifacts_command(Path::new("."), &[PathBuf::from(hostile)]);
+        let raw_suffix = format!("-- {hostile}");
+        assert!(
+            !hostile_command.ends_with(raw_suffix.as_str()),
+            "raw metacharacters reached the command: {hostile_command}"
+        );
+        let quoted_posix = format!(
+            "-- {}",
+            crate::agent::loop_commands::shell_arg_for(hostile, false)
+        );
+        let quoted_windows = format!(
+            "-- {}",
+            crate::agent::loop_commands::shell_arg_for(hostile, true)
+        );
+        assert!(
+            hostile_command.ends_with(quoted_posix.as_str())
+                || hostile_command.ends_with(quoted_windows.as_str()),
+            "hostile root is not a single quoted word: {hostile_command}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ripr_artifact_ignore_advice_covers_only_the_literal_root() -> Result<(), String> {
+        use output::doctor::DoctorArtifactIgnore;
+        let root = unique_command_test_dir("literal-ignore-advice");
+        std::fs::create_dir_all(root.join("build/cache*/nested"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("empty-excludes"), "").map_err(|error| error.to_string())?;
+        crate::git::run_git(&root, &["init"]).map_err(|error| error.to_string())?;
+        // Use an absolute excludes path so neither the test host nor Git's
+        // relative config-path interpretation can supply the expected rule.
+        let excludes = root.join("empty-excludes");
+        crate::git::run_git(
+            &root,
+            &[
+                "config",
+                "core.excludesFile",
+                excludes.to_str().ok_or("non-UTF-8 path")?,
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+        let roots = [PathBuf::from("build/cache*")];
+        let DoctorArtifactIgnore::Unignored { warning } = ripr_artifact_ignore(&root, &roots)
+        else {
+            return Err("expected missing ignore rule".to_string());
+        };
+        let entry = warning
+            .split_once("Add this line to .gitignore: ")
+            .ok_or("missing advice")?
+            .1;
+        assert_eq!(entry, r"/build/cache\*/");
+        std::fs::write(root.join(".gitignore"), format!("{entry}\n"))
+            .map_err(|error| error.to_string())?;
+        for (path, expected) in [
+            ("build/cache*/nested/a.json", Some(0)),
+            ("build/cache1/user.rs", Some(1)),
+            ("build/cache-other/user.rs", Some(1)),
+        ] {
+            let probe = crate::git::run_git_output_with_deadline(
+                &root,
+                &["check-ignore", "--no-index", "-q", "--", path],
+                Some(std::time::Duration::from_secs(5)),
+            )
+            .map_err(|error| error.to_string())?;
+            assert_eq!(probe.status.code(), expected, "{path}: {probe:?}");
+        }
+        assert_eq!(
+            ripr_artifact_ignore(&root, &roots),
+            DoctorArtifactIgnore::Ignored
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_artifact_tracking_treats_configured_roots_as_literal_paths() -> Result<(), String> {
+        // Owner P1 (PR #8901): a configured root such as `build/cache*` is a
+        // literal directory name, never a git pathspec glob. With only
+        // `build/cache1/user.rs` tracked, the probe must not wildcard-match
+        // it under the configured root — doctor and diff intake agree on
+        // literal component semantics.
+        use output::doctor::DoctorArtifactTracking;
+        let root = unique_command_test_dir("artifact-literal-pathspec");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let empty_excludes = root.join("empty-excludes");
+        std::fs::write(&empty_excludes, "").map_err(|error| error.to_string())?;
+        for args in [
+            ["init"].as_slice(),
+            ["config", "user.email", "ripr@example.invalid"].as_slice(),
+            ["config", "user.name", "ripr tests"].as_slice(),
+            [
+                "config",
+                "core.excludesFile",
+                empty_excludes.to_str().ok_or("non-utf8 excludes path")?,
+            ]
+            .as_slice(),
+        ] {
+            crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
+        }
+        std::fs::create_dir_all(root.join("build").join("cache1"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("build").join("cache1").join("user.rs"),
+            "fn f() {}\n",
+        )
+        .map_err(|error| error.to_string())?;
+        crate::git::run_git(&root, ["add", "--", "build/cache1/user.rs"].as_slice())
+            .map_err(|error| error.to_string())?;
+        let literal_roots = vec![PathBuf::from("build").join("cache*")];
+        assert_eq!(
+            ripr_artifact_tracking(&root, &literal_roots),
+            DoctorArtifactTracking::Untracked,
+            "a tracked build/cache1 file must not match the literal build/cache* root"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ripr_artifact_tracking_matches_literal_star_directory_descendants() -> Result<(), String> {
+        // PR #8901 review (coderabbit): the POSITIVE side of the literal
+        // root contract — a tracked file beneath a directory literally
+        // named `build/cache*` must match the configured `build/cache*`
+        // root. The earlier glob-escaped pathspec (`build/cache\*`) failed
+        // this on git 2.47 (no match at all), silently dropping real
+        // artifacts from the tracking warning; plain roots under the
+        // global `--literal-pathspecs` switch match both literal-star
+        // directories and glob-free roots. Windows cannot create a `*`
+        // directory name at all, so the positive case is unix-only (the
+        // negative case above runs everywhere).
+        use output::doctor::DoctorArtifactTracking;
+        let root = unique_command_test_dir("artifact-literal-star-positive");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let empty_excludes = root.join("empty-excludes");
+        std::fs::write(&empty_excludes, "").map_err(|error| error.to_string())?;
+        for args in [
+            ["init"].as_slice(),
+            ["config", "user.email", "ripr@example.invalid"].as_slice(),
+            ["config", "user.name", "ripr tests"].as_slice(),
+            [
+                "config",
+                "core.excludesFile",
+                empty_excludes.to_str().ok_or("non-utf8 excludes path")?,
+            ]
+            .as_slice(),
+        ] {
+            crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
+        }
+        std::fs::create_dir_all(root.join("build").join("cache*"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("build").join("cache*").join("a.json"), "{}\n")
+            .map_err(|error| error.to_string())?;
+        crate::git::run_git(&root, ["add", "--", "build/cache*/a.json"].as_slice())
+            .map_err(|error| error.to_string())?;
+        let literal_roots = vec![PathBuf::from("build").join("cache*")];
+        match ripr_artifact_tracking(&root, &literal_roots) {
+            DoctorArtifactTracking::Tracked { warning } => {
+                assert!(
+                    warning.contains("rm --cached -r -- 'build/cache*'")
+                        || warning.contains("rm --cached -r -- build/cache*"),
+                    "the remedy must name the literal-star root: {warning}"
+                );
+            }
+            other => return Err(format!("expected Tracked, got {other:?}")),
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_artifact_tracking_untrack_names_only_indexed_roots() -> Result<(), String> {
+        // PR #8901 review (devin #4): when only relocated artifacts are
+        // tracked, the printed `git rm --cached` must name only the indexed
+        // roots — an unmatched default-root pathspec would make git reject
+        // the whole command.
+        use output::doctor::DoctorArtifactTracking;
+        let root = unique_command_test_dir("artifact-relocated-only");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let empty_excludes = root.join("empty-excludes");
+        std::fs::write(&empty_excludes, "").map_err(|error| error.to_string())?;
+        for args in [
+            ["init"].as_slice(),
+            ["config", "user.email", "ripr@example.invalid"].as_slice(),
+            ["config", "user.name", "ripr tests"].as_slice(),
+            [
+                "config",
+                "core.excludesFile",
+                empty_excludes.to_str().ok_or("non-utf8 excludes path")?,
+            ]
+            .as_slice(),
+        ] {
+            crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
+        }
+        let layer_dir = root.join(".ripr-cache").join("repo-seam-facts");
+        std::fs::create_dir_all(&layer_dir).map_err(|error| error.to_string())?;
+        std::fs::write(layer_dir.join("a.json"), "{}").map_err(|error| error.to_string())?;
+        crate::git::run_git(
+            &root,
+            ["add", "--", ".ripr-cache/repo-seam-facts/a.json"].as_slice(),
+        )
+        .map_err(|error| error.to_string())?;
+        let artifact_roots = vec![
+            PathBuf::from("target").join("ripr"),
+            PathBuf::from(".ripr-cache").join("repo-seam-facts"),
+        ];
+        match ripr_artifact_tracking(&root, &artifact_roots) {
+            DoctorArtifactTracking::Tracked { warning } => {
+                assert!(
+                    warning.contains("rm --cached -r -- .ripr-cache/repo-seam-facts"),
+                    "{warning}"
+                );
+                // Match the root as a pathspec only: the `git -C <root>`
+                // prefix legitimately embeds the temp checkout path, which on
+                // Linux CI lives under `target/ripr-command-...` and would
+                // false-positive a bare substring check.
+                assert!(
+                    !warning.contains("-- target/ripr"),
+                    "untracked default root must not reach the remedy: {warning}"
+                );
+            }
+            other => return Err(format!("expected Tracked, got {other:?}")),
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
     }
 
     #[test]

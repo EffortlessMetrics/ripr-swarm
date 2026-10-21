@@ -990,6 +990,7 @@ mod tests {
             disposition: "resumable",
             manifest: String::new(),
             command: None,
+            start_withheld: false,
             evidence_head: String::new(),
             receipt: crate::app::agent_status::AgentStatusAttemptReceipt::NotApplicable,
             last_after_refusal: None,

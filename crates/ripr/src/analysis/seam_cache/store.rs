@@ -1392,6 +1392,35 @@ mod tests {
         Ok(())
     }
 
+    /// #8948 through the production codec: a seam written to the cache and
+    /// read back carries the same observed values, test file included, as the
+    /// fresh seam, so output cannot depend on cache temperature.
+    #[test]
+    fn codec_round_trip_keeps_observed_value_test_files() -> Result<(), String> {
+        use super::super::related_test_table::tests::seam;
+        use crate::domain::{ValueContext, ValueFact};
+        let mut fresh = seam(1, Vec::new());
+        fresh.evidence.observed_values = ["tests/a.rs", "tests/b.rs"]
+            .into_iter()
+            .map(|file| ValueFact {
+                file: Some(std::path::PathBuf::from(file)),
+                line: 12,
+                text: "assert_eq!(f(5), 6)".to_owned(),
+                value: "5".to_owned(),
+                context: ValueContext::FunctionArgument,
+            })
+            .collect();
+        let key = empty_key();
+        let envelope = CacheEnvelope::new_with_fallback(key, vec![fresh.clone()], None, Vec::new());
+        let bytes = codec::encode(&envelope)?;
+        let warm = codec::decode(&bytes)?;
+        assert_eq!(
+            warm.classified_seams[0].evidence.observed_values,
+            fresh.evidence.observed_values
+        );
+        Ok(())
+    }
+
     /// The probing search alone, as the planner ran before #5364: the oracle
     /// for the modeled plan.
     fn probed_shard_ranges(
