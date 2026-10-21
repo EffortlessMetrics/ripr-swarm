@@ -1333,12 +1333,41 @@ fn missing_ref_repair(root: &Path, missing_ref: &str, git_timeout: Option<Durati
     if let Some(advice) = qualified_remote_advice(missing_ref, remotes.as_deref()) {
         return advice;
     }
+    // #8652: an unqualified missing ref may already live in
+    // remote-tracking form. A fetch creates `<remote>/<ref>`, never a
+    // local `<ref>`, so when that form resolves it is the followable
+    // advice; re-prescribing the fetch loops on the same failure.
+    if !missing_ref.contains('/')
+        && !missing_ref.starts_with('-')
+        && let Some([only]) = remotes.as_deref()
+        && remote_name_is_plain(only)
+    {
+        let tracking = format!("{only}/{missing_ref}");
+        if git_ref_output(root, &format!("{tracking}^{{commit}}"), git_timeout)
+            .is_some_and(|output| output.status.success())
+        {
+            return format!(
+                "the fetched branch is `{tracking}`, not a local `{missing_ref}`: pass `--base {tracking}`"
+            );
+        }
+    }
     match remotes.as_deref() {
-        Some([]) => format!(
+        Some([]) if missing_ref.contains('/') => format!(
             "Check the spelling of `{missing_ref}` (`git branch --list` shows this repository's local branches). No git remote is configured: if it lives on a remote, add that remote (for example `git remote add <name> <url>`), then fetch it"
         ),
+        Some([]) => format!(
+            "Check the spelling of `{missing_ref}` (`git branch --list` shows this repository's local branches). No git remote is configured: if it lives on a remote, add that remote (for example `git remote add <name> <url>`), then fetch it; the fetched branch is named `<name>/{missing_ref}`, not a local `{missing_ref}`"
+        ),
         Some([only]) if remote_name_is_plain(only) => {
-            format!("Fetch the ref (for example `git fetch {only}`)")
+            // Only a plain branch name gains a remote-tracking form; an
+            // explicit `refs/...` path keeps the plain fetch advice.
+            if missing_ref.contains('/') {
+                format!("Fetch the ref (for example `git fetch {only}`)")
+            } else {
+                format!(
+                    "Fetch the ref (for example `git fetch {only}`); the fetched branch is named `{only}/{missing_ref}`, not a local `{missing_ref}`"
+                )
+            }
         }
         _ => {
             // #5252 item 8: plain `git fetch` follows the repo's own default
@@ -3323,6 +3352,50 @@ mod tests {
         assert!(
             !repair.contains("git fetch origin"),
             "the repair must not prescribe a remote the repo lacks, got: {repair}"
+        );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_ref_repair_names_the_remote_tracking_form_it_can_resolve() -> std::io::Result<()> {
+        // #8652: a fetch creates `origin/topic`, never a local `topic`.
+        // When that remote-tracking ref already resolves, the repair must
+        // name the followable `--base origin/topic`, not re-prescribe the
+        // fetch that already happened.
+        let dir = unique_fixture_root("missing-ref-remote-tracking")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        run_git_checked(
+            &dir,
+            &["remote", "add", "origin", "https://example.test/fork.git"],
+        )?;
+        run_git_checked(&dir, &["update-ref", "refs/remotes/origin/topic", "HEAD"])?;
+
+        let repair = missing_ref_repair(&dir, "topic", None);
+        assert!(
+            repair.contains("--base origin/topic"),
+            "the repair must name the resolvable remote-tracking ref, got: {repair}"
+        );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_ref_repair_no_remote_arm_names_remote_tracking_refs() -> std::io::Result<()> {
+        // #8652: after add-remote + fetch, the branch lands as
+        // `<name>/topic`; the no-remote advice must say so, or following
+        // it literally re-fails on the unqualified name.
+        let dir = unique_fixture_root("missing-ref-no-remote-tracking")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+
+        let repair = missing_ref_repair(&dir, "topic", None);
+        assert!(
+            repair.contains("<name>/topic"),
+            "the no-remote repair must name the remote-tracking form, got: {repair}"
         );
 
         ignore_remove_dir_all(&dir);
