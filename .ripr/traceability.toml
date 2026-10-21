@@ -931,6 +931,8 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::calibrate_cargo_mutants_writes_json_when_requested",
   "crates/ripr/tests/cli_smoke.rs::calibrate_foreign_same_line_join_discloses_missing_head",
   "crates/ripr/tests/cli_smoke.rs::calibrate_headed_snapshot_names_the_assumed_subject",
+  "crates/ripr/tests/cli_smoke/mutation_calibration_provenance.rs::calibrate_saved_json_retains_head_provenance",
+  "crates/ripr/tests/cli_smoke/mutation_calibration_provenance.rs::calibrate_saved_markdown_retains_head_provenance",
   "crates/ripr/tests/cli_smoke/snapshot_recovery.rs::missing_snapshot_recovery_preserves_native_redirect_target",
   "crates/ripr/tests/cli_smoke.rs::calibration_runtime_fixture_matches_checked_reports",
   "crates/ripr/tests/cli_smoke.rs::calibration_runtime_fixture_v2_matches_checked_reports",
@@ -12395,6 +12397,7 @@ tests = [
   "crates/ripr/src/cli/command_metadata.rs::tests::help_row_reports_its_machine_catalog_route",
   "crates/ripr/src/cli/command_metadata.rs::tests::production_table_is_complete_and_consistent",
   "crates/ripr/tests/task_first_facade.rs::inspection_cache_disclosure::inspection_discovery_discloses_observed_cache_writes",
+  "crates/ripr/tests/task_first_facade.rs::inspection_cache_disclosure::inventory_ignores_transient_git_lock_files",
   "crates/ripr/tests/task_first_facade.rs::inspection_cache_disclosure::saved_inspection_and_status_controls_preserve_inventories",
   "crates/ripr/src/cli/command_metadata.rs::tests::every_public_catalog_row_is_described",
   "crates/ripr/src/cli/command_metadata.rs::tests::readonly_row_declaring_a_product_write_is_rejected",
@@ -16518,6 +16521,27 @@ tests = [
   "crates/ripr/tests/framework_oracle_limit.rs::an_expect_shape_that_differs_keeps_the_gap",
   "crates/ripr/tests/framework_oracle_limit.rs::an_unredacted_insta_field_is_withheld",
   "crates/ripr/tests/framework_oracle_limit.rs::an_insta_shape_that_differs_keeps_the_gap",
+  "crates/ripr/tests/framework_oracle_limit.rs::an_owner_binding_must_reach_the_assertion",
+  "crates/ripr/tests/framework_oracle_limit.rs::a_binding_that_reaches_the_assertion_is_withheld",
+  "crates/ripr/tests/framework_oracle_limit.rs::non_code_cannot_supply_a_binding",
+  "crates/ripr/tests/framework_oracle_limit.rs::non_code_cannot_supply_an_assertion",
+  "crates/ripr/tests/framework_oracle_limit.rs::a_commented_environment_write_activates_nothing",
+  "crates/ripr/tests/framework_oracle_limit.rs::a_shadow_inside_a_callback_reaches_an_assertion_inside_it",
+  "crates/ripr/tests/framework_oracle_limit.rs::a_closed_callback_shadow_leaves_the_owner_binding",
+  "crates/ripr/src/analysis/classify/framework_oracle.rs::tests::a_binding_must_reach_the_assertion_to_derive_from_the_owner",
+  "crates/ripr/src/analysis/classify/framework_oracle.rs::tests::a_commented_or_quoted_binding_is_not_a_binding",
+  "crates/ripr/src/analysis/classify/framework_oracle.rs::tests::commented_or_quoted_writes_are_not_writes",
+  "crates/ripr/src/analysis/classify/framework_oracle.rs::tests::an_operand_derives_from_the_owner_by_call_or_binding",
+  "crates/ripr/src/analysis/test_grip_evidence/snapshot_owner_binding.rs::tests::a_shadow_in_a_callback_or_closure_body_is_judged_where_the_assertion_sits",
+  "crates/ripr/src/analysis/test_grip_evidence/snapshot_owner_binding.rs::tests::a_mutable_borrow_or_attribute_prefixed_shadow_withdraws_the_binding",
+  "crates/ripr/src/analysis/test_grip_evidence/snapshot_owner_binding.rs::tests::prefixed_raw_strings_and_nested_comments_are_blanked",
+  "crates/ripr/src/analysis/test_grip_evidence/snapshot_owner_binding.rs::tests::a_binder_in_the_assertion_arguments_or_a_repeated_assertion_is_judged",
+  "crates/ripr/src/analysis/test_grip_evidence/snapshot_owner_binding.rs::tests::non_ascii_neighbours_do_not_make_another_identifier_the_local",
+  "crates/ripr/src/analysis/test_grip_evidence/snapshot_owner_binding.rs::tests::a_macro_defined_in_the_test_withholds_credit",
+  "crates/ripr/src/analysis/test_grip_evidence/snapshot_owner_binding.rs::tests::lifetimes_and_numeric_suffixes_are_not_locals",
+  "crates/ripr/src/analysis/test_grip_evidence/snapshot_owner_binding.rs::tests::a_generated_sweep_of_binder_shapes_and_placements_withholds_credit",
+  "crates/ripr/src/analysis/test_grip_evidence/snapshot_owner_binding.rs::tests::an_open_plain_let_keeps_the_previous_binding_but_not_a_binder_in_its_initializer",
+  "crates/ripr/src/analysis/test_grip_evidence/snapshot_owner_binding.rs::tests::a_shadow_or_parameter_earlier_on_the_assertion_line_is_judged",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::analyzer_limit_refusals_are_limits_of_ripr_reading",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::refusals_that_can_keep_an_assertion_from_running_are_not_limits",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_outcome_settling_attribute_is_the_refusal_wherever_it_sits",
@@ -17100,6 +17124,49 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0282-repair-attempt-after-refusal-retry-budget.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+
+[[behavior]]
+id = "RIPR-SPEC-0294"
+name = "Mutation calibration output clarity contract"
+spec = "docs/specs/RIPR-SPEC-0294-mutation-calibration-clarity.md"
+tests = [
+  "crates/ripr/src/output/mutation_calibration.rs::tests::calibration_provenance_verdict_covers_all_head_combinations",
+  "crates/ripr/src/output/mutation_calibration.rs::tests::calibration_provenance_disclosure_sentence_is_nonempty_and_names_verdict_facts",
+  "crates/ripr/src/output/mutation_calibration.rs::tests::calibration_provenance_json_shape_mirrors_verdict",
+  "crates/ripr/src/output/mutation_calibration.rs::tests::agreement_how_to_read_is_present_on_md_and_json_surfaces",
+  "crates/ripr/src/output/mutation_calibration.rs::tests::mutation_calibration_summarizes_static_runtime_agreement",
+  "crates/ripr/src/output/mutation_calibration.rs::tests::span_join_reads_cargo_mutants_columns_end_to_end",
+  "crates/ripr/tests/cli_smoke.rs::calibration_runtime_fixture_matches_checked_reports",
+  "crates/ripr/tests/cli_smoke.rs::calibration_runtime_fixture_v2_matches_checked_reports",
+  "crates/ripr/tests/cli_smoke.rs::calibration_runtime_fixture_v3_matches_checked_reports",
+  "crates/ripr/tests/cli_smoke.rs::calibration_span_containment_atuin_fixture_matches_checked_reports",
+  "crates/ripr/tests/cli_smoke.rs::calibration_span_containment_semver_display_refuses_same_line_pairing",
+]
+fixtures = [
+  "fixtures/boundary_gap/calibration/runtime-fixtures-v1/mutation-calibration.json",
+  "fixtures/boundary_gap/calibration/runtime-fixtures-v1/mutation-calibration.md",
+  "fixtures/boundary_gap/calibration/runtime-fixtures-v2/mutation-calibration.json",
+  "fixtures/boundary_gap/calibration/runtime-fixtures-v2/mutation-calibration.md",
+  "fixtures/boundary_gap/calibration/runtime-fixtures-v3/mutation-calibration.json",
+  "fixtures/boundary_gap/calibration/runtime-fixtures-v3/mutation-calibration.md",
+  "fixtures/boundary_gap/calibration/span-containment-atuin/mutation-calibration.json",
+  "fixtures/boundary_gap/calibration/span-containment-atuin/mutation-calibration.md",
+  "fixtures/boundary_gap/calibration/span-containment-semver-display/mutation-calibration.json",
+  "fixtures/boundary_gap/calibration/span-containment-semver-display/mutation-calibration.md",
+]
+code = [
+  "crates/ripr/src/output/mutation_calibration.rs",
+  "crates/ripr/src/output/outcome/mod.rs",
+  "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/help/reports.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0294-mutation-calibration-clarity.md",
 ]
 metrics = [
   "unit_test_pass_rate",
