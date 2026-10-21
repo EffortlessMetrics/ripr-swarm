@@ -1942,6 +1942,7 @@ fn inventory_diff_scoped_classified_seams_inner(
             Duration::ZERO,
         );
         reused.absent_changed_files = absent_changed_files;
+        cancellation::checkpoint()?;
         return Ok(reused);
     }
     let total_rust_files = state.files.len();
@@ -8311,6 +8312,33 @@ marker = "libtest_mimic::Trial"
             format!("{:?}", warm.repo_seam_limit),
             format!("{:?}", cold.repo_seam_limit),
             "a reuse hit must keep the cold run's seam-limit fact"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bound_seams_inventory_reuse_hit_honors_cancellation() -> Result<(), String> {
+        let root = make_tempdir("bound-seams-hit-cancel")?;
+        bound_seams_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = [PathBuf::from("src/pricing.rs")];
+        let owners = ["discounted_total".to_string()];
+        inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)?;
+
+        let token = cancellation::AnalysisCancellationToken::new();
+        token.cancel(cancellation::AnalysisAbortKind::Cancelled);
+        evaluation_probe::reset();
+        let result = cancellation::with_token(&token, || {
+            inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)
+        });
+        let hit = evaluation_probe::evaluated() == 0;
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert!(hit, "the second call must be a reuse hit");
+        assert_eq!(
+            result.err().as_deref(),
+            Some("analysis cancelled: Cancelled"),
+            "a cancelled run must not commit a reused inventory"
         );
         Ok(())
     }
