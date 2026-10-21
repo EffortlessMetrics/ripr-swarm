@@ -51,7 +51,9 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
                 // `CommandError` after the envelope.
                 match render_selector_refusal_document(&options.selector, refusal_kind, &message) {
                     // A JSON document, not report text: keep it parseable (#6309).
-                    Ok(rendered) => write_stdout_refusal_json(rendered),
+                    Ok(rendered) => {
+                        write_stdout_refusal_json(rendered).map_err(CommandError::Failure)?
+                    }
                     Err(render_error) => eprintln!("ripr: {render_error}"),
                 }
             }
@@ -80,7 +82,7 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
                     "warnings": disclosure.warnings,
                 });
                 // A JSON document, not report text: keep it parseable (#6309).
-                write_stdout_refusal_json(render(&document)?);
+                write_stdout_refusal_json(render(&document)?).map_err(CommandError::Failure)?;
             }
             return Err(CommandError::Decision(refusal_message(
                 &resolution.seam_id,

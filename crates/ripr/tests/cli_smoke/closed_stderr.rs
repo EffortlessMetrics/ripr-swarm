@@ -19,6 +19,18 @@ fn run(root: &Path, args: &[&str], closed: bool) -> Result<Output, std::io::Erro
     command.output()
 }
 
+/// Spawn with stdout's reader closed before the child starts, so the refusal
+/// document cannot be delivered.
+#[cfg(feature = "lang-rust")]
+fn run_closed_stdout(root: &Path, args: &[&str]) -> Result<Output, std::io::Error> {
+    let mut command = probe_command(env!("CARGO_BIN_EXE_ripr"));
+    command.current_dir(root).args(args).stdin(Stdio::null());
+    let (reader, writer) = std::io::pipe()?;
+    drop(reader);
+    command.stdout(writer);
+    command.output()
+}
+
 #[test]
 fn malformed_config_json_keeps_exit_two_with_closed_stderr() -> TestResult {
     let root = unique_temp_workspace("closed-stderr-config");
@@ -297,6 +309,34 @@ fn ready_stub_json_keeps_exit_zero_with_closed_stderr() -> TestResult {
         assert_eq!(document["state"], "ready");
         assert_eq!(document["written"], false);
         assert_eq!(output.status.code(), Some(0), "{output:?}");
+    }
+    Ok(())
+}
+
+/// When the refusal JSON cannot be written to stdout, no machine answer was
+/// delivered: the command is an operational failure (exit 2), not decision 3.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn unknown_card_and_stub_json_refusal_exit_two_with_closed_stdout() -> TestResult {
+    let root = unique_temp_workspace("closed-stdout-unknown-refusal");
+    super::init_producer_fixture_repo(&root)?;
+    let _cleanup = DeclaredHunkScratch(root.clone());
+    for command in ["card", "stub"] {
+        let args = [
+            "agent",
+            command,
+            "--root",
+            ".",
+            "--seam-id",
+            "missing-stdout-seam",
+            "--json",
+        ];
+        let normal = run(&root, &args, false)?;
+        assert_eq!(normal.status.code(), Some(3), "{args:?}: {normal:?}");
+        assert!(!normal.stdout.is_empty(), "{args:?}: {normal:?}");
+        let closed = run_closed_stdout(&root, &args)?;
+        assert_eq!(closed.status.code(), Some(2), "{args:?}: {closed:?}");
+        assert!(closed.stdout.is_empty(), "{args:?}: {closed:?}");
     }
     Ok(())
 }

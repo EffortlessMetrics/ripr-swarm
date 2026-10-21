@@ -300,8 +300,8 @@ already and is not a refusal.
 
 `ripr agent stub --json` emits one `rust_test_stub` document on stdout when
 the producer yields a stub (`state: ready`, exit 0). A producer refusal
-keeps stdout empty and, under `--json`, writes the same `kind` on stderr
-with `state: refused` (#5355). A selector that names no reported gap — a
+writes, under `--json`, the same `kind` on stdout with `state: refused`
+(#5355) and exits `3`; the human decision prose goes to stderr. A selector that names no reported gap — a
 stale or mistyped seam id, the most common refusal — renders the envelope
 too, with `refusal.kind: seam_not_found`, `seam_id` repeating the
 requested id (`null` for a location selector, which never resolved to a
@@ -311,7 +311,8 @@ instead uses `refusal.kind: selector_ambiguous`: several files match the path
 suffix, or disjoint seams of the requested kind tie. Its reason names the
 paths or seam IDs to choose; the unresolved identity and disclosure fields
 stay `null` and `warnings` stays `[]`. Both selector refusals keep exit 3,
-empty stdout, and the human decision prose after the stderr JSON.
+the JSON on stdout, and the human decision prose on stderr. If the stdout
+write itself fails, no document was delivered and the command exits `2`.
 
 Schema `0.2` replaces `0.1` for all ready and refused stub documents (#7762).
 The field set is unchanged; the new refusal-kind spelling requires the new

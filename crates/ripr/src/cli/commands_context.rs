@@ -7,13 +7,20 @@ use std::path::Path;
 /// renderers' newline conventions and JSON escaping. A typed `--json` refusal
 /// document is the machine answer, so it goes to stdout (the convention of
 /// `check`, `diff`, `agent packet`, `agent verify-execute`) while the human
-/// prose reaches stderr through the returned error. Best effort: a closed
-/// stdout reader keeps the original decision exit.
-pub(super) fn write_stdout_refusal_json(document: String) {
+/// prose reaches stderr through the returned error. A stdout write or flush
+/// failure is returned (prefixed like the other stdout writers so a closed
+/// pipe stays silent): no JSON was delivered, so the caller must report an
+/// operational failure (exit 2) instead of the decision exit 3.
+pub(super) fn write_stdout_refusal_json(document: String) -> Result<(), String> {
     use std::io::Write as _;
     let document = crate::terminal_text::json_terminal_safe(document);
     let newline = if document.ends_with('\n') { "" } else { "\n" };
-    let _ = write!(std::io::stdout().lock(), "{document}{newline}");
+    let mut stdout = std::io::stdout().lock();
+    write!(stdout, "{document}{newline}")
+        .map_err(|err| format!("write to stdout failed: {err}"))?;
+    stdout
+        .flush()
+        .map_err(|err| format!("flush stdout failed: {err}"))
 }
 
 /// Map a producer outcome after its original report has reached stdout.

@@ -63,7 +63,9 @@ pub(super) fn agent_card_stdout(options: AgentCardOptions) -> Result<String, Com
                 match render_agent_card_refusal(&options, kind, &message) {
                     // A JSON document, not report text: bidi characters become
                     // JSON escapes so the envelope stays parseable (#6309).
-                    Ok(rendered) => write_stdout_refusal_json(rendered),
+                    Ok(rendered) => {
+                        write_stdout_refusal_json(rendered).map_err(CommandError::Failure)?
+                    }
                     Err(render_error) => eprintln!("ripr: {render_error}"),
                 }
             }
