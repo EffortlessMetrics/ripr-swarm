@@ -17295,6 +17295,9 @@ tests = [
   "crates/ripr/src/analysis/pipeline.rs::tests::excluding_every_changed_file_is_also_an_error",
   "crates/ripr/src/analysis/pipeline.rs::tests::scope_binds_into_the_input_identity",
   "crates/ripr/src/analysis/pipeline.rs::tests::oversized_diff_still_fails_closed_without_a_scope",
+  "crates/ripr/src/analysis/pipeline.rs::tests::a_conflict_in_a_scoped_out_file_does_not_make_the_kept_files_unsupported",
+  "crates/ripr/src/analysis/pipeline.rs::tests::a_long_pattern_list_is_bounded_in_the_limitation_instead_of_aborting",
+  "crates/ripr/src/analysis/diff_scope_filter.rs::tests::bounded_flags_cap_a_long_pattern_list",
   "crates/ripr/src/analysis/language/rust/mod.rs::tests::committed_root_target_is_build_output_but_a_nested_target_module_is_not",
   "crates/ripr/tests/cli_smoke.rs::check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result",
 ]

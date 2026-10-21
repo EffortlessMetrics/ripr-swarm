@@ -996,15 +996,25 @@ fn check_inner(
                 input.format.primary_cli_name()
             ))
         } else {
-            match crate::analysis::DiffScopeFilter::new(
-                std::mem::take(&mut scope_include),
-                std::mem::take(&mut scope_exclude),
-            ) {
-                Ok(filter) => {
-                    input.scope = filter;
-                    None
+            if write_artifact.is_some() || gap_ledger.is_some() || output_dir.is_some() {
+                Some(
+                    "--path/--exclude cannot be combined with --write-artifact, --gap-ledger or \
+                     --output-dir: those outputs are reusable as a whole-diff result, and a \
+                     scoped run covers only the chosen files. Drop the scope, or save the \
+                     scoped result from --format json instead"
+                        .to_string(),
+                )
+            } else {
+                match crate::analysis::DiffScopeFilter::new(
+                    std::mem::take(&mut scope_include),
+                    std::mem::take(&mut scope_exclude),
+                ) {
+                    Ok(filter) => {
+                        input.scope = filter;
+                        None
+                    }
+                    Err(error) => Some(error),
                 }
-                Err(error) => Some(error),
             }
         };
         if let Some(message) = refusal {

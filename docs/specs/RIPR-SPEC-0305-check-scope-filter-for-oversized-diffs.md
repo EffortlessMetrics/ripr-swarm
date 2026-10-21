@@ -69,7 +69,12 @@ glob dialect. No `--path` admits every file the excludes do not remove;
 4. The filter is bound into the analysis input identity, so one diff under two
    scopes is two analysis subjects. An unrestricted filter leaves identities
    unchanged.
-5. Rust files with a generator header, `cargo vendor` crates and a repository
+5. A scoped run cannot be combined with `--write-artifact`, `--gap-ledger` or
+   `--output-dir`: those outputs are reusable as a whole-diff result. Per-file
+   parser limitations (conflict markers, combined hunks) on a scoped-out file
+   are dropped; diff-wide counters (renames, deletions, truncated sections)
+   stay whole-diff and conservative.
+6. Rust files with a generator header, `cargo vendor` crates and a repository
    root `target/` directory are skipped with a named limitation before the
    caps, as before; a nested `target` directory is ordinary source.
 
@@ -84,6 +89,7 @@ glob dialect. No `--path` admits every file the excludes do not remove;
 
 ## Non-Goals
 
+- Scope flags on the printed `explain`/`context` drill-in commands.
 - Narrowing the parse-time changed-file-count bound
   (`RIPR_MAX_DIFF_INDEX_FILES`), which runs before the filter.
 - A scope for repo-scoped formats, the LSP or MCP.

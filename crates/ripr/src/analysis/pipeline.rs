@@ -927,7 +927,7 @@ fn out_of_scope_limitation(
             format!(
                 "Files left out by `{}` have no finding. Rerun with a wider --path or without \
                  --exclude to analyze them: {listed}.",
-                diff_scope.flags()
+                diff_scope.flags_bounded()
             ),
         )?,
     )
@@ -936,7 +936,7 @@ fn out_of_scope_limitation(
         "{} changed file(s) were left out by the requested scope ({}) and were not analyzed: \
          {listed}",
         files.len(),
-        diff_scope.flags()
+        diff_scope.flags_bounded()
     ))
 }
 
@@ -1015,6 +1015,14 @@ fn run_pipeline_for_diff_text_with_language_config(
         .limitations
         .into_iter()
         .filter(|limitation| diff_limitation_in_scope(limitation, languages))
+        // A per-file parser limitation (combined hunk, conflict markers) on a
+        // file the operator scoped out must not invalidate the files kept.
+        .filter(|limitation| {
+            limitation
+                .path
+                .as_deref()
+                .is_none_or(|path| diff_scope.admits(std::path::Path::new(path)))
+        })
         .collect::<Vec<_>>();
     if !out_of_scope_files.is_empty() {
         limitations.push(out_of_scope_limitation(diff_scope, &out_of_scope_files)?);
@@ -6954,6 +6962,67 @@ index 0000000..1111111 100644
         let again = identity("identity-scoped-again", &["src/lib.rs"], &[])?;
         assert_ne!(unscoped, scoped);
         assert_eq!(scoped, again);
+        Ok(())
+    }
+    #[test]
+    fn a_conflict_in_a_scoped_out_file_does_not_make_the_kept_files_unsupported()
+    -> Result<(), String> {
+        let diff = "diff --git a/src/merge.rs b/src/merge.rs\n\
+                    --- a/src/merge.rs\n\
+                    +++ b/src/merge.rs\n\
+                    @@ -1,5 +1,1 @@\n\
+                    -<<<<<<< ours\n\
+                    -a\n\
+                    -=======\n\
+                    -b\n\
+                    ->>>>>>> theirs\n\
+                    +a\n\
+                    diff --git a/src/lib.rs b/src/lib.rs\n\
+                    --- a/src/lib.rs\n\
+                    +++ b/src/lib.rs\n\
+                    @@ -1 +1 @@\n\
+                    -pub fn f(x: i32) -> bool { x > 1 }\n\
+                    +pub fn f(x: i32) -> bool { x >= 1 }\n";
+        let kind = |exclude: &[&str], label: &str| -> Result<AnalysisOutcomeKind, String> {
+            run_scoped(label, &[], exclude, diff)?
+                .map_err(|error| format!("{label}: {error}"))?
+                .analysis_outcome
+                .map(|outcome| outcome.kind)
+                .ok_or_else(|| "outcome missing".to_string())
+        };
+        assert_eq!(
+            kind(&[], "scope-conflict-open")?,
+            AnalysisOutcomeKind::UnsupportedInput
+        );
+        assert_eq!(
+            kind(&["src/merge.rs"], "scope-conflict-excluded")?,
+            AnalysisOutcomeKind::PartialWithLimitations
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_long_pattern_list_is_bounded_in_the_limitation_instead_of_aborting() -> Result<(), String>
+    {
+        let many: Vec<String> = (0..40)
+            .map(|index| format!("generated/dir{index}"))
+            .collect();
+        let exclude: Vec<&str> = many.iter().map(String::as_str).collect();
+        let result = run_scoped("scope-long-list", &[], &exclude, SAMPLE_RUST_DIFF)?;
+        // Every changed file survives these excludes, so the run is complete;
+        // add a removed file to exercise the limitation text bound.
+        result.map_err(|error| format!("unrelated excludes must not fail: {error}"))?;
+        let mut with_removed = exclude.clone();
+        with_removed.push("src/big.rs");
+        let result = run_scoped(
+            "scope-long-list-removed",
+            &[],
+            &with_removed,
+            &scoped_oversized_diff(),
+        )?
+        .map_err(|error| format!("a long pattern list must not abort: {error}"))?;
+        let outcome = result.analysis_outcome.ok_or("outcome missing")?;
+        assert_eq!(outcome.kind, AnalysisOutcomeKind::PartialWithLimitations);
         Ok(())
     }
 }

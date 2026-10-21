@@ -92,6 +92,21 @@ impl DiffScopeFilter {
             .join(" ")
     }
 
+    /// [`Self::flags`] capped for the 512-character limitation text bounds;
+    /// the full filter stays in the identity and the refusal text.
+    pub(crate) fn flags_bounded(&self) -> String {
+        const SHOWN: usize = 120;
+        let flags = self.flags();
+        if flags.chars().count() <= SHOWN {
+            return flags;
+        }
+        format!(
+            "{}… ({} pattern(s) in total)",
+            flags.chars().take(SHOWN - 1).collect::<String>(),
+            self.include.len() + self.exclude.len()
+        )
+    }
+
     /// Stable text bound into the analysis input identity, so the same diff
     /// under a different scope is a different analysis subject. Empty for an
     /// unrestricted filter, which keeps every existing identity unchanged.
@@ -211,6 +226,19 @@ mod tests {
         }
         let refusal = filter(&[], &[".."]).err().unwrap_or_default();
         assert!(refusal.contains("--exclude pattern"), "{refusal}");
+    }
+
+    #[test]
+    fn bounded_flags_cap_a_long_pattern_list() -> Result<(), String> {
+        let many: Vec<String> = (0..40)
+            .map(|index| format!("generated/dir{index}"))
+            .collect();
+        let scope = DiffScopeFilter::new(Vec::new(), many)?;
+        let bounded = scope.flags_bounded();
+        assert!(bounded.chars().count() < 160, "{bounded}");
+        assert!(bounded.ends_with("(40 pattern(s) in total)"), "{bounded}");
+        assert!(scope.flags().chars().count() > 512);
+        Ok(())
     }
 
     #[test]

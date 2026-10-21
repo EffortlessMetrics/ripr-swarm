@@ -3502,6 +3502,17 @@ fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() ->
     assert_failure(&still_big);
     assert!(String::from_utf8_lossy(&still_big.stderr).contains("diff_scope_oversized"));
 
+    // Reusable whole-diff outputs cannot carry a scoped result.
+    let artifact = dir.join("scoped-artifact.json").display().to_string();
+    let saved = run(&["--path", "src/lib.rs", "--write-artifact", &artifact]);
+    assert_eq!(saved.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&saved.stderr).contains("--write-artifact"),
+        "{}",
+        String::from_utf8_lossy(&saved.stderr)
+    );
+    assert!(!std::path::Path::new(&artifact).exists());
+
     // Malformed patterns and repo-scoped formats are refused up front.
     let bad = run(&["--path", "../escape"]);
     assert_eq!(bad.status.code(), Some(2));
