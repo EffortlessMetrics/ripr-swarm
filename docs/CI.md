@@ -38,6 +38,15 @@ workflow shell with the production policy binary and real Git histories, and
 exercise the checked-in job predicates and dependency wiring; they do not claim
 hosted Actions or wheel qualification.
 
+The wheel's package source-contract step selects the complete
+`policy::distribution::` test namespace, including sibling guidance, wheelhouse,
+version and archive-contract modules. The compiled-inventory regression compares
+the workflow filter through libtest with that complete nonempty inventory and
+rejects the former root-tests-only selection, a zero-match filter and an
+overbroad policy filter. Enumeration is separate from the step's test execution;
+these source controls do not qualify a built wheel or guard every possible
+zero-test command.
+
 ## Merge-ready label flow
 
 The non-required lanes gated by `merge-ready` do not run on a Draft or plain Ready
