@@ -188,7 +188,9 @@
           "oracle_kind": "smoke_only",
           "oracle": "expect(...).toBeDefined(...)",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
         }
       ],
       "typescript_preview_card": {
@@ -327,7 +329,9 @@
           "oracle_kind": "smoke_only",
           "oracle": "expect(...).toBeDefined(...)",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
         }
       ],
       "typescript_preview_card": {
@@ -455,7 +459,9 @@
           "oracle_kind": "relational_check",
           "oracle": "expect(...).toBeGreaterThan(...)",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
         }
       ],
       "typescript_preview_card": {

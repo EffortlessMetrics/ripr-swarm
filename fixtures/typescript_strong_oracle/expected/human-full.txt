@@ -46,8 +46,8 @@ Evidence
   - propagation unknown: TypeScript preview adapter does not yet model propagation
   - observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)
   - discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `amount == threshold`
-  - related test tests/discount.test.ts:5 at threshold discounts uses strong exact value oracle: expect(...).toBe(...)
-  - related test tests/discount.test.ts:9 above threshold discounts uses strong exact value oracle: expect(...).toBe(...)
+  - related test tests/discount.test.ts:5 at threshold discounts uses strong exact value oracle: expect(...).toBe(...); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/discount.test.ts:9 above threshold discounts uses strong exact value oracle: expect(...).toBe(...); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
 
 Weakness
   - Only heuristic TypeScript test links were found for `applyDiscount`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion

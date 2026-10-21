@@ -20,7 +20,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: return await Promise.reject(new Error("missing id"));
   Missing discriminator (1 of 2): Only heuristic TypeScript test links were found for `loadProfile`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion
-  Related test: tests/profile.test.ts:1 rejects missing profile id broadly
+  Related test: tests/profile.test.ts:1 rejects missing profile id broadly (ripr could not confirm that this assertion observes the changed behavior)
   Next step — TypeScript preview advisory: broad error evidence does not establish missing
     discriminator `rejects Error matching "missing id"`; add an exact payload to `toThrow` (string,
     object, or class reference) and no actionable repair packet is emitted until verify, receipt,

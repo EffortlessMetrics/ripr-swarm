@@ -68,7 +68,9 @@
           "oracle_kind": "exact_value",
           "oracle": "expect(...).toBe(...)",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "missing_input",
+          "why": "no test input reaches `amount == DISCOUNT_THRESHOLD`"
         },
         {
           "name": "discounts far above threshold",
@@ -78,7 +80,9 @@
           "oracle_kind": "exact_value",
           "oracle": "expect(...).toBe(...)",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "missing_input",
+          "why": "no test input reaches `amount == DISCOUNT_THRESHOLD`"
         }
       ],
       "typescript_preview_card": {

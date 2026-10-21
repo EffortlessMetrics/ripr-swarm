@@ -214,3 +214,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — ts_return_ternary_boundary (16)
+
+Reason:
+typescript row-local related-test miss (#5495, RIPR-SPEC-0224): rows gain a typed non-decisional miss; class, stages and decision fields unchanged
+
+Command:
+`cargo xtask goldens bless ts_return_ternary_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

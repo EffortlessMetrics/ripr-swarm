@@ -20,7 +20,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: return "ready";
   Missing discriminator (1 of 2): Related test reaches `load` but the strongest extracted oracle is `unknown`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form…
-  Related test: tests/load.test.ts:4 missing token rejects with the required literal
+  Related test: tests/load.test.ts:4 missing token rejects with the required literal (asserts, but not on the changed value)
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `return value == "ready"`; no actionable repair packet is emitted until verify,
     receipt, and edit-boundary fields are available

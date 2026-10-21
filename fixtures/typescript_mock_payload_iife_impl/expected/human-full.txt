@@ -47,7 +47,7 @@ Evidence
   - observation weak: Strongest extracted oracle kind: `mock_expectation` (rank 4)
   - discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `call db.write includes v + 2`
   - local flow reaches call effect: db.write(v + 2); (line 2)
-  - related test tests/save.test.ts:7 save uses medium mock expectation oracle: expect(db.write).toHaveBeenCalledWith(2)
+  - related test tests/save.test.ts:7 save uses medium mock expectation oracle: expect(db.write).toHaveBeenCalledWith(2); misses: assertion too weak to tell the old behavior from the new
 
 Weakness
   - Related test reaches `save` with bounded mock payload evidence `expect(db.write).toHaveBeenCalledWith(2)`; keep the item advisory until mock-shape actionability can name verify command, receipt command, evidence refs, and edit boundaries

@@ -47,7 +47,7 @@ Evidence
   - observation weak: Strongest extracted oracle kind: `snapshot` (rank 4)
   - discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `return value == amount - 20`
   - local flow reaches returned value: return amount - 20; (line 3)
-  - related test tests/lib.test.ts:3 price uses medium snapshot oracle: expect(...).toMatchSnapshot(...)
+  - related test tests/lib.test.ts:3 price uses medium snapshot oracle: expect(...).toMatchSnapshot(...); misses: assertion too weak to tell the old behavior from the new
 
 Weakness
   - Related test reaches `price` with snapshot evidence; keep the snapshot as weak preview evidence and add an exact-value assertion for the changed discriminator before routing a repair packet

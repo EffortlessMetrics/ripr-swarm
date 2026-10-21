@@ -117,14 +117,28 @@ unsupported state as unknown and fabricates no reason conforms.
 
 | miss | Rust | Python | TypeScript | Perl v1 |
 | --- | --- | --- | --- | --- |
-| `no_call_path` | yes | pending #5491 | pending #5495 | no |
-| `no_assertion` | yes | pending #5491 | pending #5495 | no |
-| `assertion_not_observing` | yes | pending #5491 | pending #5495 | no (#3223) |
+| `no_call_path` | yes | pending #5491 | yes | no |
+| `no_assertion` | yes | pending #5491 | yes | no |
+| `assertion_not_observing` | yes | pending #5491 | yes | no (#3223) |
 | `assertion_not_credited` | yes | no (#5446) | no (#5446) | no |
-| `weak_assertion` | yes | pending #5491 | pending #5495 | no |
-| `missing_input` | yes | pending #5491 | pending #5495 | no (#4061, perl-lsp-swarm#17237, #5562) |
-| `missing_exact_assertion` | yes | pending #5491 | pending #5495 | no |
-| `observation_unconfirmed` | yes | pending #5491 | pending #5495 | yes |
+| `weak_assertion` | yes | pending #5491 | yes | no |
+| `missing_input` | yes | pending #5491 | yes | no (#4061, perl-lsp-swarm#17237, #5562) |
+| `missing_exact_assertion` | yes | pending #5491 | no (#5495: no row-owned fact) | no |
+| `observation_unconfirmed` | yes | pending #5491 | yes | yes |
+
+TypeScript (#5495) emits only from row-local merged evidence: the owner-path
+disposition (#5523), assertion admission, the family-relevant assertion
+(#5525) and per-row predicate activation (#5527). `no_call_path` covers
+heuristic name/proximity rows and affirmatively rejected owner calls, never
+`ModuleEntryCall`. `no_assertion` requires established path and admission
+`NoAssertionLike`. `assertion_not_observing` is a strong assertion of another
+behavior family, or a strong family assertion beside a mocked or spy-fabricated
+owner. `observation_unconfirmed` covers a module-entry path, an unanchored or
+unresolved alias owner call with an admitted assertion, and a strong row whose
+own boundary or changed-sink observation is unproven. Rows with unresolved
+admission, static-limited findings, `exposed`, `static_unknown` and Bun bridge
+findings keep `miss: null`. `missing_exact_assertion` stays unemitted because
+the TypeScript discriminator fact is finding-wide.
 
 "Pending" means the row-evidence prerequisites in this spec have landed or are
 tracked, and the producer has not yet mapped them. Perl's narrower coverage is
@@ -215,8 +229,8 @@ excluded from deterministic identity.
 
 ### Assertion admission prerequisite (Python, TypeScript)
 
-Python and TypeScript record no miss yet. Before a producer (#5491, #5495)
-may write a `no_assertion` miss, each extracted test carries an assertion
+Python records no miss yet; TypeScript writes one from #5495 under the
+rules below. Before a producer (#5491, #5495) may write a `no_assertion` miss, each extracted test carries an assertion
 admission state, computed fail-closed from the test's syntax:
 
 - `recognized_assertion_present`: the oracle extractor credited an assertion.
@@ -297,7 +311,7 @@ differs from the strength-only pick the finding adds
 
 ### Owner-path disposition (TypeScript)
 
-Before a TypeScript miss producer (#5495) can say why a related test does not
+So that the TypeScript miss producer (#5495) can say why a related test does not
 catch a change, each candidate must say what it establishes about the
 changed owner. `TypeScriptRelationKind` stays the relation's provenance; each
 `TypeScriptRelatedCandidate` also carries one internal
@@ -397,8 +411,8 @@ actionability or rendered output.
   unknown is RIPR-SPEC-0221's admission rule.
 - Splitting `assertion_not_credited` into proven-inert and admission-unproven
   cases; that needs the typed admission refusal from #5359.
-- Python and TypeScript miss producers (#5491, #5495) are not yet landed; the
-  contract and their prerequisites are specified here, the mapping is not.
+- The Python miss producer (#5491) is not yet landed; the TypeScript mapping
+  (#5495) ships row-local tokens only, see the capability table.
   Richer Perl reasons that need row-owned facts (#5562).
 - Any producer implementation, parser, call-graph or oracle expansion,
   support-tier promotion, or runtime or mutation-kill claim.

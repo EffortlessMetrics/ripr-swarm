@@ -46,8 +46,8 @@ Evidence
   - propagation unknown: TypeScript preview adapter does not yet model propagation
   - observation weak: Strongest extracted oracle kind: `relational_check` (rank 3)
   - discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `amount == threshold`
-  - related test tests/discount.test.ts:1 discounted value is not the full amount uses weak relational check oracle: t.not(...)
-  - related test tests/discount.test.ts:5 discounted value is not deeply equal to the full amount uses weak relational check oracle: t.notDeepEqual(...)
+  - related test tests/discount.test.ts:1 discounted value is not the full amount uses weak relational check oracle: t.not(...); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/discount.test.ts:5 discounted value is not deeply equal to the full amount uses weak relational check oracle: t.notDeepEqual(...); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
 
 Weakness
   - Only heuristic TypeScript test links were found for `applyDiscount`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion

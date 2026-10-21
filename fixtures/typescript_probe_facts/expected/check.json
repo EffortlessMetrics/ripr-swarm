@@ -56,7 +56,9 @@
           "line": 1,
           "oracle_strength": "smoke",
           "oracle_kind": "smoke_only",
-          "oracle": "expect(...).toBeTruthy(...)"
+          "oracle": "expect(...).toBeTruthy(...)",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {
@@ -310,7 +312,9 @@
           "line": 1,
           "oracle_strength": "smoke",
           "oracle_kind": "smoke_only",
-          "oracle": "expect(...).toBeTruthy(...)"
+          "oracle": "expect(...).toBeTruthy(...)",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {
@@ -447,7 +451,9 @@
           "line": 1,
           "oracle_strength": "smoke",
           "oracle_kind": "smoke_only",
-          "oracle": "expect(...).toBeTruthy(...)"
+          "oracle": "expect(...).toBeTruthy(...)",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {
@@ -583,7 +589,9 @@
           "line": 1,
           "oracle_strength": "smoke",
           "oracle_kind": "smoke_only",
-          "oracle": "expect(...).toBeTruthy(...)"
+          "oracle": "expect(...).toBeTruthy(...)",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {
@@ -720,7 +728,9 @@
           "line": 1,
           "oracle_strength": "smoke",
           "oracle_kind": "smoke_only",
-          "oracle": "expect(...).toBeTruthy(...)"
+          "oracle": "expect(...).toBeTruthy(...)",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {
@@ -857,7 +867,9 @@
           "line": 1,
           "oracle_strength": "smoke",
           "oracle_kind": "smoke_only",
-          "oracle": "expect(...).toBeTruthy(...)"
+          "oracle": "expect(...).toBeTruthy(...)",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {
@@ -994,7 +1006,9 @@
           "line": 1,
           "oracle_strength": "smoke",
           "oracle_kind": "smoke_only",
-          "oracle": "expect(...).toBeTruthy(...)"
+          "oracle": "expect(...).toBeTruthy(...)",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {
@@ -1131,7 +1145,9 @@
           "line": 1,
           "oracle_strength": "smoke",
           "oracle_kind": "smoke_only",
-          "oracle": "expect(...).toBeTruthy(...)"
+          "oracle": "expect(...).toBeTruthy(...)",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {
@@ -1268,7 +1284,9 @@
           "line": 1,
           "oracle_strength": "smoke",
           "oracle_kind": "smoke_only",
-          "oracle": "expect(...).toBeTruthy(...)"
+          "oracle": "expect(...).toBeTruthy(...)",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {

@@ -69,7 +69,9 @@
           "oracle_kind": "snapshot",
           "oracle": "expect(...).toMatchSnapshot(...)",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
         }
       ],
       "typescript_preview_card": {

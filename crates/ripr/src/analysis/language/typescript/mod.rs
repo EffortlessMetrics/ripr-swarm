@@ -101,6 +101,9 @@ mod rejection_equality_tests;
 mod related_tests;
 #[cfg(test)]
 mod replaced_block_tests;
+mod row_miss;
+#[cfg(test)]
+mod row_miss_tests;
 #[cfg(test)]
 mod self_comparing_assertion_tests;
 mod spread_override_guard;
@@ -130,7 +133,9 @@ mod workspace_packages;
 pub(crate) use actionability::*;
 pub(crate) use admission::{TypeScriptAdmissionContext, TypeScriptAssertionAdmission};
 pub(crate) use annotation_only::*;
-pub(crate) use assertion_selection::{row_projection_move, select_family_relevant_assertion};
+pub(crate) use assertion_selection::{
+    TypeScriptAssertionSelection, row_projection_move, select_family_relevant_assertion,
+};
 pub(crate) use boundary_input::*;
 pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
@@ -153,6 +158,7 @@ pub(crate) use parse::*;
 pub(crate) use paths::*;
 pub(crate) use probe_shape::*;
 pub(crate) use related_tests::*;
+pub(crate) use row_miss::*;
 pub(crate) use spread_override_guard::*;
 pub(crate) use static_limit::*;
 use suite_factory::SuiteFactoryExpansion;

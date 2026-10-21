@@ -20,7 +20,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: if (amount >= 5000) {
   Missing discriminator (1 of 2): Related tests reach `shipping` with a strong oracle, but no strong assertion observes a `shipping(...)` call at the changed predicate boundary `amount == 5000`; inputs on one side…
-  Related test: tests/shipping.test.ts:3 small order pays shipping
+  Related test: tests/shipping.test.ts:3 small order pays shipping (ripr could not confirm that this assertion observes the changed behavior)
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `amount == 5000`; the repair packet is complete and delegatable (advisory)
   Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak

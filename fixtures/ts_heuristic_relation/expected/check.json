@@ -56,7 +56,9 @@
           "line": 7,
           "oracle_strength": "unknown",
           "oracle_kind": "unknown",
-          "oracle": ""
+          "oracle": "",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found"
         }
       ],
       "typescript_preview_card": {

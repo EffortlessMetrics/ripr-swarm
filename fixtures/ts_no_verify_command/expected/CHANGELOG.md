@@ -420,3 +420,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_no_verify_command (19)
+
+Reason:
+typescript row-local related-test miss (#5495, RIPR-SPEC-0224): rows gain a typed non-decisional miss; class, stages and decision fields unchanged
+
+Command:
+`cargo xtask goldens bless ts_no_verify_command --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

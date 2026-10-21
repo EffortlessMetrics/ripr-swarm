@@ -58,7 +58,9 @@
           "oracle_kind": "unknown",
           "oracle": "",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "assertion_not_observing",
+          "why": "asserts, but not on the changed value"
         },
         {
           "name": "empty user throws with error code",
@@ -68,7 +70,9 @@
           "oracle_kind": "unknown",
           "oracle": "",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "assertion_not_observing",
+          "why": "asserts, but not on the changed value"
         },
         {
           "name": "empty user throws ParseError class",
@@ -78,7 +82,9 @@
           "oracle_kind": "unknown",
           "oracle": "",
           "relation_reason": "direct_owner_call",
-          "relation_confidence": "high"
+          "relation_confidence": "high",
+          "miss": "assertion_not_observing",
+          "why": "asserts, but not on the changed value"
         }
       ],
       "typescript_preview_card": {

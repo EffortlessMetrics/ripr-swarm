@@ -611,3 +611,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — javascript_js_preview (22)
+
+Reason:
+typescript row-local related-test miss (#5495, RIPR-SPEC-0224): rows gain a typed non-decisional miss; class, stages and decision fields unchanged
+
+Command:
+`cargo xtask goldens bless javascript_js_preview --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

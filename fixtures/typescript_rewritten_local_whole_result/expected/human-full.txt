@@ -47,7 +47,7 @@ Evidence
   - observation weak: Strongest extracted oracle kind: `relational_check` (rank 3)
   - discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `adult == age > 18`
   - local flow reaches constructed field: adult: age > 18, (line 4)
-  - related test tests/profile.test.ts:4 profile records adulthood uses weak relational check oracle: expect(...).toMatchObject(...)
+  - related test tests/profile.test.ts:4 profile records adulthood uses weak relational check oracle: expect(...).toMatchObject(...); misses: assertion too weak to tell the old behavior from the new
 
 Weakness
   - Related test reaches `buildProfile` but the strongest extracted oracle is `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form with an exact payload (string, object, or class reference)

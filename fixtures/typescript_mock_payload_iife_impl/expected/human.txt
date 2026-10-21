@@ -20,7 +20,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: db.write(v + 2);
   Missing discriminator (1 of 2): Related test reaches `save` with bounded mock payload evidence `expect(db.write).toHaveBeenCalledWith(2)`; keep the item advisory until mock-shape actionability can name verify…
-  Related test: tests/save.test.ts:7 save
+  Related test: tests/save.test.ts:7 save (assertion too weak to tell the old behavior from the new)
   Next step — TypeScript preview advisory: related mock payload evidence
     `expect(db.write).toHaveBeenCalledWith(2)` is syntax-bounded for `call db.write includes v + 2`,
     but no actionable repair packet is emitted until verify, receipt, evidence refs, and edit

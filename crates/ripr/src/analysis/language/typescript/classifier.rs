@@ -5305,6 +5305,27 @@ pub(crate) fn classify_change_with_alias_state(
     );
     missing.push(actionability.missing_summary());
 
+    // #5495: the row-local miss is assigned last, from the final class, and
+    // writes only `RelatedTest::miss`; nothing above or below reads it.
+    assign_row_misses(
+        &TsRowMissContext {
+            class: &class,
+            static_limited: static_limit.is_some(),
+            probe_shape: &probe_shape,
+            line_text,
+            owner,
+            alias_map,
+            workspace_root,
+            credits: CreditFacts {
+                mock_facts: &mock_facts,
+                pin_facts: &pin_facts,
+            },
+        },
+        &related_candidates,
+        &predicate_activations,
+        &mut related,
+    );
+
     let related_count = related.len();
     let reach_summary = format!(
         "{} related test(s) found for owner `{}`",

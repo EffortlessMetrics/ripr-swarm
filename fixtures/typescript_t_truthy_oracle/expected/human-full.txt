@@ -47,7 +47,7 @@ Evidence
   - observation weak: Strongest extracted oracle kind: `smoke_only` (rank 2)
   - discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `return value == total - penalty + 0`
   - local flow reaches returned value: return total - penalty + 0; (line 2)
-  - related test tests/score.test.ts:3 scores a truthy result uses smoke smoke only oracle: t.truthy(...)
+  - related test tests/score.test.ts:3 scores a truthy result uses smoke smoke only oracle: t.truthy(...); misses: assertion too weak to tell the old behavior from the new
 
 Weakness
   - Related test reaches `score` with a smoke-only oracle; replace or augment the truthiness check with an exact-value assertion for the changed discriminator before routing a repair packet

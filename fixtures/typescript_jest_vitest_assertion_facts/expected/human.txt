@@ -20,7 +20,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: return `summary:${status.trim()}`;
   Missing discriminator (1 of 2): Related test reaches `renderSummary` with snapshot evidence; keep the snapshot as weak preview evidence and add an exact-value assertion for the changed discriminator before…
-  Related test: tests/signals.test.ts:26 renders summary snapshot
+  Related test: tests/signals.test.ts:26 renders summary snapshot (assertion too weak to tell the old behavior from the new)
   Next step — TypeScript preview advisory: add an exact-value assertion alongside the snapshot for
     missing discriminator `return value == `summary:${status.trim()}``; no actionable repair packet
     is emitted until verify, receipt, and edit-boundary fields are available
