@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A UTF-8 byte-order mark at the start of a Rust file no longer hides that file's `mod`, `#[path]` and `include!` edges from the module-graph walk. rustc drops the mark, and the index already did; the walk now does too, so a test module reached only through a BOM-prefixed file is no longer credited as a related test and a `no_static_path` finding no longer turns into `exposed` (#9009).

@@ -1391,10 +1391,13 @@ pub(crate) fn targeted_test_brief_for_classified_seam(entry: &ClassifiedSeam) ->
     out.push_str("\nWhy it matters:\n");
     if let Some(test) = evidence.related_tests.first() {
         out.push_str(&format!(
-            "- Related test evidence: {} uses {} {} oracle.\n",
+            "- Related test evidence: {} uses {}.\n",
             test.test_name,
-            test.oracle_strength.as_str(),
-            test.oracle_kind.as_str()
+            crate::output::related_test_miss::oracle_projection(
+                &test.oracle_strength,
+                &test.oracle_kind,
+                !matches!(test.oracle_strength, crate::domain::OracleStrength::None),
+            )
         ));
     } else {
         out.push_str("- No related test location is visible in saved-workspace analysis.\n");
@@ -3920,6 +3923,7 @@ mod tests {
             observe: stage(StageState::Yes),
             discriminate: stage(StageState::Yes),
             observed_values: vec![ValueFact {
+                file: None,
                 line: 12,
                 text: "discounted_total(50, 100)".to_string(),
                 value: "50".to_string(),
@@ -5978,7 +5982,7 @@ mod tests {
             "- weak, weakly_gripped",
             "- owner: pricing::discounted_total",
             "Why it matters:",
-            "- Related test evidence: below_threshold_has_no_discount uses strong exact_value oracle.",
+            "- Related test evidence: below_threshold_has_no_discount uses strong exact value oracle.",
             "- Missing discriminator: discount_threshold (equality boundary) (observed values do not include the equality-boundary case)",
             "Add a targeted test:",
             "- Suggested file: tests/pricing.rs",
@@ -6012,6 +6016,46 @@ mod tests {
                     "missing inferred brief text {needle:?} in:\n{brief}"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn targeted_test_brief_oracle_wording_distinguishes_ungraded_assertions() -> Result<(), String>
+    {
+        for (kind, strength, expected) in [
+            (
+                OracleKind::ExactValue,
+                OracleStrength::Unknown,
+                "exact value oracle, not graded against this probe",
+            ),
+            (
+                OracleKind::Unknown,
+                OracleStrength::Unknown,
+                "an unclassified oracle, not graded against this probe",
+            ),
+            (
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+                "strong exact value oracle",
+            ),
+        ] {
+            let mut entry = weakly_gripped_classified();
+            entry.evidence.related_tests = vec![std::sync::Arc::new(related_test_with(
+                "observes_price",
+                kind,
+                strength,
+                crate::analysis::test_grip_evidence::RelationConfidence::High,
+            ))];
+            let brief = targeted_test_brief_for_classified_seam(&entry);
+            let row = brief
+                .lines()
+                .find(|line| line.starts_with("- Related test evidence:"))
+                .ok_or_else(|| format!("missing related-test evidence: {brief}"))?;
+            assert_eq!(
+                row,
+                format!("- Related test evidence: observes_price uses {expected}.")
+            );
         }
         Ok(())
     }

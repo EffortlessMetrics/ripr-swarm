@@ -97,7 +97,10 @@ pub(crate) struct CallIdentityMemos {
     /// RIPR-SPEC-0035: every workspace `const`/`static` by name with its
     /// file and masked initializer, built once per index on first use by
     /// the owner-return pin's self-computed expected-value check.
-    constants: std::sync::OnceLock<BTreeMap<String, Vec<(std::path::PathBuf, String)>>>,
+    constants: std::sync::OnceLock<ConstantTable>,
+    /// #9209: the workspace's non-plain `Drop` impls, read once per index so
+    /// `drop_is_plain` is a lookup instead of a per-probe corpus parse.
+    drop_impls: std::sync::OnceLock<super::element_field_pin::DropImplIndex>,
 }
 
 impl Clone for CallIdentityMemos {
@@ -197,11 +200,23 @@ impl CallIdentityMemos {
     /// The memoized workspace constant table, built by `build` on first use.
     pub(crate) fn workspace_constants(
         &self,
-        build: impl FnOnce() -> BTreeMap<String, Vec<(std::path::PathBuf, String)>>,
-    ) -> &BTreeMap<String, Vec<(std::path::PathBuf, String)>> {
+        build: impl FnOnce() -> ConstantTable,
+    ) -> &ConstantTable {
         self.constants.get_or_init(build)
     }
+
+    /// The memoized workspace `Drop` impl index, built by `build` on first use.
+    pub(super) fn workspace_drop_impls(
+        &self,
+        build: impl FnOnce() -> super::element_field_pin::DropImplIndex,
+    ) -> &super::element_field_pin::DropImplIndex {
+        self.drop_impls.get_or_init(build)
+    }
 }
+
+/// Workspace `const`/`static` items by name: file, masked initializer, and
+/// the declared `T` of `: T` when the item states one (#8112).
+pub(crate) type ConstantTable = BTreeMap<String, Vec<(std::path::PathBuf, String, Option<String>)>>;
 
 /// The memoized (or freshly scanned) whole-index answers for `package`.
 fn call_identity_shape(
@@ -714,6 +729,9 @@ impl OwnerCallIdentity {
         if first == "Self" {
             return Matches::Any;
         }
+        // Modules a glob of the owner's own crate can bring in under `first`
+        // (`use mycrate::*;` makes `b::render(..)` the crate's `b`).
+        let mut from_globs = Matches::none();
         for scope in &scopes.scopes {
             let base = file_segments.map(|file| join(file, &scope.modules));
             let base = base.as_deref();
@@ -725,6 +743,11 @@ impl OwnerCallIdentity {
                 let [binding] = imports.as_slice() else {
                     return Matches::Any;
                 };
+                // A nearer glob may bind `first` to a different module than
+                // this outer import; which wins is not read, so fail closed.
+                if !matches!(&from_globs, Matches::Some(set) if set.is_empty()) {
+                    return Matches::Any;
+                }
                 let module = match binding {
                     UseBinding::Path(path) | UseBinding::Renamed(path) => {
                         use_target(path, base, scope, crate_names)
@@ -749,18 +772,48 @@ impl OwnerCallIdentity {
             for glob in &scope.globs {
                 match glob {
                     Some(glob) if glob.len() == 1 && glob[0] == "super" => follows_super = true,
-                    // Another glob may bring the segment in.
-                    _ => return Matches::Any,
+                    // A glob that names a module of the owner's crate can
+                    // bring in only that module's child modules, so a placed
+                    // `<glob>::<first>` is what `first` may name. Any other
+                    // glob (a dependency, an unreadable prefix) may bring the
+                    // segment in from somewhere ripr cannot see.
+                    Some(glob) => match use_target(glob, base, scope, crate_names) {
+                        Some(module) => {
+                            let candidate = join(&module, segments);
+                            if self.module_is_placed(&candidate) {
+                                from_globs = from_globs.union(self.matches_module(Some(candidate)));
+                            }
+                        }
+                        None => return Matches::Any,
+                    },
+                    None => return Matches::Any,
                 }
             }
             if !follows_super {
                 break;
             }
         }
-        if crate_names.contains(first) {
-            return self.matches_module(Some(rest.to_vec()));
+        let by_crate_name = crate_names.contains(first);
+        let named = if by_crate_name {
+            self.matches_module(Some(rest.to_vec()))
+        } else {
+            Matches::none()
+        };
+        match from_globs.union(named) {
+            // Nothing placed was named: the segment is bound by nothing
+            // ripr reads.
+            Matches::Some(set) if set.is_empty() => Matches::Any,
+            found => found,
         }
-        Matches::Any
+    }
+
+    /// Whether some placed definition sits directly in the crate-anchored
+    /// `module`.
+    fn module_is_placed(&self, module: &[String]) -> bool {
+        self.definitions
+            .iter()
+            .flatten()
+            .any(|path| path.as_slice() == module)
     }
 
     /// The definitions declared directly in the crate-anchored `module`;
@@ -806,9 +859,22 @@ fn use_target(
         "crate" | "self" | "super" => keyword_module(path, base?),
         "Self" => None,
         _ if scope.child_modules.contains(first) => Some(join(base?, path)),
-        _ if crate_names.contains(first) => Some(path[1..].to_vec()),
+        _ if crate_names.contains(first) && !crate_name_rebound(scope, first) => {
+            Some(path[1..].to_vec())
+        }
         _ => None,
     }
+}
+
+/// Whether `scope` binds the crate-name identifier `name` to something other
+/// than the crate itself (`use other_dep as globs;`), so a path starting with
+/// it no longer names the owner's crate.
+fn crate_name_rebound(scope: &NameScope, name: &str) -> bool {
+    scope.block_binds(name)
+        || scope.defines.contains(name)
+        || scope
+            .imports_of(name)
+            .any(|binding| !matches!(binding, UseBinding::Path(path) if path.len() == 1))
 }
 
 /// The crate-anchored module of a path that starts with `crate`, `self` or
@@ -916,7 +982,7 @@ fn attribute_sets_path(attribute: &str) -> bool {
 /// The module path of a definition: its file's module segments, then the
 /// inline modules its parser id records. `None` when either is unknown or
 /// the id is not a parser id of a module-level item.
-fn definition_module_path(function: &FunctionSummary) -> Option<Vec<String>> {
+pub(super) fn definition_module_path(function: &FunctionSummary) -> Option<Vec<String>> {
     let mut path = file_module_segments(&function.file)?;
     let prefix = format!("{}::", crate::analysis::stable_path_text(&function.file));
     let rest = function.id.0.strip_prefix(&prefix)?;
@@ -1101,7 +1167,7 @@ fn crate_class(file: &Path) -> Option<String> {
 
 /// The file sits under a `tests/` directory and no `src/` directory: an
 /// integration-test crate.
-fn under_tests_dir(file: &Path) -> bool {
+pub(super) fn under_tests_dir(file: &Path) -> bool {
     let normalized = super::related_tests::normalize_path(file);
     !(normalized.contains("/src/") || normalized.starts_with("src/"))
         && super::super::rust_index::is_test_file(file)
@@ -1879,6 +1945,68 @@ fn other_crate() {
         assert_eq!(
             settle(&index, "::a::render", "other_crate"),
             Some(CallTarget::Unsettled)
+        );
+    }
+
+    /// A `use <own crate>::*;` at the top of an integration test is the
+    /// usual spelling. It must not hide which module a qualified call names:
+    /// the glob brings in only the crate's own modules, and the crate's name
+    /// still anchors a fully spelled path beside it. A glob of a dependency,
+    /// or an unrelated module, keeps the call unsettled.
+    #[test]
+    fn an_own_crate_glob_does_not_hide_a_qualified_call() {
+        let tests = "\
+use modules::*;
+
+#[test]
+fn glob_module_path() {
+    assert_eq!(b::render(1), 2);
+}
+
+#[test]
+fn glob_crate_path() {
+    assert_eq!(modules::b::render(1), 2);
+}
+
+#[test]
+fn glob_owner_module_path() {
+    assert_eq!(a::render(1), 2);
+}
+
+#[test]
+fn glob_unknown_first_segment() {
+    assert_eq!(other_dep::a::render(1), 2);
+}
+";
+        let own = index(&[("src/lib.rs", RENDER_LIB), ("tests/api.rs", tests)]);
+        for test in ["glob_module_path", "glob_crate_path"] {
+            assert_eq!(settle(&own, "::a::render", test), Some(CallTarget::Other));
+            assert_eq!(settle(&own, "::b::render", test), Some(CallTarget::Owner));
+        }
+        assert_eq!(
+            settle(&own, "::a::render", "glob_owner_module_path"),
+            Some(CallTarget::Owner)
+        );
+        assert_eq!(
+            settle(&own, "::a::render", "glob_unknown_first_segment"),
+            Some(CallTarget::Unsettled)
+        );
+        let dependency_glob = "\
+use other_dep::*;
+
+#[test]
+fn foreign_glob() {
+    assert_eq!(b::render(1), 2);
+}
+";
+        let foreign = index(&[
+            ("src/lib.rs", RENDER_LIB),
+            ("tests/api.rs", dependency_glob),
+        ]);
+        assert_eq!(
+            settle(&foreign, "::a::render", "foreign_glob"),
+            Some(CallTarget::Unsettled),
+            "`b` may come from the dependency's glob"
         );
     }
 

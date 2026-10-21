@@ -48,6 +48,10 @@ LABELS = {
     ),
 }
 SHA_RE = re.compile(r"[0-9a-f]{40}")
+TEMPLATE_LINES = {
+    "claim": "Governing issue or accepted claim:",
+    "delta": "Acceptance delta (one sentence):",
+}
 
 
 def normalize(value: str) -> str:
@@ -130,6 +134,62 @@ def trusted_peer(current: dict[str, Any], peer: dict[str, Any]) -> bool:
     )
 
 
+def dependabot_identity(current: dict[str, Any]) -> dict[str, str] | None:
+    """Policy-derived claim for a same-repository Dependabot update PR.
+
+    Dependabot writes its own PR body and cannot carry the template lines, so
+    the claim is the dependency policy in docs/CI.md. The delta names the update
+    branch. Peers are compared only on identity lines in their own bodies, so a
+    derived identity never competes with another Dependabot PR. Only the GitHub-attested
+    bot author on a dependabot/ branch of this repository qualifies; a fork or
+    a human-authored PR must still write the lines itself.
+    """
+
+    user = current.get("user") or {}
+    head = current.get("head") or {}
+    base = current.get("base") or {}
+    ref = head.get("ref") or ""
+    repository = head_repository(current)
+    if (
+        user.get("login") != "dependabot[bot]"
+        or user.get("type") != "Bot"
+        or not ref.startswith("dependabot/")
+        or repository == ""
+        or repository != ((base.get("repo") or {}).get("full_name") or "")
+    ):
+        return None
+    return {
+        "claim": "docs/CI.md dependency update policy",
+        "delta": f"dependency update {ref}",
+    }
+
+
+def effective_fields(pr: dict[str, Any]) -> dict[str, str]:
+    """Body fields, with the Dependabot policy identity filling missing lines."""
+
+    fields = extract_fields(pr.get("body") or "")
+    if invalid(fields["claim"]) or invalid(fields["delta"]):
+        derived = dependabot_identity(pr)
+        if derived is not None:
+            fields = {**fields, **derived}
+    return fields
+
+
+def identity_detail(fields: dict[str, str]) -> str:
+    missing = [
+        TEMPLATE_LINES[key]
+        for key in ("claim", "delta")
+        if invalid(fields.get(key, ""))
+    ]
+    if not missing:
+        return ""
+    return (
+        "missing or placeholder PR body line(s): "
+        + ", ".join(missing)
+        + "; add the line(s) from .github/pull_request_template.md with a real value"
+    )
+
+
 def refusal(
     reason: str,
     current: dict[str, Any],
@@ -137,6 +197,7 @@ def refusal(
     max_files: int,
     max_lines: int,
     peers: list[int] | None = None,
+    detail: str = "",
 ) -> dict[str, Any]:
     changed_files = int(current.get("changed_files") or 0)
     changed_lines = int(current.get("additions") or 0) + int(
@@ -145,6 +206,7 @@ def refusal(
     return {
         "status": "refused",
         "reason": reason,
+        "detail": detail,
         "claim": normalize(fields.get("claim", "")),
         "acceptance_delta": normalize(fields.get("delta", "")),
         "competing_prs": peers or [],
@@ -163,19 +225,28 @@ def decide(
     max_files: int,
     max_lines: int,
 ) -> dict[str, Any]:
-    fields = extract_fields(current.get("body") or "")
+    fields = effective_fields(current)
     actual_head = ((current.get("head") or {}).get("sha") or "")
-    refuse = lambda reason, peers=None: refusal(  # noqa: E731
-        reason, current, fields, max_files, max_lines, peers
+    refuse = lambda reason, peers=None, detail="": refusal(  # noqa: E731
+        reason, current, fields, max_files, max_lines, peers, detail
     )
     if not expected_head or not SHA_RE.fullmatch(expected_head):
-        return refuse("expected_head_missing")
+        return refuse(
+            "expected_head_missing",
+            detail="expected head is missing or is not a full 40-character commit SHA; retry admission with the exact PR head",
+        )
     if actual_head != expected_head:
-        return refuse("candidate_head_moved")
+        return refuse(
+            "candidate_head_moved",
+            detail=f"PR head is {actual_head or 'missing'} but admission was requested for {expected_head}; refresh the exact PR/head evidence and retry",
+        )
     if current.get("state") != "open" or current.get("draft") is True:
-        return refuse("candidate_not_open_ready")
+        return refuse(
+            "candidate_not_open_ready",
+            detail=f"PR state is {current.get('state')!r} and draft is {current.get('draft')!r}; admission requires an open, ready (non-draft) PR",
+        )
     if invalid(fields["claim"]) or invalid(fields["delta"]):
-        return refuse("claim_identity_missing")
+        return refuse("claim_identity_missing", detail=identity_detail(fields))
 
     claim = normalize(fields["claim"])
     delta = normalize(fields["delta"])
@@ -183,7 +254,7 @@ def decide(
     for peer in open_candidates:
         if peer.get("number") == current.get("number") or not trusted_peer(current, peer):
             continue
-        peer_fields = extract_fields(peer.get("body") or "")
+        peer_fields = effective_fields(peer)
         if invalid(peer_fields["claim"]) or invalid(peer_fields["delta"]):
             continue
         if normalize(peer_fields["claim"]) == claim and normalize(
@@ -194,18 +265,28 @@ def decide(
             exact_peers.append(int(peer["number"]))
 
     if exact_peers:
-        return refuse("competing_candidate", sorted(exact_peers))
+        peers = sorted(exact_peers)
+        listed = ", ".join(f"#{peer}" for peer in peers)
+        return refuse(
+            "competing_candidate",
+            peers,
+            detail=f"trusted competing PR(s) {listed} share the same governing claim and acceptance delta; reconcile them and record the accepted winner/losing disposition naming the winning PR in one of the competing PR bodies (or name a listed peer as the proposed replacement in the winning PR body) before qualification",
+        )
 
     changed_files = int(current.get("changed_files") or 0)
     changed_lines = int(current.get("additions") or 0) + int(
         current.get("deletions") or 0
     )
     if not docs_only and (changed_files > max_files or changed_lines > max_lines):
-        return refuse("qualification_scope_oversized")
+        return refuse(
+            "qualification_scope_oversized",
+            detail=f"candidate changes {changed_files} files / {changed_lines} changed lines, exceeding the ordinary limit of {max_files} files / {max_lines} changed lines; split or recompose the candidate before ordinary qualification",
+        )
 
     return {
         "status": "admitted",
         "reason": "candidate_current_unique_bounded",
+        "detail": "",
         "claim": claim,
         "acceptance_delta": delta,
         "competing_prs": [],
@@ -226,14 +307,18 @@ def fixture(
     draft: bool = False,
     repository: str = "EffortlessMetrics/ripr-swarm",
     target: str = "main",
+    login: str = "contributor",
+    user_type: str = "User",
+    ref: str = "feature",
 ) -> dict[str, Any]:
     return {
         "number": number,
         "state": "open",
         "draft": draft,
         "body": body,
-        "head": {"sha": head, "repo": {"full_name": repository}},
-        "base": {"ref": target},
+        "user": {"login": login, "type": user_type},
+        "head": {"sha": head, "ref": ref, "repo": {"full_name": repository}},
+        "base": {"ref": target, "repo": {"full_name": "EffortlessMetrics/ripr-swarm"}},
         "changed_files": changed_files,
         "additions": additions,
         "deletions": deletions,
@@ -367,8 +452,30 @@ def self_test() -> None:
     ]
     assert run(mutual_replace[0], mutual_replace)["reason"] == "competing_candidate"
     assert run(fixture(body="", head=head), [])["reason"] == "claim_identity_missing"
+    empty_detail = run(fixture(body="", head=head), [])["detail"]
+    assert "Governing issue or accepted claim:" in empty_detail
+    assert "Acceptance delta (one sentence):" in empty_detail
+    claim_only_detail = run(
+        fixture(body="Governing issue or accepted claim: #2022\n", head=head), []
+    )["detail"]
+    assert "Acceptance delta (one sentence):" in claim_only_detail
+    assert "Governing issue or accepted claim:" not in claim_only_detail
+    placeholder_detail = run(
+        fixture(
+            body=fixture_body(delta="TBD"),
+            head=head,
+        ),
+        [],
+    )["detail"]
+    assert "Acceptance delta (one sentence):" in placeholder_detail
     oversized = fixture(body=fixture_body(), head=head, changed_files=161)
     assert run(oversized, [oversized])["reason"] == "qualification_scope_oversized"
+    assert "161 files" in run(oversized, [oversized])["detail"]
+    assert "160 files" in run(oversized, [oversized])["detail"]
+    assert "#11" in run(current, [current, duplicate])["detail"]
+    competing_detail = run(current, [current, duplicate])["detail"]
+    assert "one of the competing PR bodies" in competing_detail
+    assert "both PR bodies" not in competing_detail
     assert run(oversized, [oversized], docs=True)["status"] == "admitted"
     assert run(current, [current], "b" * 40)["reason"] == "candidate_head_moved"
     assert (
@@ -376,7 +483,42 @@ def self_test() -> None:
         == "candidate_not_open_ready"
     )
     assert run(current, [], "short")["reason"] == "expected_head_missing"
-    print("candidate-admission self-test: 21 controls passed")
+    bump = {
+        "login": "dependabot[bot]",
+        "user_type": "Bot",
+        "ref": "dependabot/npm_and_yarn/editors/vscode/markdown-it-14.3.3",
+    }
+    admitted = run(fixture(body="Bumps markdown-it.", head=head, **bump), [])
+    assert admitted["status"] == "admitted"
+    assert admitted["claim"] == "docs/ci.md dependency update policy"
+    assert admitted["acceptance_delta"] == f"dependency update {bump['ref']}".casefold()
+    sibling = fixture(
+        number=11,
+        body="Bumps another.",
+        head="b" * 40,
+        **{**bump, "ref": "dependabot/cargo/serde-1.0.1"},
+    )
+    assert run(fixture(body="", head=head, **bump), [sibling])["status"] == "admitted"
+    for spoof in (
+        {**bump, "login": "contributor"},
+        {**bump, "user_type": "User"},
+        {**bump, "ref": "feature/dependabot/x"},
+        {**bump, "repository": "external/fork"},
+    ):
+        refused = run(fixture(body="", head=head, **spoof), [])
+        assert refused["reason"] == "claim_identity_missing", spoof
+    matching = fixture(
+        number=12,
+        body=fixture_body(
+            claim="docs/CI.md dependency update policy",
+            delta=f"dependency update {bump['ref']}",
+        ),
+        head="c" * 40,
+    )
+    bot = fixture(number=10, body="", head=head, **bump)
+    assert run(bot, [bot, matching])["reason"] == "competing_candidate"
+    assert run(matching, [bot, matching], "c" * 40)["reason"] == "competing_candidate"
+    print("candidate-admission self-test: 37 controls passed")
 
 
 def load_json(path: Path) -> Any:

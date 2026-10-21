@@ -26,8 +26,9 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/propagated_error_closing_early_path/input --diff <cwd>/fixtures/propagated_error_closing_early_path/diff.patch --mode fast probe:src_lib.rs:error_path:107ffe09
   ripr context --root <cwd>/fixtures/propagated_error_closing_early_path/input --diff <cwd>/fixtures/propagated_error_closing_early_path/diff.patch --mode fast --at probe:src_lib.rs:error_path:107ffe09
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:error_path:107ffe09 --root <cwd>/fixtures/propagated_error_closing_early_path/input` for the full gate's answer
 Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/propagated_error_closing_early_path/input --at src/lib.rs:6 --kind error_path
+  ripr agent stub --root <cwd>/fixtures/propagated_error_closing_early_path/input --at src/lib.rs:5 --kind error_path
 
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.

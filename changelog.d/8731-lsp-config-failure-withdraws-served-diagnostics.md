@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- When `ripr.toml` breaks mid-session after a snapshot has committed, both pull diagnostic paths (`textDocument/diagnostic` and `workspace/diagnostic`) now withdraw the retained pre-failure findings and serve the typed analysis-pending marker under the `fix_configuration` recovery route, tagged `withdrawn_configuration_failure` so the state is not misreported as never-analyzed. The committed snapshot stays retained and reachable via the retrieval routes; the stale served identity no longer answers `unchanged` behind the withdrawal (#8731).

@@ -17,6 +17,90 @@ const TEST_COVERED_BY_LIST_TIMEOUT: Duration = Duration::from_mins(5);
 /// the list cap or reported as an unresolved `covered_by` pointer (#4141).
 const TEST_COVERED_BY_BUILD_TIMEOUT: Duration = Duration::from_mins(30);
 const COVERED_BY_INSTRUMENT_PREFIX: &str = "covered_by_instrument_timeout:";
+/// Infrastructure state: the spawn timed out while Cargo was blocked on a
+/// build/package lock held by another process (#8793). Still an instrument
+/// failure, never a policy violation and never a pass.
+const COVERED_BY_LOCK_WAIT_PREFIX: &str = "covered_by_lock_wait_timeout:";
+/// Cargo prints this line while it waits on a lock another process holds.
+const CARGO_LOCK_WAIT_MARKER: &str = "waiting for file lock";
+/// A spawn that timed out while only waiting on a cargo lock is retried this
+/// many times, so time spent queued behind another process's build does not
+/// consume the enumeration budget. The bound keeps the gate fail-closed.
+const LOCK_WAIT_RETRIES: usize = 6;
+/// Total wall-clock ceiling for one lock-wait retry sequence (#8939). The
+/// attempt bound alone allows 7 spawns of the 30-minute build timeout (about
+/// 3.5h). The sum of the lock-wait attempts' recorded durations is checked
+/// after each attempt, so the sequence may overshoot by at most one spawn
+/// timeout. 90 minutes lets three build-length lock waits clear and no more.
+const LOCK_WAIT_CEILING: Duration = Duration::from_mins(90);
+/// First word of the history line recording that the ceiling stopped retrying.
+const LOCK_WAIT_CEILING_NOTE_PREFIX: &str = "xtask: lock-wait ceiling";
+const INSTRUMENT_FAILURE_PHRASE: &str = "instrument timeout, not an unresolved pointer";
+
+/// True when `error` is a `check-file-policy` instrument failure (timeout or
+/// lock wait), as opposed to a policy violation. `precommit` uses this to run
+/// its remaining checks and still fail at the end.
+pub(crate) fn is_covered_by_instrument_failure(error: &str) -> bool {
+    // Anchored to the first line, which the validator formats itself. Later
+    // lines embed arbitrary cargo stdout/stderr, which must not be able to
+    // turn a real failure into an infrastructure one.
+    error.lines().next().is_some_and(|first| {
+        first.contains(&format!(
+            "enumeration did not finish ({INSTRUMENT_FAILURE_PHRASE})"
+        ))
+    })
+}
+
+/// The lock line, only while cargo was still blocked on it: cargo keeps the
+/// line after it acquires the lock and goes on to compile, so a lock line
+/// followed by any other output is a stale mention, not a lock wait.
+fn lock_wait_note(stderr: &str) -> Option<&str> {
+    stderr
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .filter(|line| line.contains(CARGO_LOCK_WAIT_MARKER))
+}
+
+/// Run `capture`, retrying while the only observed cause of a timeout is a
+/// cargo lock wait. Any other timeout, exhausted lock-wait retries, or an
+/// exhausted [`LOCK_WAIT_CEILING`] (summed from the recorded attempt
+/// durations, so no clock is read) is returned as a timed-out output and stays
+/// a failure.
+fn capture_past_lock_wait(
+    spawn: &CoveredBySpawn,
+    capture: &mut impl FnMut(&CoveredBySpawn) -> Result<TimedOutput, String>,
+) -> Result<TimedOutput, String> {
+    let mut attempts = 0;
+    let mut waited = Duration::ZERO;
+    loop {
+        let mut output = capture(spawn)?;
+        let lock_wait = output.timed_out && lock_wait_note(&output.stderr).is_some();
+        if lock_wait {
+            waited = waited.saturating_add(output.duration);
+        }
+        let ceiling_exhausted = lock_wait && waited >= LOCK_WAIT_CEILING;
+        if lock_wait && !ceiling_exhausted && attempts < LOCK_WAIT_RETRIES {
+            attempts += 1;
+            continue;
+        }
+        // History lines are kept ahead of cargo's own output so the last-line
+        // lock check above is unaffected.
+        if ceiling_exhausted {
+            output.stderr = format!(
+                "{LOCK_WAIT_CEILING_NOTE_PREFIX} of {LOCK_WAIT_CEILING:?} exhausted after {waited:?} blocked on a cargo lock\n{}",
+                output.stderr
+            );
+        }
+        if attempts > 0 {
+            output.stderr = format!(
+                "xtask: retried {attempts} time(s) while blocked on a cargo lock (final attempt took {:?})\n{}",
+                output.duration, output.stderr
+            );
+        }
+        return Ok(output);
+    }
+}
 
 /// Validate the repository's non-Rust file policy and write its standard
 /// report. The parser and shared path predicates remain in `main.rs` until
@@ -204,9 +288,17 @@ fn validate_test_covered_by_recorded_with(
             if key.as_ref().is_some_and(|key| warmed.contains(key)) {
                 continue;
             }
-            let captured = capture(&spawn);
-            diagnostics.push(CommandDiagnostic::captured("cargo", &spawn.args, &captured));
-            let output = captured?;
+            // One diagnostic row per attempt, so the time spent in earlier
+            // lock-wait attempts is not lost from the report.
+            let output = capture_past_lock_wait(&spawn, &mut |attempt| {
+                let captured = capture(attempt);
+                diagnostics.push(CommandDiagnostic::captured(
+                    "cargo",
+                    &attempt.args,
+                    &captured,
+                ));
+                captured
+            })?;
             if output.timed_out || !output.status.is_some_and(|status| status.success()) {
                 return Ok(enumeration_result(output, spawn.timeout));
             }
@@ -457,7 +549,22 @@ fn enumeration_result(output: TimedOutput, timeout: Duration) -> (bool, String, 
         .map(|status| status.to_string())
         .unwrap_or_else(|| "not available".to_string());
     let timeout_note = if output.timed_out {
-        format!("{COVERED_BY_INSTRUMENT_PREFIX} timed out after {timeout:?}; ")
+        match lock_wait_note(&output.stderr) {
+            Some(line) => {
+                let ceiling = output
+                    .stderr
+                    .lines()
+                    .take(2)
+                    .find(|history| history.starts_with(LOCK_WAIT_CEILING_NOTE_PREFIX))
+                    .map(|history| format!("{history}; "))
+                    .unwrap_or_default();
+                format!(
+                    "{COVERED_BY_LOCK_WAIT_PREFIX} timed out after {timeout:?} blocked on a cargo lock held by another process ({}); {ceiling}",
+                    line.trim()
+                )
+            }
+            None => format!("{COVERED_BY_INSTRUMENT_PREFIX} timed out after {timeout:?}; "),
+        }
     } else {
         String::new()
     };
@@ -511,9 +618,11 @@ fn validate_test_covered_by_with(
             None => enumerate(&args)
                 .map_err(|error| format!("{path}:{line} enumerate `{command}`: {error}"))?,
         };
-        if stderr.starts_with(COVERED_BY_INSTRUMENT_PREFIX) {
+        if stderr.starts_with(COVERED_BY_INSTRUMENT_PREFIX)
+            || stderr.starts_with(COVERED_BY_LOCK_WAIT_PREFIX)
+        {
             return Err(format!(
-                "{path}:{line} test-valued `covered_by` enumeration did not finish (instrument timeout, not an unresolved pointer): `{command}`\nstdout: {stdout}\nstderr: {stderr}"
+                "{path}:{line} test-valued `covered_by` enumeration did not finish ({INSTRUMENT_FAILURE_PHRASE}): `{command}`\nstdout: {stdout}\nstderr: {stderr}"
             ));
         }
         if !success {
@@ -545,11 +654,19 @@ mod tests {
     use std::time::Duration;
 
     use super::COVERED_BY_INSTRUMENT_PREFIX;
+    use super::COVERED_BY_LOCK_WAIT_PREFIX;
+    use super::CoveredBySpawn;
+    use super::INSTRUMENT_FAILURE_PHRASE;
+    use super::LOCK_WAIT_CEILING;
+    use super::LOCK_WAIT_CEILING_NOTE_PREFIX;
+    use super::LOCK_WAIT_RETRIES;
     use super::TEST_COVERED_BY_BUILD_TIMEOUT;
     use super::TEST_COVERED_BY_LIST_TIMEOUT;
     use super::build_args_before_list;
+    use super::capture_past_lock_wait;
     use super::enumeration_result;
     use super::enumeration_spawns;
+    use super::is_covered_by_instrument_failure;
     use super::validate_test_covered_by;
     use super::validate_test_covered_by_with;
     use crate::run::{CommandDiagnostic, TimedOutput};
@@ -1527,6 +1644,310 @@ mod tests {
                 "instrument timeout was reported as an unresolved pointer: {error}"
             ))
         }
+    }
+
+    fn lock_wait_output(timed_out: bool) -> TimedOutput {
+        timed_output(
+            None,
+            "",
+            "    Blocking waiting for file lock on build directory\n",
+            timed_out,
+        )
+    }
+
+    fn lock_spawn() -> CoveredBySpawn {
+        CoveredBySpawn {
+            args: vec!["test".to_string()],
+            timeout: TEST_COVERED_BY_LIST_TIMEOUT,
+            description: "test",
+        }
+    }
+
+    fn timed_for(
+        millis: u64,
+        status: Option<std::process::ExitStatus>,
+        stdout: &str,
+        stderr: &str,
+        timed_out: bool,
+    ) -> TimedOutput {
+        let mut output = timed_output(status, stdout, stderr, timed_out);
+        output.duration = Duration::from_millis(millis);
+        output
+    }
+
+    #[test]
+    fn test_covered_by_lock_wait_attempts_are_all_recorded_with_their_durations()
+    -> Result<(), String> {
+        let commands = [
+            common(1, "cargo test -p xtask slow_filter"),
+            common(2, "cargo test -p xtask other_filter"),
+        ];
+        let lock = "    Blocking waiting for file lock on build directory\n";
+        let mut script = vec![
+            (
+                "slow_filter",
+                "--no-run",
+                timed_for(1100, None, "", lock, true),
+            ),
+            (
+                "slow_filter",
+                "--no-run",
+                timed_for(2200, None, "", lock, true),
+            ),
+            (
+                "slow_filter",
+                "--no-run",
+                timed_for(3300, Some(status(0)), "", "", false),
+            ),
+            (
+                "slow_filter",
+                "--list",
+                timed_for(4400, Some(status(0)), "slow_case: test\n", "", false),
+            ),
+            // The second selector shares the first's warmed build, so it only
+            // lists.
+            (
+                "other_filter",
+                "--list",
+                timed_for(600, Some(status(0)), "other_case: test\n", "", false),
+            ),
+        ]
+        .into_iter();
+        let mut rows = Vec::new();
+        let observations = super::validate_test_covered_by_recorded_with(
+            "policy.toml",
+            &commands,
+            FilePolicyHost::Unix,
+            &mut rows,
+            |spawn| {
+                let (filter, flag, output) = script
+                    .next()
+                    .ok_or_else(|| "unexpected extra spawn".to_string())?;
+                if !spawn.args.iter().any(|arg| arg == filter)
+                    || !spawn.args.iter().any(|arg| arg == flag)
+                {
+                    return Err(format!("unexpected argv {:?}", spawn.args));
+                }
+                Ok(output)
+            },
+        )?;
+        if script.next().is_some() {
+            return Err("scripted spawns were not all consumed".to_string());
+        }
+        let selected = observations
+            .iter()
+            .map(|observation| observation.selected.clone())
+            .collect::<Vec<_>>();
+        if selected
+            != [
+                Some(vec!["slow_case".to_string()]),
+                Some(vec!["other_case".to_string()]),
+            ]
+        {
+            return Err(format!("selectors were not kept distinct: {selected:?}"));
+        }
+        let elapsed = rows.iter().filter_map(|row| row.elapsed_ms).sum::<u128>();
+        if rows.len() != 5 || elapsed != 11_600 {
+            return Err(format!(
+                "every attempt must be recorded: {} rows, {elapsed} ms",
+                rows.len()
+            ));
+        }
+        let first_selector = rows
+            .iter()
+            .take(4)
+            .filter_map(|row| row.elapsed_ms)
+            .sum::<u128>();
+        if first_selector != 11_000 {
+            return Err(format!("lock-wait attempts lost time: {first_selector}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_covered_by_lock_wait_does_not_consume_the_budget_but_stays_bounded()
+    -> Result<(), String> {
+        // A lock wait that clears within the retry bound completes.
+        let mut calls = 0;
+        let output = capture_past_lock_wait(&lock_spawn(), &mut |_| {
+            calls += 1;
+            Ok(if calls <= 3 {
+                lock_wait_output(true)
+            } else {
+                timed_output(Some(status(0)), "case: test\n", "", false)
+            })
+        })?;
+        if output.timed_out || calls != 4 {
+            return Err(format!("lock wait was not retried to completion: {calls}"));
+        }
+        // Negative experiment: a lock that never clears still fails, distinctly.
+        let mut calls = 0;
+        let output = capture_past_lock_wait(&lock_spawn(), &mut |_| {
+            calls += 1;
+            Ok(lock_wait_output(true))
+        })?;
+        if !output.timed_out || calls != LOCK_WAIT_RETRIES + 1 {
+            return Err(format!("unbounded or swallowed lock wait: {calls}"));
+        }
+        let (success, _, stderr) = enumeration_result(output, TEST_COVERED_BY_LIST_TIMEOUT);
+        if success || !stderr.starts_with(COVERED_BY_LOCK_WAIT_PREFIX) {
+            return Err(format!("lock-wait timeout was not distinct: {stderr}"));
+        }
+        // Negative experiment: a real timeout with no lock wait is not retried.
+        let mut calls = 0;
+        let output = capture_past_lock_wait(&lock_spawn(), &mut |_| {
+            calls += 1;
+            Ok(timed_output(None, "", "Compiling x\n", true))
+        })?;
+        let (_, _, stderr) = enumeration_result(output, TEST_COVERED_BY_LIST_TIMEOUT);
+        if calls != 1 || !stderr.starts_with(COVERED_BY_INSTRUMENT_PREFIX) {
+            return Err(format!("real timeout was retried or mislabeled: {calls}"));
+        }
+        // Negative experiment: a stale lock line followed by compile output is
+        // not a lock wait, so it is neither retried nor labeled as one.
+        let mut calls = 0;
+        let output = capture_past_lock_wait(&lock_spawn(), &mut |_| {
+            calls += 1;
+            Ok(timed_output(
+                None,
+                "",
+                "    Blocking waiting for file lock on build directory\n   Compiling xtask v0.1.0\n",
+                true,
+            ))
+        })?;
+        let (_, _, stderr) = enumeration_result(output, TEST_COVERED_BY_LIST_TIMEOUT);
+        if calls != 1 || !stderr.starts_with(COVERED_BY_INSTRUMENT_PREFIX) {
+            return Err(format!(
+                "stale lock line was retried or mislabeled: {calls}: {stderr}"
+            ));
+        }
+        // Retry history is kept in the report text.
+        let output = capture_past_lock_wait(&lock_spawn(), &mut |_| Ok(lock_wait_output(true)))?;
+        if !output.stderr.starts_with("xtask: retried 6 time(s)") {
+            return Err(format!("retry history missing: {}", output.stderr));
+        }
+        // Both timeouts surface as instrument failures through the validator.
+        let commands = [common(4, "cargo test -p xtask slow_filter")];
+        let error = match validate_test_covered_by_with(
+            "policy.toml",
+            &commands,
+            FilePolicyHost::Unix,
+            |_| {
+                Ok((
+                    false,
+                    String::new(),
+                    format!("{COVERED_BY_LOCK_WAIT_PREFIX} timed out"),
+                ))
+            },
+        ) {
+            Ok(_) => return Err("lock-wait timeout unexpectedly passed".to_string()),
+            Err(error) => error,
+        };
+        if !is_covered_by_instrument_failure(&error) {
+            return Err(format!("lock wait not an instrument failure: {error}"));
+        }
+        // Negative experiment: the phrase quoted in embedded cargo output of a
+        // genuine failure does not make it an instrument failure.
+        let spoofed =
+            validate_test_covered_by_with("policy.toml", &commands, FilePolicyHost::Unix, |_| {
+                Ok((
+                    false,
+                    String::new(),
+                    format!("error: {INSTRUMENT_FAILURE_PHRASE}"),
+                ))
+            });
+        match spoofed {
+            Err(error) if !is_covered_by_instrument_failure(&error) => {}
+            other => return Err(format!("spoofed phrase read as instrument: {other:?}")),
+        }
+        if is_covered_by_instrument_failure("policy.toml:9 selects zero tests") {
+            return Err("unresolved pointer read as instrument failure".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_covered_by_lock_wait_ceiling_stops_retrying_and_names_the_ceiling() -> Result<(), String>
+    {
+        let attempt = LOCK_WAIT_CEILING / 3 + Duration::from_secs(1);
+        // Lock waits whose recorded durations sum past the ceiling stop early,
+        // well before the attempt bound.
+        let mut calls = 0;
+        let output = capture_past_lock_wait(&lock_spawn(), &mut |_| {
+            calls += 1;
+            let mut output = lock_wait_output(true);
+            output.duration = attempt;
+            Ok(output)
+        })?;
+        if calls != 3 || calls > LOCK_WAIT_RETRIES {
+            return Err(format!("ceiling did not stop the retries: {calls}"));
+        }
+        let (success, _, stderr) = enumeration_result(output, TEST_COVERED_BY_LIST_TIMEOUT);
+        let ceiling = format!("{LOCK_WAIT_CEILING:?}");
+        if success
+            || !stderr.starts_with(COVERED_BY_LOCK_WAIT_PREFIX)
+            || !stderr.contains(&format!("{LOCK_WAIT_CEILING_NOTE_PREFIX} of {ceiling}"))
+        {
+            return Err(format!("ceiling stop did not name the ceiling: {stderr}"));
+        }
+        // Still an instrument failure through the validator, never a pass.
+        let commands = [common(4, "cargo test -p xtask slow_filter")];
+        let error = match validate_test_covered_by_with(
+            "policy.toml",
+            &commands,
+            FilePolicyHost::Unix,
+            |_| Ok((false, String::new(), stderr.clone())),
+        ) {
+            Ok(_) => return Err("ceiling stop unexpectedly passed".to_string()),
+            Err(error) => error,
+        };
+        if !is_covered_by_instrument_failure(&error) {
+            return Err(format!("ceiling stop not an instrument failure: {error}"));
+        }
+        // A sum landing exactly on the ceiling is exhausted: the comparison is
+        // inclusive.
+        let mut calls = 0;
+        let output = capture_past_lock_wait(&lock_spawn(), &mut |_| {
+            calls += 1;
+            let mut output = lock_wait_output(true);
+            output.duration = LOCK_WAIT_CEILING / 3;
+            Ok(output)
+        })?;
+        if calls != 3 || !output.stderr.contains(LOCK_WAIT_CEILING_NOTE_PREFIX) {
+            return Err(format!("exact-ceiling sum was not exhausted: {calls}"));
+        }
+        // A sequence below the ceiling is still retried to completion.
+        let mut calls = 0;
+        let output = capture_past_lock_wait(&lock_spawn(), &mut |_| {
+            calls += 1;
+            Ok(if calls <= 2 {
+                let mut output = lock_wait_output(true);
+                output.duration = LOCK_WAIT_CEILING / 4;
+                output
+            } else {
+                timed_output(Some(status(0)), "case: test\n", "", false)
+            })
+        })?;
+        if output.timed_out || calls != 3 || output.stderr.contains(LOCK_WAIT_CEILING_NOTE_PREFIX) {
+            return Err(format!("sub-ceiling wait was cut short: {calls}"));
+        }
+        // Negative experiment: a long real (non-lock) timeout is not a lock
+        // wait, is not retried, and is not labeled as the ceiling.
+        let mut calls = 0;
+        let output = capture_past_lock_wait(&lock_spawn(), &mut |_| {
+            calls += 1;
+            let mut output = timed_output(None, "", "Compiling x\n", true);
+            output.duration = LOCK_WAIT_CEILING * 2;
+            Ok(output)
+        })?;
+        let (_, _, stderr) = enumeration_result(output, TEST_COVERED_BY_LIST_TIMEOUT);
+        if calls != 1
+            || !stderr.starts_with(COVERED_BY_INSTRUMENT_PREFIX)
+            || stderr.contains(LOCK_WAIT_CEILING_NOTE_PREFIX)
+        {
+            return Err(format!("real timeout changed behavior: {calls}: {stderr}"));
+        }
+        Ok(())
     }
 
     #[test]

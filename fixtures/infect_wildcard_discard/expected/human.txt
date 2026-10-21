@@ -2,39 +2,35 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/infect_wildcard_discard/input
 
-Summary: 2 probes (0 exposed, 0 weak, 0 unrevealed, 0 no path, 2 unknown); 2 of 2 findings unsuppressed
+Summary: 1 probe (0 exposed, 0 weak, 0 unrevealed, 0 no path, 1 unknown); 1 of 1 finding unsuppressed
 
 Analysis outcome: findings below (analysis complete)
-  Counts: 1 changed file(s), 3 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 1 changed file(s), 3 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
 
 Start here:
   State: limited by static analysis
   Safe next action: inspect the named static limitation before treating this as repair-ready
-  File: ./src/lib.rs:3
-  Static exposure: unknown (severity: note, confidence 0.66)
-  Why unknown: the path from the changed behavior to an observable sink is not statically clear
-  Canonical gap: gap:rust:src/lib.rs:process:return_value:return_value:amount
-  Changed behavior: amount
-  Analyzer limit: No clear propagation path from changed behavior to an observable sink
+  File: ./src/lib.rs:2
+  Static exposure: unknown (severity: note, confidence 0.50)
+  Why unknown: the analysis could not determine a static exposure state
+  Canonical gap: gap:rust:src/lib.rs:process:static_unknown:static_unknown:let__=compute_fee_amount*9
+  Changed behavior: let _ = compute_fee(amount * 9);
+  Analyzer limit: No strong discriminator was detected
   Related test: tests/process_tests.rs:4 process_returns_amount_unchanged
-  Next step: Trace the changed value to its output or effect, and inspect what the related test
-    actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or
-    strengthen a test only if this inspection finds a gap. Compare the original and changed
-    implementations with a focused run using the project's configured test runner (`cargo test` for
-    ordinary Cargo tests). Static classification may remain unknown
-  Evidence: reach yes · infection yes · propagation unknown · observation yes · discriminator not established
+  Next step: Inspect the changed behavior and its existing tests; ripr has not established a test
+    gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and
+    changed implementations with a focused run using the project's configured test runner (`cargo
+    test` for ordinary Cargo tests). Static classification may remain unknown
+  Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator unknown
     - reach yes: Related tests appear to reach process: process_returns_amount_unchanged
-    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - infection unknown: Changed syntax is not mapped to a high-confidence probe family
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/infect_wildcard_discard/input --diff <cwd>/fixtures/infect_wildcard_discard/diff.patch --mode fast probe:src_lib.rs:return_value:d0b06139
-  ripr context --root <cwd>/fixtures/infect_wildcard_discard/input --diff <cwd>/fixtures/infect_wildcard_discard/diff.patch --mode fast --at probe:src_lib.rs:return_value:d0b06139
-Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/infect_wildcard_discard/input --at src/lib.rs:3 --kind return_value
+  ripr explain --root <cwd>/fixtures/infect_wildcard_discard/input --diff <cwd>/fixtures/infect_wildcard_discard/diff.patch --mode fast probe:src_lib.rs:static_unknown:49492955
+  ripr context --root <cwd>/fixtures/infect_wildcard_discard/input --diff <cwd>/fixtures/infect_wildcard_discard/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:49492955
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:static_unknown:49492955 --root <cwd>/fixtures/infect_wildcard_discard/input` for the full gate's answer
 
-Hidden:
-  1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:2 (unknown)
+More:
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

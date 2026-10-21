@@ -36,7 +36,7 @@ pub(crate) use dependency_expiry::check_dependency_suppression_expiry;
 pub(crate) use doc_roles::check_doc_roles;
 pub(crate) use droid_review::check_droid_review_config;
 pub(crate) use executable_files::check_executable_files;
-pub(crate) use file_policy::check_file_policy;
+pub(crate) use file_policy::{check_file_policy, is_covered_by_instrument_failure};
 pub(crate) use local_context::check_local_context;
 pub(crate) use network::check_network_policy;
 pub(crate) use no_panic::check_no_panic_family;

@@ -29,6 +29,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_predicate_boundary_const_result_local/input --diff <cwd>/fixtures/ts_predicate_boundary_const_result_local/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:e23661f5
   ripr context --root <cwd>/fixtures/ts_predicate_boundary_const_result_local/input --diff <cwd>/fixtures/ts_predicate_boundary_const_result_local/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:e23661f5
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_pricing.ts:typescript_preview:e23661f5 --root <cwd>/fixtures/ts_predicate_boundary_const_result_local/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full
