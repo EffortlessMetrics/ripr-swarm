@@ -389,11 +389,6 @@ mod tests {
                 1,
                 "struct Packet { value: u8 } fn make() -> Packet { Packet { value: 7 } }",
             ),
-            (
-                "enum Packet { Data {\n    value: u8,\n} }\n",
-                2,
-                "value: u8,",
-            ),
             ("union Packet {\n    value: u8,\n}\n", 2, "value: u8,"),
             (
                 "const fn width() -> usize { 4 }\nstruct Packet {\n    value: [u8; width()],\n}\n",
@@ -410,6 +405,76 @@ mod tests {
             assert!(
                 declaration_shape(&facts, line, text).is_none(),
                 "shared or unsupported field context was admitted: {text}"
+            );
+        }
+        Ok(())
+    }
+
+    /// #8999: enum variant fields (multi-line and one-line variants) are
+    /// type declarations with exact coordinates, LF and CRLF.
+    #[test]
+    fn enum_variant_fields_preserve_trivia_and_byte_identity() -> Result<(), String> {
+        for (text, line) in [
+            ("value: u8,", 5),
+            ("pub_ok: Marker, // field", 5),
+            ("Short { offset: usize },", 7),
+        ] {
+            for newline in ["\n", "\r\n"] {
+                let source = format!(
+                    "// λ\nstruct Marker;\nenum Packet {{\n    Data {{\n    {}\n    }},\n    {}\n}}\n",
+                    if line == 5 { text } else { "value: u8," },
+                    if line == 7 { text } else { "Plain," },
+                )
+                .replace('\n', newline);
+                let facts = declaration_facts(&source)?;
+                let shape = declaration_shape(&facts, line, text)
+                    .ok_or_else(|| format!("variant declaration was not retained: {text}"))?;
+                assert_eq!(shape.family, ProbeFamily::StaticUnknown);
+                assert_eq!(shape.text, text);
+                assert_eq!(shape.start_line, line);
+                assert_eq!(Some(shape.start_byte), source.find(text));
+                assert!(!shape.standalone_call);
+                assert!(!shape.unsafe_boundary);
+            }
+        }
+        Ok(())
+    }
+
+    /// #8999 negatives: executable or shared syntax keeps its real probes.
+    #[test]
+    fn enum_variant_declaration_authority_rejects_expressions_and_shared_lines()
+    -> Result<(), String> {
+        for (source, line, text) in [
+            // Expression inside the field type.
+            (
+                "const N: usize = 1;\nenum E {\n    A { x: [u8; N + 1] },\n}\n",
+                3,
+                "A { x: [u8; N + 1] },",
+            ),
+            (
+                "const N: usize = 1;\nenum E {\n    A {\n        x: [u8; N + 1],\n    },\n}\n",
+                4,
+                "x: [u8; N + 1],",
+            ),
+            // Declaration shares its line with a constructing body.
+            (
+                "enum E { A { x: u8 } } fn f() -> E { E::A { x: 7 } }\n",
+                1,
+                "enum E { A { x: u8 } } fn f() -> E { E::A { x: 7 } }",
+            ),
+            // The constructing body itself is never a declaration.
+            (
+                "enum E { A { x: u8 } }\nfn f() -> E {\n    E::A {\n        x: 7,\n    }\n}\n",
+                4,
+                "x: 7,",
+            ),
+            // Tuple variants carry no named field.
+            ("enum E {\n    A(u8, u8),\n}\n", 2, "A(u8, u8),"),
+        ] {
+            let facts = declaration_facts(source)?;
+            assert!(
+                declaration_shape(&facts, line, text).is_none(),
+                "admitted as a variant declaration: {text}"
             );
         }
         Ok(())
