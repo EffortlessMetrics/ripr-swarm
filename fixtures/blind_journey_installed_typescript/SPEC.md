@@ -15,7 +15,7 @@ This fixture commits one fresh small npm project
 (`fixtures/blind_journey_installed_typescript/repository/`): `src/pricing.ts`
 owns one discount-threshold comparison and `test/pricing.test.ts` is the
 single related Vitest test. `package.json` selects the `vitest run` script and
-every snapshot retains the full `package-lock.json` (vitest 3.2.4, `npm ci`-installable) that backs
+every snapshot retains the full `package-lock.json` (vitest 5.0.5, `npm ci`-installable) that backs
 the npm-runner selection.
 Ten bound snapshots are retained:
 
