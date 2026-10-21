@@ -648,8 +648,12 @@ fn submodule_ignore_settings_cannot_hide_pointer_changes() -> Result<(), String>
                     .stdout
                     .lines()
                     .find(|line| line.starts_with("- Recommended first command:"));
-                if !command
-                    .is_some_and(|line| line.contains("--worktree") && line.contains("--base HEAD"))
+                // `ripr check` analyzes tracked edits by default, so the dirty
+                // submodule is carried by the scope note, not by extra flags.
+                if !command.is_some_and(|line| line.ends_with("ripr check"))
+                    || !doctor
+                        .stdout
+                        .contains("`--worktree` analyzes staged and unstaged tracked edits")
                 {
                     return Err(format!(
                         "doctor lost the tracked edit: {}\n{}",
