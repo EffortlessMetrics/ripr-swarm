@@ -2242,6 +2242,10 @@ PRs are limited to minor and patch updates. Major updates should be deliberate,
 scoped PRs because they often change toolchain, release, or runtime behavior.
 Dependabot PRs are not auto-merged; they must pass the normal CI, coverage,
 security, and `xtask` checks before merge.
+Candidate admission accepts a same-repository PR authored by `dependabot[bot]`
+on a `dependabot/` branch without the template claim lines: the claim is this
+dependency policy and the acceptance delta is the update branch. Any other PR
+still has to state its own claim.
 
 GitHub-hosted security settings are tracked in
 [Repository settings](REPO_SETTINGS.md). Dependency Graph, Dependabot alerts,
