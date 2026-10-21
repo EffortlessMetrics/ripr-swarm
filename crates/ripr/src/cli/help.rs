@@ -65,6 +65,7 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "continue",
     "coverage-grip frontier",
     "diff",
+    "capabilities",
     "doctor",
     "evidence-health",
     "explain",
@@ -90,6 +91,7 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "pr-comments existing",
     "pr-comments plan",
     "pr-comments requests",
+    "pr-comments summary",
     "pr-evidence",
     "pr-ledger record",
     "pr-review front-panel",
@@ -137,6 +139,7 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         "cache export" => CACHE_EXPORT_HELP,
         "cache status" => CACHE_STATUS_HELP,
         "calibrate cargo-mutants" => CALIBRATE_HELP,
+        "capabilities" => CAPABILITIES_HELP,
         "check" => CHECK_HELP,
         "config validate" => CONFIG_HELP,
         "context" => CONTEXT_HELP,
@@ -165,7 +168,10 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         | "policy readiness"
         | "policy suppression-health"
         | "policy waiver-aging" => POLICY_HELP,
-        "pr-comments plan" | "pr-comments existing" | "pr-comments requests" => PR_COMMENTS_HELP,
+        "pr-comments plan"
+        | "pr-comments existing"
+        | "pr-comments requests"
+        | "pr-comments summary" => PR_COMMENTS_HELP,
         "pr-evidence" => PR_EVIDENCE_HELP,
         "pr-ledger record" => PR_LEDGER_HELP,
         "pr-review front-panel" => PR_REVIEW_HELP,
@@ -366,6 +372,10 @@ pub(super) fn print_context_help() {
     println!("{CONTEXT_HELP}");
 }
 
+pub(super) fn print_capabilities_help() {
+    println!("{CAPABILITIES_HELP}");
+}
+
 pub(super) fn print_doctor_help() {
     println!("{DOCTOR_HELP}");
 }
@@ -406,13 +416,13 @@ mod tests {
         AGENT_BRIEF_HELP, AGENT_CARD_HELP, AGENT_HELP, AGENT_PACKET_HELP, AGENT_RECEIPT_HELP,
         AGENT_REPAIR_HELP, AGENT_REVIEW_SUMMARY_HELP, AGENT_START_HELP, AGENT_STATUS_HELP,
         AGENT_VERIFY_HELP, ANNOTATIONS_HELP, ASSISTANT_LOOP_HELP, BASELINE_HELP, CACHE_CLEAR_HELP,
-        CACHE_STATUS_HELP, CALIBRATE_HELP, CHECK_HELP, CONFIG_HELP, CONTEXT_HELP,
-        COVERAGE_GRIP_HELP, DIFF_HELP, DOCTOR_HELP, EVIDENCE_HEALTH_HELP, EXPLAIN_HELP,
-        FEEDBACK_EXPORT_HELP, FEEDBACK_RECORD_HELP, FIRST_ACTION_HELP, FIRST_PR_HELP, GATE_HELP,
-        HELP, HELP_ALL, IMPACTED_EVIDENCE_HELP, INIT_HELP, LSP_HELP, OUTCOME_HELP, PILOT_HELP,
-        PLUS_HELP, POLICY_HELP, PR_COMMENTS_HELP, PR_EVIDENCE_HELP, PR_LEDGER_HELP, PR_REVIEW_HELP,
-        PR_SUMMARY_HELP, REPORTS_HELP, RERUN_HELP, REVIEW_COMMENTS_HELP, SWARM_HELP,
-        SWARM_INGEST_HELP, SWARM_QUEUE_HELP, ZERO_HELP, print_agent_brief_help,
+        CACHE_STATUS_HELP, CALIBRATE_HELP, CAPABILITIES_HELP, CHECK_HELP, CONFIG_HELP,
+        CONTEXT_HELP, COVERAGE_GRIP_HELP, DIFF_HELP, DOCTOR_HELP, EVIDENCE_HEALTH_HELP,
+        EXPLAIN_HELP, FEEDBACK_EXPORT_HELP, FEEDBACK_RECORD_HELP, FIRST_ACTION_HELP, FIRST_PR_HELP,
+        GATE_HELP, HELP, HELP_ALL, IMPACTED_EVIDENCE_HELP, INIT_HELP, LSP_HELP, OUTCOME_HELP,
+        PILOT_HELP, PLUS_HELP, POLICY_HELP, PR_COMMENTS_HELP, PR_EVIDENCE_HELP, PR_LEDGER_HELP,
+        PR_REVIEW_HELP, PR_SUMMARY_HELP, REPORTS_HELP, RERUN_HELP, REVIEW_COMMENTS_HELP,
+        SWARM_HELP, SWARM_INGEST_HELP, SWARM_QUEUE_HELP, ZERO_HELP, print_agent_brief_help,
         print_agent_card_help, print_agent_help, print_agent_packet_help, print_agent_receipt_help,
         print_agent_repair_help, print_agent_review_summary_help, print_agent_start_help,
         print_agent_status_help, print_agent_verify_help, print_assistant_loop_help,
@@ -1167,6 +1177,7 @@ mod tests {
     const PR_COMMENTS_GITHUB_PARSER_RS: &str = include_str!("commands/pr_comments_github.rs");
     const CI_SUMMARY_PARSER_RS: &str = include_str!("commands/ci_summary.rs");
     const REVIEW_COMMENTS_PARSER_RS: &str = include_str!("commands/review_comments.rs");
+    const CAPABILITIES_PARSER_RS: &str = include_str!("commands/capabilities.rs");
     const CONTEXT_PARSER_RS: &str = include_str!("commands/context.rs");
     const CONFIG_PARSER_RS: &str = include_str!("commands/config.rs");
     const DOCTOR_PARSER_RS: &str = include_str!("commands/doctor.rs");
@@ -1288,6 +1299,7 @@ mod tests {
             CLI_COMMANDS_RS,
             &["parse_calibrate_cargo_mutants_options"],
         ),
+        ("capabilities", CAPABILITIES_PARSER_RS, &["capabilities"]),
         ("check", CHECK_PARSER_RS, &["check_inner"]),
         (
             "config validate",
@@ -1332,7 +1344,7 @@ mod tests {
             &["run_impacted_evidence", "parse_options"],
         ),
         ("init", INIT_PARSER_RS, &["parse_init_options"]),
-        ("lsp", CLI_COMMANDS_RS, &["lsp"]),
+        ("lsp", CLI_COMMANDS_RS, &["lsp_with_serve"]),
         ("mcp", MCP_PARSER_RS, &["run"]),
         ("outcome", CLI_COMMANDS_RS, &["parse_outcome_options"]),
         ("pilot", PILOT_PARSER_RS, &["parse_pilot_options"]),
@@ -1390,6 +1402,11 @@ mod tests {
             "pr-comments requests",
             PR_COMMENTS_GITHUB_PARSER_RS,
             &["parse_pr_comments_requests_options"],
+        ),
+        (
+            "pr-comments summary",
+            PR_COMMENTS_GITHUB_PARSER_RS,
+            &["parse_pr_comments_summary_options"],
         ),
         (
             "pr-evidence",
@@ -1569,12 +1586,67 @@ mod tests {
 
     /// One pass over Rust source producing `(skeleton, literals)`.
     ///
-    /// The skeleton blanks comment bodies and string-literal contents while
+    /// The skeleton blanks comment bodies, string-literal contents, and char
+    /// literals (`'x'`, `'\''`, `'\\'`, `'\n'`, `'\u{..}'`, `b'x'`) while
     /// keeping the byte layout, so code searches and brace matching see only
     /// code; `literals` carries each string literal's byte offset and decoded
     /// content. Raw strings (`r#"…"#`) and raw identifiers (`r#type`) are
-    /// told apart from plain identifiers starting with `r`.
+    /// told apart from plain identifiers starting with `r`. Lifetimes and
+    /// loop labels stay code.
     fn scan_rust_source(source: &str) -> (String, Vec<(usize, String)>) {
+        // End offset after a `'…'` / `b'…'` char literal, or `None` for a
+        // lifetime or loop label (`'a`, `'static`, `'outer:`). A `'` opens a
+        // char literal only when followed by an escape, or by exactly one
+        // char then `'`.
+        fn char_literal_end(source: &str, open: usize) -> Option<usize> {
+            let rest = open + 1;
+            let tail = source.get(rest..)?;
+            let mut chars = tail.char_indices();
+            let (_, first) = chars.next()?;
+            if first == '\\' {
+                let (_, escaped) = chars.next()?;
+                match escaped {
+                    'u' => {
+                        let (_, brace) = chars.next()?;
+                        if brace != '{' {
+                            return None;
+                        }
+                        loop {
+                            let (_, ch) = chars.next()?;
+                            if ch == '}' {
+                                break;
+                            }
+                            if !ch.is_ascii_hexdigit() && ch != '_' {
+                                return None;
+                            }
+                        }
+                    }
+                    'x' => {
+                        let (_, d1) = chars.next()?;
+                        let (_, d2) = chars.next()?;
+                        if !d1.is_ascii_hexdigit() || !d2.is_ascii_hexdigit() {
+                            return None;
+                        }
+                    }
+                    _ => {}
+                }
+                let (close_rel, close) = chars.next()?;
+                if close == '\'' {
+                    return Some(rest + close_rel + 1);
+                }
+                return None;
+            }
+            if first == '\'' {
+                return None;
+            }
+            let (close_rel, close) = chars.next()?;
+            if close == '\'' {
+                Some(rest + close_rel + 1)
+            } else {
+                None
+            }
+        }
+
         let bytes = source.as_bytes();
         let mut skeleton = vec![b' '; bytes.len()];
         let mut literals: Vec<(usize, String)> = Vec::new();
@@ -1662,6 +1734,12 @@ mod tests {
                 i = (content_end + 1).min(bytes.len());
                 continue;
             }
+            if bytes[i] == b'\''
+                && let Some(after) = char_literal_end(source, i)
+            {
+                i = after;
+                continue;
+            }
             skeleton[i] = bytes[i];
             i += 1;
         }
@@ -1706,6 +1784,78 @@ mod tests {
             return None;
         }
         None
+    }
+
+    /// #4368: char literals must not open a phantom string or inject a
+    /// phantom brace into the skeleton, or `function_body_span` depth
+    /// counting and later flag mining go wrong. Lifetimes and loop labels
+    /// stay code.
+    #[test]
+    fn scan_rust_source_blanks_char_literals_without_phantom_strings_or_braces()
+    -> Result<(), String> {
+        let source = r#"
+fn parse_demo<'a>(xs: &'a str) {
+    let _quote = '"';
+    let _brace = '}';
+    let _apos = '\'';
+    let _nl = '\n';
+    let _bs = '\\';
+    let _uni = '\u{1F600}';
+    let _byte = b'x';
+    'outer: loop {
+        break 'outer;
+    }
+    match arg {
+        "--keep-me" => {}
+    }
+}
+"#;
+        let (skeleton, literals) = scan_rust_source(source);
+        let opens = skeleton.bytes().filter(|byte| *byte == b'{').count();
+        let closes = skeleton.bytes().filter(|byte| *byte == b'}').count();
+        if opens != closes {
+            return Err(format!(
+                "skeleton brace imbalance ({opens} open, {closes} close): {skeleton:?}"
+            ));
+        }
+        if skeleton.contains('"') {
+            return Err(format!(
+                "skeleton retained a quote that should have been blanked: {skeleton:?}"
+            ));
+        }
+        if !skeleton.contains("'a") {
+            return Err(format!("lifetime `'a` should remain code: {skeleton:?}"));
+        }
+        if !skeleton.contains("'outer") {
+            return Err(format!(
+                "loop label `'outer` should remain code: {skeleton:?}"
+            ));
+        }
+        if let Some((_, phantom)) = literals.iter().find(|(_, literal)| {
+            literal.contains('}')
+                || literal.contains("let _")
+                || literal.contains("outer")
+                || literal.contains("parse_demo")
+        }) {
+            return Err(format!(
+                "phantom string literal from char contents: {phantom:?}"
+            ));
+        }
+        let (body_start, body_end) = function_body_span(&skeleton, "parse_demo")
+            .ok_or_else(|| "parse_demo body not found after char-literal scan".to_string())?;
+        let flags: Vec<&str> = literals
+            .iter()
+            .filter(|(at, literal)| {
+                *at >= body_start && *at < body_end && flag_shaped_literal(literal)
+            })
+            .map(|(_, literal)| literal.as_str())
+            .collect();
+        if flags != ["--keep-me"] {
+            return Err(format!(
+                "flag literals after char literals should still be mined; got {flags:?}"
+            ));
+        }
+        Ok(())
     }
 
     /// The flags one command's parser accepts: flag-shaped string literals
@@ -1937,6 +2087,7 @@ mod tests {
             ),
             ("gate", GATE_HELP, &["--pr-guidance", "--mode"]),
             ("doctor", DOCTOR_HELP, &["--root", "--json", "--profile"]),
+            ("capabilities", CAPABILITIES_HELP, &["--language", "--json"]),
             ("config validate", CONFIG_HELP, &["--root"]),
             (
                 "pilot",

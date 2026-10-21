@@ -1,0 +1,11 @@
+diff --git a/reach/chart_import.py b/reach/chart_import.py
+--- a/reach/chart_import.py
++++ b/reach/chart_import.py
+@@ -1,6 +1,6 @@
+ class Chart:
+     def _chart_pad(self):
+-        return 2
++        return 3
+ 
+     def render_chart(self):
+         return "|" + " " * self._chart_pad() + "|"

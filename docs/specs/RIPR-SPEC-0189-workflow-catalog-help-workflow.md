@@ -94,8 +94,8 @@ Authority:
     required step must produce at least one result family, so removing a
     single family fails the check even when the remaining edges still
     connect the step chain. Workflow content mirrors real producers: the
-    repair handoff selects a seam ID from the pilot packet (a `probe:`
-    finding ID is not a seam ID), and the PR-evidence workflow feeds
+    repair handoff selects a seam ID from the pilot packet (`ripr repair` also
+    accepts a `probe:` finding ID that names one repair-eligible seam), and the PR-evidence workflow feeds
     `ripr outcome` two preserved raw `repo-exposure-json` snapshots, keeping
     the `pr-evidence` wrapper packet out of the outcome inputs.
 

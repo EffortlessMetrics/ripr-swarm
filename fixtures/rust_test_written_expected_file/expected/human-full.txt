@@ -67,7 +67,7 @@ Evidence
   - propagation unknown: No propagation model is available for this changed syntax
   - observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect
   - discriminator no: No assertion found on related tests
-  - local flow reaches unknown sink (line 2)
+  - local flow reaches unknown sink (line 2) — ripr could not classify where the changed value ends up; propagation confidence is limited
   - related test tests/render.rs:2 renders misses: asserts, but not on the changed value; checked `std::fs::write("tests/w.txt", written_expected::render(4).to_string()).unwrap()`
   - source function argument value x = 4 at line 3
   - source assertion argument value "tests/w.txt" at line 4

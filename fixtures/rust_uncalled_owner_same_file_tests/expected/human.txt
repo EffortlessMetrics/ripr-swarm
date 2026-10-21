@@ -15,7 +15,6 @@ Start here:
   Why no path: no related test was found that reaches this change
   Canonical gap: gap:rust:src/lib.rs:untested_rounding:return_value:return_value:cents+49/100
   Changed behavior: (cents + 49) / 100
-  Missing discriminator (1 of 3): No relevant oracle was detected
   Related test (1 of 2 matched rows): src/lib.rs:14 discount_applies_at_100 (no call to the changed code found; linked by file location only)
   Next step: ripr found no static test path to this change — this is not a coverage assessment. A
     test may already exercise it through macros, helper-call chains, or integration tests that
@@ -29,6 +28,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_uncalled_owner_same_file_tests/input --diff <cwd>/fixtures/rust_uncalled_owner_same_file_tests/diff.patch --mode fast probe:src_lib.rs:return_value:672a64b9
   ripr context --root <cwd>/fixtures/rust_uncalled_owner_same_file_tests/input --diff <cwd>/fixtures/rust_uncalled_owner_same_file_tests/diff.patch --mode fast --at probe:src_lib.rs:return_value:672a64b9
+  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:return_value:672a64b9 --root <cwd>/fixtures/rust_uncalled_owner_same_file_tests/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_uncalled_owner_same_file_tests/input --at src/lib.rs:6 --kind return_value
 

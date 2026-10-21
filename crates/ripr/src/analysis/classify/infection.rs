@@ -1,7 +1,7 @@
 use super::super::rust_index::{FunctionSummary, TestSummary, extract_literals};
 use super::activation::{
     boundary_constant_operand_name, comparison_operands, has_observed_boundary_equality,
-    is_computed_value_expression, owner_input_values,
+    is_computed_value_expression, owner_input_values, returned_comparison_view,
 };
 use super::owner_pin::short_circuit::ShortCircuitTail;
 use crate::analysis::probes::same_connectives;
@@ -266,6 +266,26 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
     owner: Option<&FunctionSummary>,
     owner_has_other_callers: bool,
 ) -> StageEvidence {
+    // A returned bare comparison with a resolved missing boundary
+    // discriminator reads the predicate lens's gap, never a better reading:
+    // only a `weak` result replaces the return-value reading, which is
+    // otherwise unchanged (#9094).
+    if let Some(mut predicate) = returned_comparison_view(probe)
+        && !activation.missing_discriminators.is_empty()
+    {
+        predicate.family = ProbeFamily::Predicate;
+        let evidence = infection_evidence_for_owner(
+            &predicate,
+            related_tests,
+            activation,
+            unresolved_boundary,
+            owner,
+            owner_has_other_callers,
+        );
+        if matches!(evidence.state, StageState::Weak) {
+            return evidence;
+        }
+    }
     match probe.family {
         ProbeFamily::Predicate => {
             let probe_literals = boundary_literals(&probe.expression);
@@ -865,6 +885,7 @@ mod tests {
             observed_values: facts
                 .iter()
                 .map(|(value, context)| ValueFact {
+                    file: None,
                     line: 1,
                     text: String::new(),
                     value: (*value).to_string(),

@@ -44,7 +44,7 @@ non-claims.
 authorities into one strict JSON document on `ripr help --json`. The
 document carries:
 
-- `schema_version` (integer, currently `2`; bumped on any material DTO shape
+- `schema_version` (integer, currently `3`; bumped on any material DTO shape
   change, pinned by tests, and registered in `docs/OUTPUT_SCHEMA.md`),
   `product_version`, and `catalog_contract_version`;
 - `commands`: one row per C1 catalog entry joined to its C2 metadata row on
@@ -123,11 +123,15 @@ Authority:
     whose numeric codes are the implemented `CommandError` mapping
     (`docs/EXIT_CODES.md`). Orchestrator-branching rows are pinned:
     `check` findings including `exposed` complete with 0; `gate evaluate`
-    maps `config_error` to 2 and `blocked` to 3; `agent verify` / `agent
-    card` / `agent stub` refuse with 3 and empty stdout; `agent
+    maps `config_error` to 2 and `blocked` to 3; `agent verify` refuses
+    with 3 and empty stdout; `agent card` / `agent stub` / `agent packet`
+    refuse with 3 and json-optional stdout (typed refusal document on stdout
+    under `--json`, prose on stderr); `agent
     verify-execute` refuses with 3 and a stdout document; `agent repair`
     refuses with 3 and json-optional stdout; `receipt check` orphan or gap
-    mismatch is 2, not 3. A metadata row that contradicts that mapping is a
+    mismatch is 2, not 3; `doctor` completed-with-findings is 3 under the
+    `doctor_findings` kind while its usage/operational failures stay 2
+    (#5102). A metadata row that contradicts that mapping is a
     catalog integrity failure. `stop_states` remains free-text and is not
     the exit authority. The document does not prove a given invocation's
     status.
@@ -137,10 +141,10 @@ unwritable: a previously rendered JSON refusal remains intact with exit `2`
 or `3`. Panic diagnostics are also best effort, retaining the internal-error
 exit `2` without recursive abort. This does not guarantee report production
 when an earlier analysis-stage diagnostic fails.
-The `agent card` and `agent stub` stderr JSON refusal writers likewise retain
+The `agent card` and `agent stub` JSON refusal writers likewise retain
 exit `3` after reaching their named decision, even when the stderr reader has
-closed. Their refusal stdout stays empty; readable stderr keeps the same JSON
-envelope, escaping, newline and following prose.
+closed. Under `--json` the refusal document goes to stdout and the prose to
+stderr; without `--json` stdout stays empty.
 
 `help --json` serializes existing catalog authority only. It never parses
 human help, executes commands, inspects a repository, or strengthens any
@@ -149,7 +153,7 @@ command or workflow claim.
 ## Required Evidence
 
 - Production document integrity is empty of violations and the document is
-  valid JSON with `schema_version` 2, non-empty `commands` and `workflows`,
+  valid JSON with `schema_version` 3, non-empty `commands` and `workflows`,
   and a 64-hex-character sha256 digest.
 - Determinism fixtures: reversing the source table order normalizes to the
   same digest; the rendered bytes are stable across builds of the same
@@ -198,7 +202,7 @@ command or workflow claim.
 
 ## Acceptance Examples
 
-1. `ripr help --json` prints one JSON line carrying `schema_version` 2,
+1. `ripr help --json` prints one JSON line carrying `schema_version` 3,
    every catalog command row, every workflow row, and the catalog digest;
    stderr is empty and the workspace is untouched. The `cmd:check` row's
    `exit` object names findings including `exposed` and
@@ -247,7 +251,7 @@ command or workflow claim.
 
 | Surface | Responsibility |
 | --- | --- |
-| `crates/ripr/src/cli/commands_context.rs` | best-effort stderr JSON refusal writer shared by card and stub |
+| `crates/ripr/src/cli/commands_context.rs` | stdout JSON refusal writer (best-effort stderr prose) shared by card and stub |
 | `crates/ripr/src/cli/commands/agent_card.rs` | typed card refusal reporting before returning its decision |
 | `crates/ripr/src/cli/commands/agent_stub.rs` | selector and resolved-stub refusal reporting before returning its decision |
 | `crates/ripr/src/cli/help_json.rs` | versioned DTO, catalog projection, digest, fail-closed document validation, render/print entry points, tests |

@@ -370,3 +370,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — infect_value_returned (32)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless infect_value_returned --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — infect_value_returned (33)
+
+Reason:
+RIPR-SPEC-0224: ungraded oracle reads '<kind> oracle, not graded against this probe' (#8388)
+
+Command:
+`cargo xtask goldens bless infect_value_returned --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

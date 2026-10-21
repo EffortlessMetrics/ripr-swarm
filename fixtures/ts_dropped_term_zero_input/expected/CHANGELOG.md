@@ -71,3 +71,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_dropped_term_zero_input (7)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless ts_dropped_term_zero_input --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

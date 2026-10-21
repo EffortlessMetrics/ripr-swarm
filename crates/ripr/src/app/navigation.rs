@@ -48,6 +48,90 @@ pub(crate) struct RepairRoute {
     pub(crate) finding_id: String,
     /// The exact seam ID the repair resolver accepts for this finding.
     pub(crate) seam_id: String,
+    /// The production file whose uncommitted changes make `ripr repair`
+    /// refuse this seam today (its inline `#[cfg(test)]` module is the edit
+    /// target and starts only from the committed file). When set, the check
+    /// screen states the commit-or-stash requirement instead of offering the
+    /// repair start as a runnable next action.
+    pub(crate) uncommitted_target: Option<String>,
+}
+
+/// Why the check pipeline offered no repair start for its selected finding
+/// (#8729). Producer-owned at the decision site in
+/// `app::task_first::check_repair_route`, so the rendered advisory names
+/// the state instead of leaving the repair line's absence silent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum RepairRouteRefusal {
+    /// The finding has no canonical gap to bind a seam from.
+    NoCanonicalGap,
+    /// The root's typed config could not be loaded.
+    ConfigUnreadable,
+    /// Classifying seams in the finding's file failed.
+    ClassificationFailed,
+    /// The repo seam-limit authority was unreadable, or the classified
+    /// candidate set exceeded the configured limit.
+    SeamLimit,
+    /// No classified seam in the finding's file binds this finding.
+    NoBindingSeam,
+    /// Several classified seams bind this finding; the check screen never
+    /// picks one silently.
+    SeveralBindingSeams,
+    /// The one binding seam failed the shared repair-admission gate.
+    Ineligible { reason: String },
+}
+
+impl RepairRouteRefusal {
+    /// The one-line advisory for the check triage screen (#8729).
+    /// `full_gate_command` is the bound `ripr repair <finding-id>` command
+    /// for this navigation. The seam-budget arm names its own recovery
+    /// instead: the full gate re-checks the same truncated authority, so
+    /// pointing there would repeat the refusal.
+    pub(crate) fn advisory(&self, full_gate_command: &str) -> String {
+        let gate = || format!("run `{full_gate_command}` for the full gate's answer");
+        match self {
+            Self::NoCanonicalGap => format!(
+                "no repair start offered: the finding carries no canonical gap to bind a seam; {}",
+                gate()
+            ),
+            Self::ConfigUnreadable => format!(
+                "no repair start offered: the root's config could not be read; {}",
+                gate()
+            ),
+            Self::ClassificationFailed => format!(
+                "no repair start offered: classifying the finding's seams failed; {}",
+                gate()
+            ),
+            Self::SeamLimit => {
+                format!(
+                    "no repair start offered: the seam budget left the repair candidate set unreadable or truncated; {}",
+                    super::task_first::WIDEN_SEAM_BUDGET
+                )
+            }
+            Self::NoBindingSeam => format!(
+                "no repair start offered: no seam in the finding's file binds this finding; {}",
+                gate()
+            ),
+            Self::SeveralBindingSeams => format!(
+                "no repair start offered: several seams bind this finding and the check screen never picks one; {}",
+                gate()
+            ),
+            Self::Ineligible { reason } => {
+                format!("no repair start offered: {reason}; {}", gate())
+            }
+        }
+    }
+}
+
+/// What the check pipeline decided about the repair route for its selected
+/// finding (#8729): the route to print, a named refusal to disclose, or a
+/// deliberate silence. Silence covers a static-limited finding — its
+/// limitation guidance already renders on the same screen — and runs with
+/// no selected finding at all.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CheckRepairRoute {
+    Route(RepairRoute),
+    Refused(RepairRouteRefusal),
+    Silent,
 }
 
 /// Copy-pasteable sibling commands for a selected finding.
@@ -64,6 +148,11 @@ pub(crate) struct FindingNavigation {
     /// The repair route the check pipeline computed for its selected
     /// finding (#8166 Slice C). Absent means no route is printed.
     repair_route: Option<RepairRoute>,
+    /// The named refusal when the check pipeline selected a finding but
+    /// offered it no repair start (#8729). Absent on a computed route and
+    /// on deliberate silence (static-limited findings, no selected
+    /// finding).
+    repair_route_refusal: Option<RepairRouteRefusal>,
 }
 
 impl FindingNavigation {
@@ -76,6 +165,7 @@ impl FindingNavigation {
             repair_suffix: String::new(),
             stub_route: None,
             repair_route: None,
+            repair_route_refusal: None,
         }
     }
 
@@ -85,10 +175,22 @@ impl FindingNavigation {
         self
     }
 
-    /// Carry the check pipeline's repair-route decision to the renderer.
-    pub(crate) fn with_repair_route(mut self, repair_route: Option<RepairRoute>) -> Self {
-        self.repair_route = repair_route;
+    /// Carry the check pipeline's repair-route outcome to the renderer
+    /// (#8729): a route prints the start command, a refusal prints the
+    /// advisory naming why, and silence prints nothing.
+    pub(crate) fn with_repair_route_outcome(mut self, outcome: CheckRepairRoute) -> Self {
+        match outcome {
+            CheckRepairRoute::Route(route) => self.repair_route = Some(route),
+            CheckRepairRoute::Refused(refusal) => self.repair_route_refusal = Some(refusal),
+            CheckRepairRoute::Silent => {}
+        }
         self
+    }
+
+    /// The named refusal for the check screen's selected finding, when the
+    /// pipeline computed one (#8729).
+    pub(crate) fn repair_route_refusal(&self) -> Option<&RepairRouteRefusal> {
+        self.repair_route_refusal.as_ref()
     }
 
     /// The repair route for `finding_id`, when one was computed for that
@@ -193,6 +295,7 @@ pub(crate) fn finding_navigation_with_worktree(
         ),
         stub_route: None,
         repair_route: None,
+        repair_route_refusal: None,
     }
 }
 
@@ -237,6 +340,10 @@ fn navigation_args(
         }
         if worktree {
             args.push("--worktree".to_string());
+        } else if input.git_candidate.is_none() {
+            // All live CLI siblings default to the dirty worktree. A command
+            // for committed input must therefore carry its explicit source.
+            args.push("--committed".to_string());
         }
     }
 
@@ -393,7 +500,8 @@ mod tests {
             "ripr repair 67fc764ba37d77bd"
         );
         // The route only answers for its own finding.
-        let routed = navigation.with_repair_route(Some(RepairRoute {
+        let routed = navigation.with_repair_route_outcome(CheckRepairRoute::Route(RepairRoute {
+            uncommitted_target: None,
             finding_id: "probe:one".to_string(),
             seam_id: "67fc764ba37d77bd".to_string(),
         }));
@@ -404,6 +512,59 @@ mod tests {
             Some("67fc764ba37d77bd")
         );
         assert!(routed.repair_route_for("probe:two").is_none());
+    }
+
+    /// #8729: a named refusal renders a one-line advisory naming the state
+    /// and the full-gate recovery; the seam-budget arm names its own
+    /// recovery because the full gate re-checks the same truncated
+    /// authority.
+    #[test]
+    fn repair_route_refusal_advisory_names_state_and_recovery() {
+        let gate = "ripr repair probe:one --root repo";
+        for (refusal, expected) in [
+            (RepairRouteRefusal::NoCanonicalGap, "no canonical gap"),
+            (
+                RepairRouteRefusal::ConfigUnreadable,
+                "config could not be read",
+            ),
+            (
+                RepairRouteRefusal::ClassificationFailed,
+                "classifying the finding's seams failed",
+            ),
+            (
+                RepairRouteRefusal::NoBindingSeam,
+                "no seam in the finding's file binds",
+            ),
+            (
+                RepairRouteRefusal::SeveralBindingSeams,
+                "several seams bind",
+            ),
+            (
+                RepairRouteRefusal::Ineligible {
+                    reason: "not a headline repair target".to_string(),
+                },
+                "not a headline repair target",
+            ),
+        ] {
+            let advisory = refusal.advisory(gate);
+            assert!(
+                advisory.starts_with("no repair start offered: ") && advisory.contains(expected),
+                "advisory must name the state ({expected}): {advisory}"
+            );
+            assert!(
+                advisory.contains(gate),
+                "advisory must name the full-gate recovery: {advisory}"
+            );
+        }
+        let budget = RepairRouteRefusal::SeamLimit.advisory(gate);
+        assert!(
+            budget.contains("seam budget") && budget.contains("wider seam budget"),
+            "seam-budget refusal must name the budget recovery: {budget}"
+        );
+        assert!(
+            !budget.contains("ripr repair"),
+            "seam-budget refusal must not route to the same truncated gate: {budget}"
+        );
     }
 
     #[test]
@@ -419,7 +580,7 @@ mod tests {
         assert_eq!(
             navigation.explain_command("probe:id"),
             format!(
-                "ripr explain --root {} --base origin/main --mode draft probe:id",
+                "ripr explain --root {} --base origin/main --committed --mode draft probe:id",
                 bound(".")
             )
         );
