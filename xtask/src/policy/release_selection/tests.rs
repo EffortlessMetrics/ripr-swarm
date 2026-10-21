@@ -149,7 +149,7 @@ fn schema_rejects_unknown_fields_and_wrong_identity() {
     assert_trips_only(RULE_SCHEMA, &bad_sha);
 
     let mut no_census_date = valid();
-    no_census_date["census"]["captured_on"] = json!(" ");
+    no_census_date["census"]["captured_on"] = json!("yesterday");
     assert_trips_only(RULE_SCHEMA, &no_census_date);
 
     let mut no_non_claims = valid();
@@ -256,6 +256,11 @@ fn dependency_must_name_another_claim() {
     unknown["claims"][0]["depends_on"] = json!(["missing"]);
     assert_trips_only(RULE_DEPENDENCY, &unknown);
 
+    let mut cycle = valid();
+    cycle["claims"][0]["depends_on"] = json!(["b"]);
+    cycle["claims"][1]["depends_on"] = json!(["a"]);
+    assert_trips_only(RULE_DEPENDENCY, &cycle);
+
     let mut itself = valid();
     itself["claims"][0]["depends_on"] = json!(["a"]);
     assert_trips_only(RULE_DEPENDENCY, &itself);
@@ -278,6 +283,14 @@ fn an_issue_has_one_place_in_the_partition() {
     let mut unplaced = valid();
     unplaced["census"]["open_release_check_issues"] = json!([10, 11, 12, 20, 99]);
     assert_trips_only(RULE_ISSUE_PARTITION, &unplaced);
+
+    let mut related_and_outside = valid();
+    related_and_outside["claims"][0]["related_issues"] = json!([20]);
+    assert_trips_only(RULE_ISSUE_PARTITION, &related_and_outside);
+
+    let mut related_dup = valid();
+    related_dup["claims"][0]["related_issues"] = json!([30, 30]);
+    assert_trips_only(RULE_ISSUE_PARTITION, &related_dup);
 
     let mut related_twice = valid();
     related_twice["claims"][0]["related_issues"] = json!([30]);
@@ -305,6 +318,23 @@ fn stage_cannot_outrun_the_rows() {
     let mut roster_elsewhere = eligible();
     roster_elsewhere["open_prs"]["captured_at_main"] = json!(SHA_B);
     assert_trips_only(RULE_STAGE_LAW, &roster_elsewhere);
+
+    for open in [
+        "release_optional_pending_decision",
+        "release_required_product",
+        "release_required_control",
+        "release_required_test_infrastructure",
+    ] {
+        let mut unfinished = eligible();
+        unfinished["open_prs"]["rows"][0]["disposition"] = json!(open);
+        assert_trips_only(RULE_STAGE_LAW, &unfinished);
+    }
+
+    let mut empty = eligible();
+    empty["claims"] = json!([]);
+    empty["census"]["open_release_check_issues"] = json!([]);
+    empty["open_prs"]["rows"] = json!([]);
+    assert_trips_only(RULE_STAGE_LAW, &empty);
 
     let mut blocked = eligible();
     blocked["open_prs"]["rows"][0]["disposition"] = json!("blocked_on_named_authority");

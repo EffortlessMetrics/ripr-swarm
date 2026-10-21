@@ -4,9 +4,10 @@
 //! be in or explicitly outside the final swarm candidate, and why". It binds
 //! each selected claim to exactly one resolution from the #2766 vocabulary and
 //! fails closed on the stage law: a packet may not claim `scope_closed` or
-//! `hard_cut_eligible` while a row is `pending`, while a release hold is
-//! unresolved, or (for `hard_cut_eligible`) before the open-PR rows were
-//! captured at an exact main commit.
+//! `hard_cut_eligible` while a row is `pending`, while the packet is empty,
+//! or (for `hard_cut_eligible`) while a release hold is unresolved, an open PR
+//! is not terminally dispositioned, or the open-PR rows were not captured at
+//! the observed main commit.
 //!
 //! The check is deterministic and network-free. It does not read GitHub, so it
 //! cannot establish that a cited PR merged or that an issue is closed; those
@@ -73,6 +74,15 @@ const PR_DISPOSITIONS: &[&str] = &[
     "accepted_defer_with_non_claim",
     "candidate_exclusion_with_manifest",
     "blocked_on_named_authority",
+    "superseded",
+    "unrelated_to_selected_candidate",
+];
+
+/// Open-PR dispositions that carry no unfinished work; the rest mean a PR is
+/// still expected to land or is waiting, which `hard_cut_eligible` forbids.
+const TERMINAL_PR_DISPOSITIONS: &[&str] = &[
+    "accepted_defer_with_non_claim",
+    "candidate_exclusion_with_manifest",
     "superseded",
     "unrelated_to_selected_candidate",
 ];
@@ -199,13 +209,13 @@ pub(crate) fn check_release_selection() -> Result<(), String> {
         }
     };
     let outcome = evaluate_release_selection(RELEASE_SELECTION_PATH, &text);
-    write_report("release-selection.json", &selection_json(&outcome))?;
+    write_report("release-selection-packet.json", &selection_json(&outcome))?;
     finish_policy_report(report_spec(), &outcome.violations)
 }
 
 fn report_spec() -> PolicyReportSpec<'static> {
     PolicyReportSpec {
-        report_file: "release-selection.md",
+        report_file: "release-selection-packet.md",
         check: "check-release-selection",
         why_it_matters: "The selected-claim packet is what the hard cut consumes: every claim has one resolution, every deferral names what the release does not claim, and the stage cannot advance past a pending row or an unresolved release hold. Without this check the packet can say `hard_cut_eligible` while a row is still pending, which is the false-ready state the cut exists to prevent. The check is offline and does not read GitHub, so it proves internal consistency and honest staging, not that cited evidence is current.",
         fix_kind: FixKind::AuthorDecisionRequired,
@@ -268,6 +278,7 @@ fn evaluate_release_selection(path: &str, text: &str) -> Outcome {
 
     check_header(&packet, &mut violations);
     check_claims(&packet, &mut violations);
+    check_dependency_cycles(&packet, &mut violations);
     check_outside(&packet, &mut violations);
     check_partition(&packet, &mut violations);
     check_open_prs(&packet, &mut violations);
@@ -334,8 +345,17 @@ fn check_header(packet: &Packet, violations: &mut Vec<String>) {
             "observed_main.sha must be a 40-character lowercase commit SHA or null",
         ));
     }
-    if blank(&packet.census.captured_on) {
-        violations.push(rule(RULE_SCHEMA, "census.captured_on must name a date"));
+    let date = packet.census.captured_on.as_bytes();
+    let date_ok = date.len() == 10
+        && date.iter().enumerate().all(|(i, b)| match i {
+            4 | 7 => *b == b'-',
+            _ => b.is_ascii_digit(),
+        });
+    if !date_ok {
+        violations.push(rule(
+            RULE_SCHEMA,
+            "census.captured_on must be a YYYY-MM-DD date",
+        ));
     }
     if packet.non_claims.is_empty() || packet.non_claims.iter().any(|text| blank(text)) {
         violations.push(rule(
@@ -397,6 +417,38 @@ fn check_claims(packet: &Packet, violations: &mut Vec<String>) {
             }
         }
         check_claim_evidence(claim, violations);
+    }
+}
+
+/// A dependency cycle means no member can be the first to be terminal.
+fn check_dependency_cycles(packet: &Packet, violations: &mut Vec<String>) {
+    let edges: BTreeMap<&str, Vec<&str>> = packet
+        .claims
+        .iter()
+        .map(|claim| {
+            (
+                claim.claim_id.as_str(),
+                claim.depends_on.iter().map(String::as_str).collect(),
+            )
+        })
+        .collect();
+    for start in edges.keys() {
+        let mut stack: Vec<&str> = edges[start].clone();
+        let mut seen = BTreeSet::new();
+        while let Some(next) = stack.pop() {
+            if next == *start {
+                violations.push(rule(
+                    RULE_DEPENDENCY,
+                    format!("claim `{start}` is part of a dependency cycle"),
+                ));
+                break;
+            }
+            if seen.insert(next)
+                && let Some(more) = edges.get(next)
+            {
+                stack.extend(more.iter().copied());
+            }
+        }
     }
 }
 
@@ -579,7 +631,26 @@ fn check_partition(packet: &Packet, violations: &mut Vec<String>) {
     }
     let mut related_seen: BTreeMap<u64, &str> = BTreeMap::new();
     for claim in &packet.claims {
+        let mut own_related = BTreeSet::new();
         for related in &claim.related_issues {
+            if !own_related.insert(*related) {
+                violations.push(rule(
+                    RULE_ISSUE_PARTITION,
+                    format!(
+                        "issue #{related} is listed twice in related_issues of `{}`",
+                        claim.claim_id
+                    ),
+                ));
+            }
+            if packet.outside_selection.iter().any(|o| o.issue == *related) {
+                violations.push(rule(
+                    RULE_ISSUE_PARTITION,
+                    format!(
+                        "issue #{related} is related to `{}` and also outside_selection",
+                        claim.claim_id
+                    ),
+                ));
+            }
             if let Some(owner) = owners.get(related) {
                 violations.push(rule(
                     RULE_ISSUE_PARTITION,
@@ -656,6 +727,12 @@ fn check_stage(packet: &Packet, violations: &mut Vec<String>) {
     let closed = stage == "scope_closed" || stage == "hard_cut_eligible";
     let eligible = stage == "hard_cut_eligible";
     if closed {
+        if packet.claims.is_empty() || packet.census.open_release_check_issues.is_empty() {
+            violations.push(rule(
+                RULE_STAGE_LAW,
+                format!("stage is {stage} but the packet has no claims or no recorded census; an empty packet is not a closed one"),
+            ));
+        }
         for claim in packet.claims.iter().filter(|c| c.resolution == "pending") {
             violations.push(rule(
                 RULE_STAGE_LAW,
@@ -697,16 +774,20 @@ fn check_stage(packet: &Packet, violations: &mut Vec<String>) {
                 "open_prs.captured_at_main must equal observed_main.sha at hard_cut_eligible",
             ));
         }
-        if packet
-            .open_prs
-            .rows
-            .iter()
-            .any(|row| row.disposition == "blocked_on_named_authority")
-        {
-            violations.push(rule(
-                RULE_STAGE_LAW,
-                "hard_cut_eligible cannot carry an open PR blocked_on_named_authority",
-            ));
+        for row in &packet.open_prs.rows {
+            if PR_DISPOSITIONS.contains(&row.disposition.as_str())
+                && !TERMINAL_PR_DISPOSITIONS.contains(&row.disposition.as_str())
+            {
+                violations.push(rule(
+                    RULE_STAGE_LAW,
+                    format!(
+                        "hard_cut_eligible but open PR #{} is `{}`; only {} are terminal",
+                        row.pr,
+                        row.disposition,
+                        TERMINAL_PR_DISPOSITIONS.join(", ")
+                    ),
+                ));
+            }
         }
     }
 }

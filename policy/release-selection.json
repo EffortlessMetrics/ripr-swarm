@@ -15,8 +15,8 @@
       "resolution": "landed_and_accepted",
       "candidate_effect": "Canonical baseline identity and deterministic legacy migration are in the cut.",
       "implementation_refs": [
-        "pr:8076",
-        "pr:8267"
+        "pr:3935",
+        "pr:8076"
       ],
       "proof_refs": [
         "https://github.com/EffortlessMetrics/ripr-swarm/issues/1964"
@@ -29,8 +29,7 @@
       "resolution": "landed_and_accepted",
       "candidate_effect": "Exact RC manifest selection after authoritative stable absence is in the cut.",
       "implementation_refs": [
-        "pr:4083",
-        "pr:4208"
+        "pr:4083"
       ],
       "proof_refs": [
         "https://github.com/EffortlessMetrics/ripr-swarm/issues/3798"
@@ -40,14 +39,15 @@
       "claim_id": "agent-instruction-authority",
       "owner_issue": 3785,
       "materiality": "release_optional",
-      "resolution": "landed_and_accepted",
-      "candidate_effect": "AGENTS.md is the complete effective contributor-instruction authority; the repair-stack landing boundaries are in.",
+      "resolution": "accepted_defer_with_non_claim",
+      "candidate_effect": "The bounded native finish-flow slice of the repair stack landed (#7198).",
       "implementation_refs": [
         "pr:7198"
       ],
       "proof_refs": [
         "https://github.com/EffortlessMetrics/ripr-swarm/issues/3785#issuecomment-6074811896"
-      ]
+      ],
+      "non_claim": "The release does not claim #3785's broader contributor-instruction authority or runtime inventory; the issue was closed with status/partial and those parts remain open."
     },
     {
       "claim_id": "cache-help-suggestions",
@@ -56,7 +56,7 @@
       "resolution": "landed_and_accepted",
       "candidate_effect": "Cache status/clear help and scoped flag suggestions are in the cut.",
       "implementation_refs": [
-        "pr:3828"
+        "pr:3823"
       ],
       "proof_refs": [
         "https://github.com/EffortlessMetrics/ripr-swarm/issues/3786"
@@ -126,31 +126,32 @@
     {
       "claim_id": "cache-observability",
       "owner_issue": 3795,
-      "materiality": "release_required",
-      "resolution": "landed_and_accepted",
-      "candidate_effect": "Cache store-error rows, phase costs and semantic reuse are disclosed.",
+      "materiality": "release_optional",
+      "resolution": "accepted_defer_with_non_claim",
+      "candidate_effect": "Store failures are retained in the latency report (#4171) and cold-path measurement landed (#3837).",
       "implementation_refs": [
         "pr:3837",
-        "pr:3839"
+        "pr:4171"
       ],
       "proof_refs": [
         "https://github.com/EffortlessMetrics/ripr-swarm/issues/3795#issuecomment-5771461413"
-      ]
+      ],
+      "non_claim": "The release does not claim phase-cost or semantic-reuse disclosure or receipt projection of cache observability; #3795 was closed manually with receipt projection recorded as open."
     },
     {
       "claim_id": "pilot-ranking",
       "owner_issue": 5497,
       "materiality": "release_required",
-      "resolution": "landed_and_accepted",
-      "candidate_effect": "Pilot ranks gap classes only, and the agent brief, packets and LSP withhold unresolved-reach limitations; producer-side typing of unresolved reach (#5492) stays open and unclaimed.",
+      "resolution": "accepted_defer_with_non_claim",
+      "candidate_effect": "Pilot ranks gap classes only, and the agent brief, packets and LSP withhold unresolved-reach limitations (#6774, #7116).",
       "implementation_refs": [
         "pr:6774",
         "pr:7116"
       ],
       "proof_refs": [
-        "https://github.com/EffortlessMetrics/ripr-swarm/issues/5497",
-        "https://github.com/EffortlessMetrics/ripr-swarm/issues/6775"
-      ]
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/5497"
+      ],
+      "non_claim": "The release does not claim #5497 acceptance across all consumers (the issue stays open) or producer-side typing of unresolved reach (#5492)."
     },
     {
       "claim_id": "stale-binary-substitution",
@@ -207,7 +208,7 @@
         "https://github.com/EffortlessMetrics/ripr-swarm/issues/4000#issuecomment-6033502553",
         "https://github.com/EffortlessMetrics/ripr-swarm/issues/4001#issuecomment-6043595956"
       ],
-      "non_claim": "The release does not claim root binding for the gap-record context packet, TypeScript hover artifact text or command_specs.human_display, and does not claim the printed commands are verified from a foreign working directory in PowerShell."
+      "non_claim": "The release does not claim root binding for the gap-record context packet, first-useful-action and hover paths, doc examples or command_specs.human_display; multi-root ambiguity, removed-workspace refusal, Workspace Trust or a cross-surface digest (#4001 controls 5, 6, 7, 10); hostile-artifact spellings (#7054) or the symlink-then-.. root case (#6960); or verification of printed commands from a foreign working directory in PowerShell."
     },
     {
       "claim_id": "powershell-foreign-cwd",
@@ -232,7 +233,8 @@
         3862
       ],
       "proof_refs": [
-        "https://github.com/EffortlessMetrics/ripr-swarm/issues/3794#issuecomment-5854784213"
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/3794#issuecomment-5854784213",
+        "docs/releases/0.11.0-cut-checklist.md"
       ],
       "non_claim": "Warm runs recompute semantic analysis; the release makes no large-repository wall-clock claim, and Windows warm cost is not measured."
     },
@@ -699,9 +701,6 @@
       "materiality": "release_required",
       "resolution": "pending",
       "candidate_effect": "Admission is advisory; the denominator is not yet mechanically stopped from moving.",
-      "related_issues": [
-        5114
-      ],
       "next": "Activate the admission packet through the controller's packet-only procedure after selection is terminal. Owner: Hard-cut admission thread."
     },
     {
@@ -839,32 +838,12 @@
       "note": "Editor, LSP and MCP contract slice assigned to a later candidate in policy/release-targets.toml or deferred by scope ruling; not in the 0.11.0 cut."
     },
     {
-      "issue": 1896,
-      "reason": "later_release_candidate",
-      "note": "Editor, LSP and MCP contract slice assigned to a later candidate in policy/release-targets.toml or deferred by scope ruling; not in the 0.11.0 cut."
-    },
-    {
-      "issue": 1926,
-      "reason": "later_release_candidate",
-      "note": "Editor, LSP and MCP contract slice assigned to a later candidate in policy/release-targets.toml or deferred by scope ruling; not in the 0.11.0 cut."
-    },
-    {
-      "issue": 1928,
-      "reason": "later_release_candidate",
-      "note": "Editor, LSP and MCP contract slice assigned to a later candidate in policy/release-targets.toml or deferred by scope ruling; not in the 0.11.0 cut."
-    },
-    {
       "issue": 1995,
       "reason": "later_release_candidate",
       "note": "Editor, LSP and MCP contract slice assigned to a later candidate in policy/release-targets.toml or deferred by scope ruling; not in the 0.11.0 cut."
     },
     {
       "issue": 2048,
-      "reason": "later_release_candidate",
-      "note": "Editor, LSP and MCP contract slice assigned to a later candidate in policy/release-targets.toml or deferred by scope ruling; not in the 0.11.0 cut."
-    },
-    {
-      "issue": 2822,
       "reason": "later_release_candidate",
       "note": "Editor, LSP and MCP contract slice assigned to a later candidate in policy/release-targets.toml or deferred by scope ruling; not in the 0.11.0 cut."
     },
@@ -879,54 +858,74 @@
       "note": "Editor, LSP and MCP contract slice assigned to a later candidate in policy/release-targets.toml or deferred by scope ruling; not in the 0.11.0 cut."
     },
     {
-      "issue": 3056,
+      "issue": 1896,
       "reason": "later_release_candidate",
-      "note": "Editor, LSP and MCP contract slice assigned to a later candidate in policy/release-targets.toml or deferred by scope ruling; not in the 0.11.0 cut."
+      "note": "Milestoned 0.13.0 candidate; not listed in policy/release-targets.toml and not in the 0.11.0 cut."
+    },
+    {
+      "issue": 1926,
+      "reason": "later_release_candidate",
+      "note": "Milestoned 0.13.0 candidate; not listed in policy/release-targets.toml and not in the 0.11.0 cut."
+    },
+    {
+      "issue": 1928,
+      "reason": "later_release_candidate",
+      "note": "Milestoned 0.13.0 candidate; not listed in policy/release-targets.toml and not in the 0.11.0 cut."
     },
     {
       "issue": 3094,
       "reason": "later_release_candidate",
-      "note": "Editor, LSP and MCP contract slice assigned to a later candidate in policy/release-targets.toml or deferred by scope ruling; not in the 0.11.0 cut."
+      "note": "Milestoned 0.13.0 candidate; not listed in policy/release-targets.toml and not in the 0.11.0 cut."
+    },
+    {
+      "issue": 2822,
+      "reason": "rolling",
+      "note": "Rolling or unscheduled work with no 0.11 milestone; excluded from the selected claims by this packet's scope ruling, not by a release-targets assignment."
     },
     {
       "issue": 2021,
-      "reason": "later_release_candidate",
-      "note": "Editor, LSP and MCP contract slice assigned to a later candidate in policy/release-targets.toml or deferred by scope ruling; not in the 0.11.0 cut."
+      "reason": "rolling",
+      "note": "Rolling or unscheduled work with no 0.11 milestone; excluded from the selected claims by this packet's scope ruling, not by a release-targets assignment."
+    },
+    {
+      "issue": 3056,
+      "reason": "rolling",
+      "note": "Rolling or unscheduled work with no 0.11 milestone; excluded from the selected claims by this packet's scope ruling, not by a release-targets assignment."
     },
     {
       "issue": 6234,
-      "reason": "later_release_candidate",
-      "note": "Go and language-expansion lane; 0.11 ships no Go adapter, so qualification of one is outside the cut."
+      "reason": "rolling",
+      "note": "Unmilestoned Go and language-expansion lane; 0.11 ships no Go adapter, so qualification of one is outside the cut."
     },
     {
       "issue": 6237,
-      "reason": "later_release_candidate",
-      "note": "Go and language-expansion lane; 0.11 ships no Go adapter, so qualification of one is outside the cut."
+      "reason": "rolling",
+      "note": "Unmilestoned Go and language-expansion lane; 0.11 ships no Go adapter, so qualification of one is outside the cut."
     },
     {
       "issue": 6238,
-      "reason": "later_release_candidate",
-      "note": "Go and language-expansion lane; 0.11 ships no Go adapter, so qualification of one is outside the cut."
+      "reason": "rolling",
+      "note": "Unmilestoned Go and language-expansion lane; 0.11 ships no Go adapter, so qualification of one is outside the cut."
     },
     {
       "issue": 6246,
-      "reason": "later_release_candidate",
-      "note": "Go and language-expansion lane; 0.11 ships no Go adapter, so qualification of one is outside the cut."
+      "reason": "rolling",
+      "note": "Unmilestoned Go and language-expansion lane; 0.11 ships no Go adapter, so qualification of one is outside the cut."
     },
     {
       "issue": 6402,
-      "reason": "later_release_candidate",
-      "note": "Go and language-expansion lane; 0.11 ships no Go adapter, so qualification of one is outside the cut."
+      "reason": "rolling",
+      "note": "Unmilestoned Go and language-expansion lane; 0.11 ships no Go adapter, so qualification of one is outside the cut."
     },
     {
       "issue": 6422,
-      "reason": "later_release_candidate",
-      "note": "Go and language-expansion lane; 0.11 ships no Go adapter, so qualification of one is outside the cut."
+      "reason": "rolling",
+      "note": "Unmilestoned Go and language-expansion lane; 0.11 ships no Go adapter, so qualification of one is outside the cut."
     },
     {
       "issue": 6550,
-      "reason": "later_release_candidate",
-      "note": "Go and language-expansion lane; 0.11 ships no Go adapter, so qualification of one is outside the cut."
+      "reason": "rolling",
+      "note": "Unmilestoned Go and language-expansion lane; 0.11 ships no Go adapter, so qualification of one is outside the cut."
     }
   ],
   "open_prs": {
