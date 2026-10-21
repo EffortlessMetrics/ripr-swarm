@@ -251,6 +251,7 @@ runs:
             --expected-head "${ADMISSION_EXPECTED_HEAD:-}" \
             --max-changed-files "${ADMISSION_MAX_CHANGED_FILES}" \
             --max-changed-lines "${ADMISSION_MAX_CHANGED_LINES}" \
+            --pr-files "$pr_files" \
             "${docs_flag[@]}" > "$result"
           rc_candidate=$?
           python3 "$action_root/release_cut_admission.py" \

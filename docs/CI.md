@@ -2265,6 +2265,11 @@ Candidate admission accepts a same-repository PR authored by `dependabot[bot]`
 on a `dependabot/` branch without the template claim lines: the claim is this
 dependency policy and the acceptance delta is the update branch. Any other PR
 still has to state its own claim.
+The ordinary size envelope (files and changed lines) does not count the lines of
+machine-written `package-lock.json` and `Cargo.lock` files, matched by exact file
+name; a dependency or fixture lockfile refresh is verified by the package manager
+and dependency review rather than by reading the diff. Hand-written lines are
+still limited as before.
 
 GitHub-hosted security settings are tracked in
 [Repository settings](REPO_SETTINGS.md). Dependency Graph, Dependabot alerts,

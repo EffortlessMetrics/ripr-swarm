@@ -47,6 +47,10 @@ LABELS = {
         "accepted winner and losing candidate disposition",
     ),
 }
+# Machine-written dependency lockfiles are verified by their package manager and
+# dependency review, not by reading the diff, so their lines do not count toward
+# the ordinary qualification size envelope. Matching is by exact file name.
+GENERATED_LOCKFILES = {"package-lock.json", "Cargo.lock"}
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 TEMPLATE_LINES = {
     "claim": "Governing issue or accepted claim:",
@@ -175,6 +179,14 @@ def effective_fields(pr: dict[str, Any]) -> dict[str, str]:
     return fields
 
 
+def generated_lockfile_lines(pr_files: list[dict[str, Any]]) -> int:
+    return sum(
+        int(entry.get("additions") or 0) + int(entry.get("deletions") or 0)
+        for entry in pr_files
+        if str(entry.get("filename") or "").rsplit("/", 1)[-1] in GENERATED_LOCKFILES
+    )
+
+
 def identity_detail(fields: dict[str, str]) -> str:
     missing = [
         TEMPLATE_LINES[key]
@@ -224,6 +236,7 @@ def decide(
     docs_only: bool,
     max_files: int,
     max_lines: int,
+    generated_lines: int = 0,
 ) -> dict[str, Any]:
     fields = effective_fields(current)
     actual_head = ((current.get("head") or {}).get("sha") or "")
@@ -274,13 +287,16 @@ def decide(
         )
 
     changed_files = int(current.get("changed_files") or 0)
-    changed_lines = int(current.get("additions") or 0) + int(
-        current.get("deletions") or 0
+    changed_lines = max(
+        0,
+        int(current.get("additions") or 0)
+        + int(current.get("deletions") or 0)
+        - generated_lines,
     )
     if not docs_only and (changed_files > max_files or changed_lines > max_lines):
         return refuse(
             "qualification_scope_oversized",
-            detail=f"candidate changes {changed_files} files / {changed_lines} changed lines, exceeding the ordinary limit of {max_files} files / {max_lines} changed lines; split or recompose the candidate before ordinary qualification",
+            detail=f"candidate changes {changed_files} files / {changed_lines} changed lines, exceeding the ordinary limit of {max_files} files / {max_lines} changed lines (generated lockfile lines are not counted); split or recompose the candidate before ordinary qualification",
         )
 
     return {
@@ -477,6 +493,20 @@ def self_test() -> None:
     assert "one of the competing PR bodies" in competing_detail
     assert "both PR bodies" not in competing_detail
     assert run(oversized, [oversized], docs=True)["status"] == "admitted"
+    locks = [
+        {"filename": "fixtures/a/package-lock.json", "additions": 900, "deletions": 800},
+        {"filename": "Cargo.lock", "additions": 40, "deletions": 10},
+        {"filename": "src/not-package-lock.json", "additions": 5, "deletions": 5},
+        {"filename": "src/lib.rs", "additions": 3, "deletions": 0},
+    ]
+    assert generated_lockfile_lines(locks) == 1750
+    big = fixture(body=fixture_body(), head=head, additions=3000, deletions=100)
+    assert run(big, [big])["reason"] == "qualification_scope_oversized"
+    assert decide(big, [big], head, False, max_files, max_lines, 1750)["status"] == "admitted"
+    assert (
+        decide(big, [big], head, False, max_files, max_lines, 50)["reason"]
+        == "qualification_scope_oversized"
+    )
     assert run(current, [current], "b" * 40)["reason"] == "candidate_head_moved"
     assert (
         run(fixture(body=fixture_body(), head=head, draft=True), [], head)["reason"]
@@ -518,7 +548,7 @@ def self_test() -> None:
     bot = fixture(number=10, body="", head=head, **bump)
     assert run(bot, [bot, matching])["reason"] == "competing_candidate"
     assert run(matching, [bot, matching], "c" * 40)["reason"] == "competing_candidate"
-    print("candidate-admission self-test: 37 controls passed")
+    print("candidate-admission self-test: 42 controls passed")
 
 
 def load_json(path: Path) -> Any:
@@ -530,6 +560,7 @@ def main() -> int:
     parser.add_argument("--current", type=Path)
     parser.add_argument("--open-prs", type=Path)
     parser.add_argument("--expected-head")
+    parser.add_argument("--pr-files", type=Path)
     parser.add_argument("--docs-only", action="store_true")
     parser.add_argument("--max-changed-files", type=int, default=160)
     parser.add_argument("--max-changed-lines", type=int, default=3000)
@@ -549,6 +580,7 @@ def main() -> int:
         args.docs_only,
         args.max_changed_files,
         args.max_changed_lines,
+        generated_lockfile_lines(load_json(args.pr_files) or []) if args.pr_files else 0,
     )
     print(json.dumps(result, sort_keys=True))
     return 1 if result["status"] == "refused" else 0
