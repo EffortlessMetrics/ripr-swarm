@@ -629,6 +629,10 @@ fn registering_block_roots(statements: &[Stmt], params: &BTreeSet<String>, out: 
                 module_bindings(std::slice::from_ref(other), &mut bindings, &mut roots);
                 roots.extend(bindings.into_iter().flat_map(|(names, _)| names));
                 out.extend(roots.into_iter().filter(|root| !params.contains(root)));
+                // A nested def under `if`, `try`, `with` or a loop still runs.
+                for block in nested_blocks(other) {
+                    registering_block_roots(block, params, out);
+                }
             }
         }
     }
