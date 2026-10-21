@@ -1,0 +1,73 @@
+{
+  "subject_id": "authored-py-pytest-self-reach",
+  "origin": "authored",
+  "version_label": "authored@2026-10-18",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "other/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "other/models.py",
+      "sha256": "b4fab19ade4f57dc2d68876bc48b233384d422ad38e2cab477cb50f76fb2f5eb"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "5d407c2e48a767b2a788a2aedb1bcd7266f733684b7c80f5629dd2c4cf3775c4"
+    },
+    {
+      "path": "reach/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "reach/chain.py",
+      "sha256": "a37b454306826fdb6a0e007b943e2460939a5921068226c8d38019e238029770"
+    },
+    {
+      "path": "reach/chart_import.py",
+      "sha256": "16f30122a05db3b9f83d979ee076f00828a8725668d9b24eae904df709726f55"
+    },
+    {
+      "path": "reach/ledger_render.py",
+      "sha256": "e62361dd32234afb375da9c1caf4ffd14805c9ca38d513e9f1f6167586297d54"
+    },
+    {
+      "path": "reach/panel_direct.py",
+      "sha256": "214d2bec75df9b5af2ecc463b74bd9ebb35a76c0b9094f37597819749100aa6d"
+    },
+    {
+      "path": "reach/prepared.py",
+      "sha256": "9c1a0c28a78ebb15039de27af485016f12216d663e67cae429631865aa19d818"
+    },
+    {
+      "path": "reach/table_other.py",
+      "sha256": "85e99c3b365e691dd396c3b9693a9c412ec99e1fca23dec9f4bf55fe804f8f38"
+    },
+    {
+      "path": "tests/test_chain.py",
+      "sha256": "83bf6022fc114f18a69941731a11ec2cc72d4becee30b8c63e0c057a31c2cb9d"
+    },
+    {
+      "path": "tests/test_chart_import.py",
+      "sha256": "4e37a96f094c5501bdab5738fb74e1643b025f5441296d68261cc03ff5bacc88"
+    },
+    {
+      "path": "tests/test_ledger_render.py",
+      "sha256": "32671c038c348f532b2da74b701a97b60fb8ca6af546869b8b5be83a83ccc4a7"
+    },
+    {
+      "path": "tests/test_panel_direct.py",
+      "sha256": "c9e334c48a049bcb759894cd0bdb143ca9da12e649385d502d40f6450fec0574"
+    },
+    {
+      "path": "tests/test_prepared.py",
+      "sha256": "d986f62033824c1f4748a5b86b0186046a0832bf46c2d32c8a916b4112901588"
+    },
+    {
+      "path": "tests/test_table_other.py",
+      "sha256": "90dc41fe96bba1bcecb4a4f842608b298d1a928a29e50f62f8671bbf789ee70c"
+    }
+  ]
+}

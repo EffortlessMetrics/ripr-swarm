@@ -1,5 +1,8 @@
 //! Real workflow shell and immutable Git histories; no wheel build or consumers.
 #![cfg(target_os = "linux")]
+#[path = "../test_support.rs"]
+mod test_support;
+
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -125,17 +128,9 @@ fn copy(from: &Path, to: &Path) -> TestResult {
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> TestResult<Self> {
-        let root = std::env::temp_dir().join(format!(
-            "wheel-routing-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_nanos()
-        ));
-        fs::create_dir_all(std::env::temp_dir())?;
-        fs::create_dir(&root)?;
+        let root = test_support::scratch("wheel-routing")?;
         let fixture = Self(root);
-        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let source = test_support::workspace_root()?;
         let inputs = [
             "Cargo.toml",
             "Cargo.lock",
@@ -182,7 +177,10 @@ impl Fixture {
                 "RUSTUP_HOME",
                 std::env::var_os("RUSTUP_HOME").ok_or("RUSTUP_HOME")?,
             )
-            .env("POLICY_BINARY", env!("CARGO_BIN_EXE_repo-policy"));
+            .env(
+                "POLICY_BINARY",
+                test_support::policy_binary(env!("CARGO_BIN_EXE_repo-policy"))?,
+            );
         if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
             command.env("LLVM_PROFILE_FILE", profile);
         }

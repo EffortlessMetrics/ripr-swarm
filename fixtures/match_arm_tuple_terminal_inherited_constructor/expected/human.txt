@@ -26,6 +26,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/match_arm_tuple_terminal_inherited_constructor/input --diff <cwd>/fixtures/match_arm_tuple_terminal_inherited_constructor/diff.patch --mode fast probe:src_work_queue.rs:match_arm:e2ddad8e
   ripr context --root <cwd>/fixtures/match_arm_tuple_terminal_inherited_constructor/input --diff <cwd>/fixtures/match_arm_tuple_terminal_inherited_constructor/diff.patch --mode fast --at probe:src_work_queue.rs:match_arm:e2ddad8e
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_work_queue.rs:match_arm:e2ddad8e --root <cwd>/fixtures/match_arm_tuple_terminal_inherited_constructor/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/match_arm_tuple_terminal_inherited_constructor/input --at src/work_queue.rs:30 --kind match_arm
 

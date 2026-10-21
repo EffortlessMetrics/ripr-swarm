@@ -26,6 +26,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_returned_error_drop_plain/input --diff <cwd>/fixtures/rust_returned_error_drop_plain/diff.patch --mode fast probe:src_lib.rs:field_construction:9382a2f4
   ripr context --root <cwd>/fixtures/rust_returned_error_drop_plain/input --diff <cwd>/fixtures/rust_returned_error_drop_plain/diff.patch --mode fast --at probe:src_lib.rs:field_construction:9382a2f4
+  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:field_construction:9382a2f4 --root <cwd>/fixtures/rust_returned_error_drop_plain/input` for the full gate's answer
 No test stub here: the changed field is set on a struct literal the owner does not return directly (as its tail or `return` value), so the stub cannot tell which value to assert on
 
 Hidden:

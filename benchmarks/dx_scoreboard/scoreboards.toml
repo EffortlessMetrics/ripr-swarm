@@ -886,7 +886,12 @@ source = "ingest:rust-corpus-smoke"
 # (top-5 precision moves at least 0.04 per pick, top-10 precision 0.02, the
 # top-10 shares 0.02), and the confirmed and refuted counts allow no change in
 # the worse direction, because an unscored pick turning refuted moves precision by less than one
-# pick's step. Any pick that moves the wrong way fails. An intended trade-off
+# pick's step. The refuted counts alone may also rise by the picks the run
+# admitted beyond the baseline's (pick_growth_allowance, #7167): a larger
+# judged set adds picks of every verdict, and an absolute count would turn red
+# on growth that raises precision. At a flat or smaller pick count the margin
+# is zero, so a flipped pick still fails, and the precision and share rows
+# still judge the mix of the added picks. An intended trade-off
 # refreshes the baseline in the same pull request. Each row's repository is
 # the corpus version, so a baseline from another answer key is reported
 # uncompared rather than compared.
@@ -975,6 +980,7 @@ direction = "lower_is_better"
 target = 8
 regression_pct = 0
 regression_floor = 0
+pick_growth_allowance = true
 runner_dependent = false
 source = "ingest:pilot-ranking"
 
@@ -999,5 +1005,6 @@ direction = "lower_is_better"
 target = 16
 regression_pct = 0
 regression_floor = 0
+pick_growth_allowance = true
 runner_dependent = false
 source = "ingest:pilot-ranking"

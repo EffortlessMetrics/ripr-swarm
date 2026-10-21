@@ -1,0 +1,16 @@
+pub fn score(x: u32) -> u32 {
+    x * 2
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn score_doubles() {
+        let value = score(2);
+        if false {
+            assert_eq!(value, 4);
+        }
+    }
+}

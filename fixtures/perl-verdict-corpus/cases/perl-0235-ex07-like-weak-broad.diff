@@ -1,0 +1,13 @@
+diff --git a/lib/Ledger.pm b/lib/Ledger.pm
+index 78101d1..4b68561 100644
+--- a/lib/Ledger.pm
++++ b/lib/Ledger.pm
+@@ -15,7 +15,7 @@ sub summary {
+ 
+ sub format_entry {
+     my ($date, $amount) = @_;
+-    return sprintf('%s %+d', $date, $amount);
++    return sprintf("%s %+d", $date, $amount);
+ }
+ 
+ sub is_overdrawn {

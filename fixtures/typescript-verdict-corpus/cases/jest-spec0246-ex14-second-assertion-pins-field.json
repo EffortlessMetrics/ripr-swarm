@@ -1,0 +1,48 @@
+{
+  "case_id": "jest-spec0246-ex14-second-assertion-pins-field",
+  "subject_id": "authored-ts-jest-mined",
+  "diff": "cases/jest-spec0246-ex14-second-assertion-pins-field.diff",
+  "anchor": {
+    "file": "src/settingsBoth.ts",
+    "line": 7
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "field_construction",
+  "test_shape": "jest_toequal_input_plus_member_pin_on_fresh_input",
+  "hard_case": "the first assertion cannot see the dropped field, but a second assertion on a fresh input pins `ok`",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9.3; edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "return { ...cfg };",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "marked settings keep the input and set ok",
+        "equivalence_review": "not equivalent: changes the value the changed line returns"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`return { ...cfg, ok: true }` becomes `return { ...cfg }`. The `toEqual(cfg)` assertion passes on both versions, but `markBoth({ name: \"bo\" }).ok` reads `undefined` after the edit and fails `toBe(true)`. RIPR-SPEC-0246 example 14 (the second-assertion form) reads this `exposed`.",
+  "labeling_observation": {
+    "ripr_commit": "c97b9fc",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0246#14"
+  ]
+}

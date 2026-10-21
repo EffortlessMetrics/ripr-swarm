@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Perl: a related test whose assertion the fact producer grades `weak_broad` on a kind that can pin the change (`throws_ok`, `dies_ok`, `like(dies {...}, ...)`) now reads `static_unknown` with a next step that says why, instead of a `reachable_unrevealed` gap. The producer cannot tell these apart (#6582). Perl verdict corpus false verdicts 12/36 to 8/36 (RIPR-SPEC-0235 rule 16).

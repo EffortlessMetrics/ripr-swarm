@@ -3018,10 +3018,17 @@ pub(crate) fn evidence_promotion_human_oracle_line_matches(
     let normalized = line.trim().to_ascii_lowercase();
 
     if let Some(related_test) = normalized.strip_prefix("- related test ") {
-        let projection = format!(
-            "{expected_strength} {} oracle:",
-            expected_kind.replace('_', " ")
-        );
+        // A multi-word kind that already leads with the strength word is not
+        // doubled: `smoke_only`/`smoke` reads "smoke only oracle" (#8711).
+        let kind_label = expected_kind.replace('_', " ");
+        let projection = if kind_label
+            .split_once(' ')
+            .is_some_and(|(lead, _)| lead == expected_strength)
+        {
+            format!("{kind_label} oracle:")
+        } else {
+            format!("{expected_strength} {kind_label} oracle:")
+        };
         for (separator, _) in related_test.match_indices(" uses ") {
             let Some((location, test_name)) = related_test[..separator].rsplit_once(' ') else {
                 continue;
@@ -3037,7 +3044,29 @@ pub(crate) fn evidence_promotion_human_oracle_line_matches(
             {
                 continue;
             }
-            return related_test[separator + " uses ".len()..].starts_with(projection.as_str());
+            let phrase = &related_test[separator + " uses ".len()..];
+            // A row ungraded against the probe reads "<kind> oracle, not
+            // graded against this probe" (an unclassified kind reads "an
+            // unclassified oracle") (#8388).
+            let ungraded = if expected_kind == "unknown" {
+                "an unclassified oracle, not graded against this probe:".to_string()
+            } else {
+                format!(
+                    "{} oracle, not graded against this probe:",
+                    expected_kind.replace('_', " ")
+                )
+            };
+            // A row with no oracle reads "no oracle" (#8747).
+            let absent = phrase
+                .strip_prefix("no oracle")
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with([';', ':', ',']));
+            return if expected_strength == "none" {
+                expected_kind == "unknown" && absent
+            } else if expected_strength == "unknown" {
+                phrase.starts_with(ungraded.as_str())
+            } else {
+                phrase.starts_with(projection.as_str())
+            };
         }
         return false;
     }
@@ -5098,61 +5127,36 @@ mod harness_limitation_assertion_tests {
     }
 
     #[test]
-    fn pinned_external_patch_paths_are_diff_sourced() -> Result<(), String> {
-        // Extension-based positives do not consult the filesystem, so they
-        // stay true from any process cwd (#8657).
+    fn pinned_external_patch_paths_are_diff_sourced() {
         assert!(evidence_promotion_case_is_diff_sourced(Some(
             "fixtures/evidence-promotion-honesty-corpus/patches/semver-matches-greater.diff"
         )));
+        // The extension branch never touches the filesystem, so a path that
+        // does not exist is still diff-sourced when it names a `.patch` file
+        // and is not when it names a plain, missing directory.
         assert!(evidence_promotion_case_is_diff_sourced(Some(
             "does-not-need-to-exist.patch"
         )));
+        assert!(!evidence_promotion_case_is_diff_sourced(Some(
+            "does-not-need-to-exist"
+        )));
         assert!(!evidence_promotion_case_is_diff_sourced(None));
-
-        // The exists(diff.patch) branch is cwd-relative. Pin it with
-        // absolute temp directories rather than a repo fixture whose
-        // patch file is visible from the workspace root but not from
-        // `xtask/` (the coverage failure on main 16953fb).
-        let temp_root = std::env::temp_dir();
-        std::fs::create_dir_all(&temp_root)
-            .map_err(|err| format!("create temp_dir root {}: {err}", temp_root.display()))?;
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_nanos())
-            .unwrap_or(0);
-        let sandbox = temp_root.join(format!(
-            "ripr-8657-diff-sourced-{}-{stamp}",
-            std::process::id()
+        // Absolute paths: the check reads the filesystem, and other xtask
+        // tests move the process cwd to the repo root. A relative
+        // `fixtures/split_test_boundary_oracle` flipped to diff-sourced
+        // (it carries a `diff.patch`) whenever one of them ran concurrently.
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let diff_fixture = manifest_dir
+            .parent()
+            .unwrap_or(manifest_dir)
+            .join("fixtures/split_test_boundary_oracle");
+        assert!(diff_fixture.join("diff.patch").exists());
+        assert!(evidence_promotion_case_is_diff_sourced(
+            diff_fixture.to_str()
         ));
-        let _ = std::fs::remove_dir_all(&sandbox);
-        std::fs::create_dir(&sandbox)
-            .map_err(|err| format!("create sandbox {}: {err}", sandbox.display()))?;
-
-        let with_patch = sandbox.join("with-patch");
-        let without_patch = sandbox.join("without-patch");
-        std::fs::create_dir(&with_patch)
-            .map_err(|err| format!("create {}: {err}", with_patch.display()))?;
-        std::fs::create_dir(&without_patch)
-            .map_err(|err| format!("create {}: {err}", without_patch.display()))?;
-        std::fs::write(with_patch.join("diff.patch"), b"")
-            .map_err(|err| format!("write diff.patch: {err}"))?;
-
-        let with_patch = with_patch
-            .to_str()
-            .ok_or_else(|| "with-patch temp path is not utf-8".to_string())?;
-        let without_patch = without_patch
-            .to_str()
-            .ok_or_else(|| "without-patch temp path is not utf-8".to_string())?;
-        assert!(
-            evidence_promotion_case_is_diff_sourced(Some(with_patch)),
-            "directory with diff.patch must be diff-sourced regardless of cwd"
-        );
-        assert!(
-            !evidence_promotion_case_is_diff_sourced(Some(without_patch)),
-            "directory without diff.patch must not be diff-sourced regardless of cwd"
-        );
-
-        let _ = std::fs::remove_dir_all(&sandbox);
-        Ok(())
+        assert!(!manifest_dir.join("diff.patch").exists());
+        assert!(!evidence_promotion_case_is_diff_sourced(
+            manifest_dir.to_str()
+        ));
     }
 }

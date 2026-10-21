@@ -27,6 +27,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/field_match_macro_option_shadow/input --diff <cwd>/fixtures/field_match_macro_option_shadow/diff.patch --mode fast probe:src_lib.rs:match_arm:23efc786
   ripr context --root <cwd>/fixtures/field_match_macro_option_shadow/input --diff <cwd>/fixtures/field_match_macro_option_shadow/diff.patch --mode fast --at probe:src_lib.rs:match_arm:23efc786
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:match_arm:23efc786 --root <cwd>/fixtures/field_match_macro_option_shadow/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/field_match_macro_option_shadow/input --at src/lib.rs:5 --kind match_arm
 

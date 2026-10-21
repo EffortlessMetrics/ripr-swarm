@@ -777,3 +777,52 @@ fn leaf_is_present(path: &Path) -> Result<bool, String> {
         Err(error) => Err(format!("inspect {}: {error}", path.display())),
     }
 }
+
+#[test]
+fn library_crate_name_for_root_file_resolves_name_root_and_target_shape() -> Result<(), String> {
+    use crate::analysis::new_test_target::library_crate_name_for_root_file;
+    let root = claim_root("8741-crate-name")?;
+    // Hyphenated package name maps to an underscore crate name.
+    write_file(
+        &root.0,
+        "hyph/Cargo.toml",
+        "[package]\nname = \"my-pkg\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    write_file(&root.0, "hyph/src/lib.rs", "pub fn a() {}\n")?;
+    // `[lib] name` override wins over the package name.
+    write_file(
+        &root.0,
+        "named/Cargo.toml",
+        "[package]\nname = \"pkg-x\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[lib]\nname = \"renamed\"\n",
+    )?;
+    write_file(&root.0, "named/src/lib.rs", "pub fn a() {}\n")?;
+    // Bin-only package has no library target.
+    write_file(
+        &root.0,
+        "bin/Cargo.toml",
+        "[package]\nname = \"only-bin\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )?;
+    write_file(&root.0, "bin/src/main.rs", "fn main() {}\n")?;
+
+    let name = |owner: &str, target: Option<&str>| {
+        library_crate_name_for_root_file(&root.0, Path::new(owner), target.map(Path::new))
+    };
+    assert_eq!(name("hyph/src/lib.rs", None).as_deref(), Some("my_pkg"));
+    assert_eq!(name("named/src/lib.rs", None).as_deref(), Some("renamed"));
+    assert_eq!(name("bin/src/main.rs", None), None);
+    assert_eq!(name("hyph/src/other.rs", None), None);
+    assert_eq!(
+        name("hyph/src/lib.rs", Some("hyph/tests/a.rs")).as_deref(),
+        Some("my_pkg")
+    );
+    for bad in [
+        "hyph/tests/common/mod.rs",
+        "hyph/tests/sub/main.rs",
+        "hyph/src/tests/a.rs",
+        "named/tests/a.rs",
+        "hyph/tests/a.txt",
+    ] {
+        assert_eq!(name("hyph/src/lib.rs", Some(bad)), None, "{bad}");
+    }
+    Ok(())
+}

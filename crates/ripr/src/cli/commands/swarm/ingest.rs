@@ -1,6 +1,6 @@
 use crate::cli::commands_context::ensure_command_root;
 use crate::cli::parse::expect_value;
-use crate::cli::suggest::unknown_argument;
+use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use std::path::{Path, PathBuf};
 
@@ -37,9 +37,7 @@ pub(super) fn parse_options(args: &[String]) -> Result<Options, String> {
                 i += 1;
                 let value = expect_value(args, i, "--format")?;
                 if value != "json" {
-                    return Err(format!(
-                        "unknown swarm ingest format {value:?}; expected `json`"
-                    ));
+                    return Err(unknown_value("swarm ingest format", value, &["json"]));
                 }
             }
             "--json" => {}
@@ -130,7 +128,14 @@ mod tests {
         );
         assert_eq!(
             parse_options(&args(&["--format", "md"])),
-            Err("unknown swarm ingest format \"md\"; expected `json`".to_string())
+            Err("unknown swarm ingest format \"md\". Accepted: json.".to_string())
+        );
+        assert_eq!(
+            parse_options(&args(&["--format", "jsn"])),
+            Err(
+                "unknown swarm ingest format \"jsn\". Did you mean `json`? Accepted: json."
+                    .to_string()
+            )
         );
         assert_eq!(
             parse_options(&args(&[])),

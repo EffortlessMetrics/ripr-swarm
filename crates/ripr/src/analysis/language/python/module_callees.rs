@@ -6,12 +6,14 @@
 //! body rebinds, parameters, calls inside comments or strings, and nested
 //! definitions' own names are not edges. Facts are textual and advisory: a
 //! missing edge only withholds a weak relation, never grants an oracle.
+//!
+//! The text is the owner's whole span, so a call inside a nested `def` or
+//! lambda counts as an edge of the enclosing owner (an over-approximation;
+//! the relation it feeds stays weak). Call-site shape is shared with
+//! `contains_call_name` through `is_bare_call_site`.
 
-use super::related_tests::{
-    is_definition_name, is_python_identifier_char, line_prefix_looks_like_comment_or_string,
-    python_text_hides_code, text_binds_name,
-};
-use super::{PythonParameter, python_callee_start_has_boundary};
+use super::PythonParameter;
+use super::related_tests::{is_bare_call_site, is_python_identifier_char, text_binds_name};
 
 /// Most distinct callee names kept per owner, so a generated body cannot make
 /// the fact unbounded.
@@ -41,10 +43,7 @@ pub(super) fn bare_callees(owner_text: &str, parameters: &[PythonParameter]) -> 
             || NON_CALL_KEYWORDS.contains(&name)
             || callees.iter().any(|existing| existing == name)
             || parameters.iter().any(|parameter| parameter.name == name)
-            || !python_callee_start_has_boundary(owner_text, start)
-            || line_prefix_looks_like_comment_or_string(owner_text, start)
-            || python_text_hides_code(owner_text, start)
-            || is_definition_name(owner_text, start)
+            || !is_bare_call_site(owner_text, start)
             || text_binds_name(owner_text, name)
         {
             continue;

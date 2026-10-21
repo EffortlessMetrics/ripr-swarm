@@ -35,6 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_error_path_shape/input --diff <cwd>/fixtures/python_error_path_shape/diff.patch --mode fast probe:src_validation.py:python_preview:82db397b
   ripr context --root <cwd>/fixtures/python_error_path_shape/input --diff <cwd>/fixtures/python_error_path_shape/diff.patch --mode fast --at probe:src_validation.py:python_preview:82db397b
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_validation.py:python_preview:82db397b --root <cwd>/fixtures/python_error_path_shape/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full
