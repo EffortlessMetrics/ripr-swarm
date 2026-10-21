@@ -119,6 +119,16 @@ shows no assertion, a duplicate, imported or cfg-gated definition, a macro
 from another file or crate, and a call in a closure, branch or `use`-bearing
 test keep this limit.
 
+### Helper call with a macro among its arguments (#9122)
+
+An `assert_*` helper call (`common::assert_matches(snapbox::file![..], cmd)`)
+whose arguments contain a macro is still recognized as a helper call when its
+callee, the text before the first `(`, is the `assert_*` path. The macro hides
+what the call compares, so the call is graded `unknown` and never exact, even
+for an equality-named helper. A macro invocation (`assert_eq!(..)`) or a
+macro in the callee position is not a helper call. Negation and inequality
+arguments (`!x`, `a != b`) do not change this grade.
+
 ## Fail-Closed Boundaries
 
 - Never promote the finding because a custom assertion macro exists.

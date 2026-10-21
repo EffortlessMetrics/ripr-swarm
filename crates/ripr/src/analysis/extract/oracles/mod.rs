@@ -158,6 +158,33 @@ fn pins_error_payload() {
     }
 
     #[test]
+    fn helper_call_with_negation_or_inequality_arguments_is_never_graded_exact() {
+        for line in [
+            "common::assert_matches(a != b, cmd);",
+            "common::assert_matches(!x, cmd);",
+            "common::assert_matches(!x, snapbox::file![\"a\"]);",
+        ] {
+            let facts = extract_assertions(line, 3);
+            assert_eq!(facts.len(), 1, "{line}: {facts:?}");
+            assert_ne!(facts[0].strength, OracleStrength::Strong, "{line}");
+            assert!(
+                matches!(
+                    facts[0].strength,
+                    OracleStrength::Unknown | OracleStrength::Weak | OracleStrength::Smoke
+                ),
+                "{line}: {:?}",
+                facts[0].strength
+            );
+        }
+        // A macro among the arguments stays unknown, never exact.
+        assert_classification(
+            "common::assert_matches(!x, snapbox::file![\"a\"]);",
+            OracleKind::Unknown,
+            OracleStrength::Unknown,
+        );
+    }
+
+    #[test]
     fn macro_invocations_and_non_helper_lines_are_not_helper_calls() {
         for line in [
             "println!(\"{}\", checker.assert_ok(1));",

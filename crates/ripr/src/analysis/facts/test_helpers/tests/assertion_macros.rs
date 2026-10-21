@@ -160,6 +160,41 @@ fn unattributable_local_macros_grant_nothing() -> Result<(), Box<dyn Error>> {
             "assert_gate!(3);",
         ),
         (
+            "message argument carries the fragment, condition is constant",
+            "($x:expr) => {{ assert!(true, \"{}\", $x); }};",
+            "assert_gate!(gate(3));",
+        ),
+        (
+            "constant disjunction with a message fragment",
+            "($x:expr) => {{ assert!(false || true, \"{}\", $x); }};",
+            "assert_gate!(gate(3));",
+        ),
+        (
+            "fragment or true",
+            "($x:expr) => {{ assert!($x || true); }};",
+            "assert_gate!(gate(3));",
+        ),
+        (
+            "true or fragment",
+            "($x:expr) => {{ assert!(true || $x); }};",
+            "assert_gate!(gate(3));",
+        ),
+        (
+            "fragment equals itself",
+            "($x:expr) => {{ assert!($x == $x); }};",
+            "assert_gate!(gate(3));",
+        ),
+        (
+            "fragment equals its own clone",
+            "($x:expr) => {{ assert_eq!($x.clone(), $x); }};",
+            "assert_gate!(gate(3));",
+        ),
+        (
+            "equal literals with a message fragment",
+            "($x:expr) => {{ assert_eq!(1, 1, \"{}\", $x); }};",
+            "assert_gate!(gate(3));",
+        ),
+        (
             "recursive macro",
             "($x:expr) => {{ assert_eq!(gate($x), true); assert_gate!($x); }};",
             "assert_gate!(3);",

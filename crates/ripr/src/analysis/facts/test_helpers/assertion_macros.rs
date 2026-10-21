@@ -269,27 +269,105 @@ fn assertion_uses_fragment(assertion: &str, fragments: &[String]) -> bool {
 /// of one operand with itself, or of two literals, prove nothing.
 fn is_tautology(assertion: &str) -> bool {
     let masked = mask_comments_and_strings(assertion);
-    let Some((_, rest)) = masked.trim().split_once('!') else {
+    let Some((name, rest)) = masked.trim().split_once('!') else {
         return false;
     };
+    let name = name.rsplit("::").next().unwrap_or(name).trim();
+    let name = name.strip_prefix("debug_").unwrap_or(name);
     let Some(inner) = delimited_inner(rest.trim().trim_end_matches(';')) else {
         return false;
     };
     let arguments = top_level_arguments(inner);
-    let is_literal = |argument: &str| {
-        let argument = argument.trim();
-        argument == "true"
-            || argument == "false"
-            || (!argument.is_empty()
-                && argument
-                    .chars()
-                    .all(|c| c.is_ascii_digit() || c == '_' || c == '.'))
-    };
-    match arguments.as_slice() {
-        [condition] => is_literal(condition),
-        [left, right, ..] => left == right || (is_literal(left) && is_literal(right)),
-        [] => true,
+    // Only the leading operands are asserted; later arguments are a message.
+    match (name, arguments.as_slice()) {
+        (_, []) => true,
+        ("assert", [condition, ..]) | (_, [condition]) => constant_condition(condition),
+        (_, [left, right, ..]) => {
+            same_operand(left, right) || (is_literal(left) && is_literal(right))
+        }
     }
+}
+
+fn is_literal(argument: &str) -> bool {
+    let argument = argument.trim();
+    argument == "true"
+        || argument == "false"
+        || (!argument.is_empty()
+            && argument
+                .chars()
+                .all(|c| c.is_ascii_digit() || c == '_' || c == '.'))
+}
+
+/// Whitespace-free operand with trailing `.clone()` calls removed.
+fn normalized_operand(operand: &str) -> String {
+    let mut text = operand
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>();
+    while let Some(stripped) = text.strip_suffix(".clone()") {
+        text = stripped.to_string();
+    }
+    text
+}
+
+fn same_operand(left: &str, right: &str) -> bool {
+    normalized_operand(left) == normalized_operand(right)
+}
+
+/// Split at a top-level operator outside brackets.
+fn split_top<'a>(text: &'a str, operator: &str) -> Vec<&'a str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    let bytes = text.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            _ if depth == 0 && text[index..].starts_with(operator) => {
+                parts.push(&text[start..index]);
+                index += operator.len();
+                start = index;
+                continue;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    parts.push(&text[start..]);
+    parts
+}
+
+/// A condition that is constant whatever the fragments hold: a literal,
+/// `x == x`, `x || true`, `true || x`, `!false`.
+fn constant_condition(condition: &str) -> bool {
+    let condition = condition.trim();
+    if is_literal(condition) {
+        return true;
+    }
+    if condition.starts_with('(')
+        && let Some(inner) = delimited_inner(condition)
+    {
+        return constant_condition(inner);
+    }
+    let alternatives = split_top(condition, "||");
+    if alternatives.len() > 1 {
+        return alternatives.iter().any(|part| constant_condition(part));
+    }
+    let conjuncts = split_top(condition, "&&");
+    if conjuncts.len() > 1 {
+        return conjuncts.iter().all(|part| constant_condition(part));
+    }
+    if let Some(negated) = condition.strip_prefix('!') {
+        return is_literal(negated.trim());
+    }
+    for operator in ["==", "<=", ">="] {
+        if let [left, right] = split_top(condition, operator).as_slice() {
+            return same_operand(left, right);
+        }
+    }
+    false
 }
 
 /// Evidence order: `Unknown` is the floor of what counts as evidence.

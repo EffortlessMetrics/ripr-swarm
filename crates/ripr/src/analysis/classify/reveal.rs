@@ -6735,13 +6735,27 @@ mod tests {
                     OracleStrength::Unknown,
                 )],
             );
-            let (_, discriminate, _) =
+            let (observe, discriminate, _) =
                 reveal_evidence(&probe, &[(&macro_test, RelationReason::DirectOwnerCall)]);
 
             assert!(
                 !matches!(discriminate.state, StageState::Yes | StageState::Weak),
                 "macro credit raised the discriminator to {:?}",
                 discriminate.state
+            );
+            let yes = StageEvidence::new(StageState::Yes, Confidence::High, "stage");
+            let class = crate::analysis::classify::decision::classify(
+                &yes,
+                &yes,
+                &yes,
+                &observe,
+                &discriminate,
+                &probe,
+            );
+            assert_ne!(
+                class,
+                crate::domain::ExposureClass::Exposed,
+                "macro credit must never classify as exposed"
             );
         }
     }

@@ -9426,6 +9426,9 @@ tests = [
   "crates/ripr/src/analysis/syntax/local_assertion_macros.rs::tests::refuses_calls_that_may_not_run_or_resolve_elsewhere",
   "crates/ripr/src/analysis/syntax/local_assertion_macros.rs::tests::refuses_duplicate_imported_gated_and_unscoped_definitions",
   "crates/ripr/src/analysis/classify/reveal.rs::tests::local_assertion_macro_credit_never_reads_as_a_discriminator",
+  "crates/ripr/src/analysis/extract/oracles/mod.rs::tests::helper_call_with_a_macro_argument_is_seen_but_never_graded_exact",
+  "crates/ripr/src/analysis/extract/oracles/mod.rs::tests::helper_call_with_negation_or_inequality_arguments_is_never_graded_exact",
+  "crates/ripr/src/analysis/extract/oracles/mod.rs::tests::macro_invocations_and_non_helper_lines_are_not_helper_calls",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
