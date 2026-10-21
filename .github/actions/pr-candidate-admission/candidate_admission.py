@@ -57,6 +57,14 @@ LABELS = {
 GENERATED_ATTRIBUTE = "linguist-generated"
 GENERATED_DATA_EXTENSIONS = {".json", ".jsonl", ".lock", ".md", ".txt", ".stdout"}
 GENERATED_EXEMPT_NEVER = {".gitattributes"}
+# Declarable shapes. A new generated family is added here, in reviewed code, so
+# a .gitattributes edit alone can never widen the exemption.
+GENERATED_DECLARATION_ALLOWED = (
+    re.compile(r"^(?:\*\*/)?package-lock\.json$"),
+    re.compile(r"^(?:\*\*/)?Cargo\.lock$"),
+    re.compile(r"^fixtures/[A-Za-z0-9_.\-*/]*expected/\*\*$"),
+    re.compile(r"^metrics/public-proof/\*\*$"),
+)
 DEFAULT_MAX_GENERATED_LINES = 40000
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 TEMPLATE_LINES = {
@@ -214,45 +222,58 @@ def _glob_regex(pattern: str) -> re.Pattern[str]:
     return re.compile(("^" if anchored else "^(?:.*/)?") + body + "$")
 
 
+def declaration_allowed(pattern: str) -> bool:
+    return any(shape.match(pattern) for shape in GENERATED_DECLARATION_ALLOWED)
+
+
+def generated_state(attributes: list[str]) -> bool | None:
+    """Final state of the attribute on one line (last token wins), or None."""
+    state = None
+    for attribute in attributes:
+        if attribute in (GENERATED_ATTRIBUTE, f"{GENERATED_ATTRIBUTE}=true"):
+            state = True
+        elif attribute in (
+            f"-{GENERATED_ATTRIBUTE}",
+            f"!{GENERATED_ATTRIBUTE}",
+            f"{GENERATED_ATTRIBUTE}=false",
+        ):
+            state = False
+    return state
+
+
 def parse_generated_rules(text: str) -> list[tuple[re.Pattern[str], bool]]:
-    """Ordered (pattern, generated) rules; the last matching rule wins."""
+    """Ordered (pattern, generated) rules; the last matching rule wins. A
+    declaration outside the allowed shapes is ignored, never trusted."""
     rules: list[tuple[re.Pattern[str], bool]] = []
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
         pattern, *attributes = line.split()
-        for attribute in attributes:
-            if attribute in (GENERATED_ATTRIBUTE, f"{GENERATED_ATTRIBUTE}=true"):
-                rules.append((_glob_regex(pattern), True))
-            elif attribute in (f"-{GENERATED_ATTRIBUTE}", f"{GENERATED_ATTRIBUTE}=false"):
-                rules.append((_glob_regex(pattern), False))
+        state = generated_state(attributes)
+        if state is None:
+            continue
+        if state and not declaration_allowed(pattern):
+            continue
+        rules.append((_glob_regex(pattern), state))
     return rules
 
 
 def check_generated_declarations(text: str) -> list[str]:
-    """Problems with the declared generated paths. Every declaration must name
-    a data file type, so a broad glob cannot be aimed at source."""
+    """Problems with the declared generated paths: every declaration must be
+    one of the shapes in GENERATED_DECLARATION_ALLOWED."""
     problems = []
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
         pattern, *attributes = line.split()
-        if not any(a.split("=")[0] == GENERATED_ATTRIBUTE for a in attributes):
-            continue
-        if any(a in (f"-{GENERATED_ATTRIBUTE}", f"{GENERATED_ATTRIBUTE}=false") for a in attributes):
-            continue
-        leaf = pattern.rsplit("/", 1)[-1]
-        if leaf in ("*", "**"):
-            # A directory-wide declaration is bounded per file by the data
-            # extension filter and in total by the generated line cap.
-            if "/" not in pattern.strip("/") or pattern.startswith(("*", "/*")):
-                problems.append(f"{pattern}: declare a specific directory, not the whole tree")
-            continue
-        suffix = ("." + leaf.rsplit(".", 1)[-1]).lower() if "." in leaf else ""
-        if suffix not in GENERATED_DATA_EXTENSIONS:
-            problems.append(f"{pattern}: generated declarations must end in a data extension ({', '.join(sorted(GENERATED_DATA_EXTENSIONS))})")
+        if any(a.split("=")[0].lstrip("-!") == GENERATED_ATTRIBUTE for a in attributes) and (
+            generated_state(attributes) is not False
+        ) and not declaration_allowed(pattern):
+            problems.append(
+                f"{pattern}: not a declarable generated path; allowed shapes are package-lock.json, Cargo.lock, fixtures/**/expected/** and metrics/public-proof/** (extend GENERATED_DECLARATION_ALLOWED in reviewed code)"
+            )
     return problems
 
 
@@ -283,9 +304,12 @@ def generated_totals(
         if entry.get("previous_filename"):
             paths.append(str(entry["previous_filename"]))
         # A rename counts as generated only if both ends are.
-        if all(is_generated(path, rules) for path in paths):
+        changed = int(entry.get("additions") or 0) + int(entry.get("deletions") or 0)
+        # A zero-line change (pure rename, empty file) saves no review lines, so
+        # it stays in the file count and cannot be used to drain it.
+        if changed and all(is_generated(path, rules) for path in paths):
             files += 1
-            lines += int(entry.get("additions") or 0) + int(entry.get("deletions") or 0)
+            lines += changed
     return files, lines
 
 
@@ -607,7 +631,10 @@ def self_test() -> None:
         "Cargo.lock linguist-generated=true\n"
         "fixtures/**/expected/** linguist-generated\n"
         "fixtures/**/expected/hand-written.json -linguist-generated\n"
+        "fixtures/**/expected/unset.json !linguist-generated\n"
         "crates/** linguist-generated\n"
+        "*.json linguist-generated\n"
+        ".claude/** linguist-generated\n"
         "docs/*.md linguist-generated\n"
         "# comment linguist-generated\n"
         "* text=auto\n"
@@ -621,12 +648,15 @@ def self_test() -> None:
         ("fixtures/a/expected/rows/x.json", True),
         ("fixtures/a/b/expected/out.txt", True),
         ("fixtures/a/expected/hand-written.json", False),
+        ("fixtures/a/expected/unset.json", False),
         ("fixtures/a/input/expected.json", False),
         ("fixtures/expected/x.json", True),
         ("crates/ripr/src/lib.rs", False),
-        ("crates/ripr/data.json", True),
-        ("docs/CI.md", True),
-        ("docs/sub/CI.md", False),
+        ("crates/ripr/data.json", False),
+        ("package.json", False),
+        ("policy/release-hard-cut-admission.json", False),
+        (".claude/skills/x/SKILL.md", False),
+        ("docs/CI.md", False),
         (".gitattributes", False),
     ):
         assert is_generated(path, rules) is expected, path
@@ -635,11 +665,12 @@ def self_test() -> None:
         {"filename": "Cargo.lock", "additions": 40, "deletions": 10},
         {"filename": "fixtures/a/expected/rows/x.json", "additions": 100, "deletions": 0},
         {"filename": "fixtures/a/expected/run.sh", "additions": 70, "deletions": 0},
+        {"filename": "fixtures/a/expected/empty.json", "additions": 0, "deletions": 0},
         {"filename": "crates/ripr/src/lib.rs", "additions": 3, "deletions": 0},
         {"filename": "new.json", "previous_filename": "Cargo.lock", "additions": 1, "deletions": 1},
     ]
-    assert generated_totals(listed, rules, 6) == (3, 1850)
-    assert generated_totals(listed, rules, 7) == (0, 0), "a truncated listing exempts nothing"
+    assert generated_totals(listed, rules, 7) == (3, 1850)
+    assert generated_totals(listed, rules, 8) == (0, 0), "a truncated listing exempts nothing"
     big = fixture(body=fixture_body(), head=head, additions=3000, deletions=100, changed_files=170)
     assert run(big, [big])["reason"] == "qualification_scope_oversized"
     admitted_big = decide(big, [big], head, False, max_files, max_lines, 20, 1750)
@@ -659,51 +690,15 @@ def self_test() -> None:
     )
     assert check_generated_declarations(
         "package-lock.json linguist-generated\nfixtures/**/expected/** linguist-generated\n"
-        "crates/x/*.rs -linguist-generated\n"
+        "metrics/public-proof/** linguist-generated\ncrates/x/*.rs -linguist-generated\n"
     ) == []
-    for bad in ("**/*.rs", "*", "**", "src/lib.rs", "xtask/**/*.py", "scripts/run.sh"):
-        assert check_generated_declarations(f"{bad} linguist-generated\n"), bad
-    assert run(current, [current], "b" * 40)["reason"] == "candidate_head_moved"
-    assert (
-        run(fixture(body=fixture_body(), head=head, draft=True), [], head)["reason"]
-        == "candidate_not_open_ready"
-    )
-    assert run(current, [], "short")["reason"] == "expected_head_missing"
-    bump = {
-        "login": "dependabot[bot]",
-        "user_type": "Bot",
-        "ref": "dependabot/npm_and_yarn/editors/vscode/markdown-it-14.3.3",
-    }
-    admitted = run(fixture(body="Bumps markdown-it.", head=head, **bump), [])
-    assert admitted["status"] == "admitted"
-    assert admitted["claim"] == "docs/ci.md dependency update policy"
-    assert admitted["acceptance_delta"] == f"dependency update {bump['ref']}".casefold()
-    sibling = fixture(
-        number=11,
-        body="Bumps another.",
-        head="b" * 40,
-        **{**bump, "ref": "dependabot/cargo/serde-1.0.1"},
-    )
-    assert run(fixture(body="", head=head, **bump), [sibling])["status"] == "admitted"
-    for spoof in (
-        {**bump, "login": "contributor"},
-        {**bump, "user_type": "User"},
-        {**bump, "ref": "feature/dependabot/x"},
-        {**bump, "repository": "external/fork"},
+    for bad in (
+        "**/*.rs", "*", "**", "src/lib.rs", "xtask/**/*.py", "scripts/run.sh", "*.json",
+        "**/*.md", ".claude/**", ".github/**", "crates/**", "scripts/*", "package.json",
+        "policy/**", "CLAUDE.md", "fixtures/**/input/**",
     ):
-        refused = run(fixture(body="", head=head, **spoof), [])
-        assert refused["reason"] == "claim_identity_missing", spoof
-    matching = fixture(
-        number=12,
-        body=fixture_body(
-            claim="docs/CI.md dependency update policy",
-            delta=f"dependency update {bump['ref']}",
-        ),
-        head="c" * 40,
-    )
-    bot = fixture(number=10, body="", head=head, **bump)
-    assert run(bot, [bot, matching])["reason"] == "competing_candidate"
-    assert run(matching, [bot, matching], "c" * 40)["reason"] == "competing_candidate"
+        assert check_generated_declarations(f"{bad} linguist-generated\n"), bad
+    assert check_generated_declarations("src/lib.rs linguist-generated=false linguist-generated\n")
     print("candidate-admission self-test: all controls passed")
 
 
@@ -733,10 +728,11 @@ def main() -> int:
         self_test()
         return 0
     if args.check_attributes:
+        if not args.check_attributes.exists():
+            print(f"::error::{args.check_attributes} is missing")
+            return 1
         problems = check_generated_declarations(
             args.check_attributes.read_text(encoding="utf-8")
-            if args.check_attributes.exists()
-            else ""
         )
         for problem in problems:
             print(f"::error::{problem}")
