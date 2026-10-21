@@ -150,6 +150,10 @@ created, review-after, and source metadata fields; refuses to overwrite without
 a historical-debt ledger and does not suppress or silence current findings by
 itself.
 
+An overwrite refusal prints a complete retry retaining the supplied `--from`
+and effective `--out` as shell-quoted path arguments, with explicit `--force`.
+It does not write anything before the operator chooses that retry.
+
 The review metadata object is additive. Campaign 17 baseline files that only
 contain `reviewed` and `reason`, or omit `review` entirely, remain valid. The
 diff report must preserve any present metadata into baseline-derived delta

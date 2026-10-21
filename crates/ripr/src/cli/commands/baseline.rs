@@ -60,8 +60,10 @@ fn baseline_create(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     if options.out.exists() && !options.force {
+        let quoted_from = crate::agent::loop_commands::shell_arg(&options.from.to_string_lossy());
+        let quoted_out = crate::agent::loop_commands::shell_arg(&options.out.to_string_lossy());
         return Err(format!(
-            "{} already exists; rerun `ripr baseline create --force` to overwrite it",
+            "{} already exists; rerun `ripr baseline create --from {quoted_from} --out {quoted_out} --force` to overwrite it",
             options.out.display()
         ));
     }
