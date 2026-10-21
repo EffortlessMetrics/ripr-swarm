@@ -30,7 +30,7 @@ use super::workspace::{
 use crate::agent::artifact::git_output;
 use crate::agent::command_specs::{AgentArtifactRoute, agent_inspection_command_spec};
 use crate::analysis::ClassifiedSeam;
-use crate::analysis::inventory_diff_scoped_classified_seams_at_with_config;
+use crate::analysis::inventory_diff_scoped_bound_seams_at_with_config;
 use crate::analysis::repair_route::repair_packet_eligibility;
 use crate::app::repair_card_handoff::{
     AgentCardError, SeamCardFacts, assemble_repair_card, card_packet_json, finding_for_seam,
@@ -169,7 +169,7 @@ pub(crate) fn gather_seam_inventory(
             .iter()
             .filter_map(|finding| finding.canonical_gap.as_ref().map(|gap| gap.owner.clone()))
             .collect::<Vec<_>>();
-        candidate_seams = inventory_diff_scoped_classified_seams_at_with_config(
+        candidate_seams = inventory_diff_scoped_bound_seams_at_with_config(
             root,
             config,
             &changed_files,

@@ -111,6 +111,7 @@ pub(crate) use seam_inventory::{
     inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
     inventory_compact_classified_seams_at_with_config,
+    inventory_diff_scoped_bound_seams_at_with_config,
     inventory_diff_scoped_classified_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_at_with_config,
     inventory_pilot_seams_report_at_with_config, inventory_seams_at_with_config, pilot_seam_budget,

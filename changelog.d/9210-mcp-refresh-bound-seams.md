@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr_refresh` over MCP no longer evaluates test-grip evidence for every caller-file seam in the diff scope: only seams in the changed files or owned by a changed gap, the only seams that can bind a snapshot item or change a repair verdict, are evaluated, and an unchanged refresh reuses the classified result keyed by the full workspace cache key, changed-file set and owner set. Committed items, bindings and repair readiness are unchanged (#9210).

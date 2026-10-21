@@ -888,6 +888,12 @@ pub(crate) struct ScopedClassifiedSeamInventory {
 pub(crate) struct DiffScopeEvidenceStages<'a> {
     pub(crate) first: &'a dyn Fn(&RepoSeam) -> bool,
     pub(crate) sufficient: &'a dyn Fn(&[ClassifiedSeam]) -> bool,
+    /// Canonical bytes naming every input `first` and `sufficient` depend on
+    /// beyond the workspace itself (#9210). When set, the classified result
+    /// may be reused for the same workspace cache key and the same identity;
+    /// `None` never reuses. A caller whose predicates read anything not
+    /// encoded here must leave this `None`.
+    pub(crate) reuse: Option<&'a [u8]>,
 }
 
 /// Cache-backed inventory for one edited test file.
@@ -1473,6 +1479,120 @@ pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
     )
 }
 
+/// Whether a seam can be named by a changed finding's gap: it sits in a
+/// changed file, or its owner is exactly a changed gap owner. Every
+/// seam-to-finding join the card binding and the shared repair validator run
+/// keys on the finding's file and owner (`finding_for_seam`,
+/// `resolve_repair_subject_in`), so a seam outside this set can bind no item.
+fn seam_can_bind_changed_gap(
+    seam: &RepoSeam,
+    changed_file_keys: &BTreeSet<Vec<u8>>,
+    changed_owner_names: &BTreeSet<&str>,
+) -> bool {
+    changed_file_keys.contains(&inventory_scope_key(seam.file()))
+        || changed_owner_names.contains(seam.owner())
+}
+
+/// Canonical reuse identity for [`inventory_diff_scoped_bound_seams_at_with_config`]:
+/// the exact changed-file scope keys and owner names its first stage reads.
+fn bound_seams_reuse_identity(
+    changed_file_keys: &BTreeSet<Vec<u8>>,
+    changed_owner_names: &BTreeSet<&str>,
+) -> Vec<u8> {
+    let mut identity = b"bound-seams-v1".to_vec();
+    for key in changed_file_keys {
+        identity.push(0);
+        identity.extend_from_slice(key);
+    }
+    identity.push(1);
+    for owner in changed_owner_names {
+        identity.push(0);
+        identity.extend_from_slice(owner.as_bytes());
+    }
+    identity
+}
+
+/// The diff-scoped inventory for a consumer that binds seams to changed
+/// findings (the MCP refresh, #9210): only seams in the changed files or
+/// owned by a changed gap receive evidence, because no other seam can bind a
+/// finding. Caller-file seams widen the scope but are never evaluated, and
+/// are counted in `unevaluated_seams`. The classified result is reused for an
+/// identical workspace cache key, changed-file set and owner set.
+pub(crate) fn inventory_diff_scoped_bound_seams_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+    changed_files: &[PathBuf],
+    changed_owner_names: &[String],
+) -> Result<ScopedClassifiedSeamInventory, String> {
+    let changed_file_keys = changed_files
+        .iter()
+        .map(|path| inventory_scope_key(path))
+        .collect::<BTreeSet<_>>();
+    let owner_names = changed_owner_names
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let identity = bound_seams_reuse_identity(&changed_file_keys, &owner_names);
+    let first = |seam: &RepoSeam| seam_can_bind_changed_gap(seam, &changed_file_keys, &owner_names);
+    let stages = DiffScopeEvidenceStages {
+        first: &first,
+        sufficient: &|_| true,
+        reuse: Some(&identity),
+    };
+    inventory_diff_scoped_classified_seams_inner(
+        root,
+        config,
+        DiffScopeInputs::canonical(changed_files, changed_owner_names),
+        !no_impact_fast_path_disabled(),
+        Some(&stages),
+        None,
+    )
+}
+
+/// Small process-wide reuse of staged diff-scoped results (#9210). The key is
+/// the full workspace cache key (corpus content, config, manifests, toolchain,
+/// analyzer identity) plus the caller's predicate identity, so any workspace
+/// change misses. Only complete, reusable-key results are stored.
+mod bound_inventory_reuse {
+    use super::{RepoSeamCacheKey, ScopedClassifiedSeamInventory};
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+
+    const CAPACITY: usize = 4;
+
+    type Entry = (RepoSeamCacheKey, Vec<u8>, ScopedClassifiedSeamInventory);
+
+    static ENTRIES: Mutex<VecDeque<Entry>> = Mutex::new(VecDeque::new());
+
+    pub(super) fn lookup(
+        key: &RepoSeamCacheKey,
+        identity: &[u8],
+    ) -> Option<ScopedClassifiedSeamInventory> {
+        let entries = ENTRIES.lock().ok()?;
+        entries
+            .iter()
+            .find(|(entry_key, entry_identity, _)| entry_key == key && entry_identity == identity)
+            .map(|(_, _, inventory)| inventory.clone())
+    }
+
+    pub(super) fn store(
+        key: &RepoSeamCacheKey,
+        identity: &[u8],
+        inventory: &ScopedClassifiedSeamInventory,
+    ) {
+        let Ok(mut entries) = ENTRIES.lock() else {
+            return;
+        };
+        entries.retain(|(entry_key, entry_identity, _)| {
+            !(entry_key == key && entry_identity == identity)
+        });
+        if entries.len() >= CAPACITY {
+            entries.pop_front();
+        }
+        entries.push_back((key.clone(), identity.to_vec(), inventory.clone()));
+    }
+}
+
 /// The current change's classified seams and canonical missing-file coverage.
 #[derive(Debug)]
 pub(crate) struct ClassifiedChangeReport {
@@ -1507,6 +1627,7 @@ pub(crate) fn classify_seams_in_files_at_with_config(
     let stages = DiffScopeEvidenceStages {
         first: on_change,
         sufficient: &|_| true,
+        reuse: None,
     };
     inventory_diff_scoped_classified_seams_inner(
         root,
@@ -1783,6 +1904,20 @@ fn inventory_diff_scoped_classified_seams_inner(
     };
     cancellation::checkpoint()?;
     let workspace_cache_key = state.cache_key();
+    let reuse_identity = stages
+        .and_then(|stages| stages.reuse)
+        .filter(|_| consumer.is_none() && workspace_cache_key.is_reusable());
+    if let Some(identity) = reuse_identity
+        && let Some(mut reused) = bound_inventory_reuse::lookup(&workspace_cache_key, identity)
+    {
+        trace_latency_phase(
+            "diff_scoped_inventory",
+            "staged_result_reused",
+            Duration::ZERO,
+        );
+        reused.absent_changed_files = absent_changed_files;
+        return Ok(reused);
+    }
     let total_rust_files = state.files.len();
     let production_files = production_files_from_state_with_role(&state, config);
     let total_production_files = production_files.len();
@@ -1864,7 +1999,7 @@ fn inventory_diff_scoped_classified_seams_inner(
         };
 
     cancellation::checkpoint()?;
-    Ok(ScopedClassifiedSeamInventory {
+    let inventory = ScopedClassifiedSeamInventory {
         classified,
         classified_seams_considered,
         file_fact_cache: cached.file_fact_cache,
@@ -1876,7 +2011,34 @@ fn inventory_diff_scoped_classified_seams_inner(
         immediate_caller_files,
         unevaluated_seams,
         absent_changed_files,
-    })
+    };
+    if let Some(identity) = reuse_identity {
+        bound_inventory_reuse::store(&inventory.workspace_cache_key, identity, &inventory);
+    }
+    Ok(inventory)
+}
+
+/// Test-only count of seams handed to evidence evaluation on this thread, so
+/// a test can prove how many seams a scoped inventory actually evaluated.
+#[cfg(test)]
+pub(crate) mod evaluation_probe {
+    use std::cell::Cell;
+
+    thread_local! {
+        static EVALUATED: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(crate) fn record(count: usize) {
+        EVALUATED.with(|evaluated| evaluated.set(evaluated.get() + count));
+    }
+
+    pub(crate) fn reset() {
+        EVALUATED.with(|evaluated| evaluated.set(0));
+    }
+
+    pub(crate) fn evaluated() -> usize {
+        EVALUATED.with(Cell::get)
+    }
 }
 
 /// Classify the scoped seams, first stage only when `stages` accepts it.
@@ -1911,6 +2073,8 @@ fn classify_scoped_seams(
             ),
             Duration::ZERO,
         );
+        #[cfg(test)]
+        evaluation_probe::record(first.len());
         evidence = pass.evidence_for(&first);
         cancellation::checkpoint()?;
         let classified_first =
@@ -1935,6 +2099,8 @@ fn classify_scoped_seams(
         &format!("review_scope_start_seams_{}", rest.len()),
         Duration::ZERO,
     );
+    #[cfg(test)]
+    evaluation_probe::record(rest.len());
     // Evidence is per seam and pairs by id, so first-stage evidence
     // joins the rest without changing any seam's classification or the
     // original seam order.
@@ -3799,6 +3965,7 @@ fn taxed_total_runs() {
             Some(&DiffScopeEvidenceStages {
                 first: &first,
                 sufficient: &accept,
+                reuse: None,
             }),
         )?;
         assert_eq!(offered.get(), first_ids.len());
@@ -3812,6 +3979,7 @@ fn taxed_total_runs() {
             Some(&DiffScopeEvidenceStages {
                 first: &first,
                 sufficient: &decline,
+                reuse: None,
             }),
         )?;
         assert_eq!(declined_skipped, 0);
@@ -7901,6 +8069,162 @@ marker = "libtest_mimic::Trial"
                 "scope must hold exactly the changed file: {names:?}"
             ));
         }
+        Ok(())
+    }
+
+    fn bound_seams_layout(root: &Path) -> Result<(), String> {
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = 'bound-seams-fixture'\nversion = '0.1.0'\n\n[workspace]\n",
+        )?;
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub mod pricing;\npub mod checkout;\npub mod unrelated;\n",
+        )?;
+        write_file(
+            &root.join("src/pricing.rs"),
+            "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n",
+        )?;
+        write_file(
+            &root.join("src/checkout.rs"),
+            "pub fn checkout(amount: i32) -> i32 {\n    if crate::pricing::discounted_total(amount, 100) > 50 { 1 } else { 0 }\n}\n",
+        )?;
+        write_file(
+            &root.join("src/unrelated.rs"),
+            "pub fn clamp_low(value: i32) -> i32 {\n    if value > 2 { value } else { 0 }\n}\n",
+        )?;
+        write_file(
+            &root.join("tests/pricing.rs"),
+            "#[test]\nfn discounted_total_applies_at_threshold() {\n    assert_eq!(bound_seams_fixture::pricing::discounted_total(100, 100), 90);\n}\n",
+        )?;
+        Ok(())
+    }
+
+    fn seam_file_names(inventory: &ScopedClassifiedSeamInventory) -> BTreeSet<String> {
+        inventory
+            .classified
+            .iter()
+            .map(|entry| entry.seam.file().to_string_lossy().replace('\\', "/"))
+            .collect()
+    }
+
+    /// #9210: the MCP refresh binds seams only to changed findings, so only
+    /// changed-file seams may receive evidence even though the caller-file
+    /// widening scopes more.
+    #[test]
+    fn bound_seams_inventory_evaluates_only_seams_that_can_bind() -> Result<(), String> {
+        let root = make_tempdir("bound-seams-scope")?;
+        bound_seams_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = [PathBuf::from("src/pricing.rs")];
+        let owners = ["discounted_total".to_string()];
+
+        evaluation_probe::reset();
+        let full = inventory_diff_scoped_classified_seams_at_with_config(
+            &root, &config, &changed, &owners,
+        )?;
+        let full_evaluated = evaluation_probe::evaluated();
+        evaluation_probe::reset();
+        let bound =
+            inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)?;
+        let bound_evaluated = evaluation_probe::evaluated();
+        let _ = std::fs::remove_dir_all(&root);
+
+        // Fixture premises: the caller widening really scopes the caller file.
+        assert!(
+            seam_file_names(&full).contains("src/checkout.rs"),
+            "fixture must scope the caller file: {:?}",
+            seam_file_names(&full)
+        );
+        let pricing_in_full = full
+            .classified
+            .iter()
+            .filter(|entry| entry.seam.file().ends_with("pricing.rs"))
+            .count();
+        assert!(pricing_in_full > 0, "fixture must hold changed-file seams");
+
+        assert_eq!(
+            seam_file_names(&bound),
+            BTreeSet::from(["src/pricing.rs".to_string()])
+        );
+        assert_eq!(bound_evaluated, pricing_in_full);
+        assert_eq!(bound.classified.len(), pricing_in_full);
+        assert!(
+            full_evaluated > bound_evaluated,
+            "old path evaluates callers too"
+        );
+        assert_eq!(
+            bound.unevaluated_seams,
+            full.classified.len() - pricing_in_full
+        );
+        assert_eq!(bound.workspace_cache_key, full.workspace_cache_key);
+
+        // Output identity for the seams that can bind: byte-identical
+        // classification and evidence to the unstaged path.
+        let render = |entries: Vec<&ClassifiedSeam>| {
+            serde_json::to_value(entries).map_err(|error| format!("serialize: {error}"))
+        };
+        let full_changed = render(
+            full.classified
+                .iter()
+                .filter(|entry| entry.seam.file().ends_with("pricing.rs"))
+                .collect(),
+        )?;
+        let bound_all = render(bound.classified.iter().collect())?;
+        assert_eq!(bound_all, full_changed);
+        Ok(())
+    }
+
+    /// #9210: an unchanged refresh reuses the classified result; any change
+    /// to the workspace corpus, the changed-file set or the owner set misses.
+    #[test]
+    fn bound_seams_inventory_reuse_is_keyed_by_workspace_and_scope() -> Result<(), String> {
+        let root = make_tempdir("bound-seams-reuse")?;
+        bound_seams_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = [PathBuf::from("src/pricing.rs")];
+        let owners = ["discounted_total".to_string()];
+        let run = |changed: &[PathBuf],
+                   owners: &[String]|
+         -> Result<(usize, serde_json::Value), String> {
+            evaluation_probe::reset();
+            let inventory =
+                inventory_diff_scoped_bound_seams_at_with_config(&root, &config, changed, owners)?;
+            let value = serde_json::to_value(&inventory.classified)
+                .map_err(|error| format!("serialize: {error}"))?;
+            Ok((evaluation_probe::evaluated(), value))
+        };
+
+        let (first_evaluated, first) = run(&changed, &owners)?;
+        assert!(first_evaluated > 0, "cold run must evaluate");
+        let (second_evaluated, second) = run(&changed, &owners)?;
+        assert_eq!(second_evaluated, 0, "unchanged refresh must reuse");
+        assert_eq!(second, first, "reuse must not change output");
+
+        // A different changed-file scope never serves the earlier result.
+        let (other_scope_evaluated, other_scope) = run(&[PathBuf::from("src/unrelated.rs")], &[])?;
+        assert!(other_scope_evaluated > 0);
+        assert_ne!(other_scope, first);
+
+        // A production edit changes the corpus key: re-evaluated, fresh.
+        write_file(
+            &root.join("src/pricing.rs"),
+            "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount > threshold { amount - 10 } else { amount }\n}\n",
+        )?;
+        let (edited_evaluated, edited) = run(&changed, &owners)?;
+        assert!(edited_evaluated > 0, "edited workspace must not reuse");
+        assert_ne!(edited, first, "edited source must show in the result");
+
+        // A test-only edit changes grip evidence and must also miss.
+        let (_, before_test_edit) = run(&changed, &owners)?;
+        write_file(
+            &root.join("tests/pricing.rs"),
+            "#[test]\nfn unrelated_now() {\n    assert!(true);\n}\n",
+        )?;
+        let (test_edit_evaluated, after_test_edit) = run(&changed, &owners)?;
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(test_edit_evaluated > 0, "test edit must not reuse");
+        assert_ne!(after_test_edit, before_test_edit);
         Ok(())
     }
 
