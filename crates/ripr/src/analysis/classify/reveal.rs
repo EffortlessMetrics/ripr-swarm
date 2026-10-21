@@ -240,6 +240,14 @@ pub(in crate::analysis) struct RevealOutcome {
     pub(in crate::analysis) owner_pin_credited: bool,
 }
 
+/// Summaries of the `no` observe/discriminate stages when no related test
+/// exists. They rest on "no reachable test", so a finding whose reach later
+/// becomes unknown (proc-macro code, #8999) replaces them.
+pub(in crate::analysis) const NO_REACHABLE_TEST_OBSERVE_SUMMARY: &str =
+    "No reachable test oracle found";
+pub(in crate::analysis) const NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY: &str =
+    "No assertion can discriminate the changed behavior without a reachable test";
+
 #[allow(
     clippy::too_many_arguments,
     reason = "reveal's grouped inputs plus the optional RIPR-SPEC-0229 arm selector"
@@ -260,12 +268,12 @@ pub(in crate::analysis) fn reveal_outcome(
             observe: StageEvidence::new(
                 StageState::No,
                 Confidence::Medium,
-                "No reachable test oracle found",
+                NO_REACHABLE_TEST_OBSERVE_SUMMARY,
             ),
             discriminate: StageEvidence::new(
                 StageState::No,
                 Confidence::Medium,
-                "No assertion can discriminate the changed behavior without a reachable test",
+                NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY,
             ),
             related: Vec::new(),
             related_total: 0,
@@ -325,6 +333,7 @@ pub(in crate::analysis) fn reveal_outcome(
             &analysis.strongest_kind,
             &probe.family,
             analysis.observation_unverified,
+            analysis.strongest_proximity_only,
         )
     };
 
@@ -351,6 +360,10 @@ struct RevealAssertionAnalysis {
     related: Vec<RelatedTest>,
     strongest: OracleStrength,
     strongest_kind: OracleKind,
+    /// The assertion supplying `strongest_kind` sits in a test related only by
+    /// file or module proximity (#9122), so its kind is not a claim about the
+    /// assertion that observes the changed behavior.
+    strongest_proximity_only: bool,
     /// Confirmation belongs to the assertion supplying the selected oracle
     /// strength. A weaker token match must not upgrade an unrelated exact
     /// oracle, even when both assertions are in the same related test.
@@ -1857,6 +1870,7 @@ fn analyze_related_assertions(
     let mut related = Vec::new();
     let mut strongest = OracleStrength::None;
     let mut strongest_kind = OracleKind::Unknown;
+    let mut strongest_proximity_only = false;
     let mut strongest_observation_confirmed = false;
     let mut matched_any = false;
     let mut owner_pin_credited = false;
@@ -2324,6 +2338,7 @@ fn analyze_related_assertions(
                 {
                     strongest = relative_strength.clone();
                     strongest_kind = assertion.kind.clone();
+                    strongest_proximity_only = is_proximity_only(*reason);
                     strongest_observation_confirmed = observation_confirmed;
                 }
                 related.push(RelatedTest {
@@ -2373,6 +2388,7 @@ fn analyze_related_assertions(
         related,
         strongest,
         strongest_kind,
+        strongest_proximity_only,
         strongest_observation_confirmed,
         matched_any,
         owner_pin_credited,
@@ -4512,11 +4528,31 @@ fn is_bare_unwrap_expect_row(test: &RelatedTest) -> bool {
     let Some(text) = test.oracle.as_deref() else {
         return false;
     };
-    let text = text.trim().trim_end_matches(';').trim_end();
+    let Some(text) = join_method_chain_lines(text.trim().trim_end_matches(';').trim_end()) else {
+        return false;
+    };
+    let text = text.as_str();
     !text.contains("assert")
         && !text.contains("matches!")
-        && !text.contains('\n')
         && (text.ends_with(".unwrap()") || ends_with_expect_of_one_literal(text))
+}
+
+/// Joins a statement written over several lines into one line, but only when
+/// it is a plain method chain: every line after the first begins with `.`
+/// (a builder chain such as `Dfa::builder()\n    .configure(..)\n    .build(..)`).
+/// Any other multi-line text returns `None`, so it is never mistaken for
+/// setup (#9122).
+fn join_method_chain_lines(text: &str) -> Option<String> {
+    let mut lines = text.lines();
+    let mut joined = lines.next()?.trim().to_string();
+    for line in lines {
+        let line = line.trim();
+        if !line.starts_with('.') {
+            return None;
+        }
+        joined.push_str(line);
+    }
+    Some(joined)
 }
 
 /// `recv.expect("message")`, where the argument is exactly one string
@@ -4637,6 +4673,7 @@ fn build_discriminate_evidence(
     strongest_kind: &OracleKind,
     family: &ProbeFamily,
     observation_unverified: bool,
+    proximity_only: bool,
 ) -> StageEvidence {
     // For families that require token confirmation (MatchArm, ReturnValue,
     // FieldConstruction, SideEffect, CallDeletion), a family_match or
@@ -4649,6 +4686,34 @@ fn build_discriminate_evidence(
             StageState::Weak,
             Confidence::Medium,
             "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)",
+        );
+    }
+    // #9122: an error-variant kind names the error the changed behavior
+    // returns. A test linked only by file or module location is credited for
+    // strength, but its `matches!(.., Err(..))` pins a variant on another
+    // function's result, which says nothing about a changed predicate, a
+    // call or a field. Name no kind rather than one the linked evidence does
+    // not show; grading is unchanged. Families whose change can itself be an
+    // error variant (`ErrorPath`, `MatchArm`, `ReturnValue`,
+    // `FieldConstruction`) keep the established wording.
+    if proximity_only
+        && matches!(strongest, OracleStrength::Strong)
+        && matches!(
+            strongest_kind,
+            OracleKind::ExactErrorVariant | OracleKind::GuardedResultMatch
+        )
+        && !matches!(
+            family,
+            ProbeFamily::ErrorPath
+                | ProbeFamily::MatchArm
+                | ProbeFamily::ReturnValue
+                | ProbeFamily::FieldConstruction
+        )
+    {
+        return StageEvidence::new(
+            StageState::Yes,
+            Confidence::Medium,
+            "Strong oracle found: assertion kind not established (test linked by file, module or name proximity only)",
         );
     }
     match strongest {
@@ -5738,6 +5803,82 @@ mod tests {
         assert_eq!(total, 2);
     }
 
+    /// #9122: a multi-line builder chain ending in `.unwrap()` is the same
+    /// setup statement as the one-line form, so it is dropped beside the
+    /// test's real `assert_eq!` rather than graded "smoke only".
+    #[test]
+    fn multiline_builder_chain_setup_row_is_dropped_beside_the_assertion() {
+        let chain = "Dfa::builder()\n            .configure(true)\n            .build(\"a+\")\n            .unwrap();";
+        let (finalized, total) = finalize_related_tests(
+            vec![
+                smoke_row("builder_test", 3, chain),
+                RelatedTest {
+                    oracle: Some("assert_eq!(expected, dfa.try_search_fwd(&input));".to_string()),
+                    ..related("builder_test", 3, Some(RelationReason::DirectOwnerCall))
+                },
+            ],
+            None,
+        );
+        assert_eq!(
+            oracle_texts(&finalized),
+            vec![(
+                "builder_test",
+                "assert_eq!(expected, dfa.try_search_fwd(&input));"
+            )]
+        );
+        assert_eq!(total, 1);
+    }
+
+    /// Discriminating negatives for #9122: a multi-line chain stays a row when
+    /// it is the test's only oracle, when it does not end in unwrap/expect,
+    /// when a continuation line carries an assertion, or when the lines are
+    /// separate statements rather than one method chain.
+    #[test]
+    fn multiline_setup_row_stays_unless_it_is_a_bare_unwrap_chain_beside_an_assertion() {
+        let real = |name: &str, line: usize| RelatedTest {
+            oracle: Some("assert_eq!(v, 5);".to_string()),
+            ..related(name, line, Some(RelationReason::DirectOwnerCall))
+        };
+        let rows = vec![
+            smoke_row(
+                "only_chain",
+                3,
+                "Dfa::builder()\n    .build(\"a\")\n    .unwrap();",
+            ),
+            smoke_row(
+                "not_unwrap",
+                10,
+                "Dfa::builder()\n    .build(\"a\")\n    .len();",
+            ),
+            real("not_unwrap", 10),
+            smoke_row(
+                "asserting",
+                20,
+                "Dfa::builder()\n    .inspect(|d| assert!(d.ok()))\n    .unwrap();",
+            ),
+            real("asserting", 20),
+            smoke_row("two_statements", 30, "setup();\n    build().unwrap();"),
+            real("two_statements", 30),
+        ];
+        let (finalized, total) = finalize_related_tests(rows, None);
+        assert_eq!(total, 7);
+        let names: Vec<(&str, bool)> = finalized
+            .iter()
+            .map(|row| {
+                (
+                    row.name.as_str(),
+                    row.oracle.as_deref() == Some("assert_eq!(v, 5);"),
+                )
+            })
+            .collect();
+        for name in ["only_chain", "not_unwrap", "asserting", "two_statements"] {
+            let smoke_kept = finalized
+                .iter()
+                .any(|row| row.name == name && row.oracle.as_deref() != Some("assert_eq!(v, 5);"));
+            assert!(smoke_kept, "{name} smoke row must stay: {names:?}");
+        }
+    }
+
     /// The drop is conditional: a test whose only oracle is the unwrap, a
     /// same-named test elsewhere, a real smoke assertion and a chained call
     /// all stay listed.
@@ -6718,6 +6859,46 @@ mod tests {
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].name, "score_returns_value");
         assert_eq!(related[0].oracle, None);
+    }
+
+    // #9122: a same-file assertion macro earns only an unknown-strength fact.
+    // Crediting it must never read as a weak or exact discriminator, however
+    // little the macro's body actually pins.
+    #[test]
+    fn local_assertion_macro_credit_never_reads_as_a_discriminator() {
+        for family in [ProbeFamily::ReturnValue, ProbeFamily::Predicate] {
+            let probe = probe(family, "score");
+            let macro_test = test_with_assertions(
+                "score_through_macro",
+                vec![oracle(
+                    "assert_tautology!(score())",
+                    OracleKind::Unknown,
+                    OracleStrength::Unknown,
+                )],
+            );
+            let (observe, discriminate, _) =
+                reveal_evidence(&probe, &[(&macro_test, RelationReason::DirectOwnerCall)]);
+
+            assert!(
+                !matches!(discriminate.state, StageState::Yes | StageState::Weak),
+                "macro credit raised the discriminator to {:?}",
+                discriminate.state
+            );
+            let yes = StageEvidence::new(StageState::Yes, Confidence::High, "stage");
+            let class = crate::analysis::classify::decision::classify(
+                &yes,
+                &yes,
+                &yes,
+                &observe,
+                &discriminate,
+                &probe,
+            );
+            assert_ne!(
+                class,
+                crate::domain::ExposureClass::Exposed,
+                "macro credit must never classify as exposed"
+            );
+        }
     }
 
     #[test]
@@ -7753,10 +7934,124 @@ return Err(\"typed pin\".into());
         ];
 
         for (strength, kind, family, state, summary) in cases {
-            let evidence = build_discriminate_evidence(&strength, &kind, &family, false);
+            let evidence = build_discriminate_evidence(&strength, &kind, &family, false, false);
             assert_eq!(evidence.state, state);
             assert_eq!(evidence.summary, summary);
         }
+    }
+
+    /// #9122 (an HTTP client dogfood case): an `assert!(matches!(.., Err(..)))` in a
+    /// test related to the owner only by file location supplied "exact error
+    /// variant assertion" as the oracle for a predicate it does not pin.
+    #[test]
+    fn proximity_only_error_variant_assertion_is_not_named_for_a_predicate() {
+        let probe = probe(ProbeFamily::Predicate, "should_remove_con_len");
+        let exact_error = oracle(
+            "assert!(matches!(parse_resp(Some(37)), Err(Parse::TooLarge)));",
+            OracleKind::ExactErrorVariant,
+            OracleStrength::Strong,
+        );
+        let test = test_with_assertions("max_header_size", vec![exact_error]);
+        let (_, proximity, _) = reveal_evidence(&probe, &[(&test, RelationReason::SameTestFile)]);
+        assert_eq!(proximity.state, StageState::Yes, "{proximity:?}");
+        assert!(
+            !proximity.summary.contains("error variant"),
+            "proximity-linked assertion kind was named: {proximity:?}"
+        );
+        // Discriminating alternate: the same assertion reached by a call
+        // keeps its kind-specific wording.
+        let (_, called, _) = reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+        assert_eq!(
+            called.summary, "Strong oracle found: exact error variant assertion",
+            "{called:?}"
+        );
+    }
+
+    /// A name-token-only link (`WeakTokenSubstring`) is proximity too, so the
+    /// summary must not claim the test shares the file or module.
+    #[test]
+    fn name_token_proximity_error_variant_assertion_names_no_kind_or_location() {
+        let probe = probe(ProbeFamily::Predicate, "should_remove_con_len");
+        let exact_error = oracle(
+            "assert!(matches!(parse_resp(Some(37)), Err(Parse::TooLarge)));",
+            OracleKind::ExactErrorVariant,
+            OracleStrength::Strong,
+        );
+        let test = test_with_assertions("max_header_size", vec![exact_error]);
+        let (_, proximity, _) =
+            reveal_evidence(&probe, &[(&test, RelationReason::WeakTokenSubstring)]);
+        assert_eq!(proximity.state, StageState::Yes, "{proximity:?}");
+        assert_eq!(
+            proximity.summary,
+            "Strong oracle found: assertion kind not established (test linked by file, module or name proximity only)",
+            "{proximity:?}"
+        );
+    }
+
+    #[test]
+    fn proximity_only_strong_oracle_names_no_kind() {
+        for kind in [
+            OracleKind::ExactErrorVariant,
+            OracleKind::GuardedResultMatch,
+        ] {
+            let evidence = build_discriminate_evidence(
+                &OracleStrength::Strong,
+                &kind,
+                &ProbeFamily::Predicate,
+                false,
+                true,
+            );
+            assert_eq!(evidence.state, StageState::Yes);
+            assert_eq!(
+                evidence.summary,
+                "Strong oracle found: assertion kind not established (test linked by file, module or name proximity only)"
+            );
+        }
+        // Discriminating negatives: an exact value keeps its wording under
+        // proximity, and an error-path probe keeps the error-variant wording.
+        let evidence = build_discriminate_evidence(
+            &OracleStrength::Strong,
+            &OracleKind::ExactValue,
+            &ProbeFamily::Predicate,
+            false,
+            true,
+        );
+        assert_eq!(
+            evidence.summary,
+            "Strong oracle found: exact value or pattern assertion"
+        );
+        let evidence = build_discriminate_evidence(
+            &OracleStrength::Strong,
+            &OracleKind::ExactErrorVariant,
+            &ProbeFamily::ErrorPath,
+            false,
+            true,
+        );
+        assert_eq!(
+            evidence.summary,
+            "Strong oracle found: exact error variant assertion"
+        );
+        // A call-linked assertion keeps its kind.
+        let evidence = build_discriminate_evidence(
+            &OracleStrength::Strong,
+            &OracleKind::ExactErrorVariant,
+            &ProbeFamily::ErrorPath,
+            false,
+            false,
+        );
+        assert_eq!(
+            evidence.summary,
+            "Strong oracle found: exact error variant assertion"
+        );
+        // Weaker strengths are unchanged by proximity.
+        let evidence = build_discriminate_evidence(
+            &OracleStrength::Weak,
+            &OracleKind::RelationalCheck,
+            &ProbeFamily::Predicate,
+            false,
+            true,
+        );
+        assert!(evidence.summary.starts_with("Only relational oracle found"));
     }
 
     #[test]

@@ -102,8 +102,8 @@ pub(in crate::analysis) use reach::{
 pub(in crate::analysis) use related_tests::{
     DependencyEdgeContext, RelatedTestCandidateIndex, body_contains_owner_call,
     call_text_may_call_free_function, find_related_tests_with_candidate_index, impl_self_type_name,
-    manifests_with_unindexed_files, method_call_resolves_to_impl, module_stem, owner_call_text,
-    owner_dispatch_trait, package_prefix, test_calls_free_function,
+    is_partial_eq_method, manifests_with_unindexed_files, method_call_resolves_to_impl,
+    module_stem, owner_call_text, owner_dispatch_trait, package_prefix, test_calls_free_function,
 };
 pub(in crate::analysis) use reveal::is_inline_expect_snapshot;
 pub(in crate::analysis) use reveal::reveal_outcome;
@@ -111,6 +111,9 @@ pub(in crate::analysis) use reveal::unconditional_owner_insert_field;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;
 pub(in crate::analysis) use reveal::{
     ASSERTION_CONTEXT_UNESTABLISHED, FileUseStatements, oracle_crediting_relations,
+};
+pub(in crate::analysis) use reveal::{
+    NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY, NO_REACHABLE_TEST_OBSERVE_SUMMARY,
 };
 pub(in crate::analysis) use reveal::{ReturnOracleAdmission, contains_as_whole_word};
 pub(in crate::analysis) use slice_boundary::refine_slice_boundary;

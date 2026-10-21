@@ -36,6 +36,8 @@ mod source_role_corpus;
 mod summary;
 mod sync_memo;
 mod syntax;
+mod test_changes;
+pub(crate) use test_changes::{DiffTestChanges, diff_test_changes};
 pub(crate) mod test_grip_evidence;
 pub(crate) mod test_stub;
 mod value_resolution;
@@ -86,7 +88,8 @@ pub use language::{
     PartialDiffStopReason,
 };
 pub(crate) use probes::{
-    fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression, sanitize_path,
+    fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
+    normalize_rust_expression, sanitize_path,
 };
 #[cfg(test)]
 pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustIndex, RustSyntaxAdapter};
@@ -101,18 +104,18 @@ pub(crate) use seam_inventory::apply_pilot_seam_budget_inner;
 #[cfg(test)]
 pub(crate) use seam_inventory::inventory_seams_from_index;
 pub(crate) use seam_inventory::{
-    ClassifiedChangeReport, ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT,
+    ClassifiedChangeReport, ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, FileSeamIndex,
     ScopedClassifiedSeamInventory, ScopedEvidenceConsumer, SeamLimitInfo, SeamLimitSource,
-    TargetedTestInventoryError, apply_pilot_seam_budget,
-    classify_seams_in_file_with_related_at_with_config, classify_seams_in_files_at_with_config,
-    diff_only_rust_files, file_seams_without_evidence_at_with_config,
+    TargetedTestInventoryError, apply_pilot_seam_budget, classify_seams_in_file_with_shared_index,
+    classify_seams_in_files_at_with_config, diff_only_rust_files,
     inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
     inventory_compact_classified_seams_at_with_config,
     inventory_diff_scoped_classified_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_at_with_config,
     inventory_pilot_seams_report_at_with_config, inventory_seams_at_with_config, pilot_seam_budget,
-    repo_exposure_seam_limit, seam_kind_for_probe_family, workspace_cache_key_at_with_config,
+    repo_exposure_seam_limit, scoped_file_seams, seam_kind_for_probe_family,
+    workspace_cache_key_at_with_config,
 };
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
 pub(crate) use syntax::fn_signature::{
@@ -1085,12 +1088,14 @@ pub(crate) fn run_repo_analysis_with_oracle_policy_and_rust_config(
     oracle_policy: &OraclePolicy,
     languages: &[language::LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
+    language_config: &crate::config::LanguagesConfig,
 ) -> Result<AnalysisResult, String> {
     pipeline::run_repo_pipeline_with_oracle_policy_and_rust_config(
         options,
         oracle_policy,
         languages,
         rust_config,
+        language_config,
     )
 }
 

@@ -1344,7 +1344,7 @@ mod tests {
             &["run_impacted_evidence", "parse_options"],
         ),
         ("init", INIT_PARSER_RS, &["parse_init_options"]),
-        ("lsp", CLI_COMMANDS_RS, &["lsp"]),
+        ("lsp", CLI_COMMANDS_RS, &["lsp_with_serve"]),
         ("mcp", MCP_PARSER_RS, &["run"]),
         ("outcome", CLI_COMMANDS_RS, &["parse_outcome_options"]),
         ("pilot", PILOT_PARSER_RS, &["parse_pilot_options"]),

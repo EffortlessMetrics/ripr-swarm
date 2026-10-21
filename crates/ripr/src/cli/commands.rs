@@ -1230,18 +1230,8 @@ pub(super) fn calibrate(args: &[String]) -> Result<(), String> {
         &repo_exposure_json,
         &mutants_json,
     )?;
-    // Disclose on stderr (machine JSON output on stdout is unchanged) what
-    // can actually be said about artifact identity. The join is file/line
-    // capable and cargo-mutants JSON usually carries no head, so a silent
-    // success lets a foreign same-line mutant inherit the static seam's
-    // authority. Mirror `ripr outcome`'s disclosure (#7449 / #1942).
-    eprintln!(
-        "{}",
-        output::mutation_calibration::calibrate_head_provenance_disclosure(
-            &repo_exposure_json,
-            &mutants_json,
-        )
-    );
+    // The report owns the input-head projection and its qualification on every surface.
+    eprintln!("{}", report.head_provenance_disclosure());
     let rendered = match options.format {
         CalibrateFormat::Markdown => {
             output::mutation_calibration::render_mutation_calibration_md(&report)
@@ -3155,6 +3145,7 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // `--worktree` matches `ripr check --worktree`: the finding may come
     // from uncommitted edits the committed-history diff never sees.
     let mut worktree = false;
+    let mut committed = false;
     // #8739: same meaning as `ripr check --quiet`: stderr progress only.
     let mut quiet = false;
     let mut root_explicitly_provided = false;
@@ -3181,6 +3172,7 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
                 from_artifact = Some(PathBuf::from(expect_value(args, i, "--from")?));
             }
             "--worktree" => worktree = true,
+            "--committed" => committed = true,
             "--mode" => {
                 i += 1;
                 input.mode = parse_mode(expect_value(args, i, "--mode")?)?;
@@ -3233,13 +3225,14 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     if from_artifact.is_none() && base_explicitly_provided && input.diff_file.is_some() {
         return Err(base_with_diff_conflict_error("explain"));
     }
-    worktree_scope_conflict(
+    drill_in_scope_conflict(
         "explain",
         worktree,
+        committed,
         input.diff_file.is_some(),
         from_artifact.is_some(),
     )?;
-    if selector.is_none() && !worktree {
+    if selector.is_none() && !worktree && !committed {
         return Err(missing_selector_error(
             "missing finding selector",
             "ripr check --json",
@@ -3256,34 +3249,13 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // finding); with an unmoved root it is used as typed.
     let replay = from_artifact.is_some() || input.diff_file.is_some();
     let selector = selector
-        .map(
-            |item| match check::bind_member_selector_item(prefix.as_deref(), &input.root, &item) {
-                Err(_) if replay => match prefix.as_deref() {
-                    Some(prefix) => {
-                        // Normalize `./` first so `./pkg/x.rs:2` is not prefixed twice.
-                        let bare = item.trim_start_matches("./");
-                        let anchored = if bare.starts_with(&format!("{prefix}/")) {
-                            bare.to_string()
-                        } else {
-                            format!("{prefix}/{bare}")
-                        };
-                        match anchored.rsplit_once(':') {
-                            Some((file, _)) => {
-                                check::refuse_root_shadowed_selector(&input.root, file)
-                                    .map(|()| anchored)
-                            }
-                            None => Ok(anchored),
-                        }
-                    }
-                    None => Ok(item),
-                },
-                bound => bound,
-            },
-        )
+        .map(|item| bind_member_drill_in_selector(prefix.as_deref(), &input.root, item, replay))
         .transpose()?;
     let config = load_for_root(&input.root)?;
     apply_to_check_input(&mut input, &config, explicit);
-    let worktree = worktree || dirty_tree_default_is_worktree(&input, from_artifact.is_some());
+    let worktree_from_default =
+        !worktree && dirty_tree_default_is_worktree(&input, from_artifact.is_some(), committed);
+    let worktree = worktree || worktree_from_default;
     let Some(selector) = selector else {
         return Err(missing_selector_error(
             "missing finding selector",
@@ -3331,6 +3303,7 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
                 &config,
                 explicit.mode,
                 worktree,
+                worktree_from_default,
                 progress_sink,
             )?
         }
@@ -3356,19 +3329,40 @@ pub(super) fn missing_selector_error(what: &str, listing: &str) -> String {
     )
 }
 
-/// A `--worktree` drill-in without `--root` resolves the implicit project
-/// root the same way `ripr check --worktree` does, so a manual invocation
-/// from a project subdirectory analyzes the scope that listed the finding.
-/// An explicit `--root` is kept as given.
-pub(super) fn resolve_worktree_root(
-    input: &mut CheckInput,
-    worktree: bool,
-    root_explicitly_provided: bool,
-) -> Result<(), String> {
-    if worktree && !root_explicitly_provided {
-        check::resolve_implicit_workspace_root(input)?;
+/// #8872/#8902: bind a member-relative `file:line` drill-in selector (`explain`
+/// and `context`) to the invocation directory. With `--from`/`--diff`
+/// (`replay`) the named file need not exist in the working tree (for example a
+/// file the diff deletes), so a selector that binds to nothing is not refused:
+/// it is anchored to the invocation directory instead (never left as a bare
+/// suffix that could match a sibling member's finding); with an unmoved root it
+/// is used as typed.
+fn bind_member_drill_in_selector(
+    prefix: Option<&str>,
+    root: &Path,
+    item: String,
+    replay: bool,
+) -> Result<String, String> {
+    match check::bind_member_selector_item(prefix, root, &item) {
+        Err(_) if replay => match prefix {
+            Some(prefix) => {
+                // Normalize `./` first so `./pkg/x.rs:2` is not prefixed twice.
+                let bare = item.trim_start_matches("./");
+                let anchored = if bare.starts_with(&format!("{prefix}/")) {
+                    bare.to_string()
+                } else {
+                    format!("{prefix}/{bare}")
+                };
+                match anchored.rsplit_once(':') {
+                    Some((file, _)) => {
+                        check::refuse_root_shadowed_selector(root, file).map(|()| anchored)
+                    }
+                    None => Ok(anchored),
+                }
+            }
+            None => Ok(item),
+        },
+        bound => bound,
     }
-    Ok(())
 }
 
 /// `ripr check` reads the working tree by default when it holds uncommitted
@@ -3377,8 +3371,13 @@ pub(super) fn resolve_worktree_root(
 /// drill-in without a supplied scope (`--diff`, `--from`, candidate tree)
 /// follows the shared `app::diff_source` default instead of re-analysing
 /// committed history only.
-pub(super) fn dirty_tree_default_is_worktree(input: &CheckInput, from_artifact: bool) -> bool {
-    !from_artifact
+pub(super) fn dirty_tree_default_is_worktree(
+    input: &CheckInput,
+    from_artifact: bool,
+    committed: bool,
+) -> bool {
+    !committed
+        && !from_artifact
         && input.diff_file.is_none()
         && input.git_candidate.is_none()
         && app::diff_source::select_live_diff_source(
@@ -3389,14 +3388,30 @@ pub(super) fn dirty_tree_default_is_worktree(input: &CheckInput, from_artifact: 
         .is_working_tree()
 }
 
-/// `--worktree` is its own diff source, like in `ripr check`: it cannot sit
-/// beside `--diff`, and an artifact from `--from` already fixes the scope.
-pub(super) fn worktree_scope_conflict(
+/// Explicit live sources are mutually exclusive and cannot override a supplied
+/// diff or an artifact. These are argv errors, before root or input reads.
+pub(super) fn drill_in_scope_conflict(
     command: &str,
     worktree: bool,
+    committed: bool,
     diff_file: bool,
     from_artifact: bool,
 ) -> Result<(), String> {
+    if committed && worktree {
+        return Err(format!(
+            "{command} --committed and --worktree select different diff sources; pass one"
+        ));
+    }
+    if committed && diff_file {
+        return Err(format!(
+            "{command} --committed cannot be combined with --diff"
+        ));
+    }
+    if committed && from_artifact {
+        return Err(format!(
+            "{command} --committed cannot be combined with --from: the artifact already records the diff it was written from"
+        ));
+    }
     if worktree && diff_file {
         return Err(format!(
             "{command} --worktree cannot be combined with --diff"
@@ -3411,6 +3426,19 @@ pub(super) fn worktree_scope_conflict(
 }
 
 pub(super) fn lsp(args: &[String]) -> Result<(), String> {
+    lsp_with_serve(args, crate::lsp::serve)
+}
+
+/// Argument dispatch for `ripr lsp`, separated from the blocking stdio
+/// transport so unit tests can prove accepted-argument/dispatch semantics
+/// without entering the real server (issue #1387: the server owns tokio
+/// stdin/stdout and waits indefinitely while stdin stays open, so a test
+/// that calls `lsp(&["--stdio"])` hangs). Production always passes
+/// `crate::lsp::serve`; tests inject a nonblocking stub.
+fn lsp_with_serve(
+    args: &[String],
+    serve: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
     for arg in args {
         match arg.as_str() {
             "--stdio" => {}
@@ -3425,7 +3453,7 @@ pub(super) fn lsp(args: &[String]) -> Result<(), String> {
             other => return Err(unknown_argument("lsp", other)),
         }
     }
-    crate::lsp::serve()
+    serve()
 }
 
 /// `ripr pr-summary` — binary-first PR readiness summary (Campaign 31 item 8).
@@ -7178,7 +7206,7 @@ language = "rust"
 
         let rendered = std::fs::read_to_string(&out)
             .map_err(|err| format!("read calibration output: {err}"))?;
-        assert!(rendered.contains(r#""schema_version": "0.2""#));
+        assert!(rendered.contains(r#""schema_version": "0.3""#));
         assert!(rendered.contains(r#""static_gap_and_runtime_signal": 1"#));
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
@@ -7522,6 +7550,76 @@ language = "rust"
         assert!(combined.contains("outcomes"));
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
+    }
+
+    /// A headed cargo-mutants directory keeps its head identity through the
+    /// CLI combine: agreeing members surface the shared head, and
+    /// disagreeing members are disclosed as a conflict instead of a
+    /// missing head.
+    #[test]
+    fn calibrate_directory_preserves_member_head_identity() -> Result<(), String> {
+        let dir = unique_command_test_dir("calibrate-dir-heads");
+        let mutants_dir = dir.join("cargo-mutants");
+        std::fs::create_dir_all(&mutants_dir)
+            .map_err(|err| format!("create mutants dir: {err}"))?;
+        let head = "1111111111111111111111111111111111111140";
+        std::fs::write(
+            mutants_dir.join("outcomes.json"),
+            format!(
+                r#"{{"artifact":{{"repository":{{"head":"{head}"}}}},"outcomes":[{{"id":"m1","outcome":"missed"}}]}}"#
+            ),
+        )
+        .map_err(|err| format!("write outcomes.json: {err}"))?;
+        std::fs::write(
+            mutants_dir.join("mutants.json"),
+            r#"{"mutants":[{"id":"m1","operator":"replace"}]}"#,
+        )
+        .map_err(|err| format!("write mutants.json: {err}"))?;
+
+        let combined = read_calibration_mutants_json(&mutants_dir)?;
+        let disclosure = output::mutation_calibration::calibrate_head_provenance_disclosure(
+            &snapshot_with_head(head),
+            &combined,
+        );
+        assert!(
+            disclosure.contains(head) && disclosure.contains("same commit"),
+            "agreeing directory members must surface the shared head: {disclosure}"
+        );
+
+        // Disagreeing members: rewrite mutants.json with a different head.
+        let other = "2222222222222222222222222222222222222241";
+        std::fs::write(
+            mutants_dir.join("mutants.json"),
+            format!(
+                r#"{{"artifact":{{"repository":{{"head":"{other}"}}}},"mutants":[{{"id":"m1","operator":"replace"}}]}}"#
+            ),
+        )
+        .map_err(|err| format!("rewrite mutants.json: {err}"))?;
+        let combined = read_calibration_mutants_json(&mutants_dir)?;
+        let disclosure = output::mutation_calibration::calibrate_head_provenance_disclosure(
+            &snapshot_with_head(head),
+            &combined,
+        );
+        assert!(
+            disclosure.contains("conflicting repository heads")
+                && disclosure.contains(head)
+                && disclosure.contains(other),
+            "disagreeing directory members must be disclosed as a conflict: {disclosure}"
+        );
+        assert!(
+            !disclosure.contains("does not carry a head SHA"),
+            "a disagreement must not be reported as an absent head: {disclosure}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    fn snapshot_with_head(head: &str) -> String {
+        serde_json::json!({
+            "schema_version": "0.3",
+            "artifact": { "repository": { "root": "/w", "head": head } },
+        })
+        .to_string()
     }
 
     #[test]
@@ -8643,8 +8741,46 @@ language = "rust"
 
     #[test]
     fn lsp_accepts_stdio_flag() {
-        // lsp function doesn't reject --stdio, it just processes it
-        assert_eq!(lsp(&args(&["--stdio"])), Ok(()));
+        // Must not enter the real blocking stdio server (issue #1387: it
+        // owns tokio stdin/stdout and waits indefinitely while stdin stays
+        // open). The injected stub proves `--stdio` is accepted and
+        // dispatches to the transport.
+        let entered = std::cell::Cell::new(false);
+        assert_eq!(
+            lsp_with_serve(&args(&["--stdio"]), || {
+                entered.set(true);
+                Ok(())
+            }),
+            Ok(())
+        );
+        assert!(
+            entered.get(),
+            "expected --stdio to dispatch to the transport"
+        );
+    }
+
+    #[test]
+    fn lsp_default_args_enter_transport() {
+        let entered = std::cell::Cell::new(false);
+        assert_eq!(
+            lsp_with_serve(&args(&[]), || {
+                entered.set(true);
+                Ok(())
+            }),
+            Ok(())
+        );
+        assert!(
+            entered.get(),
+            "expected default args to dispatch to the transport"
+        );
+    }
+
+    #[test]
+    fn lsp_propagates_transport_errors() {
+        assert_eq!(
+            lsp_with_serve(&args(&["--stdio"]), || Err("transport down".to_string())),
+            Err("transport down".to_string())
+        );
     }
 
     #[test]
