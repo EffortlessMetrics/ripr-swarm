@@ -116,7 +116,8 @@ Rust-only when only Rust is enabled.
 Routing rules:
 
 - `*.rs` → Rust adapter (always).
-- `*.ts`, `*.tsx`, `*.mts`, `*.cts` → TypeScript adapter (preview, opt-in).
+- `*.ts`, `*.tsx`, `*.mts`, `*.cts` → TypeScript adapter (preview; auto-enabled by
+  project detection when no `ripr.toml` exists).
 - `*.js`, `*.jsx`, `*.mjs`, `*.cjs` → TypeScript-family adapter with
   JavaScript preview labels (preview, opt-in).
 - `*.py` → Python adapter (preview, opt-in).
