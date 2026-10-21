@@ -127,10 +127,10 @@ reviewed candidate, never as a general "please run CI" signal.
 | State | How to read it on the PR | Next action |
 | --- | --- | --- |
 | Candidate | Draft or Ready, no `merge-ready` for this head; `ub-review` and light checks run on push, gated jobs show `skipped` | Finish review, repair findings, run focused local proof; skipped gated jobs are expected here |
-| Qualification requested | `merge-ready` was just added for this head | Wait; do not push, re-label or re-toggle Draft/Ready |
+| Qualification requested | The PR is Ready (not Draft) and `merge-ready` was just added for this head | Wait; do not push, re-label or re-toggle Draft/Ready |
 | Qualifying | A `routed-rust.yml` run for this head is queued or in progress; `Ripr Rust Small Result` is absent or pending | Wait for the run; the watchdog reports it as in flight |
 | Qualified | `Ripr Rust Small Result` succeeded on the current head SHA | Confirm the head SHA is unchanged, inspect the results and review, then merge |
-| Not qualified | A push landed after the request, or the result failed or was refused at admission | Repair (admission refusals name the missing PR-body field), then remove and re-apply `merge-ready` for the new head |
+| Not qualified | A push landed after the request, or the result failed or was refused at admission (a Draft PR is refused: `candidate_not_open_ready`) | Repair; admission refusals name the cause (for example a missing PR-body claim field, or Draft). Mark the PR Ready, then remove and re-apply `merge-ready` for the new head |
 
 A green `ub-review` wrapper is advisory: read its review and sensor output, not
 only the conclusion (see the `ub-review` notes under Current Workflows). A
