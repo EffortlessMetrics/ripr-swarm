@@ -9916,6 +9916,18 @@ fn release_workflows_publish_only_by_explicit_dispatch() -> Result<(), String> {
             return Err(format!("{input} must gate its job on an explicit 'true'"));
         }
     }
+    // #3798: the RC manifest sits under the RC tag but is named for the
+    // X.Y.Z generation, as the editor's rcManifestUrl expects; waiting on a
+    // manifest named after the full RC version never succeeds.
+    if !extension.contains("generation=\"${version%%[-+]*}\"")
+        || !extension.contains("/v${version}/ripr-server-manifest-v${generation}.json")
+        || extension.contains("ripr-server-manifest-v${version}.json")
+    {
+        return Err(
+            "publish-extension.yml must wait for the generation-keyed manifest under the release tag"
+                .to_string(),
+        );
+    }
     // One dispatch authorizes exactly one channel: zero or two must fail
     // before anything packages, publishes or touches the Release.
     if !extension.contains("true/false | false/true) ;;") {
