@@ -1838,6 +1838,13 @@ fn mark_rebound_decorators(source: &str, owners: &mut [PythonOwner]) {
 
 /// Whether a decorator line or star import makes any marker unprovable.
 fn typing_markers_distrusted(source: &str) -> bool {
+    // A lone carriage return is a Python line break `str::lines` does not see.
+    if source
+        .match_indices('\r')
+        .any(|(at, _)| source.as_bytes().get(at + 1) != Some(&b'\n'))
+    {
+        return true;
+    }
     source.lines().any(|line| {
         let line = line.trim_start();
         if let Some(rest) = line.strip_prefix('@') {
@@ -1874,8 +1881,30 @@ fn is_plain_decorator(text: &str) -> bool {
         return true;
     }
     let mut depth = 0usize;
-    for (index, c) in call.char_indices() {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let chars: Vec<(usize, char)> = call.char_indices().collect();
+    for (at, &(index, c)) in chars.iter().enumerate() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == open {
+                quote = None;
+            }
+            continue;
+        }
         match c {
+            // Triple-quoted strings are not parsed: the line is unreadable.
+            '\'' | '"' => {
+                if chars.get(at + 1).is_some_and(|&(_, next)| next == c)
+                    && chars.get(at + 2).is_some_and(|&(_, next)| next == c)
+                {
+                    return false;
+                }
+                quote = Some(c);
+            }
             '(' => depth += 1,
             ')' => {
                 depth = match depth.checked_sub(1) {
@@ -1889,17 +1918,19 @@ fn is_plain_decorator(text: &str) -> bool {
             _ => {}
         }
     }
-    depth == 0
+    depth == 0 && quote.is_none()
 }
 
 fn is_typing_import_line(line: &str) -> bool {
-    [
-        "from typing import",
-        "from typing_extensions import",
-        "import typing",
-    ]
-    .iter()
-    .any(|prefix| line.starts_with(prefix))
+    let module_import = ["import typing", "import typing_extensions"]
+        .iter()
+        .any(|prefix| {
+            line.strip_prefix(prefix)
+                .is_some_and(|rest| !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_'))
+        });
+    (line.starts_with("from typing import")
+        || line.starts_with("from typing_extensions import")
+        || module_import)
         && !line.contains(';')
 }
 
