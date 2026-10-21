@@ -476,3 +476,86 @@ fn pattern_and_loop_rebindings_of_the_parameter_keep_the_gap() -> Result<(), Str
     }
     Ok(())
 }
+
+#[test]
+fn an_unrelated_differently_named_local_keeps_the_intermediate_input_credit() -> Result<(), String>
+{
+    // Control (#9197): `y` is declared, `x` is untouched, so the #9147 credit
+    // holds for the tail and explicit-return forms.
+    for (new, old) in [
+        ("    x > 102", "    x > 100"),
+        ("    return x > 102;", "    return x > 100;"),
+    ] {
+        let findings = findings_after(
+            "    let y = 7;\n    let _ = y + 1;\n",
+            new,
+            old,
+            INTERMEDIATE_INPUT,
+        )?;
+        assert_gap_named(&findings, false)?;
+        let return_value = family(&findings, "return_value")?;
+        assert_eq!(
+            return_value.class,
+            ExposureClass::Exposed,
+            "{return_value:?}"
+        );
+    }
+    Ok(())
+}
+
+/// `thr(101)` equals the new threshold of `> 100` to `> 101`; `thr(50)` is far.
+const AT_NEW_THRESHOLD: &str = "use thr::thr;\n\n#[test]\nfn at() {\n    assert!(thr(101));\n}\n\n#[test]\nfn below() {\n    assert!(!thr(50));\n}\n";
+
+#[test]
+fn a_rebound_or_mutated_parameter_does_not_satisfy_the_equality_boundary() -> Result<(), String> {
+    // #9197: the observed 101 equals the new threshold only by name. The
+    // owner rebinds or mutates `x` first, so the compared value is not 101 and
+    // the boundary gap stays, for the tail and explicit-return forms.
+    for prefix in [
+        "    let x = x * 2;\n",
+        "    let mut x = x;\n    x += 5;\n",
+        "    let mut x = x;\n    x = x + 5;\n",
+        "    let (x, _) = (x + 5, 0);\n",
+        "    for x in 0..1 {}\n",
+    ] {
+        for (new, old) in [
+            ("    x > 101", "    x > 100"),
+            ("    return x > 101;", "    return x > 100;"),
+        ] {
+            let findings = findings_after(prefix, new, old, AT_NEW_THRESHOLD)?;
+            assert_gap_named(&findings, true).map_err(|e| format!("{prefix:?} {new}: {e}"))?;
+            let return_value = family(&findings, "return_value")?;
+            assert_ne!(
+                return_value.class,
+                ExposureClass::Exposed,
+                "{prefix:?} {return_value:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn an_unrelated_local_keeps_the_equality_boundary_credit() -> Result<(), String> {
+    // Control: `y` is declared, `x` is untouched, so `thr(101)` still sits
+    // on the new threshold.
+    for (new, old) in [
+        ("    x > 101", "    x > 100"),
+        ("    return x > 101;", "    return x > 100;"),
+    ] {
+        let findings = findings_after(
+            "    let y = 7;\n    let _ = y + 1;\n",
+            new,
+            old,
+            AT_NEW_THRESHOLD,
+        )?;
+        assert_gap_named(&findings, false)?;
+        let return_value = family(&findings, "return_value")?;
+        assert_eq!(
+            return_value.class,
+            ExposureClass::Exposed,
+            "{return_value:?}"
+        );
+    }
+    Ok(())
+}

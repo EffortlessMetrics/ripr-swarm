@@ -2577,3 +2577,23 @@ the same side of both thresholds keep the gap.
 The intermediate-input reading also declines when the owner may compare a value other than the caller's: any occurrence of the parameter name in the body before the compared line (a `let`, pattern, `for`, `if let`, `match` arm or closure binding, or any other use), a binding form beside it on the compared line, a `mut` binding or borrow of it, or any assignment to it (`x += 5`). The gap stays in those cases (#9147).
 
 Only unqualified owner calls supply separating inputs: a module-qualified or method call of the same name (`rival::thr(101)`) may be another function and is never counted, and helper-transferred rows are not read (#9147).
+
+An operand that merely name-matches an owner parameter is that parameter's
+observed value only while the owner leaves the name alone (#9197). When the
+owner rebinds or mutates the name on or before the compared line (`let x`,
+`let mut x`, `x += ..`, `x = ..`, `&mut x`, a `for`, `let`, `if let` or match-arm
+pattern, a closure parameter list, or a `matches!` line that mentions it), the
+equality-boundary path withholds the credit: an observed input is not treated
+as the compared value, so a test input that equals the threshold only by name
+no longer satisfies the boundary and the gap stays. The operand remains a known
+parameter, so the unresolved-input reading is unchanged; a live `let` local
+still folds through the bounded evaluator. The scan is deliberately over-eager
+(it does not prove scope), so it only ever removes a credit; a field access,
+path segment, comparison or unrelated local keeps it, and a match arm that binds
+the scrutinee's own name (`match n { n if 0 > n => .. }`) rebinds the same value
+and keeps the credit.
+The one corpus row this moves is `strsim-sorensen-dice-equal` (credited to gap):
+its `if b == a` follows `let a: String = a.chars().filter(..).collect()`, so `a`
+is a rebound local, not the argument the test passed. Declining the credit is
+the intended fail-closed direction; it does cost this row a correct credit
+(labeled discriminated, now `false_actionable` in the report).

@@ -388,23 +388,49 @@ fn observed_discriminator_values(
     let call_values = call_values_for_owner(owner, &parameters, related_tests, helper_chain, index);
     let left_parameter = boundary_operand_parameter(owner, owner_source, &parameters, &left);
     let right_parameter = boundary_operand_parameter(owner, owner_source, &parameters, &right);
+    let left_credit = credited_parameter(
+        owner,
+        &parameters,
+        &left,
+        &left_parameter,
+        probe.location.line,
+    );
+    let right_credit = credited_parameter(
+        owner,
+        &parameters,
+        &right,
+        &right_parameter,
+        probe.location.line,
+    );
     // #3295: the operands resolve once per probe (initializer or
     // parameter); only the input row changes per call.
-    let left_resolved = resolve_boundary_operand(
+    let left_resolved = credited_resolution(
         owner,
+        &parameters,
         &left,
+        resolve_boundary_operand(
+            owner,
+            &left,
+            probe.location.line,
+            &parameters,
+            index,
+            workspace_complete,
+        ),
         probe.location.line,
-        &parameters,
-        index,
-        workspace_complete,
     );
-    let right_resolved = resolve_boundary_operand(
+    let right_resolved = credited_resolution(
         owner,
-        &right,
-        probe.location.line,
         &parameters,
-        index,
-        workspace_complete,
+        &right,
+        resolve_boundary_operand(
+            owner,
+            &right,
+            probe.location.line,
+            &parameters,
+            index,
+            workspace_complete,
+        ),
+        probe.location.line,
     );
     let right_constant = (right_resolved.is_none() && right_parameter.is_none())
         .then(|| boundary_constant(owner, &right, index))
@@ -444,13 +470,13 @@ fn observed_discriminator_values(
             });
             continue;
         }
-        let Some(left_parameter) = left_parameter.as_deref() else {
+        let Some(left_credit) = left_credit.as_deref() else {
             continue;
         };
-        let Some(left_value) = parameter_value(&row, left_parameter) else {
+        let Some(left_value) = parameter_value(&row, left_credit) else {
             continue;
         };
-        let right_value = right_parameter
+        let right_value = right_credit
             .as_deref()
             .and_then(|parameter| parameter_value(&row, parameter))
             .map(|value| value.value)
@@ -470,12 +496,12 @@ fn observed_discriminator_values(
             });
         }
     }
-    if let (Some(constant), Some(left_parameter)) = (&right_constant, left_parameter.as_deref()) {
+    if let (Some(constant), Some(left_credit)) = (&right_constant, left_credit.as_deref()) {
         for (line, text) in owner_calls_passing_constant(
             related_tests,
             owner,
             &parameters,
-            left_parameter,
+            left_credit,
             constant,
             index,
         ) {
@@ -510,6 +536,51 @@ pub(crate) enum ResolvedOperand {
         callee: Box<crate::analysis::facts::FunctionSummary>,
         arguments: Vec<String>,
     },
+}
+
+/// The parameter whose observed rows may be credited as `operand`'s value
+/// (#9197). A name that matches a parameter but that the owner rebinds or
+/// mutates on or before the compared line is no longer the value the test
+/// passed in, so the observed rows must not satisfy the boundary. The operand
+/// stays a known parameter for the unresolved-input reading; only the credit
+/// is withheld.
+fn credited_parameter(
+    owner: &FunctionSummary,
+    parameters: &[String],
+    operand: &str,
+    found: &Option<String>,
+    predicate_line: usize,
+) -> Option<String> {
+    found.clone().filter(|_| {
+        !(parameters.iter().any(|parameter| parameter == operand)
+            && owner_rebinds_operand(owner, operand, predicate_line))
+    })
+}
+
+/// `resolved`, except a parameter operand the owner rebinds or mutates
+/// resolves to no exact row value (#9197).
+fn credited_resolution(
+    owner: &FunctionSummary,
+    parameters: &[String],
+    operand: &str,
+    resolved: Option<ResolvedOperand>,
+    predicate_line: usize,
+) -> Option<ResolvedOperand> {
+    match resolved {
+        Some(ResolvedOperand::Parameter(_))
+            if credited_parameter(
+                owner,
+                parameters,
+                operand,
+                &Some(operand.to_string()),
+                predicate_line,
+            )
+            .is_none() =>
+        {
+            None
+        }
+        other => other,
+    }
 }
 
 fn resolve_boundary_operand(
@@ -763,6 +834,102 @@ fn owner_declares_local(owner: &FunctionSummary, operand: &str, predicate_line: 
                     .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
             })
         })
+}
+
+/// Whether the owner may rebind or mutate the identifier `operand` on or before
+/// the predicate line, so a name match against an owner parameter no longer
+/// proves the compared value is what the test passed in (#9197). Fail-closed:
+/// any `let`/`mut`/`ref` binding, assignment or compound assignment, `for` or
+/// `let` pattern, closure parameter list, match-arm pattern or `matches!`
+/// line that mentions the name counts, without proving it is the same scope.
+/// Comments and strings are masked, the signature is skipped (a `mut x`
+/// parameter alone is not a rebinding), and a field access (`self.x`) or path
+/// segment (`m::x`) is a different name.
+fn owner_rebinds_operand(owner: &FunctionSummary, operand: &str, predicate_line: usize) -> bool {
+    if owner_declares_local(owner, operand, predicate_line) {
+        return true;
+    }
+    let is_identifier = operand
+        .chars()
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && operand
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+    if !is_identifier {
+        return false;
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    let through_predicate = masked
+        .lines()
+        .enumerate()
+        .take_while(|(offset, _)| owner.start_line + offset <= predicate_line)
+        .map(|(_, line)| line)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let Some((_, body)) = through_predicate.split_once('{') else {
+        return false;
+    };
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    body.match_indices(operand).any(|(start, _)| {
+        let before = &body[..start];
+        let after = &body[start + operand.len()..];
+        if before.chars().next_back().is_some_and(is_word)
+            || after.chars().next().is_some_and(is_word)
+            || before.ends_with('.')
+            || before.ends_with("::")
+        {
+            return false;
+        }
+        let before_trimmed = before.trim_end();
+        let after_trimmed = after.trim_start();
+        let line_before = before.rsplit('\n').next().unwrap_or(before);
+        let line_after = after.split('\n').next().unwrap_or(after);
+        let last_word = before_trimmed
+            .rsplit(|ch: char| !is_word(ch))
+            .next()
+            .unwrap_or("");
+        let assigned = (after_trimmed.starts_with('=')
+            && !after_trimmed.starts_with("==")
+            && !after_trimmed.starts_with("=>"))
+            || ["+=", "-=", "*=", "/=", "%=", "^=", "&=", "|=", "<<=", ">>="]
+                .iter()
+                .any(|assignment| after_trimmed.starts_with(assignment));
+        let binding_keyword = matches!(last_word, "let" | "mut" | "ref");
+        // A guard use (`n if 0 > n =>`) is not a pattern. An arm that binds
+        // the scrutinee's own name (`match n { n if .. => .. }`) rebinds the
+        // same value, so it keeps the parameter.
+        let self_binding_arm = line_before.trim().is_empty()
+            && (after_trimmed.starts_with("if ") || after_trimmed.starts_with("=>"))
+            && body.contains(&format!("match {operand} {{"));
+        let match_arm_pattern =
+            line_after.contains("=>") && !contains_word(line_before, "if") && !self_binding_arm;
+        let for_pattern = before
+            .rfind("for ")
+            .filter(|at| at == &0 || !before[..*at].ends_with(is_word))
+            .is_some_and(|at| !contains_word(&before[at..], "in"));
+        let let_pattern = before
+            .rfind("let ")
+            .filter(|at| at == &0 || !before[..*at].ends_with(is_word))
+            .is_some_and(|at| !before[at..].contains(['=', ';']));
+        let single_pipes = line_before
+            .replace("||", "")
+            .replace("|=", "")
+            .matches('|')
+            .count();
+        assigned
+            || binding_keyword
+            || match_arm_pattern
+            || for_pattern
+            || let_pattern
+            || single_pipes % 2 == 1
+            || line_before.contains("matches!")
+    })
+}
+
+fn contains_word(text: &str, word: &str) -> bool {
+    text.split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .any(|token| token == word)
 }
 
 /// The initializer of a local binding whose live span (per the #3294
@@ -1155,26 +1322,52 @@ fn missing_boundary_discriminator(
     }
     let left_parameter = boundary_operand_parameter(owner, owner_source, &parameters, &left);
     let right_parameter = boundary_operand_parameter(owner, owner_source, &parameters, &right);
+    let left_credit = credited_parameter(
+        owner,
+        &parameters,
+        &left,
+        &left_parameter,
+        probe.location.line,
+    );
+    let right_credit = credited_parameter(
+        owner,
+        &parameters,
+        &right,
+        &right_parameter,
+        probe.location.line,
+    );
 
     // #3295 exact path: when either operand is a computed local, the
     // bounded evaluator resolves its value from the row's exact
     // inputs; the boundary is observed when both sides compare equal
     // under any row.
-    let left_resolved = resolve_boundary_operand(
+    let left_resolved = credited_resolution(
         owner,
+        &parameters,
         &left,
+        resolve_boundary_operand(
+            owner,
+            &left,
+            probe.location.line,
+            &parameters,
+            index,
+            workspace_complete,
+        ),
         probe.location.line,
-        &parameters,
-        index,
-        workspace_complete,
     );
-    let right_resolved = resolve_boundary_operand(
+    let right_resolved = credited_resolution(
         owner,
-        &right,
-        probe.location.line,
         &parameters,
-        index,
-        workspace_complete,
+        &right,
+        resolve_boundary_operand(
+            owner,
+            &right,
+            probe.location.line,
+            &parameters,
+            index,
+            workspace_complete,
+        ),
+        probe.location.line,
     );
     let right_constant = (right_resolved.is_none() && right_parameter.is_none())
         .then(|| boundary_constant(owner, &right, index))
@@ -1216,12 +1409,12 @@ fn missing_boundary_discriminator(
     });
 
     let equality_observed = exact_equality_observed
-        || left_parameter.as_deref().is_some_and(|left_parameter| {
+        || left_credit.as_deref().is_some_and(|left_credit| {
             call_values.iter().any(|row| {
-                let Some(left_value) = parameter_value(row, left_parameter) else {
+                let Some(left_value) = parameter_value(row, left_credit) else {
                     return false;
                 };
-                let right_value = right_parameter
+                let right_value = right_credit
                     .as_deref()
                     .and_then(|parameter| parameter_value(row, parameter))
                     .map(|value| value.value)
@@ -1236,13 +1429,13 @@ fn missing_boundary_discriminator(
         });
     let constant_named = right_constant
         .as_ref()
-        .zip(left_parameter.as_deref())
-        .is_some_and(|(constant, left_parameter)| {
+        .zip(left_credit.as_deref())
+        .is_some_and(|(constant, left_credit)| {
             !owner_calls_passing_constant(
                 related_tests,
                 owner,
                 &parameters,
-                left_parameter,
+                left_credit,
                 constant,
                 index,
             )
@@ -8035,5 +8228,54 @@ assert_eq!(input.amount, 100);"#
         ] {
             assert_eq!(unread_mentions(source, "add"), count, "{source}");
         }
+    }
+
+    #[test]
+    fn a_rebound_or_mutated_parameter_is_not_the_compared_value() {
+        // #9197: the operand name matches the parameter, but the owner
+        // rebinds or mutates it before line 3, so no input row is its value.
+        let rebound = |prelude: &str| {
+            let owner = function(&format!(
+                "pub fn thr(x: i32) -> bool {{\n{prelude}\n    x > 102\n}}"
+            ));
+            let parameters = function_parameters(&owner);
+            credited_parameter(&owner, &parameters, "x", &Some("x".to_string()), 3)
+        };
+        for prelude in [
+            "    let x = x * 2;",
+            "    let mut x = x;",
+            "    x += 5;",
+            "    x = x + 5;",
+            "    for x in 0..3 { let _ = x; }",
+            "    let (x, _) = (x + 5, 0);",
+            "    if let Some(x) = Some(1) { let _ = x; }",
+            "    let _ = Some(1).map(|x| x + 5);",
+            "    let _ = match Some(1) { Some(x) => x, None => 0 };",
+            "    let _ = matches!(Some(1), Some(x) if x > 0);",
+            "    let _ = foo(&mut x);",
+            "    let _ = match Some(1) { Some(x) if x > 0 => x, _ => 0 };",
+        ] {
+            assert_eq!(rebound(prelude), None, "{prelude}");
+        }
+        // Controls: unrelated names, fields, comparisons and a path segment
+        // do not decline the parameter.
+        for prelude in [
+            "    let y = 7;",
+            "    let point = (1, 2);\n    let _ = point.0 <= 3 && x <= 3;",
+            "    let _ = self.x;",
+            "    let _ = m::x();",
+            "    let _ = x == 3;",
+            "    let _ = Foo { x: x };",
+            "    let _ = match x {\n        x if 0 > x => -1,\n        _ => 1,\n    };",
+        ] {
+            assert_eq!(rebound(prelude), Some("x".to_string()), "{prelude}");
+        }
+        // A rebinding after the compared line is not before it.
+        let later = function("pub fn thr(x: i32) -> bool {\n    x > 102\n    let x = 1;\n}");
+        let parameters = function_parameters(&later);
+        assert_eq!(
+            credited_parameter(&later, &parameters, "x", &Some("x".to_string()), 2),
+            Some("x".to_string())
+        );
     }
 }
