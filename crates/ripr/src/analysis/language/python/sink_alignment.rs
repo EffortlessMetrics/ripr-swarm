@@ -4,13 +4,17 @@ use super::effect_alignment::{
 };
 use super::owners_tests::collect_imports_from_statements;
 use super::probe_shape::classify_probe_shape;
+use super::related_tests::TestLookup;
 use super::related_tests::{
-    oracle_operand_calls, oracle_operand_names, owner_module_callees, owner_result_locals,
+    oracle_operand_calls, oracle_operand_names, oracle_operand_protocol_entry,
+    owner_module_callees, owner_result_locals,
 };
 use super::source_facts::parse_module_result;
+use super::wrapped_call::owner_call_only_inside_opaque_wrapper;
 use super::{
-    PythonOwner, PythonTest, has_identifier_boundary, import_source_module_matches_owner,
-    parse_attribute_assignment, python_dict_field_segment_parts, significant_change_tokens,
+    PythonOwner, PythonTest, assertion_calls_method_only_on_foreign_receiver,
+    has_identifier_boundary, import_source_module_matches_owner, parse_attribute_assignment,
+    python_dict_field_segment_parts, significant_change_tokens,
     strong_test_calls_owner_method_on_bound_receiver, strong_test_imports_owner_from_module,
     strong_tests_import_only_rival_modules, top_level_python_segments,
 };
@@ -578,16 +582,17 @@ pub(super) fn classify_sink_alignment_with_old(
     // behavior family (a `pytest.raises` for a changed `return`) never
     // credits, whichever branch its text would pass.
     let focus = PythonAssertionFocus::for_change(family, line_text, old_line_text);
+    let test_lookup = TestLookup::new(all_tests);
     let mut units = alignment_units(
         &strong_tests,
-        all_tests,
+        &test_lookup,
         error_path,
         &focus,
         effect.as_ref(),
     );
     units.extend(alignment_units(
         &mock_tests,
-        all_tests,
+        &test_lookup,
         error_path,
         &focus,
         effect.as_ref(),
@@ -755,22 +760,35 @@ pub(super) fn classify_sink_alignment_with_old(
             owner_class_token.as_ref(),
             method_name_token.as_ref(),
             &[unit.related],
-            all_tests,
+            &test_lookup,
         )
     });
+    // The relation above reads the whole test body; the assertion itself must
+    // not call the method only on some other receiver (#8247).
+    let asserts_foreign_receiver = |unit: &AlignmentUnit<'_>| match (
+        unit.test,
+        owner_class_token.as_ref(),
+        method_name_token.as_ref(),
+    ) {
+        (Some(test), Some(class), Some(method)) => {
+            assertion_calls_method_only_on_foreign_receiver(test, owner, class, method, &unit.text)
+        }
+        _ => false,
+    };
     // Free-function module identity: a non-method owner's bare function-name token
     // credits `direct` only when the test holding the assertion imports it from
     // the owner's module. A same-named free function imported from a different
     // module (`from src.checker import validate` for owner `src.handler.validate`)
     // is not identity-bearing — the false-`exposed` guard for free functions.
     let free_fn_module_identity = per_related_test(|unit: &AlignmentUnit<'_>| {
-        !is_method_owner && strong_test_imports_owner_from_module(&[unit.related], all_tests, owner)
+        !is_method_owner
+            && strong_test_imports_owner_from_module(&[unit.related], &test_lookup, owner)
     });
     // Method-owner identity is class and method name; a test whose imports
     // name a same-named module of another project uses that project's class.
     let method_owner_identity = per_related_test(|unit: &AlignmentUnit<'_>| {
         is_method_owner
-            && !strong_tests_import_only_rival_modules(owner, &[unit.related], all_tests)
+            && !strong_tests_import_only_rival_modules(owner, &[unit.related], &test_lookup)
     });
     // Owner output observed through a module-identified call (#4567): the
     // assertion calls the owner through its module (`utils.sign(0) == 0`,
@@ -794,6 +812,15 @@ pub(super) fn classify_sink_alignment_with_old(
                         .iter()
                         .any(|local| oracle_operand_names(&unit.text, local))
             })
+    };
+    // Dunder owner invoked through a builtin protocol entry (`reversed(Range(0))`
+    // for `Range.__reversed__`): the entry call must take a receiver bound to the
+    // owner class and be an asserted operand, directly or under materializers.
+    let protocol_entry_observed = |unit: &AlignmentUnit<'_>| {
+        is_method_owner
+            && unit
+                .test
+                .is_some_and(|test| oracle_operand_protocol_entry(&unit.text, test, owner))
     };
     // Receiver/value identity for an attribute-assignment changed sink. The bare
     // attribute token (`status`) is collision-prone: a same-named field on an
@@ -884,6 +911,7 @@ pub(super) fn classify_sink_alignment_with_old(
         field_construction_credit_ok(unit)
             && fstring_credit_ok(unit)
             && !expected_computed_through_owner(&unit.text, &owner_reference_tokens)
+            && !owner_call_only_inside_opaque_wrapper(&unit.text, &owner_reference_tokens)
             && !assertion_calls_stand_in(unit, owner)
     };
     // A mock assertion credits only through the effect branch, where it pins
@@ -908,7 +936,7 @@ pub(super) fn classify_sink_alignment_with_old(
             && fstring_credit_ok(unit)
             && !assertion_calls_stand_in(unit, owner)
     };
-    let branches: [CreditBranch<'_, '_>; 6] = [
+    let branches: [CreditBranch<'_, '_>; 7] = [
         ("direct", "strong_oracle_observes_owner_name", &|unit| {
             observes_imported_owner(unit, &identity_tokens)
                 && (method_owner_identity(unit) || free_fn_module_identity(unit))
@@ -922,6 +950,7 @@ pub(super) fn classify_sink_alignment_with_old(
                     .as_ref()
                     .is_some_and(|token| observes(unit, std::slice::from_ref(token)))
                     && binds_method_receiver(unit)
+                    && !asserts_foreign_receiver(unit)
                     && gates_ok(unit)
             },
         ),
@@ -933,6 +962,11 @@ pub(super) fn classify_sink_alignment_with_old(
             observes_imported_owner(unit, own_aliases.as_deref().unwrap_or(&alias_tokens))
                 && gates_ok(unit)
         }),
+        (
+            "direct",
+            "strong_oracle_observes_owner_protocol_entry",
+            &|unit| protocol_entry_observed(unit) && method_owner_identity(unit) && gates_ok(unit),
+        ),
         (
             "direct",
             "strong_oracle_observes_owner_call_through_module",
@@ -1041,7 +1075,7 @@ struct AlignmentUnit<'a> {
 /// `all_tests` contributes its one reported oracle.
 fn alignment_units<'a>(
     strong_tests: &[&'a RelatedTest],
-    all_tests: &'a [PythonTest],
+    all_tests: &TestLookup<'a>,
     error_path: bool,
     focus: &PythonAssertionFocus,
     effect: Option<&ChangedEffect>,
@@ -1050,11 +1084,8 @@ fn alignment_units<'a>(
     let admits_mock = effect.is_some_and(ChangedEffect::admits_mock_assertion);
     let mut units = Vec::new();
     for related in strong_tests {
-        let test = all_tests.iter().find(|test| {
-            test.name == related.name
-                && test.file == related.file
-                && test.line == related.line
-                && super::test_activation::activation_control(test).is_none()
+        let test = all_tests.matching(related).find(|test| {
+            test.line == related.line && super::test_activation::activation_control(test).is_none()
         });
         let before = units.len();
         if let Some(test) = test {
@@ -1117,7 +1148,7 @@ fn assertion_calls_stand_in(unit: &AlignmentUnit<'_>, owner: &PythonOwner) -> bo
 /// (assignment, local `def`/`class`, loop/`as` target, or a non-owner import).
 /// Nested `def`/`class` bodies are a different scope, so a helper-local
 /// shadow does not hide an outer assertion on the imported owner.
-fn function_scope_stand_in(test: &PythonTest, name: &str, owner: &PythonOwner) -> bool {
+pub(super) fn function_scope_stand_in(test: &PythonTest, name: &str, owner: &PythonOwner) -> bool {
     if name.is_empty() {
         return false;
     }
@@ -1126,6 +1157,51 @@ fn function_scope_stand_in(test: &PythonTest, name: &str, owner: &PythonOwner) -
     };
     parameter_names.iter().any(|parameter| parameter == name)
         || suite_binds_stand_in(&body, name, test, owner)
+        || binds_by_walrus(&test.body_text, name)
+        || test.constant_rebinding.module_rebinds(name)
+}
+
+/// Whether `body_text` binds `name` with an assignment expression
+/// (`name := ...`), which binds in the enclosing function scope wherever the
+/// expression sits. Textual on purpose: a comment or string match only
+/// withholds credit.
+fn binds_by_walrus(body_text: &str, name: &str) -> bool {
+    body_text.match_indices(name).any(|(idx, _)| {
+        let before_ok = body_text[..idx]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_' || ch == '.'));
+        let rest = &body_text[idx + name.len()..];
+        let after_ok = rest
+            .chars()
+            .next()
+            .is_none_or(|ch| !(ch.is_alphanumeric() || ch == '_'));
+        before_ok && after_ok && rest.trim_start().starts_with(":=")
+    })
+}
+
+/// Whether a `match` case pattern captures `name` (`case fee:`,
+/// `case [*fee]`, `case {**fee}`, `case Cls() as fee`).
+fn pattern_binds_name(pattern: &ast::Pattern, name: &str) -> bool {
+    let named =
+        |bound: &Option<ast::Identifier>| bound.as_ref().is_some_and(|id| id.as_str() == name);
+    let any =
+        |patterns: &[ast::Pattern]| patterns.iter().any(|inner| pattern_binds_name(inner, name));
+    match pattern {
+        ast::Pattern::MatchValue(_) | ast::Pattern::MatchSingleton(_) => false,
+        ast::Pattern::MatchSequence(sequence) => any(&sequence.patterns),
+        ast::Pattern::MatchMapping(mapping) => named(&mapping.rest) || any(&mapping.patterns),
+        ast::Pattern::MatchClass(class) => any(&class.patterns) || any(&class.kwd_patterns),
+        ast::Pattern::MatchStar(star) => named(&star.name),
+        ast::Pattern::MatchAs(alias) => {
+            named(&alias.name)
+                || alias
+                    .pattern
+                    .as_ref()
+                    .is_some_and(|inner| pattern_binds_name(inner, name))
+        }
+        ast::Pattern::MatchOr(or) => any(&or.patterns),
+    }
 }
 
 fn parse_test_function_scope(test: &PythonTest) -> Option<(Vec<String>, Vec<Stmt>)> {
@@ -1228,10 +1304,10 @@ fn suite_binds_stand_in(
             test,
             owner,
         ),
-        Stmt::Match(stmt) => stmt
-            .cases
-            .iter()
-            .any(|case| suite_binds_stand_in(&case.body, name, test, owner)),
+        Stmt::Match(stmt) => stmt.cases.iter().any(|case| {
+            pattern_binds_name(&case.pattern, name)
+                || suite_binds_stand_in(&case.body, name, test, owner)
+        }),
         Stmt::Import(_) | Stmt::ImportFrom(_) => {
             let imports = collect_imports_from_statements(&test.file, std::slice::from_ref(stmt));
             imports.iter().any(|import| {

@@ -79,6 +79,19 @@ beyond this status slice raises the SDK migration trigger rather than expanding
 a parallel framework. LSP and MCP remain peers over shared RIPR authority; one
 transport must not invoke or reinterpret the other.
 
+## Alternatives Considered
+
+- **Adopt the official Rust SDK in the first slice.** Not chosen then: it would
+  have made dependency adoption, lockfile regeneration, and conformance work
+  the dominant change (see Context). The SDK migration section below records
+  the successor that did adopt it.
+- **A local wire adapter as the long-term transport.** Superseded: the first
+  slice used one deliberately small adapter, and growth beyond status raised
+  the SDK migration trigger instead of expanding a parallel framework.
+- **Give MCP its own root discovery, evidence interpretation, or edit and
+  execution authority.** Rejected: MCP stays a projection over the shared
+  workspace-status producer, and LSP and MCP remain peers.
+
 ## SDK migration (#3088)
 
 The status-only successor uses pinned official `rmcp 3.5.0` with default
@@ -152,7 +165,7 @@ mapping specifies successor proof; it does not claim that it has run.
 | Fragmented message | Retained FrameReader and split public initialize controls |
 | Oversize discard/recovery | Retained bounded FrameReader cap/recovery control |
 | Over-cap response keeps known ID | Typed bounded writer fallback control |
-| Unreadable ID becomes null | Transport null-id Invalid Request frame control (`protocol_error_frame` bypassing the SDK type, #5254 item 3); SDK omission retained for dispatched errors, no arbitrary Value ID in production |
+| Unreadable ID becomes null; recoverable ID is echoed | Transport Invalid Request frame control (`protocol_error_frame` bypassing the SDK type, #5254 item 3): a frame with a `method` and a string or integer `id` but wrong-shape `params` echoes that ID verbatim; notifications and null, boolean, float or structured IDs answer `"id": null`. SDK omission retained for dispatched errors |
 
 All three original public stdio controls remain: legacy status/tool-resource
 equality, rejection arms, and discovery metadata/ping/unavailable recovery.

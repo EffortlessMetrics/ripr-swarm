@@ -335,6 +335,11 @@ pub(super) fn apply_rust_macro_wrapped_assertion_limit(
         // owner inside an assertion-like macro ripr cannot read, that macro
         // is the likely discriminator, so name the limit instead of a gap.
         find_unresolved_assertion_macro_witness(finding, index, Some(owner_name))
+    } else if only_credited_local_macros_supply_an_oracle(finding) {
+        // #9122: a same-file macro earns an unknown-grade fact, never a
+        // graded oracle. It must not turn the macro limit into a gap: the
+        // named limit stays, because the macro's discrimination is unresolved.
+        find_unresolved_assertion_macro_witness(finding, index, None)
     } else {
         return;
     };
@@ -449,6 +454,40 @@ fn only_proximity_tests_supply_an_oracle(finding: &Finding) -> bool {
         }
     }
     direct_seen && proximity_oracle_seen
+}
+
+/// A `weakly_exposed` finding whose every recognized oracle is a same-file
+/// macro call credited at unknown grade (#9122): `name!(..)` text with kind
+/// and strength both unknown. A truncated related-test window never qualifies.
+fn only_credited_local_macros_supply_an_oracle(finding: &Finding) -> bool {
+    if finding.class != ExposureClass::WeaklyExposed
+        || finding
+            .related_tests_matched_total
+            .is_some_and(|total| total > finding.related_tests.len())
+    {
+        return false;
+    }
+    let mut seen = false;
+    for related in finding.oracle_related_tests() {
+        let Some(oracle) = related.oracle.as_deref() else {
+            continue;
+        };
+        let macro_call = oracle.split_once('!').is_some_and(|(name, rest)| {
+            !name.is_empty()
+                && name
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == ':')
+                && rest.trim_start().starts_with(['(', '[', '{'])
+        });
+        if !(macro_call
+            && related.oracle_kind == crate::domain::OracleKind::Unknown
+            && related.oracle_strength == crate::domain::OracleStrength::Unknown)
+        {
+            return false;
+        }
+        seen = true;
+    }
+    seen
 }
 
 /// With `owner_in_arguments`, only a test related by a direct relation counts,
@@ -917,7 +956,7 @@ mod tests {
             calls: vec![CallFact {
                 line: start_line,
                 name: "inner".to_string(),
-                text: "inner(10, 3)".to_string(),
+                text: "inner(10, 3)".to_string().into(),
             }],
             assertions: Vec::new(),
             literals: vec![
@@ -1102,6 +1141,53 @@ mod tests {
             ..Default::default()
         });
         (finding, index)
+    }
+
+    // #9122: a credited same-file macro keeps the named limit instead of a gap.
+    #[test]
+    fn credited_local_macro_oracle_keeps_the_macro_limit_but_a_graded_one_does_not() {
+        let build = |oracle: &str, kind: OracleKind, strength: OracleStrength| {
+            let mut finding = reachable_unrevealed_finding_with_related_test(
+                "test_inner_with_custom_assertion_macro",
+                "tests/it.rs",
+                4,
+            );
+            finding.class = ExposureClass::WeaklyExposed;
+            for related in &mut finding.related_tests {
+                related.oracle = Some(oracle.to_string());
+                related.oracle_kind = kind.clone();
+                related.oracle_strength = strength.clone();
+            }
+            finding
+        };
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: vec![test_summary(
+                "test_inner_with_custom_assertion_macro",
+                "tests/it.rs",
+                4,
+                "let result = inner(10, 3);\nassert_result!(result, 7);",
+            )],
+            ..Default::default()
+        });
+
+        let mut credited = build(
+            "assert_result!(result, 7)",
+            OracleKind::Unknown,
+            OracleStrength::Unknown,
+        );
+        apply_rust_macro_wrapped_assertion_limit(&mut credited, &index, None);
+        assert_eq!(
+            credited.static_limit_kind,
+            Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved)
+        );
+
+        let mut graded = build(
+            "assert!(inner(10, 3) > 0);",
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+        );
+        apply_rust_macro_wrapped_assertion_limit(&mut graded, &index, None);
+        assert_eq!(graded.static_limit_kind, None);
     }
 
     #[test]

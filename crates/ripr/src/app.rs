@@ -83,6 +83,7 @@ pub(crate) use crate::analysis::repair_route::repair_route_readiness;
 pub(crate) use check::check_with_progress_core;
 #[cfg(test)]
 pub(crate) use check::check_workspace_repo_with_origins;
+pub(crate) use check::check_workspace_with_config_typed;
 #[cfg(test)]
 pub(crate) use check::check_workspace_worktree_with_origins;
 pub(crate) use check::check_workspace_worktree_with_sources_open_rust_paths_and_progress;
@@ -104,8 +105,8 @@ pub(crate) use explain::{
     explain_finding_with_config_navigation_mode_and_progress,
 };
 pub(crate) use navigation::{
-    CheckDiffProvenance, FindingDrillIn, FindingNavigation, RepairRoute, finding_navigation,
-    finding_navigation_with_worktree,
+    CheckDiffProvenance, CheckRepairRoute, FindingDrillIn, FindingNavigation, RepairRoute,
+    finding_navigation, finding_navigation_with_worktree,
 };
 pub(crate) use progress::{
     AnalysisProgressEvent, AnalysisProgressScope, AnalysisProgressSink, AnalysisProgressStage,
@@ -300,6 +301,16 @@ pub struct CheckOutput {
     /// `--worktree` for files it cannot see. Cleared together with
     /// `unanalyzed_working_tree` for every non-committed-history mode.
     pub(crate) untracked_working_tree_source_paths: Vec<String>,
+    /// The gitignored subset of the excluded working-tree state (#7467):
+    /// routed source/test files ignored by `.gitignore`, plus routed files
+    /// under ignored directories. Neither the committed-history diff nor the
+    /// working-tree diff analyzes them, so the human/GitHub/JSON notes name
+    /// them with the force intent-to-add repair (`git add -N` refuses
+    /// ignored paths) instead of letting a result read as covering them.
+    /// The exclusion itself is unchanged. Cleared together with
+    /// `unanalyzed_working_tree` for every mode that is neither
+    /// committed-history nor a working-tree read.
+    pub(crate) ignored_working_tree_source_paths: Vec<String>,
     /// Python test files in the repository, set only when a changed Rust file
     /// has a `no_static_path` finding (#6340). Human-output context only: ripr
     /// does not link Python tests to Rust changes. Never serialized; no

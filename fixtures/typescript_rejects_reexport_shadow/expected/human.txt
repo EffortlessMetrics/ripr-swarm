@@ -12,7 +12,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation and by missing packet fields (canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs): typescript_oracle_helper_gated — the test calls assertion helper `expect(...)` around owner `load`; the adapter cannot inspect the helper body or prove its oracle semantics from the test call site; resolve the limitation and complete the missing fields before acting
+  Safe next action: preview-language evidence is advisory; no repair packet is emitted because of the named static limitation: typescript_oracle_helper_gated — the test calls assertion helper `expect(...)` around owner `load`; the adapter cannot inspect the helper body or prove its oracle semantics from the test call site; `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
   File: src/load.ts:3
   Language: typescript
   Language status: preview
@@ -32,6 +32,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_rejects_reexport_shadow/input --diff <cwd>/fixtures/typescript_rejects_reexport_shadow/diff.patch --mode fast probe:src_load.ts:typescript_preview:fd09bc48
   ripr context --root <cwd>/fixtures/typescript_rejects_reexport_shadow/input --diff <cwd>/fixtures/typescript_rejects_reexport_shadow/diff.patch --mode fast --at probe:src_load.ts:typescript_preview:fd09bc48
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_load.ts:typescript_preview:fd09bc48 --root <cwd>/fixtures/typescript_rejects_reexport_shadow/input` for the full gate's answer
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).

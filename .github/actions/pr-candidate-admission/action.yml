@@ -1,0 +1,295 @@
+name: 'PR candidate admission'
+description: 'Refuse expensive qualification for stale, competing, oversized, or hard-cut-frozen candidates (#2022, #4987, #5391)'
+author: 'EffortlessMetrics'
+
+inputs:
+  token:
+    description: 'Read-only GitHub token used to inspect the current PR and open candidate set'
+    required: false
+    default: ''
+  repository:
+    description: 'Repository in owner/name form'
+    required: false
+    default: ''
+  pr-number:
+    description: 'Pull request number; empty for non-PR workflow invocations'
+    required: false
+    default: ''
+  expected-head:
+    description: 'Exact full candidate head from the admission event'
+    required: false
+    default: ''
+  docs-only:
+    description: 'Whether the independently classified candidate is docs-only'
+    required: false
+    default: 'false'
+  max-changed-files:
+    description: 'Maximum changed files admitted to ordinary non-docs qualification'
+    required: false
+    default: '160'
+  max-changed-lines:
+    description: 'Maximum additions plus deletions admitted to ordinary non-docs qualification'
+    required: false
+    default: '3000'
+  mode:
+    description: 'admit or self-test'
+    required: false
+    default: 'admit'
+
+outputs:
+  status:
+    description: 'admitted, not_applicable, self_test_pass, or refused'
+    value: ${{ steps.admit.outputs.status }}
+  reason:
+    description: 'Stable candidate-admission reason token'
+    value: ${{ steps.admit.outputs.reason }}
+  claim:
+    description: 'Normalized governing claim identity'
+    value: ${{ steps.admit.outputs.claim }}
+  acceptance_delta:
+    description: 'Normalized acceptance delta'
+    value: ${{ steps.admit.outputs.acceptance_delta }}
+  competing_prs:
+    description: 'Comma-separated trusted competing PR numbers'
+    value: ${{ steps.admit.outputs.competing_prs }}
+  changed_files:
+    description: 'GitHub changed-files count for the current PR'
+    value: ${{ steps.admit.outputs.changed_files }}
+  changed_lines:
+    description: 'GitHub additions plus deletions for the current PR'
+    value: ${{ steps.admit.outputs.changed_lines }}
+  cut_status:
+    description: 'Hard-cut freeze status'
+    value: ${{ steps.admit.outputs.cut_status }}
+  cut_reason:
+    description: 'Stable hard-cut freeze reason token'
+    value: ${{ steps.admit.outputs.cut_reason }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Evaluate candidate and hard-cut admission
+      id: admit
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        ADMISSION_REPOSITORY: ${{ inputs.repository }}
+        ADMISSION_PR_NUMBER: ${{ inputs.pr-number }}
+        ADMISSION_EXPECTED_HEAD: ${{ inputs.expected-head }}
+        ADMISSION_DOCS_ONLY: ${{ inputs.docs-only }}
+        ADMISSION_MAX_CHANGED_FILES: ${{ inputs.max-changed-files }}
+        ADMISSION_MAX_CHANGED_LINES: ${{ inputs.max-changed-lines }}
+        ADMISSION_MODE: ${{ inputs.mode }}
+      run: |
+        set -euo pipefail
+        action_root="${GITHUB_ACTION_PATH}"
+        packet_path="policy/release-hard-cut-admission.json"
+        local_packet="${GITHUB_WORKSPACE}/${packet_path}"
+        tmp="$(mktemp -d)"
+        trap 'rm -rf "$tmp"' EXIT
+        current="$tmp/current.json"
+        open_prs="$tmp/open-prs.json"
+        pr_files="$tmp/pr-files.json"
+        base_commit="$tmp/base-commit.json"
+        cut_commit="$tmp/cut-commit.json"
+        packet="$tmp/cut-packet.json"
+        packet_meta="$tmp/cut-packet-meta.json"
+        result="$tmp/result.json"
+        cut_result="$tmp/cut-result.json"
+        rc_candidate=0
+        rc_cut=0
+        candidate_allowed="admitted,refused,self_test_pass,not_applicable"
+
+        python3 "$action_root/candidate_admission.py" --self-test
+        python3 "$action_root/release_cut_admission.py" --self-test
+
+        validate_candidate_result() {
+          local file="$1" rc="$2" allowed="$3"
+          if ! jq -e --arg allowed "$allowed" '
+            type == "object"
+            and (.status | type == "string")
+            and (.reason | type == "string" and length > 0)
+            and (.claim | type == "string")
+            and (.acceptance_delta | type == "string")
+            and (.competing_prs | type == "array")
+            and (.changed_files | type == "number")
+            and (.changed_lines | type == "number")
+            and (.max_changed_files | type == "number")
+            and (.max_changed_lines | type == "number")
+            and (.status as $status | ($allowed | split(",") | index($status)) != null)
+          ' "$file" >/dev/null; then
+            echo "::error::candidate admission produced no valid result"
+            exit 1
+          fi
+          local status
+          status="$(jq -r '.status' "$file")"
+          case "$status:$rc" in
+            admitted:0|refused:1|self_test_pass:0|not_applicable:0) ;;
+            *)
+              echo "::error::candidate admission status/exit mismatch ($status/$rc)"
+              exit 1
+              ;;
+          esac
+        }
+
+        validate_cut_result() {
+          local file="$1" rc="$2"
+          if ! jq -e '
+            type == "object"
+            and (.status == "admitted" or .status == "refused")
+            and (.reason | type == "string" and length > 0)
+          ' "$file" >/dev/null; then
+            echo "::error::hard-cut admission produced no valid result"
+            exit 1
+          fi
+          local status
+          status="$(jq -r '.status' "$file")"
+          case "$status:$rc" in
+            admitted:0|refused:1) ;;
+            *)
+              echo "::error::hard-cut admission status/exit mismatch ($status/$rc)"
+              exit 1
+              ;;
+          esac
+        }
+
+        if [ "${ADMISSION_MODE:-admit}" != "admit" ]; then
+          printf '%s\n' '{"status":"self_test_pass","reason":"candidate_and_cut_controls_passed","claim":"","acceptance_delta":"","competing_prs":[],"changed_files":0,"changed_lines":0,"max_changed_files":160,"max_changed_lines":3000}' > "$result"
+          printf '%s\n' '{"status":"admitted","reason":"cut_self_test_pass"}' > "$cut_result"
+        elif [ -z "${ADMISSION_PR_NUMBER:-}" ]; then
+          printf '%s\n' '{"status":"not_applicable","reason":"non_pull_request_invocation","claim":"","acceptance_delta":"","competing_prs":[],"changed_files":0,"changed_lines":0,"max_changed_files":160,"max_changed_lines":3000}' > "$result"
+          printf '%s\n' '{"status":"admitted","reason":"cut_non_pull_request_invocation"}' > "$cut_result"
+        else
+          [ -n "${GH_TOKEN:-}" ] || { echo '::error::candidate admission requires a read-only GitHub token'; exit 1; }
+          [ -n "${ADMISSION_REPOSITORY:-}" ] || { echo '::error::candidate admission requires owner/name repository identity'; exit 1; }
+          gh api "repos/${ADMISSION_REPOSITORY}/pulls/${ADMISSION_PR_NUMBER}" > "$current"
+          gh api --paginate "repos/${ADMISSION_REPOSITORY}/pulls?state=open&per_page=100" | jq -s 'add' > "$open_prs"
+          gh api --paginate "repos/${ADMISSION_REPOSITORY}/pulls/${ADMISSION_PR_NUMBER}/files?per_page=100" | jq -s 'add' > "$pr_files"
+
+          base_ref="$(jq -r '.base.ref // empty' "$current")"
+          [ -n "$base_ref" ] || { echo '::error::candidate admission received no base ref'; exit 1; }
+          base_sha="$(gh api "repos/${ADMISSION_REPOSITORY}/git/ref/heads/${base_ref}" --jq '.object.sha // empty')"
+          [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::candidate admission could not resolve exact live base SHA'; exit 1; }
+          gh api "repos/${ADMISSION_REPOSITORY}/git/commits/${base_sha}" > "$base_commit"
+
+          # The enforcement packet comes from the exact live base commit, never
+          # the candidate checkout. The local inactive template is used only
+          # while the machinery PR is introduced on a base that has no packet.
+          packet_err="$RUNNER_TEMP/packet-err.$$"
+          if gh api "repos/${ADMISSION_REPOSITORY}/contents/${packet_path}?ref=${base_sha}" > "$packet_meta" 2>"$packet_err"; then
+            jq -r '.content' "$packet_meta" | tr -d '\n' | base64 --decode > "$packet"
+            packet_from_base=1
+          elif grep -q 'HTTP 404' "$packet_err"; then
+            cp "$local_packet" "$packet"
+            packet_from_base=0
+          else
+            echo '::error::hard-cut packet read from the live base failed for a reason other than absence'
+            exit 1
+          fi
+          cut_sha="$(jq -r 'if .state == "active" then .observed_main.sha // "" else "" end' "$packet")"
+          cut_args=()
+          if [ -n "$cut_sha" ]; then
+            [[ "$cut_sha" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::hard-cut packet has an invalid product-cut SHA'; exit 1; }
+            gh api "repos/${ADMISSION_REPOSITORY}/git/commits/${cut_sha}" > "$cut_commit"
+            cut_args=(--cut-commit "$cut_commit")
+          fi
+
+          docs_flag=()
+          [ "${ADMISSION_DOCS_ONLY:-false}" = "true" ] && docs_flag=(--docs-only)
+          candidate_allowed="admitted,refused"
+          set +e
+          python3 "$action_root/candidate_admission.py" \
+            --current "$current" \
+            --open-prs "$open_prs" \
+            --expected-head "${ADMISSION_EXPECTED_HEAD:-}" \
+            --max-changed-files "${ADMISSION_MAX_CHANGED_FILES}" \
+            --max-changed-lines "${ADMISSION_MAX_CHANGED_LINES}" \
+            "${docs_flag[@]}" > "$result"
+          rc_candidate=$?
+          python3 "$action_root/release_cut_admission.py" \
+            --packet "$packet" \
+            --current "$current" \
+            --base-commit "$base_commit" \
+            --pr-files "$pr_files" \
+            --expected-head "${ADMISSION_EXPECTED_HEAD:-}" \
+            "${cut_args[@]}" > "$cut_result"
+          rc_cut=$?
+          set -e
+
+          base_sha_after="$(gh api "repos/${ADMISSION_REPOSITORY}/git/ref/heads/${base_ref}" --jq '.object.sha // empty')"
+          if [ "$base_sha_after" != "$base_sha" ]; then
+            # Movement is harmless only when both the evaluated and the newly
+            # observed base carry an inactive packet; any other state refuses.
+            # Only a positively read inactive packet, or a verified HTTP 404
+            # (when the evaluated base also had none), is benign movement.
+            moved_state=""
+            if gh api "repos/${ADMISSION_REPOSITORY}/contents/${packet_path}?ref=${base_sha_after}" > "$packet_meta" 2>"$packet_err"; then
+              moved_state="$(jq -r '.content' "$packet_meta" | tr -d '\n' | base64 --decode | jq -r '.state')" || moved_state="unreadable"
+            elif [ "$packet_from_base" = "0" ] && grep -q 'HTTP 404' "$packet_err"; then
+              moved_state=inactive
+            else
+              moved_state="unreadable"
+            fi
+            if [ "$(jq -r '.state' "$packet")" != "inactive" ] || [ "$moved_state" != "inactive" ]; then
+              echo "::error::candidate admission base moved during evaluation ($base_sha -> $base_sha_after)"
+              exit 1
+            fi
+          fi
+        fi
+
+        validate_candidate_result "$result" "$rc_candidate" "$candidate_allowed"
+        validate_cut_result "$cut_result" "$rc_cut"
+
+        status="$(jq -r '.status' "$result")"
+        reason="$(jq -r '.reason' "$result")"
+        claim="$(jq -r '.claim' "$result")"
+        acceptance_delta="$(jq -r '.acceptance_delta' "$result")"
+        competing_prs="$(jq -r '.competing_prs | map(tostring) | join(",")' "$result")"
+        changed_files="$(jq -r '.changed_files' "$result")"
+        changed_lines="$(jq -r '.changed_lines' "$result")"
+        max_files="$(jq -r '.max_changed_files' "$result")"
+        max_lines="$(jq -r '.max_changed_lines' "$result")"
+        cut_status="$(jq -r '.status' "$cut_result")"
+        cut_reason="$(jq -r '.reason' "$cut_result")"
+        {
+          echo "status=$status"
+          echo "reason=$reason"
+          echo "claim=$claim"
+          echo "acceptance_delta=$acceptance_delta"
+          echo "competing_prs=$competing_prs"
+          echo "changed_files=$changed_files"
+          echo "changed_lines=$changed_lines"
+          echo "cut_status=$cut_status"
+          echo "cut_reason=$cut_reason"
+        } >> "$GITHUB_OUTPUT"
+        {
+          echo "### PR candidate admission"
+          echo ""
+          echo "- status: \`$status\`"
+          echo "- reason: \`$reason\`"
+          echo "- hard-cut status: \`$cut_status\`"
+          echo "- hard-cut reason: \`$cut_reason\`"
+          echo "- claim: \`$claim\`"
+          echo "- acceptance delta: \`$acceptance_delta\`"
+          echo "- competing PRs: \`${competing_prs:-none}\`"
+          echo "- scope: \`$changed_files files / $changed_lines changed lines\`"
+          echo "- ordinary limit: \`$max_files files / $max_lines changed lines\`"
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        if [ "$status" = "refused" ]; then
+          case "$reason" in
+            competing_candidate)
+              echo "::error::candidate admission refused ($reason): reconcile trusted competing PRs ${competing_prs:-unknown} and record the accepted winner/losing disposition before qualification" ;;
+            qualification_scope_oversized)
+              echo "::error::candidate admission refused ($reason): split or recompose the candidate before ordinary qualification ($changed_files files, $changed_lines changed lines)" ;;
+            claim_identity_missing)
+              echo "::error::candidate admission refused ($reason): complete Governing issue or accepted claim and Acceptance delta in the PR body" ;;
+            *)
+              echo "::error::candidate admission refused ($reason); refresh the exact PR/head evidence and retry the explicit admission event" ;;
+          esac
+          exit 1
+        fi
+        if [ "$cut_status" = "refused" ]; then
+          echo "::error::hard-cut admission refused ($cut_reason): the active cut is frozen; only a packet-only #5114/#2766 control update may qualify before #1609"
+          exit 1
+        fi

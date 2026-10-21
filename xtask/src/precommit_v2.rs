@@ -181,6 +181,32 @@ pub(super) fn run_policy() -> Result<(), String> {
 
 fn run_composition(ci_policy: bool) -> Result<(), String> {
     let root = repository_root().map_err(|error| error.message)?;
+    run_composition_in(
+        root,
+        ci_policy,
+        &mut |ci_policy| {
+            if ci_policy {
+                crate::precommit_policy(true)
+            } else {
+                crate::precommit()
+            }
+        },
+        &mut run_status,
+    )
+}
+
+type StatusRunner<'a> =
+    dyn FnMut(&str, &[String]) -> Result<CommandDiagnostic, PrecommitError> + 'a;
+
+/// The composition with its two process-spawning dependencies injected: the
+/// existing repository policy gate and the command runner used for the diff
+/// checks and Clippy. Production passes the real ones (#8939).
+fn run_composition_in(
+    root: PathBuf,
+    ci_policy: bool,
+    policy: &mut dyn FnMut(bool) -> Result<(), String>,
+    status: &mut StatusRunner<'_>,
+) -> Result<(), String> {
     let mut report = PrecommitReport {
         schema_version: "0.2",
         composition: if ci_policy {
@@ -289,21 +315,29 @@ fn run_composition(ci_policy: bool) -> Result<(), String> {
     };
     report.impact_plan = build_impact_plan(&report.change_set, &package_roots);
 
-    let policy_result = if ci_policy {
-        crate::precommit_policy(true)
-    } else {
-        crate::precommit()
-    };
-    if let Err(error) = policy_result {
-        return fail_with_report(
-            &root,
-            &mut report,
-            PrecommitFailureKind::SourceOrPolicy,
-            "existing repository policy precommit",
-            error,
-        );
+    let policy_result = policy(ci_policy);
+    // #8793: a file-policy instrument failure (cargo lock wait or timeout)
+    // alone is infrastructure state, not a source failure. The outer checks
+    // still run; the failure is recorded now so any later report keeps it, and
+    // the run still fails at the end.
+    let mut deferred_instrument = None;
+    match policy_result {
+        Ok(()) => record_pass(&mut report, "existing repository policy precommit"),
+        Err(error) if error.starts_with(crate::PRECOMMIT_INSTRUMENT_PREFIX) => {
+            report.limitations.push(error.clone());
+            record_failure(&mut report, "existing repository policy precommit", &error);
+            deferred_instrument = Some(error);
+        }
+        Err(error) => {
+            return fail_with_report(
+                &root,
+                &mut report,
+                PrecommitFailureKind::SourceOrPolicy,
+                "existing repository policy precommit",
+                error,
+            );
+        }
     }
-    record_pass(&mut report, "existing repository policy precommit");
 
     let committed_diff = format!("{}...HEAD", merge_base_sha);
     let diff_checks = [
@@ -318,7 +352,7 @@ fn run_composition(ci_policy: bool) -> Result<(), String> {
     for args in diff_checks {
         let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
         let command = format_command("git", &arg_refs, &root);
-        match run_status("git", &git_args_owned(&root, &args)) {
+        match status("git", &git_args_owned(&root, &args)) {
             Ok(diagnostic) => record_diagnostic_pass(&mut report, &command, diagnostic, &root),
             Err(error) => {
                 return fail_with_diagnostic_report(
@@ -339,7 +373,7 @@ fn run_composition(ci_policy: bool) -> Result<(), String> {
         );
     } else if report.impact_plan.workspace_clippy {
         let args = workspace_clippy_args(&root);
-        run_clippy(&root, &mut report, args, &[])?;
+        run_clippy(&root, &mut report, status, args, &[])?;
     } else if report.impact_plan.impacted_packages.is_empty() {
         let reason = report
             .impact_plan
@@ -353,12 +387,23 @@ fn run_composition(ci_policy: bool) -> Result<(), String> {
             run_clippy(
                 &root,
                 &mut report,
+                status,
                 package_clippy_args(&root, package),
                 &packages[index + 1..],
             )?;
         }
     }
 
+    if let Some(error) = deferred_instrument {
+        report.status = PrecommitFailureKind::Infrastructure.status().to_string();
+        report.failure_kind = Some(PrecommitFailureKind::Infrastructure);
+        return match write_report(&root, &report) {
+            Ok(()) => Err(error),
+            Err(report_error) => Err(format!(
+                "{error}; failed to publish current report: {report_error}"
+            )),
+        };
+    }
     report.status = "pass".to_string();
     write_report(&root, &report)
 }
@@ -413,6 +458,7 @@ fn fail_with_diagnostic_report(
 fn run_clippy(
     root: &Path,
     report: &mut PrecommitReport,
+    status: &mut StatusRunner<'_>,
     args: Vec<String>,
     remaining_packages: &[String],
 ) -> Result<(), String> {
@@ -421,7 +467,7 @@ fn run_clippy(
         &args.iter().map(String::as_str).collect::<Vec<_>>(),
         root,
     );
-    match run_status("cargo", &args) {
+    match status("cargo", &args) {
         Ok(diagnostic) => {
             record_diagnostic_pass(report, &command, diagnostic, root);
             Ok(())
@@ -650,6 +696,13 @@ fn load_package_roots(root: &Path) -> Result<Vec<PackageRoot>, PrecommitError> {
             format!("cargo metadata returned malformed JSON: {error}"),
         )
     })?;
+    package_roots_from_metadata(metadata, root)
+}
+
+fn package_roots_from_metadata(
+    metadata: CargoMetadata,
+    root: &Path,
+) -> Result<Vec<PackageRoot>, PrecommitError> {
     let mut roots = Vec::new();
     let workspace_members = metadata
         .workspace_members
@@ -719,6 +772,10 @@ fn cargo_metadata_args(root: &Path) -> Vec<String> {
         "metadata".to_string(),
         "--format-version".to_string(),
         "1".to_string(),
+        // The planner consumes only workspace-member packages and their
+        // declared dependencies (#8233); the resolved external graph is
+        // never read, so do not pay to serialize it.
+        "--no-deps".to_string(),
         "--manifest-path".to_string(),
         root.join("Cargo.toml").display().to_string(),
     ]
@@ -1175,6 +1232,33 @@ fn is_sha(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deferred_instrument_failure_is_infrastructure_alone_and_never_hides_a_real_failure() {
+        let instrument = "policy.toml:1 enumeration did not finish".to_string();
+        // Alone: classified as infrastructure by its prefix, never a pass.
+        let alone = crate::finish_precommit_policy(Some(instrument.clone()), Ok(()), false);
+        assert!(
+            matches!(&alone, Err(error) if error.starts_with(crate::PRECOMMIT_INSTRUMENT_PREFIX)),
+            "{alone:?}"
+        );
+        // With a real later failure: both are reported and it is not infrastructure.
+        let both = crate::finish_precommit_policy(
+            Some(instrument.clone()),
+            Err("check-spec-format failed".to_string()),
+            false,
+        );
+        assert!(
+            matches!(&both, Err(error)
+                if !error.starts_with(crate::PRECOMMIT_INSTRUMENT_PREFIX)
+                    && error.contains("check-spec-format failed")
+                    && error.contains(&instrument)),
+            "{both:?}"
+        );
+        // No instrument failure: a later failure passes through unchanged.
+        let plain = crate::finish_precommit_policy(None, Err("plain".to_string()), false);
+        assert_eq!(plain, Err("plain".to_string()));
+    }
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_TEST_REPO_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -1847,5 +1931,324 @@ mod tests {
                 Ok(()) | Err(_) => {}
             }
         }
+    }
+
+    /// Fixture for driving the real composition end to end (#8939): a one-crate
+    /// workspace on `main` with an unstaged Rust change, so the change set,
+    /// package roots and impact plan are real and only the policy gate and the
+    /// diff/Clippy runner are injected.
+    fn composition_fixture() -> Result<TestRepo, String> {
+        let fixture = TestRepo::new()?;
+        fixture.write(
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"crates/a\"]\nresolver = \"2\"\n",
+        )?;
+        fixture.write(
+            "crates/a/Cargo.toml",
+            "[package]\nname = \"a\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        fixture.write("crates/a/src/lib.rs", "pub fn a() {}\n")?;
+        fixture.git(&["add", "."])?;
+        fixture.git(&["commit", "-q", "-m", "base"])?;
+        fixture.write("crates/a/src/lib.rs", "pub fn a_changed() {}\n")?;
+        Ok(fixture)
+    }
+
+    type Driven = (Result<(), String>, Vec<String>, serde_json::Value);
+
+    /// Runs the composition with the given policy outcome. Returns the result,
+    /// the runner calls and the published report.
+    fn drive_composition(
+        fixture: &TestRepo,
+        policy_result: Result<(), String>,
+    ) -> Result<Driven, String> {
+        let mut calls = Vec::new();
+        // Temp dirs may sit behind a symlink (macOS /var -> /private/var) and
+        // package roots are canonicalized before prefix stripping.
+        let root = fs::canonicalize(&fixture.path).map_err(|error| error.to_string())?;
+        let result = run_composition_in(
+            root,
+            false,
+            &mut |_| policy_result.clone(),
+            &mut |program, args| {
+                calls.push(format!("{program} {}", args.join(" ")));
+                if program == "cargo" {
+                    // Stand in for Clippy without compiling the fixture.
+                    return run_status("git", &["--version".to_string()]);
+                }
+                run_status(program, args)
+            },
+        );
+        let report = serde_json::from_slice(
+            &fs::read(fixture.path.join(REPORT_JSON)).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        Ok((result, calls, report))
+    }
+
+    #[test]
+    fn composition_with_deferred_instrument_failure_is_infrastructure_after_remaining_stages()
+    -> Result<(), String> {
+        let fixture = composition_fixture()?;
+        let instrument = "policy.toml:1 test-valued `covered_by` enumeration did not finish (instrument timeout, not an unresolved pointer)".to_string();
+        let deferred = crate::finish_precommit_policy(Some(instrument.clone()), Ok(()), false);
+        let (result, calls, report) = drive_composition(&fixture, deferred)?;
+        let error = match &result {
+            Err(error) if error.starts_with(crate::PRECOMMIT_INSTRUMENT_PREFIX) => error,
+            other => {
+                return Err(format!(
+                    "deferred instrument failure did not fail the run: {other:?}"
+                ));
+            }
+        };
+        require(
+            report["status"] == "infrastructure_failure"
+                && report["failure_kind"] == "infrastructure",
+            format!("report was not infrastructure: {report}"),
+        )?;
+        let diff_checks = calls.iter().filter(|call| call.contains(" diff ")).count();
+        require(
+            diff_checks == 3,
+            format!("diff checks did not all run: {calls:?}"),
+        )?;
+        require(
+            calls
+                .iter()
+                .any(|call| call.starts_with("cargo clippy") && call.contains("-p a ")),
+            format!("selected Clippy did not run: {calls:?}"),
+        )?;
+        let commands = report["commands"].as_array().ok_or("commands missing")?;
+        require(
+            commands.iter().any(|entry| {
+                entry["command"]
+                    .as_str()
+                    .is_some_and(|command| command.contains("clippy"))
+                    && entry["outcome"] == "pass"
+            }),
+            format!("Clippy pass not recorded: {commands:?}"),
+        )?;
+        let limitations = report["limitations"]
+            .as_array()
+            .ok_or("limitations missing")?;
+        require(
+            limitations.iter().any(|item| item == error.as_str()),
+            "instrument failure was not retained in the report",
+        )
+    }
+
+    #[test]
+    fn composition_with_real_policy_failure_and_instrument_failure_is_not_infrastructure()
+    -> Result<(), String> {
+        let fixture = composition_fixture()?;
+        let instrument = "policy.toml:1 enumeration did not finish".to_string();
+        let both = crate::finish_precommit_policy(
+            Some(instrument.clone()),
+            Err("check-spec-format failed".to_string()),
+            false,
+        );
+        let (result, calls, report) = drive_composition(&fixture, both)?;
+        require(
+            matches!(&result, Err(error)
+                if !error.starts_with(crate::PRECOMMIT_INSTRUMENT_PREFIX)
+                    && error.contains("check-spec-format failed")
+                    && error.contains(&instrument)),
+            format!("combined failure was misreported: {result:?}"),
+        )?;
+        require(
+            report["status"] == "source_or_policy_failure"
+                && report["failure_kind"] == "source_or_policy",
+            format!("real policy failure was classified as infrastructure: {report}"),
+        )?;
+        require(
+            !calls.iter().any(|call| call.starts_with("cargo clippy")),
+            format!("later stages ran after a real policy failure: {calls:?}"),
+        )
+    }
+
+    #[test]
+    fn metadata_args_request_workspace_only_packages() {
+        let args = cargo_metadata_args(Path::new("repo"));
+        assert!(args.iter().any(|arg| arg == "--no-deps"), "{args:?}");
+    }
+
+    /// #8233: full and workspace-only metadata must project to identical
+    /// package roots and impact plans on a workspace exercising renamed,
+    /// inherited, dev, build, and target-specific dependencies.
+    #[test]
+    fn workspace_only_metadata_projects_identical_roots_and_plan() -> Result<(), String> {
+        let sequence = NEXT_TEST_REPO_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let root = fs::canonicalize(std::env::temp_dir())
+            .unwrap_or_else(|_| std::env::temp_dir())
+            .join(format!(
+                "ripr-precommit-8233-{}-{sequence}",
+                std::process::id()
+            ));
+        // A path crate OUTSIDE the workspace root and not in `members`:
+        // `cargo metadata --no-deps` omits it, full metadata includes it as
+        // a non-member package; both must project the same member roots.
+        let outside = root.with_file_name(format!(
+            "ripr-precommit-8233-outside-{}-{sequence}",
+            std::process::id()
+        ));
+        let write = |rel: &str, body: &str| -> Result<(), String> {
+            let path = root.join(rel);
+            fs::create_dir_all(path.parent().ok_or("fixture parent")?)
+                .map_err(|error| error.to_string())?;
+            fs::write(path, body).map_err(|error| error.to_string())
+        };
+        let result = (|| -> Result<(), String> {
+            write(
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"base\", \"mid\", \"app\", \"unrelated\"]\nresolver = \"2\"\n[workspace.dependencies]\nbase = { path = \"base\" }\n",
+            )?;
+            write(
+                "base/Cargo.toml",
+                "[package]\nname = \"base\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            )?;
+            write("base/src/lib.rs", "pub fn base() {}\n")?;
+            // mid renames base; app inherits base from the workspace,
+            // depends on mid normally, base as dev/build/target deps.
+            write(
+                "mid/Cargo.toml",
+                "[package]\nname = \"mid\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[dependencies]\nrenamed_base = { package = \"base\", path = \"../base\" }\n",
+            )?;
+            write("mid/src/lib.rs", "pub fn mid() {}\n")?;
+            write(
+                "app/Cargo.toml",
+                &"[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[dependencies]\nmid = { path = \"../mid\" }\nbase.workspace = true\n[dev-dependencies]\nbase = { path = \"../base\" }\n[build-dependencies]\nbase = { path = \"../base\" }\n[target.'cfg(windows)'.dependencies]\nbase = { path = \"../base\" }\n[dependencies.outside]\npath = \"{outside}\"\n"
+                    .replace("{outside}", &outside.display().to_string().replace('\\', "/")),
+            )?;
+            write("app/src/lib.rs", "pub fn app() {}\n")?;
+            write("app/build.rs", "fn main() {}\n")?;
+            write(
+                "unrelated/Cargo.toml",
+                "[package]\nname = \"unrelated\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            )?;
+            write("unrelated/src/lib.rs", "pub fn unrelated() {}\n")?;
+            fs::create_dir_all(outside.join("src")).map_err(|error| error.to_string())?;
+            fs::write(
+                outside.join("Cargo.toml"),
+                "[package]\nname = \"outside\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            )
+            .map_err(|error| error.to_string())?;
+            fs::write(outside.join("src/lib.rs"), "pub fn outside() {}\n")
+                .map_err(|error| error.to_string())?;
+
+            let metadata = |extra: &[&str]| -> Result<CargoMetadata, String> {
+                let mut args: Vec<String> = vec![
+                    "metadata".to_string(),
+                    "--format-version".to_string(),
+                    "1".to_string(),
+                ];
+                args.extend(extra.iter().map(ToString::to_string));
+                args.push("--manifest-path".to_string());
+                let manifest = root.join("Cargo.toml").display().to_string();
+                args.push(manifest);
+                let bytes = capture_process_output("cargo", &args, &[])
+                    .map_err(|error| format!("cargo metadata failed: {}", error.message))?;
+                serde_json::from_slice(&bytes).map_err(|error| error.to_string())
+            };
+            let full = package_roots_from_metadata(metadata(&[])?, &root)
+                .map_err(|error| error.message)?;
+            let workspace_only = package_roots_from_metadata(metadata(&["--no-deps"])?, &root)
+                .map_err(|error| error.message)?;
+            let project = |roots: &[PackageRoot]| {
+                roots
+                    .iter()
+                    .map(|root| {
+                        let mut deps = root.dependencies.clone();
+                        deps.sort();
+                        (
+                            root.name.clone(),
+                            root.relative_root.clone(),
+                            deps,
+                            root.proc_macro,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            };
+            require(
+                project(&full) == project(&workspace_only),
+                "workspace-only metadata changed the package roots",
+            )?;
+            require(full.len() == 4, "expected four nonempty workspace roots")?;
+            require(
+                !full
+                    .iter()
+                    .chain(&workspace_only)
+                    .any(|r| r.name == "outside"),
+                "non-member path dependency must not be a package root",
+            )?;
+            let app = full
+                .iter()
+                .find(|root| root.name == "app")
+                .ok_or("app root missing")?;
+            require(
+                app.dependencies.iter().any(|dep| dep == "mid")
+                    && app.dependencies.iter().any(|dep| dep == "base")
+                    && app.dependencies.iter().any(|dep| dep == "outside"),
+                format!("app edges missing: {:?}", app.dependencies),
+            )?;
+            let change = ChangeSet {
+                complete: true,
+                changes: vec![ChangedPath {
+                    kind: "modified".to_string(),
+                    path: "base/src/lib.rs".to_string(),
+                    old_path: None,
+                    origins: vec!["test".to_string()],
+                }],
+                ..ChangeSet::empty()
+            };
+            let plan = build_impact_plan(&change, &workspace_only);
+            require(
+                plan.impacted_packages.iter().any(|name| name == "base")
+                    && plan.impacted_packages.iter().any(|name| name == "mid")
+                    && plan.impacted_packages.iter().any(|name| name == "app")
+                    && !plan
+                        .impacted_packages
+                        .iter()
+                        .any(|name| name == "unrelated"),
+                format!("reverse closure changed: {:?}", plan.impacted_packages),
+            )?;
+            Ok(())
+        })();
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&outside);
+        result
+    }
+
+    /// Negative control (#8233): a member id absent from `packages` (or no
+    /// members) yields no roots, and the planner reports an explicit
+    /// skipped reason (pinned behaviour, unchanged by `--no-deps`) rather than
+    /// fabricating impacted packages.
+    #[test]
+    fn missing_or_empty_members_yield_no_roots_and_explicit_skip() -> Result<(), String> {
+        let change = ChangeSet {
+            complete: true,
+            changes: vec![ChangedPath {
+                kind: "modified".to_string(),
+                path: "base/src/lib.rs".to_string(),
+                old_path: None,
+                origins: vec!["test".to_string()],
+            }],
+            ..ChangeSet::empty()
+        };
+        for members in [r#"["ghost 0.1.0 (path+file:///nowhere)"]"#, "[]"] {
+            let metadata: CargoMetadata = serde_json::from_str(&format!(
+                r#"{{"packages":[],"workspace_members":{members}}}"#
+            ))
+            .map_err(|error| error.to_string())?;
+            let roots = package_roots_from_metadata(metadata, Path::new("/repo"))
+                .map_err(|error| error.message)?;
+            require(roots.is_empty(), format!("expected no roots: {roots:?}"))?;
+            let plan = build_impact_plan(&change, &roots);
+            require(
+                plan.impacted_packages.is_empty()
+                    && !plan.workspace_clippy
+                    && plan.skipped_reason.is_some(),
+                format!("empty roots must yield an explicit skip: {plan:?}"),
+            )?;
+        }
+        Ok(())
     }
 }

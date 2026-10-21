@@ -86,7 +86,7 @@ ripr agent repair --root . --attempt <repair-attempt-id> --phase after
 ```
 
 The before phase writes the before snapshot, brief, packet, and workflow files
-and prints the exact `--attempt` command for the after phase. The after phase
+and prints the exact `ripr continue --attempt <id>` command (the same after phase) to run next. The after phase
 writes the after snapshot, analysis outcome, verify JSON, and receipt. Both
 phases print a short human summary on stdout by default that names the next
 command and where the JSON files were written; pass `--json` for the machine documents. With `--json` the after
@@ -128,7 +128,7 @@ or receipt files, and prints one next command:
 | State | Next command |
 | --- | --- |
 | No seam known yet | `ripr pilot --root <root>`, which selects the seam |
-| One repair attempt waiting for its test edit at the current `HEAD`, or with that test committed on top of its prepared head | that attempt's `ripr agent repair --attempt <id> --phase after`; when its last after phase was refused, the reason names the refusal first |
+| One repair attempt waiting for its test edit at the current `HEAD`, or with that test committed on top of its prepared head | that attempt's `ripr continue --attempt <id>` (the explicit spelling is `ripr agent repair --attempt <id> --phase after`); when its last after phase was refused, the reason names the refusal first |
 | A seam whose attempt failed, went stale, or was prepared at a `HEAD` the current one does not descend from | `ripr agent repair --seam-id <seam-id> --phase before`, which starts a new attempt; for rewritten history the reason first names the `git reset --soft <prepared-head>` recovery that resumes the attempt |
 | A seam whose finished attempt's receipt shows grip `unchanged`, `changed`, or `regressed` | `ripr agent repair --seam-id <seam-id> --phase before`: the gap is still open, so start a new attempt and strengthen the test |
 | A finished attempt whose receipt is `invalid` or `incomplete`, or whose evidence was recorded at another `HEAD` | none; status is `warning` and the warning says which |
@@ -341,6 +341,12 @@ ripr agent receipt \
   --out target/ripr/reports/agent-receipt.json
 ```
 
+The receipt needs a repair attempt for the seam: without `--attempt`, the seam
+must have exactly one attempt under `target/ripr/repair-attempts/`, and the
+command refuses with exit `2` (naming `ripr agent repair ... --phase before`)
+when none exists or several do. Start the attempt first, or pass
+`--attempt <repair-attempt-id>`; the two-phase path above does this for you.
+
 The receipt records static provenance: RIPR version, repo root, config
 fingerprint when available, command-template version, artifact hashes, before
 class, after class, movement, and static boundary flags. It stays advisory and
@@ -434,14 +440,17 @@ envelope, environment posture, and declared limitations.
 
 ## MCP adapter
 
-`ripr mcp --stdio` exposes a bounded, read-only workspace-status projection
-for MCP clients: one tool (`ripr_workspace_status`) and one resource
-(`ripr://workspace/status`), both returning the same
-`ripr-mcp-workspace-status-v1` document. It declares no source-edit,
-verification-execution, mutation-execution, or model-provider authority
-(ADR 0022), and the status is resolved once at process startup — a static
-snapshot for the life of the server, not a live view. See
-[`docs/interop/mcp.md`](interop/mcp.md).
+`ripr mcp --stdio` serves a bounded, read-only workspace session for MCP
+clients: nine tools (`ripr_workspace_status`, `ripr_refresh`, `ripr_list_gaps`,
+`ripr_get_gap`, `ripr_prepare_repair`, `ripr_get_repair_attempt`,
+`ripr_get_receipt_status`, `ripr_get_repair_card`,
+`ripr_list_repair_attempts`) and the `ripr://workspace/status` resource plus
+five resource templates. It declares no source-edit, verification-execution,
+mutation-execution, or model-provider authority (ADR 0022): a prepared repair
+transaction is in-memory and authorizes nothing, and the client owns the edit,
+the verification and the receipt. The workspace root is resolved once at
+process startup; analysis runs only on an explicit `ripr_refresh`, over the
+committed default-branch diff. See [MCP workspace session server](interop/mcp.md).
 
 ## CI Path
 

@@ -12,7 +12,7 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 131
+floor = 138
 
 # Oracle-accuracy gate. Cases with `expected_oracle` label the related-test
 # oracle kind and strength a spec adopts; `verdict-corpus check` fails when
@@ -309,6 +309,12 @@ id = "RIPR-SPEC-0200"
 scope = "out"
 reason = "evaluation or report tooling over ripr's output; no Rust edit with runtime mutant truth to label"
 
+# Python same-class transitive-reach limitation
+[[spec]]
+id = "RIPR-SPEC-0201"
+scope = "out"
+reason = "Python same-class transitive reach; a Rust case cannot label it"
+
 # Shared behavior-evidence witness adapters and parity corpus
 [[spec]]
 id = "RIPR-SPEC-0204"
@@ -432,6 +438,12 @@ scope = "in"
 [[spec.waived]]
 example = 9
 reason = "both arms return 2 (`1 + 1` and `2`), so the widened pattern `0..=3` to `0..=4` and every other mutant of the edited pattern leave f unchanged for every input; the edit is equivalent and no runtime truth exists"
+
+# Python guarded-arm activation gate
+[[spec]]
+id = "RIPR-SPEC-0260"
+scope = "out"
+reason = "Python guarded-arm activation; a Rust case cannot label it"
 
 # Guarded side effect no test input enters
 [[spec]]
@@ -569,6 +581,11 @@ reason = "non-Rust language or packaging surface"
 # Rust closures in iterator adaptors
 [[spec]]
 id = "RIPR-SPEC-0265"
+scope = "in"
+
+# Rust doc examples as tests
+[[spec]]
+id = "RIPR-SPEC-0279"
 scope = "in"
 
 # TypeScript strict custom matcher
@@ -741,3 +758,37 @@ reason = "explain/context packet drill-in projection of an observed signature; n
 id = "RIPR-SPEC-0268"
 scope = "out"
 reason = "render-only collapse of a duplicated evidence row; not an analyzer verdict"
+
+# Covered-by instrument-failure contract
+[[spec]]
+id = "RIPR-SPEC-0280"
+scope = "out"
+reason = "repository precommit and xtask instrument contract; not an analyzer verdict, so no corpus case can label it"
+
+# Pilot ranking refuted-count growth allowance
+[[spec]]
+id = "RIPR-SPEC-0281"
+scope = "out"
+reason = "advisory ranking-scoreboard gate rule in xtask; not an analyzer verdict, so no corpus case can label it"
+
+# Repair attempt after-refusal retry budget
+[[spec]]
+id = "RIPR-SPEC-0282"
+scope = "out"
+reason = "agent repair-loop retry bound and status routing; not an analyzer verdict, so no corpus case can label it"
+[[unmeasured]]
+id = "RIPR-SPEC-0283"
+reason = "acceptance examples are bullet prose, not numbered; no corpus case cites an example number"
+[[spec]]
+id = "RIPR-SPEC-0285"
+scope = "out"
+reason = "doctor/repo-input framework-scan admission, ordering, and string-awareness hygiene; not an exposure-verdict example a corpus case labels"
+[[spec]]
+id = "RIPR-SPEC-0290"
+scope = "out"
+reason = "pilot start-command root rendering; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0292"
+scope = "out"
+reason = "xtask spot-check admission by report schema version; not an exposure-verdict example a corpus case labels"

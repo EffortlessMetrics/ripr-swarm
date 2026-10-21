@@ -10,7 +10,14 @@ import {
   Trace
 } from 'vscode-languageclient/node';
 import { explicitSetting, getConfig, RiprConfig } from './config';
-import { missingServerRemedy, requestedServerVersion, resolveServer, ResolveFailure, ResolvedServer } from './serverResolver';
+import {
+  requestedServerVersion,
+  resolveServer,
+  ResolveFailure,
+  ResolveFailureKind,
+  ResolvedServer,
+  resolutionFailureRecovery
+} from './serverResolver';
 import { setupFilePath, hasUnsafeShellMetacharacter, redirectTargetMatches, redirectStaysInWorkspace, serverShellArg, normalizePath, sameWorkspaceRoot, rootMatchesWorkspace, objectField, stringField, boundedStringField, arrayLength, numberFieldValue, TEST_RUNNER_VERIFY_COMMAND_PREFIXES, testRunnerCommandLeavesScope } from './packetJson';
 import { riprDocumentSelectorsForWorkspace, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
 import type { WorkspaceRootPickItem } from './workspaceHelpers';
@@ -121,6 +128,27 @@ export const RIPR_DOCUMENT_SELECTORS: Array<{ language: string; scheme: 'file' }
 
 const SHOW_OUTPUT_ACTION = 'Show Output';
 const SELECT_WORKSPACE_ROOT_ACTION = 'Select Workspace Root';
+const OPEN_SETTINGS_ACTION = 'Open Settings';
+const COPY_DIAGNOSTIC_ACTION = 'Copy Diagnostic';
+const COPY_INSTALL_COMMAND_ACTION = 'Copy Install Command';
+const RETRY_ACTION = 'Retry';
+
+/**
+ * Popup actions for a missing-server error. Copy Install Command is only
+ * honest when no binary was found; download, HTTP, checksum and manifest
+ * failures get diagnostic, Show Output, and retry actions instead (#8588).
+ * Show Output matches the server-failed recovery from #8587.
+ */
+export function missingServerMessageActions(kind: ResolveFailureKind): string[] {
+  if (kind === 'missing_binary') {
+    return [OPEN_SETTINGS_ACTION, COPY_DIAGNOSTIC_ACTION, COPY_INSTALL_COMMAND_ACTION, RETRY_ACTION];
+  }
+  return [OPEN_SETTINGS_ACTION, COPY_DIAGNOSTIC_ACTION, SHOW_OUTPUT_ACTION, RETRY_ACTION];
+}
+
+export function resolutionFailureGuidance(failure: ResolveFailure, autoDownload: boolean): string {
+  return resolutionFailureRecovery(failure.kind, autoDownload, failure.remedy);
+}
 
 // Palette invocations of diagnostic-scoped commands arrive without the
 // payload a code action carries. Say how to invoke them with a target
@@ -622,9 +650,9 @@ export class RiprClientController {
         kind: 'serverUnavailable',
         summary: 'ripr server is not available.',
         detail: server.detail,
-        nextStep: `${server.remedy ?? missingServerRemedy(config.autoDownload)} Then run ripr: Restart Server.`
+        nextStep: `${resolutionFailureGuidance(server, config.autoDownload)} Then run ripr: Restart Server.`
       });
-      await this.showMissingServerMessage(server.message, server.detail, server.remedy);
+      await this.showMissingServerMessage(server);
       return;
     }
     this.server = server;
@@ -736,7 +764,7 @@ export class RiprClientController {
         // server that already died at the handshake.
         const reason = error instanceof Error ? error.message : String(error);
         this.updateStatus({
-          kind: 'serverUnavailable',
+          kind: 'serverFailed',
           summary: 'ripr server failed to start.',
           detail: `Server: ${server.source} (${server.detail})\n${reason}`,
           nextStep: 'Run ripr: Show Output to see the server error, fix it, then run ripr: Restart Server.'
@@ -1629,6 +1657,17 @@ export class RiprClientController {
       this.runtime.showInformationMessage('ripr diagnostics refresh requires a running server.');
       return;
     }
+    // #8733: the server answers `ripr.refresh` only after the accepted
+    // refresh finishes, which can sit pending for the rest of a long
+    // analysis; tie immediate feedback to the gesture so the recovery
+    // command never appears dead while work is already in flight. Gate
+    // on the typed analysis-status signal (written only by real ripr
+    // notifications and reset on start) so the startup placeholder
+    // 'analysisQueued' status from startOnce cannot toast while idle.
+    if (this.receivedTypedAnalysisStatus
+      && (this.typedAnalysisStatusState === 'running' || this.typedAnalysisStatusState === 'queued')) {
+      this.runtime.showInformationMessage('ripr refresh queued: analysis is in progress.');
+    }
     try {
       await client.sendRequest('workspace/executeCommand', {
         command: 'ripr.refresh',
@@ -1782,7 +1821,11 @@ export class RiprClientController {
       // state — so store the clean completion form even while documents are
       // dirty; the dirty-buffer overlay applies to the visible status only
       // and must not survive into the restored close-path status.
-      this.lastCompletedStatus = statusFromRefreshCompletedMessage(message);
+      // Once the typed `ripr/analysisStatus` is flowing it owns the stored
+      // clean status (#8585): the log-derived form carries no typed rows.
+      if (!this.receivedTypedAnalysisStatus) {
+        this.lastCompletedStatus = statusFromRefreshCompletedMessage(message);
+      }
       this.updateStatus(completed);
       void this.refreshFirstUsefulActionStatus();
       return;
@@ -1877,8 +1920,10 @@ export class RiprClientController {
           nextStep: `Run ${retry} to obtain a current saved-workspace snapshot.`
         });
         return;
-      case 'succeeded':
-        this.updateStatus(statusForRunStatus(status.run_status, {
+      case 'succeeded': {
+        // The clean saved-workspace form (no dirty overlay) is what closing
+        // an unsaved buffer restores (#7340, #8585).
+        const cleanInput = {
           detail: analysisStatusDetail(status),
           retryCommand: typeof status.retry_command === 'string' ? status.retry_command : undefined,
           // #5999: the server's budget-bound recovery replaces the canned
@@ -1888,11 +1933,17 @@ export class RiprClientController {
             && status.retry_recovery.detail.trim()
             ? status.retry_recovery.detail
             : undefined,
-          dirtyRoutedDocuments: Array.from(this.dirtyRiprDocuments),
-          components: status.components
+          components: status.components,
+          unavailableLanguages: status.unavailable_languages
+        };
+        this.lastCompletedStatus = statusForRunStatus(status.run_status, cleanInput);
+        this.updateStatus(statusForRunStatus(status.run_status, {
+          ...cleanInput,
+          dirtyRoutedDocuments: Array.from(this.dirtyRiprDocuments)
         }));
         void this.refreshFirstUsefulActionStatus();
         return;
+      }
       default:
         return;
     }
@@ -2626,11 +2677,13 @@ export class RiprClientController {
       this.server = server;
       return server;
     }
-    await this.showMissingServerMessage(server.message, server.detail, server.remedy);
+    await this.showMissingServerMessage(server);
     return undefined;
   }
 
-  private async showMissingServerMessage(summary: string, detail: string, remedy?: string): Promise<void> {
+  private async showMissingServerMessage(failure: ResolveFailure): Promise<void> {
+    const summary = failure.message;
+    const detail = failure.detail;
     this.output.appendLine(summary);
     this.output.appendLine(detail);
     // Name the actual failure (HTTP/checksum/manifest) in the popup body —
@@ -2643,17 +2696,14 @@ export class RiprClientController {
       ? detail.split('\n')[0] || summary
       : summary;
     const separator = cause.endsWith('.') ? '' : '.';
-    const guidance = remedy ?? missingServerRemedy(this.runtime.getConfig().autoDownload);
+    const guidance = resolutionFailureGuidance(failure, this.runtime.getConfig().autoDownload);
     const selection = await this.runtime.showErrorMessage(
       `ripr server is not available: ${cause}${separator} ${guidance}`,
-      'Open Settings',
-      'Copy Diagnostic',
-      'Copy Install Command',
-      'Retry'
+      ...missingServerMessageActions(failure.kind)
     );
-    if (selection === 'Open Settings') {
+    if (selection === OPEN_SETTINGS_ACTION) {
       await vscode.commands.executeCommand('workbench.action.openSettings', 'ripr.server');
-    } else if (selection === 'Copy Diagnostic') {
+    } else if (selection === COPY_DIAGNOSTIC_ACTION) {
       try {
         await this.runtime.writeClipboard(`ripr server is not available\n${summary}\n${detail}`);
         this.runtime.showInformationMessage('Copied the ripr server diagnostic to the clipboard.');
@@ -2662,9 +2712,11 @@ export class RiprClientController {
         this.output.appendLine(`ripr copy server diagnostic failed: ${message}`);
         this.warnWithOutput('ripr could not copy the server diagnostic.');
       }
-    } else if (selection === 'Copy Install Command') {
+    } else if (selection === COPY_INSTALL_COMMAND_ACTION) {
       await this.runtime.writeClipboard('cargo install ripr');
-    } else if (selection === 'Retry') {
+    } else if (selection === SHOW_OUTPUT_ACTION) {
+      this.showOutput();
+    } else if (selection === RETRY_ACTION) {
       await this.restart();
     }
   }
@@ -3163,6 +3215,7 @@ function serverStartedSummary(kind: RiprStatusKind): string {
     case 'analysisRunning':
     case 'analysisReady':
     case 'analysisLimited':
+    case 'languageNotEnabled':
     case 'gapActionable':
     case 'gapNoAction':
     case 'gapArtifactWarning':
@@ -3178,6 +3231,8 @@ function serverStartedSummary(kind: RiprStatusKind): string {
       return 'not yet; resolving server binary';
     case 'serverUnavailable':
       return 'no; server unavailable';
+    case 'serverFailed':
+      return 'no; server failed to start';
     case 'disabled':
       return 'no; extension disabled';
     case 'noWorkspace':
@@ -3209,7 +3264,10 @@ function evidenceFreshnessSummary(kind: RiprStatusKind): string {
       return 'current saved-workspace status reported by server refresh';
     case 'noEnabledLanguages':
       return 'not projected; languages are disabled';
+    case 'languageNotEnabled':
+      return 'partial; changed files of a language without an enabled adapter were not analyzed';
     case 'serverUnavailable':
+    case 'serverFailed':
     case 'noWorkspace':
     case 'workspaceAmbiguous':
     case 'disabled':
@@ -3940,6 +3998,16 @@ interface RiprAnalysisStatusPayload {
   root_detail?: string | null;
   root_recovery_route?: string;
   components?: AnalysisStatusComponent[];
+  /** #8585: changed-file languages skipped because their adapter is not
+   * enabled; the server's typed row, not the limitation's detail text. */
+  unavailable_languages?: AnalysisStatusUnavailableLanguage[];
+}
+
+/** One typed `unavailable_languages` row from `ripr/analysisStatus` (#8585). */
+export interface AnalysisStatusUnavailableLanguage {
+  language: string;
+  file_count?: number;
+  recovery?: string | null;
 }
 
 function analysisStatusPayload(params: unknown): RiprAnalysisStatusPayload | undefined {
@@ -4091,6 +4159,7 @@ export function statusForRunStatus(
     retryRecovery?: string;
     dirtyRoutedDocuments?: readonly string[];
     components?: readonly AnalysisStatusComponent[];
+    unavailableLanguages?: readonly AnalysisStatusUnavailableLanguage[];
   } = {}
 ): RiprStatusState {
   const dirty = input.dirtyRoutedDocuments ?? [];
@@ -4124,6 +4193,22 @@ export function statusForRunStatus(
       ].filter((line): line is string => Boolean(line)).join('\n'),
       nextStep: `Run ${REFRESH_DIAGNOSTICS_COMMAND_TITLE} to compute the full seam inventory.`
     };
+  }
+  // #8585: changed files of a language whose adapter is not enabled were not
+  // analyzed. The typed rows name the language; this outranks the generic
+  // incomplete-input and healthy presentations they would otherwise fall
+  // into, but not the stale, deferred, cache, limited or partition states,
+  // which carry their own recovery.
+  const unavailable = validUnavailableLanguages(input.unavailableLanguages);
+  if (
+    unavailable.length > 0
+    && (runStatus === 'limited_incomplete_input'
+      || !((runStatus ?? '') in LIMITED_RUN_STATUS_PRESENTATIONS))
+  ) {
+    // Compose with the presentation the run would otherwise get, so degraded
+    // component recoveries and the untrustworthy-findings warning survive.
+    const base = statusForRunStatus(runStatus, { ...input, unavailableLanguages: undefined });
+    return statusForUnavailableLanguages(unavailable, base);
   }
   const limited = LIMITED_RUN_STATUS_PRESENTATIONS[runStatus ?? ''];
   if (limited) {
@@ -4170,6 +4255,51 @@ export function statusForRunStatus(
     summary: 'ripr saved-workspace analysis completed.',
     detail: input.detail,
     nextStep: 'Inspect diagnostics, then use bounded ripr hover and code actions for one focused test.'
+  };
+}
+
+/** Drop malformed rows: the payload crosses a process boundary. */
+function validUnavailableLanguages(
+  rows: readonly AnalysisStatusUnavailableLanguage[] | undefined
+): AnalysisStatusUnavailableLanguage[] {
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+  return rows.filter(
+    (row) => typeof row?.language === 'string' && row.language.trim().length > 0
+  );
+}
+
+function statusForUnavailableLanguages(
+  rows: readonly AnalysisStatusUnavailableLanguage[],
+  base: RiprStatusState
+): RiprStatusState {
+  const described = rows.map((row) =>
+    typeof row.file_count === 'number' && row.file_count > 0
+      ? `${row.language} (${row.file_count} ${plural(row.file_count, 'file')})`
+      : row.language
+  );
+  const recoveries = uniqueStrings(
+    rows
+      .map((row) => row.recovery)
+      .filter((recovery): recovery is string => typeof recovery === 'string' && recovery.trim().length > 0)
+  );
+  const languageStep = recoveries.length > 0
+    ? recoveries.map(capitalizeFirst).join('; ')
+    : 'Add the language to ripr.toml [languages] enabled, then run ripr: Restart Server.';
+  // A degraded base (incomplete input with component recoveries) keeps its
+  // own detail and next step after the language disclosure.
+  const degradedBase = base.kind === 'analysisLimited';
+  return {
+    kind: 'languageNotEnabled',
+    summary: `ripr did not analyze changed ${described.join(', ')}: the language adapter is not enabled.`,
+    detail: [
+      base.detail,
+      'Changed files of these languages produce no diagnostics, so a quiet editor is not an all-clear for them.'
+    ].filter((line): line is string => Boolean(line)).join('\n'),
+    nextStep: degradedBase && base.nextStep
+      ? `${languageStep}. Also: ${base.nextStep}`
+      : languageStep
   };
 }
 

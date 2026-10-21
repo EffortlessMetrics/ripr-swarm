@@ -264,19 +264,39 @@ fn tests_call_matching(
     name: &str,
     kind_matches: impl Fn(&NamedEntryKind) -> bool,
 ) -> bool {
+    // #9086: the import answer is needed only for a free-call spelling of the
+    // name, so it is computed lazily, and at most once per indexed file here
+    // (a file with N tests was parsed N times per query). The run memo in
+    // `source_imports_foreign_entry` additionally shares it across queries.
+    let file_imports: std::cell::RefCell<std::collections::BTreeMap<&std::path::Path, bool>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
     !name.is_empty()
         && index.tests().iter().any(|test| {
             let file_facts = index.files().get(&test.file);
-            let source = match &file_facts {
-                Some(facts) => facts.source.as_ref(),
-                None => test.body.as_str(),
+            let per_test: std::cell::Cell<Option<bool>> = std::cell::Cell::new(None);
+            let imports_of = || match &file_facts {
+                Some(facts) => {
+                    if let Some(known) = file_imports.borrow().get(test.file.as_path()) {
+                        return *known;
+                    }
+                    let known = source_imports_foreign_entry(index, facts.source.as_ref(), name);
+                    file_imports.borrow_mut().insert(test.file.as_path(), known);
+                    known
+                }
+                None => match per_test.get() {
+                    Some(known) => known,
+                    None => {
+                        let known = source_imports_foreign_entry(index, test.body.as_str(), name);
+                        per_test.set(Some(known));
+                        known
+                    }
+                },
             };
-            let imports = source_imports_foreign_entry(index, source, name);
             test.calls.iter().any(|call| {
                 call.name == name
                     && named_entry_kinds(&call.text, name).iter().any(|kind| {
                         let free_shadowed = matches!(kind, NamedEntryKind::Free)
-                            && (imports
+                            && (imports_of()
                                 || local_binding_shadows(
                                     index,
                                     LocalBindingSubject {
@@ -298,13 +318,40 @@ fn tests_call_matching(
 /// Import identity only. Do not reuse `test_call_is_shadowed`: uniqueness
 /// would hide every #7080 entry.
 fn source_imports_foreign_entry(index: &RustIndex, source: &str, name: &str) -> bool {
-    let renamed_import = super::reveal::flattened_use_paths(source)
-        .iter()
-        .any(|import| {
-            import.alias.as_deref() == Some(name) && import.path.rsplit("::").next() != Some(name)
-        });
-    renamed_import
-        || super::reveal::file_imports_foreign_callee_name(source, name, &index.package_names)
+    // Pure in the source, the name and the package names, and asked once per
+    // (probe, helper chain, test), each time re-parsing the whole test file;
+    // two files that were fast alone took 37 s together (#9086). Each
+    // classification worker scope (rayon `map_init` in the Rust language
+    // analysis, not one scope per run) computes each answer once.
+    let query = format!(
+        "{name}\0{}",
+        index
+            .package_names
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join("\0")
+    );
+    crate::analysis::syntax::run_memo::memoize_with(
+        crate::analysis::syntax::run_memo::Product::ForeignEntryImport,
+        0,
+        &query,
+        source,
+        || {
+            let renamed_import = super::reveal::flattened_use_paths(source)
+                .iter()
+                .any(|import| {
+                    import.alias.as_deref() == Some(name)
+                        && import.path.rsplit("::").next() != Some(name)
+                });
+            renamed_import
+                || super::reveal::file_imports_foreign_callee_name(
+                    source,
+                    name,
+                    &index.package_names,
+                )
+        },
+    )
 }
 
 struct LocalBindingSubject<'a> {
@@ -603,7 +650,7 @@ pub(crate) fn call_sites(
             continue;
         }
         let arguments = split_call_arguments_text(&call.text, callee_name)?;
-        sites.push((call.text.clone(), arguments));
+        sites.push((call.text.to_string(), arguments));
     }
     (!sites.is_empty()).then_some(sites)
 }
@@ -1928,7 +1975,7 @@ mod tests {
             calls: vec![CallFact {
                 name: name.to_string(),
                 line: 2,
-                text: text.to_string(),
+                text: text.to_string().into(),
             }],
             assertions: Vec::new(),
             literals: Vec::new(),
@@ -1951,7 +1998,7 @@ mod tests {
                 .map(|(callee, text)| CallFact {
                     line: 2,
                     name: callee.to_string(),
-                    text: text.to_string(),
+                    text: text.to_string().into(),
                 })
                 .collect(),
             returns: Vec::new(),
@@ -2021,6 +2068,59 @@ mod tests {
                 .is_some_and(|edge| edge.contains("not a unique function"))
         );
         Ok(())
+    }
+
+    // #9086: the memoized import answer is keyed by the name and the package
+    // names as well as the source, so one source asked under two names or two
+    // package sets inside a run scope gets each its own answer.
+    #[test]
+    fn scoped_import_answers_are_keyed_by_name_and_package_names() {
+        let source = "use serde::parse;\nfn t() { parse(); other(); }\n";
+        let mut foreign = index_with_tests(vec![], vec![]);
+        foreign.package_names = std::collections::BTreeSet::new();
+        let mut own = index_with_tests(vec![], vec![]);
+        own.package_names = ["serde".to_string()].into_iter().collect();
+        let ask = |index: &RustIndex, name: &str| source_imports_foreign_entry(index, source, name);
+        let unscoped = [
+            ask(&foreign, "parse"),
+            ask(&foreign, "other"),
+            ask(&own, "parse"),
+            ask(&own, "other"),
+        ];
+        assert_eq!(unscoped, [true, false, false, false]);
+        let _scope = crate::analysis::syntax::run_memo::enter();
+        // Two passes: the second is served from the scope.
+        for _ in 0..2 {
+            let scoped = [
+                ask(&foreign, "parse"),
+                ask(&foreign, "other"),
+                ask(&own, "parse"),
+                ask(&own, "other"),
+            ];
+            assert_eq!(scoped, unscoped);
+        }
+    }
+
+    // #9086: inside a scope the same (source, name, package names) query scans
+    // the source once; a different name or package set is a new scan.
+    #[test]
+    fn scoped_import_answer_scans_once_per_distinct_query() {
+        let source = "fn parse(x: u8) -> u8 { x }\nfn t() { parse(1); other(2); }\n";
+        let plain = index_with_tests(vec![], vec![]);
+        let mut with_package = index_with_tests(vec![], vec![]);
+        with_package.package_names = ["serde".to_string()].into_iter().collect();
+        let scans = || super::super::macro_item_names::SCAN_COUNT.with(|count| count.get());
+        let _scope = crate::analysis::syntax::run_memo::enter();
+        super::super::macro_item_names::SCAN_COUNT.with(|count| count.set(0));
+        let first = source_imports_foreign_entry(&plain, source, "parse");
+        assert_eq!(scans(), 1, "the first ask scans the source");
+        let second = source_imports_foreign_entry(&plain, source, "parse");
+        assert_eq!(first, second);
+        assert_eq!(scans(), 1, "the repeated ask is served from the scope");
+        source_imports_foreign_entry(&plain, source, "other");
+        assert_eq!(scans(), 2, "another name is a new scan");
+        source_imports_foreign_entry(&with_package, source, "parse");
+        assert_eq!(scans(), 3, "another package set is a new scan");
     }
 
     // #7080: tests that call the ambiguous name enter the refused chain;
@@ -2822,18 +2922,22 @@ mod tests {
         let mut test = test_summary_calling("order_discount", "order_discount(10)");
         test.start_line = 10;
         test.end_line = 14;
-        let shadow = "macro_rules! fake {\n    () => { fn order_discount(_: u32) -> u32 { 5 } };\n}\nfake!();\n";
-        test.body = format!("{shadow}fn t() {{\n    assert_eq!(order_discount(10), 5);\n}}").into();
+        // The macro names the fn through its `$n:ident` binder, so neither
+        // `fn order_discount` nor a `let` appears in the body: only the
+        // macro rule can shadow the call, not the lexical body scan.
+        let shadow = "macro_rules! make {\n    ($n:ident) => { fn $n(_: u32) -> u32 { 5 } };\n}\nmake!(order_discount);\n";
+        let tail = "fn t() {\n    assert_eq!(order_discount(10), 5);\n}";
+        test.body = format!("{shadow}{tail}").into();
         assert!(idx.files().get(&test.file).is_none(), "fallback path only");
         assert!(test_call_is_shadowed(&idx, &test, "order_discount", 11));
-        // Control: a macro defining another name leaves the shared gate
-        // closed (the lexical body scan is a separate authority).
-        let unrelated = test.body.replace("fn order_discount", "fn other_name");
-        assert!(!super::super::reveal::file_imports_foreign_callee_name(
-            &unrelated,
-            "order_discount",
-            &idx.package_names
-        ));
+        // Control: the same macro defining another name leaves the call
+        // unshadowed through the same entry point.
+        test.body = format!(
+            "{}{tail}",
+            shadow.replace("make!(order_discount)", "make!(other_name)")
+        )
+        .into();
+        assert!(!test_call_is_shadowed(&idx, &test, "order_discount", 11));
     }
 
     // #6780 review round 3: the abstention applies only when every
@@ -2967,13 +3071,13 @@ mod tests {
         let test_calls = vec![CallFact {
             line: 1,
             name: "classify".to_string(),
-            text: "classify(\" x\")".to_string(),
+            text: "classify(\" x\")".to_string().into(),
         }];
         assert!(test_reaches_through_chain(&test_calls, "is_word_start", &idx, true).is_some());
         let unrelated = vec![CallFact {
             line: 1,
             name: "other".to_string(),
-            text: "other()".to_string(),
+            text: "other()".to_string().into(),
         }];
         assert!(test_reaches_through_chain(&unrelated, "is_word_start", &idx, true).is_none());
         Ok(())
@@ -3042,6 +3146,80 @@ mod tests {
             Some(arguments) if arguments == vec!["1".to_string()] => Ok(()),
             other => Err(format!("expected [\"1\"], got {other:?}")),
         }
+    }
+
+    /// #9086: a file with many tests that call the queried name was
+    /// re-parsed once per test (quadratic on a generic-heavy file). The
+    /// import answer is per file, so the scan count tracks files, not tests.
+    #[test]
+    fn tests_call_name_scans_each_file_once_not_once_per_test() -> Result<(), String> {
+        use crate::analysis::facts::OwnedRustIndex;
+        let mut source = String::from("fn parse(x: u8) -> u8 { x }\n");
+        for n in 0..60 {
+            source.push_str(&format!(
+                "#[test]\nfn t{n}() {{ assert_eq!(parse({n}), {n}); }}\n"
+            ));
+        }
+        let facts = crate::analysis::syntax::ra::summarize_file_with_parser(
+            std::path::Path::new("tests/many.rs"),
+            &source,
+        )?;
+        let index = RustIndex::from_owned(OwnedRustIndex {
+            functions: facts.functions.clone(),
+            tests: facts.tests.clone(),
+            files: [(PathBuf::from("tests/many.rs"), facts)]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        });
+        if index.tests().len() < 60 {
+            return Err(format!("fixture built {} tests", index.tests().len()));
+        }
+        super::super::macro_item_names::SCAN_COUNT.with(|count| count.set(0));
+        // No test matches, so `any` cannot short-circuit: all 60 tests are
+        // evaluated and a per-test (uncached) import scan would count 60.
+        if tests_call_matching(&index, "parse", |_| false) {
+            return Err("matcher rejects every kind".to_string());
+        }
+        let scans = super::super::macro_item_names::SCAN_COUNT.with(|count| count.get());
+        if scans != 1 {
+            return Err(format!("expected one scan for one file, saw {scans}"));
+        }
+        Ok(())
+    }
+
+    /// #9086: a test that never calls the queried name as a free call must
+    /// not trigger the import scan at all.
+    #[test]
+    fn tests_that_do_not_call_the_name_never_scan_imports() -> Result<(), String> {
+        use crate::analysis::facts::OwnedRustIndex;
+        let mut source = String::from("fn parse(x: u8) -> u8 { x }\nfn other(x: u8) -> u8 { x }\n");
+        for n in 0..20 {
+            source.push_str(&format!(
+                "#[test]\nfn t{n}() {{ assert_eq!(other({n}), {n}); }}\n"
+            ));
+        }
+        let facts = crate::analysis::syntax::ra::summarize_file_with_parser(
+            std::path::Path::new("tests/few.rs"),
+            &source,
+        )?;
+        let index = RustIndex::from_owned(OwnedRustIndex {
+            functions: facts.functions.clone(),
+            tests: facts.tests.clone(),
+            files: [(PathBuf::from("tests/few.rs"), facts)]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        });
+        super::super::macro_item_names::SCAN_COUNT.with(|count| count.set(0));
+        if tests_call_name(&index, "parse") {
+            return Err("no test calls `parse`".to_string());
+        }
+        let scans = super::super::macro_item_names::SCAN_COUNT.with(|count| count.get());
+        if scans != 0 {
+            return Err(format!("expected no scan, saw {scans}"));
+        }
+        Ok(())
     }
 
     #[test]

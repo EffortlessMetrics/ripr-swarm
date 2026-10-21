@@ -10,13 +10,13 @@
 //! `evidence_promotion`, and `tests.rs`) compile unchanged.
 
 use crate::no_panic::contains_word;
-use crate::run::{run_output_optional, run_output_owned_with_envs};
+use crate::run::{run_output_bytes, run_output_optional, run_output_owned_with_envs};
 use crate::{
     collect_pr_changes, forbidden_static_terms, has_markdown_heading, json_escape, markdown_cell,
     normalize_path, read_text_lossy, ripr_debug_binary, write_json_string_array, write_report,
 };
 use rayon::prelude::*;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -141,11 +141,25 @@ enum GoldenCheckRun {
 
 fn golden_check_run() -> Result<GoldenCheckRun, String> {
     let run_set = collect_golden_runs()?;
+    // #8614: warn (do not fail) when a fixture input's working-tree endings
+    // differ from its normalized form; `goldens bless` refuses on the same
+    // evidence. Warning here keeps a local pass from looking clean.
+    let crlf_warnings = crlf_guard_warnings(&run_set.fixtures);
+    for warning in &crlf_warnings {
+        eprintln!("warning: {warning}");
+    }
     // One provenance snapshot backs both the drift report and the console
     // failure card, so the two always name the same build (#7401).
     let provenance = golden_drift_provenance();
     let entries = write_golden_drift_reports(&run_set.runs, &run_set.violations, &provenance)?;
-    let body = goldens_check_report_body(&run_set.fixtures, &run_set.runs, &run_set.violations);
+    let mut body = goldens_check_report_body(&run_set.fixtures, &run_set.runs, &run_set.violations);
+    if !crlf_warnings.is_empty() {
+        body.push_str("## Line-ending warnings (#8614)\n\n");
+        for warning in &crlf_warnings {
+            body.push_str(&format!("- {warning}\n"));
+        }
+        body.push('\n');
+    }
     write_report("goldens.md", &body)?;
     if run_set.violations.is_empty() {
         Ok(GoldenCheckRun::Clean)
@@ -350,6 +364,199 @@ fn collect_golden_runs() -> Result<GoldenRunSet, String> {
     })
 }
 
+/// One `git ls-files --eol` row: index/worktree ending classes and the raw
+/// attribute text after `attr/` (for example `text=auto eol=lf` or `-text`).
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct GitEolInfo {
+    index: String,
+    worktree: String,
+    attrs: String,
+}
+
+fn parse_git_ls_files_eol(output: &[u8]) -> BTreeMap<String, GitEolInfo> {
+    let mut map = BTreeMap::new();
+    for entry in output.split(|byte| *byte == 0) {
+        if entry.is_empty() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(entry);
+        let Some((meta, path)) = text.split_once('\t') else {
+            continue;
+        };
+        let mut fields = meta.split_whitespace();
+        let (Some(index), Some(worktree)) = (fields.next(), fields.next()) else {
+            continue;
+        };
+        let attrs = meta
+            .split_once("attr/")
+            .map(|(_, rest)| rest.trim().to_string())
+            .unwrap_or_default();
+        map.insert(
+            path.replace('\\', "/"),
+            GitEolInfo {
+                index: index.strip_prefix("i/").unwrap_or(index).to_string(),
+                worktree: worktree.strip_prefix("w/").unwrap_or(worktree).to_string(),
+                attrs,
+            },
+        );
+    }
+    map
+}
+
+/// Fire only for the #8614 shape: LF in the index, CRLF/mixed in the working
+/// tree, and attributes that normalize to LF. `-text`/`binary` fixtures and
+/// `eol=crlf` fixtures keep their bytes by design and never fire.
+fn git_eol_info_fires(info: &GitEolInfo) -> bool {
+    if info.index != "lf" || !matches!(info.worktree.as_str(), "crlf" | "mixed") {
+        return false;
+    }
+    let tokens: Vec<&str> = info.attrs.split_whitespace().collect();
+    if tokens
+        .iter()
+        .any(|t| *t == "-text" || *t == "binary" || *t == "text=unset")
+    {
+        return false;
+    }
+    if tokens.contains(&"eol=crlf") {
+        return false;
+    }
+    // With `text`/`text=auto`/`eol=lf` the normalized form is LF. With no
+    // text attribute at all git does not normalize, so CRLF is the content.
+    tokens
+        .iter()
+        .any(|t| *t == "eol=lf" || *t == "text" || *t == "text=auto" || *t == "text=set")
+}
+
+fn bytes_contain_crlf(bytes: &[u8]) -> bool {
+    bytes.windows(2).any(|pair| pair == b"\r\n")
+}
+
+fn bytes_look_binary(bytes: &[u8]) -> bool {
+    bytes.iter().take(8000).any(|byte| *byte == 0)
+}
+
+/// Files whose bytes feed a fixture run: `diff.patch` plus `input/**`.
+fn fixture_input_files(fixture: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let diff = fixture.join("diff.patch");
+    if diff.is_file() {
+        files.push(diff);
+    }
+    let mut stack = vec![fixture.join("input")];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.is_file() {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+fn fixture_embeds_input_identity(fixture: &Path) -> bool {
+    read_text_lossy(&fixture.join("expected/check.json"))
+        .is_ok_and(|text| text.contains("input_identity"))
+}
+
+/// Pure guard core: `eol_by_path` keys are `/`-normalized paths as printed by
+/// `git ls-files`; `attr_excluded` holds normalized paths whose attributes
+/// (`-text`, `binary`, `eol=crlf`) exempt them. Files absent from
+/// `eol_by_path` fall back to a byte check so untracked inputs and synthetic
+/// trees are covered on any host.
+fn crlf_guard_violations_with(
+    fixture: &Path,
+    eol_by_path: &BTreeMap<String, GitEolInfo>,
+    attr_excluded: &BTreeSet<String>,
+) -> Vec<String> {
+    if !fixture_embeds_input_identity(fixture) {
+        return Vec::new();
+    }
+    let mut violations = Vec::new();
+    for file in fixture_input_files(fixture) {
+        let normalized = normalize_path(&file);
+        if attr_excluded.contains(&normalized) {
+            continue;
+        }
+        if let Some(info) = eol_by_path.get(&normalized) {
+            if git_eol_info_fires(info) {
+                violations.push(format!(
+                    "{normalized}: working-tree line endings are `{}` but the git index is `{}` (attr/{}); blessing from these bytes would embed an `input_identity` an `eol=lf` checkout cannot reproduce",
+                    info.worktree, info.index, info.attrs
+                ));
+            }
+            continue;
+        }
+        if let Ok(bytes) = fs::read(&file)
+            && bytes_contain_crlf(&bytes)
+            && !bytes_look_binary(&bytes)
+        {
+            violations.push(format!(
+                "{normalized}: working-tree bytes contain CRLF line endings and no LF-normalized git index entry covers this file; blessing from these bytes would embed an `input_identity` an `eol=lf` checkout cannot reproduce"
+            ));
+        }
+    }
+    violations
+}
+
+fn git_attr_excluded(path: &str) -> bool {
+    let Ok(text) = run_output_optional("git", &["check-attr", "text", "eol", "binary", "--", path])
+    else {
+        return false;
+    };
+    text.lines().any(|line| {
+        let value = line.rsplit(": ").next().unwrap_or("");
+        line.contains(": text: unset")
+            || line.contains(": binary: set")
+            || (line.contains(": eol: crlf") && value == "crlf")
+    })
+}
+
+/// Production guard for one fixture: ask git for the normalized form via
+/// `git ls-files --eol`, falling back to bytes for untracked inputs.
+fn crlf_guard_violations(fixture: &Path) -> Result<Vec<String>, String> {
+    if !fixture_embeds_input_identity(fixture) {
+        return Ok(Vec::new());
+    }
+    let fixture_arg = normalize_path(fixture);
+    let eol_by_path = run_output_bytes("git", &["ls-files", "--eol", "-z", "--", &fixture_arg])
+        .map(|bytes| parse_git_ls_files_eol(&bytes))
+        .unwrap_or_default();
+    let mut attr_excluded = BTreeSet::new();
+    for file in fixture_input_files(fixture) {
+        let normalized = normalize_path(&file);
+        if !eol_by_path.contains_key(&normalized) && git_attr_excluded(&normalized) {
+            attr_excluded.insert(normalized);
+        }
+    }
+    Ok(crlf_guard_violations_with(
+        fixture,
+        &eol_by_path,
+        &attr_excluded,
+    ))
+}
+
+fn crlf_guard_warnings(fixtures: &[PathBuf]) -> Vec<String> {
+    let mut warnings = Vec::new();
+    for fixture in fixtures {
+        match crlf_guard_violations(fixture) {
+            Ok(violations) => warnings.extend(violations.into_iter().map(|violation| {
+                format!(
+                    "{violation} (`goldens bless` will refuse this fixture until the file is converted to LF)"
+                )
+            })),
+            Err(_) => continue,
+        }
+    }
+    warnings
+}
+
 fn goldens_bless(name: &str, reason: &str) -> Result<(), String> {
     // Argument validation precedes the fixture run, so a malformed invocation
     // costs neither a build nor a discarded cache (#3054 review).
@@ -360,6 +567,24 @@ fn goldens_bless(name: &str, reason: &str) -> Result<(), String> {
             "fixture does not exist: {}",
             normalize_path(&fixture)
         ));
+    }
+    // #8614: refuse before any fixture run or write when an input file's
+    // working-tree endings differ from its index/attribute-normalized form.
+    // Blessing from CRLF bytes would embed an `input_identity` that an
+    // `eol=lf` checkout cannot reproduce. Never normalize the file here.
+    let crlf_violations = crlf_guard_violations(&fixture)?;
+    if !crlf_violations.is_empty() {
+        let mut message = format!(
+            "goldens bless refused for fixture `{name}`: {} fixture input file(s) have working-tree line endings that differ from their index/attribute-normalized (LF) form, and `expected/check.json` embeds `input_identity`. Blessing now would embed a hash no `eol=lf` checkout reproduces. No files were changed.\n",
+            crlf_violations.len()
+        );
+        for violation in &crlf_violations {
+            message.push_str(&format!("  - {violation}\n"));
+        }
+        message.push_str(
+            "next: convert the listed file(s) to LF (for example `git checkout -- <path>` on a clean file, or your editor's LF setting), verify `git ls-files --eol -- <path>` reports `w/lf`, then re-run bless",
+        );
+        return Err(message);
     }
     let run = run_fixture_outputs(&fixture)?;
 
@@ -2439,6 +2664,97 @@ mod tests {
         assert_eq!(super::classify_precommit_goldens(&[gap, other]), None);
         assert_eq!(super::classify_precommit_goldens(&[]), None);
     }
+    fn synthetic_fixture(
+        label: &str,
+        input_bytes: &[u8],
+        embeds: bool,
+    ) -> Result<std::path::PathBuf, String> {
+        let dir = unique_temp_path(label);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("input/src")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(dir.join("expected")).map_err(|e| e.to_string())?;
+        std::fs::write(dir.join("input/src/lib.rs"), input_bytes).map_err(|e| e.to_string())?;
+        std::fs::write(dir.join("diff.patch"), "diff\n").map_err(|e| e.to_string())?;
+        let check = if embeds {
+            "{\"analysis_outcome\":{\"identity\":{\"input_identity\":\"sha256:abc\"}},\"findings\":[]}"
+        } else {
+            "{\"findings\":[]}"
+        };
+        std::fs::write(dir.join("expected/check.json"), check).map_err(|e| e.to_string())?;
+        Ok(dir)
+    }
+
+    #[test]
+    fn crlf_guard_fires_on_synthetic_crlf_input() -> Result<(), String> {
+        // #8614 deterministic control: CRLF bytes + git saying i/lf w/crlf.
+        let dir = synthetic_fixture("8614-crlf", b"fn a() {}\r\nfn b() {}\r\n", true)?;
+        let key = normalize_path(&dir.join("input/src/lib.rs"));
+        let mut eol = BTreeMap::new();
+        eol.insert(
+            key,
+            GitEolInfo {
+                index: "lf".into(),
+                worktree: "crlf".into(),
+                attrs: "text=auto eol=lf".into(),
+            },
+        );
+        let violations = crlf_guard_violations_with(&dir, &eol, &BTreeSet::new());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(violations[0].contains("lib.rs"), "{violations:?}");
+        // Byte fallback (no git entry) fires on the same synthetic tree shape.
+        let dir2 = synthetic_fixture("8614-crlf-fallback", b"x\r\ny\r\n", true)?;
+        let fallback = crlf_guard_violations_with(&dir2, &BTreeMap::new(), &BTreeSet::new());
+        let _ = std::fs::remove_dir_all(&dir2);
+        assert!(!fallback.is_empty(), "CRLF fallback must fire");
+        Ok(())
+    }
+
+    #[test]
+    fn crlf_guard_does_not_fire_on_lf_binary_or_non_identity_fixtures() -> Result<(), String> {
+        // LF negative control.
+        let dir = synthetic_fixture("8614-lf", b"fn a() {}\n", true)?;
+        let key = normalize_path(&dir.join("input/src/lib.rs"));
+        let mut eol = BTreeMap::new();
+        eol.insert(
+            key.clone(),
+            GitEolInfo {
+                index: "lf".into(),
+                worktree: "lf".into(),
+                attrs: "text=auto eol=lf".into(),
+            },
+        );
+        assert!(crlf_guard_violations_with(&dir, &eol, &BTreeSet::new()).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+        // -text binary fixture with CRLF bytes never fires.
+        let dir = synthetic_fixture("8614-binary", b"a\r\nb\r\n", true)?;
+        let key = normalize_path(&dir.join("input/src/lib.rs"));
+        let mut eol = BTreeMap::new();
+        eol.insert(
+            key,
+            GitEolInfo {
+                index: "lf".into(),
+                worktree: "crlf".into(),
+                attrs: "-text".into(),
+            },
+        );
+        assert!(crlf_guard_violations_with(&dir, &eol, &BTreeSet::new()).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+        // No input_identity in expected output: guard is out of scope.
+        let dir = synthetic_fixture("8614-no-identity", b"a\r\n", false)?;
+        assert!(crlf_guard_violations_with(&dir, &BTreeMap::new(), &BTreeSet::new()).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn parse_git_ls_files_eol_reads_index_worktree_and_attrs() {
+        let map = parse_git_ls_files_eol(b"i/lf    w/crlf  attr/text=auto eol=lf \tfixtures/x/input/src/lib.rs\0i/-text w/-text attr/-text\tassets/a.png\0");
+        assert_eq!(map["fixtures/x/input/src/lib.rs"].worktree, "crlf");
+        assert!(git_eol_info_fires(&map["fixtures/x/input/src/lib.rs"]));
+        assert!(!git_eol_info_fires(&map["assets/a.png"]));
+    }
+
     #[test]
     fn spec_line_placeholder_is_not_a_real_spec_id() {
         // #7399: the scaffold placeholder must not satisfy the fixture gate.

@@ -1,12 +1,13 @@
 # Exit Codes
 
-ripr uses a three-value exit code contract:
+ripr uses three ordinary command exit codes, plus standalone Unix check interruption:
 
 | Code | Meaning |
 |------|---------|
 | `0`  | The command completed. |
 | `2`  | The command could not complete: usage, parse, operational, or internal error. |
 | `3`  | The command ran successfully and reached a blocking decision or a typed refusal. |
+| `130` | Supported standalone Unix `check` analysis was interrupted. |
 
 `ripr check` is advisory: it exits `0` whether or not it found gaps, including
 `exposed` and `weakly_exposed` findings. A non-zero exit from `check` means the
@@ -29,25 +30,35 @@ verify-execute` declining a packet (the refusal JSON document is on stdout)
 - `3`: the command completed by reaching a blocking decision or typed
   refusal; read the report or the stdout JSON document for the answer
   (standalone `ripr agent verify` is the exception: its refusal is named on
-  stderr and stdout stays empty; see below. `ripr agent repair` prints its
-  refusal document only with `--json`; without it stdout stays empty and
-  stderr names the cause. `ripr agent card` prints its
-  `agent_card_refusal` envelope on stderr with `--json` and the prose
-  rendering after it; stdout stays empty on every refusal).
+  stderr and stdout stays empty; see below. `ripr agent repair`,
+  `ripr agent card` and `ripr agent stub` print their refusal document
+  (`agent_card_refusal` / `rust_test_stub` `state: refused`) on stdout only
+  with `--json`, with the prose on stderr; without it stdout stays empty and
+  stderr names the cause. An unknown `--seam-id` is one typed refusal with
+  one exit, `3`, on `agent card`, `agent stub` and `agent packet` (`agent
+  repair --phase before` still exits `2` for it): with `--json` the document is on stdout
+  and the prose on stderr).
 - `2`: the invocation or operation failed; retrying differently is
   appropriate.
 
-`ripr help --json` projects this same mapping as a typed per-command `exit`
+`ripr help --json` projects this ordinary completion mapping as a typed per-command `exit`
 object (RIPR-SPEC-0190). Orchestrators that discover commands from that
-document should branch on `exit`, not on free-text `stop_states`.
+document should branch on `exit`, not on free-text `stop_states`. External
+standalone interruption (130 or native signal termination) is separate from
+that completion metadata.
 
 Error and panic diagnostics on stderr are best effort. If a stderr reader
 closes after a JSON refusal has been written, the command retains that stdout
 document and its original exit `2` or `3`. A failed panic diagnostic still
 terminates with `2`; reporting it must not cause a recursive panic or abort.
-Once `agent card` or `agent stub` reaches a named refusal, its stderr JSON
-envelope is also best effort: a closed stderr reader keeps stdout empty and
-preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
+Once `agent card` or `agent stub` reaches a named refusal, its stdout JSON
+document is written first and the stderr prose is best effort: a closed
+stderr reader keeps the stdout document and preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
+The refusal exit `3` also requires that the machine answer was delivered: for
+`agent card`, `agent stub` and an unknown-seam `agent packet` under `--json`, a
+refusal document that cannot be rendered or cannot be written to stdout (for
+example a closed stdout reader) exits `2` instead, since no typed answer
+reached the caller.
 
 ## When you see exit code 2
 
@@ -82,7 +93,8 @@ preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
   JSON only), `agent brief --json`, and `agent packet --json` each write the
   shared refusal shape keyed with their own `schema_version` (rerun
   `ripr-targeted-rerun-v1`, context `1.0`, diff and agent brief `0.1`, agent
-  packet `0.5`), and `mode` appears only on commands that accept `--mode`.
+  packet `0.5`; an unknown `agent packet --seam-id` is the one typed
+  refusal among these and exits `3`, see above), and `mode` appears only on commands that accept `--mode`.
   For `check`, the machine-readable formats also carry their own refusal
   document on stdout (#7332): SARIF renders a schema-valid run whose only
   signal is a tool-configuration notification, GitHub renders one workflow
@@ -92,8 +104,9 @@ preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
   `analysis_outcome: null`; no `run_status` field), and
   `repo-exposure-json` and `agent-seam-packets-json` render their format's
   refused envelope (zeroed counts, `run_status: "refused"`). Machine formats without an
-  honest refusal shape yet — `repo-sarif`, `badge-plus`, `repo-badge-*`,
-  `shields`, `repo-seams-*`, and `repo-exposure-summary-json` — write
+  honest refusal shape yet — `repo-sarif`, `badge-shields`, `badge-plus-*`,
+  `repo-badge-*`, `repo-seams-*`, `repo-exposure-md`, and
+  `repo-exposure-summary-json` — write
   nothing to stdout and put the prose diagnostic on stderr for now; that
   gap is a named limitation, not a clean result. Exactly two cases stay
   prose-only with empty stdout on every command: argv usage errors and
@@ -123,6 +136,10 @@ preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
 
 - **Gate failure**: `ripr gate evaluate` evaluated successfully and blocked
   the PR; the full report was still written to `--out`.
+- **Doctor findings**: `ripr doctor` completed its diagnosis and at least
+  one check failed; the full report was already written (human screen or
+  `--json` document) and stderr names `doctor found issues` (#5102). A
+  usage error or a failure before a report exists stays exit `2`.
 - **Typed refusal**: `ripr agent verify-execute` refused the packet (for
   example `verification_rejected_policy` or `verification_wrong_root`) and
   rendered the typed refusal JSON on stdout; `ripr agent repair --phase
@@ -161,9 +178,9 @@ preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
   a specific path or one of the suggested seam IDs). Several inline test modules are not a
   refusal: among those gated by plain `cfg(test)`, the stub goes into the
   one that already names the owner, else the nearest one after it, else the
-  nearest one before it. The named reason is on stderr, with
-  a `rust_test_stub` schema `0.2` `state: refused` envelope under `--json`; stdout stays
-  empty. A failed read, analysis, or `--write` stays exit `2`.
+  nearest one before it. The named reason is on stderr; under `--json` a
+  `rust_test_stub` schema `0.2` `state: refused` envelope is the stdout
+  document, and without it stdout stays empty. A failed read, analysis, or `--write` stays exit `2`.
 - **Typed agent card refusal**: `ripr agent card` reached a deliberate named
   refusal of the default handoff — the seam id names no seam
   (`seam_not_found`: re-list seams or correct the id), the seam's grip class
@@ -175,9 +192,9 @@ preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
   builder, route gate, or budget refused to mint the card
   (`budget_overflow`: fall back to the canonical packet). With `--json` the
   versioned `agent_card_refusal` envelope (`schema_version` `0.1`) renders
-  on stderr with the typed `error.kind`, `seam_id`, verbatim `message`, and
-  `remedy_route`; stdout stays empty because it is the card-artifact stream.
-  Without `--json` stderr carries the prose rendering only. The kinds are
+  on stdout with the typed `error.kind`, `seam_id`, verbatim `message`, and
+  `remedy_route`, and the prose rendering stays on stderr. Without `--json`
+  stdout stays empty and stderr carries the prose rendering only. The kinds are
   closed and pinned by `cargo xtask check-output-contracts`
   (RIPR-SPEC-0202). Operational failures of the command (an unreadable
   config, a failed git probe, a detail-source serialization failure) still
@@ -222,9 +239,12 @@ tree; and a repair `--phase after` whose edit cage recorded a violation.
 
 ## `ripr doctor` exit codes
 
-`ripr doctor` uses the same contract: `0` when all checks pass, `2` when
-any check fails (including missing language runtimes that are enabled in
-the effective configuration).
+`ripr doctor` uses the same contract: `0` when all checks pass, `3` when
+the diagnosis completed and any check failed (including missing language
+runtimes that are enabled in the effective configuration), and `2` only
+when the run could not complete — a usage error (no check ran) or an
+operational failure before a report exists (#5102). Both the human and
+`--json` surfaces use this mapping; the report is written before exit `3`.
 
 The `Cargo.toml` check applies only when Rust is in scope for the root:
 Rust is enabled and either a Cargo.toml is found at the selected root, an
@@ -233,7 +253,7 @@ ancestor Cargo project bounded by git, or nested in this tree; Rust markers
 detected or enabled. A Python-only or TypeScript-only root with no nested
 or ancestor Cargo.toml reports `cargo_toml` as `skipped` with the reason.
 The analysis profile also skips `cargo` and `rustc`; `--profile source-build`
-still probes those tools and can exit `2` if they are missing.
+still probes those tools and can exit `3` if they are missing.
 A Cargo.toml at the selected root, an
 ancestor Cargo project bounded by git, or a nested Cargo.toml in this tree
 (for example `rust/Cargo.toml` at a polyglot git root that also has
@@ -247,7 +267,7 @@ profile, a missing `cargo` or `rustc`, or a workspace `rustc` older than
 RIPR's build MSRV, is reported as `advisory` and does not change the exit
 code: the installed binary can still analyze the workspace. A missing `cargo`
 still withholds evidence that reads `cargo metadata`. Under
-`--profile source-build`, the same conditions are failures and exit `2`. A
+`--profile source-build`, the same conditions are failures and exit `3`. A
 missing cargo or rustc names an install route on the failing check; an older
 rustc still names `rustup update stable`. Enabled language runtimes stay
 visible but do not decide that profile's exit.
@@ -287,3 +307,31 @@ argv-level exit `2`, names the root, and writes no report. `ripr gate evaluate`
 treats an incomplete, partial, or unsupported
 analysis outcome as a `config_error` in every mode, so a gate never passes
 on a partial denominator.
+
+## Standalone Unix check interruption (#7618)
+
+For ordinary single-output `ripr check` with live Git or a resolved regular
+`--diff` file, first SIGINT requests existing cooperative cancellation during
+analysis. The existing child owner settles/reaps the managed exporter before
+returning where supported. Exit 130 and stderr explain how to rerun; cancellation
+is not a partial successful report or fail-soft producer degradation. Confirmed
+settlement discards only the current unpublished packet. Cleanup blockers or
+unconfirmed settlement retain named staging; prior packets and user data survive.
+The next invocation uses fresh staging and never consumes that retained partial.
+
+Stdin (`--diff -`), FIFO/nonregular/unresolved inputs, `--output-dir`,
+`--write-artifact`, and `--gap-ledger` retain native SIGINT. Their blocking I/O or
+separate publication paths are outside cooperative single-output qualification.
+After analysis/rendering, stdout publication switches to native interruption;
+streamed bytes cannot be retracted. A second analysis SIGINT also permits native
+termination if I/O or cleanup stalls. Forced termination does not establish
+reaping or staging cleanup.
+
+Existing library `ripr::cli::run` preserves caller-owned signal policy. The binary
+opts into `run_with_interrupt_handling`, a once-per-process standalone entry whose
+signal actions last until process exit. `CommandError::Interrupted(String)` adds
+an exhaustive-match arm; use it or `message()`/`exit_code()`. This recorded but
+unendorsed API migration is for the upcoming 0.11.0 minor, not a 0.11.x patch.
+Native execution evidence is Linux x86_64 with explicitly trusted single-process
+fixture exporters. macOS/Windows runtime, arbitrary descendants, hostile path
+replacement and real perllsp compatibility remain unqualified.

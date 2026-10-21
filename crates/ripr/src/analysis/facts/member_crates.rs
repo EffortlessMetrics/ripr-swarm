@@ -136,6 +136,30 @@ impl MemberCrates {
     /// `crate::` differs. Without manifest authority, or with an unreadable
     /// manifest, nothing is a default root.
     pub(crate) fn is_default_target_root(&self, crate_root: &Path) -> bool {
+        self.default_target_root_with_flags(crate_root, &["autolib", "autobins"])
+    }
+
+    /// Unit-test identity follows the discovery flag for this root's target
+    /// kind. Disabling automatic binaries does not disable the default library
+    /// (or vice versa). Keep the broader root predicate above unchanged for its
+    /// other consumers, and retain its conservative moved-target checks.
+    pub(crate) fn is_default_unit_target_root(&self, crate_root: &Path) -> bool {
+        if crate_root
+            .parent()
+            .and_then(Path::file_name)
+            .is_none_or(|name| name != "src")
+        {
+            return false;
+        }
+        let flag = match crate_root.file_name().and_then(|name| name.to_str()) {
+            Some("lib.rs") => "autolib",
+            Some("main.rs") => "autobins",
+            _ => return false,
+        };
+        self.default_target_root_with_flags(crate_root, &[flag])
+    }
+
+    fn default_target_root_with_flags(&self, crate_root: &Path, required_flags: &[&str]) -> bool {
         let Some(root) = &self.root else {
             return false;
         };
@@ -151,13 +175,16 @@ impl MemberCrates {
             return false;
         }
         let manifest = &package.manifest;
-        let flag_off = |key: &str| {
+        let flag_untrusted = |key: &str| {
             manifest
                 .get("package")
                 .and_then(|package| package.get(key))
-                .is_some_and(|value| value.as_bool() != Some(true))
+                .is_some_and(|value| match value.as_bool() {
+                    Some(enabled) => !enabled && required_flags.contains(&key),
+                    None => true,
+                })
         };
-        if flag_off("autolib") || flag_off("autobins") {
+        if flag_untrusted("autolib") || flag_untrusted("autobins") {
             return false;
         }
         let names_path = |path: &toml::Value, default: &str| {
@@ -371,6 +398,57 @@ fn internal_path(
     }
     let path = source.get("path")?.as_str()?;
     Some(lexical(&base.join(path)))
+}
+
+impl MemberCrates {
+    /// Whether `cargo test` runs the doc examples of the library whose crate
+    /// root is `crate_root`, a root-relative `src/lib.rs` (#6648): the
+    /// manifest keeps that file as its default library root
+    /// ([`Self::is_default_target_root`]), leaves `[lib] doctest` on and
+    /// builds a Rust library a doctest can link (`lib`, `rlib` or
+    /// `proc-macro`, or no `crate-type`). Without manifest authority, or with
+    /// any value it cannot read, the answer is no.
+    pub(crate) fn runs_library_doctests(&self, crate_root: &Path) -> bool {
+        let Some(root) = &self.root else {
+            return false;
+        };
+        if !crate_root.ends_with(Path::new("src").join("lib.rs"))
+            || !self.is_default_target_root(crate_root)
+        {
+            return false;
+        }
+        let root = lexical(root);
+        let crate_root = lexical(&root.join(crate_root));
+        let Some(directory) = crate_root.parent().and_then(Path::parent) else {
+            return false;
+        };
+        let Some((package, _)) = nearest_package(&root, directory) else {
+            return false;
+        };
+        if package.directory != directory || !is_default_library_root(&package, &crate_root) {
+            return false;
+        }
+        let Some(lib) = package.manifest.get("lib") else {
+            return true;
+        };
+        let doctest_on = lib
+            .get("doctest")
+            .is_none_or(|value| value.as_bool() == Some(true));
+        let linkable = lib.get("crate-type").is_none_or(|kinds| {
+            kinds.as_array().is_some_and(|kinds| {
+                kinds.iter().any(|kind| {
+                    kind.as_str()
+                        .is_some_and(|kind| matches!(kind, "lib" | "rlib"))
+                })
+            })
+        });
+        // A proc-macro crate exports no plain `pub fn` an example could
+        // call, so it registers nothing.
+        let not_proc_macro = lib
+            .get("proc-macro")
+            .is_none_or(|value| value.as_bool() == Some(false));
+        doctest_on && linkable && not_proc_macro
+    }
 }
 
 /// One package manifest: its directory and parsed table.
@@ -640,6 +718,47 @@ mod tests {
         let default = MemberCrates::new(&root).is_default_target_root(Path::new(crate_root));
         let _ = std::fs::remove_dir_all(&root);
         Ok(default)
+    }
+
+    #[test]
+    fn unit_target_discovery_flags_do_not_change_shared_root_authority() -> Result<(), String> {
+        for (flags, lib, main, shared) in [
+            ("", true, true, true),
+            ("autolib = false\n", false, true, false),
+            ("autobins = false\n", true, false, false),
+            ("autolib = false\nautobins = false\n", false, false, false),
+            ("autolib = true\nautobins = true\n", true, true, true),
+            ("autolib = \"bad\"\n", false, false, false),
+            ("autobins = \"bad\"\n", false, false, false),
+            ("[lib]\npath = \"src/real.rs\"\n", false, false, false),
+            (
+                "[[test]]\nname = \"t\"\npath = \"src/lib.rs\"\n",
+                false,
+                false,
+                false,
+            ),
+        ] {
+            let manifest = format!("{PRICING}{flags}");
+            let root = temp_workspace("unit-target-root", &[("pricing/Cargo.toml", &manifest)])?;
+            let authority = MemberCrates::new(&root);
+            for (path, expected) in [("pricing/src/lib.rs", lib), ("pricing/src/main.rs", main)] {
+                assert_eq!(
+                    authority.is_default_unit_target_root(Path::new(path)),
+                    expected,
+                    "{path}: {flags}"
+                );
+                assert_eq!(
+                    authority.is_default_target_root(Path::new(path)),
+                    shared,
+                    "shared {path}: {flags}"
+                );
+            }
+            assert!(!authority.is_default_unit_target_root(Path::new("pricing/src/other.rs")));
+            assert!(!authority.is_default_unit_target_root(Path::new("pricing/tests/lib.rs")));
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        assert!(!MemberCrates::default().is_default_unit_target_root(Path::new("src/lib.rs")));
+        Ok(())
     }
 
     #[test]

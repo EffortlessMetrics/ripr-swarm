@@ -1,0 +1,30 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_predicate_returned_drop_plain/input
+
+Summary: 1 probe (1 exposed, 0 weak, 0 unrevealed, 0 no path); 1 of 1 finding unsuppressed
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+
+Start here:
+  State: no gap selected for repair
+  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation
+  File: ./src/lib.rs:15
+  Static exposure: exposed (severity: info, confidence 1.00)
+  Canonical gap: gap:rust:src/lib.rs:make:predicate_boundary:predicate:x==10
+  Changed behavior: x >= 10
+  Related test (1 of 2 matched rows): src/lib.rs:23 boundary
+  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
+    - reach yes: Related tests appear to reach make: boundary, far
+    - infection yes: Detected related test input at the changed boundary
+    - 11 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/rust_predicate_returned_drop_plain/input --diff <cwd>/fixtures/rust_predicate_returned_drop_plain/diff.patch --mode fast probe:src_lib.rs:predicate:bca747dd
+  ripr context --root <cwd>/fixtures/rust_predicate_returned_drop_plain/input --diff <cwd>/fixtures/rust_predicate_returned_drop_plain/diff.patch --mode fast --at probe:src_lib.rs:predicate:bca747dd
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:predicate:bca747dd --root <cwd>/fixtures/rust_predicate_returned_drop_plain/input` for the full gate's answer
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

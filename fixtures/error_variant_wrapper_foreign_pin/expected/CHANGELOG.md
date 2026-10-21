@@ -293,3 +293,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_variant_wrapper_foreign_pin (23)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_foreign_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_variant_wrapper_foreign_pin (24)
+
+Reason:
+RIPR-SPEC-0224: JSON evidence_path words a test with no assertion 'uses no oracle' (#8747)
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_foreign_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

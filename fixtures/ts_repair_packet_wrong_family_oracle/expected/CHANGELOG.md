@@ -251,3 +251,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_wrong_family_oracle (22)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_wrong_family_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_wrong_family_oracle (23)
+
+Reason:
+RIPR-SPEC-0224: unclassified-kind oracle not graded against this probe (#8388)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_wrong_family_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_wrong_family_oracle (24)
+
+Reason:
+RIPR-SPEC-0224: a row with no selected assertion reads 'uses no oracle' (#8388)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_wrong_family_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

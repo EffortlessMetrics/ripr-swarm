@@ -218,6 +218,7 @@ pub(crate) fn render_with_config(
     out.push_str("  \"summary\": ");
     summary_json(&mut out, output);
     out.push_str(",\n");
+    let mut analysis_outcome_close_at: Option<usize> = None;
     if let Some(outcome) = &output.analysis_outcome {
         let serialized = serde_json::to_string(outcome).unwrap_or_else(|error| {
             format!(
@@ -233,6 +234,9 @@ pub(crate) fn render_with_config(
         });
         out.push_str("    \"outcome\": ");
         out.push_str(&serialized);
+        // #9010: the findings bound is only known after the array renders, so
+        // remember where a `document_complete` disclosure splices in.
+        analysis_outcome_close_at = Some(out.len());
         out.push_str("\n  },\n");
     }
     out.push_str("  \"findings\": [\n");
@@ -292,6 +296,22 @@ pub(crate) fn render_with_config(
     } else {
         None
     };
+    // #9010: a budget-bounded document must not read as a complete outcome.
+    // `analysis_complete` stays the analysis verdict (no new outcome kind);
+    // this additive, only-when-bounded disclosure sits beside it so the shared
+    // incomplete-outcome predicate can fail closed on a findings prefix.
+    if let (Some(bound), Some(at)) = (findings_bound.as_ref(), analysis_outcome_close_at) {
+        // `at` was recorded before the findings array was appended, so it must
+        // sit on a char boundary inside the buffer.
+        debug_assert!(at <= out.len() && out.is_char_boundary(at));
+        out.insert_str(
+            at,
+            &format!(
+                ",\n    \"document_complete\": false,\n    \"findings_rendered\": {},\n    \"findings_total\": {}",
+                bound.rendered, bound.total
+            ),
+        );
+    }
     // Additive advisory field — emitted only when the caller passed
     // `--suppression-policy` (#1441). Absent otherwise, so existing goldens
     // and consumers without a policy see identical output.
@@ -503,6 +523,24 @@ pub(crate) fn render_with_config(
             1,
             "untracked_working_tree_source_paths",
             &output.untracked_working_tree_source_paths,
+            false,
+        );
+    }
+    // Additive advisory field: emitted when routed source or test files are
+    // gitignored in the live repository (#7467), on both committed-history
+    // and working-tree reads, since neither read analyzes them — and plain
+    // `git add -N` refuses them, so the human/GitHub notes name the force
+    // intent-to-add repair. Absent when the list is empty. This is the
+    // machine-readable form of the human/GitHub gitignored-files notes;
+    // without it a zero-finding JSON report reads as complete while routed
+    // files were silently excluded.
+    if !output.ignored_working_tree_source_paths.is_empty() {
+        out.push_str(",\n");
+        array_field(
+            &mut out,
+            1,
+            "ignored_working_tree_source_paths",
+            &output.ignored_working_tree_source_paths,
             false,
         );
     }
@@ -1128,14 +1166,16 @@ fn evidence_path_values(finding: &Finding) -> Vec<String> {
     );
 
     values.extend(finding.related_tests.iter().take(5).map(|test| {
-        let oracle_kind = display_label(test.oracle_kind.as_str());
         let mut value = format!(
-            "related test {}:{} {} uses {} {} oracle",
+            "related test {}:{} {} uses {}",
             crate::output::path::display_path(&test.file),
             test.line,
             test.name,
-            test.oracle_strength.as_str(),
-            oracle_kind
+            crate::output::related_test_miss::oracle_projection(
+                &test.oracle_strength,
+                &test.oracle_kind,
+                test.oracle.is_some(),
+            )
         );
         if let Some(oracle) = &test.oracle {
             value.push_str(&format!(": {oracle}"));
@@ -1162,10 +1202,6 @@ fn evidence_path_values(finding: &Finding) -> Vec<String> {
     );
 
     values
-}
-
-fn display_label(value: &str) -> String {
-    value.replace('_', " ")
 }
 
 fn strongest_related_test(finding: &Finding) -> Option<&RelatedTest> {
@@ -1721,6 +1757,7 @@ mod provenance_tests {
 
     fn fact(line: usize, value: &str, text: &str) -> ValueFact {
         ValueFact {
+            file: None,
             line,
             text: text.to_string(),
             value: value.to_string(),
@@ -1828,6 +1865,7 @@ mod harness_projection_tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             partial_scope: None,

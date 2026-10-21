@@ -77,6 +77,19 @@ impl ChangedFile {
         pairs
     }
 
+    /// Replacement blocks whose removed and added runs differ in length and
+    /// that no removed line interrupts, as the added run's new-side lines and
+    /// its removed lines. [`Self::replacement_counterparts`] pairs nothing in
+    /// such a block; a caller that judges the block as a whole (a rewrap of
+    /// one statement) reads it here.
+    pub(crate) fn uneven_replacement_blocks(&self) -> Vec<(Vec<usize>, Vec<&ChangedLine>)> {
+        self.replacement_runs()
+            .into_iter()
+            .filter(|run| !run.interrupted && run.removed.len() != run.len())
+            .map(|run| ((run.start..=run.end).collect(), run.removed))
+            .collect()
+    }
+
     /// Every added line's counterpart for a caller that compares an added
     /// line with the old line it replaced, keyed by the added line's
     /// new-side line. An even block pairs by position, as
@@ -138,6 +151,138 @@ impl ChangedFile {
         pairs
     }
 
+    /// Added lines whose trimmed text is byte-identical to one removed line of
+    /// the same replacement run, as `(added new-side line, removed old-side
+    /// line)`. Git reports an unchanged or moved line inside a rewritten block
+    /// as both removed and added; it is not an edit. Fail-closed: the text must
+    /// occur exactly once among the run's added lines and exactly once among
+    /// the removed lines recorded in it, so a repeated line never pairs by
+    /// guess, and a blank line never pairs.
+    pub(crate) fn identical_replacement_lines(&self) -> Vec<(usize, usize)> {
+        let added_at: BTreeMap<usize, &ChangedLine> = self
+            .added_lines
+            .iter()
+            .map(|line| (line.new_side_line, line))
+            .collect();
+        let mut pairs = Vec::new();
+        for run in self.replacement_runs() {
+            let removed: Vec<&ChangedLine> = run
+                .removed_by_coordinate
+                .iter()
+                .flat_map(|(_, lines)| lines.iter().copied())
+                .collect();
+            let added: Vec<&ChangedLine> = (run.start..=run.end)
+                .filter_map(|line| added_at.get(&line).copied())
+                .collect();
+            // (added position, removed position, new-side line, old line)
+            let mut candidates: Vec<(usize, usize, usize, usize)> = Vec::new();
+            for (added_position, line) in added.iter().enumerate() {
+                let text = line.text.trim();
+                // Punctuation-only lines (`}`, `);`) carry no identity.
+                if !text.chars().any(char::is_alphanumeric) {
+                    continue;
+                }
+                // Continuation lines (`.unwrap_or_default();`, `&& ok`, `?`)
+                // take their meaning from the previous statement, so a move
+                // between statements changes behavior without changing text.
+                if text.starts_with(['.', '?', '&', '|', '+', '-', '*', '/', '=', '<', '>']) {
+                    continue;
+                }
+                // Leading whitespace is kept: inside a multiline string it is
+                // content, so a re-indented string line is an edit.
+                let exact = line.text.trim_end_matches('\r');
+                let added_count = added
+                    .iter()
+                    .filter(|l| l.text.trim_end_matches('\r') == exact)
+                    .count();
+                let mut matches = removed
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, l)| l.text.trim_end_matches('\r') == exact);
+                let (1, Some((removed_position, old)), None) =
+                    (added_count, matches.next(), matches.next())
+                else {
+                    continue;
+                };
+                // The same text under a different opener is a different
+                // construct (`Packet {` field vs `where` bound).
+                if enclosing_opener(&added, added_position)
+                    == enclosing_opener(&removed, removed_position)
+                {
+                    candidates.push((
+                        added_position,
+                        removed_position,
+                        line.new_side_line,
+                        old.line,
+                    ));
+                }
+            }
+            // A comment or string boundary in the run can turn a live line
+            // into prose (or back) without changing its text, and the text
+            // alone cannot say which side of the boundary it sits on.
+            let crosses_prose = |text: &str| {
+                text.contains("/*")
+                    || text.contains("*/")
+                    || text.chars().filter(|&c| c == '"').count() % 2 == 1
+            };
+            if added.iter().any(|l| crosses_prose(&l.text))
+                || removed.iter().any(|l| crosses_prose(&l.text))
+            {
+                continue;
+            }
+            // Fail-closed: a reorder (`validate; commit` -> `commit; validate`,
+            // swapped arguments) is an edit, so every pair must keep its order.
+            if candidates.windows(2).any(|w| w[0].1 >= w[1].1) {
+                continue;
+            }
+            // A line that opens or closes a block and has no counterpart moves
+            // a boundary, so an identical neighbour may now sit in another block.
+            let paired_added: BTreeSet<usize> = candidates.iter().map(|c| c.0).collect();
+            let paired_removed: BTreeSet<usize> = candidates.iter().map(|c| c.1).collect();
+            let unbalanced = |text: &str| {
+                text.chars().fold(0i32, |net, c| match c {
+                    '{' | '(' | '[' => net + 1,
+                    '}' | ')' | ']' => net - 1,
+                    _ => net,
+                }) != 0
+            };
+            if added
+                .iter()
+                .enumerate()
+                .any(|(i, l)| !paired_added.contains(&i) && unbalanced(&l.text))
+                || removed
+                    .iter()
+                    .enumerate()
+                    .any(|(i, l)| !paired_removed.contains(&i) && unbalanced(&l.text))
+            {
+                continue;
+            }
+            // An identical call that crosses an edited statement changed its
+            // order relative to that statement (`update(1); report();` ->
+            // `report(); update(2);`), so unpaired removed lines before a pair
+            // with unpaired added lines after it (or the reverse) is an edit.
+            let unpaired = |paired: &BTreeSet<usize>, range: std::ops::Range<usize>| {
+                range.filter(|i| !paired.contains(i)).count()
+            };
+            // Statements, call arguments and match arms are order-sensitive;
+            // only a `field: value,` line may move within its literal.
+            if candidates.iter().any(|c| {
+                if is_field_line(added[c.0].text.trim()) {
+                    return false;
+                }
+                let removed_before = unpaired(&paired_removed, 0..c.1);
+                let removed_after = unpaired(&paired_removed, c.1 + 1..removed.len());
+                let added_before = unpaired(&paired_added, 0..c.0);
+                let added_after = unpaired(&paired_added, c.0 + 1..added.len());
+                (removed_before > 0 && added_after > 0) || (removed_after > 0 && added_before > 0)
+            }) {
+                continue;
+            }
+            pairs.extend(candidates.iter().map(|c| (c.2, c.3)));
+        }
+        pairs
+    }
+
     /// The file's contiguous added runs that have removed lines recorded at
     /// their start. The diff parser gives every removed line of a block the
     /// new-side coordinate where the block's added run starts.
@@ -190,20 +335,72 @@ impl ChangedFile {
         runs
     }
 
-    /// The new-side line where the contiguous added run holding this line
-    /// starts.
-    pub(crate) fn added_run_start(&self, added_new_side_line: usize) -> usize {
-        let mut run_start = added_new_side_line;
-        while run_start > 0
-            && self
-                .added_lines
-                .iter()
-                .any(|line| line.new_side_line == run_start - 1)
-        {
-            run_start -= 1;
+    /// Map from each added new-side line to the start of its contiguous run.
+    /// Built in one pass over the file's added coordinates, so a caller
+    /// visiting every added line costs O(n log n), not a scan of every added
+    /// line at every step of the run.
+    pub(crate) fn added_run_starts(&self) -> BTreeMap<usize, usize> {
+        let added: BTreeSet<usize> = self
+            .added_lines
+            .iter()
+            .map(|line| line.new_side_line)
+            .collect();
+        let mut starts = BTreeMap::new();
+        let mut lines = added.iter().copied().peekable();
+        while let Some(start) = lines.next() {
+            let mut end = start;
+            starts.insert(start, start);
+            while lines.next_if(|&next| next == end + 1).is_some() {
+                end += 1;
+                starts.insert(end, start);
+            }
         }
-        run_start
+        starts
     }
+
+    /// The new-side line where the contiguous added run holding this line
+    /// starts. Callers visiting every added line of a file should build
+    /// [`Self::added_run_starts`] once and use [`Self::added_run_start_from`].
+    #[cfg(test)]
+    pub(crate) fn added_run_start(&self, added_new_side_line: usize) -> usize {
+        Self::added_run_start_from(&self.added_run_starts(), added_new_side_line)
+    }
+
+    /// Look up a run start in a map from [`Self::added_run_starts`]. A line
+    /// that is not itself added still walks back through an immediately
+    /// preceding contiguous run, matching the previous per-step scan.
+    pub(crate) fn added_run_start_from(
+        starts: &BTreeMap<usize, usize>,
+        added_new_side_line: usize,
+    ) -> usize {
+        starts
+            .get(&added_new_side_line)
+            .copied()
+            .or_else(|| {
+                added_new_side_line
+                    .checked_sub(1)
+                    .and_then(|previous| starts.get(&previous).copied())
+            })
+            .unwrap_or(added_new_side_line)
+    }
+}
+
+/// `name: value,` struct-literal field line; the one kind of line that may
+/// move within its literal without changing meaning.
+fn is_field_line(text: &str) -> bool {
+    let rest = text.trim_start_matches(|c: char| c.is_alphanumeric() || c == '_');
+    rest.len() < text.len() && rest.starts_with(": ") && text.ends_with(',')
+}
+
+/// The nearest earlier line of `lines` that opens a block or a bound list
+/// (ends with `{`, `(` or `[`, or is a `where` clause), trimmed. Two equal
+/// lines are only the same line when they sit under the same opener.
+fn enclosing_opener<'a>(lines: &[&'a ChangedLine], position: usize) -> Option<&'a str> {
+    lines[..position].iter().rev().find_map(|line| {
+        let text = line.text.trim();
+        (text.ends_with(['{', '(', '[']) || text == "where" || text.starts_with("where "))
+            .then_some(text)
+    })
 }
 
 /// One contiguous added run and the removed lines recorded inside it.
@@ -438,6 +635,34 @@ mod tests {
         assert_eq!(text(4), Some("a"));
         assert_eq!(text(5), Some("b"));
         assert_eq!(changed.added_run_start(5), 4);
+    }
+
+    #[test]
+    fn added_run_start_on_a_long_run_is_bounded() {
+        // One contiguous 20_000-line added run: the start map is built once
+        // and every lookup is log time. The previous walk scanned every
+        // added line at every step of the run, once per call.
+        let n = 20_000;
+        let changed = ChangedFile {
+            path: PathBuf::from("src/long.rs"),
+            added_lines: (1..=n).map(|i| line(i, i, "x();")).collect(),
+            removed_lines: Vec::new(),
+        };
+        let started = std::time::Instant::now();
+        let starts = changed.added_run_starts();
+        assert_eq!(starts.len(), n);
+        for i in 1..=n {
+            assert_eq!(starts.get(&i).copied(), Some(1));
+            assert_eq!(ChangedFile::added_run_start_from(&starts, i), 1);
+        }
+        assert_eq!(changed.added_run_start(n), 1);
+        assert_eq!(changed.added_run_start(1), 1);
+        // Walking back from the first line after the run still lands at the
+        // run start; a further gap does not.
+        assert_eq!(ChangedFile::added_run_start_from(&starts, n + 1), 1);
+        assert_eq!(changed.added_run_start(n + 2), n + 2);
+        assert_eq!(changed.added_run_start(0), 0);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
     }
 
     #[test]

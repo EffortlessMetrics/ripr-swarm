@@ -1038,6 +1038,59 @@ mod tests {
         weakly_gripped_entry_for_seam(boundary_seam())
     }
 
+    #[test]
+    fn parsed_match_arm_geometry_keeps_nested_ownership_and_head_ambiguity() -> Result<(), String> {
+        use crate::analysis::{RaRustSyntaxAdapter, RustIndex, RustSyntaxAdapter};
+        let path = Path::new("src/lib.rs");
+        let source = "pub fn route(x: Option<Option<u8>>) -> u8 {\n    match x {\n        Some(inner) => match inner {\n            Some(v) =>\n                v,\n            _ => 0,\n        },\n        _ => 1,\n    }\n}\n";
+        let facts = RaRustSyntaxAdapter.summarize_file(path, source)?;
+        let mut index = RustIndex::default();
+        index.extend_functions(facts.functions.clone());
+        index.insert_file_only(path.to_path_buf(), facts);
+        let candidates: Vec<_> =
+            crate::analysis::inventory_seams_from_index(&[path.to_path_buf()], &index)
+                .into_iter()
+                .filter(|s| s.kind() == SeamKind::MatchArm)
+                .map(weakly_gripped_entry_for_seam)
+                .collect();
+        assert_eq!(candidates.len(), 6, "two match heads and four actual arms");
+        let gap = FindingCanonicalGap {
+            id: "geometry-control".into(),
+            language: "rust".into(),
+            file: "src/lib.rs".into(),
+            owner: "route".into(),
+            behavior_kind: "match_arm".into(),
+            probe_kind: "match_arm".into(),
+            normalized_discriminator: String::new(),
+        };
+        let mut finding =
+            producer_gap_finding("geometry", &gap.id, &gap.file, &gap.owner, "match_arm");
+        finding.probe.family = crate::domain::ProbeFamily::MatchArm;
+        for (line, anchor) in [(5, 4), (6, 6), (8, 8)] {
+            finding.probe.location.line = line;
+            let qualified: Vec<_> = candidates
+                .iter()
+                .filter(|entry| producer_candidate_qualifies(entry, &finding, &gap, &candidates))
+                .map(|entry| entry.seam.display_line())
+                .collect();
+            assert_eq!(
+                qualified,
+                [anchor],
+                "body line {line} must name only its innermost arm"
+            );
+        }
+        // The nested `match` head is line-only on the outer arm's own line;
+        // it remains an ambiguous same-kind claimant rather than fabricated precision.
+        finding.probe.location.line = 3;
+        assert!(!candidates.iter().any(|entry| producer_candidate_qualifies(
+            entry,
+            &finding,
+            &gap,
+            &candidates
+        )));
+        Ok(())
+    }
+
     /// #7177: a weakly-gripped predicate boundary at `display_line`, the
     /// twin-seam collision control: same file/owner/kind, different line.
     fn twin_boundary_entry(display_line: usize) -> ClassifiedSeam {
@@ -1135,6 +1188,7 @@ mod tests {
         let mut entry = weakly_gripped_entry();
         entry.evidence.discriminate = stage(StageState::Weak);
         entry.evidence.observed_values = vec![ValueFact {
+            file: None,
             line: 120,
             text: "discounted_total(50, 100)".to_string(),
             value: "50".to_string(),
@@ -2090,6 +2144,8 @@ mod tests {
             non_claims: Vec::new(),
             after: None,
             last_after_refusal: None,
+            after_refusal_count: 0,
+            after_refusal_history: Vec::new(),
             terminal_artifacts: Vec::new(),
             store: None,
         })

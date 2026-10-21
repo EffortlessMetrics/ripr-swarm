@@ -359,6 +359,8 @@ fn durable_attempt_document(
     });
     let mut limitations = manifest.limitations.clone();
     limitations.extend(route_limitations);
+    // #8766: a restart the shared repair gate refuses is named as by-hand work.
+    limitations.extend(selected.restart_withheld.clone());
     json!({
         "schema_version": REPAIR_ATTEMPT_SCHEMA_VERSION,
         "attempt_id": manifest.repair_attempt_id.as_str(),
@@ -398,9 +400,9 @@ fn unknown_attempt(attempt_id: &str, root_present: bool) -> AttemptFailure {
     let (detail, recovery) = if root_present {
         (
             format!(
-                "no repair attempt or receipt `{attempt_id}` exists in this session or in the durable store of this workspace root"
+                "no repair attempt or receipt `{attempt_id}` is held by this server session, and no durable attempt manifest in this workspace root's store has that identity. Transactions created by ripr_prepare_repair live only in this server's memory (they are never written to the durable store), so one from an earlier server process or past the 64-entry superseded bound is gone"
             ),
-            "prepare the item with ripr_prepare_repair, or discover durable attempts with ripr_list_repair_attempts",
+            "if the id came from ripr_prepare_repair, call ripr_refresh and ripr_prepare_repair again to create a current transaction; durable attempts come from the CLI repair workflow and are listed by ripr_list_repair_attempts",
         )
     } else {
         (
@@ -447,9 +449,9 @@ fn load_durable_attempt(
     Err(AttemptFailure::new(
         CODE_ATTEMPT_NOT_FOUND,
         format!(
-            "no repair attempt `{attempt_id}` exists in the durable store of this workspace root"
+            "no durable repair attempt manifest `{attempt_id}` exists in this workspace root's store. Transactions created by ripr_prepare_repair are in-memory session state and never appear in the durable store"
         ),
-        "discover durable attempt ids with ripr_list_repair_attempts, then retry the selected id",
+        "discover durable attempt ids with ripr_list_repair_attempts, then retry the selected id; for an id from ripr_prepare_repair, call ripr_refresh and ripr_prepare_repair again",
     ))
 }
 
@@ -669,10 +671,14 @@ impl WorkspaceSession {
                 "repair_packet_ready": false,
                 "ineligibility": {
                     "reason": reason,
-                    "detail": readiness.reason(),
+                    "detail": readiness.detail(),
                 },
                 "attempt": Value::Null,
-                "recovery": "re-run ripr_refresh after the producer establishes the missing fact; ripr_prepare_repair never guesses a missing field",
+                "recovery": if reason.starts_with("seam_") {
+                    "the shared repair gate refused this seam; ripr_prepare_repair does not override it. Change the code or tests, then re-run ripr_refresh"
+                } else {
+                    "re-run ripr_refresh after the producer establishes the missing fact; ripr_prepare_repair never guesses a missing field"
+                },
                 "limitations": [
                     "a route that lacks a safe target, discriminator, fix site, or command stays a typed limitation",
                     "no attempt was created: the tool must not create a misleading transaction",
@@ -980,6 +986,7 @@ mod tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            ignored_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
             partial_scope: None,
@@ -1001,6 +1008,7 @@ mod tests {
             workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            desired_base: None,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -1016,6 +1024,7 @@ mod tests {
             workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            desired_base: None,
             superseded_order: std::collections::VecDeque::new(),
         };
         for index in 0..MAX_SUPERSEDED_TOMBSTONES + 10 {
@@ -1047,6 +1056,7 @@ mod tests {
             workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            desired_base: None,
             superseded_order: std::collections::VecDeque::new(),
         };
         let total = MAX_SUPERSEDED_TOMBSTONES + 10;

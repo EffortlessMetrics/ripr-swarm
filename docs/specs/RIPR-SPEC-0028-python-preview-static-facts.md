@@ -281,6 +281,40 @@ Test-name and fixture-name proximity may provide a suggested repair location,
 but these links must be marked uncertain, must keep weak reachability, and must
 not promote unrelated assertions to strong revealability.
 
+A top-level helper function that no test calls itself is related, with the
+weak `helper_owner_call` relation, to a test that calls a same-module caller of
+it (`Version.__init__` reaching `_validate_epoch`), following bare-name calls
+for at most three hops in the helper's file. The relation is uncertain,
+carries no oracle, and never reaches `exposed`; a duplicate helper name, a
+parameter or local rebinding of the name, an attribute call, and comment or
+string text make no edge, nor does a caller wrapped by any decorator
+(including one whose name cannot be read, or a call form such as
+`@property(x)`) other than a bare `classmethod`, `staticmethod` or
+`property`, alone or combined; an `async def` caller is allowed (#4568).
+Known limits, all weak-only: a module-level rebinding such as
+`helper = wrap(helper)` is not detected, and a call inside a nested `def` or
+lambda counts as an edge of the enclosing owner.
+
+A pytest test that names a module-level `@pytest.fixture` function (in its own
+module or a `conftest.py` up its directory chain, nearest wins) as a parameter
+is related, with the weak `fixture_owner_call` relation, when that fixture's
+body calls the owner by the rules a test body uses (#4563). One hop only; a
+renamed fixture (`name=`) and a test that rebinds the parameter name make no
+edge, nor does a parameter that a pytest `parametrize` names as an argname,
+read syntactically (variable argvalues, `pytest.param(marks=...)` and
+unreadable `indirect` values still count) unless `indirect=` is the literal
+`True` or a literal list naming it. A class-level `parametrize` (on the test's
+class or a local ancestor) counts the same way. When a file defines the same
+fixture name twice the last definition wins, and the analyzer attaches at most
+eight fixture definitions to one test (an implementation limit, not a pytest
+rule). A later ordinary `def` of the same name replaces the fixture and
+is not attached. Not covered: module-level or class-body
+`pytestmark = pytest.mark.parametrize(...)`, aliased or bare parametrize forms (`import pytest as pt`, `from pytest.mark
+import parametrize`), fixtures defined inside a class, `mock` or rebinding
+inside the fixture body, parameters with defaults or supplied by `@patch`,
+`autouse` fixtures and fixtures of fixtures. The relation is uncertain,
+carries no oracle, and never reaches `exposed`.
+
 A Python test is related to an owner only when the test references the owner.
 Same-stem file, test-name, and fixture-name proximity only rank a test that
 already references the owner without a recognized call shape; they never
@@ -306,7 +340,18 @@ comments, strings, and docstrings:
   `module.Class(...)`) relates `__init__`, `__new__`, and `__post_init__` as
   `constructor_call`, an oracle-eligible relation; for any other dunder it
   relates as `dunder_protocol`, which stays uncertain because syntax cannot
-  bind `obj[key] = value` or `a == b` to the constructed instance. A dunder
+  bind `obj[key] = value` or `a == b` to the constructed instance. The one
+  exception is a builtin protocol entry applied to a sole argument bound to the
+  owner class (`reversed(Class(0))` for `__reversed__`, likewise `len`, `bool`,
+  `iter`, `next`, `hash`, `str`, `repr`): it relates as `protocol_entry_call`,
+  an oracle-eligible relation, and only when an assertion takes the entry as an
+  asserted operand (an unasserted entry elsewhere in the body does not relate).
+  The entry, the `list`/`tuple` wrapper and the receiver must keep their
+  bindings: a builtin shadowed by an import, a module or test-local binding
+  (including tuple and annotated targets), or a receiver rebound by a chained,
+  bracketed, loop, `with`, walrus or augmented target, or not the whole bound
+  value, is not credited. Extra, keyword, starred or trailing-comma
+  arguments are not the entry and fall back to `dunder_protocol`. A dunder
   owner with no related test, in a workspace whose tests import its class,
   its module, or anything from a package above it, reads `static_unknown`
   with the `dynamic_dispatch` limit instead of `no_static_path`: the adapter
@@ -555,6 +600,13 @@ read-out: the boolean the classifier uses is derived from the surfaced
   of the same name inside the test replaces the earlier binding, and the
   test's own `import pkg.mod as alias` is not a rebinding of `alias`. Those calls also bind boundary activation, so the
   relational-boundary gate still applies to them.
+  `strong_oracle_observes_owner_protocol_entry` (`direct`) credits a dunder
+  method owner whose strong oracle takes the builtin protocol entry on a
+  receiver bound to its class as an asserted operand
+  (`list(reversed(Range(0))) == []`), directly or under `list`/`tuple` only.
+  `sorted`, `set` and `frozenset` erase the ordering the dunder determines and
+  are not transparent here; any other wrapper may ignore the entry
+  (`always_true(reversed(Range(0)))` stays `orthogonal`) (#8563).
   `strong_oracle_observes_changed_effect_channel` (`direct`) credits a
   changed write (`print`, a file write, a call on a passed collaborator, or
   a `self` field) whose strong oracle compares the channel that write
@@ -740,6 +792,34 @@ Expected static evidence:
 - a related test that reaches `century_index` without observing the
   changed return remains a gap.
 
+Typing markers are not decorator indirection:
+
+```python
+from typing import final, override
+
+class Child(Base):
+    @override
+    def rate(self, n):
+        return n + 1
+```
+
+Expected static evidence:
+
+- `@final`, `@override` and `@no_type_check` written as plain names (and
+  `typing.` / `typing_extensions.` qualified or aliased spellings; the
+  `typing_extensions` spelling covers `final` and `override` only) return the
+  function unchanged, so the owner emits no `decorator_indirection`;
+- a rebound receiver, a competing alias, a local same-named decorator, a
+  marker written as a call (`@final(wrapper)`), a file where the marker name
+  appears anywhere other than a `@name` decorator line or a `typing` /
+  `typing_extensions` import (a `def`, `class`, assignment, tuple or loop
+  target, nested or class-scope rebind, `try`/`except` import fallback), a
+  star import from another module, or any decorator in the file that is not
+  a plain dotted name (`@registry["x"]`, `@(lambda f: g)`) stays
+  `decorator_indirection`. This is a lexical fail-closed screen, not a scope
+  analysis, so an unrelated mention of the name (a docstring, a parameter, a `typing.` annotation for the qualified spelling) or a trailing comment on a decorator line also keeps the limit, and a rebind with no literal identifier (`globals().update(...)`, `exec`, a Unicode-normalised spelling) is not seen; a decorator line must be a dotted name or one call closing at the end of the line, so a subscripted, conditional, lambda, triple-quoted or multi-line call decorator withholds trust for the whole file (parentheses inside single-line string literals are skipped), as does a lone carriage-return line break (the lexical screen assumes the parser's pre-3.12 string lexing); `typing.overload`, `abc.abstractmethod`,
+  `contextlib.contextmanager` and `property` also stay limited.
+
 Simple route decorator repair:
 
 ```python
@@ -768,7 +848,9 @@ framework-specific selectors and relate only to the referenced owner.
 Functools memoization transparency (`lru_cache` / `cache` /
 `cached_property`) is covered by
 `crates/ripr/src/analysis/language/python/static_limits.rs` tests and
-`fixtures/python_functools_memoization_not_indirection`. Arbitrary
+`fixtures/python_functools_memoization_not_indirection`. Typing-marker
+transparency (`final` / `override` / `no_type_check`) is covered by the
+`typing_marker_*` tests in the same file. Arbitrary
 decorators such as `@retry` remain limited via
 `fixtures/python_decorator_indirection_limit`.
 
@@ -805,6 +887,15 @@ suggested test file when the repair route carries a bare test name.
 The single-literal expected-value rule (including one triple-quoted string,
 and excluding compounds and adjacent-string concatenation) is covered by
 `crates/ripr/src/analysis/language/python/tests.rs::classify_change_never_restates_changed_expression_as_discriminator`.
+
+The pre-parse nesting budget (`parse_budget.rs`, #4109) counts brackets inside
+an open string literal so a deeply bracketed literal still declines, but a
+closed literal cannot leave a bracket open for the code after it. Unbalanced
+brackets in separate literals such as `"\x1b[31m"` therefore do not accumulate
+into file nesting (#8561): covered by
+`crates/ripr/src/analysis/language/python/parse_budget.rs::tests::unbalanced_brackets_in_separate_strings_do_not_accumulate`
+(including real nesting after the table still declining) and the CLI test
+`crates/ripr/tests/python_parse_nesting.rs::unbalanced_bracket_string_literals_do_not_trip_the_nesting_budget`.
 
 Package re-export reach is covered end to end, in diff and repo mode, by
 `crates/ripr/src/analysis/language/python/reexport_tests.rs`: attribute calls
