@@ -223,6 +223,7 @@ def decide(
     result = {
         "status": "admitted",
         "reason": "cut_inactive",
+        "detail": "",
         "cut_state": state,
         "cut_generation": packet["generation"],
         "pr": pr_number,
@@ -237,14 +238,34 @@ def decide(
         return result
 
     if actual_head != expected_head:
-        return {**result, "status": "refused", "reason": "cut_candidate_head_moved"}
+        return {
+            **result,
+            "status": "refused",
+            "reason": "cut_candidate_head_moved",
+            "detail": f"PR head is {actual_head or 'missing'} but admission was requested for {expected_head}; refresh the exact PR/head evidence and retry",
+        }
     if cut_commit is None:
-        return {**result, "status": "refused", "reason": "cut_commit_missing"}
+        return {
+            **result,
+            "status": "refused",
+            "reason": "cut_commit_missing",
+            "detail": "the active hard-cut packet binds a cut commit that could not be read; refresh the exact base evidence and retry",
+        }
     cut_sha, cut_tree, _ = _commit_identity(cut_commit, "cut_commit")
     if packet["observed_main"]["sha"] != cut_sha:
-        return {**result, "status": "refused", "reason": "cut_sha_mismatch"}
+        return {
+            **result,
+            "status": "refused",
+            "reason": "cut_sha_mismatch",
+            "detail": f"packet observed_main.sha is {packet['observed_main']['sha']} but the read cut commit is {cut_sha}",
+        }
     if packet["observed_main"]["tree"] != cut_tree:
-        return {**result, "status": "refused", "reason": "cut_tree_mismatch"}
+        return {
+            **result,
+            "status": "refused",
+            "reason": "cut_tree_mismatch",
+            "detail": f"packet observed_main.tree is {packet['observed_main']['tree']} but the read cut commit tree is {cut_tree}",
+        }
     # A packet-only PR is the sole way out of a freeze, so it is admitted even
     # after main moved (a second control commit or an unadmitted push);
     # otherwise the freeze could only be cleared by bypassing protection.
@@ -255,8 +276,19 @@ def decide(
     # The active packet lives in one reviewed control commit immediately after
     # the product cut. Any further main movement makes its first parent differ.
     if not base_parents or base_parents[0] != cut_sha:
-        return {**result, "status": "refused", "reason": "cut_main_moved"}
-    return {**result, "status": "refused", "reason": "cut_frozen"}
+        parent = base_parents[0] if base_parents else "missing"
+        return {
+            **result,
+            "status": "refused",
+            "reason": "cut_main_moved",
+            "detail": f"base first parent is {parent} but the packet cut is {cut_sha}; main moved after the cut and the active freeze refuses ordinary qualification",
+        }
+    return {
+        **result,
+        "status": "refused",
+        "reason": "cut_frozen",
+        "detail": "the active hard-cut freeze refuses ordinary qualification; only a packet-only #5114/#2766 control update may qualify before #1609",
+    }
 
 
 def fixture_packet(state: str = "inactive") -> dict[str, Any]:
@@ -320,6 +352,8 @@ def self_test() -> None:
     )
     active = fixture_packet("active")
     assert result(active)["reason"] == "cut_frozen"
+    assert "hard-cut freeze" in result(active)["detail"]
+    assert "cut commit" in result(active, cut_commit=None)["detail"]
     assert (
         result(active, pr_files=[{"filename": PACKET_PATH}])["reason"]
         == "cut_packet_control_update"
@@ -379,7 +413,7 @@ def self_test() -> None:
     else:
         raise AssertionError("deferred row must fail")
 
-    print("release-cut-admission self-test: 12 controls passed")
+    print("release-cut-admission self-test: 14 controls passed")
 
 
 def load_json(path: Path, label: str) -> Any:

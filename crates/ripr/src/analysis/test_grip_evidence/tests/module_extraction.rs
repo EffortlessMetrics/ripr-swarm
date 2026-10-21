@@ -674,6 +674,7 @@ fn module_extraction_repair_card_keeps_indexed_unit_target() -> Result<(), Strin
             subject: RepairCardSubject {
                 seam_id: entry.seam.id().as_str().to_string(),
                 canonical_gap_id: readiness.canonical_gap_id.clone(),
+                seam_content_gap_id: readiness.canonical_gap_id.clone(),
                 finding_id: None,
             },
             instruction: &instruction,

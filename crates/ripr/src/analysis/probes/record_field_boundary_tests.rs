@@ -543,3 +543,42 @@ fn lexical_fallback_names_the_whole_array_line() -> Result<(), String> {
     }
     Ok(())
 }
+
+const ENUM_SOURCE: &str = "pub enum DecodeError {\n    InvalidByte(usize, u8),\n    InvalidLastSymbol {\n        offset: usize,\n        byte: u8,\n    },\n    Short { offset: usize },\n}\npub fn bad(offset: usize) -> DecodeError {\n    DecodeError::InvalidLastSymbol {\n        offset: offset,\n        byte: 0,\n    }\n}\n";
+
+/// #8999: an enum variant's named-field declaration is type syntax; it
+/// stays one visible `static_unknown` probe and never `field_construction`.
+#[test]
+fn enum_variant_field_declarations_are_not_field_construction() -> Result<(), String> {
+    for (line, expression) in [
+        (4, "offset: usize,"),
+        (5, "byte: u8,"),
+        (7, "Short { offset: usize },"),
+    ] {
+        let probes = probes_at(ENUM_SOURCE, line)?;
+        assert!(
+            field_construction_expressions(&probes).is_empty(),
+            "line {line} declaration seeded a construction: {probes:?}"
+        );
+        assert_eq!(probes.len(), 1, "line {line}: {probes:?}");
+        assert_eq!(probes[0].family, ProbeFamily::StaticUnknown);
+        assert_eq!(probes[0].expression, expression);
+    }
+    Ok(())
+}
+
+/// #8999 negative control: the same field names constructing the variant in
+/// a function body still seed `field_construction`.
+#[test]
+fn enum_variant_construction_still_seeds_field_construction() -> Result<(), String> {
+    let probes = probes_at(ENUM_SOURCE, 11)?;
+    assert!(
+        probes.iter().any(|probe| {
+            probe.family == ProbeFamily::FieldConstruction
+                && probe.location.line == 11
+                && probe.expression.contains("offset: offset")
+        }),
+        "variant construction lost its field probe: {probes:?}"
+    );
+    Ok(())
+}

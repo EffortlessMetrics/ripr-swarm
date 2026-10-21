@@ -99,8 +99,9 @@ read-only and without execution authority (ADR 0022):
   facts on one canonical item of the current completed snapshot. The
   evaluation is a fail-closed conjunction computed at snapshot commit time:
   candidate actionability (`#3281` predicate), an established discriminator
-  (non-empty normalized discriminator, no producer-named missing
-  discriminator), and an established fix site (a strong-oracle,
+  (non-empty normalized discriminator; a producer-named missing
+  discriminator is accepted only on a `weakly_exposed` finding, where the
+  named value is the repair target), and an established fix site (a strong-oracle,
   high-confidence directly-related test on a shared edit-cage test-surface
   path). The first failing gate is the typed reason (`not_candidate_actionable`,
   `missing_discriminator`,
@@ -108,8 +109,12 @@ read-only and without execution authority (ADR 0022):
   `fix_site_not_established`,
   `fix_site_not_test_surface`). A producer that names its missing
   discriminators (activation `missing_discriminators`, or a
-  `Missing discriminator value:` entry in `missing`) refuses as
-  `missing_discriminator`. A finding whose canonical gap the producer
+  `Missing discriminator value:` entry in `missing`) on any class other
+  than `weakly_exposed` refuses as `missing_discriminator`; on a
+  `weakly_exposed` finding with a populated canonical gap the named value
+  is the discriminator the repair adds to the existing weak test, so the
+  discriminator gate passes (#8717) and the fix-site gate and the shared
+  seam validator below still decide, never the missing value alone. A finding whose canonical gap the producer
   withheld behind the finding's own typed static limitation refuses as
   `static_limitation` — the per-finding limitation, not the language,
   explains the missing fact (Python omits the canonical gap exactly when a
@@ -244,11 +249,21 @@ read-only and without execution authority (ADR 0022):
   `discriminator_not_populated_for_language` in both the gap document's
   readiness block (which agrees with its own `discriminator_availability`
   block) and the negative `ripr_prepare_repair` document, while a
-  producer-named missing discriminator keeps the `missing_discriminator`
-  refusal and a finding whose gap the producer withheld behind its own
+  producer-named missing discriminator on a non-weak class keeps the
+  `missing_discriminator` refusal and a finding whose gap the producer withheld behind its own
   typed static limitation refuses as `static_limitation`, never as a
   language-wide gap. Flipping a refusal back to a contradiction or a
   misattribution must fail these controls.
+- #8717 weak-discriminator controls: a `weakly_exposed` finding that names
+  its missing discriminator with a populated canonical gap and a directly
+  related fix site is finding-level ready, while the same named value on
+  every non-weak class, a weak finding without a canonical gap, and a weak
+  finding without a fix site stay refused with their typed reasons. The
+  real stdio control on the `is_adult` weak-boundary fixture asserts the
+  boundary item is repair-ready only when `ripr repair` admits its seam,
+  never an item the CLI refuses. Restoring the blanket
+  `missing_discriminator` refusal or dropping the class condition must fail
+  these controls.
 - Vocabulary and projection controls: the receipt-status mapping over the
   shared receipt reading and subordinate presence lifecycle. Producer-backed
   controls cover complete improved, changed, regressed and unchanged, typed
