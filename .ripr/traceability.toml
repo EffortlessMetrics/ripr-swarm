@@ -16351,6 +16351,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/guard_entry_guard.rs::reads_destructured_options_parameters",
   "crates/ripr/src/analysis/language/typescript/guard_entry_guard.rs::option_defaults_and_literal_objects_decide_the_guard",
   "crates/ripr/src/analysis/language/typescript/guard_entry_guard.rs::a_reassigned_or_shadowed_option_local_is_not_read",
+  "crates/ripr/src/analysis/language/typescript/guard_entry_guard.rs::signature_and_literal_shapes_that_misplace_the_options_position_are_refused",
   "crates/ripr/src/analysis/language/typescript/guard_entry_guard.rs::reads_then_else_if_and_else_arms",
   "crates/ripr/src/analysis/language/typescript/guard_entry_guard.rs::evaluates_literal_calls_against_guards",
   "crates/ripr/src/analysis/language/typescript/guard_entry_guard.rs::a_defaulted_parameter_is_not_assumed_undefined",

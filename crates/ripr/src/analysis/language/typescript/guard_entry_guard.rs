@@ -536,6 +536,10 @@ pub(crate) fn parameter_shapes(owner_source: &str) -> Option<ParameterShapes> {
         if part.starts_with("...") {
             return None;
         }
+        // A `this` parameter is erased from the call's positional arguments.
+        if part.starts_with("this") && !part["this".len()..].starts_with(is_identifier_char) {
+            return None;
+        }
         if part.starts_with('{') {
             shapes.options.push(options_parameter(part, index)?);
             shapes.names.push(String::new());
@@ -591,16 +595,23 @@ fn parameter_part_ranges(masked: &str, open: usize) -> Option<ParameterRanges> {
     let list = &masked[list_start..close];
     let mut parts = Vec::new();
     let (mut depth, mut start) = (0usize, 0usize);
+    let mut previous = ' ';
     for (at, c) in list.char_indices() {
         match c {
             '(' | '[' | '{' | '<' => depth += 1,
-            ')' | ']' | '}' | '>' => depth = depth.saturating_sub(1),
+            // The `>` of an `=>` inside a type does not close an angle.
+            '>' if previous == '=' => {}
+            ')' | ']' | '}' | '>' => depth = depth.checked_sub(1)?,
             ',' if depth == 0 => {
                 parts.push((list_start + start, list_start + at));
                 start = at + 1;
             }
             _ => {}
         }
+        previous = c;
+    }
+    if depth != 0 {
+        return None;
     }
     if !list[start..].trim().is_empty() {
         parts.push((list_start + start, list_start + list.len()));
@@ -779,6 +790,10 @@ fn object_property(text: &str, key: &str) -> Option<Option<Lit>> {
         let (name, rest) =
             if let Some(quote) = entry.chars().next().filter(|c| matches!(c, '\'' | '"')) {
                 let close = entry[1..].find(quote)? + 1;
+                // An escaped key is not compared raw.
+                if entry[1..close].contains('\\') {
+                    return None;
+                }
                 (entry[1..close].to_string(), entry[close + 1..].trim())
             } else {
                 let name: String = entry
@@ -800,6 +815,10 @@ fn object_property(text: &str, key: &str) -> Option<Option<Lit>> {
             // A method, getter or setter (`get key() {}`, `key() {}`).
             return None;
         };
+        // `__proto__: v` sets the prototype, not a property.
+        if name == "__proto__" {
+            return None;
+        }
         if name != key {
             continue;
         }
@@ -1902,6 +1921,53 @@ mod tests {
         let strict = "function run(items, { preserveOrder = true }) {\n  if (preserveOrder) {\n    a();\n  } else {\n    b();\n  }\n}\n";
         assert!(!excludes(strict, 5, "b();", &["[]"]));
         assert!(excludes(strict, 5, "b();", &["[]", "{}"]));
+    }
+
+    #[test]
+    fn signature_and_literal_shapes_that_misplace_the_options_position_are_refused() {
+        let generic = "function run(cb: Array<(x: number) => void>, { preserveOrder = true } = {}) {\n  if (preserveOrder) {\n    a();\n  } else {\n    b();\n  }\n}\n";
+        let shapes = parameter_shapes(generic)
+            .map(|s| s.options.iter().map(|o| o.index).collect::<Vec<_>>());
+        assert_eq!(shapes, Some(vec![1]));
+        assert!(
+            parameter_shapes("function run(a: Array<number, { x = 1 } = {}) {\n  a();\n}\n")
+                .is_none()
+        );
+        let this_param = "function run(this: void, { preserveOrder = true } = {}) {\n  if (preserveOrder) {\n    a();\n  } else {\n    b();\n  }\n}\n";
+        assert!(parameter_shapes(this_param).is_none());
+        let this_arg = "function run(thisArg, { preserveOrder = true } = {}) {\n  if (preserveOrder) {\n    a();\n  } else {\n    b();\n  }\n}\n";
+        assert!(parameter_shapes(this_arg).is_some());
+        let flag = "function run(items, { preserveOrder = true } = {}) {\n  if (preserveOrder) {\n    a();\n  } else {\n    b();\n  }\n}\n";
+        assert!(excludes(
+            flag,
+            5,
+            "b();",
+            &["[]", "{ preserveOrder: true }"]
+        ));
+        assert!(!excludes(
+            flag,
+            5,
+            "a();",
+            &["[]", "{ preserveOrder: true }"]
+        ));
+        assert!(!excludes(
+            flag,
+            5,
+            "a();",
+            &["[]", "{ 'preserve\\x4Frder': false }"]
+        ));
+        assert!(!excludes(
+            flag,
+            5,
+            "a();",
+            &["[]", "{ __proto__: { preserveOrder: false } }"]
+        ));
+        assert!(excludes(
+            flag,
+            5,
+            "b();",
+            &["[]", "{ nested: { preserveOrder: false } }"]
+        ));
     }
 
     #[test]
