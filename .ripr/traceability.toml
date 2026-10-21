@@ -11621,6 +11621,7 @@ tests = [
   "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_mixed_test_settles_coarsely_on_the_owner_but_its_bare_call_on_the_rival",
   "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_path_remapped_package_has_no_identity",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::a_sibling_files_same_named_function_test_does_not_relate",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::keyword_probe_tokens_do_not_relate_tests_by_name",
   "crates/ripr/src/analysis/syntax/name_scope.rs::tests::records_scopes_innermost_first_with_imports_globs_and_definitions",
   "crates/ripr/src/analysis/syntax/name_scope.rs::tests::a_module_item_of_the_name_is_a_definition_of_that_scope",
   "crates/ripr/src/analysis/syntax/name_scope.rs::tests::unparseable_or_missing_function_yields_none",

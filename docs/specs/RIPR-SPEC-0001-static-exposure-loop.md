@@ -606,6 +606,13 @@ Fixture coverage:
 - `identical_line_pairing_never_hides_reorders_or_block_moves`
 - `multiline_builder_chain_setup_row_is_dropped_beside_the_assertion`
 - `multiline_setup_row_stays_unless_it_is_a_bare_unwrap_chain_beside_an_assertion`
+- `keyword_probe_tokens_do_not_relate_tests_by_name`
+
+Related-test name tokens come from the changed expression's identifiers. A Rust
+keyword (`return`, `while`, `loop`, ...) is syntax and never a name token, and
+the substring fallback applies the same generic/common-word gate as the
+word-boundary path (#9172), so a test named `ready_return` or `wait_while` does
+not make an uncalled owner read `weakly_exposed`.
 
 ## Implementation Mapping
 

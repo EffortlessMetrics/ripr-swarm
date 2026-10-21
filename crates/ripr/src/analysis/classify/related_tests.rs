@@ -658,7 +658,13 @@ fn find_related_tests_with_candidates<'a>(
 ) -> Vec<(&'a TestSummary, RelationReason)> {
     let mut related: Vec<(&TestSummary, RelationReason)> = Vec::new();
     let owner_name = owner_fn.map(|f| f.name.as_str()).unwrap_or("");
-    let probe_tokens = extract_identifier_tokens(&probe.expression);
+    // A language keyword (`return`, `while`) names no behavior: relating a
+    // test through it linked `ready_return` / `wait_while` to any uncalled
+    // owner (#9172).
+    let probe_tokens: Vec<String> = extract_identifier_tokens(&probe.expression)
+        .into_iter()
+        .filter(|token| !RUST_KEYWORDS.contains(&token.as_str()))
+        .collect();
     // #3714: the converted callee of a wrapper error seam, if any. A test
     // whose captured calls name it relates weakly (SeamCalleeCall) even when
     // no name-affinity signal fires.
@@ -1089,7 +1095,10 @@ fn find_related_tests_with_candidates<'a>(
             let substring_named = (!file_name.is_empty()
                 && normalize_path(&test.file).contains(&file_name))
                 || probe_tokens.iter().any(|token| {
-                    token.len() > 2 && test_name.contains(&token.to_ascii_lowercase())
+                    // The fallback applies the same generic/common-word gate as
+                    // the word-boundary path (#9172).
+                    test_name_word_token(token, common_words)
+                        .is_some_and(|word| test_name.contains(&word))
                 });
             if substring_named {
                 substring_only_fallback.push((test, RelationReason::WeakTokenSubstring));
@@ -2150,6 +2159,15 @@ fn common_across_tests(
 
 /// Identifiers that appear in so many Rust bodies that naming one in a test
 /// name says nothing about which code the test reaches.
+/// Strict and reserved Rust keywords: syntax, never a behavior name.
+const RUST_KEYWORDS: &[&str] = &[
+    "abstract", "as", "async", "await", "become", "box", "break", "const", "continue", "crate",
+    "do", "dyn", "else", "enum", "extern", "false", "final", "fn", "for", "gen", "if", "impl",
+    "in", "let", "loop", "macro", "match", "mod", "move", "mut", "override", "priv", "pub", "ref",
+    "return", "self", "Self", "static", "struct", "super", "trait", "true", "try", "type",
+    "typeof", "unsafe", "unsized", "use", "virtual", "where", "while", "yield",
+];
+
 const GENERIC_PROBE_TOKENS: &[&str] = &[
     "String",
     "Result",
@@ -4961,6 +4979,52 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
         assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
+    }
+
+    /// #9172: a Rust keyword in the changed expression is syntax, not a name
+    /// token. `ready_return` / `wait_while` must not relate to an owner they
+    /// never call; a real identifier token still relates through the same
+    /// fallback.
+    #[test]
+    fn keyword_probe_tokens_do_not_relate_tests_by_name() {
+        let owner = function("src/lib.rs", "compute");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![
+                test_with_call("tests/other.rs", "ready_return", "ready(false);", "ready"),
+                test_with_call("tests/other.rs", "wait_while", "ready(true);", "ready"),
+                test_with_call(
+                    "tests/other.rs",
+                    "scale_factor_loads",
+                    "ready(true);",
+                    "ready",
+                ),
+            ],
+            ..Default::default()
+        });
+        for expression in ["return n * 3", "while let Some(x) = q.pop()"] {
+            let related = find_related_tests(
+                &probe("src/lib.rs", expression),
+                Some(&owner),
+                &index,
+                true,
+                None,
+                None,
+            );
+            assert!(related.is_empty(), "{expression}: {related:?}");
+        }
+        // Positive control: a non-keyword identifier token still relates.
+        let related = find_related_tests(
+            &probe("src/lib.rs", "return scale_factor * n"),
+            Some(&owner),
+            &index,
+            true,
+            None,
+            None,
+        );
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].0.name, "scale_factor_loads");
         assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
     }
 
