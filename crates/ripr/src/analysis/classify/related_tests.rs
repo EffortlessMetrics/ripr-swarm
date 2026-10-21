@@ -10,6 +10,7 @@
 use super::super::rust_index::{
     FunctionSummary, RustIndex, TestSummary, extract_identifier_tokens,
 };
+use super::text::is_rust_whitespace;
 use crate::analysis::extract::{
     ShadowAuthority, fact_body_defines_callee_fn, fact_body_let_shadow_line,
     mask_comments_and_strings, test_body_defines_callee_fn, test_body_let_shadow_line,
@@ -2319,6 +2320,10 @@ fn ident_ending_at(text: &str, end_exclusive: usize) -> Option<&str> {
     (start < end).then(|| &text[start..end])
 }
 
+fn qualified_head_prefix(prefix: &str) -> bool {
+    prefix.ends_with("::") || prefix.ends_with('#')
+}
+
 /// The primitive type a suffixed numeric literal names (`5f64`, `0xffu8`,
 /// `1_000usize`, `2e3f32`), or `None` for anything else. An unsuffixed
 /// literal gets its type from inference, which ripr does not run, so it stays
@@ -2489,7 +2494,13 @@ fn last_let_statement<'a>(body: &'a str, binding: &str) -> Option<&'a str> {
                 .find(';')
                 .map(|offset| i + offset)
                 .unwrap_or(body.len());
-            last = Some(&body[let_at..stmt_end]);
+            let stmt = &body[let_at..stmt_end];
+            // A previously admitted annotation may contain a semicolon in a
+            // const argument after an inner '='. Its reader now needs the
+            // complete type. Preserve the old prefix requirement and keep
+            // initializer-only bindings at their existing statement boundary.
+            let typed = stmt.find('=').is_some_and(|eq| stmt[..eq].contains(':'));
+            last = Some(if typed { &body[let_at..] } else { stmt });
         }
         search = let_at + 1;
     }
@@ -2510,12 +2521,62 @@ fn let_statement_type_head(stmt: &str) -> Option<&str> {
     let eq = stmt.find('=')?;
     let pattern = &stmt[..eq];
     if let Some(colon) = pattern.find(':') {
-        return type_head(&pattern[colon + 1..]).map(|(segments, _)| segments.last().copied())?;
+        // Full annotation consumption may only narrow the previous compact
+        // authority, including its bounded generic-specialization handling.
+        let prior_head = type_head(&pattern[colon + 1..])?.0.last().copied()?;
+        // The first '=' may belong to an associated-type binding or a const
+        // argument. Read the complete annotation before finding its assignment.
+        let annotation = &stmt[colon + 1..];
+        let (segments, tail) = type_head_tail(annotation, skip_annotation_generic_args)?;
+        let [name] = segments.as_slice() else {
+            return None;
+        };
+        if *name != prior_head {
+            return None;
+        }
+        let tail = tail.strip_prefix("::").map_or(tail, str::trim_start);
+        let tail = if tail.starts_with('<') {
+            &tail[skip_annotation_generic_args(tail.as_bytes(), 0)?..]
+        } else {
+            tail
+        };
+        let tail = tail.trim_start();
+        return (tail.starts_with('=') && !tail.starts_with("==") && !tail.starts_with("=>"))
+            .then_some(*name);
     }
     let init = &stmt[eq + 1..];
     initializer_is_one_head_expr(init)
         .then(|| initializer_type_head(init))
         .flatten()
+}
+
+/// Complete a type annotation's generic arguments without treating function
+/// arrows or grouped const expressions as angle delimiters. Callers already
+/// mask literals and comments. Keep this separate from initializer turbofish
+/// admission so preserving annotations cannot widen constructor recognition.
+fn skip_annotation_generic_args(bytes: &[u8], open: usize) -> Option<usize> {
+    if bytes.get(open) != Some(&b'<') {
+        return None;
+    }
+    let mut depth = 0usize;
+    let mut groups = Vec::new();
+    for (offset, byte) in bytes.get(open..)?.iter().enumerate() {
+        match byte {
+            b'(' => groups.push(b')'),
+            b'[' => groups.push(b']'),
+            b'{' => groups.push(b'}'),
+            b')' | b']' | b'}' if groups.pop() != Some(*byte) => return None,
+            b'<' if groups.is_empty() => depth += 1,
+            b'>' if groups.is_empty() && bytes.get(open + offset - 1) != Some(&b'-') => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(open + offset + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Whether an initializer is a single path, call or struct literal with
@@ -2557,21 +2618,23 @@ fn initializer_is_one_head_expr(init: &str) -> bool {
 /// and fails closed. The `new_*`/`from_*`/`with_*` prefixes are a naming
 /// convention, not a return type: `Site::with_cache()` still reads as `Site`
 /// even if it returns a `Cache`; there is no return-type lookup here.
+/// Module-qualified heads stay unresolved: this matcher receives only a
+/// compact impl name, so the final segment cannot establish type identity.
 fn initializer_type_head(expr: &str) -> Option<&str> {
     let (segments, next) = type_head(expr)?;
     match (segments.as_slice(), next) {
-        // `m::Site(1)` / `crate::m::Site(1)`: a CamelCase call after a module
-        // segment is a tuple struct, not a variant of the module.
+        // A CamelCase call after a module segment is a qualified tuple
+        // struct, whose root cannot be resolved from the compact impl name.
         ([.., module, call], Some(b'('))
             if is_variant_name(call) && module.starts_with(|c: char| c.is_ascii_lowercase()) =>
         {
-            Some(call)
+            None
         }
-        ([.., ty, call], Some(b'(')) => {
+        ([ty, call], Some(b'(')) => {
             (is_constructor_name(call) || is_variant_name(call)).then_some(*ty)
         }
-        ([last], Some(b'(')) | ([.., last], Some(b'{')) => Some(last),
-        ([.., ty, _assoc], _) => Some(ty),
+        ([last], Some(b'(') | Some(b'{')) => Some(last),
+        ([ty, _assoc], None) => Some(ty),
         _ => None,
     }
 }
@@ -2594,6 +2657,14 @@ fn is_constructor_name(name: &str) -> bool {
 /// first non-space byte after it. A turbofish (`Site::<T>::new`) is skipped;
 /// any other generic argument list ends the path.
 fn type_head(text: &str) -> Option<(Vec<&str>, Option<u8>)> {
+    let (segments, tail) = type_head_tail(text, skip_generic_args)?;
+    Some((segments, tail.bytes().next()))
+}
+
+fn type_head_tail(
+    text: &str,
+    skip_args: fn(&[u8], usize) -> Option<usize>,
+) -> Option<(Vec<&str>, &str)> {
     let mut rest = text.trim_start();
     loop {
         let trimmed = rest
@@ -2607,6 +2678,11 @@ fn type_head(text: &str) -> Option<(Vec<&str>, Option<u8>)> {
             Some(next) => rest = next,
             None => break,
         }
+    }
+    // Absolute paths, including suffixes left after a Unicode path prefix
+    // was truncated by the ASCII-only backward scanner, are not bare types.
+    if rest.starts_with("::") {
+        return None;
     }
     let bytes = rest.as_bytes();
     let mut segments = Vec::new();
@@ -2624,14 +2700,13 @@ fn type_head(text: &str) -> Option<(Vec<&str>, Option<u8>)> {
         }
         end += 2;
         if rest[end..].starts_with('<') {
-            end = skip_generic_args(bytes, end)?;
+            end = skip_args(bytes, end)?;
         }
     }
     if segments.is_empty() {
         return None;
     }
-    let next = rest[end..].trim_start().bytes().next();
-    Some((segments, next))
+    Some((segments, rest[end..].trim_start()))
 }
 
 /// Index just past the `<..>` starting at `open`, or `None` if unbalanced.
@@ -2930,7 +3005,17 @@ fn bracketed_expr_has_type(
             whole = true;
             continue;
         }
-        if before > 0 && bytes[before - 1] == b'.' {
+        // Rust whitespace includes NEL, line separators and direction marks.
+        // Keep a qualifier visible across all of them without changing the
+        // separate parenthesis/call checks above.
+        let prefix = text[..start].trim_end_matches(is_rust_whitespace);
+        if prefix.ends_with('.')
+            || qualified_head_prefix(prefix)
+            || text[..start]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| !ch.is_ascii() && !is_rust_whitespace(ch))
+        {
             return false;
         }
         return initializer_type_head(&text[start..=close]).is_some_and(|head| head == impl_type);
@@ -5024,7 +5109,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             ("Render::render(&Site::new().cache());", false),
             ("Render::render(&Site::default());", false),
             ("Render::render(&Site::CACHE);", false),
-            ("Render::render(&m::Site(1));", true),
+            ("Render::render(&m::Site(1));", false),
             ("Render::render(&Kind::Site(1));", false),
             ("let s = Site::new(); Render::render(&s);", false),
             ("let s: Site = Site::new(); Render::render(&s);", true),
@@ -9784,8 +9869,8 @@ let r = try_parse_summary(\"x\");",
                 "let s = Cache::new(); let s = Site::new(); s.build();",
                 true,
             ),
-            ("m::Site(1).build();", true),
-            ("crate::m::Site(1).build();", true),
+            ("m::Site(1).build();", false),
+            ("crate::m::Site(1).build();", false),
             ("m::Cache(1).build();", false),
             (
                 "let s = Cache::new(); let s = Site { x: s.build() };",
@@ -9794,7 +9879,7 @@ let r = try_parse_summary(\"x\");",
             ("let s = Cache::new(); let s = Site::new(s.build());", false),
             ("let c = Site::new().cache(); c.build();", false),
             ("let c = Site::new()?; c.build();", false),
-            ("let s = m::Site(1); s.build();", true),
+            ("let s = m::Site(1); s.build();", false),
             ("let s = Site { langs: 1 }; s.build();", true),
             ("$ /* c */ return (Site::new()).build();", false),
             ("loop { break $ break (Site::new()).build(); }", false),
@@ -9808,6 +9893,138 @@ let r = try_parse_summary(\"x\");",
                 method_call_resolves_to_impl_type(&summary, "build", "Site"),
                 expected,
                 "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn qualified_receiver_initializers_cannot_resolve_from_a_compact_type_name() {
+        for body in [
+            "foreign::Site { langs: 1 }.build();",
+            "foreign :: Site { langs: 1 }.build();",
+            "foreign::Site(1).build();",
+            "foreign:: Site(1).build();",
+            "foreign::r#Site(1).build();",
+            "foreign::r#Site { langs: 1 }.build();",
+            "é::Site { langs: 1 }.build();",
+            "foreign::é::Site(1).build();",
+            "éSite { langs: 1 }.build();",
+            "e\u{301}Site { langs: 1 }.build();",
+            "éSite(1).build();",
+            "éSite::new().build();",
+            "::Site { langs: 1 }.build();",
+            "foreign::Site::new().build();",
+            "(foreign :: Site::new()).build();",
+            "let s = foreign::Site { langs: 1 }; s.build();",
+            "let s = foreign::Site(1); (s).build();",
+            "let s = foreign::Site::new(); s.build();",
+            "let s: foreign::Site = make(); s.build();",
+            "let s: ::Site = make(); s.build();",
+            "let s: Site :: Foreign = make(); s.build();",
+            "let s: Site<u8> :: Foreign = make(); s.build();",
+            "Render::build(&foreign::Site { langs: 1 });",
+            "Render::build(&foreign::Site(1));",
+        ] {
+            let summary = test("tests/site.rs", "foreign_only", body);
+            assert!(
+                !method_call_resolves_to_impl(&summary, "build", "Site", Some("Render")),
+                "a compact Site name cannot identify the qualified receiver: {body}"
+            );
+        }
+    }
+
+    #[test]
+    fn rust_source_whitespace_cannot_hide_receiver_qualification() {
+        for whitespace in ['\u{0085}', '\u{200E}', '\u{200F}', '\u{2028}', '\u{2029}'] {
+            for initializer in ["Site { langs: 1 }", "Site(1)"] {
+                let body = format!("foreign::{whitespace}{initializer}.build();");
+                let summary = test("tests/site.rs", "qualified_whitespace", &body);
+                assert!(
+                    !method_call_resolves_to_impl_type(&summary, "build", "Site"),
+                    "Rust whitespace erased the qualifier: {body:?}"
+                );
+                let body = format!("return{whitespace}{initializer}.build();");
+                let summary = test("tests/site.rs", "bare_whitespace", &body);
+                assert!(
+                    method_call_resolves_to_impl_type(&summary, "build", "Site"),
+                    "Rust whitespace hid a bare receiver: {body:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_independent_bare_receiver_still_resolves_beside_a_foreign_call() {
+        for body in [
+            "foreign::Site { langs: 1 }.build(); Site { langs: 2 }.build();",
+            "let s = foreign::Site(1); s.build(); let s = Site(2); s.build();",
+            "foreign::Site::new().build(); Site::new().build();",
+            "foreign::Site::new().build(); Shape::Circle(1).build();",
+            "let s: Site<u8> = make(); s.build();",
+        ] {
+            let summary = test("tests/site.rs", "mixed", body);
+            let impl_type = if body.contains("Shape::Circle") {
+                "Shape"
+            } else {
+                "Site"
+            };
+            assert!(
+                method_call_resolves_to_impl_type(&summary, "build", impl_type),
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn bare_generic_type_annotations_keep_receiver_identity() {
+        for annotation in [
+            "Site<u8>",
+            "Site<fn() -> ()>",
+            "Site<fn() -> Vec<u8>>",
+            "Site::<fn() -> ()>",
+            "Site :: <fn() -> ()>",
+            "Site:: <fn() -> ()>",
+            "Site<{ 1 > 0 }>",
+            "Site<{ 1 < 2 }>",
+            "Site<{ 1 == 1 }>",
+            "Site<Box<dyn Iterator<Item = u8>>>",
+            "Site<{ let n = 1; n == 1 }>",
+            "Site<'>'>",
+        ] {
+            let body = format!("let s: {annotation} = make(); s.build();");
+            let summary = test("tests/site.rs", "bare_generic", &body);
+            assert!(
+                method_call_resolves_to_impl_type(&summary, "build", "Site"),
+                "bare annotation lost its receiver identity: {body}"
+            );
+            let body = format!("let s: {annotation} :: Foreign = make(); s.build();");
+            let summary = test("tests/site.rs", "qualified_generic", &body);
+            assert!(
+                !method_call_resolves_to_impl_type(&summary, "build", "Site"),
+                "generic arguments cannot hide a qualified type tail: {body}"
+            );
+        }
+    }
+
+    #[test]
+    fn annotation_compatibility_does_not_expand_initializer_admission() {
+        for body in [
+            "let s: Site<[u8; 4]> = make(); s.build();",
+            "let s: Site<{ true; false }> = make(); s.build();",
+            "let s: Site::<{ 1 == 1 }> = make(); s.build();",
+            "let s: Site::<{ 1 == 2 }> = make(); s.build();",
+            "let s: Site::<Box<dyn Iterator<Item = u8>>> = make(); s.build();",
+            "let s = Site::with_cache::<fn() -> ()>(); s.build();",
+            "let s: Site<fn() -> ()] = make(); s.build();",
+            "let s: Site<u8> == make(); s.build();",
+            "let s: Site<u8> => make(); s.build();",
+            "let s: Site == make(); s.build();",
+            "let s: Site => make(); s.build();",
+        ] {
+            let summary = test("tests/site.rs", "unsupported", body);
+            assert!(
+                !method_call_resolves_to_impl_type(&summary, "build", "Site"),
+                "annotation preservation expanded an unsupported path: {body}"
             );
         }
     }
@@ -9963,7 +10180,7 @@ let r = try_parse_summary(\"x\");",
             ("let x: Site = make()", Some("Site")),
             ("let x: &mut Site = make()", Some("Site")),
             ("let mut x = Site::new()", Some("Site")),
-            ("let x = crate::m::Site::new()", Some("Site")),
+            ("let x = crate::m::Site::new()", None),
             ("let x = Site { langs: Vec::new() }", Some("Site")),
             ("let x = Site(1)", Some("Site")),
             ("let x = &Site::default()", Some("Site")),

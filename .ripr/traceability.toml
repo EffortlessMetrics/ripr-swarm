@@ -458,6 +458,12 @@ id = "RIPR-SPEC-0005"
 name = "repo seam inventory and test grip"
 spec = "docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md"
 tests = [
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::qualified_receiver_initializers_cannot_resolve_from_a_compact_type_name",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::rust_source_whitespace_cannot_hide_receiver_qualification",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::an_independent_bare_receiver_still_resolves_beside_a_foreign_call",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::bare_generic_type_annotations_keep_receiver_identity",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::annotation_compatibility_does_not_expand_initializer_admission",
+  "fixtures/rust_qualified_foreign_receiver",
   "crates/ripr/tests/snapshot_return_admission.rs::snapshot_of_an_unrelated_value_cannot_close_the_owner_return",
   "crates/ripr/tests/snapshot_return_admission.rs::snapshot_of_the_owner_result_binding_keeps_its_grade",
   "crates/ripr/tests/snapshot_return_admission.rs::snapshot_of_the_direct_owner_call_keeps_its_grade",
@@ -8324,6 +8330,7 @@ fixtures = [
   "fixtures/rust_macro_reach_limitation",
   "fixtures/typescript_adversarial_same_method_other_class",
   "fixtures/rust_adversarial_same_method_other_type",
+  "fixtures/rust_qualified_foreign_receiver",
   "fixtures/rust_same_method_owner_type_positive",
   "fixtures/rust_adversarial_free_function_receiver",
   "fixtures/rust_adversarial_shared_error_variant_proximity",

@@ -1,0 +1,168 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_qualified_foreign_receiver/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:c655ac63d26d435f5bd928789495c8aeca15f9b49414ed1d556f0bd1c0b59b63","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:return_value:c861ec7a",
+      "canonical_gap_id": "gap:rust:src/lib.rs:impl Iterator for WhileSome::size_hint:return_value:return_value:0_some_self.remaining",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:impl Iterator for WhileSome::size_hint:return_value:return_value:0_some_self.remaining",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "impl Iterator for WhileSome::size_hint",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "0_some_self.remaining"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:c861ec7a",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 18,
+        "expression": "(0, Some(self.remaining))"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"No test is seen calling size_hint; tests share only its file or a name token: foreign_size_hint_is_observed, unicode_module_receiver_is_not_the_local_type"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: (0, Some(self.remaining))"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: whole-object equality assertion"}
+       },
+      "evidence_path": ["reach weak: No test is seen calling size_hint; tests share only its file or a name token: foreign_size_hint_is_observed, unicode_module_receiver_is_not_the_local_type", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: (0, Some(self.remaining))", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (weakly_exposed); related oracle: Strong oracle found: whole-object equality assertion", "local flow reaches returned value: (0, Some(self.remaining)) (line 18)", "related test tests/size_hints.rs:2 foreign_size_hint_is_observed uses strong exact value oracle: assert_eq!(it.size_hint().1, Some(3));", "related test tests/size_hints.rs:2 foreign_size_hint_is_observed uses strong exact value oracle: assert_eq!(it.size_hint().0, 3);", "related test tests/size_hints.rs:2 foreign_size_hint_is_observed uses strong exact value oracle: assert_eq!(it.size_hint(), (3, Some(3)));", "related test tests/size_hints.rs:10 unicode_module_receiver_is_not_the_local_type uses strong whole object equality oracle: assert_eq!(é::WhileSome { remaining: 3 }.size_hint().1, Some(3));", "source assertion argument value 3 at line 4", "source assertion argument value 3 at line 5", "source assertion argument value 3 at line 6", "source assertion argument value 3 at line 12", "source enum variant value ::WhileSome at line 12"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"(0, Some(self.remaining))","line":18}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: (0, Some(self.remaining))", "No test is seen calling size_hint; tests share only its file or a name token: foreign_size_hint_is_observed, unicode_module_receiver_is_not_the_local_type", "Reachable tests can plausibly activate this changed behavior", "Strong oracle found: whole-object equality assertion"],
+      "missing": [],
+      "assertion_texts": {
+        "4": "assert_eq!(it.size_hint().1, Some(3));",
+        "5": "assert_eq!(it.size_hint().0, 3);",
+        "6": "assert_eq!(it.size_hint(), (3, Some(3)));",
+        "12": "assert_eq!(é::WhileSome { remaining: 3 }.size_hint().1, Some(3));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 4,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 5,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 6,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 12,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 12,
+            "value": "::WhileSome",
+            "context": "enum_variant"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 4,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 5,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 6,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 12,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 12,
+          "value": "::WhileSome",
+          "context": "enum_variant"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 4,
+      "related_tests": [
+        {
+          "name": "foreign_size_hint_is_observed",
+          "file": "tests/size_hints.rs",
+          "line": 2,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(it.size_hint().1, Some(3));",
+          "relation_reason": "weak_token_substring",
+          "relation_confidence": "low"
+        },
+        {
+          "name": "foreign_size_hint_is_observed",
+          "file": "tests/size_hints.rs",
+          "line": 2,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(it.size_hint().0, 3);",
+          "relation_reason": "weak_token_substring",
+          "relation_confidence": "low"
+        },
+        {
+          "name": "foreign_size_hint_is_observed",
+          "file": "tests/size_hints.rs",
+          "line": 2,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(it.size_hint(), (3, Some(3)));",
+          "relation_reason": "weak_token_substring",
+          "relation_confidence": "low"
+        },
+        {
+          "name": "unicode_module_receiver_is_not_the_local_type",
+          "file": "tests/size_hints.rs",
+          "line": 10,
+          "oracle_strength": "strong",
+          "oracle_kind": "whole_object_equality",
+          "oracle": "assert_eq!(é::WhileSome { remaining: 3 }.size_hint().1, Some(3));",
+          "relation_reason": "weak_token_substring",
+          "relation_confidence": "low"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "whole_object_equality",
+      "oracle_strength": "strong",
+      "recommended_next_step": "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.",
+      "suggested_next_action": "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}
