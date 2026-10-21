@@ -28,9 +28,9 @@ Support-tier impact:
 
 Policy impact:
 
-- Adds the controlled output enum `related_test_miss` to
-  `policy/output_contracts.txt` and `docs/OUTPUT_SCHEMA.md`. No gate, badge,
-  or report file changes.
+- The controlled output enum `related_test_miss` is registered in
+  `policy/output_contracts.txt` and `docs/OUTPUT_SCHEMA.md` by the Rust slice.
+  This revision adds no policy entry and changes no gate, badge or report file.
 
 ## Problem
 
@@ -57,9 +57,12 @@ facades own none of these.
 
 ### Class gate
 
-- `exposed`: no class-level row misses.
+- `exposed`: no class-derived row miss. Row-level facts such as a
+  `no_call_path` on a matched row whose relation does not establish reach may
+  still appear.
 - `static_unknown` and every other explicitly unknown, blocked or partial
-  state: no speculative row miss.
+  state: no speculative row miss. A withheld `static_unknown` finding may
+  restore the misses its reveal pass established for its rows.
 - A concrete gap class may carry a miss only on a row for which the producer
   established it. A row inside a concrete gap stays `miss: null` when its own
   evidence is unresolved.
@@ -85,11 +88,13 @@ so changing only the explanation changes no decision field.
 
 ### Assertion admission
 
-Three states stay distinct: a recognized assertion; proven no assertion-like
+Three states stay distinct: a recognized assertion; established absence of any assertion-like
 construct after complete extraction; and an assertion-like, refused, custom or
 dynamic form whose admission is unresolved. An empty recognized-assertion
 vector is not by itself `no_assertion`. `assertion_not_credited` is not a
-bucket for unsupported syntax; only a typed proven refusal (#5446) may use it.
+bucket for unsupported syntax; only a typed established refusal (#5446) may use it. Rust's current
+emission on a refused row predates this rule and stays a documented exception
+until #5446 lands.
 
 ### Minimum evidence per miss
 
@@ -98,8 +103,8 @@ bucket for unsupported syntax; only a typed proven refusal (#5446) may use it.
 | `no_call_path` | no established path to the changed owner under the producer's relation model |
 | `no_assertion` | path established, extraction complete, no executable assertion-like construct |
 | `assertion_not_observing` | affirmative evidence the admitted assertion observes another owner, value or sink |
-| `assertion_not_credited` | a typed proven refusal accepted by #5446 |
-| `weak_assertion` | an admitted, family-relevant oracle below the producer's strong or exact threshold |
+| `assertion_not_credited` | a typed established refusal accepted by #5446 |
+| `weak_assertion` | an admitted, family-relevant oracle at a weak or smoke tier, below the producer's strong or exact threshold |
 | `missing_input` | a row-owned predicate-activation or boundary omission |
 | `missing_exact_assertion` | a row-owned observed-surface or exact-discriminator omission |
 | `observation_unconfirmed` | a path/assertion relationship exists but observation can be neither proved nor refuted |
@@ -112,7 +117,8 @@ field, error variant, effect, call deletion or match arm.
 
 This table documents which propositions each adapter may emit today. It is
 normative documentation, not a second capability registry; once #5531 lands it
-is validated against or derived from that registry. An adapter that reports an
+is validated against or derived from that registry (which has no `miss` field yet;
+adding one is a follow-up). An adapter that reports an
 unsupported state as unknown and fabricates no reason conforms.
 
 | miss | Rust | Python | TypeScript | Perl v1 |
@@ -120,14 +126,17 @@ unsupported state as unknown and fabricates no reason conforms.
 | `no_call_path` | yes | yes (name- or location-only relations) | pending #5495 | no |
 | `no_assertion` | yes | no (#6657) | pending #5495 | no |
 | `assertion_not_observing` | yes | no (credit-only alignment; `is_unmatched` coupling) | pending #5495 | no (#3223) |
-| `assertion_not_credited` | yes | no (#5446) | no (#5446) | no |
+| `assertion_not_credited` | yes, unsplit until #5446 | no (#5446) | no (#5446) | no |
 | `weak_assertion` | yes | yes (weak and smoke only) | pending #5495 | no |
 | `missing_input` | yes | yes (predicate boundary, row-owned) | pending #5495 | no (#4061, perl-lsp-swarm#17237, #5562) |
 | `missing_exact_assertion` | yes | no (no row-owned fact) | pending #5495 | no |
 | `observation_unconfirmed` | yes | yes (strong assertion not credited by its own row) | pending #5495 | yes |
 
-"Pending" means the row-evidence prerequisites in this spec have landed or are
-tracked, and the producer has not yet mapped them. Perl's narrower coverage is
+Rust "yes" means the reason is emitted; it does not claim conformance with every
+law above (see Current Rust conformance gaps).
+
+"Pending" means the producer has not mapped that reason yet; the row-evidence
+prerequisites for it are specified in this document. Perl's narrower coverage is
 a capability difference, not a parity failure.
 
 Python (#5491) writes a miss only on a `weakly_exposed` finding without a
@@ -146,21 +155,25 @@ static limit, one row at a time, in `python/row_miss.rs`:
 - `observation_unconfirmed`: a strong family-selected assertion that the row,
   evaluated alone, does not credit as observing the changed sink. Python's
   alignment only credits; no credit never becomes an affirmative mismatch.
+  A row whose callee is a local stand-in of the owner stays here: stand-in
+  detection is textual and errs toward withholding credit, so it cannot
+  support an affirmative no-call claim.
 
 Python does not yet write:
 
-- `no_assertion`: `extraction_complete_no_assertion` is not a proven absence
-  while the cross-file blind spots of #6657 (conftest autouse fixtures,
-  plugins, ini `filterwarnings`, bare sibling imports) are unaccounted for.
+- `no_assertion`: `extraction_complete_no_assertion` is not an established
+  absence while the cross-file blind spots of #6657 (conftest autouse
+  fixtures, plugins, ini `filterwarnings`, bare sibling imports) are
+  unaccounted for.
 - `assertion_not_observing`: alignment cannot separate an affirmative sibling
   sink from an unresolved one, and the value marks a row examined-only
   (`RelatedTest::is_unmatched`), which `oracle_related_tests` and its
   decisional consumers read; emitting it would move ordering and witnesses.
 - `missing_exact_assertion`: `missing_discriminators` is finding-wide and no
   row-owned observed-surface fact exists.
-- `assertion_not_credited`: no typed proven refusal (#5446). Skipped, xfail
-  and expected-failure tests keep the classifier's `static_unknown` and no
-  oracle credit.
+- `assertion_not_credited`: no typed refusal (#5446). Skipped, xfail and
+  expected-failure tests keep the classifier's `static_unknown` and no oracle
+  credit.
 
 ### Projection law
 
@@ -175,6 +188,33 @@ cards or packets. No transport defines its own miss semantics.
 controlled in `policy/output_contracts.txt`. Additions are additive and bump
 the schema only as `docs/OUTPUT_SCHEMA.md` requires. Explanatory prose is
 excluded from deterministic identity.
+
+### Current Rust conformance gaps
+
+The contract above is the target. The Rust slice described under Behavior does
+not yet satisfy all of it, and these gaps are tracked rather than claimed away:
+
+- Decision independence (#5563): `RelatedTest::is_unmatched()` is derived from
+  `miss == assertion_not_observing`, and `Finding::oracle_related_tests`,
+  `exact_oracle_gap_next_step` and the diagnostic witness read it, and
+  `exact_oracle_gap_next_step` also branches directly on
+  `miss == missing_exact_assertion`, and the Rust oracle pass reads
+  `assertion_not_credited` when choosing the macro-wrapped-assertion limit and
+  its next step. Changing a row's miss can therefore change triage ordering,
+  next step, limit kind or fix-site selection. These readers are examples, not
+  a complete inventory; #5563 owns the inventory and the decoupling.
+- Row-owned support (#5564): the annotation pass computes boundary and
+  exact-assertion presence once from the finding-wide `missing_discriminators`
+  list and assigns `missing_input` or `missing_exact_assertion` to eligible
+  rows, so a row can carry a fact that belongs to another test.
+- Family-typed rendering (#5493): the reason renderer ignores the finding's
+  `ProbeFamily` and hard-codes its fact lookups, and `input_boundary_fact`
+  selects predicate facts by ` == ` text.
+
+Until those land, Rust is listed as supported in the capability table only for
+the vocabulary it emits, not as conforming to decision independence, row
+ownership or typed-family rendering. New adapters must meet the contract as
+written and must not copy these gaps.
 
 ## Behavior
 
@@ -194,7 +234,8 @@ excluded from deterministic identity.
   RIPR-SPEC-0229 unselected-arm facts),
   `missing_exact_assertion` (error-variant and field facts) and
   `observation_unconfirmed` for `weakly_exposed` and `reachable_unrevealed`.
-  `exposed` findings and the unknown classes get no class-level miss.
+  `exposed` findings and the unknown classes get no class-derived miss; row-level
+  facts such as `no_call_path` can still appear on them.
 - `observation_unconfirmed` is an unknown, not an established miss: its sentence
   says ripr could not confirm that the assertion observes the changed
   behavior (#5508). Only `assertion_not_observing` claims the assertion
@@ -207,8 +248,10 @@ excluded from deterministic identity.
   that row. Unequal sink text stays unconfirmed. Every other Perl row keeps no
   miss: advisory relations, weak or missing oracles, partial or blocked
   packets, and the finding-wide discriminator, which has no test identity.
-- `miss` is evidence only. No stage, class, confidence, stop reason, or next
-  step reads it. Post-classification gates that asked whether any related
+- `miss` is evidence only (target; the Rust exceptions are listed under
+  Current Rust conformance gaps). The target is that no stage, class,
+  confidence, stop reason, limit or next step reads it; the Rust readers are
+  those gaps. Post-classification gates that asked whether any related
   test survived oracle matching use `Finding::oracle_related_tests`, which
   skips `assertion_not_observing` rows, so their decisions are unchanged.
 - Oracle rows are ranked and packed into the eight-row window exactly as
@@ -247,9 +290,8 @@ excluded from deterministic identity.
 
 ### Assertion admission prerequisite (Python, TypeScript)
 
-Python records `weak_assertion`, `no_call_path`, `missing_input` and
-`observation_unconfirmed` only; TypeScript records no miss yet. Before a
-producer (#5491, #5495) may write a `no_assertion` miss, each extracted test carries an assertion
+Which adapters write a miss is stated in the capability table above. Before a
+producer may write a `no_assertion` miss, each extracted test carries an assertion
 admission state, computed fail-closed from the test's syntax:
 
 - `recognized_assertion_present`: the oracle extractor credited an assertion.
@@ -429,11 +471,9 @@ actionability or rendered output.
 - Changing any verdict. Whether a self-contradicting gap should become an
   unknown is RIPR-SPEC-0221's admission rule.
 - Splitting `assertion_not_credited` into proven-inert and admission-unproven
-  cases; that needs the typed admission refusal from #5359.
-- The TypeScript miss producer (#5495) is not yet landed, and the Python
-  producer (#5491) maps only the subset in the capability table; the
-  remaining Python reasons wait on #6657, #5446 and row-owned facts.
-  Richer Perl reasons that need row-owned facts (#5562).
+  cases; that needs the typed admission refusal tracked by #5446 (see #5359).
+- Per-adapter miss mappings: the capability table states which reasons each
+  adapter writes, and each producer PR owns its own column. Richer Perl reasons that need row-owned facts (#5562).
 - Any producer implementation, parser, call-graph or oracle expansion,
   support-tier promotion, or runtime or mutation-kill claim.
 
@@ -471,7 +511,8 @@ actionability or rendered output.
   `crates/ripr/src/mcp/gaps.rs::tests` — the same packet-backed row, token and
   shared sentence in check JSON, the context packet, human-full, `ripr
   explain`, the human digest, LSP hover, related information and diagnostic
-  data, and MCP gap evidence; no projected decision reads `miss`.
+  data, and MCP gap evidence; no projected surface adds a decision that reads
+  `miss` beyond the Rust gaps listed above.
 - `crates/ripr/src/output/human/explain.rs::tests` — an unconfirmed row is not
   labelled a miss.
 - `crates/ripr/src/analysis/language/python/python_tests.rs` and
