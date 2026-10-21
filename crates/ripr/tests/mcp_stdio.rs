@@ -1955,7 +1955,11 @@ fn install_gap_filter_fixture() -> Result<PathBuf, String> {
         "pub fn accepts(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n";
     std::fs::write(root.join("src/pricing.rs"), pricing).map_err(|error| error.to_string())?;
     std::fs::write(root.join("src/uncovered.rs"), uncovered).map_err(|error| error.to_string())?;
-    std::fs::write(root.join("tests/pricing.rs"), "use mcp_journey_fixture::pricing::{discount, fee};\n#[test]\nfn discount_boundary() {\n    assert_eq!(discount(100, 100), 90);\n}\n#[test]\nfn fee_boundary() {\n    assert_eq!(fee(100, 100), 105);\n}\n").map_err(|error| error.to_string())?;
+    // Three pinned inputs per function, the B4 shape: the shared seam
+    // validator behind `ripr repair` admits that seam as a weak boundary,
+    // while a lone boundary assertion grips the seam outright and `ripr
+    // repair` refuses it (#8717), so the two ready subjects need this shape.
+    std::fs::write(root.join("tests/pricing.rs"), "use mcp_journey_fixture::pricing::{discount, fee};\n#[test]\nfn discount_below() {\n    assert_eq!(discount(50, 100), 50);\n}\n#[test]\nfn discount_far_above() {\n    assert_eq!(discount(10_000, 100), 9_990);\n}\n#[test]\nfn discount_boundary() {\n    assert_eq!(discount(100, 100), 90);\n}\n#[test]\nfn fee_below() {\n    assert_eq!(fee(50, 100), 50);\n}\n#[test]\nfn fee_far_above() {\n    assert_eq!(fee(10_000, 100), 10_005);\n}\n#[test]\nfn fee_boundary() {\n    assert_eq!(fee(100, 100), 105);\n}\n").map_err(|error| error.to_string())?;
     let languages = if cfg!(feature = "lang-python") {
         std::fs::write(
             root.join("pyproject.toml"),
@@ -3062,6 +3066,234 @@ fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
         let code = miss.pointer("/error/data/code").and_then(Value::as_str);
         if code != Some("item_not_found") {
             return Err(format!("{kind} resource miss lost item_not_found: {miss}"));
+        }
+    }
+    Ok(())
+}
+
+/// Exposed-match-arm fixture (#8717): main holds `price` with the old arm
+/// values, the checked-out `feat` branch changes them, and `tests/t.rs`
+/// asserts `price(Kind::A) == 1` so the shared seam classifier grips the
+/// changed arm. The producer's finding-level facts still carry a strong
+/// directly-related test on a test-surface path, which is exactly the shape
+/// that used to make MCP report the item repair-ready while `ripr repair`
+/// refused its seam.
+fn install_exposed_match_arm_fixture() -> Result<PathBuf, String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("clock before Unix epoch: {error}"))?
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-mcp-stdio-repair-parity-{}-{stamp}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"parity-fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[lib]\nname = \"parity_fixture\"\npath = \"src/lib.rs\"\n\n[workspace]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub enum Kind { A, B, C }\npub fn price(k: Kind) -> u32 {\n    match k { Kind::A => 1, Kind::B => 2, Kind::C => 3 }\n}\npub fn total(v: &[u32]) -> u32 { v.iter().sum() }\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("tests/t.rs"),
+        "use parity_fixture::*;\n#[test] fn a() { assert_eq!(price(Kind::A), 1); }\n#[test] fn t() { assert!(total(&[1, 2]) > 0); }\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join(".gitignore"), "/target\n").map_err(|error| error.to_string())?;
+    fixture_git_ok(&root, &["-c", "init.defaultBranch=main", "init", "-q"])?;
+    fixture_git_ok(&root, &["config", "user.name", "ripr fixture"])?;
+    fixture_git_ok(&root, &["config", "user.email", "fixture@ripr.invalid"])?;
+    fixture_git_ok(&root, &["config", "core.autocrlf", "false"])?;
+    commit_fixture(&root, "base")?;
+    fixture_git_ok(&root, &["checkout", "-q", "-b", "feat"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub enum Kind { A, B, C }\npub fn price(k: Kind) -> u32 {\n    match k { Kind::A => 1, Kind::B => 5, Kind::C => 30 }\n}\npub fn total(v: &[u32]) -> u32 { v.iter().sum::<u32>() + 1 }\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("tests/t.rs"),
+        "use parity_fixture::*;\n#[test] fn a() { assert_eq!(price(Kind::A), 1); }\n#[test] fn t() { assert!(total(&[1, 2]) > 0); }\n#[test] fn b() { assert_eq!(price(Kind::B), 5); assert_eq!(price(Kind::A), 1); }\n",
+    )
+    .map_err(|error| error.to_string())?;
+    commit_fixture(&root, "change arms")?;
+    Ok(root)
+}
+
+/// What `ripr repair <item>` says about one finding id: `None` when the
+/// shared gate admits it, else the refusal text. The CLI is the authority
+/// the MCP readiness projection must never exceed (#8717).
+fn cli_repair_refusal(root: &Path, finding_id: &str) -> Result<Option<String>, String> {
+    let output = worktree_ripr()
+        .args(["repair", finding_id, "--root"])
+        .arg(root)
+        .output()
+        .map_err(|error| format!("spawn ripr repair: {error}"))?;
+    if output.status.success() {
+        return Ok(None);
+    }
+    Ok(Some(String::from_utf8_lossy(&output.stderr).into_owned()))
+}
+
+/// #8717: `ripr_prepare_repair`, the `ripr_list_gaps` summary and
+/// `ripr_get_gap` must not call an item repair-ready when the shared repair
+/// gate behind `ripr repair` refuses its seam. The exposed `price` arm is
+/// gripped by `tests/t.rs`; before the fix MCP returned a ready packet with an
+/// `awaiting_edit` attempt while the CLI refused the same item.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn mcp_readiness_never_exceeds_the_cli_repair_gate() -> Result<(), String> {
+    const ARM: &str = "gap:rust:src/lib.rs:price:match_arm:match_arm:kind_a";
+    const REFRESH_TIMEOUT: Duration = Duration::from_mins(3);
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let root = install_exposed_match_arm_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    let refresh = structured_tool_success(&refresh, "ripr_refresh")?;
+    if refresh["snapshot"]["finding_count"].as_u64().unwrap_or(0) < 2 {
+        return Err(format!(
+            "fixture must yield the arm and total findings: {refresh}"
+        ));
+    }
+    let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    let list = structured_tool_success(&list, "ripr_list_gaps")?;
+    let items = list["items"].as_array().ok_or("list omitted items")?;
+    if !items.iter().any(|item| item["canonical_id"] == ARM) {
+        return Err(format!("fixture lost the match-arm item {ARM}: {list}"));
+    }
+
+    let mut cli_refusals = 0;
+    for item in items {
+        let id = item["canonical_id"].as_str().ok_or("item omitted id")?;
+        let gap = session.call_tool(
+            &format!("gap-{id}"),
+            "ripr_get_gap",
+            json!({ "canonical_id": id }),
+            REPLY_TIMEOUT,
+        )?;
+        let gap = structured_tool_success(&gap, "ripr_get_gap")?;
+        let finding_id = gap["item"]["finding_id"]
+            .as_str()
+            .ok_or("gap omitted finding_id")?
+            .to_string();
+        let prepare = session.call_tool(
+            &format!("prepare-{id}"),
+            "ripr_prepare_repair",
+            json!({ "canonical_id": id }),
+            REPLY_TIMEOUT,
+        )?;
+        let prepare = structured_tool_success(&prepare, "ripr_prepare_repair")?;
+        let list_ready = item["repair_packet_ready"] == true;
+        // One readiness fact across the three MCP surfaces.
+        if gap["item"]["readiness"]["repair_packet_ready"] != item["repair_packet_ready"]
+            || prepare["repair_packet_ready"] != item["repair_packet_ready"]
+        {
+            return Err(format!(
+                "MCP surfaces disagree on readiness for {id}: list={item} gap={} prepare={prepare}",
+                gap["item"]["readiness"]
+            ));
+        }
+        let refusal = cli_repair_refusal(&root, &finding_id)?;
+        // The projection is conservative: a CLI refusal is never MCP-ready.
+        if refusal.is_some() {
+            cli_refusals += 1;
+            if list_ready || !prepare["attempt"].is_null() {
+                return Err(format!(
+                    "MCP called {id} repair-ready (attempt {}) but `ripr repair {finding_id}` refuses: {}",
+                    prepare["attempt"],
+                    refusal.unwrap_or_default()
+                ));
+            }
+            if item["repair_ineligibility"].as_str().is_none()
+                || prepare["ineligibility"]["reason"] != item["repair_ineligibility"]
+            {
+                return Err(format!(
+                    "the refusal must be typed and identical on list and prepare for {id}: {item} {prepare}"
+                ));
+            }
+        }
+        if id == ARM {
+            let refusal = refusal.ok_or("`ripr repair` must refuse the gripped arm")?;
+            if !refusal.contains("not repair-eligible") || !refusal.contains("already grip") {
+                return Err(format!("CLI refusal changed shape: {refusal}"));
+            }
+            if item["repair_ineligibility"] != "seam_already_gripped"
+                || prepare["ineligibility"]["reason"] != "seam_already_gripped"
+                || prepare["repair_packet_ready"] != false
+                || !prepare["attempt"].is_null()
+            {
+                return Err(format!(
+                    "the gripped arm must refuse typed with no attempt: {item} {prepare}"
+                ));
+            }
+            let reason = gap["item"]["readiness"]["reason"].as_str().unwrap_or("");
+            if !reason.contains("already grip") {
+                return Err(format!(
+                    "get_gap readiness must carry the shared validator's reason: {reason}"
+                ));
+            }
+        }
+    }
+    if cli_refusals < 2 {
+        return Err(format!(
+            "both fixture items are refused by `ripr repair`; observed {cli_refusals}"
+        ));
+    }
+    Ok(())
+}
+
+/// Positive half of the parity control (#8717): the B4 boundary item MCP
+/// reports repair-ready is the item `ripr repair` starts.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn mcp_ready_item_is_the_item_the_cli_repair_gate_admits() -> Result<(), String> {
+    const REFRESH_TIMEOUT: Duration = Duration::from_mins(3);
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let root = install_b4_repair_ready_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    // The before phase's premise check wants Cargo's `target/` ignored; the
+    // admission this control compares is the resolver's, which runs first.
+    std::fs::write(root.join(".gitignore"), "/target\n").map_err(|error| error.to_string())?;
+    commit_fixture(&root, "ignore target")?;
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    structured_tool_success(&refresh, "ripr_refresh")?;
+    let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    let list = structured_tool_success(&list, "ripr_list_gaps")?;
+    let ready: Vec<&Value> = list["items"]
+        .as_array()
+        .ok_or("list omitted items")?
+        .iter()
+        .filter(|item| item["repair_packet_ready"] == true)
+        .collect();
+    if ready.is_empty() {
+        return Err(format!("B4 must yield a repair-ready item: {list}"));
+    }
+    for item in ready {
+        let id = item["canonical_id"].as_str().ok_or("item omitted id")?;
+        let prepare = session.call_tool(
+            "prepare",
+            "ripr_prepare_repair",
+            json!({ "canonical_id": id }),
+            REPLY_TIMEOUT,
+        )?;
+        let prepare = structured_tool_success(&prepare, "ripr_prepare_repair")?;
+        let finding_id = prepare["attempt"]["finding_id"]
+            .as_str()
+            .ok_or_else(|| format!("ready prepare lost its finding id: {prepare}"))?;
+        if let Some(refusal) = cli_repair_refusal(&root, finding_id)? {
+            return Err(format!(
+                "MCP-ready {id} must be admitted by `ripr repair {finding_id}`: {refusal}"
+            ));
         }
     }
     Ok(())
