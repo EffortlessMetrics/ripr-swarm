@@ -14,7 +14,7 @@ The owner returns `Cfg { n: x * 3 }`. The diff changes the constructed field fro
 
 ## Then
 
-The field-construction finding must not read `exposed`. It reads `weakly_exposed`. (The return_value finding on the same line is credited through the generic oracle path and remains a disclosed residual on #8480.)
+Neither finding on the changed line reads `exposed`; both read `weakly_exposed`. The field-construction finding is refused through the owner return pin, and the return_value finding is demoted at the final semantic owner on the same evidence, because the generic oracle path credits its whole-object equality assertion without consulting the pin.
 
 ## Must Not
 

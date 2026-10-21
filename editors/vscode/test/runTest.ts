@@ -136,16 +136,37 @@ export function stageMultiRootWorkspace(templatePath: string, workspacePath: str
   return workspaceFile;
 }
 
-async function runUntrustedTests(
+const DOWNLOAD_ATTEMPTS = 3;
+
+// The VS Code build is fetched at test time; one transient connect error
+// (ETIMEDOUT/ENETUNREACH, #5072) should not fail the whole lane. The download
+// is cached under `cachePath`; the returned executable is handed to every
+// run so none of them repeats the version lookup.
+async function downloadVSCodeWithRetry(
   cachePath: string,
+  extensionDevelopmentPath: string
+): Promise<string> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt += 1) {
+    try {
+      return await downloadAndUnzipVSCode({ cachePath, extensionDevelopmentPath });
+    } catch (caught) {
+      lastError = caught;
+      console.warn(`VS Code download attempt ${attempt}/${DOWNLOAD_ATTEMPTS} failed: ${String(caught)}`);
+      if (attempt < DOWNLOAD_ATTEMPTS) {
+        await new Promise<void>((resolve) => setTimeout(resolve, attempt * 5000));
+      }
+    }
+  }
+  throw lastError;
+}
+
+async function runUntrustedTests(
+  vscodeExecutablePath: string,
   extensionDevelopmentPath: string,
   extensionTestsPath: string,
   launchArgs: string[]
 ): Promise<void> {
-  const vscodeExecutablePath = await downloadAndUnzipVSCode({
-    cachePath,
-    extensionDevelopmentPath
-  });
   const args = [
     '--no-sandbox',
     '--disable-gpu-sandbox',
@@ -240,11 +261,12 @@ async function main() {
       );
     }
 
+    const vscodeExecutablePath = await downloadVSCodeWithRetry(cachePath, extensionDevelopmentPath);
     if (workspaceTrustMode === 'untrusted') {
-      await runUntrustedTests(cachePath, extensionDevelopmentPath, extensionTestsPath, launchArgs);
+      await runUntrustedTests(vscodeExecutablePath, extensionDevelopmentPath, extensionTestsPath, launchArgs);
     } else if (process.env.RIPR_TEST_MULTIROOT_ONLY !== '1') {
       await runTests({
-        cachePath,
+        vscodeExecutablePath,
         extensionDevelopmentPath,
         extensionTestsPath,
         launchArgs,
@@ -282,7 +304,7 @@ async function main() {
       process.env.RIPR_TEST_MULTIROOT_RECEIPT = path.join(matrixRoot, 'acceptance.json');
       process.env.RIPR_TEST_CLIPBOARD_CAPTURE_PATH = path.join(matrixUserData, 'clipboard.txt');
       await runTests({
-        cachePath,
+        vscodeExecutablePath,
         extensionDevelopmentPath,
         extensionTestsPath,
         launchArgs: [

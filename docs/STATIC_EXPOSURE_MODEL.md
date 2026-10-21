@@ -210,7 +210,10 @@ typed reason and routes a repair, rather than being silently called covered.
 For Rust diff findings, `return_value`, `error_path` and `predicate` evidence from a bare
 `assert_eq!`, execution and macro binding must be statically established before
 matching, observation or oracle strength can credit that assertion
-(RIPR-SPEC-0197). Family-specific error/boundary meaning and owner-return pins
+(RIPR-SPEC-0197). Match-arm evidence applies the same execution and macro
+binding admission to outer bare `assert!`, including supported eager local
+check-helper assertions (RIPR-SPEC-0229, #7788). Qualified macros and fallible
+helper results are outside that bounded MatchArm gate. Family-specific error/boundary meaning and owner-return pins
 remain separate decisions; a valid operand cannot establish its own execution. Refused deferred,
 conditional, uncollected or ambiguous assertion contexts are not weak protection: if no
 other oracle remains, Observe and Discriminate are `no` and the class is

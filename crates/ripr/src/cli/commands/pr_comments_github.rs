@@ -6,6 +6,7 @@
 use crate::cli::parse::expect_value;
 use crate::cli::suggest::unknown_argument;
 use crate::output::pr_inline_comment_github::{existing_comments, publish_requests};
+use crate::output::pr_summary_comment::summary_request;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,6 +15,11 @@ use super::non_empty_string_arg;
 
 const EXISTING: &str = "pr-comments existing";
 const REQUESTS: &str = "pr-comments requests";
+const SUMMARY: &str = "pr-comments summary";
+const DEFAULT_GUIDANCE: &str = "target/ripr/review/comments.json";
+const DEFAULT_SUMMARY_DIR: &str = "target/ripr/review/summary";
+/// Same line shape as [`REQUESTS_MANIFEST`], for the one summary call.
+pub(crate) const SUMMARY_MANIFEST: &str = "summary.tsv";
 const DEFAULT_RAW: &str = "target/ripr/review/existing-comments.raw.json";
 const DEFAULT_EXISTING_OUT: &str = "target/ripr/review/existing-comments.json";
 const DEFAULT_PLAN: &str = "target/ripr/review/comment-publish-plan.json";
@@ -52,6 +58,7 @@ pub(super) fn parse_pr_comments_existing_options(
         }
         i += 1;
     }
+    validate_out_file(&options.out)?;
     Ok(options)
 }
 
@@ -77,6 +84,7 @@ pub(super) fn pr_comments_existing(args: &[String]) -> Result<(), String> {
         read_json(&options.root.join(&options.raw), EXISTING)?
     };
     let existing = existing_comments(&pages);
+    refuse_linked_out_file(&options.root, &options.out)?;
     let out = options.root.join(&options.out);
     write_json(&out, &existing, EXISTING)?;
     let count = existing["comments"].as_array().map_or(0, Vec::len);
@@ -149,23 +157,48 @@ pub(super) fn parse_pr_comments_requests_options(
 /// path inside `--root`: no absolute path, no `..`, not the root itself, and
 /// no tab or line break, since the request manifest is tab-separated.
 fn validate_out_dir(out_dir: &Path) -> Result<(), String> {
-    if !out_dir.components().all(|part| {
-        matches!(
-            part,
-            std::path::Component::Normal(_) | std::path::Component::CurDir
-        )
-    }) || out_dir
-        .components()
-        .all(|part| part == std::path::Component::CurDir)
-    {
+    validate_out_dir_for(REQUESTS, out_dir)
+}
+
+fn is_relative_inside_root(path: &Path) -> bool {
+    let mut seen_normal = false;
+    for part in path.components() {
+        match part {
+            std::path::Component::Normal(_) => seen_normal = true,
+            std::path::Component::CurDir => {}
+            _ => return false,
+        }
+    }
+    seen_normal
+}
+
+fn validate_out_dir_for(command: &str, out_dir: &Path) -> Result<(), String> {
+    if !is_relative_inside_root(out_dir) {
         return Err(format!(
-            "{REQUESTS} --out-dir must be a relative directory inside --root (got {}); the run replaces its request files",
+            "{command} --out-dir must be a relative directory inside --root (got {}); the run replaces its request files",
             out_dir.display()
         ));
     }
     if out_dir.to_string_lossy().contains(['\t', '\r', '\n']) {
         return Err(format!(
-            "{REQUESTS} --out-dir cannot contain a tab or line break: the request manifest is tab-separated"
+            "{command} --out-dir cannot contain a tab or line break: the request manifest is tab-separated"
+        ));
+    }
+    Ok(())
+}
+
+/// `existing --out` is a file under `--root`: the same relative / inside-root
+/// / no-control-char rule as `--out-dir`, applied to a file path.
+fn validate_out_file(out: &Path) -> Result<(), String> {
+    if !is_relative_inside_root(out) {
+        return Err(format!(
+            "{EXISTING} --out must be a relative file path inside --root (got {})",
+            out.display()
+        ));
+    }
+    if out.to_string_lossy().contains(['\t', '\r', '\n']) {
+        return Err(format!(
+            "{EXISTING} --out cannot contain a tab or line break"
         ));
     }
     Ok(())
@@ -236,26 +269,175 @@ pub(super) fn pr_comments_requests(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct SummaryOptions {
+    pub(super) root: PathBuf,
+    pub(super) pr_guidance: PathBuf,
+    pub(super) raw: Option<PathBuf>,
+    pub(super) out_dir: PathBuf,
+    pub(super) pull_request: String,
+    pub(super) head_sha: String,
+    pub(super) run_url: String,
+}
+
+pub(super) fn parse_pr_comments_summary_options(args: &[String]) -> Result<SummaryOptions, String> {
+    let mut options = SummaryOptions {
+        root: PathBuf::from("."),
+        pr_guidance: PathBuf::from(DEFAULT_GUIDANCE),
+        raw: None,
+        out_dir: PathBuf::from(DEFAULT_SUMMARY_DIR),
+        pull_request: String::new(),
+        head_sha: String::new(),
+        run_url: String::new(),
+    };
+    let mut i = 0usize;
+    while i < args.len() {
+        let flag = args[i].as_str();
+        i += 1;
+        match flag {
+            "--root" => options.root = PathBuf::from(non_empty_string_arg(args, i, flag, SUMMARY)?),
+            "--pr-guidance" => {
+                options.pr_guidance = PathBuf::from(non_empty_string_arg(args, i, flag, SUMMARY)?)
+            }
+            "--raw" => {
+                options.raw = Some(PathBuf::from(non_empty_string_arg(args, i, flag, SUMMARY)?))
+            }
+            "--out-dir" => {
+                options.out_dir = PathBuf::from(non_empty_string_arg(args, i, flag, SUMMARY)?)
+            }
+            "--pull-request" => options.pull_request = expect_value(args, i, flag)?.to_string(),
+            "--head-sha" => options.head_sha = expect_value(args, i, flag)?.to_string(),
+            "--run-url" => options.run_url = expect_value(args, i, flag)?.to_string(),
+            other => return Err(unknown_argument(SUMMARY, other)),
+        }
+        i += 1;
+    }
+    validate_out_dir_for(SUMMARY, &options.out_dir)?;
+    if options.pull_request.is_empty() || !options.pull_request.bytes().all(|b| b.is_ascii_digit())
+    {
+        return Err(format!(
+            "{SUMMARY} needs --pull-request N with the pull request number (got {:?})",
+            options.pull_request
+        ));
+    }
+    if options.head_sha.is_empty() || !options.head_sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(format!(
+            "{SUMMARY} needs --head-sha SHA with the pull request head commit (got {:?})",
+            options.head_sha
+        ));
+    }
+    Ok(options)
+}
+
+pub(super) fn pr_comments_summary(args: &[String]) -> Result<(), String> {
+    let options = parse_pr_comments_summary_options(args)?;
+    let guidance = read_json(&options.root.join(&options.pr_guidance), SUMMARY)?;
+    let pages = match options.raw.as_deref() {
+        None => Value::Array(Vec::new()),
+        Some(raw) if raw.as_os_str() == "-" => {
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut std::io::stdin(), &mut bytes)
+                .map_err(|err| format!("{SUMMARY} could not read standard input: {err}"))?;
+            serde_json::from_slice(&bytes)
+                .map_err(|err| format!("{SUMMARY}: standard input is not JSON: {err}"))?
+        }
+        Some(raw) => read_json(&options.root.join(raw), SUMMARY)?,
+    };
+    let request = summary_request(
+        &guidance,
+        &pages,
+        &options.pull_request,
+        &options.head_sha,
+        &options.run_url,
+    );
+
+    refuse_linked_out_dir(&options.root, &options.out_dir)?;
+    let out_dir = options.root.join(&options.out_dir);
+    fs::create_dir_all(&out_dir)
+        .map_err(|err| format!("{SUMMARY} could not create {}: {err}", out_dir.display()))?;
+    // An earlier run's request must never be replayed.
+    for name in [SUMMARY_MANIFEST, "summary-request.json"] {
+        let path = out_dir.join(name);
+        if fs::symlink_metadata(&path).is_ok_and(|metadata| !metadata.file_type().is_dir()) {
+            fs::remove_file(&path)
+                .map_err(|err| format!("{SUMMARY} could not remove {}: {err}", path.display()))?;
+        }
+    }
+    let manifest_path = out_dir.join(SUMMARY_MANIFEST);
+    let Some(request) = request else {
+        fs::write(&manifest_path, "").map_err(|err| {
+            format!(
+                "{SUMMARY} could not write {}: {err}",
+                manifest_path.display()
+            )
+        })?;
+        println!("No findings and no earlier RIPR summary comment: nothing to post.");
+        return Ok(());
+    };
+    let file = options.out_dir.join("summary-request.json");
+    write_json(&options.root.join(&file), &request.payload, SUMMARY)?;
+    let line = format!(
+        "{}\t{}\t{}\t{}\n",
+        request.method,
+        manifest_field(&request.endpoint),
+        manifest_field(&file.display().to_string()),
+        manifest_field(&request.message)
+    );
+    fs::write(&manifest_path, line).map_err(|err| {
+        format!(
+            "{SUMMARY} could not write {}: {err}",
+            manifest_path.display()
+        )
+    })
+}
+
 /// The lexical check in the parser keeps `--out-dir` under `--root` only if
 /// no existing component is a link: a symlink or junction there would send
 /// the cleanup and the writes outside the workspace, so refuse it.
 fn refuse_linked_out_dir(root: &Path, out_dir: &Path) -> Result<(), String> {
+    refuse_linked_path(
+        REQUESTS,
+        "--out-dir",
+        root,
+        out_dir,
+        "the run replaces request files there",
+    )
+}
+
+/// Same walk as [`refuse_linked_out_dir`], for `existing --out` as a file.
+fn refuse_linked_out_file(root: &Path, out: &Path) -> Result<(), String> {
+    refuse_linked_path(
+        EXISTING,
+        "--out",
+        root,
+        out,
+        "the run writes existing-comment metadata there",
+    )
+}
+
+fn refuse_linked_path(
+    command: &str,
+    flag: &str,
+    root: &Path,
+    relative: &Path,
+    why: &str,
+) -> Result<(), String> {
     let mut current = root.to_path_buf();
-    for part in out_dir.components() {
+    for part in relative.components() {
         current.push(part);
         let metadata = match fs::symlink_metadata(&current) {
             Ok(metadata) => metadata,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(err) => {
                 return Err(format!(
-                    "{REQUESTS} could not inspect {}: {err}",
+                    "{command} could not inspect {}: {err}",
                     current.display()
                 ));
             }
         };
         if metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
             return Err(format!(
-                "{REQUESTS} --out-dir cannot pass through a link ({} is one); the run replaces request files there",
+                "{command} {flag} cannot pass through a link ({} is one); {why}",
                 current.display()
             ));
         }
@@ -315,7 +497,7 @@ fn write_json(path: &Path, value: &Value, command: &str) -> Result<(), String> {
 mod tests {
     use super::{
         is_request_file, parse_pr_comments_existing_options, parse_pr_comments_requests_options,
-        pr_comments_existing, pr_comments_requests, validate_out_dir,
+        pr_comments_existing, pr_comments_requests, validate_out_dir, validate_out_file,
     };
     use std::path::{Path, PathBuf};
 
@@ -385,6 +567,36 @@ mod tests {
         }
     }
 
+    fn parse_existing_out(out: &str) -> Result<String, String> {
+        parse_pr_comments_existing_options(&strings(&["--out", out]))
+            .map(|options| options.out.display().to_string())
+    }
+
+    /// `existing --out` writes one file, so only a relative path inside --root
+    /// may be named (#6789).
+    #[test]
+    fn existing_out_must_stay_inside_the_root() {
+        assert_eq!(
+            parse_existing_out("target/ripr/review/existing-comments.json"),
+            Ok("target/ripr/review/existing-comments.json".to_string())
+        );
+        assert_eq!(parse_existing_out("./o.json"), Ok("./o.json".to_string()));
+        for escaping in [
+            "/tmp/o.json",
+            "../sibling.json",
+            "target/../x.json",
+            ".",
+            "a\tb",
+            "a\rb",
+            "a\nb",
+        ] {
+            assert!(
+                parse_existing_out(escaping).is_err(),
+                "{escaping:?} was accepted"
+            );
+        }
+    }
+
     /// A `publish` symlink to a directory outside --root is refused before
     /// anything there is removed or written.
     #[cfg(unix)]
@@ -433,6 +645,47 @@ mod tests {
         assert!(err.contains("cannot pass through a link"), "{err}");
         assert_eq!(kept?, "keep\n");
         assert_eq!(entries.map_err(|err| err.to_string())?, 1);
+        Ok(())
+    }
+
+    /// A `--out` path that passes through a symlink to a directory outside
+    /// --root is refused before anything there is written.
+    #[cfg(unix)]
+    #[test]
+    fn existing_refuses_an_out_that_links_outside_the_root() -> Result<(), String> {
+        use std::fs;
+        let base = scratch("existing-link");
+        let root = base.join("root");
+        let external = base.join("external");
+        fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+        fs::create_dir_all(&external).map_err(|err| err.to_string())?;
+        fs::write(root.join("pages.json"), "[]").map_err(|err| err.to_string())?;
+        let sentinel = external.join("keep.txt");
+        fs::write(&sentinel, "keep\n").map_err(|err| err.to_string())?;
+        std::os::unix::fs::symlink(&external, root.join("leak")).map_err(|err| err.to_string())?;
+
+        let result = pr_comments_existing(&strings(&[
+            "--root",
+            &root.display().to_string(),
+            "--raw",
+            "pages.json",
+            "--out",
+            "leak/existing.json",
+        ]));
+        let kept = fs::read_to_string(&sentinel).map_err(|err| err.to_string());
+        let leaked = external.join("existing.json").exists();
+        let _ = fs::remove_dir_all(&base);
+
+        let err = match result {
+            Ok(()) => return Err("a linked --out was accepted".to_string()),
+            Err(err) => err,
+        };
+        assert!(err.contains("cannot pass through a link"), "{err}");
+        assert_eq!(kept?, "keep\n");
+        assert!(
+            !leaked,
+            "existing-comment metadata was written through the link"
+        );
         Ok(())
     }
 
@@ -503,6 +756,34 @@ mod tests {
         ] {
             assert!(
                 validate_out_dir(Path::new(refused)).is_err(),
+                "{refused:?} was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn existing_out_validation_is_lexical() {
+        for allowed in [
+            "existing-comments.json",
+            "./o.json",
+            "target/ripr/review/existing-comments.json",
+            "a/./b.json",
+        ] {
+            assert_eq!(validate_out_file(Path::new(allowed)), Ok(()), "{allowed}");
+        }
+        for refused in [
+            "/tmp/o.json",
+            "../sibling.json",
+            "target/../x.json",
+            ".",
+            "./.",
+            "",
+            "a\tb",
+            "a\rb",
+            "a\nb",
+        ] {
+            assert!(
+                validate_out_file(Path::new(refused)).is_err(),
                 "{refused:?} was accepted"
             );
         }
@@ -644,6 +925,39 @@ mod tests {
                 .err()
                 .is_some_and(|err| err.contains("could not read") && err.contains("absent.json"))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn summary_refuses_a_malformed_raw_page_file() -> Result<(), String> {
+        use std::fs;
+        let root = scratch("summary-malformed");
+        fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+        fs::write(
+            root.join("g.json"),
+            r#"{"comments": [], "summary": {"summary_only": 0}, "analysis_outcome": {"analysis_complete": true}}"#,
+        )
+        .map_err(|err| err.to_string())?;
+        fs::write(root.join("pages.json"), "not json").map_err(|err| err.to_string())?;
+        let result = super::pr_comments_summary(&strings(&[
+            "--root",
+            &root.display().to_string(),
+            "--pr-guidance",
+            "g.json",
+            "--raw",
+            "pages.json",
+            "--pull-request",
+            "7",
+            "--head-sha",
+            "abc",
+        ]));
+        let wrote = root.join("target/ripr/review/summary/summary.tsv").exists();
+        let _ = fs::remove_dir_all(&root);
+        assert!(
+            result.err().is_some_and(|err| err.contains("pages.json")),
+            "a malformed page file was accepted"
+        );
+        assert!(!wrote, "a request was written after a malformed page file");
         Ok(())
     }
 

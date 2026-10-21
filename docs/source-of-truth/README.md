@@ -17,7 +17,7 @@ Proposal = why.
 Spec = what.
 ADR = durable decision.
 Plan = PR-sized sequence.
-Active goal = what agents execute now.
+Selected work = what agents execute now (a root-selected transition bound to a portfolio basis; the retired singleton active-goal authority is historical, #1701/#1706).
 Support tiers = what users may believe.
 Policy ledgers = what exceptions and obligations exist.
 CI = what proved it.
@@ -91,11 +91,12 @@ the actual diff and validation evidence.
 ## Enforcement state
 
 The original doctrine slice defined the model before enforcing it. The current
-repo now has advisory validators for document artifacts, active goals, and the
-support-tier claim map. The source-of-truth workflow runs those three narrow
-validators; the graph report remains a separate report-only command. Those
-checks are still narrower than product correctness and are not
-branch-protection gates.
+repo now has advisory validators for document artifacts and the support-tier
+claim map; the retired active-goal validator was deleted with the
+`.ripr/goals/` scheduler (#1701). The source-of-truth workflow runs those
+narrow validators plus the spec-digest step; the graph report remains a
+separate report-only command. Those checks are still narrower than product
+correctness and are not branch-protection gates.
 
 Existing repo checks cover the model at different layers:
 
@@ -121,6 +122,7 @@ blocker first.
 These files explain the source-of-truth stack and point to the proof commands
 that operate it. Enforcement comes from the named `cargo xtask` commands and
 the advisory workflow, not from this prose. The current checks prove registered
-artifact links, active-goal shape, and support-tier proof-command references;
+artifact links and support-tier proof-command references (the retired
+active-goal shape check left with the `.ripr/goals/` scheduler in #1701);
 they do not prove product behavior, infer support-tier or policy impact, promote
 CI to blocking, or replace policy-specific ledger checks.

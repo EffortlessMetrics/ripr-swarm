@@ -23,6 +23,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/wrapped-guarded-original --diff fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/wrapped-guarded-original/diff.patch --mode fast probe:src_lib.rs:return_value:519eff0d
   ripr context --root fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/wrapped-guarded-original --diff fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/wrapped-guarded-original/diff.patch --mode fast --at probe:src_lib.rs:return_value:519eff0d
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:return_value:519eff0d --root fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/wrapped-guarded-original` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

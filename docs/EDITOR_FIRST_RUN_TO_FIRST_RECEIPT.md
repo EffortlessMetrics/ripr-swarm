@@ -11,9 +11,9 @@ install/open -> diagnose setup -> read status -> inspect one diagnostic
 -> verify -> receipt -> refresh -> inspect first-pr packet
 ```
 
-Rust is the stable default. TypeScript and JavaScript are opt-in preview
-surfaces; Python preview is enabled automatically for Python-shaped
-repositories without a `ripr.toml`. Preview findings stay advisory,
+Rust is the stable default. JavaScript is an opt-in preview surface;
+TypeScript and Python previews are enabled automatically for TypeScript- or
+Python-shaped repositories without a `ripr.toml`. Preview findings stay advisory,
 syntax-first, and static-limit bounded.
 
 ## 1. Install And Open
@@ -23,8 +23,9 @@ Open VSX, then open the repository root in VS Code.
 
 The normal editor install path should not require `cargo install ripr`. The
 extension resolves the server from, in order, `ripr.server.path`, a bundled
-server, a downloaded cached server, a verified first-run download, `ripr` on
-`PATH`, or an actionable error.
+server, a downloaded cached server, a compatible `ripr` on `PATH` (when
+`ripr.server.version` is empty), a verified first-run download, `ripr` on `PATH`
+as the fallback, or an actionable error.
 
 For a first Rust loop, no `ripr.toml` is required. Missing config is a normal
 first-run state; Rust remains enabled by default.

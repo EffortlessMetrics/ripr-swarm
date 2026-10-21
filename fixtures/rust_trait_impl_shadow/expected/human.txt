@@ -24,6 +24,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_trait_impl_shadow/input --diff <cwd>/fixtures/rust_trait_impl_shadow/diff.patch --mode fast probe:src_lib.rs:return_value:b6bd8eab
   ripr context --root <cwd>/fixtures/rust_trait_impl_shadow/input --diff <cwd>/fixtures/rust_trait_impl_shadow/diff.patch --mode fast --at probe:src_lib.rs:return_value:b6bd8eab
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:return_value:b6bd8eab --root <cwd>/fixtures/rust_trait_impl_shadow/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_trait_impl_shadow/input --at src/lib.rs:7 --kind return_value
 

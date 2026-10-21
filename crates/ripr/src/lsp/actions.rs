@@ -2453,20 +2453,37 @@ mod tests {
 
     #[test]
     fn receipt_command_falls_back_past_a_route_it_cannot_bind() {
-        // #4001: a safe receipt route the binder withholds (a `\` escape next
-        // to `--root .`) does not hide a later bindable candidate.
+        // #4001: a safe receipt route the binder withholds does not hide a
+        // later bindable candidate. The `--root=.` spelling is withheld on
+        // every host, so the fallback is demonstrated on every host (#8499).
         let root = std::env::temp_dir().join("ripr-receipt-fallback");
+        let bound = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
+        );
+        let fallback = Some(format!("ripr agent receipt --root {bound} --json"));
+        let data = serde_json::json!({
+            "receipt_command": "ripr receipt write --root=. --json",
+            "commands": { "receipt": "ripr agent receipt --root . --json" },
+        });
+        assert_eq!(first_safe_receipt_command(&root, &data), fallback);
+        // The original #4001 scenario: a `\` escape next to `--root .` is
+        // withheld only where the shell reads `\` as an escape. The Windows
+        // console form reads it literally, so the route binds instead of
+        // falling back (#8153).
         let data = serde_json::json!({
             "receipt_command": "ripr receipt write --note it\\s --root . --json",
             "commands": { "receipt": "ripr agent receipt --root . --json" },
         });
-        let bound = crate::agent::loop_commands::shell_arg(
-            &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
-        );
-        assert_eq!(
-            first_safe_receipt_command(&root, &data),
-            Some(format!("ripr agent receipt --root {bound} --json"))
-        );
+        if cfg!(windows) {
+            assert_eq!(
+                first_safe_receipt_command(&root, &data),
+                Some(format!(
+                    "ripr receipt write --note it\\s --root {bound} --json"
+                ))
+            );
+        } else {
+            assert_eq!(first_safe_receipt_command(&root, &data), fallback);
+        }
     }
 
     #[test]

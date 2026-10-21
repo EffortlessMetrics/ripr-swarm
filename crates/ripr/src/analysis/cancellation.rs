@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use std::fmt;
 use std::sync::{
     Arc,
-    atomic::{AtomicU8, Ordering},
+    atomic::{AtomicBool, AtomicU8, Ordering},
 };
 use std::time::{Duration, Instant};
 
@@ -41,6 +41,8 @@ struct CancellationState {
     /// failed or finished before its next checkpoint never saw it.
     outcome: AtomicU8,
     budget: Option<AnalysisBudget>,
+    interrupted: Option<Arc<AtomicBool>>,
+    native_publication: Option<Arc<AtomicBool>>,
 }
 
 #[derive(Clone)]
@@ -88,6 +90,8 @@ impl AnalysisCancellationToken {
             reason: AtomicU8::new(ACTIVE),
             outcome: AtomicU8::new(OUTCOME_NONE),
             budget: None,
+            interrupted: None,
+            native_publication: None,
         }))
     }
 
@@ -97,11 +101,40 @@ impl AnalysisCancellationToken {
         Self(Arc::new(CancellationState {
             reason: AtomicU8::new(ACTIVE),
             outcome: AtomicU8::new(OUTCOME_NONE),
+            interrupted: None,
+            native_publication: None,
             budget: Some(AnalysisBudget {
                 started,
                 limit,
                 now,
             }),
+        }))
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn with_interrupt_flags(
+        interrupted: Arc<AtomicBool>,
+        native_publication: Arc<AtomicBool>,
+    ) -> Self {
+        Self(Arc::new(CancellationState {
+            reason: AtomicU8::new(ACTIVE),
+            outcome: AtomicU8::new(OUTCOME_NONE),
+            budget: None,
+            interrupted: Some(interrupted),
+            native_publication: Some(native_publication),
+        }))
+    }
+
+    /// Give a budgeted CLI worker the caller's SIGINT flags without sharing
+    /// its abort state. A worker deadline must not turn the caller's later
+    /// refusal publication into another cancellation error.
+    pub(crate) fn for_check_budget_worker(&self) -> Self {
+        Self(Arc::new(CancellationState {
+            reason: AtomicU8::new(ACTIVE),
+            outcome: AtomicU8::new(OUTCOME_NONE),
+            budget: None,
+            interrupted: self.0.interrupted.clone(),
+            native_publication: self.0.native_publication.clone(),
         }))
     }
 
@@ -137,6 +170,14 @@ impl AnalysisCancellationToken {
     }
 
     pub(crate) fn checkpoint(&self) -> Result<(), AnalysisCancellation> {
+        if self
+            .0
+            .interrupted
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::SeqCst))
+        {
+            self.cancel(AnalysisAbortKind::Cancelled);
+        }
         if self.abort_kind().is_none() && self.remaining_budget().is_some_and(|left| left.is_zero())
         {
             self.cancel(AnalysisAbortKind::DeadlineExceeded);
@@ -265,6 +306,31 @@ pub(crate) fn with_optional_token<T>(
     let previous = CURRENT_TOKEN.with(|slot| slot.replace(token.cloned()));
     let _guard = ContextGuard(previous);
     work()
+}
+
+pub(crate) fn cli_interrupted() -> bool {
+    current_token().is_some_and(|token| {
+        token
+            .0
+            .interrupted
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::SeqCst))
+    })
+}
+
+/// Hand standalone stdout publication to native interruption. Ordinary
+/// library/budget tokens retain their existing checkpoint semantics.
+pub(crate) fn begin_cli_publication() -> Result<(), String> {
+    if let Some(token) = current_token()
+        && let Some(native) = &token.0.native_publication
+    {
+        // Signal handling stores cancellation before reading native. In the
+        // SeqCst order, this store/checkpoint pair cannot miss that signal
+        // while its handler also misses the publication handoff.
+        native.store(true, Ordering::SeqCst);
+        token.checkpoint().map_err(|error| error.to_string())?;
+    }
+    Ok(())
 }
 
 pub(crate) fn checkpoint() -> Result<(), String> {

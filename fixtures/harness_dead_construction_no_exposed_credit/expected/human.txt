@@ -16,7 +16,6 @@ Start here:
   Why no path: no related test was found that reaches this change
   Canonical gap: gap:rust:src/lib.rs:parse_limit:call_deletion:call_deletion:raw.parse_.unwrap_or_1
   Changed behavior: raw.parse().unwrap_or(1)
-  Missing discriminator (1 of 3): No relevant oracle was detected
   Next step: ripr found no static test path to this change — this is not a coverage assessment. A
     test may already exercise it through macros, helper-call chains, or integration tests that
     ripr's static model does not yet trace. If none does, add a co-located test that reaches and
@@ -29,6 +28,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/harness_dead_construction_no_exposed_credit/input --diff <cwd>/fixtures/harness_dead_construction_no_exposed_credit/diff.patch --mode fast probe:src_lib.rs:call_deletion:289dd551
   ripr context --root <cwd>/fixtures/harness_dead_construction_no_exposed_credit/input --diff <cwd>/fixtures/harness_dead_construction_no_exposed_credit/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:289dd551
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:call_deletion:289dd551 --root <cwd>/fixtures/harness_dead_construction_no_exposed_credit/input` for the full gate's answer
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.

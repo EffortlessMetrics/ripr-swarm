@@ -51,6 +51,29 @@ stays in the user-facing section that describes the behavior. Generated
 `Internal / CI` fragments into a short rolled-up summary under that heading
 rather than one bullet per case batch.
 
+## Retiring A `ripr.toml` Key
+
+Teams commit `ripr.toml` as reviewed policy, and every config table rejects
+unknown keys. A key that is renamed or removed without notice therefore turns
+every existing config into a load failure on the first run after an upgrade.
+Retire a key in this order (#7453):
+
+1. In the release that renames or replaces it, keep the old spelling working and
+   print a named warning that says the key is deprecated and what replaces it.
+   File the change under `Deprecated`.
+2. Keep that behavior for at least one minor release. While ripr is pre-1.0 a
+   minor release is the next `0.N.0` bump, so a key deprecated in `0.12.0` can be
+   retired no earlier than `0.13.0`.
+3. In the release that stops accepting the key, add it to `RETIRED_KEYS` in
+   `crates/ripr/src/config.rs`, so the load error names the release that
+   retired it and its replacement instead of a bare `unknown field`. File the
+   change under `Removed`.
+
+The `RETIRED_KEYS` table is empty until the first key is retired. Step 1 is a
+policy requirement for the first rename, not machinery that exists today;
+[#7453](https://github.com/EffortlessMetrics/ripr-swarm/issues/7453) owns the
+deprecation-warning step.
+
 ## Static Language
 
 Changelog entries for static analysis behavior should use conservative exposure

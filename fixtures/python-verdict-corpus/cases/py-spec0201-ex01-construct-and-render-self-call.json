@@ -1,0 +1,48 @@
+{
+  "case_id": "py-spec0201-ex01-construct-and-render-self-call",
+  "subject_id": "authored-py-pytest-self-reach",
+  "diff": "cases/py-spec0201-ex01-construct-and-render-self-call.diff",
+  "anchor": {
+    "file": "reach/ledger_render.py",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "pytest_construct_then_public_method",
+  "hard_case": "the edited helper is reached only through `self._ledger_pad()` from the public `render_ledger`",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return 3",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_ledger_render.py::test_render_ledger",
+        "equivalence_review": "not equivalent: the edit changes the value the test asserts"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`return 2` becomes `return 3` in `Ledger._ledger_pad`. The test constructs `Ledger()` and asserts `render_ledger()` returns `\"|  |\"`; the edit pads three spaces and fails it. RIPR-SPEC-0201 example 1: ripr reaches the helper only through a `self.` call from the public method.",
+  "labeling_observation": {
+    "ripr_commit": "006eaf8",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0201#1"
+  ]
+}

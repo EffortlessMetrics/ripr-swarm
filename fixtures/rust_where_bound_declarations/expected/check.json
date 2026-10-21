@@ -41,7 +41,7 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"unknown","confidence":"low","summary":"Assertions exist, but oracle strength is unknown"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach packet: observes_packet", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 7)", "related test src/lib.rs:19 observes_packet uses unknown exact value oracle: assert_eq!(packet(7_u8).Upper, 7);", "source assertion argument value 7 at line 20", "source function argument value value = 7_ at line 20"],
+      "evidence_path": ["reach yes: Related tests appear to reach packet: observes_packet", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 7)", "related test src/lib.rs:19 observes_packet uses exact value oracle, not graded against this probe: assert_eq!(packet(7_u8).Upper, 7);", "source assertion argument value 7 at line 20", "source function argument value value = 7_ at line 20"],
       "flow_sinks": [
         {"kind":"unknown","text":"unknown sink","line":7}
       ],

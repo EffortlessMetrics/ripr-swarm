@@ -1,223 +1,645 @@
 {
-  "claim_boundary": "Agreement is scored only on seam_precise joins (operator mutants whose original operator appears in a predicate_boundary or return_value seam expression on the same line). Claims are limited to the recorded checkout revisions, cargo-mutants versions, and this join rule; this is not a suite adequacy measure.",
+  "analyzer_version": "ripr 0.11.0 (731e36ef5a75b50b7dd38fc78c8fbb2a23c11d43)",
+  "claim_boundary": "Agreement is scored only on canonical_precise records: a BinaryOperator or UnaryOperator mutant that ripr calibrate joined by seam_id or by unique span containment to a predicate_boundary or return_value seam, with a caught or missed outcome. File/line fallback joins, span-overlap ties, unmatched records, and unsupported genres, seam kinds or outcomes are counted as exclusions and never scored. Claims are limited to the recorded checkout revisions, cargo-mutants versions, and this join rule; this is not a suite adequacy measure.",
   "disagreement_examples": {
-    "false_gap": [
+    "overclaim": [
       {
-        "expression": "i > 0",
-        "file": "src/display.rs",
-        "grip_class": "ungripped",
-        "line": 39,
-        "mutant": "src/display.rs:39:18: replace > with < in <impl Display for VersionReq>::fmt",
-        "repo": "semver",
-        "revision": "280ebcb6edac3aa4cdc545dbff8a26c5ac4861fe",
-        "runtime_outcome": "caught",
-        "seam_id": "e88add45fb495e40",
-        "seam_kind": "predicate_boundary"
-      },
-      {
-        "expression": "self.op == Op::Wildcard",
-        "file": "src/display.rs",
-        "grip_class": "ungripped",
-        "line": 69,
-        "mutant": "src/display.rs:69:31: replace == with != in <impl Display for Comparator>::fmt",
-        "repo": "semver",
-        "revision": "280ebcb6edac3aa4cdc545dbff8a26c5ac4861fe",
-        "runtime_outcome": "caught",
-        "seam_id": "ab47e0513584d66b",
-        "seam_kind": "predicate_boundary"
-      },
-      {
-        "expression": "self.op == Op::Wildcard",
-        "file": "src/display.rs",
-        "grip_class": "ungripped",
-        "line": 72,
-        "mutant": "src/display.rs:72:27: replace == with != in <impl Display for Comparator>::fmt",
-        "repo": "semver",
-        "revision": "280ebcb6edac3aa4cdc545dbff8a26c5ac4861fe",
-        "runtime_outcome": "caught",
-        "seam_id": "a23f3b51304bfbde",
-        "seam_kind": "predicate_boundary"
-      },
-      {
-        "expression": "val < 10",
-        "file": "src/display.rs",
-        "grip_class": "ungripped",
-        "line": 157,
-        "mutant": "src/display.rs:157:12: replace < with == in digits",
-        "repo": "semver",
-        "revision": "280ebcb6edac3aa4cdc545dbff8a26c5ac4861fe",
-        "runtime_outcome": "caught",
-        "seam_id": "6caf4439e5440023",
-        "seam_kind": "predicate_boundary"
-      },
-      {
-        "expression": "self.0 == '\\0'",
-        "file": "src/error.rs",
-        "grip_class": "ungripped",
-        "line": 120,
-        "mutant": "src/error.rs:120:19: replace == with != in <impl Display for QuotedChar>::fmt",
-        "repo": "semver",
-        "revision": "280ebcb6edac3aa4cdc545dbff8a26c5ac4861fe",
-        "runtime_outcome": "caught",
-        "seam_id": "5eaa975c73abbaf8",
-        "seam_kind": "predicate_boundary"
-      },
-      {
-        "expression": "(len_bits + 6) / 7",
-        "file": "src/identifier.rs",
-        "grip_class": "ungripped",
-        "line": 411,
-        "mutant": "src/identifier.rs:411:20: replace / with % in bytes_for_varint",
-        "repo": "semver",
-        "revision": "280ebcb6edac3aa4cdc545dbff8a26c5ac4861fe",
-        "runtime_outcome": "caught",
-        "seam_id": "12354c9f09adc903",
+        "expression": "ByteSize(size * EB)",
+        "file": "src/lib.rs",
+        "grip_class": "strongly_gripped",
+        "join_method": "span_containment",
+        "line": 240,
+        "mutant": "src/lib.rs:240:23: replace * with + in ByteSize::eb",
+        "repo": "bytesize",
+        "revision": "66a3715e33369e99cb428bcd5aee32291f8e0a94",
+        "runtime_outcome": "missed",
+        "seam_id": "96be21b333b271ee",
         "seam_kind": "return_value"
       },
       {
-        "expression": "ordering != Ordering::Equal",
-        "file": "src/impls.rs",
-        "grip_class": "ungripped",
-        "line": 94,
-        "mutant": "src/impls.rs:94:25: replace != with == in <impl Ord for Prerelease>::cmp",
-        "repo": "semver",
-        "revision": "280ebcb6edac3aa4cdc545dbff8a26c5ac4861fe",
-        "runtime_outcome": "caught",
-        "seam_id": "3816a022ec27548c",
-        "seam_kind": "predicate_boundary"
-      },
-      {
-        "expression": "ordering != Ordering::Equal",
-        "file": "src/impls.rs",
-        "grip_class": "ungripped",
-        "line": 139,
-        "mutant": "src/impls.rs:139:25: replace != with == in <impl Ord for BuildMetadata>::cmp",
-        "repo": "semver",
-        "revision": "280ebcb6edac3aa4cdc545dbff8a26c5ac4861fe",
-        "runtime_outcome": "caught",
-        "seam_id": "f4656cc2d461efff",
-        "seam_kind": "predicate_boundary"
-      },
-      {
-        "expression": "segment_len == 0",
+        "expression": "Ok(Self((v * u) as u64))",
         "file": "src/parse.rs",
-        "grip_class": "ungripped",
-        "line": 235,
-        "mutant": "src/parse.rs:235:32: replace == with != in identifier",
-        "repo": "semver",
-        "revision": "280ebcb6edac3aa4cdc545dbff8a26c5ac4861fe",
-        "runtime_outcome": "caught",
-        "seam_id": "36bf26d07be506e4",
-        "seam_kind": "predicate_boundary"
-      },
-      {
-        "expression": "pos == Position::Pre",
-        "file": "src/parse.rs",
-        "grip_class": "ungripped",
-        "line": 242,
-        "mutant": "src/parse.rs:242:24: replace == with != in identifier",
-        "repo": "semver",
-        "revision": "280ebcb6edac3aa4cdc545dbff8a26c5ac4861fe",
-        "runtime_outcome": "caught",
-        "seam_id": "28f8a9d991cf8d90",
-        "seam_kind": "predicate_boundary"
-      },
-      {
-        "expression": "segment_len > 1",
-        "file": "src/parse.rs",
-        "grip_class": "ungripped",
-        "line": 243,
-        "mutant": "src/parse.rs:243:36: replace > with < in identifier",
-        "repo": "semver",
-        "revision": "280ebcb6edac3aa4cdc545dbff8a26c5ac4861fe",
-        "runtime_outcome": "caught",
-        "seam_id": "1ff312d98c9900a4",
-        "seam_kind": "predicate_boundary"
-      },
-      {
-        "expression": "depth + 1 == MAX_COMPARATORS",
-        "file": "src/parse.rs",
-        "grip_class": "ungripped",
-        "line": 394,
-        "mutant": "src/parse.rs:394:18: replace == with != in version_req",
-        "repo": "semver",
-        "revision": "280ebcb6edac3aa4cdc545dbff8a26c5ac4861fe",
-        "runtime_outcome": "caught",
-        "seam_id": "ef645df634f65594",
-        "seam_kind": "predicate_boundary"
+        "grip_class": "strongly_gripped",
+        "join_method": "span_containment",
+        "line": 24,
+        "mutant": "src/parse.rs:24:46: replace * with + in <impl str::FromStr for ByteSize>::from_str",
+        "repo": "bytesize",
+        "revision": "66a3715e33369e99cb428bcd5aee32291f8e0a94",
+        "runtime_outcome": "missed",
+        "seam_id": "432d212424ed6d04",
+        "seam_kind": "return_value"
       }
     ]
   },
-  "outcomes_by_pairing_and_grip_class": {
-    "function_body": {
+  "operator_token_diagnostic": {
+    "absent_examples": [],
+    "counts": {
+      "present": 493
+    }
+  },
+  "outcomes_by_disposition_and_grip_class": {
+    "ambiguous_file_line": {
+      "no_joined_seam": {
+        "caught": 2,
+        "missed": 1
+      }
+    },
+    "ambiguous_span_overlap": {
+      "no_joined_seam": {
+        "caught": 31,
+        "missed": 9,
+        "unviable": 3
+      }
+    },
+    "canonical_precise": {
       "activation_unknown": {
-        "caught": 36,
-        "missed": 30,
-        "timeout": 2,
-        "unviable": 2
+        "caught": 285,
+        "missed": 86
       },
-      "propagation_unknown": {
-        "unviable": 2
+      "opaque": {
+        "caught": 46,
+        "missed": 1
       },
       "strongly_gripped": {
-        "caught": 26,
-        "unviable": 2
+        "caught": 61,
+        "missed": 2
       },
       "ungripped": {
-        "caught": 14,
-        "missed": 6,
-        "unviable": 14
-      },
-      "weakly_gripped": {
-        "caught": 30,
         "missed": 12
       }
     },
-    "same_line_other": {
+    "file_line_only": {
       "activation_unknown": {
-        "caught": 53,
-        "missed": 18
+        "caught": 46,
+        "missed": 8,
+        "timeout": 3,
+        "unviable": 1
+      },
+      "opaque": {
+        "caught": 15,
+        "timeout": 1
       },
       "strongly_gripped": {
-        "caught": 42,
-        "missed": 1
+        "caught": 49,
+        "missed": 17,
+        "unviable": 1
+      }
+    },
+    "unmatched_no_containing_seam": {
+      "no_joined_seam": {
+        "caught": 697,
+        "missed": 104,
+        "timeout": 10,
+        "unviable": 32
+      }
+    },
+    "unscoreable_outcome": {
+      "activation_unknown": {
+        "timeout": 4
+      },
+      "strongly_gripped": {
+        "timeout": 1,
+        "unviable": 3
+      }
+    },
+    "unsupported_genre": {
+      "activation_unknown": {
+        "caught": 24,
+        "missed": 53,
+        "unviable": 8
+      },
+      "opaque": {
+        "caught": 8,
+        "missed": 2,
+        "unviable": 8
+      },
+      "strongly_gripped": {
+        "caught": 47,
+        "unviable": 21
       },
       "ungripped": {
-        "caught": 30,
-        "missed": 7,
+        "missed": 22,
+        "unviable": 1
+      }
+    },
+    "unsupported_seam_kind": {
+      "activation_unknown": {
+        "caught": 6,
+        "missed": 4
+      },
+      "opaque": {
+        "caught": 4,
+        "missed": 1,
         "unviable": 1
       },
       "weakly_gripped": {
-        "caught": 27,
-        "missed": 7
-      }
-    },
-    "seam_precise": {
-      "activation_unknown": {
-        "caught": 95,
-        "missed": 29,
-        "timeout": 1
-      },
-      "strongly_gripped": {
-        "caught": 14,
-        "timeout": 1
-      },
-      "ungripped": {
-        "caught": 22,
-        "missed": 1
-      },
-      "weakly_gripped": {
-        "caught": 8,
-        "missed": 3
+        "caught": 4
       }
     }
+  },
+  "pilot_top_recommendations": {
+    "by_grip_class": {
+      "ungripped": {
+        "confirmed": 6,
+        "unscored": 1
+      },
+      "weakly_gripped": {
+        "confirmed": 1,
+        "refuted": 16,
+        "unscored": 12
+      }
+    },
+    "by_tier": {
+      "none": {
+        "unscored": 13
+      },
+      "owner": {
+        "confirmed": 1,
+        "refuted": 16
+      },
+      "seam": {
+        "confirmed": 6
+      }
+    },
+    "claim_boundary": "A pilot recommendation is confirmed when a viable operator mutant of its predicate or return expression was missed (with none, a viable mutant on its line; with none there either, a whole-body mutant of its innermost function), refuted when every such mutant was caught, and unscored otherwise. Precision is confirmed over confirmed plus refuted, for the recorded revisions and cargo-mutants versions only.",
+    "counts": {
+      "confirmed": 7,
+      "refuted": 16,
+      "unscored": 13
+    },
+    "max_seams_per_repo": 10,
+    "precision": 0.304,
+    "recommendations_total": 36,
+    "repos": [
+      {
+        "name": "rust-hex",
+        "recommendations": [
+          {
+            "caught": 1,
+            "file": "src/lib.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "call_presence",
+            "line": 230,
+            "missed": 0,
+            "rank": 1,
+            "seam_id": "b1e5606c0d2cbc22",
+            "tier": "owner",
+            "verdict": "refuted"
+          },
+          {
+            "caught": 0,
+            "file": "src/lib.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "call_presence",
+            "line": 240,
+            "missed": 0,
+            "rank": 2,
+            "seam_id": "ef5aa978be1c5de9",
+            "tier": "none",
+            "verdict": "unscored"
+          },
+          {
+            "caught": 2,
+            "file": "src/lib.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "call_presence",
+            "line": 264,
+            "missed": 0,
+            "rank": 3,
+            "seam_id": "a166e7c828e4ffe2",
+            "tier": "owner",
+            "verdict": "refuted"
+          }
+        ]
+      },
+      {
+        "name": "semver",
+        "recommendations": [
+          {
+            "caught": 2,
+            "file": "src/identifier.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "call_presence",
+            "line": 174,
+            "missed": 0,
+            "rank": 1,
+            "seam_id": "e10f437124e9b344",
+            "tier": "owner",
+            "verdict": "refuted"
+          },
+          {
+            "caught": 1,
+            "file": "src/identifier.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "field_construction",
+            "line": 209,
+            "missed": 0,
+            "rank": 2,
+            "seam_id": "def8200639cee5c3",
+            "tier": "owner",
+            "verdict": "refuted"
+          },
+          {
+            "caught": 0,
+            "file": "src/impls.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "call_presence",
+            "line": 18,
+            "missed": 1,
+            "rank": 3,
+            "seam_id": "6110309e048379e1",
+            "tier": "owner",
+            "verdict": "confirmed"
+          },
+          {
+            "caught": 0,
+            "file": "src/lib.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "field_construction",
+            "line": 391,
+            "missed": 0,
+            "rank": 4,
+            "seam_id": "598820688d815e5e",
+            "tier": "none",
+            "verdict": "unscored"
+          },
+          {
+            "caught": 0,
+            "file": "src/parse.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "field_construction",
+            "line": 148,
+            "missed": 0,
+            "rank": 5,
+            "seam_id": "b1d188993b6cb4db",
+            "tier": "none",
+            "verdict": "unscored"
+          },
+          {
+            "caught": 4,
+            "file": "src/parse.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "error_variant",
+            "line": 180,
+            "missed": 0,
+            "rank": 6,
+            "seam_id": "43faddf0cfa67376",
+            "tier": "owner",
+            "verdict": "refuted"
+          },
+          {
+            "caught": 2,
+            "file": "src/parse.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "field_construction",
+            "line": 211,
+            "missed": 0,
+            "rank": 7,
+            "seam_id": "ed7389d3716e2f0a",
+            "tier": "owner",
+            "verdict": "refuted"
+          },
+          {
+            "caught": 2,
+            "file": "src/parse.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "field_construction",
+            "line": 217,
+            "missed": 0,
+            "rank": 8,
+            "seam_id": "2317514a92cd6fd8",
+            "tier": "owner",
+            "verdict": "refuted"
+          },
+          {
+            "caught": 0,
+            "file": "src/parse.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "field_construction",
+            "line": 357,
+            "missed": 0,
+            "rank": 9,
+            "seam_id": "ae733d0d5b2ca5df",
+            "tier": "none",
+            "verdict": "unscored"
+          },
+          {
+            "caught": 1,
+            "file": "src/identifier.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "field_construction",
+            "line": 210,
+            "missed": 0,
+            "rank": 10,
+            "seam_id": "c58dac062b92d2c6",
+            "tier": "owner",
+            "verdict": "refuted"
+          }
+        ]
+      },
+      {
+        "name": "strsim-rs",
+        "recommendations": [
+          {
+            "caught": 2,
+            "file": "src/lib.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "call_presence",
+            "line": 324,
+            "missed": 0,
+            "rank": 1,
+            "seam_id": "fe5e65c1331a0b8e",
+            "tier": "owner",
+            "verdict": "refuted"
+          },
+          {
+            "caught": 3,
+            "file": "src/lib.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "call_presence",
+            "line": 741,
+            "missed": 0,
+            "rank": 2,
+            "seam_id": "e402c8f4826d0d47",
+            "tier": "owner",
+            "verdict": "refuted"
+          },
+          {
+            "caught": 2,
+            "file": "src/lib.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "call_presence",
+            "line": 325,
+            "missed": 0,
+            "rank": 3,
+            "seam_id": "39e675c15481f7af",
+            "tier": "owner",
+            "verdict": "refuted"
+          }
+        ]
+      },
+      {
+        "name": "bytesize",
+        "recommendations": [
+          {
+            "caught": 1,
+            "file": "src/parse.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "error_variant",
+            "line": 27,
+            "missed": 0,
+            "rank": 1,
+            "seam_id": "6b3548552e679074",
+            "tier": "owner",
+            "verdict": "refuted"
+          },
+          {
+            "caught": 0,
+            "file": "src/parse.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "error_variant",
+            "line": 251,
+            "missed": 0,
+            "rank": 2,
+            "seam_id": "3331a830d2dfede4",
+            "tier": "none",
+            "verdict": "unscored"
+          },
+          {
+            "caught": 1,
+            "file": "src/parse.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "error_variant",
+            "line": 32,
+            "missed": 0,
+            "rank": 3,
+            "seam_id": "745fe65533bd4582",
+            "tier": "owner",
+            "verdict": "refuted"
+          },
+          {
+            "caught": 0,
+            "file": "src/lib.rs",
+            "grip_class": "ungripped",
+            "kind": "return_value",
+            "line": 258,
+            "missed": 2,
+            "rank": 4,
+            "seam_id": "9f4c2a85d52b74f4",
+            "tier": "seam",
+            "verdict": "confirmed"
+          },
+          {
+            "caught": 0,
+            "file": "src/lib.rs",
+            "grip_class": "ungripped",
+            "kind": "return_value",
+            "line": 276,
+            "missed": 2,
+            "rank": 5,
+            "seam_id": "15c66252fe1c8c00",
+            "tier": "seam",
+            "verdict": "confirmed"
+          },
+          {
+            "caught": 0,
+            "file": "src/lib.rs",
+            "grip_class": "ungripped",
+            "kind": "return_value",
+            "line": 288,
+            "missed": 2,
+            "rank": 6,
+            "seam_id": "b33cbd4586eabe7e",
+            "tier": "seam",
+            "verdict": "confirmed"
+          },
+          {
+            "caught": 0,
+            "file": "src/lib.rs",
+            "grip_class": "ungripped",
+            "kind": "return_value",
+            "line": 294,
+            "missed": 2,
+            "rank": 7,
+            "seam_id": "35c840b7d9a4b59d",
+            "tier": "seam",
+            "verdict": "confirmed"
+          },
+          {
+            "caught": 0,
+            "file": "src/lib.rs",
+            "grip_class": "ungripped",
+            "kind": "return_value",
+            "line": 306,
+            "missed": 2,
+            "rank": 8,
+            "seam_id": "0fbf486a6751ffe1",
+            "tier": "seam",
+            "verdict": "confirmed"
+          },
+          {
+            "caught": 0,
+            "file": "src/lib.rs",
+            "grip_class": "ungripped",
+            "kind": "return_value",
+            "line": 318,
+            "missed": 2,
+            "rank": 9,
+            "seam_id": "ee8c94efbd1df487",
+            "tier": "seam",
+            "verdict": "confirmed"
+          },
+          {
+            "caught": 0,
+            "file": "ensure-no-std/src/compat_test.rs",
+            "grip_class": "ungripped",
+            "kind": "call_presence",
+            "line": 6,
+            "missed": 0,
+            "rank": 10,
+            "seam_id": "dee841d398e994dd",
+            "tier": "none",
+            "verdict": "unscored"
+          }
+        ]
+      },
+      {
+        "name": "humantime",
+        "recommendations": [
+          {
+            "caught": 2,
+            "file": "src/date.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "error_variant",
+            "line": 74,
+            "missed": 0,
+            "rank": 1,
+            "seam_id": "598481dcd9183e92",
+            "tier": "owner",
+            "verdict": "refuted"
+          },
+          {
+            "caught": 0,
+            "file": "src/date.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "error_variant",
+            "line": 86,
+            "missed": 0,
+            "rank": 2,
+            "seam_id": "781e0c2f0beff0bf",
+            "tier": "none",
+            "verdict": "unscored"
+          },
+          {
+            "caught": 0,
+            "file": "src/date.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "error_variant",
+            "line": 110,
+            "missed": 0,
+            "rank": 3,
+            "seam_id": "a57b6ce33e756f89",
+            "tier": "none",
+            "verdict": "unscored"
+          },
+          {
+            "caught": 1,
+            "file": "src/duration.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "field_construction",
+            "line": 369,
+            "missed": 0,
+            "rank": 4,
+            "seam_id": "d061dfc2a5b21e3e",
+            "tier": "owner",
+            "verdict": "refuted"
+          },
+          {
+            "caught": 0,
+            "file": "src/date.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "error_variant",
+            "line": 90,
+            "missed": 0,
+            "rank": 5,
+            "seam_id": "89da5e2f16197372",
+            "tier": "none",
+            "verdict": "unscored"
+          },
+          {
+            "caught": 0,
+            "file": "src/date.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "error_variant",
+            "line": 119,
+            "missed": 0,
+            "rank": 6,
+            "seam_id": "c05175e34de65e92",
+            "tier": "none",
+            "verdict": "unscored"
+          },
+          {
+            "caught": 1,
+            "file": "src/duration.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "field_construction",
+            "line": 370,
+            "missed": 0,
+            "rank": 7,
+            "seam_id": "9337b1c282e6ddd6",
+            "tier": "owner",
+            "verdict": "refuted"
+          },
+          {
+            "caught": 0,
+            "file": "src/date.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "error_variant",
+            "line": 129,
+            "missed": 0,
+            "rank": 8,
+            "seam_id": "8ea568b994a73718",
+            "tier": "none",
+            "verdict": "unscored"
+          },
+          {
+            "caught": 0,
+            "file": "src/date.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "error_variant",
+            "line": 151,
+            "missed": 0,
+            "rank": 9,
+            "seam_id": "a820ecb9a2f1d878",
+            "tier": "none",
+            "verdict": "unscored"
+          },
+          {
+            "caught": 0,
+            "file": "src/date.rs",
+            "grip_class": "weakly_gripped",
+            "kind": "error_variant",
+            "line": 154,
+            "missed": 0,
+            "rank": 10,
+            "seam_id": "a0bdb2b99f1f0ae0",
+            "tier": "none",
+            "verdict": "unscored"
+          }
+        ]
+      }
+    ],
+    "scored": 23,
+    "unavailable_repos": 0
   },
   "repos": [
     {
       "calibration_metrics": {
-        "ambiguous_file_line_total": 34,
+        "ambiguous_file_line_total": 0,
+        "ambiguous_span_overlap_total": 2,
         "join_method_counts": {
-          "file_line": 36
+          "file_line": 3,
+          "span_containment": 33
         },
         "matched_total": 36,
         "mutants_total": 86,
@@ -227,27 +649,46 @@
           "timeout": 1,
           "unviable": 4
         },
-        "static_seams_total": 136,
-        "static_without_runtime_total": 80,
-        "unmatched_mutants_total": 16
+        "static_seams_total": 69,
+        "static_without_runtime_total": 46,
+        "unmatched_mutants_total": 48,
+        "unmatched_reason_counts": {
+          "no_containing_seam": 48
+        }
       },
+      "cargo_mutants_args": [],
       "cargo_mutants_version": "27.1.0",
       "exposure_run_status": "complete",
+      "mutant_diffs_checked_against_revision": 86,
+      "mutant_set_sha256": "73d4594dde4d80d08e5f12d60223ad69adbde9005456c1a7cf23c6715571432b",
+      "mutant_timeout_secs": 60,
       "name": "rust-hex",
       "pairings": {
-        "function_body": 18,
-        "same_line_other": 16,
-        "seam_precise": 2
+        "canonical_precise": 22,
+        "canonical_precise_by_join_method": {
+          "seam_id": 0,
+          "span_containment": 22
+        },
+        "excluded": {
+          "ambiguous_span_overlap": 2,
+          "file_line_only": 3,
+          "unmatched_no_containing_seam": 48,
+          "unsupported_genre": 9,
+          "unsupported_seam_kind": 2
+        },
+        "records_total": 86
       },
       "revision": "e25a8701f7f6b5ec4acedffcb4a45cfb69cc34eb"
     },
     {
       "calibration_metrics": {
-        "ambiguous_file_line_total": 176,
+        "ambiguous_file_line_total": 0,
+        "ambiguous_span_overlap_total": 26,
         "join_method_counts": {
-          "file_line": 144
+          "file_line": 16,
+          "span_containment": 183
         },
-        "matched_total": 144,
+        "matched_total": 199,
         "mutants_total": 365,
         "runtime_outcome_counts": {
           "caught": 268,
@@ -255,27 +696,46 @@
           "timeout": 5,
           "unviable": 32
         },
-        "static_seams_total": 895,
-        "static_without_runtime_total": 582,
-        "unmatched_mutants_total": 45
+        "static_seams_total": 487,
+        "static_without_runtime_total": 338,
+        "unmatched_mutants_total": 140,
+        "unmatched_reason_counts": {
+          "no_containing_seam": 140
+        }
       },
+      "cargo_mutants_args": [],
       "cargo_mutants_version": "27.1.0",
       "exposure_run_status": "complete",
+      "mutant_diffs_checked_against_revision": 365,
+      "mutant_set_sha256": "93775d8607fee5e0e2018957ab372f177bdb7d7cb173bcc7c810d445a6210cb5",
+      "mutant_timeout_secs": 60,
       "name": "semver",
       "pairings": {
-        "function_body": 49,
-        "same_line_other": 42,
-        "seam_precise": 53
+        "canonical_precise": 139,
+        "canonical_precise_by_join_method": {
+          "seam_id": 0,
+          "span_containment": 139
+        },
+        "excluded": {
+          "ambiguous_span_overlap": 26,
+          "file_line_only": 16,
+          "unmatched_no_containing_seam": 140,
+          "unsupported_genre": 38,
+          "unsupported_seam_kind": 6
+        },
+        "records_total": 365
       },
       "revision": "280ebcb6edac3aa4cdc545dbff8a26c5ac4861fe"
     },
     {
       "calibration_metrics": {
-        "ambiguous_file_line_total": 106,
+        "ambiguous_file_line_total": 0,
+        "ambiguous_span_overlap_total": 2,
         "join_method_counts": {
-          "file_line": 137
+          "file_line": 5,
+          "span_containment": 121
         },
-        "matched_total": 137,
+        "matched_total": 126,
         "mutants_total": 358,
         "runtime_outcome_counts": {
           "caught": 272,
@@ -283,94 +743,151 @@
           "timeout": 4,
           "unviable": 3
         },
-        "static_seams_total": 245,
-        "static_without_runtime_total": 97,
-        "unmatched_mutants_total": 115
+        "static_seams_total": 108,
+        "static_without_runtime_total": 42,
+        "unmatched_mutants_total": 230,
+        "unmatched_reason_counts": {
+          "no_containing_seam": 230
+        }
       },
+      "cargo_mutants_args": [],
       "cargo_mutants_version": "27.1.0",
       "exposure_run_status": "complete",
+      "mutant_diffs_checked_against_revision": 358,
+      "mutant_set_sha256": "01ddabdebf76915bd6172185be4831207eb2cd31c1105ca553cc6885e007f76b",
+      "mutant_timeout_secs": 60,
       "name": "strsim-rs",
       "pairings": {
-        "function_body": 17,
-        "same_line_other": 76,
-        "seam_precise": 44
+        "canonical_precise": 95,
+        "canonical_precise_by_join_method": {
+          "seam_id": 0,
+          "span_containment": 95
+        },
+        "excluded": {
+          "ambiguous_span_overlap": 2,
+          "file_line_only": 5,
+          "unmatched_no_containing_seam": 230,
+          "unscoreable_outcome": 1,
+          "unsupported_genre": 17,
+          "unsupported_seam_kind": 8
+        },
+        "records_total": 358
       },
       "revision": "dacc84c0dc61eff0ee0ff66962bcf2e17018ad26"
     },
     {
       "calibration_metrics": {
-        "ambiguous_file_line_total": 219,
+        "ambiguous_file_line_total": 3,
+        "ambiguous_span_overlap_total": 0,
         "join_method_counts": {
-          "file_line": 118
+          "file_line": 71,
+          "span_containment": 239
         },
-        "matched_total": 118,
+        "matched_total": 310,
         "mutants_total": 362,
         "runtime_outcome_counts": {
-          "caught": 186,
-          "missed": 144,
+          "caught": 185,
+          "missed": 145,
           "timeout": 9,
           "unviable": 23
         },
-        "static_seams_total": 376,
-        "static_without_runtime_total": 168,
-        "unmatched_mutants_total": 25
+        "static_seams_total": 204,
+        "static_without_runtime_total": 106,
+        "unmatched_mutants_total": 49,
+        "unmatched_reason_counts": {
+          "no_containing_seam": 49
+        }
       },
+      "cargo_mutants_args": [],
       "cargo_mutants_version": "27.1.0",
       "exposure_run_status": "complete",
+      "mutant_diffs_checked_against_revision": 362,
+      "mutant_set_sha256": "f21961c4587411f6b1a3ccc7717c9c8b06b22ccbcc75076ff14fa9a72a73cc95",
+      "mutant_timeout_secs": 60,
       "name": "bytesize",
       "pairings": {
-        "function_body": 69,
-        "same_line_other": 14,
-        "seam_precise": 35
+        "canonical_precise": 127,
+        "canonical_precise_by_join_method": {
+          "seam_id": 0,
+          "span_containment": 127
+        },
+        "excluded": {
+          "ambiguous_file_line": 3,
+          "file_line_only": 71,
+          "unmatched_no_containing_seam": 49,
+          "unscoreable_outcome": 6,
+          "unsupported_genre": 106
+        },
+        "records_total": 362
       },
       "revision": "66a3715e33369e99cb428bcd5aee32291f8e0a94"
     },
     {
       "calibration_metrics": {
-        "ambiguous_file_line_total": 137,
+        "ambiguous_file_line_total": 0,
+        "ambiguous_span_overlap_total": 13,
         "join_method_counts": {
-          "file_line": 101
+          "file_line": 46,
+          "span_containment": 139
         },
-        "matched_total": 101,
+        "matched_total": 185,
         "mutants_total": 574,
         "runtime_outcome_counts": {
-          "caught": 537,
-          "missed": 20,
+          "caught": 539,
+          "missed": 18,
           "unviable": 17
         },
-        "static_seams_total": 461,
-        "static_without_runtime_total": 256,
-        "unmatched_mutants_total": 336
+        "static_seams_total": 282,
+        "static_without_runtime_total": 157,
+        "unmatched_mutants_total": 376,
+        "unmatched_reason_counts": {
+          "no_containing_seam": 376
+        }
       },
+      "cargo_mutants_args": [],
       "cargo_mutants_version": "27.1.0",
       "exposure_run_status": "complete",
+      "mutant_diffs_checked_against_revision": 574,
+      "mutant_set_sha256": "94dfc9ff682dcc5d7df3a94d0fc6d72f460826a95c3036c63d0b30e58093ed45",
+      "mutant_timeout_secs": 60,
       "name": "humantime",
       "pairings": {
-        "function_body": 23,
-        "same_line_other": 38,
-        "seam_precise": 40
+        "canonical_precise": 110,
+        "canonical_precise_by_join_method": {
+          "seam_id": 0,
+          "span_containment": 110
+        },
+        "excluded": {
+          "ambiguous_span_overlap": 13,
+          "file_line_only": 46,
+          "unmatched_no_containing_seam": 376,
+          "unscoreable_outcome": 1,
+          "unsupported_genre": 24,
+          "unsupported_seam_kind": 4
+        },
+        "records_total": 574
       },
       "revision": "76c8929b4cc286f675322475a8e1841f35bafc57"
     }
   ],
-  "schema_version": "ripr-mutation-spot-check-v1",
+  "schema_version": "ripr-mutation-spot-check-v2",
   "scored_families": {
     "claims_discriminator": {
-      "agreement_rate": 1.0,
+      "agreement_rate": 0.968,
       "counts": {
-        "agree": 14
+        "agree": 61,
+        "overclaim": 2
       },
-      "mutants_scored": 14,
-      "seams_scored": 8
+      "mutants_scored": 63,
+      "seams_scored": 31
     },
     "claims_no_discriminator": {
-      "agreement_rate": 0.043,
+      "agreement_rate": 1.0,
       "counts": {
-        "agree": 1,
-        "false_gap": 22
+        "agree": 12
       },
-      "mutants_scored": 23,
-      "seams_scored": 12
+      "mutants_scored": 12,
+      "seams_scored": 6
     }
   },
   "status": "advisory"

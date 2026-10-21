@@ -233,10 +233,12 @@ ripr init --ci github
 ```
 
 Review the generated files before committing them. The workflow installs the
-ripr version that generated it, so generate it with a released `ripr`: an
-unreleased development build names a version crates.io does not publish yet,
-and the install step fails. On a PR, read the job summary
-first, then open the linked artifacts for the evidence and suggested test.
+ripr version that generated it. An unreleased development build instead pins
+the latest release and says so in a warning; after
+upgrading ripr, refresh with `ripr init --ci github --force`. Preview the
+files first with `--dry-run`. On a PR, read the summary comment it posts on the
+conversation (one comment, updated on every push; same-repository PRs only), then the job summary
+and the linked artifacts for the evidence and suggested test.
 The generated workflow is non-blocking by default; a policy gate is a separate,
 explicit adoption decision.
 The workflow runs on `ubuntu-latest` and pins `shell: bash`, so its steps
@@ -258,7 +260,8 @@ ripr pilot --root .
 ```
 
 Before starting a repair, make sure `target/` is in a committed `.gitignore`
-(see below). When pilot recommends a repair, run the exact
+(see below) and that the production change itself is committed: the before
+phase refuses a seam whose edit-target file has uncommitted changes. When pilot recommends a repair, run the exact
 `ripr agent repair ... --phase before` command it prints. That printed command
 is the advanced spelling of the ordinary start `ripr repair <seam-id>`; both
 begin the same before/edit/after attempt, and the ordinary start additionally
@@ -348,7 +351,8 @@ unestablished. Python analysis is `preview`, with selected pytest/unittest
 repair routes at `usable alpha`. Only complete weak-evidence routes get repair
 cards; zero cards is normal for unsupported or non-repairable findings.
 
-TypeScript and JavaScript are opt-in previews. Diff analysis recognizes:
+TypeScript is enabled automatically for TypeScript-shaped repositories without a
+`ripr.toml`; JavaScript is an opt-in preview. Diff analysis recognizes:
 
 ```text
 .ts  .tsx  .mts  .cts  .js  .jsx  .mjs  .cjs

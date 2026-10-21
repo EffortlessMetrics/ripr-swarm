@@ -51,6 +51,11 @@ const RUST_CORPUS_SMOKE_SCHEMA_VERSION: &str = "ripr-rust-corpus-smoke-v1";
 /// Receipt written by `cargo xtask pilot-ranking score` (pilot's top picks
 /// judged against the checked-in mutation answer key); converted on ingest.
 const PILOT_RANKING_SCHEMA_VERSION: &str = super::pilot_ranking::RECEIPT_SCHEMA_VERSION;
+/// Grain marker for `first_run.over_budget_steps`: step occurrences, not
+/// breached metric rows. Written into the metric's evidence so it survives
+/// ingest into a baseline report's sample detail; a baseline whose samples
+/// do not name it counted breached rows and is not compared.
+const FIRST_RUN_OVER_BUDGET_GRAIN: &str = "step-occurrences-v1";
 /// Row metrics that carry their own per-step time or output-length `budget`.
 const FIRST_RUN_BUDGETED: [&str; 2] = ["secs", "stdout_lines"];
 /// The generated workflow's size, budgeted on its own so a large `init_ci`
@@ -143,6 +148,14 @@ pub(crate) struct MetricDef {
     /// "1.5x plus 0.5 s" rule).
     #[serde(default)]
     pub(crate) regression_additive: bool,
+    /// A lower-is-better pooled count of picks (for example refuted picks)
+    /// may also rise by the number of picks the run admitted beyond the
+    /// baseline's. A bigger judged set adds picks of every verdict, so an
+    /// absolute count trips on growth that improves precision; the margin
+    /// stays zero when the pick count is flat or falls, and the precision
+    /// and share gates still judge the mix of the new picks.
+    #[serde(default)]
+    pub(crate) pick_growth_allowance: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -446,6 +459,14 @@ pub(crate) fn parse_config(text: &str) -> Result<Config, String> {
         if metric.direction != "lower_is_better" && metric.direction != "higher_is_better" {
             return Err(format!(
                 "metric `{}` direction must be lower_is_better or higher_is_better",
+                metric.id
+            ));
+        }
+        if metric.pick_growth_allowance
+            && (metric.direction != "lower_is_better" || !metric.source.starts_with("ingest:"))
+        {
+            return Err(format!(
+                "metric `{}` pick_growth_allowance needs a lower_is_better ingested metric",
                 metric.id
             ));
         }
@@ -793,8 +814,11 @@ fn is_source_install_step(name: &str) -> bool {
 ///
 /// - failed steps: `exit` rows that are not 0, and steps with rows but no
 ///   `exit` row (a walk cut off mid-step);
-/// - over-budget steps: `secs` and `stdout_lines` rows over the row's
-///   `budget`;
+/// - over-budget steps: step occurrences with a `secs` or `stdout_lines`
+///   row over the row's `budget` (one occurrence breaching both budgets
+///   counts once, with both rows kept as evidence; the evidence names the
+///   `step-occurrences-v1` grain so a breached-row-grain baseline is not
+///   compared against it);
 /// - over-budget workflows: `workflow_lines` rows over the row's `budget`,
 ///   counted apart because file size says nothing about step speed;
 /// - walk seconds per case (setup excluded), compared per case at 50% plus
@@ -833,6 +857,29 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
     }
     let mut steps: Vec<Step> = Vec::new();
     let mut over = Vec::new();
+    // Budgeted rows grouped by step occurrence, keyed by occurrence
+    // ordinal for the case and step. Exported rows are
+    // occurrence-sequential (`secs`, `exit`, `stdout_lines` per
+    // occurrence), so the nth `secs` row starts occurrence n and a
+    // `stdout_lines` row belongs to the latest occurrence started for
+    // that step (its own ordinal when it precedes any `secs` row). A
+    // missing `stdout_lines` row therefore cannot shift the next
+    // occurrence's output onto an earlier occurrence that only breached
+    // its time budget.
+    struct BudgetOccurrence {
+        case: String,
+        step: String,
+        occurrence: usize,
+        breached: bool,
+    }
+    struct BudgetCounter {
+        case: String,
+        step: String,
+        secs: usize,
+        stdout: usize,
+    }
+    let mut over_occurrences: Vec<BudgetOccurrence> = Vec::new();
+    let mut budget_counters: Vec<BudgetCounter> = Vec::new();
     let mut over_workflow = Vec::new();
     let mut friction = 0.0;
     let mut verdicts = Vec::new();
@@ -908,11 +955,55 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
             }
             _ => {}
         }
-        if FIRST_RUN_BUDGETED.contains(&metric)
-            && let Some(budget) = row["budget"].as_f64()
-            && value > budget
-        {
-            over.push(format!("{case}/{step} {metric} {value} > {budget}"));
+        if FIRST_RUN_BUDGETED.contains(&metric) {
+            let breached = row["budget"].as_f64().is_some_and(|budget| value > budget);
+            let counter_index = budget_counters
+                .iter()
+                .position(|counter| counter.case == case && counter.step == step)
+                .unwrap_or_else(|| {
+                    budget_counters.push(BudgetCounter {
+                        case: case.to_string(),
+                        step: step.to_string(),
+                        secs: 0,
+                        stdout: 0,
+                    });
+                    budget_counters.len() - 1
+                });
+            let occurrence = budget_counters.get_mut(counter_index).map_or(0, |counter| {
+                if metric == "secs" {
+                    let occurrence = counter.secs;
+                    counter.secs += 1;
+                    occurrence
+                } else {
+                    let occurrence = if counter.secs > 0 {
+                        counter.secs - 1
+                    } else {
+                        counter.stdout
+                    };
+                    counter.stdout += 1;
+                    occurrence
+                }
+            });
+            let index = over_occurrences
+                .iter()
+                .position(|seen| {
+                    seen.case == case && seen.step == step && seen.occurrence == occurrence
+                })
+                .unwrap_or_else(|| {
+                    over_occurrences.push(BudgetOccurrence {
+                        case: case.to_string(),
+                        step: step.to_string(),
+                        occurrence,
+                        breached: false,
+                    });
+                    over_occurrences.len() - 1
+                });
+            if let Some(seen) = over_occurrences.get_mut(index) {
+                seen.breached |= breached;
+            }
+            if breached && let Some(budget) = row["budget"].as_f64() {
+                over.push(format!("{case}/{step} {metric} {value} > {budget}"));
+            }
         }
         if metric == FIRST_RUN_WORKFLOW_LINES
             && let Some(budget) = row["budget"].as_f64()
@@ -966,7 +1057,7 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
     let unknown = verdicts.iter().filter(|v| v.ends_with("_unknown")).count();
     let mut out = vec![
         json!({"id": "first_run.failed_steps", "value": failed.len(), "evidence": list(&failed)}),
-        json!({"id": "first_run.over_budget_steps", "value": over.len(), "evidence": list(&over)}),
+        json!({"id": "first_run.over_budget_steps", "value": over_occurrences.iter().filter(|occurrence| occurrence.breached).count(), "evidence": format!("{FIRST_RUN_OVER_BUDGET_GRAIN}: {}", list(&over))}),
         json!({"id": "first_run.over_budget_workflows", "value": over_workflow.len(), "evidence": list(&over_workflow)}),
     ];
     // An install-only walk ran no cases, so a zero here would read as "no
@@ -1126,6 +1217,20 @@ fn from_spot_check_v2(base_row: &Value) -> bool {
                 sample["detail"]
                     .as_str()
                     .is_some_and(|detail| detail.contains(MUTATION_SPOT_CHECK_SCHEMA_VERSION))
+            })
+    })
+}
+
+/// A baseline row counts step occurrences only when every one of its
+/// samples names that grain in its evidence. A row recorded before the
+/// grain marker counted breached metric rows, so it names nothing.
+fn from_step_occurrence_grain(base_row: &Value) -> bool {
+    base_row["samples"].as_array().is_some_and(|samples| {
+        !samples.is_empty()
+            && samples.iter().all(|sample| {
+                sample["detail"]
+                    .as_str()
+                    .is_some_and(|detail| detail.contains(FIRST_RUN_OVER_BUDGET_GRAIN))
             })
     })
 }
@@ -2131,7 +2236,8 @@ fn repo_regressions(def: &MetricDef, row: &Value, base_row: &Value) -> Vec<Value
         .into_iter()
         .filter_map(|(repo, current)| {
             let (_, before) = base.iter().find(|(id, _)| *id == repo)?;
-            let allowed = allowed_worsening(def, *before);
+            let allowed =
+                allowed_worsening(def, *before) + repo_pick_growth(def, row, base_row, &repo);
             (worsening(def, *before, current) > allowed).then(|| {
                 json!({
                     "repo": repo,
@@ -2142,6 +2248,56 @@ fn repo_regressions(def: &MetricDef, row: &Value, base_row: &Value) -> Vec<Value
             })
         })
         .collect()
+}
+
+/// The pick count a pilot-ranking row's evidence carries
+/// (`... refuted of 39 picks ...`), the one place the run records how many
+/// picks its counts were taken over.
+pub(crate) fn evidence_picks(detail: &str) -> Option<u64> {
+    let rest = detail.split_once(" refuted of ")?.1;
+    let digits = rest.chars().take_while(char::is_ascii_digit).count();
+    if !rest[digits..].starts_with(" picks") {
+        return None;
+    }
+    rest[..digits].parse().ok()
+}
+
+/// Picks one repository's sample was counted over, when its evidence says.
+fn sample_picks(row: &Value, repo: &str) -> Option<u64> {
+    row["samples"]
+        .as_array()?
+        .iter()
+        .find(|s| s["repo"].as_str() == Some(repo) && s["status"] != "incomplete")
+        .and_then(|s| evidence_picks(s["detail"].as_str()?))
+}
+
+/// How many more picks this run counted than the baseline for one
+/// repository, for a `pick_growth_allowance` metric. Zero when either side
+/// does not say or the pick count did not grow, so legacy evidence stays
+/// strict.
+fn repo_pick_growth(def: &MetricDef, row: &Value, base_row: &Value, repo: &str) -> f64 {
+    if !def.pick_growth_allowance {
+        return 0.0;
+    }
+    match (sample_picks(row, repo), sample_picks(base_row, repo)) {
+        (Some(now), Some(before)) => now.saturating_sub(before) as f64,
+        _ => 0.0,
+    }
+}
+
+/// The growth margin shown for the metric's compared worst: the smallest
+/// growth over the repositories both runs completed. `None` when no
+/// repository completed in both, so no per-repository verdict exists. The
+/// margin is for display only; a metric with `pick_growth_allowance` fails on
+/// its own repositories' verdicts, so an unchanged repository cannot revoke
+/// another's allowance.
+fn pick_growth(def: &MetricDef, row: &Value, base_row: &Value) -> Option<f64> {
+    let base = completed_repo_values(base_row);
+    completed_repo_values(row)
+        .iter()
+        .filter(|(repo, _)| base.iter().any(|(id, _)| id == repo))
+        .map(|(repo, _)| repo_pick_growth(def, row, base_row, repo))
+        .reduce(f64::min)
 }
 
 /// Per-repository values of the samples that completed. An incomplete
@@ -2320,6 +2476,15 @@ pub(crate) fn compare_with_baseline(
             });
         }
     }
+    if def.id == "first_run.over_budget_steps" && !from_step_occurrence_grain(base_row) {
+        return json!({
+            "comparable": false,
+            "value": base_row["value"],
+            "reason": format!(
+                "baseline counted breached metric rows, before the {FIRST_RUN_OVER_BUDGET_GRAIN} step-occurrence grain; re-run the first-run walk and record a new baseline to compare this metric"
+            ),
+        });
+    }
     // Samples with a repository are judged per repository below.
     let incomplete = |r: &Value| {
         r["samples"].as_array().is_some_and(|samples| {
@@ -2390,15 +2555,24 @@ pub(crate) fn compare_with_baseline(
             "recovered_repos": recovered,
         });
     };
-    let allowed = allowed_worsening(def, base);
+    let growth = pick_growth(def, row, base_row);
+    let allowed = allowed_worsening(def, base) + growth.unwrap_or(0.0);
     let by_repo = repo_regressions(def, row, base_row);
+    // Each repository's own verdict decides a growth-allowance metric: the
+    // worst values compared above can come from different repositories.
+    let aggregate_regressed = worsening(def, base, current) > allowed;
+    let regressed = if def.pick_growth_allowance && growth.is_some() {
+        !by_repo.is_empty()
+    } else {
+        aggregate_regressed || !by_repo.is_empty()
+    };
     let missing = missing_repos(row, base_row);
     json!({
         "comparable": true,
         "value": round(base),
         "delta": round(current - base),
         "allowed_worsening": round(allowed),
-        "regressed": worsening(def, base, current) > allowed || !by_repo.is_empty(),
+        "regressed": regressed,
         "regressed_repos": by_repo,
         "new_repos": new_repos,
         "missing_repos": missing,

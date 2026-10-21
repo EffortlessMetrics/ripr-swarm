@@ -594,6 +594,16 @@ Initial implementation should add tests for:
 - a producer-declared static limitation outranks the PR-wide nearby-test
   reason in the gate headline without changing eligibility
   (`crates/ripr/src/output/gate/tests.rs::gate_static_limitation_reason_outranks_pr_wide_nearby_test_flag`).
+- a check document whose findings array was cut by the byte budget discloses
+  `analysis_outcome.document_complete: false` (additive, only when bounded,
+  with `findings_rendered`/`findings_total`) while `analysis_complete` stays
+  the analysis verdict, and the shared incomplete-outcome predicate refuses it
+  at every gate, baseline, RIPR Zero, and PR-summary position even without
+  `run_limitations[]` (#9010; negative tests with unbounded controls in
+  `crates/ripr/src/output/gate/tests.rs`, `output/ripr_zero_status.rs`, and
+  `app/pr_summary/json.rs`).
+  A document with both `document_complete: false` and `analysis_complete:
+  false` keeps the already-incomplete typed outcome kind in refusals.
 
 ## Implementation Mapping
 

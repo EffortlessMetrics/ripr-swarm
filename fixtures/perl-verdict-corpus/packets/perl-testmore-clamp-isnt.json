@@ -177,7 +177,7 @@
       "evidence_refs": [],
       "kind": "partial_inference",
       "limitation_id": "change-behavior-hint-partial",
-      "message": "only predicate_boundary / return_value / exception_path behavior_hints are inferred from added-line text; every other change resolves to \"unknown\", and missing_discriminator is always null in this slice. Whole-line comments are skipped, but a die/return/comparison token inside a string literal can still be misclassified (a robust fix needs tokenization)."
+      "message": "only predicate_boundary / return_value / exception_path behavior_hints are inferred from added-line text; every other change resolves to \"unknown\", and missing_discriminator is always null in this slice. Whole-line comments are skipped and single-line \"...\" / '...' literal contents cannot drive classification, but tokens inside heredocs, multi-line strings, q{}/qq{} and other quote-like operators, regex literals, or trailing comments are still scanned as code and can be misclassified."
     }
   ],
   "oracles": [
@@ -505,8 +505,8 @@
       "confidence": "medium",
       "expected_expression": null,
       "expression": "isnt(Shop::Pricing::clamp_qty(150), 150, 'huge orders are clamped')",
-      "kind": "exact_return_assertion",
-      "observed_sink": "99 if 99 < $qty",
+      "kind": "smoke_ok",
+      "observed_sink": null,
       "oracle_id": "oracle:t/qualified.t:isnt:589-656",
       "provenance_refs": [
         "prov:oracle_extraction:file:t/qualified.t"
@@ -517,7 +517,7 @@
         "start_column": 0,
         "start_line": 20
       },
-      "strength": "strong_exact",
+      "strength": "weak_smoke",
       "target_owner_id": "owner:lib/Shop/Pricing.pm:sub:Shop::Pricing::clamp_qty:1348-1456",
       "test_id": "test:t/qualified.t"
     }
@@ -847,7 +847,7 @@
       }
     }
   ],
-  "packet_fingerprint": "sha256:6db079b978d628a0ce9f2d1c5b7c5a0282aa76e3b28765ff8afcc61f7779f22a",
+  "packet_fingerprint": "sha256:668ebe98af19aee350b48a9c2610f0a309d4f5b723a6f57dc891c9c83bba548a",
   "packet_id": "perl-lsp-ripr-facts-ripr-perl-facts-v1-s-files,owners,changes,tests,oracles,relations,dynamic_boundaries,verify_commands,limitations,provenance",
   "packet_status": "partial",
   "producer": {

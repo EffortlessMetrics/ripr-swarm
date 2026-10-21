@@ -32,6 +32,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_parse_depth_budget/input --diff <cwd>/fixtures/ts_parse_depth_budget/diff.patch --mode fast probe:src_deep_under_budget.ts:typescript_preview:85293064
   ripr context --root <cwd>/fixtures/ts_parse_depth_budget/input --diff <cwd>/fixtures/ts_parse_depth_budget/diff.patch --mode fast --at probe:src_deep_under_budget.ts:typescript_preview:85293064
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_deep_under_budget.ts:typescript_preview:85293064 --root <cwd>/fixtures/ts_parse_depth_budget/input` for the full gate's answer
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output (TypeScript preview: 2).
@@ -41,10 +42,10 @@ Hidden:
   Machine data: rerun with --format json
 
 
-Note: ripr found no static test path for any of the 3 changed expression(s) in this diff. Scope
-  analyzed: 3 changed expression(s) and 0 statically linked related test(s). This is not a coverage
-  assessment. A test may already exercise these changes through macros, helper-call chains, or
-  integration tests that ripr's static model does not yet trace; if none does, add co-located tests
-  that observe the changed behavior.
+Note: ripr established no static test path for any of the 3 changed expression(s) in this diff (2
+  found no path, 1 could not be classified). Scope analyzed: 3 changed expression(s) and 0
+  statically linked related test(s). This is not a coverage assessment. A test may already exercise
+  these changes through macros, helper-call chains, or integration tests that ripr's static model
+  does not yet trace; if none does, add co-located tests that observe the changed behavior.
 
 Note: 3 TypeScript files analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

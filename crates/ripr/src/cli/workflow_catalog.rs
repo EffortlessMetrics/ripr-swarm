@@ -17,7 +17,8 @@
 
 use crate::cli::command_catalog::{CommandCatalogEntry, CommandClass, catalog};
 use crate::cli::command_metadata::{
-    CommandCost, CommandMetadata, CommandOperation, WORKFLOW_TAGS, metadata_for,
+    CommandCost, CommandMetadata, CommandOperation, INSPECTION_CACHE_OUTPUT, WORKFLOW_TAGS,
+    metadata_for,
 };
 
 /// One typed workflow row. Every fact is static data; nothing here inspects a
@@ -167,17 +168,17 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
                 "cmd:explain",
                 "explain one finding against the same diff",
                 CommandCost::Analysis,
-                CommandOperation::ReadOnly,
+                CommandOperation::WritesArtifacts,
                 true,
-                &[],
+                &[INSPECTION_CACHE_OUTPUT],
             ),
             step(
                 "cmd:context",
                 "collect the tests and seams related to the finding",
                 CommandCost::Analysis,
-                CommandOperation::ReadOnly,
+                CommandOperation::WritesArtifacts,
                 true,
-                &[],
+                &[INSPECTION_CACHE_OUTPUT],
             ),
         ],
         optional_steps: &[
@@ -191,7 +192,7 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
             ),
             step(
                 "cmd:pilot",
-                "select the seam ID for the repair handoff from the pilot packet's top actionable seams; a probe: finding ID is not a seam ID",
+                "select the seam ID for the repair handoff from the pilot packet's top actionable seams (`ripr repair` also accepts a probe: finding ID, a canonical gap ID or a file:line naming one repair-eligible seam)",
                 CommandCost::Workspace,
                 CommandOperation::WritesArtifacts,
                 true,
@@ -231,6 +232,7 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
         artifacts_written: &[
             "stdout findings (redirect to target/ripr/reports/ when a file is needed)",
             "--write-artifact PATH reusable findings artifact",
+            INSPECTION_CACHE_OUTPUT,
             "target/ripr/pilot packet (--out overrides) with the optional pilot step",
         ],
         recovery: &[
@@ -246,7 +248,7 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
         stop_conditions: &[
             "explicit refusal when no diff can be resolved",
             "context collection reaches its --max-related-tests bound",
-            "repair refuses a probe: finding ID; re-select a seam ID from the pilot packet",
+            "repair refuses an item that names no single repair-eligible seam; re-select a seam ID from the pilot packet",
         ],
         advanced_alternatives: &[],
         limitations: "guidance only: these commands analyze static evidence; ripr never compiles, runs tests, or edits source from this workflow.",

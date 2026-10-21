@@ -34,7 +34,7 @@ pub(crate) const AGENT_ARTIFACT_SCHEMAS: &[AgentArtifactSchema] = &[
         "repo_exposure",
         crate::output::repo_exposure::REPO_EXPOSURE_SCHEMA_VERSION,
         "output::repo_exposure",
-        "0.4: current full-repo exposure artifact shape.",
+        "0.5: actual match arms carry full parser spans; line is the span start when available.",
     ),
     (
         "repo_exposure_summary",
@@ -125,7 +125,7 @@ mod tests {
     fn registry_matches_live_agent_artifact_versions() {
         let expected = [
             ("artifact_identity", "1", "agent::artifact"),
-            ("repo_exposure", "0.4", "output::repo_exposure"),
+            ("repo_exposure", "0.5", "output::repo_exposure"),
             ("repo_exposure_summary", "0.1", "output::repo_exposure"),
             (
                 "analysis_outcome_artifact",
@@ -469,6 +469,33 @@ mod tests {
             return Err(format!(
                 "queue docs must say a Rust-only ledger is empty under the python default: {follow_on}"
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn corpus_consumer_versions_match_live_cache_identity() -> Result<(), String> {
+        // These independently authored real-producer controls intentionally pin
+        // an expected generation. Bind both pins to the producer here so a
+        // cache bump cannot silently leave one consumer behind. Historical and
+        // unsupported-version negatives remain outside this current inventory.
+        for (consumer, source) in [
+            (
+                "xtask projection",
+                include_str!("../../../../xtask/src/tests/rust_corpus_projection.rs"),
+            ),
+            (
+                "LSP currentness",
+                include_str!("../../tests/lsp_lifecycle/gap_corpus_currentness.rs"),
+            ),
+        ] {
+            let expected = unique_const_str(source, "CURRENT_CORPUS_CACHE_SCHEMA_VERSION")?;
+            let live = crate::analysis::seam_cache::CACHE_SCHEMA_VERSION;
+            if expected != live {
+                return Err(format!(
+                    "{consumer} must track live corpus generation {live}, got {expected}"
+                ));
+            }
         }
         Ok(())
     }

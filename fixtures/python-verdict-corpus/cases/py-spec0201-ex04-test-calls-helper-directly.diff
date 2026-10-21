@@ -1,0 +1,11 @@
+diff --git a/reach/panel_direct.py b/reach/panel_direct.py
+--- a/reach/panel_direct.py
++++ b/reach/panel_direct.py
+@@ -1,6 +1,6 @@
+ class Panel:
+     def _panel_pad(self):
+-        return 2
++        return 3
+ 
+     def render_panel(self):
+         return "|" + " " * self._panel_pad() + "|"

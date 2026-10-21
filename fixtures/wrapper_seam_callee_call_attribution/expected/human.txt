@@ -14,7 +14,7 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.66)
   Why weak: no test is seen calling this change
   Changed behavior: try_parse_summary(raw).map_err(|error| error.to_string().into())
-  Missing discriminator: Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
+  Analyzer limit: Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
   Related test (1 of 2 matched rows): tests/attribution.rs:4 observes_callee_outcome (ripr could not confirm that this assertion observes the changed behavior)
   Next step: Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically
     establish that this boxed wrapper conversion carries the callee's error variant, so an existing
@@ -28,6 +28,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/wrapper_seam_callee_call_attribution/input --diff <cwd>/fixtures/wrapper_seam_callee_call_attribution/diff.patch --mode fast probe:src_lib.rs:error_path:463e8297
   ripr context --root <cwd>/fixtures/wrapper_seam_callee_call_attribution/input --diff <cwd>/fixtures/wrapper_seam_callee_call_attribution/diff.patch --mode fast --at probe:src_lib.rs:error_path:463e8297
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:error_path:463e8297 --root <cwd>/fixtures/wrapper_seam_callee_call_attribution/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/wrapper_seam_callee_call_attribution/input --at src/lib.rs:14 --kind error_path
 

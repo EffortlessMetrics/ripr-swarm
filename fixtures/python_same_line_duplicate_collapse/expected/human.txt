@@ -35,6 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_same_line_duplicate_collapse/input --diff <cwd>/fixtures/python_same_line_duplicate_collapse/diff.patch --mode fast probe:src_checkout.py:python_preview:c3679833
   ripr context --root <cwd>/fixtures/python_same_line_duplicate_collapse/input --diff <cwd>/fixtures/python_same_line_duplicate_collapse/diff.patch --mode fast --at probe:src_checkout.py:python_preview:c3679833
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_checkout.py:python_preview:c3679833 --root <cwd>/fixtures/python_same_line_duplicate_collapse/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

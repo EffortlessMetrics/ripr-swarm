@@ -160,7 +160,7 @@ Latest merged PR: #NNN <title> (commit <sha>)
 
 ## Current work item
 
-<which manifest entry / which PR / which scope>
+<which issue / which PR / which scope — from live GitHub/worktree state, not a manifest>
 
 ## Next work item
 

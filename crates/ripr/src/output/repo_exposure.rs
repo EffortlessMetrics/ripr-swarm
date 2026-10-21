@@ -154,7 +154,7 @@ fn bounded_generated_path_listing(paths: &[PathBuf]) -> String {
     }
 }
 
-pub(crate) const REPO_EXPOSURE_SCHEMA_VERSION: &str = "0.4";
+pub(crate) const REPO_EXPOSURE_SCHEMA_VERSION: &str = "0.5";
 pub(crate) const REPO_EXPOSURE_SUMMARY_SCHEMA_VERSION: &str = "0.1";
 
 /// Cap on related-tests rendered per seam in the JSON output. The
@@ -994,7 +994,12 @@ fn push_classified_json(
     let _ = write!(out, "      \"file\": \"");
     json_escape_into(out, &display_path(seam.file()));
     out.push_str("\",\n");
-    let _ = writeln!(out, "      \"line\": {},", seam.display_line());
+    let _ = writeln!(
+        out,
+        "      \"line\": {},",
+        seam.span()
+            .map_or(seam.display_line(), |span| span.start_line)
+    );
     if let Some(span) = seam.span() {
         let _ = writeln!(out, "      \"column\": {},", span.start_column);
         let _ = writeln!(out, "      \"end_line\": {},", span.end_line);
@@ -1643,6 +1648,7 @@ mod tests {
             observe: stage(StageState::Yes),
             discriminate: stage(StageState::Yes),
             observed_values: vec![ValueFact {
+                file: None,
                 line: 5,
                 text: "discounted_total(50, 100)".to_string(),
                 value: "50".to_string(),
@@ -1667,7 +1673,7 @@ mod tests {
     fn json_carries_schema_version_scope_and_metrics() {
         let json = render_repo_exposure_json(&[weakly_gripped_classified()], None, None, None);
         for needle in [
-            "\"schema_version\": \"0.4\"",
+            "\"schema_version\": \"0.5\"",
             "\"scope\": \"repo\"",
             "\"run_status\": \"complete\"",
             "\"seams_total\": 1",

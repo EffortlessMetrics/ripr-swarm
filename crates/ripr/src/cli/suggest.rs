@@ -256,6 +256,7 @@ fn option_section(command: &str) -> Option<&'static str> {
         "pr-comments existing" => Some("Existing options:"),
         "pr-comments plan" => Some("Plan options:"),
         "pr-comments requests" => Some("Requests options:"),
+        "pr-comments summary" => Some("Summary options:"),
         "reports index" => Some("Index options:"),
         "reports ci-packet" => Some("CI packet options:"),
         "reports ci-summary" => Some("CI summary options:"),

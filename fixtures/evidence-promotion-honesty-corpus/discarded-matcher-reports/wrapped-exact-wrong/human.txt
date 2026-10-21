@@ -23,6 +23,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/wrapped-exact-wrong --diff fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/wrapped-exact-wrong/diff.patch --mode fast probe:src_lib.rs:return_value:c7c856d1
   ripr context --root fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/wrapped-exact-wrong --diff fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/wrapped-exact-wrong/diff.patch --mode fast --at probe:src_lib.rs:return_value:c7c856d1
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:return_value:c7c856d1 --root fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/wrapped-exact-wrong` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full
