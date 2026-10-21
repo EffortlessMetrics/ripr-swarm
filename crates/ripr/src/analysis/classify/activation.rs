@@ -4672,6 +4672,19 @@ fn scalar_values(text: &str) -> Vec<String> {
         {
             let mut end = byte_idx + ch.len_utf8();
             let mut cursor = idx + 1;
+            // A radix-prefixed integer (`0xFF`, `0b1010`, `0o17`) is one
+            // literal, kept as spelled. Reading its leading `0` alone made
+            // every such literal the value `0`, so a test input far from a
+            // hex boundary compared equal to it (#9164).
+            if let Some(radix_end) = radix_literal_end(&chars, idx) {
+                if let Some((end_byte, end_ch)) = chars.get(radix_end - 1)
+                    && let Some(value) = text.get(byte_idx..end_byte + end_ch.len_utf8())
+                {
+                    values.push(value.to_string());
+                }
+                idx = radix_end;
+                continue;
+            }
             let mut seen_fraction = false;
             while cursor < chars.len() {
                 let (next_byte, next_ch) = chars[cursor];
@@ -4702,6 +4715,38 @@ fn scalar_values(text: &str) -> Vec<String> {
     values.sort();
     values.dedup();
     values
+}
+
+/// The index one past a radix-prefixed integer literal (`0x1F`, `-0b101`,
+/// `0o17`, with `_` separators) that starts at `start` (a digit or a leading
+/// `-`), or `None` when the text there is not one. A type suffix (`u8`) is
+/// left for the caller's identifier-digit guard.
+fn radix_literal_end(chars: &[(usize, char)], start: usize) -> Option<usize> {
+    let zero = if chars.get(start).is_some_and(|(_, ch)| *ch == '-') {
+        start + 1
+    } else {
+        start
+    };
+    if chars.get(zero).map(|(_, ch)| *ch) != Some('0') {
+        return None;
+    }
+    let radix = match chars.get(zero + 1).map(|(_, ch)| *ch)? {
+        'x' | 'X' => 16,
+        'b' | 'B' => 2,
+        'o' | 'O' => 8,
+        _ => return None,
+    };
+    let mut cursor = zero + 2;
+    let mut digits = 0usize;
+    while let Some((_, ch)) = chars.get(cursor) {
+        if ch.is_digit(radix) {
+            digits += 1;
+        } else if *ch != '_' {
+            break;
+        }
+        cursor += 1;
+    }
+    (digits > 0).then_some(cursor)
 }
 
 fn looks_like_table_row(line: &str) -> bool {
@@ -6480,6 +6525,45 @@ assert_eq!(input.amount, 100);"#
         sort_value_facts(&mut facts);
 
         assert_eq!(facts.len(), 2);
+    }
+
+    #[test]
+    fn scalar_values_read_a_radix_prefixed_integer_as_one_literal() {
+        // #9164: `0xFF` was read as `0` (the leading digit), so `is_big(0x10)`
+        // against a `0xFF` boundary compared equal and read as the boundary.
+        assert_eq!(scalar_values("is_big(0xFF)"), vec!["0xFF".to_string()]);
+        assert_eq!(scalar_values("f(0b1010)"), vec!["0b1010".to_string()]);
+        assert_eq!(scalar_values("f(0o17)"), vec!["0o17".to_string()]);
+        assert_eq!(scalar_values("f(-0x10)"), vec!["-0x10".to_string()]);
+        assert_eq!(scalar_values("f(0xE000_u32)"), vec!["0xE000_".to_string()]);
+        assert_eq!(
+            scalar_values("f(0xE000, 0xD7FF)"),
+            vec!["0xD7FF".to_string(), "0xE000".to_string()]
+        );
+        for spelled in ["f(0xFF)", "f(0b1010)", "f(0o17)", "f(-0x10)"] {
+            assert!(
+                !scalar_values(spelled).contains(&"0".to_string()),
+                "{spelled} must not read as the value 0"
+            );
+        }
+        // Two different hex inputs stay different values.
+        assert_ne!(scalar_values("f(0x10)"), scalar_values("f(0xFF)"));
+        assert_eq!(literal_operand_value("0xFF"), Some("0xFF".to_string()));
+    }
+
+    #[test]
+    fn scalar_values_leave_non_radix_zero_prefixed_text_alone() {
+        // Negative controls: a plain zero, a range, a float and an
+        // identifier that merely contains `0b`/`0x` keep their old reading.
+        assert_eq!(scalar_values("f(0)"), vec!["0".to_string()]);
+        assert_eq!(scalar_values("f(0.5)"), vec!["0.5".to_string()]);
+        assert!(scalar_values("f(x0b1, y0x1F)").is_empty());
+        assert_eq!(
+            scalar_values("f(0..5)"),
+            vec!["0".to_string(), "5".to_string()]
+        );
+        // A radix marker with no digits after it is not a radix literal.
+        assert_eq!(scalar_values("f(0x)"), vec!["0".to_string()]);
     }
 
     fn probe(family: ProbeFamily, expression: &str) -> Probe {
