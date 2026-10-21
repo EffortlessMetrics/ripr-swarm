@@ -2220,6 +2220,69 @@ mod tests {
         assert!(!rendered.contains("suggested file:"), "{rendered}");
     }
 
+    /// #9004: base-side evidence is not a candidate edit target, so the full
+    /// render must not print it at warning severity; a candidate-current
+    /// finding keeps its configured warning.
+    #[test]
+    fn base_side_finding_renders_at_note_severity() {
+        let current = sample_finding();
+        let location = current.probe.location.file.display().to_string();
+        let rendered_current = render_finding(&current);
+        assert!(rendered_current.contains(&format!("WARNING {location}:7")));
+
+        for currentness in [
+            crate::domain::SourceCurrentness::BaseDeleted,
+            crate::domain::SourceCurrentness::MovedOrRenamed,
+        ] {
+            let mut base_side = current.clone();
+            base_side.source_currentness = currentness;
+            let rendered = render_finding(&base_side);
+            assert!(
+                rendered.contains(&format!("NOTE {location}:7")),
+                "{rendered}"
+            );
+            assert!(!rendered.contains("WARNING"), "{rendered}");
+            assert!(!rendered.contains("(warning,"), "{rendered}");
+        }
+    }
+
+    /// #9004: the bounded digest path shares the same display rule, and a
+    /// configured `off` or `info` severity is passed through unchanged for
+    /// base-side evidence (only `warning` is softened to `note`).
+    #[test]
+    fn base_side_digest_and_configured_severity_passthrough() {
+        use crate::config::ConfigSeverity;
+        let current = sample_finding();
+        let mut base_side = current.clone();
+        base_side.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        let digest = |finding: &Finding, config: &crate::config::RiprConfig| {
+            super::sections::render_finding_digest_with_config(finding, config, Path::new("."))
+        };
+        let default = crate::config::RiprConfig::default();
+        assert!(digest(&current, &default).contains("severity: warning,"));
+        let softened = digest(&base_side, &default);
+        assert!(softened.contains("severity: note,"), "{softened}");
+        assert!(!softened.contains("severity: warning"), "{softened}");
+
+        for (configured, expected) in [(ConfigSeverity::Off, "off"), (ConfigSeverity::Info, "info")]
+        {
+            let mut config = crate::config::RiprConfig::default();
+            config.severity.findings.weakly_exposed = configured;
+            let rendered = digest(&base_side, &config);
+            assert!(
+                rendered.contains(&format!("severity: {expected},")),
+                "{rendered}"
+            );
+            let full = super::render_finding_with_config(
+                &base_side,
+                &config,
+                Path::new("."),
+                super::JsonPointerWording::CheckFlag,
+            );
+            assert!(full.contains(&format!("({expected}, confidence")), "{full}");
+        }
+    }
+
     /// rc rehearsal (py-pricing): Start here picked the card-less constant
     /// finding at line 5 over the carded literal finding at line 11, so check
     /// said "no ripr command routes this" while pilot had a card. A Python

@@ -1136,12 +1136,28 @@ pub fn resolve_base_commit(
 /// the default-base failure context; any Git failure answers `None`, so
 /// callers never advise a `--base` repair that this probe could not
 /// support (#7644).
-/// The first branch (in `for-each-ref` order) that
-/// could serve as one, named as a usable
-/// `--base` value (`main`, `origin/main`). Callers that advise a
-/// `--base` repair must name this probed ref, never a hardcoded
-/// example, and must not name the base already in use.
+/// The branch with the smallest root-scoped changed-line count whose
+/// Rust lines stay within the changed-line guard, named as a usable
+/// `--base` value (`main`, `origin/main`); ref order breaks ties.
+/// A branch whose diff the guard would refuse is not a candidate
+/// (#9013). Callers that advise a `--base` repair must name this
+/// probed ref, never a hardcoded example, and must not name the base
+/// already in use.
 pub fn another_base_candidate(root: &Path, git_timeout: Option<Duration>) -> Option<String> {
+    // #9013: a candidate is only advice ripr can stand behind when the
+    // advised run would itself be analyzed. An unreadable/invalid line
+    // guard yields no advice rather than advice the guard would refuse.
+    let rust_line_limit = crate::analysis::language::diff_changed_rust_line_limit().ok()?;
+    let file_limit = super::parse::diff_file_limit_from_env();
+    another_base_candidate_with_limits(root, git_timeout, rust_line_limit, file_limit)
+}
+
+fn another_base_candidate_with_limits(
+    root: &Path,
+    git_timeout: Option<Duration>,
+    rust_line_limit: usize,
+    file_limit: usize,
+) -> Option<String> {
     let git_lines = |args: &[&str]| -> Vec<String> {
         crate::git::run_git_output_with_deadline(root, args, git_timeout)
             .ok()
@@ -1173,7 +1189,8 @@ pub fn another_base_candidate(root: &Path, git_timeout: Option<Duration>) -> Opt
     .filter(|name| !current.contains(name));
     let head_commit = resolve_base_commit(root, Some("HEAD"), git_timeout)?;
     const MERGE_BASE_PROBE_CAP: usize = 64;
-    others.take(MERGE_BASE_PROBE_CAP).find(|name| {
+    let mut best: Option<(bool, usize, String)> = None;
+    for name in others.take(MERGE_BASE_PROBE_CAP) {
         let merge_base_differs = crate::git::run_git_output_with_deadline(
             root,
             &["merge-base", name.as_str(), "HEAD"],
@@ -1184,25 +1201,88 @@ pub fn another_base_candidate(root: &Path, git_timeout: Option<Duration>) -> Opt
         .is_some_and(|output| {
             String::from_utf8_lossy(&output.stdout).trim() != head_commit.as_str()
         });
+        if !merge_base_differs {
+            continue;
+        }
         // A distinct historical range can still restore the merge-base
         // tree; only a non-empty three-dot diff makes the advice useful.
         // `--relative` scopes that diff to `root` like the analysis
         // loader, so a branch differing only outside the analyzed root
         // does not count.
-        merge_base_differs
-            && crate::git::run_git_output_with_deadline(
-                root,
-                &[
-                    "diff",
-                    "--relative",
-                    "--quiet",
-                    &format!("{name}...HEAD"),
-                    "--",
-                ],
-                git_timeout,
-            )
-            .is_ok_and(|output| output.status.code() == Some(1))
-    })
+        let numstat = crate::git::run_git_output_with_deadline(
+            root,
+            &[
+                "diff",
+                "--relative",
+                "--ignore-submodules=none",
+                "--numstat",
+                &format!("{name}...HEAD"),
+                "--",
+            ],
+            git_timeout,
+        );
+        let Ok(output) = numstat else { continue };
+        if !output.status.success() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        if text.trim().is_empty() {
+            continue;
+        }
+        let mut total_lines = 0usize;
+        let mut rust_lines = 0usize;
+        let mut changed_files = 0usize;
+        for line in text.lines() {
+            let mut fields = line.split('\t');
+            let (Some(added), Some(deleted), Some(path)) =
+                (fields.next(), fields.next(), fields.next())
+            else {
+                continue;
+            };
+            changed_files = changed_files.saturating_add(1);
+            let changed = added
+                .parse::<usize>()
+                .unwrap_or(0)
+                .saturating_add(deleted.parse::<usize>().unwrap_or(0));
+            total_lines = total_lines.saturating_add(changed);
+            if numstat_new_path(path).ends_with(".rs") {
+                rust_lines = rust_lines.saturating_add(changed);
+            }
+        }
+        // The advised run must also survive the parser's changed-file
+        // guard, not only the Rust changed-line guard (#9013).
+        if rust_lines > rust_line_limit || changed_files > file_limit {
+            continue;
+        }
+        // Nearest first: a Rust-bearing diff before a non-Rust one, then
+        // the smallest analyzable diff; ref order only breaks ties.
+        let candidate = (rust_lines == 0, total_lines, name);
+        if best.as_ref().is_none_or(|current| candidate < *current) {
+            best = Some(candidate);
+        }
+    }
+    best.map(|(_, _, name)| name)
+}
+
+/// The destination path of one `--numstat` entry. Rename forms are
+/// `old => new` and `prefix/{old => new}/suffix`; Git also quotes paths
+/// with special characters. Anything else is already the plain path.
+fn numstat_new_path(path: &str) -> String {
+    let unquoted = path.trim().trim_matches('"');
+    let Some((before, after)) = unquoted.split_once(" => ") else {
+        return unquoted.to_string();
+    };
+    if let Some(open) = before.rfind('{')
+        && let Some(close) = after.find('}')
+    {
+        return format!(
+            "{}{}{}",
+            &before[..open],
+            &after[..close],
+            &after[close + 1..]
+        );
+    }
+    after.to_string()
 }
 
 /// Load `<base>...<head>` for the commands that name both revisions (`diff`,
@@ -2603,6 +2683,138 @@ mod tests {
         assert!(
             another_base_candidate(&sub, None).is_some(),
             "a branch differing inside the analysis root must count"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn another_base_candidate_rejects_a_diff_over_the_changed_line_guard() -> std::io::Result<()> {
+        // #9013: ripr must not advise `--base <branch>` when following that
+        // advice would refuse with `diff_scope_oversized`. The only other
+        // branch here differs by more Rust lines than the guard admits.
+        let dir = unique_fixture_root("another-base-candidate-oversized")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        run_git_checked(&dir, &["branch", "ancient"])?;
+        let big = (0..2_100)
+            .map(|n| format!("fn f{n}() {{}}\n"))
+            .collect::<String>();
+        fs::write(dir.join("big.rs"), big)?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "big rust change"])?;
+        assert_eq!(
+            another_base_candidate(&dir, None),
+            None,
+            "a branch whose diff exceeds the changed-Rust-line guard must not be advised"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn another_base_candidate_prefers_the_smallest_analyzable_diff() -> std::io::Result<()> {
+        // #9013: with several qualifying branches, ref order must not pick
+        // an ancient branch over the near branch whose diff ripr can
+        // actually analyze and that plausibly parents the current work.
+        let dir = unique_fixture_root("another-base-candidate-nearest")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        run_git_checked(&dir, &["branch", "aaa-ancient"])?;
+        let big = (0..300)
+            .map(|n| format!("fn g{n}() {{}}\n"))
+            .collect::<String>();
+        fs::write(dir.join("big.rs"), big)?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "larger change"])?;
+        run_git_checked(&dir, &["branch", "zzz-near"])?;
+        fs::write(dir.join("small.rs"), "fn only() {}\n")?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "small change"])?;
+        assert_eq!(
+            another_base_candidate(&dir, None).as_deref(),
+            Some("zzz-near"),
+            "the smallest analyzable diff must win over first-in-ref-order"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn numstat_new_path_unwraps_rename_and_quote_forms() {
+        assert_eq!(numstat_new_path("src/lib.rs"), "src/lib.rs");
+        assert_eq!(numstat_new_path("old.rs => new.rs"), "new.rs");
+        assert_eq!(
+            numstat_new_path("src/{old.rs => new.rs}"),
+            "src/new.rs",
+            "the brace rename form must not leave a trailing brace"
+        );
+        assert_eq!(
+            numstat_new_path("\"src/{old.rs => new.rs}\""),
+            "src/new.rs",
+            "quoted rename paths must still classify by destination"
+        );
+    }
+
+    #[test]
+    fn another_base_candidate_rejects_a_diff_over_the_changed_file_guard() -> std::io::Result<()> {
+        // #9013: the parser refuses a diff naming more changed files than
+        // RIPR_MAX_DIFF_INDEX_FILES, so such a branch is not advice either.
+        let dir = unique_fixture_root("another-base-candidate-file-guard")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        run_git_checked(&dir, &["branch", "ancient"])?;
+        for n in 0..3 {
+            fs::write(dir.join(format!("f{n}.rs")), "fn x() {}\n")?;
+        }
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "three files"])?;
+        assert_eq!(
+            another_base_candidate_with_limits(&dir, None, 2_000, 2),
+            None,
+            "a branch whose diff exceeds the changed-file guard must not be advised"
+        );
+        assert_eq!(
+            another_base_candidate_with_limits(&dir, None, 2_000, 3).as_deref(),
+            Some("ancient"),
+            "the same branch is a candidate when its diff fits the guard"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn another_base_candidate_counts_renamed_rust_lines() -> std::io::Result<()> {
+        // #9013: a rename-plus-edit numstat entry names both paths; the
+        // changed lines belong to the Rust destination, not to no file.
+        let dir = unique_fixture_root("another-base-candidate-rename")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "master")?;
+        fs::create_dir_all(dir.join("src"))?;
+        let original = (0..100)
+            .map(|n| format!("fn f{n}() {{}}\n"))
+            .collect::<String>();
+        fs::write(dir.join("src/old.rs"), original)?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "seed"])?;
+        run_git_checked(&dir, &["branch", "ancient"])?;
+        run_git_checked(&dir, &["mv", "src/old.rs", "src/new.rs"])?;
+        let edited = (0..100)
+            .map(|n| {
+                if n < 30 {
+                    format!("fn f{n}() {{ /* edited */ }}\n")
+                } else {
+                    format!("fn f{n}() {{}}\n")
+                }
+            })
+            .collect::<String>();
+        fs::write(dir.join("src/new.rs"), edited)?;
+        run_git_checked(&dir, &["add", "."])?;
+        run_git_checked(&dir, &["commit", "-m", "rename and edit"])?;
+        assert_eq!(
+            another_base_candidate_with_limits(&dir, None, 10, 10_000),
+            None,
+            "renamed Rust lines must count toward the changed-line guard"
         );
         ignore_remove_dir_all(&dir);
         Ok(())

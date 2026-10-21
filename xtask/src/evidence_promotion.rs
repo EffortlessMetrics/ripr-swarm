@@ -3018,10 +3018,17 @@ pub(crate) fn evidence_promotion_human_oracle_line_matches(
     let normalized = line.trim().to_ascii_lowercase();
 
     if let Some(related_test) = normalized.strip_prefix("- related test ") {
-        let projection = format!(
-            "{expected_strength} {} oracle:",
-            expected_kind.replace('_', " ")
-        );
+        // A multi-word kind that already leads with the strength word is not
+        // doubled: `smoke_only`/`smoke` reads "smoke only oracle" (#8711).
+        let kind_label = expected_kind.replace('_', " ");
+        let projection = if kind_label
+            .split_once(' ')
+            .is_some_and(|(lead, _)| lead == expected_strength)
+        {
+            format!("{kind_label} oracle:")
+        } else {
+            format!("{expected_strength} {kind_label} oracle:")
+        };
         for (separator, _) in related_test.match_indices(" uses ") {
             let Some((location, test_name)) = related_test[..separator].rsplit_once(' ') else {
                 continue;
