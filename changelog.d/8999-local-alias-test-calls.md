@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A test that calls the changed function only through a simple local alias (`let from_isoywd = NaiveDate::from_isoywd_opt; from_isoywd(..)`) is now linked as a call to the aliased function. The alias must be a single immutable `let NAME = path::to::function;` whose every other mention is a direct call after the binding; reassigned, shadowed, typed, passed-along or otherwise ambiguous aliases add no link. This adds reach evidence only and never strengthens an oracle (#8999).

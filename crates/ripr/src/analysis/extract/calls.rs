@@ -126,9 +126,168 @@ pub(crate) fn extract_call_facts(body: &str, start_line: usize) -> Vec<CallFact>
         }
         line_offset += masked_line.len();
     }
+    add_local_alias_calls(&masked, &mut calls);
     calls.sort_by(|a, b| a.line.cmp(&b.line).then(a.name.cmp(&b.name)));
     calls.dedup_by(|a, b| a.line == b.line && a.name == b.name);
     calls
+}
+
+/// A `let alias = path::to::function;` binding found in a masked body.
+struct LocalFnAlias<'a> {
+    alias: &'a str,
+    target: &'a str,
+    line_offset: usize,
+}
+
+/// Credit a call through a simple local function alias to the aliased
+/// function (`let from_isoywd = NaiveDate::from_isoywd_opt;` then
+/// `from_isoywd(..)` also reads as a call to `from_isoywd_opt`). Reach
+/// evidence only: it adds a name-only call fact beside the alias-named one
+/// and never strengthens an oracle or argument reading.
+///
+/// Fail-closed: the alias must be bound exactly once by an immutable
+/// `let NAME = <path>;` (no type annotation, no `mut`, no closure or
+/// call on the right) and every other mention of `NAME` in the body must be
+/// a direct `NAME(` call after the binding. Any other mention — a second
+/// `let`, a reassignment, a pattern binding, a closure parameter, a nested
+/// `fn`, passing the alias along — leaves the alias unresolved and adds
+/// nothing.
+fn add_local_alias_calls(masked: &str, calls: &mut Vec<CallFact>) {
+    let mut added = Vec::new();
+    for alias in local_fn_aliases(masked) {
+        if !alias_is_unambiguous(masked, &alias) {
+            continue;
+        }
+        for call in calls.iter().filter(|call| call.name == alias.alias) {
+            added.push(CallFact {
+                line: call.line,
+                name: alias.target.to_string(),
+                text: call.text.clone(),
+            });
+        }
+    }
+    for fact in added {
+        let on_line = calls.iter().filter(|call| call.line == fact.line).count();
+        if on_line < MAX_CALL_FACTS_PER_LINE {
+            calls.push(fact);
+        }
+    }
+}
+
+fn is_ident_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+/// Every `let NAME = a::b::c;` in `masked` (immutable simple binding, no
+/// type annotation, a plain path ending in a snake-case segment).
+fn local_fn_aliases(masked: &str) -> Vec<LocalFnAlias<'_>> {
+    let bytes = masked.as_bytes();
+    let mut aliases = Vec::new();
+    let mut search = 0;
+    while let Some(found) = masked[search..].find("let") {
+        let at = search + found;
+        search = at + 3;
+        if at > 0 && is_ident_byte(bytes[at - 1]) {
+            continue;
+        }
+        let rest = &masked[at + 3..];
+        let trimmed = rest.trim_start();
+        if trimmed.len() == rest.len() {
+            continue;
+        }
+        let name_len = trimmed
+            .bytes()
+            .take_while(|byte| is_ident_byte(*byte))
+            .count();
+        let name = &trimmed[..name_len];
+        let after_name = trimmed[name_len..].trim_start();
+        let Some(rhs) = after_name.strip_prefix('=') else {
+            continue;
+        };
+        if rhs.starts_with('=') || name.is_empty() || name == "mut" || name == "ref" {
+            continue;
+        }
+        if name.starts_with(|c: char| c.is_ascii_digit() || c.is_ascii_uppercase()) {
+            continue;
+        }
+        let Some(end) = rhs.find(';') else {
+            continue;
+        };
+        let path = rhs[..end].trim();
+        let Some(target) = simple_fn_path_target(path) else {
+            continue;
+        };
+        if target == name {
+            continue;
+        }
+        aliases.push(LocalFnAlias {
+            alias: name,
+            target,
+            line_offset: at,
+        });
+    }
+    aliases
+}
+
+/// The last segment of `path` when it is `ident(::ident)*` with a
+/// snake-case final segment; anything else (calls, generics, references,
+/// closures, literals) is not a simple function path.
+fn simple_fn_path_target(path: &str) -> Option<&str> {
+    let mut last = "";
+    for segment in path.split("::") {
+        let segment = segment.trim();
+        if segment.is_empty()
+            || !segment.bytes().all(is_ident_byte)
+            || segment.starts_with(|c: char| c.is_ascii_digit())
+        {
+            return None;
+        }
+        last = segment;
+    }
+    last.starts_with(|c: char| c.is_ascii_lowercase() || c == '_')
+        .then_some(last)
+}
+
+/// The alias is bound exactly once and every other mention is a direct call
+/// after the binding.
+fn alias_is_unambiguous(masked: &str, alias: &LocalFnAlias<'_>) -> bool {
+    let bytes = masked.as_bytes();
+    let name = alias.alias;
+    let mut search = 0;
+    let mut definition_seen = false;
+    while let Some(found) = masked[search..].find(name) {
+        let at = search + found;
+        let end = at + name.len();
+        search = end;
+        if (at > 0 && is_ident_byte(bytes[at - 1]))
+            || bytes.get(end).is_some_and(|b| is_ident_byte(*b))
+        {
+            continue;
+        }
+        // The binding itself: `let NAME` at the recorded offset.
+        if !definition_seen
+            && at > alias.line_offset
+            && masked[alias.line_offset + 3..at].trim().is_empty()
+        {
+            definition_seen = true;
+            continue;
+        }
+        if !definition_seen {
+            return false;
+        }
+        let before = masked[..at].trim_end();
+        let after = masked[end..].trim_start();
+        if before.ends_with('.') || before.ends_with("::") || !after.starts_with('(') {
+            return false;
+        }
+        // `fn NAME(` declares a nested function that shadows the alias.
+        if let Some(prefix) = before.strip_suffix("fn")
+            && !prefix.bytes().next_back().is_some_and(is_ident_byte)
+        {
+            return false;
+        }
+    }
+    definition_seen
 }
 
 /// Whether the attribute's arguments are expressions a test runs: rstest's
@@ -302,6 +461,76 @@ fn call_names(calls: &[CallFact]) -> Vec<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn alias_call_names(body: &str) -> Vec<(usize, String)> {
+        extract_call_facts(body, 1)
+            .into_iter()
+            .map(|call| (call.line, call.name))
+            .collect()
+    }
+
+    #[test]
+    fn local_function_alias_call_also_reads_as_call_to_the_aliased_function() {
+        // chrono 6adaa52: the test calls the changed `from_isoywd_opt`
+        // only through a `let` alias.
+        let body = "fn t() {\n    let from_isoywd = NaiveDate::from_isoywd_opt;\n    assert_eq!(from_isoywd(i32::MIN, 1, Weekday::Mon), None);\n}\n";
+        let names = alias_call_names(body);
+        assert!(names.contains(&(3, "from_isoywd".to_string())), "{names:?}");
+        assert!(
+            names.contains(&(3, "from_isoywd_opt".to_string())),
+            "{names:?}"
+        );
+        // The binding line itself is not a call.
+        assert!(!names.iter().any(|(line, _)| *line == 2), "{names:?}");
+    }
+
+    #[test]
+    fn single_segment_alias_is_resolved() {
+        let names = alias_call_names("fn t() {\n let f = parse_value;\n f(1);\n f(2);\n}\n");
+        assert!(names.contains(&(3, "parse_value".to_string())), "{names:?}");
+        assert!(names.contains(&(4, "parse_value".to_string())), "{names:?}");
+    }
+
+    #[test]
+    fn ambiguous_or_non_function_aliases_are_not_resolved() {
+        let cases = [
+            // reassigned / shadowed by a second binding
+            "fn t() {\n let f = real::target;\n f(1);\n let f = other;\n f(2);\n}\n",
+            // mutable binding can be reassigned
+            "fn t() {\n let mut f = real::target;\n f(1);\n}\n",
+            // typed binding is not a simple alias
+            "fn t() {\n let f: fn(u8) = real::target;\n f(1);\n}\n",
+            // alias passed along or captured: not only direct calls
+            "fn t() {\n let f = real::target;\n run(f);\n f(1);\n}\n",
+            // closure parameter reuses the name
+            "fn t() {\n let f = real::target;\n let g = |f: u8| f(1);\n f(2);\n}\n",
+            // nested fn shadows the alias
+            "fn t() {\n let f = real::target;\n fn f() {}\n f();\n}\n",
+            // used before the binding
+            "fn t() {\n f(1);\n let f = real::target;\n}\n",
+            // right side is a call result, not a function path
+            "fn t() {\n let f = real::target(1);\n f(2);\n}\n",
+            // method path, not a plain function path
+            "fn t() {\n let f = value.target;\n f(2);\n}\n",
+            // type-like final segment (unit struct or variant), not a function
+            "fn t() {\n let f = real::Target;\n f(2);\n}\n",
+            // alias inside a string or comment
+            "fn t() {\n // let f = real::target;\n f(2);\n}\n",
+        ];
+        for body in cases {
+            // A `target` fact on a line that calls through `f` would be an
+            // alias credit; `target(1)` on the binding line is a real call.
+            let credited = extract_call_facts(body, 1).into_iter().any(|call| {
+                (call.name == "target" || call.name == "Target")
+                    && call
+                        .text
+                        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                        .any(|w| w == "f")
+                    && !call.text.starts_with("let ")
+            });
+            assert!(!credited, "{body}");
+        }
+    }
 
     #[test]
     fn lifetimes_and_labels_do_not_mask_call_and_literal_facts() {
