@@ -150,6 +150,11 @@ fn branch_dispatch_cannot_qualify_even_when_every_child_succeeds() -> Result<(),
 fn ready_and_main_authorities_keep_real_child_result_checks() -> Result<(), String> {
     for (event, reference, status) in [
         ("pull_request", "refs/pull/10/merge", "admitted"),
+        (
+            "merge_group",
+            "refs/heads/gh-readonly-queue/main/pr-10-aaaa",
+            "admitted",
+        ),
         ("workflow_dispatch", "refs/heads/main", "not_applicable"),
         ("workflow_dispatch", "refs/heads/master", "not_applicable"),
         ("push", "refs/heads/main", "not_applicable"),
