@@ -33,8 +33,10 @@
 //! (`config.pluginmanager.register`), and a plugin installed by entry point
 //! can still fail a `NoAssertionLike` test, as can pytest configuration
 //! outside any conftest (`-p` or `usefixtures` in an ini file's `addopts`)
-//! (#6657). A conftest that re-exports implicit setup (a star import, a
-//! hook-named import or alias, an autouse-fixture factory) is tainted. A module imported from
+//! (#6657). A conftest that imports names from outside a short standard-library
+//! list (they may be an autouse fixture or hook), star-imports, aliases a hook
+//! or builds an autouse-fixture factory is tainted; setup installed through
+//! `globals()` or other runtime registration is not seen. A module imported from
 //! the test file's own directory or below is treated as test support; for a
 //! test file at the repository root, a relative import is treated as test
 //! support by alias. A `no_assertion` miss must account for the rest before
@@ -261,19 +263,27 @@ impl PythonAdmissionContext {
                     self.has_conftest_reexport = true;
                 }
                 Stmt::ImportFrom(import)
-                    if import.names.iter().any(|alias| {
-                        alias.name.as_str() == "*"
-                            || is_runtest_hook_name(alias.name.as_str())
-                            || alias
-                                .asname
-                                .as_ref()
-                                .is_some_and(|name| is_runtest_hook_name(name.as_str()))
-                    }) =>
+                    if import.level.is_some_and(|level| level.to_u32() > 0)
+                        || !import
+                            .module
+                            .as_ref()
+                            .is_some_and(|module| is_inert_import_module(module.as_str()))
+                        || import.names.iter().any(|alias| {
+                            alias.name.as_str() == "*"
+                                || is_runtest_hook_name(alias.name.as_str())
+                                || alias
+                                    .asname
+                                    .as_ref()
+                                    .is_some_and(|name| is_runtest_hook_name(name.as_str()))
+                        }) =>
                 {
                     self.has_conftest_reexport = true;
                 }
                 Stmt::AnnAssign(assign) if is_pytest_plugins_target(&assign.target) => {
                     self.has_plugins = true;
+                }
+                Stmt::AnnAssign(assign) if is_runtest_hook_target(&assign.target) => {
+                    self.has_conftest_reexport = true;
                 }
                 Stmt::AugAssign(assign) if is_pytest_plugins_target(&assign.target) => {
                     self.has_plugins = true;
@@ -363,11 +373,44 @@ pub(super) fn conftest_installs_implicit_setup(statements: &[Stmt]) -> bool {
 }
 
 fn is_runtest_hook_name(name: &str) -> bool {
-    name.starts_with("pytest_runtest_")
+    name.starts_with("pytest_runtest")
         || matches!(
             name,
-            "pytest_pyfunc_call" | "pytest_fixture_setup" | "pytest_fixture_post_finalizer"
+            "pytest_pyfunc_call"
+                | "pytest_fixture_setup"
+                | "pytest_fixture_post_finalizer"
+                // Item-mutating hooks can attach marks or fixtures to tests.
+                | "pytest_collection_modifyitems"
+                | "pytest_itemcollected"
+                | "pytest_pycollect_makeitem"
         )
+}
+
+/// Modules a conftest may import names from without re-exporting a fixture or
+/// hook defined elsewhere. Any other `from X import name` (project or
+/// third-party) may bring an autouse fixture or plugin hook into scope.
+fn is_inert_import_module(module: &str) -> bool {
+    let root = module.split('.').next().unwrap_or(module);
+    matches!(
+        root,
+        "__future__"
+            | "pytest"
+            | "typing"
+            | "typing_extensions"
+            | "os"
+            | "sys"
+            | "pathlib"
+            | "collections"
+            | "dataclasses"
+            | "json"
+            | "re"
+            | "functools"
+            | "itertools"
+            | "tempfile"
+            | "shutil"
+            | "contextlib"
+            | "datetime"
+    )
 }
 
 fn is_runtest_hook_target(target: &Expr) -> bool {
@@ -382,6 +425,10 @@ fn builds_autouse_fixture(value: &Expr) -> bool {
         return false;
     };
     if is_autouse_fixture(value) {
+        return true;
+    }
+    // `pytest.fixture(autouse=True)(fn)` applies the decorator immediately.
+    if builds_autouse_fixture(call.func.as_ref()) {
         return true;
     }
     let is_partial =

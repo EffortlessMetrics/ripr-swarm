@@ -502,6 +502,15 @@ fn conftest_reexports_option_splats_and_autouse_factories_make_admission_unresol
         "from .plugins import *\n",
         "from tests.hooks import pytest_runtest_call\n",
         "pytest_runtest_call = other.hook\n",
+        // a named import of an autouse fixture defined elsewhere
+        "from tests.fixtures import leak_check  # noqa\n",
+        "from .fixtures import leak_check\n",
+        // the decorator applied in the same expression
+        "import pytest\n\nleak = pytest.fixture(autouse=True)(_impl)\n",
+        // item-mutating hooks can attach fixtures to every test
+        "import pytest\n\n\ndef pytest_collection_modifyitems(items):\n    for item in items:\n        item.add_marker(pytest.mark.usefixtures(\"strict\"))\n",
+        "def pytest_runtestloop(session):\n    return None\n",
+        "pytest_runtest_call: object = other.hook\n",
     ];
     for conftest in cases {
         let got = tax_admission(&[
@@ -513,8 +522,8 @@ fn conftest_reexports_option_splats_and_autouse_factories_make_admission_unresol
     // Controls: an ordinary fixture module and plain imports do not taint.
     for inert in [
         "import pytest\n\n\n@pytest.fixture\ndef db():\n    return 1\n",
-        "from tests.helpers import make_db\n",
-        "from .plugins import hook_helper\n",
+        "from pathlib import Path\n",
+        "from typing import Any\n",
     ] {
         let got = tax_admission(&[
             ("tests/conftest.py", inert),
