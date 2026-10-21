@@ -462,23 +462,19 @@ pub fn render_evidence_summary_md(s: &super::model::PrEvidenceSummaryJson) -> St
                 .map_or_else(|| "not_available".to_string(), |value| value.to_string())
         )
     ));
+    // #9010: a findings-bounded check document (flag or legacy
+    // `run_limitations[]` shape) is disclosed beside the unchanged producer
+    // verdict, with counts only when the document carried them.
+    if let Some(bound) = &s.findings_bound {
+        let counts = match (bound.rendered, bound.total) {
+            (Some(rendered), Some(total)) => format!("{rendered} of {total} findings rendered"),
+            _ => "finding counts unavailable".to_string(),
+        };
+        out.push_str(&format!(
+            "**Document Complete**: `false` ({counts}). The findings array was cut by the byte budget; raise `RIPR_CHECK_FINDINGS_BYTES` or set it to `0` for the full set (see docs/OUTPUT_SCHEMA.md).\n\n"
+        ));
+    }
     if let Some(outcome) = &s.analysis_outcome {
-        // #9010: a findings-bounded check document is disclosed beside the
-        // unchanged producer verdict, with its counts and the recovery.
-        if let Some(member) = outcome.get("document_complete") {
-            let rendered = outcome.get("findings_rendered").and_then(Value::as_u64);
-            let total = outcome.get("findings_total").and_then(Value::as_u64);
-            let counts = match (rendered, total) {
-                (Some(rendered), Some(total)) => {
-                    format!(" ({rendered} of {total} findings rendered)")
-                }
-                _ => String::new(),
-            };
-            out.push_str(&format!(
-                "**Document Complete**: {}{counts}. The findings array was cut by the byte budget; raise `RIPR_CHECK_FINDINGS_BYTES` or set it to `0` for the full set (see docs/OUTPUT_SCHEMA.md).\n\n",
-                code_span(&member.to_string())
-            ));
-        }
         let kind = outcome
             .pointer("/outcome/kind")
             .and_then(Value::as_str)

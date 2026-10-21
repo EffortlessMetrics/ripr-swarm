@@ -91,6 +91,18 @@ fn build_summary(
         crate::output::gate::discloses_limited_findings_bound(value)
             || crate::output::gate::discloses_bounded_analysis_document(value)
     });
+    let findings_bound = document_bounded.then(|| {
+        let count = |key: &str| {
+            analysis_outcome
+                .as_ref()
+                .and_then(|value| value.get(key))
+                .and_then(Value::as_u64)
+        };
+        super::model::FindingsBoundDisclosure {
+            rendered: count("findings_rendered"),
+            total: count("findings_total"),
+        }
+    });
     let run_status = derive_run_status(diff_report_value, analysis_complete, document_bounded);
     let changed_surfaces = derive_changed_surfaces(diff_report_value);
     let gaps = derive_gaps(gap_ledger_value, baseline_value);
@@ -117,6 +129,7 @@ fn build_summary(
         run_status,
         analysis_complete,
         analysis_outcome,
+        findings_bound,
         changed_surfaces,
         gaps,
         limitations,
@@ -1332,6 +1345,24 @@ mod tests {
         let legacy_summary = build_pr_evidence_summary(None, None, None, Some(&legacy), None, None);
         assert_eq!(legacy_summary.run_status, "incomplete");
         assert_eq!(legacy_summary.analysis_complete, Some(true));
+        let legacy_md = super::super::render_evidence_summary_md(&legacy_summary);
+        assert!(
+            legacy_md.contains("**Analysis Complete**: `true`"),
+            "{legacy_md}"
+        );
+        assert!(
+            legacy_md.contains("**Document Complete**: `false`"),
+            "{legacy_md}"
+        );
+        assert!(
+            legacy_md.contains("finding counts unavailable"),
+            "{legacy_md}"
+        );
+        assert!(!legacy_md.contains("0 of 0"), "{legacy_md}");
+        assert!(
+            legacy_md.contains("RIPR_CHECK_FINDINGS_BYTES"),
+            "{legacy_md}"
+        );
 
         let malformed = serde_json::json!({
             "run_status": "complete",
@@ -1356,6 +1387,8 @@ mod tests {
         let summary = build_pr_evidence_summary(None, None, None, Some(&control), None, None);
         assert_eq!(summary.run_status, "complete");
         assert_eq!(summary.analysis_complete, Some(true));
+        let control_md = super::super::render_evidence_summary_md(&summary);
+        assert!(!control_md.contains("Document Complete"), "{control_md}");
     }
 
     #[test]

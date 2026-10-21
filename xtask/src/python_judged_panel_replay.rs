@@ -2467,6 +2467,15 @@ mod tests {
             return Err("a bounded check document must not read as Complete".to_string());
         }
 
+        let mut legacy_bounded = valid_no_candidates.clone();
+        legacy_bounded["run_limitations"] = json!([{"category": "limited_findings_bound"}]);
+        if matches!(
+            super::outcome_from_check(&legacy_bounded, &subject),
+            super::ReplayOutcome::Complete { .. }
+        ) {
+            return Err("a legacy bounded check document must not read as Complete".to_string());
+        }
+
         let failed_analysis = json!({
             "analysis_outcome": {
                 "analysis_complete": false,

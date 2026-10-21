@@ -1841,6 +1841,15 @@ mod tests {
         let bounded = classify_successful_stdout(
             br#"{"analysis_outcome":{"analysis_complete":true,"document_complete":false,"outcome":{"identity":{"input_identity":"sha256:fixture"},"limitations":[]}}}"#,
         );
+        let legacy = classify_successful_stdout(
+            br#"{"run_limitations":[{"category":"limited_findings_bound"}],"analysis_outcome":{"analysis_complete":true,"outcome":{"identity":{"input_identity":"sha256:fixture"},"limitations":[]}}}"#,
+        );
+        if legacy.disposition != "incomplete_output" {
+            return Err(format!(
+                "legacy bounded document must be incomplete_output, got {}",
+                legacy.disposition
+            ));
+        }
         if bounded.disposition != "incomplete_output" {
             return Err(format!(
                 "bounded document must be incomplete_output, got {}",

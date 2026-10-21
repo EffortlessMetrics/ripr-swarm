@@ -3803,6 +3803,11 @@ mod python_eval_sweep_refresh {
             "analysis_complete": true, "document_complete": false,
             "findings_rendered": 1, "findings_total": 3,
             "outcome": {"kind": "complete_with_findings"}}, "findings": []});
+        let legacy = json!({"analysis_outcome": {
+            "analysis_complete": true,
+            "outcome": {"kind": "complete_with_findings"}},
+            "run_limitations": [{"category": "limited_findings_bound",
+                "run_status": "limited_findings_bound"}], "findings": []});
         let unbounded = json!({"analysis_outcome": {
             "analysis_complete": true,
             "outcome": {"kind": "complete_with_findings"}}, "findings": []});
@@ -3864,32 +3869,40 @@ mod python_eval_sweep_refresh {
             build_profile: None,
         };
 
-        // Bounded first pass: no repeat is spent, the row is not complete.
-        let first = pass_from(&bounded);
-        let decision = run_stability_pass(
-            &missing_binary,
-            Path::new("unused"),
-            Path::new("unused"),
-            Path::new("unused"),
-            Duration::from_secs(1),
-            "s",
-            &first,
-        );
-        assert!(
-            matches!(&decision, StabilityResult::NotCompared { limitation }
-                if limitation.contains("runs only where the first result is complete")),
-            "bounded first pass must not reach a repeat"
-        );
-        let (row_status, gate) = gate_of(&first, Some(&decision));
-        assert_ne!(row_status, "complete");
-        assert_ne!(gate.as_deref(), Some("pass"), "bounded first pass");
+        // Bounded first pass (flag and legacy shapes): no repeat is spent and
+        // the row is not complete.
+        for (name, doc) in [("flag", &bounded), ("legacy", &legacy)] {
+            let first = pass_from(doc);
+            let decision = run_stability_pass(
+                &missing_binary,
+                Path::new("unused"),
+                Path::new("unused"),
+                Path::new("unused"),
+                Duration::from_secs(1),
+                "s",
+                &first,
+            );
+            assert!(
+                matches!(&decision, StabilityResult::NotCompared { limitation }
+                    if limitation.contains("runs only where the first result is complete")),
+                "{name}: bounded first pass must not reach a repeat"
+            );
+            let (row_status, gate) = gate_of(&first, Some(&decision));
+            assert_ne!(row_status, "complete", "{name}");
+            assert_ne!(gate.as_deref(), Some("pass"), "{name}: bounded first pass");
+        }
 
         // Unbounded first, bounded (Partial) second: never compared, no pass.
         let first = pass_from(&unbounded);
-        let decision = compare_passes(&first, pass_from(&bounded));
-        assert!(matches!(decision, StabilityResult::NotCompared { .. }));
-        let (_, gate) = gate_of(&first, Some(&decision));
-        assert_ne!(gate.as_deref(), Some("pass"), "partial second pass");
+        for (name, doc) in [("flag", &bounded), ("legacy", &legacy)] {
+            let decision = compare_passes(&first, pass_from(doc));
+            assert!(
+                matches!(decision, StabilityResult::NotCompared { .. }),
+                "{name}"
+            );
+            let (_, gate) = gate_of(&first, Some(&decision));
+            assert_ne!(gate.as_deref(), Some("pass"), "{name}: partial second pass");
+        }
 
         // Control: unbounded first and complete second compare stable -> pass.
         let decision = compare_passes(&first, pass_from(&unbounded));
