@@ -36,6 +36,7 @@ pub mod github;
 pub mod human;
 pub(crate) mod intervention_study;
 pub mod json;
+pub(crate) mod language_capabilities;
 pub(crate) mod limited_check;
 pub(crate) mod markdown;
 pub(crate) mod mutation_calibration;
