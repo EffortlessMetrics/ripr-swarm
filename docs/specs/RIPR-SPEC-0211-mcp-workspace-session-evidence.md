@@ -94,7 +94,8 @@ official SDK transport:
 - `ripr_workspace_status` returns the startup workspace block (root
   discovery, configuration presence, trust, authority — all unchanged from
   #3088) plus a `ripr-mcp-session-v1` session block: current desired input
-  (workspace diff against the default branch, draft mode, built-in
+  (workspace diff against the resolved default branch or the explicit
+  refresh `base` with `base_revision` when present, draft mode, built-in
   defaults), current attempt state (`no_snapshot`, `in_flight`,
   `completed`, `failed`), last completed snapshot identity,
   last-known-good, freshness relative to the last completed refresh

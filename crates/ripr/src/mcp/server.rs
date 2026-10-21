@@ -12,6 +12,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+/// Upper bound for the `ripr_refresh` `base` revision text; no real ref name
+/// or commit id approaches it, and it keeps a hostile argument out of Git.
+const MAX_BASE_REVISION_BYTES: usize = 256;
+
 /// Application adapter only. The SDK owns RPC dispatch and lifecycle, except
 /// initialize-session `ping`: method name wins over `params._meta` so a
 /// handshake-shaped keepalive is not classified as a 2026-07-28 request
@@ -103,7 +107,21 @@ impl McpServer {
         )
     }
 
-    async fn refresh_tool(&self, max_envelope_bytes: usize) -> Result<CallToolResponse, ErrorData> {
+    async fn refresh_tool(
+        &self,
+        arguments: Option<serde_json::Map<String, Value>>,
+        max_envelope_bytes: usize,
+    ) -> Result<CallToolResponse, ErrorData> {
+        reject_unknown_arguments(&arguments, &["base"])?;
+        let base = optional_nonempty_string_argument(&arguments, "base")?;
+        if let Some(base) = &base
+            && base.len() > MAX_BASE_REVISION_BYTES
+        {
+            return Err(ErrorData::invalid_params(
+                format!("base must be at most {MAX_BASE_REVISION_BYTES} bytes"),
+                None,
+            ));
+        }
         let root = match workspace::available_root(self.analysis_root.as_deref()) {
             Ok(root) => root.to_path_buf(),
             Err(failure) => {
@@ -123,10 +141,11 @@ impl McpServer {
                 return self.typed_failure(failure, workspace::REFRESH_SCHEMA_VERSION);
             }
             session.in_flight = true;
+            session.desired_base = base.clone();
         }
         let mut attempt = workspace::InFlightAttempt::new(session.clone());
         let worker = tokio::task::spawn_blocking(move || {
-            workspace::run_check(&root, root_identity.as_deref())
+            workspace::run_check(&root, root_identity.as_deref(), base.as_deref())
         });
         let outcome = match worker.await {
             Ok(outcome) => outcome,
@@ -826,17 +845,8 @@ impl ServerHandler for McpServer {
                 self.status_tool(max_envelope_bytes).await
             }
             protocol::REFRESH_TOOL_NAME => {
-                if request
-                    .arguments
-                    .as_ref()
-                    .is_some_and(|arguments| !arguments.is_empty())
-                {
-                    return Err(ErrorData::invalid_params(
-                        "ripr_refresh does not accept arguments",
-                        None,
-                    ));
-                }
-                self.refresh_tool(max_envelope_bytes).await
+                self.refresh_tool(request.arguments, max_envelope_bytes)
+                    .await
             }
             protocol::LIST_GAPS_TOOL_NAME => {
                 self.list_gaps_tool(request.arguments, max_envelope_bytes)

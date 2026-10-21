@@ -45,6 +45,16 @@ pub fn check_workspace_with_config(
     check_with_progress(input, config, AnalysisProgressScope::Diff, None)
 }
 
+/// [`check_workspace_with_config`] keeping the failure typed, so a caller
+/// (the MCP refresh) can name the recovery route for the failure family
+/// instead of re-reading rendered text.
+pub(crate) fn check_workspace_with_config_typed(
+    input: CheckInput,
+    config: &RiprConfig,
+) -> Result<CheckOutput, CoreError> {
+    check_with_progress_core(input, config, AnalysisProgressScope::Diff, None)
+}
+
 pub fn check_workspace_worktree_with_config(
     input: CheckInput,
     config: &RiprConfig,
