@@ -175,6 +175,12 @@ impl ProgressSink for Client {
 struct TokenRecord {
     token: String,
     phase: AnalysisProgressPhase,
+    // Shared with an in-flight sender even after terminal registry removal.
+    notifications: Arc<tokio::sync::Mutex<TokenNotifications>>,
+}
+
+#[derive(Default)]
+struct TokenNotifications {
     /// True once the `$/progress` begin notification has actually been sent.
     /// A token ended while `started == false` is removed silently: per the LSP
     /// spec no progress notifications may precede a begin, and none may follow
@@ -201,9 +207,6 @@ pub(super) struct AnalysisProgressTracker {
     sink: Mutex<Arc<dyn ProgressSink>>,
     supported: AtomicBool,
     tokens: Mutex<BTreeMap<u64, TokenRecord>>,
-    // Serialize notifications with terminal removal, never the create round
-    // trip. A begin already sending must precede its exactly-once end.
-    notifications: tokio::sync::Mutex<()>,
     /// Liveness bound for the `window/workDoneProgress/create` round trip
     /// (#5278). Announcement is detached from refresh (#9149); the bound
     /// also limits how long that best-effort task waits for the client.
@@ -225,7 +228,6 @@ impl AnalysisProgressTracker {
             sink: Mutex::new(sink),
             supported: AtomicBool::new(false),
             tokens: Mutex::new(BTreeMap::new()),
-            notifications: tokio::sync::Mutex::new(()),
             client_request_timeout,
         }
     }
@@ -283,8 +285,7 @@ impl AnalysisProgressTracker {
             TokenRecord {
                 token: progress_token(request.generation),
                 phase,
-                started: false,
-                last_stage: None,
+                notifications: Arc::new(tokio::sync::Mutex::new(TokenNotifications::default())),
             },
         );
         true
@@ -315,14 +316,9 @@ impl AnalysisProgressTracker {
     }
 
     async fn announce(&self, request: &RefreshRequest) {
-        {
-            let Ok(tokens) = self.tokens.lock() else {
-                return;
-            };
-            if !tokens.contains_key(&request.generation) {
-                return;
-            }
-        }
+        let Some(notifications) = self.notification_state(request.generation) else {
+            return;
+        };
         let Some(sink) = self.sink() else {
             return;
         };
@@ -356,7 +352,7 @@ impl AnalysisProgressTracker {
                 .await;
             return;
         }
-        let _notifications = self.notifications.lock().await;
+        let mut notifications = notifications.lock().await;
         let phase = {
             let Ok(tokens) = self.tokens.lock() else {
                 return;
@@ -375,18 +371,30 @@ impl AnalysisProgressTracker {
             },
         )
         .await;
-        if let Ok(mut tokens) = self.tokens.lock()
-            && let Some(record) = tokens.get_mut(&request.generation)
-        {
-            record.started = true;
-        }
+        // A terminal owner may have removed the registry entry while Begin
+        // was sending. Its retained state must still observe this completed
+        // Begin and send exactly one End after acquiring the same token lock.
+        notifications.started = true;
+    }
+
+    fn notification_state(
+        &self,
+        generation: u64,
+    ) -> Option<Arc<tokio::sync::Mutex<TokenNotifications>>> {
+        let tokens = self.tokens.lock().ok()?;
+        tokens
+            .get(&generation)
+            .map(|record| Arc::clone(&record.notifications))
     }
 
     /// Move a queued token to `analyzing` on the SAME token when the queued
     /// request starts. An unstarted token records the new phase silently.
     /// No-op for tokens already analyzing or unknown.
     pub(super) async fn transition_to_analyzing(&self, generation: u64) {
-        let _notifications = self.notifications.lock().await;
+        let Some(notifications) = self.notification_state(generation) else {
+            return;
+        };
+        let notifications = notifications.lock().await;
         let token = {
             let Ok(mut tokens) = self.tokens.lock() else {
                 return;
@@ -398,7 +406,7 @@ impl AnalysisProgressTracker {
                 return;
             }
             record.phase = AnalysisProgressPhase::Analyzing;
-            if !record.started {
+            if !notifications.started {
                 // A delayed create must announce the current phase when it
                 // succeeds, rather than claiming the promoted request is queued.
                 return;
@@ -420,7 +428,10 @@ impl AnalysisProgressTracker {
     /// Bounded report at the real phase boundary where analysis results are
     /// about to be published.
     pub(super) async fn report_publishing(&self, generation: u64) {
-        let _notifications = self.notifications.lock().await;
+        let Some(notifications) = self.notification_state(generation) else {
+            return;
+        };
+        let notifications = notifications.lock().await;
         let token = {
             let Ok(tokens) = self.tokens.lock() else {
                 return;
@@ -428,7 +439,7 @@ impl AnalysisProgressTracker {
             let Some(record) = tokens.get(&generation) else {
                 return;
             };
-            if !record.started || record.phase != AnalysisProgressPhase::Analyzing {
+            if !notifications.started || record.phase != AnalysisProgressPhase::Analyzing {
                 return;
             }
             record.token.clone()
@@ -461,7 +472,10 @@ impl AnalysisProgressTracker {
     /// unsupported clients, unknown generations, unstarted tokens, tokens
     /// still queued, terminal stages, and consecutive duplicate stages.
     pub(super) async fn report_stage(&self, generation: u64, stage: AnalysisProgressStage) {
-        let _notifications = self.notifications.lock().await;
+        let Some(notifications) = self.notification_state(generation) else {
+            return;
+        };
+        let mut notifications = notifications.lock().await;
         if !self.supported.load(Ordering::SeqCst) {
             return;
         }
@@ -475,13 +489,13 @@ impl AnalysisProgressTracker {
             let Some(record) = tokens.get_mut(&generation) else {
                 return;
             };
-            if !record.started || record.phase != AnalysisProgressPhase::Analyzing {
+            if !notifications.started || record.phase != AnalysisProgressPhase::Analyzing {
                 return;
             }
-            if record.last_stage == Some(stage) {
+            if notifications.last_stage == Some(stage) {
                 return;
             }
-            record.last_stage = Some(stage);
+            notifications.last_stage = Some(stage);
             record.token.clone()
         };
         let Some(sink) = self.sink() else {
@@ -500,26 +514,30 @@ impl AnalysisProgressTracker {
     /// before the end notification, so later ends for the same generation
     /// are no-ops.
     pub(super) async fn end(&self, generation: u64, end: AnalysisProgressEnd) {
-        let _notifications = self.notifications.lock().await;
         let record = {
             let Ok(mut tokens) = self.tokens.lock() else {
                 return;
             };
             tokens.remove(&generation)
         };
-        let Some(record) = record else {
-            return;
-        };
-        if !record.started {
-            // Removed cleanly without a notification: no begin was ever sent.
+        if let Some(record) = record {
+            self.end_record(record, end).await;
+        }
+    }
+
+    async fn end_record(&self, record: TokenRecord, end: AnalysisProgressEnd) {
+        // Only this token's sender can delay its End. Registry removal already
+        // prevents late announcements/reports and gives this owner sole custody.
+        let notifications = record.notifications.lock().await;
+        if !notifications.started {
+            // #1971: no Begin was sent, so termination remains silent.
             return;
         }
-        let token = record.token;
         let Some(sink) = self.sink() else {
             return;
         };
         sink.notify(
-            token,
+            record.token,
             ProgressNotificationValue::End {
                 message: end.message(),
             },
@@ -532,7 +550,6 @@ impl AnalysisProgressTracker {
     /// without ever starting; the active (analyzing) token is left for the
     /// refresh loop's outcome-based end.
     pub(super) async fn end_queued(&self, end: AnalysisProgressEnd) {
-        let _notifications = self.notifications.lock().await;
         let drained = {
             let Ok(mut tokens) = self.tokens.lock() else {
                 return;
@@ -545,49 +562,28 @@ impl AnalysisProgressTracker {
             queued
                 .into_iter()
                 .filter_map(|generation| tokens.remove(&generation))
-                .filter(|record| record.started)
-                .map(|record| record.token)
                 .collect::<Vec<_>>()
         };
-        let Some(sink) = self.sink() else {
-            return;
-        };
-        for token in drained {
-            sink.notify(
-                token,
-                ProgressNotificationValue::End {
-                    message: end.message(),
-                },
-            )
-            .await;
+        for record in drained {
+            self.end_record(record, end).await;
         }
     }
 
     /// Terminate every open token. Used on shutdown when the scheduler
-    /// stops accepting and running work.
+    /// stops accepting and running work. A drain still awaits each token's
+    /// in-flight notification; per-token serialization is not a total shutdown
+    /// latency bound.
     pub(super) async fn end_all(&self, end: AnalysisProgressEnd) {
-        let _notifications = self.notifications.lock().await;
         let drained = {
             let Ok(mut tokens) = self.tokens.lock() else {
                 return;
             };
             std::mem::take(&mut *tokens)
                 .into_values()
-                .filter(|record| record.started)
-                .map(|record| record.token)
                 .collect::<Vec<_>>()
         };
-        let Some(sink) = self.sink() else {
-            return;
-        };
-        for token in drained {
-            sink.notify(
-                token,
-                ProgressNotificationValue::End {
-                    message: end.message(),
-                },
-            )
-            .await;
+        for record in drained {
+            self.end_record(record, end).await;
         }
     }
 }
@@ -1042,8 +1038,9 @@ mod tests {
                     TokenRecord {
                         token: progress_token(7),
                         phase: AnalysisProgressPhase::Queued,
-                        started: false,
-                        last_stage: None,
+                        notifications: Arc::new(tokio::sync::Mutex::new(
+                            TokenNotifications::default(),
+                        )),
                     },
                 );
             }

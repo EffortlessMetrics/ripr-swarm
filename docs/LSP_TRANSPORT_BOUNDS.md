@@ -57,8 +57,12 @@ Work-done progress creation uses that same 30-second request bound, but its
 announcement runs separately from refresh completion (#9149). Tokens register
 before announcement starts; termination removes an unstarted token silently.
 A late create success cannot begin a terminated token. Begin, report and end
-notifications serialize with terminal removal so an already-started token
-ends once, after its Begin. Capability negotiation remains owned by
+notifications serialize per token, so one token's suspended send does not
+hold another token's report or terminal removal. An already-started token
+ends once, after its Begin, even if removal occurs during the Begin send.
+The full `end_all` drain still awaits in-flight notifications on the drained
+tokens; this isolation does not establish a total shutdown latency bound.
+Capability negotiation remains owned by
 `ClientFeatureProfile` (#1971).
 
 ## Typed-size traversal work
