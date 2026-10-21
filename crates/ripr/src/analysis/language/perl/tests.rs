@@ -3046,6 +3046,10 @@ fn h2_sink_whitespace_aligns_outside_literals_only() -> Result<(), String> {
         ("$a lt $b", "$altb", ExposureClass::WeaklyExposed),
         ("scalar @a", "scalar@a", ExposureClass::Exposed),
         ("$a - -1", "$a--1", ExposureClass::WeaklyExposed),
+        ("$a =~ $b", "$a = ~$b", ExposureClass::WeaklyExposed),
+        ("1 . 5", "1.5", ExposureClass::WeaklyExposed),
+        ("$x =~ /a  b/", "$x =~ /a b/", ExposureClass::WeaklyExposed),
+        ("q(a, b)", "q(a,b)", ExposureClass::WeaklyExposed),
         (
             "$amount * 0.9",
             "$amount * 0.8",
@@ -3084,6 +3088,21 @@ fn h2_producer_declared_absent_observable_is_unknown_not_a_gap() -> Result<(), S
         "a packet without the field keeps today's class"
     );
     Ok(())
+}
+
+/// Spacing that can carry meaning never aligns, even inside constructs the
+/// canonical form does not model (regex bodies, `q` forms, `$"`).
+#[test]
+fn sink_text_eq_fails_closed_on_spacing_that_carries_meaning() {
+    for (left, right) in [
+        ("$\" . \"a, b\"", "$\" . \"a,b\""),
+        ("m{a, b}", "m{a,b}"),
+        ("$a / 2", "$a/2"),
+        ("$a == -1", "$a==-1"),
+    ] {
+        assert!(!sink_text_eq(left, right), "{left:?} vs {right:?}");
+    }
+    assert!(sink_text_eq("$a == 1", "$a==1"));
 }
 
 /// `t/app.t` must NEVER project the production source path as the related-test

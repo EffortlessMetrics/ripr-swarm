@@ -3316,22 +3316,32 @@ fn sink_aligned_observation(
 }
 
 /// RIPR-SPEC-0235 rule 9: sink text equality that ignores whitespace which
-/// cannot change what the expression means. Whitespace inside a quoted
-/// literal is kept exactly. Outside one it is dropped unless both neighbors
-/// are identifier characters (`$a lt $b` is not `$altb`; a sigil ends a word, so
-/// `scalar @a` is `scalar@a`) or the same operator character
-/// (`- -1` is not `--1`), so `$a*0.9` equals `$a * 0.9` and nothing else
-/// merges. Any difference this does not explain compares unequal.
+/// cannot change what the expression means. It fails closed: text with a
+/// construct whose spacing can carry meaning (`/`, `~`, a backtick, `$"`,
+/// `$'`, or a `q`, `qq`, `qw`, `qr`, `m`, `s`, `tr` or `y` word) compares
+/// exactly. Otherwise whitespace inside a quoted literal is kept, and outside
+/// one it is dropped except between two identifier characters
+/// (`$a lt $b` is not `$altb`), between two characters that can fuse into one
+/// operator (`- -1` is not `--1`), and next to a `.` (`1 . 5` is not `1.5`).
+/// A sigil ends an identifier, so `scalar @a` equals `scalar@a`.
 fn sink_text_eq(left: &str, right: &str) -> bool {
-    left == right || canonical_sink_text(left) == canonical_sink_text(right)
+    left == right
+        || canonical_sink_text(left)
+            .zip(canonical_sink_text(right))
+            .is_some_and(|(left, right)| left == right)
 }
 
-fn canonical_sink_text(text: &str) -> String {
+fn canonical_sink_text(text: &str) -> Option<String> {
     let is_word = |c: char| c == '_' || c.is_alphanumeric();
+    let fuses = |c: char| matches!(c, '<' | '>' | '=' | '!' | '&' | '|' | '*' | '+' | '-' | ':');
+    if text.contains(['/', '~', '`']) || text.contains("$\"") || text.contains("$'") {
+        return None;
+    }
     let mut out = String::with_capacity(text.len());
     let mut quote: Option<char> = None;
     let mut escaped = false;
     let mut pending_space = false;
+    let mut word = String::new();
     for c in text.trim().chars() {
         if let Some(open) = quote {
             out.push(c);
@@ -3344,13 +3354,27 @@ fn canonical_sink_text(text: &str) -> String {
             }
             continue;
         }
+        if is_word(c) {
+            word.push(c);
+        } else {
+            if matches!(
+                word.as_str(),
+                "q" | "qq" | "qw" | "qr" | "m" | "s" | "tr" | "y"
+            ) {
+                return None;
+            }
+            word.clear();
+        }
         if c.is_whitespace() {
             pending_space = true;
             continue;
         }
         if pending_space {
             if let Some(prev) = out.chars().next_back()
-                && ((is_word(prev) && is_word(c)) || (prev == c && !is_word(c)))
+                && ((is_word(prev) && is_word(c))
+                    || (fuses(prev) && fuses(c))
+                    || prev == '.'
+                    || c == '.')
             {
                 out.push(' ');
             }
@@ -3361,7 +3385,13 @@ fn canonical_sink_text(text: &str) -> String {
         }
         out.push(c);
     }
-    out
+    if matches!(
+        word.as_str(),
+        "q" | "qq" | "qw" | "qr" | "m" | "s" | "tr" | "y"
+    ) {
+        return None;
+    }
+    Some(out)
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]

@@ -208,7 +208,7 @@ For each change, the first match wins:
    never strong, whatever their label. `weak_smoke`, `weak_broad`,
    `mention_only` and `unknown` strengths are never strong. A relation
    with a bound strong oracle reads `weakly_exposed`; with any other bound
-   oracle, `reachable_unrevealed` (except rules 16 and 17).
+   oracle, `reachable_unrevealed` (except rules 16, 17 and 18).
 7. **Relation-kind cap, per relation.** Only `direct_owner_call` supports
    positive reachability (sink-aligned `exposed`, suggested location, row
    miss). A reachable `method_receiver` or `helper_call` relation whose own
@@ -233,9 +233,12 @@ For each change, the first match wins:
    that edge trimming, equality is exact: no substring match. Whitespace
    outside a quoted literal does not distinguish two sinks, except between
    two identifier characters (`$a lt $b` is not `$altb`; a sigil ends an
-   identifier, so `scalar @a` equals `scalar@a`) or two identical operator
-   characters (`- -1` is not `--1`); inside a quoted literal it is
-   compared exactly. An `exposed` change emits
+   identifier, so `scalar @a` equals `scalar@a`), between two characters
+   that can fuse into one operator (`- -1` is not `--1`), and next to a `.`
+   (`1 . 5` is not `1.5`). Inside a quoted literal it is compared exactly.
+   Text containing `/`, `~`, a backtick, `$"`, `$'` or a `q`, `qq`, `qw`,
+   `qr`, `m`, `s`, `tr` or `y` word, where spacing can carry meaning that
+   ripr does not model, compares exactly. An `exposed` change emits
    `perl_already_discriminated:` and
    no gap, suggested location, suggested assertion or missing
    discriminator.
@@ -345,7 +348,7 @@ For each change, the first match wins:
 
 18. **No observable to align.** A relation whose bound oracle passes rules 5
     and 6 reads `static_unknown`, not `weakly_exposed`, when its change
-    carries `changed_observable: null`. A strong oracle on the owner has no
+    carries `changed_observable: null` or a blank string. A strong oracle on the owner has no
     sink to align to, so ripr cannot tell whether it pins the change, and
     rule 13 withholds the gap and location as for any `static_unknown`. A
     packet that omits the field (an older packet) and a change with an
@@ -435,7 +438,11 @@ rejected alternative. Any can be reversed later without touching the rest.
 
 12. **Whitespace in sink text.** Adopted: sink equality ignores whitespace
     outside quoted literals, except where removing it would join two
-    identifier characters or two identical operators. The producer copies both texts
+    identifier characters or fuse two operator characters, and exact
+    comparison for text with a regex, `q`-form, `~`, `/` or `$"`, where
+    spacing can carry meaning ripr does not model (review found `$a =~ $b`
+    vs `$a = ~$b`, `1 . 5` vs `1.5` and regex bodies equal under a looser
+    form). The producer copies both texts
     from source, so formatting is the one difference between two spellings
     of the same expression, and the corpus labels the whitespace-only case
     `discriminated`: `weakly_exposed` was a false repair signal on a pinned
@@ -580,7 +587,7 @@ cases.
     probed).
 31. Owner `kind: unknown`: `weakly_exposed`, no gap, location (unchanged;
     from code, not probed).
-32. `changed_observable: null` on the change: `static_unknown`, no gap, no
+32. `changed_observable: null` (or blank) on the change: `static_unknown`, no gap, no
     location (rule 18; was `weakly_exposed`).
 
 ## Test Mapping
