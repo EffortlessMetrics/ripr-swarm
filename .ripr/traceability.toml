@@ -64,6 +64,12 @@ tests = [
   "crates/ripr/tests/slice_boundary.rs::equality_keeps_the_matching_table_witness",
   "crates/ripr/tests/slice_boundary.rs::recursive_empty_input_cannot_disappear_from_cardinality_evidence",
   "crates/ripr/tests/slice_boundary.rs::production_function_pointer_input_cannot_disappear",
+  "crates/ripr/tests/slice_direct_calls.rs::an_empty_literal_pinned_exactly_credits_the_boundary",
+  "crates/ripr/tests/slice_direct_calls.rs::an_empty_literal_without_an_exact_pin_is_not_credited",
+  "crates/ripr/tests/slice_direct_calls.rs::another_production_use_keeps_the_input_set_open",
+  "crates/ripr/tests/slice_direct_calls.rs::nonempty_literals_keep_the_missing_empty_discriminator",
+  "crates/ripr/tests/slice_direct_calls.rs::hidden_or_conditional_arguments_cannot_supply_a_length",
+  "crates/ripr/tests/slice_direct_calls.rs::a_lone_empty_literal_call_credits_and_a_second_slice_does_not_pair",
   "crates/ripr/tests/unindexed_guidance.rs::unindexed_doc_assertion_prompts_inspection_without_credit_or_gap_claim",
   "crates/ripr/tests/unindexed_guidance.rs::weak_direct_owner_assertion_keeps_exact_value_advice",
   "crates/ripr/tests/unindexed_guidance.rs::wrapper_error_retains_specific_guidance_for_proximity_reach",
@@ -6573,6 +6579,19 @@ id = "RIPR-SPEC-0069"
 name = "LSP / agent feedback use case"
 spec = "docs/specs/RIPR-SPEC-0069-lsp-agent-feedback-use-case.md"
 tests = [
+  "crates/ripr/src/lsp/progress.rs::tests::terminal_cancellation_after_end_delivery_does_not_duplicate",
+  "crates/ripr/src/lsp/progress.rs::tests::terminal_cancellation_end_retains_retry_custody",
+  "crates/ripr/src/lsp/progress.rs::tests::terminal_cancellation_queued_drain_retains_retry_custody",
+  "crates/ripr/src/lsp/progress.rs::tests::terminal_cancellation_all_drain_retains_retry_custody",
+  "crates/ripr/src/lsp/tests/progress_notification_isolation_tests.rs::queued_begin_cannot_hold_active_attempt_completion_and_promotion",
+  "crates/ripr/src/lsp/tests/progress_notification_isolation_tests.rs::queued_begin_cannot_hold_active_publishing_report",
+  "crates/ripr/src/lsp/tests/progress_notification_isolation_tests.rs::end_all_preserves_order_but_still_awaits_its_suspended_token",
+  "crates/ripr/src/lsp/tests/progress_create_liveness_tests.rs::unanswered_create_does_not_delay_real_refresh_or_shutdown",
+  "crates/ripr/src/lsp/tests/progress_create_liveness_tests.rs::late_create_success_cannot_begin_a_finished_real_refresh",
+  "crates/ripr/src/lsp/progress.rs::tests::late_create_success_never_revives_terminated_tokens",
+  "crates/ripr/src/lsp/progress.rs::tests::termination_during_begin_send_ends_the_started_token_exactly_once",
+  "crates/ripr/src/lsp/progress.rs::tests::detached_announcement_registers_before_its_task_is_polled",
+  "crates/ripr/src/lsp/progress.rs::tests::queued_promotion_during_create_announces_the_current_phase",
   "crates/ripr/src/lsp/tests.rs::execute_command_collect_workspace_status_no_snapshot_returns_no_snapshot_status",
   "crates/ripr/src/lsp/tests.rs::failed_refresh_retains_last_snapshot_and_reports_stale_health",
     "crates/ripr/src/lsp/tests.rs::initialize_root_rejects_ambiguous_workspace_folders",
@@ -6592,6 +6611,7 @@ tests = [
 ]
 fixtures = []
 code = [
+  "crates/ripr/src/lsp/progress.rs",
   "crates/ripr/src/lsp/backend.rs",
     "crates/ripr/src/lsp/capabilities.rs",
     "crates/ripr/src/lsp/actions.rs",
@@ -14106,6 +14126,10 @@ tests = [
   "crates/ripr/tests/support/mcp_scope_contract.rs::status_and_refresh_advertise_committed_scope_variants",
   "crates/ripr/tests/mcp_stdio.rs::refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation",
   "crates/ripr/tests/mcp_stdio.rs::empty_gap_pages_keep_structured_outcomes_at_the_response_bound",
+  "crates/ripr/tests/mcp_stdio.rs::list_gaps_rejects_unknown_class_tokens_with_the_vocabulary",
+  "crates/ripr/tests/mcp_stdio.rs::list_gaps_bounds_the_echoed_unknown_class_token",
+  "crates/ripr/tests/mcp_stdio.rs::long_request_ids_refuse_typed_before_the_wire_cap",
+  "crates/ripr/tests/mcp_stdio.rs::window_sized_envelope_refuses_typed_instead_of_dropping_structured_content",
   "crates/ripr/tests/mcp_stdio.rs::oversized_request_id_is_rejected_with_null_id_and_the_session_survives",
   "crates/ripr/src/mcp/transport_tests.rs::oversized_request_id_is_rejected_with_null_id_and_the_session_continues",
   "crates/ripr/src/mcp/protocol.rs::tests::tool_result_fits_and_refuses_at_the_id_aware_envelope_budget",
@@ -15958,6 +15982,7 @@ fixtures = [
   "fixtures/test_from_trait_conversion_not_exact",
   "fixtures/test_wrapped_in_some_not_exact",
   "fixtures/test_in_struct_literal_not_exact",
+  "fixtures/test_in_index_read_not_exact",
 ]
 code = [
   "crates/ripr/src/analysis/classify/reveal.rs",
