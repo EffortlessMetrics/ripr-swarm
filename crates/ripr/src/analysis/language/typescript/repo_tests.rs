@@ -258,6 +258,55 @@ fn truncated_discovery_walk_is_partial() -> Result<(), String> {
 }
 
 #[test]
+fn skipped_links_disclose_even_when_production_is_selected() -> Result<(), String> {
+    let root = ts_unique_tempdir("repo-links-skipped")?;
+    ts_write_file(&root.join("src/lib.ts"), TS_SRC)?;
+    ts_write_file(&root.join("real_more/extra.ts"), TS_SRC)?;
+    // A link the discovery walk must not follow; sources behind it are
+    // invisible, so the run must disclose the skip even though `src/lib.ts`
+    // keeps the production set non-empty.
+    #[cfg(unix)]
+    let linked = {
+        use std::os::unix::fs::symlink;
+        let target = root.join("real_more");
+        let link = root.join("linked_more");
+        if symlink(&target, &link).is_err() {
+            let _ = std::fs::remove_dir_all(&root);
+            return Ok(()); // platform refused; nothing to assert here
+        }
+        link
+    };
+    #[cfg(windows)]
+    let linked = {
+        use std::os::windows::fs::symlink_dir;
+        let target = root.join("real_more");
+        let link = root.join("linked_more");
+        if symlink_dir(&target, &link).is_err() {
+            let _ = std::fs::remove_dir_all(&root);
+            return Ok(()); // privilege missing; nothing to assert here
+        }
+        link
+    };
+    #[cfg(not(any(unix, windows)))]
+    let linked: std::path::PathBuf = match () {
+        _ => return Ok(()),
+    };
+    let result = run(&root, 800);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+    assert!(
+        !result.findings.is_empty(),
+        "the real production file still seeds findings"
+    );
+    let reason = result
+        .partial_reason
+        .ok_or("skipped links must keep the run partial")?;
+    assert!(reason.contains("typescript_repo_links_skipped:"), "{reason}");
+    let _ = linked;
+    Ok(())
+}
+
+#[test]
 fn over_read_bound_file_leaves_the_denominator_and_is_partial() -> Result<(), String> {
     let root = ts_unique_tempdir("repo-read-cap")?;
     ts_write_file(&root.join("src/lib.ts"), TS_SRC)?;

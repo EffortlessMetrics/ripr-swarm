@@ -196,13 +196,13 @@ fn select_and_analyze(
             "typescript_repo_discovery_truncated: workspace discovery hit its entry cap, so TypeScript/JavaScript source may have been missed (raise RIPR_TS_MAX_WORKSPACE_FILES)".to_string(),
         );
     }
+    if input.links_skipped > 0 {
+        reasons.push(format!(
+            "typescript_repo_links_skipped: {} symlink/junction entr(ies) were not followed, so TypeScript/JavaScript source behind them may have been missed",
+            input.links_skipped
+        ));
+    }
     if input.production.is_empty() {
-        if input.links_skipped > 0 {
-            reasons.push(format!(
-                "typescript_repo_links_skipped: {} symlink/junction entr(ies) were not followed, so TypeScript/JavaScript source behind them may have been missed",
-                input.links_skipped
-            ));
-        }
         return Ok(RepoSelection {
             findings: Vec::new(),
             production_files: 0,
