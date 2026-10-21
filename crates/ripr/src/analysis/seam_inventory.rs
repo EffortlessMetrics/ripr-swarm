@@ -5644,6 +5644,164 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
         Ok(())
     }
 
+    /// Builds a core index over `core`, reuses it for `target`, and requires
+    /// the whole serialized index to equal a fresh build over `target` (#8547).
+    fn reuse_equals_fresh(
+        root: &Path,
+        core: &[(PathBuf, Vec<u8>)],
+        target: &[(PathBuf, Vec<u8>)],
+    ) -> Result<(RustIndex, RustIndex), String> {
+        let core_index = rust_index::build_analysis_index_from_loaded_files(root, core, &[])?;
+        let reused =
+            rust_index::reuse_cached_index_with_loaded_files(core_index, root, target, &[])?;
+        let fresh = rust_index::build_analysis_index_from_loaded_files(root, target, &[])?;
+        let reused_json = serde_json::to_string(&reused.index).map_err(|err| err.to_string())?;
+        let fresh_json = serde_json::to_string(&fresh.index).map_err(|err| err.to_string())?;
+        if reused_json != fresh_json {
+            return Err("reused index must serialize identically to a fresh build".into());
+        }
+        Ok((reused.index, fresh.index))
+    }
+
+    fn reuse_fixture_root(name: &str, files: &[(&str, &str)]) -> Result<PathBuf, String> {
+        let root = make_tempdir(name)?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"reusefix\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        for (path, text) in files {
+            write_file(&root.join(path), text)?;
+        }
+        Ok(root)
+    }
+
+    fn bytes_of(files: &[(&str, &str)]) -> Vec<(PathBuf, Vec<u8>)> {
+        files
+            .iter()
+            .map(|(path, text)| (PathBuf::from(path), text.as_bytes().to_vec()))
+            .collect()
+    }
+
+    /// A changed parent that deletes `#[cfg(test)] mod child;` must not leave
+    /// the child's composed test role or module provenance behind.
+    #[test]
+    fn reuse_of_changed_parent_deleting_mod_declaration_matches_fresh() -> Result<(), String> {
+        let before = [
+            (
+                "src/lib.rs",
+                "#[cfg(test)]\nmod child;\npub fn top() -> i32 { 1 }\n",
+            ),
+            ("src/child.rs", "pub fn helper() -> i32 { 2 }\n"),
+        ];
+        let after = [
+            ("src/lib.rs", "pub fn top() -> i32 { 1 }\n"),
+            ("src/child.rs", "pub fn helper() -> i32 { 2 }\n"),
+        ];
+        let root = reuse_fixture_root("reuse-mod-delete", &before)?;
+        let result = reuse_equals_fresh(&root, &bytes_of(&before), &bytes_of(&after));
+        let _ = std::fs::remove_dir_all(&root);
+        let (reused, _) = result?;
+        let child = reused
+            .files()
+            .get(&PathBuf::from("src/child.rs"))
+            .ok_or("child must stay indexed")?;
+        if !child.role_provenance.edges.is_empty() {
+            return Err("deleted `mod child;` must leave no module edge on the child".into());
+        }
+        Ok(())
+    }
+
+    /// Removing an `include!` from a changed file must drop the include
+    /// parent/target state it produced.
+    #[test]
+    fn reuse_of_changed_file_removing_include_matches_fresh() -> Result<(), String> {
+        let before = [
+            (
+                "src/lib.rs",
+                "include!(\"frag.rs\");\npub fn top() -> i32 { 1 }\n",
+            ),
+            ("src/frag.rs", "pub fn fragment() -> i32 { 2 }\n"),
+        ];
+        let after = [
+            ("src/lib.rs", "pub fn top() -> i32 { 1 }\n"),
+            ("src/frag.rs", "pub fn fragment() -> i32 { 2 }\n"),
+        ];
+        let root = reuse_fixture_root("reuse-include-remove", &before)?;
+        let core = bytes_of(&before);
+        let core_index = rust_index::build_analysis_index_from_loaded_files(&root, &core, &[])?;
+        if core_index.index.include_parents.is_empty() {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err("fixture must produce an include parent".into());
+        }
+        let result = reuse_equals_fresh(&root, &core, &bytes_of(&after));
+        let _ = std::fs::remove_dir_all(&root);
+        let (reused, _) = result?;
+        if !reused.include_parents.is_empty() {
+            return Err("removed `include!` must leave no include parent".into());
+        }
+        Ok(())
+    }
+
+    /// An addition with an unknown `#[path]` target makes module composition
+    /// unknowable, so a retained file's `outside_module_tree` claim must be
+    /// withdrawn exactly as a fresh build does.
+    #[test]
+    fn reuse_with_added_unknown_path_target_matches_fresh() -> Result<(), String> {
+        let core_src = [
+            ("src/lib.rs", "pub fn top() -> i32 { 1 }\n"),
+            ("src/orphan.rs", "pub fn orphan() -> i32 { 2 }\n"),
+        ];
+        let extra = (
+            "src/extra.rs",
+            "#[cfg(test)]\n#[cfg_attr(\u{e9}, path = \"alternate.rs\")]\nmod imp;\n",
+        );
+        let target_src = [core_src[0], core_src[1], extra];
+        let root = reuse_fixture_root("reuse-unknown-path", &core_src)?;
+        let core = bytes_of(&core_src);
+        let core_index = rust_index::build_analysis_index_from_loaded_files(&root, &core, &[])?;
+        let orphan = PathBuf::from("src/orphan.rs");
+        let outside = |index: &RustIndex| {
+            index
+                .files()
+                .get(&orphan)
+                .is_some_and(|facts| facts.role_provenance.outside_module_tree)
+        };
+        if !outside(&core_index.index) {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err("fixture must start with the orphan outside the module tree".into());
+        }
+        let result = reuse_equals_fresh(&root, &core, &bytes_of(&target_src));
+        let _ = std::fs::remove_dir_all(&root);
+        let (reused, fresh) = result?;
+        if outside(&fresh) || outside(&reused) {
+            return Err("an unknown `#[path]` target must withdraw the unlinked claim".into());
+        }
+        Ok(())
+    }
+
+    /// A changed file differing from the indexed one only by a BOM is
+    /// current: no re-parse, no fact-cache lookup, index untouched.
+    #[test]
+    fn reuse_treats_bom_only_changed_file_as_current() -> Result<(), String> {
+        let text = "pub fn a() -> i32 { 1 }\n";
+        let root = reuse_fixture_root("reuse-bom-only", &[("src/lib.rs", text)])?;
+        let plain = vec![(PathBuf::from("src/lib.rs"), text.as_bytes().to_vec())];
+        let mut with_bom = b"\xEF\xBB\xBF".to_vec();
+        with_bom.extend_from_slice(text.as_bytes());
+        let bom = vec![(PathBuf::from("src/lib.rs"), with_bom)];
+        let core = rust_index::build_analysis_index_from_loaded_files(&root, &plain, &[])?;
+        let before = core.file_fact_cache.hits + core.file_fact_cache.misses;
+        let reused = rust_index::reuse_cached_index_with_loaded_files(core, &root, &bom, &[])?;
+        let after = reused.file_fact_cache.hits + reused.file_fact_cache.misses;
+        let _ = std::fs::remove_dir_all(&root);
+        if before != after {
+            return Err(format!(
+                "BOM-only difference must not re-parse ({before} -> {after})"
+            ));
+        }
+        Ok(())
+    }
+
     /// #8547: one shared bounded seam index serves both check routes:
     /// classification populates it once, and the seam-shape consumer
     /// reuses it instead of building a second index, with results

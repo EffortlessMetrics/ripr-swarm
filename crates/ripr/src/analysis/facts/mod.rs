@@ -216,7 +216,13 @@ pub(crate) fn reuse_cached_index_with_loaded_files(
     // with an `include!` directive can re-parent already rebased function
     // identities; none of those can be undone in place, so fail closed to a
     // fresh build over exactly `files` (verdicts equal a non-reusing build).
-    let retracts = !dropped.is_empty();
+    // A changed file (an extra replacing an indexed path) retracts too:
+    // `remove_file` leaves include parents/targets/limitations and module
+    // provenance derived from the old bytes in place.
+    let retracts = !dropped.is_empty()
+        || extras
+            .iter()
+            .any(|(path, _)| cached.index.files().get(path).is_some());
     let rebases_includes = extras
         .iter()
         .any(|(_, bytes)| bytes.windows(8).any(|w| w == b"include!"));
@@ -250,6 +256,29 @@ pub(crate) fn reuse_cached_index_with_loaded_files(
             .store_failures
             .extend(stats.store_failures);
         cached.file_fact_cache.store_failures_dropped += stats.store_failures_dropped;
+        // An added file that makes module composition unknowable (lexical
+        // fallback emits no `mod` declarations; an unknown `#[path]` target
+        // may compile any file) flips workspace-wide `outside_module_tree`
+        // provenance that retained files already carry and that composition
+        // only writes when non-empty, so the stale claim cannot be undone in
+        // place. Fail closed to a fresh build.
+        let unknowable = extras.iter().any(|(path, _)| {
+            cached.index.files().get(path).is_some_and(|facts| {
+                facts.used_lexical_fallback
+                    || facts.module_declarations.iter().any(|declaration| {
+                        declaration.path_target == model::ModulePathTarget::Unknown
+                    })
+            })
+        });
+        if unknowable {
+            drop(cached);
+            return build_cached_index_with_test_harnesses(
+                root,
+                files,
+                registrations,
+                MissAttribution::Skipped,
+            );
+        }
     }
     let mut hash = crate::analysis::seam_cache::FilesContentHashBuilder::new();
     for (path, bytes) in files {
