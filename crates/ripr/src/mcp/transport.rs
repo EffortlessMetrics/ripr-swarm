@@ -92,11 +92,40 @@ struct BoundedTransport<R, W> {
 /// JSON-RPC requires `"id": null` when the request id is unknown (#5254
 /// item 3), so these frames bypass the SDK type.
 fn protocol_error_frame(code: i32, message: &str) -> std::io::Result<Vec<u8>> {
+    protocol_error_frame_with_id(json!(null), code, message)
+}
+fn protocol_error_frame_with_id(
+    id: serde_json::Value,
+    code: i32,
+    message: &str,
+) -> std::io::Result<Vec<u8>> {
     super::writer::encode(&json!({
         "jsonrpc": "2.0",
-        "id": null,
+        "id": id,
         "error": {"code": code, "message": message},
     }))
+}
+/// The request id of a typed-shape-invalid frame, when it is still readable.
+///
+/// JSON-RPC 2.0 says the error id is the request's id when it can be
+/// detected, and null only otherwise. A frame that is a JSON object with a
+/// `method` and a string or integer `id` names its request even when `params`
+/// or `_meta` is the wrong shape, so the client can correlate the rejection.
+/// The id is echoed verbatim: any JSON integer is accepted, a superset of the
+/// SDK's i64 `RequestId` (a u64 above `i64::MAX` is the client's own id).
+/// Notifications, null, boolean, float and structured ids stay null.
+fn recoverable_request_id(frame: &[u8]) -> Option<serde_json::Value> {
+    let value: serde_json::Value = serde_json::from_slice(frame).ok()?;
+    let object = value.as_object()?;
+    object.get("method")?.as_str()?;
+    let id = object.get("id")?;
+    let echoable = id.is_string() || id.is_i64() || id.is_u64();
+    // An id over the admission bound is never echoed, even in a rejection:
+    // the reply would otherwise carry it past the response cap.
+    let within_bound = serde_json::to_vec(id)
+        .map(|serialized| serialized.len() <= super::MAX_REQUEST_ID_BYTES)
+        .unwrap_or(false);
+    (echoable && within_bound).then(|| id.clone())
 }
 impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transport<RoleServer>
     for BoundedTransport<R, W>
@@ -238,6 +267,26 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
             match JsonRpcMessageCodec::<ClientJsonRpcMessage>::default().decode_eof(&mut bytes) {
                 Ok(Some(message)) => {
                     if let ClientJsonRpcMessage::Request(request) = &message
+                        && serde_json::to_vec(&request.id)
+                            .map(|id| id.len() > super::MAX_REQUEST_ID_BYTES)
+                            .unwrap_or(true)
+                    {
+                        match protocol_error_frame(
+                            -32600,
+                            "MCP request id exceeds the configured byte limit",
+                        ) {
+                            Ok(frame) => self.pending_protocol_error = Some(frame),
+                            Err(error) => {
+                                record_failure(
+                                    &self.failure,
+                                    super::writer::failure_reason(&error),
+                                );
+                                return None;
+                            }
+                        }
+                        continue;
+                    }
+                    if let ClientJsonRpcMessage::Request(request) = &message
                         && self.admission.admit(request.id.clone()).is_err()
                     {
                         record_failure(&self.failure, "MCP admission unavailable");
@@ -254,7 +303,10 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transp
                 {
                     continue;
                 }
-                Err(_) => match protocol_error_frame(-32600, "Invalid request") {
+                Err(_) => match recoverable_request_id(&frame)
+                    .and_then(|id| protocol_error_frame_with_id(id, -32600, "Invalid request").ok())
+                    .map_or_else(|| protocol_error_frame(-32600, "Invalid request"), Ok)
+                {
                     Ok(frame) => {
                         self.pending_protocol_error = Some(frame);
                     }

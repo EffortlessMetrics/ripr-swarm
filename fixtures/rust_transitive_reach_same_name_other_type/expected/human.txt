@@ -27,6 +27,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_transitive_reach_same_name_other_type/input --diff <cwd>/fixtures/rust_transitive_reach_same_name_other_type/diff.patch --mode fast probe:src_queue.rs:predicate:95e16c2d
   ripr context --root <cwd>/fixtures/rust_transitive_reach_same_name_other_type/input --diff <cwd>/fixtures/rust_transitive_reach_same_name_other_type/diff.patch --mode fast --at probe:src_queue.rs:predicate:95e16c2d
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_queue.rs:predicate:95e16c2d --root <cwd>/fixtures/rust_transitive_reach_same_name_other_type/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/rust_transitive_reach_same_name_other_type/input --at src/queue.rs:11 --kind predicate
 

@@ -26,6 +26,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_direct_collection_count_payload/input --diff <cwd>/fixtures/rust_direct_collection_count_payload/diff.patch --mode fast probe:src_lib.rs:side_effect:110476f2
   ripr context --root <cwd>/fixtures/rust_direct_collection_count_payload/input --diff <cwd>/fixtures/rust_direct_collection_count_payload/diff.patch --mode fast --at probe:src_lib.rs:side_effect:110476f2
+  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:side_effect:110476f2 --root <cwd>/fixtures/rust_direct_collection_count_payload/input` for the full gate's answer
 No test stub here: the change shows up as a side effect or call, which needs an observer or mock ripr cannot write
 
 Hidden:

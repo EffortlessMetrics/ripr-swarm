@@ -41,7 +41,7 @@
         "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach charge: selected", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: Some(ms) =>", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches match arm result: Some(ms) => (line 4)", "related test src/lib.rs:10 selected uses none unknown oracle", "source assertion argument value 1001 at line 11", "source function argument value lease = 1001 at line 11", "source function argument value lease = 600 at line 11"],
+      "evidence_path": ["reach yes: Related tests appear to reach charge: selected", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: Some(ms) =>", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches match arm result: Some(ms) => (line 4)", "related test src/lib.rs:10 selected uses no oracle", "source assertion argument value 1001 at line 11", "source function argument value lease = 1001 at line 11", "source function argument value lease = 600 at line 11"],
       "flow_sinks": [
         {"kind":"match_arm","text":"Some(ms) =>","line":4}
       ],
@@ -106,7 +106,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that it runs as the standard macro"
+          "why": "assertion not credited: ripr could not establish that this assertion counts here"
         }
       ],
       "stop_reasons": [],
@@ -149,7 +149,7 @@
         "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach charge: selected", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: 1", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches match arm result: 1 (line 4)", "related test src/lib.rs:10 selected uses none unknown oracle", "source assertion argument value 1001 at line 11", "source function argument value lease = 1001 at line 11", "source function argument value lease = 600 at line 11"],
+      "evidence_path": ["reach yes: Related tests appear to reach charge: selected", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: 1", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches match arm result: 1 (line 4)", "related test src/lib.rs:10 selected uses no oracle", "source assertion argument value 1001 at line 11", "source function argument value lease = 1001 at line 11", "source function argument value lease = 600 at line 11"],
       "flow_sinks": [
         {"kind":"match_arm","text":"1","line":4}
       ],
@@ -214,7 +214,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that it runs as the standard macro"
+          "why": "assertion not credited: ripr could not establish that this assertion counts here"
         }
       ],
       "stop_reasons": [],
@@ -257,7 +257,7 @@
         "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach charge: selected", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: Propagation witness is incomplete for returned value: Some(ms) => ms as u64", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches returned value: Some(ms) => ms as u64 (line 4)", "related test src/lib.rs:10 selected uses none unknown oracle", "source assertion argument value 1001 at line 11", "source function argument value lease = 1001 at line 11", "source function argument value lease = 600 at line 11"],
+      "evidence_path": ["reach yes: Related tests appear to reach charge: selected", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: Propagation witness is incomplete for returned value: Some(ms) => ms as u64", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches returned value: Some(ms) => ms as u64 (line 4)", "related test src/lib.rs:10 selected uses no oracle", "source assertion argument value 1001 at line 11", "source function argument value lease = 1001 at line 11", "source function argument value lease = 600 at line 11"],
       "flow_sinks": [
         {"kind":"return_value","text":"Some(ms) => ms as u64","line":4}
       ],
@@ -322,7 +322,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that it runs as the standard macro"
+          "why": "assertion not credited: ripr could not establish that this assertion counts here"
         }
       ],
       "stop_reasons": [],

@@ -161,6 +161,74 @@ fn given_an_edge_that_is_not_a_bare_module_call_then_no_helper_relation_is_made(
 }
 
 #[test]
+fn given_a_decorated_caller_then_no_helper_relation_is_made() -> Result<(), String> {
+    let tests = "from src.version import make\n\n\ndef test_make():\n    assert make(1)\n";
+    let plain = "def helper(x):\n    return x > 0\n\n\ndef make(x):\n    return helper(x)\n";
+    assert_eq!(
+        helper_relations(plain, tests, "helper")?,
+        vec!["test_make via make as helper_owner_call".to_string()]
+    );
+    let decorated = "import functools\n\n\ndef helper(x):\n    return x > 0\n\n\n@functools.lru_cache\ndef make(x):\n    return helper(x)\n";
+    assert!(helper_relations(decorated, tests, "helper")?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn given_unreadable_or_stacked_decorators_then_no_helper_relation_is_made() -> Result<(), String> {
+    let tests = "from src.version import make\n\n\ndef test_make():\n    assert make(1)\n";
+    for decorator in [
+        "@registry[\"x\"]",
+        "@(lambda f: f)",
+        "@decos[0]",
+        "@staticmethod\n@other",
+        "@async_def",
+        "@property(x)",
+    ] {
+        let source = format!(
+            "def helper(x):\n    return x > 0\n\n\n{decorator}\ndef make(x):\n    return helper(x)\n"
+        );
+        assert!(
+            helper_relations(&source, tests, "helper")?.is_empty(),
+            "{decorator}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn given_binding_or_async_wrappers_then_a_helper_relation_is_still_made() -> Result<(), String> {
+    let tests = "from src.version import make\n\n\ndef test_make():\n    assert make(1)\n";
+    let source = "def helper(x):\n    return x > 0\n\n\n@staticmethod\n@classmethod\ndef make(x):\n    return helper(x)\n";
+    assert_eq!(helper_relations(source, tests, "helper")?.len(), 1);
+    for header in [
+        "@property\ndef make(x):",
+        "@classmethod\ndef make(x):",
+        "async def make(x):",
+    ] {
+        let source =
+            format!("def helper(x):\n    return x > 0\n\n\n{header}\n    return helper(x)\n");
+        assert_eq!(
+            helper_relations(&source, tests, "helper")?.len(),
+            1,
+            "{header}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn given_call_text_inside_a_docstring_then_contains_call_name_ignores_it() {
+    assert!(!related_tests::contains_call_name(
+        "\"\"\"\nhelper(1)\n\"\"\"\nx = 1\n",
+        "helper"
+    ));
+    assert!(related_tests::contains_call_name(
+        "x = helper(1)\n",
+        "helper"
+    ));
+}
+
+#[test]
 fn given_a_duplicate_helper_definition_then_no_helper_relation_is_made() -> Result<(), String> {
     let source = "def helper(x):\n    return x > 0\n\n\ndef helper(x):\n    return x >= 0\n\n\ndef make(x):\n    return helper(x)\n";
     let tests = "from src.version import make\n\n\ndef test_make():\n    assert make(1)\n";
@@ -185,4 +253,32 @@ fn given_a_skipped_caller_test_then_the_helper_relation_is_activation_limited() 
         vec!["test_epoch_zero via Version.__init__ as test_activation_unestablished".to_string()]
     );
     Ok(())
+}
+
+#[test]
+fn given_a_triple_quote_inside_a_single_line_string_or_comment_then_a_later_call_is_kept() {
+    for prefix in [
+        "text = '\"\"\"'\n",
+        "text = \"'''\"\n",
+        "# \"\"\" opens nothing\n",
+        "text = 'it\\'s \"\"\"'\n",
+    ] {
+        let body = format!("{prefix}helper(1)\n");
+        assert!(
+            related_tests::contains_call_name(&body, "helper"),
+            "{prefix}"
+        );
+    }
+    let docstring = "\"\"\"\nmentions helper(1)\n\"\"\"\nx = 1\n";
+    assert!(!related_tests::contains_call_name(docstring, "helper"));
+    let after = "\"\"\"doc\"\"\"\nhelper(1)\n";
+    assert!(related_tests::contains_call_name(after, "helper"));
+}
+
+#[test]
+fn given_a_backslash_continued_string_then_a_call_on_the_continuation_line_is_hidden() {
+    let continued = "x = \"about \\\nhelper(1)\"\n";
+    assert!(!related_tests::contains_call_name(continued, "helper"));
+    let after = "x = \"about \\\nmore\"\nhelper(1)\n";
+    assert!(related_tests::contains_call_name(after, "helper"));
 }

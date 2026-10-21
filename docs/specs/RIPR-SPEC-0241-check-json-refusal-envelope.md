@@ -193,7 +193,7 @@ machine-readable `check` formats carry their own refusal documents:
   agent brief and agent packet; agent brief echoes the caller-supplied
   `--base` when its working set selected one. Exit stays `2`, prose stays on
   stderr, and argv usage errors stay prose-only with empty stdout.
-- The closed identity vocabulary gains four members. The first three make no
+- The closed identity vocabulary includes five members. The first four make no
   claim that analysis ran; `analysis_timeout` (#5369) means the wall-clock
   budget expired before the budgeted check analysis returned:
 
@@ -202,6 +202,7 @@ machine-readable `check` formats carry their own refusal documents:
 | `check_artifact_unusable` | `analysis/check-artifact` | A named `ripr context --from` check artifact is unreadable, malformed, foreign, or identity-mismatched. |
 | `gap_ledger_unusable` | `analysis/gap-ledger` | A named `ripr rerun --gap-ledger` file cannot be read or parsed. |
 | `seam_id_unknown` | `analysis/seam-inventory` | A named `ripr agent packet --seam-id` matches no current seam. |
+| `diff_input_unsupported` | `analysis/diff-input` | An `agent brief --diff` or `--base` working set carries a shared-parser limitation, admission refusal, or truncated textual section; brief selection did not run. Empty valid patches retain their successful brief behavior. |
 | `analysis_timeout` | `analysis/timeout` | The `ripr check` wall-clock budget (`--timeout SECS`, `RIPR_CHECK_TIMEOUT`) ran out before analysis finished (#5369). No findings are produced and the result is never a clean pass. |
 
 - For `ripr check`, the machine-readable formats `sarif`, `github`,
@@ -221,6 +222,12 @@ all renderers.
 
 ## Test Mapping (Amendment #7331, #7332)
 
+- `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_empty_and_ordinary_patches_keep_successful_selection`
+- `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_refusals_cannot_become_empty_or_fallback_successes`
+- `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_base_uses_the_same_parser_refusal_before_inventory`
+- `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_parser_errors_keep_diff_input_identity_and_budget_guards`
+- `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_truncated_sections_cannot_become_empty_or_partial_successes`
+- `crates/ripr/tests/task_first_facade/brief_diff_status.rs::brief_path_like_hunk_payload_keeps_real_changed_line_selection`
 - `crates/ripr/tests/cli_smoke.rs::diff_json_unresolvable_base_emits_refusal_envelope`
 - `crates/ripr/tests/cli_smoke.rs::diff_json_outside_work_tree_emits_refusal_envelope`
 - `crates/ripr/tests/cli_smoke.rs::rerun_json_unreadable_gap_ledger_emits_refusal_envelope`
@@ -242,8 +249,9 @@ all renderers.
 
 ## Implementation Mapping (Amendment #7331, #7332)
 
-- `crates/ripr/src/core_error.rs::CheckFailureKind::{CheckArtifactUnusable, GapLedgerUnusable, SeamIdUnknown, AnalysisTimeout}`
+- `crates/ripr/src/core_error.rs::CheckFailureKind::{CheckArtifactUnusable, GapLedgerUnusable, SeamIdUnknown, DiffInputUnsupported, AnalysisTimeout}`
 - `crates/ripr/src/cli/commands/check_budget.rs::run_with_budget`
+- `crates/ripr/src/cli/commands_agent_support.rs::agent_brief_checked_lines_from_diff`
 - `crates/ripr/src/core_error.rs::RefusalNotice`
 - `crates/ripr/src/core_error.rs::refusal_notice`
 - `crates/ripr/src/output/limited_check.rs::RefusalEnvelopeContext`

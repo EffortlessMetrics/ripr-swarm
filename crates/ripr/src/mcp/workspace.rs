@@ -41,6 +41,12 @@ pub(crate) const CODE_NO_SNAPSHOT: &str = "no_snapshot";
 pub(crate) const CODE_ANALYSIS_IN_FLIGHT: &str = "analysis_in_flight";
 pub(crate) const CODE_STALE_SNAPSHOT: &str = "stale_snapshot";
 pub(crate) const CODE_ITEM_NOT_FOUND: &str = "item_not_found";
+/// #8736 review follow-up: one raw resource-id segment can resolve both as
+/// captured (legacy raw URI for a literal-`%` file) and as its percent-
+/// decoded form (a URI-emitting client addressing the decoded file) when
+/// both files exist; the wire form is then ambiguous and the route fails
+/// closed instead of silently picking one item.
+pub(crate) const CODE_ID_AMBIGUOUS: &str = "id_ambiguous";
 pub(crate) const CODE_RESULT_TOO_LARGE: &str = "result_too_large";
 /// #7462: `ripr_get_gap` is already one item. Retrying it cannot shrink the
 /// document. The recovery names `--committed` because the snapshot analyzed
@@ -329,6 +335,11 @@ pub(crate) struct Snapshot {
     /// ride the snapshot identity: two otherwise identical snapshots with
     /// different exclusions are different snapshots.
     pub(crate) scope: ScopeFacts,
+    /// The explicit base revision the refresh asked for (`ripr_refresh`
+    /// `base`), `None` when the default branch was resolved. The disclosure
+    /// names it so a snapshot never reads as the default-branch diff when it
+    /// was analyzed against another revision.
+    pub(crate) base: Option<String>,
 }
 
 /// The scope-relevant working-tree facts one snapshot was analyzed against.
@@ -363,9 +374,10 @@ impl Snapshot {
     /// outcomes (`unsupported_input`, `analysis_failed`) stay failures and
     /// never become snapshots; partial outcomes commit with their typed
     /// limitations so complete-zero and incomplete-zero stay distinct.
-    pub(crate) fn from_output(
+    pub(crate) fn from_output_admitted(
         output: &crate::app::CheckOutput,
         root_identity: Option<&str>,
+        admission: &super::repair_admission::SeamAdmission,
     ) -> Result<Self, AttemptFailure> {
         let outcome = output
             .analysis_outcome
@@ -407,7 +419,7 @@ impl Snapshot {
         let mut items = output
             .findings
             .iter()
-            .map(|finding| GapItem::from_finding(finding, &output.root))
+            .map(|finding| GapItem::from_finding_admitted(finding, &output.root, admission))
             .collect::<Result<Vec<_>, String>>()
             .map_err(|error| {
                 AttemptFailure::new(
@@ -453,7 +465,23 @@ impl Snapshot {
             budget,
             selection,
             scope,
+            base: None,
         })
+    }
+
+    /// Finding-level projection with no seam evaluation: unit tests build
+    /// snapshots over fabricated outputs that carry no seam inventory.
+    /// Production refresh always binds [`Self::from_output_admitted`].
+    #[cfg(test)]
+    pub(crate) fn from_output(
+        output: &crate::app::CheckOutput,
+        root_identity: Option<&str>,
+    ) -> Result<Self, AttemptFailure> {
+        Self::from_output_admitted(
+            output,
+            root_identity,
+            &super::repair_admission::SeamAdmission::unevaluated(),
+        )
     }
 
     pub(crate) fn item(&self, id: &str) -> Option<&GapItem> {
@@ -537,6 +565,9 @@ pub(crate) struct WorkspaceSession {
     pub(crate) in_flight: bool,
     pub(crate) last_good: Option<Arc<Snapshot>>,
     pub(crate) last_failure: Option<AttemptFailure>,
+    /// The explicit base revision of the most recent refresh request, `None`
+    /// when it asked for the default branch (or none was requested yet).
+    pub(crate) desired_base: Option<String>,
     /// Session repair transactions created by `ripr_prepare_repair`, keyed by
     /// deterministic attempt identity. In-memory like the snapshot: a restart
     /// drops it, and every transaction binds the snapshot identity it was
@@ -968,6 +999,18 @@ impl WorkspaceSession {
             .as_ref()
             .map(|failure| failure.value())
             .unwrap_or(Value::Null);
+        // Base-less callers keep the unchanged v1 shape: `base_revision` and
+        // the `explicit` base value exist only after an explicit-base refresh.
+        let mut desired_input = json!({
+            "kind": "workspace_diff",
+            "base": "default_branch",
+            "mode": "draft",
+            "scope": "diff",
+        });
+        if let Some(base) = &self.desired_base {
+            desired_input["base"] = json!("explicit");
+            desired_input["base_revision"] = json!(base);
+        }
         json!({
             "schema_version": SESSION_SCHEMA_VERSION,
             "attempt_state": self.attempt_state(),
@@ -976,12 +1019,7 @@ impl WorkspaceSession {
             } else {
                 Value::Null
             },
-            "current_desired_input": {
-                "kind": "workspace_diff",
-                "base": "default_branch",
-                "mode": "draft",
-                "scope": "diff",
-            },
+            "current_desired_input": desired_input,
             "last_completed_snapshot": last_completed,
             "last_known_good": last_known_good,
             "last_failure": last_failure,
@@ -1079,13 +1117,22 @@ fn scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
     });
     let base = disclosure.get_or_insert_with(|| {
         json!({
-            "analyzed": "committed default-branch diff",
+            "analyzed": analyzed_label(snapshot),
             "ignored_files": "outside this analysis",
             "note": "gitignored Rust files were excluded and are not analyzed by this snapshot",
         })
     });
     base["ignored_edits"] = ignored_edits;
     disclosure
+}
+
+/// What the snapshot analyzed: the default-branch diff, or the diff against
+/// the explicit `base` the refresh requested.
+fn analyzed_label(snapshot: &Snapshot) -> String {
+    match &snapshot.base {
+        Some(base) => format!("committed diff against base `{base}`"),
+        None => "committed default-branch diff".to_string(),
+    }
 }
 
 fn tracked_scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
@@ -1103,7 +1150,7 @@ fn tracked_scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
     let more = scope.untracked.len().saturating_sub(NAMED_PATHS);
     if scope.untracked.is_empty() {
         return Some(json!({
-            "analyzed": "committed default-branch diff",
+            "analyzed": analyzed_label(snapshot),
             "uncommitted_edits": "outside this analysis",
             "note": "staged and unstaged tracked edits are outside the analyzed scope of this snapshot; analyze them with `ripr check --worktree --format json` in the repository",
         }));
@@ -1114,7 +1161,7 @@ fn tracked_scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
         named.join(", ")
     };
     Some(json!({
-        "analyzed": "committed default-branch diff",
+        "analyzed": analyzed_label(snapshot),
         "uncommitted_edits": "outside this analysis",
         "note": "this snapshot reads each file as committed at HEAD; `ripr check --worktree --format json` adds staged and unstaged tracked edits only. Untracked files are invisible to both; stage them (`git add <paths>`, or `git add -N <paths>` intent-to-add makes a new file visible to `--worktree`) and rerun, or pass an explicit `--diff`",
         "untracked_edits": {
@@ -1139,7 +1186,9 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
             "snapshot_resource": format!("ripr://snapshot/{}", snapshot.snapshot_id),
         })
     });
-    json!({
+    // `requested_base` appears only when the request named one, so a base-less
+    // refresh keeps the unchanged v1 shape.
+    let mut document = json!({
         "schema_version": REFRESH_SCHEMA_VERSION,
         "attempt": {
             "state": session.attempt_state(),
@@ -1164,7 +1213,11 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
             "an attempt runs to a terminal state; MCP cancellation of the request does not roll back a running attempt and never manufactures a snapshot",
             "a cancelled refresh attempt still commits as a completed snapshot when it finishes; only transport teardown abandons an attempt before it commits (#5254 item 2)",
         ],
-    })
+    });
+    if let Some(base) = &session.desired_base {
+        document["requested_base"] = json!(base);
+    }
+    document
 }
 
 /// The resolved analysis-configuration posture of the session (#6825): which
@@ -1294,6 +1347,7 @@ impl SessionProfile {
 pub(crate) fn run_check(
     root: &Path,
     root_identity: Option<&str>,
+    base: Option<&str>,
 ) -> Result<Snapshot, AttemptFailure> {
     let config = crate::config::load_for_root(root).map_err(|error| {
         AttemptFailure::new(
@@ -1304,25 +1358,57 @@ pub(crate) fn run_check(
     })?;
     let input = crate::app::CheckInput {
         root: PathBuf::from(root),
+        base: base.map(str::to_string),
         git_timeout: Some(crate::app::default_cli_git_timeout()),
         ..Default::default()
     };
-    let output = crate::app::check_workspace_with_config(input, &config).map_err(|error| {
-        AttemptFailure::new(
-            CODE_ANALYSIS_FAILED,
-            format!("shared check authority failed: {error}"),
-            "retry with ripr_refresh; if the failure persists, run `ripr check --format json` in the repository for the full diagnostic",
-        )
-    })?;
-    let mut snapshot = Snapshot::from_output(&output, root_identity)?;
+    let output = crate::app::check_workspace_with_config_typed(input, &config)
+        .map_err(|error| check_failure(&error, base))?;
+    // The seam inventory is gathered once inside this bounded attempt and
+    // feeds both consumers: the shared repair validator that decides each
+    // item's repair readiness (#8717) and the repair-card seam bindings
+    // (RIPR-SPEC-0215). Readiness is projected before the snapshot identity
+    // is computed, so the identity binds the admission decision.
+    let inventory = super::repair_card::gather_seam_inventory(root, &config, &output.findings)?;
+    let admission = super::repair_admission::SeamAdmission::evaluate(
+        &output.findings,
+        &inventory.candidate_seams,
+        crate::app::agent_brief::AgentBriefPolicy::from_config(&config),
+    );
+    let mut snapshot = Snapshot::from_output_admitted(&output, root_identity, &admission)?;
+    snapshot.base = base.map(str::to_string);
     // Bind the repair-card producers inside the same bounded attempt, after
     // the shared check authority completed: the snapshot commits complete —
     // items, findings, head, and card seams — or not at all (RIPR-SPEC-0215).
     // The card producers consume the same resolved workspace configuration
     // as the findings (#6825 review), so one committed snapshot cannot
     // disagree with itself across the two producers.
-    super::repair_card::bind_snapshot_card_producers(root, &config, &mut snapshot)?;
+    super::repair_card::bind_snapshot_card_producers(root, inventory, &mut snapshot)?;
     Ok(snapshot)
+}
+
+/// Project a shared-check refusal into the attempt failure. The recovery
+/// names routes this server can actually take: base resolution is retried
+/// through `ripr_refresh`'s own `base` argument (the CLI's `--base` is not
+/// reachable from a running MCP session), and an unusable repository root
+/// needs a server restart at a Git work tree.
+fn check_failure(error: &crate::core_error::CoreError, base: Option<&str>) -> AttemptFailure {
+    let detail = format!("shared check authority failed: {error}");
+    let recovery = match (error.check_refusal().identity, base) {
+        ("base_unresolvable", None) => {
+            "retry ripr_refresh with the `base` argument set to a branch, tag or commit this repository has (the detail names candidates), for example {\"base\": \"<ref>\"}"
+        }
+        ("base_unresolvable", Some(_)) => {
+            "retry ripr_refresh with a different `base` that resolves to a commit in this repository, or omit `base` to use the default branch"
+        }
+        ("repository_root_unusable", _) => {
+            "restart the server with `ripr mcp --stdio --root <repository>` pointing inside a Git work tree, then retry ripr_refresh"
+        }
+        _ => {
+            "retry with ripr_refresh; if the failure persists, run `ripr check --format json` in the repository for the full diagnostic"
+        }
+    };
+    AttemptFailure::new(CODE_ANALYSIS_FAILED, detail, recovery)
 }
 
 fn overflow_reason_as_str(reason: DiagnosticOverflowReason) -> &'static str {
@@ -1465,6 +1551,7 @@ mod tests {
             workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            desired_base: None,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -1494,6 +1581,7 @@ mod tests {
             workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            desired_base: None,
             superseded_order: std::collections::VecDeque::new(),
         };
         let _ = complete
@@ -1696,6 +1784,7 @@ mod tests {
             workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            desired_base: None,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -1774,6 +1863,7 @@ mod tests {
             workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            desired_base: None,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -2787,6 +2877,7 @@ mod tests {
             workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            desired_base: None,
             superseded_order: std::collections::VecDeque::new(),
         };
 
@@ -2859,6 +2950,7 @@ mod tests {
             workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            desired_base: None,
             superseded_order: std::collections::VecDeque::new(),
         };
         let untracked_refresh = refresh_document(&untracked_session);
@@ -2941,6 +3033,37 @@ mod tests {
                 "equivalent roots must preserve one portable snapshot identity".to_string(),
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn related_test_totals_change_snapshot_identity_without_changing_rows() -> Result<(), String> {
+        let mut before = output(AnalysisOutcomeKind::CompleteWithFindings, 1, Vec::new())?;
+        let mut finding = gaps::test_finding()?;
+        finding.related_tests = vec![finding.related_tests[0].clone(); 8];
+        finding.related_tests_matched_total = Some(12);
+        before.findings.push(finding);
+        let mut after = before.clone();
+        after.findings[0].related_tests_matched_total = Some(13);
+        let twelve =
+            Snapshot::from_output(&before, Some("root:sha256:test")).map_err(|f| f.detail)?;
+        let thirteen =
+            Snapshot::from_output(&after, Some("root:sha256:test")).map_err(|f| f.detail)?;
+        assert_eq!(twelve.items.len(), 1);
+        assert_eq!(thirteen.items.len(), 1);
+        assert_eq!(
+            twelve.items[0].evidence_core["related_tests"],
+            thirteen.items[0].evidence_core["related_tests"]
+        );
+        assert_eq!(
+            twelve.items[0].evidence_bytes,
+            thirteen.items[0].evidence_bytes
+        );
+        assert_ne!(
+            twelve.items[0].evidence_sha256,
+            thirteen.items[0].evidence_sha256
+        );
+        assert_ne!(twelve.snapshot_id, thirteen.snapshot_id);
         Ok(())
     }
 
@@ -3028,6 +3151,7 @@ mod tests {
                 workspace_failure: None,
                 repairs: std::collections::BTreeMap::new(),
                 superseded_attempts: std::collections::BTreeMap::new(),
+                desired_base: None,
                 superseded_order: std::collections::VecDeque::new(),
             };
             let item = original_items

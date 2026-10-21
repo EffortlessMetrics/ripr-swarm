@@ -10,7 +10,26 @@ pub struct ContextPacket {
     /// consumers must not treat `base_deleted` / `moved_or_renamed` /
     /// `unresolved_subject` packets as candidate edit targets.
     pub source_currentness: &'static str,
+    /// The finding's exposure classification, the same `ExposureClass::as_str`
+    /// value `ripr check --json` findings carry (#8743). The five `ripr`
+    /// stage states below are documented as underdetermined — a `yes`
+    /// discriminate grade does not mean a discriminator exists — so the
+    /// packet states the verdict outright instead of making the consumer
+    /// derive it.
+    pub classification: &'static str,
+    /// The finding's configured severity, the same `ConfigSeverity::as_str`
+    /// value `ripr check --json` findings carry. `from_finding` seeds the
+    /// class profile default; renderers holding a `RiprConfig` re-resolve it
+    /// through `SeverityConfig::for_exposure` so a user override applies here
+    /// exactly as it does on the check surface.
+    pub severity: &'static str,
+    /// The finding's confidence score (`0.0..=1.0`), wire-identical to the
+    /// `confidence` float on the check finding (#8743).
+    pub confidence: f32,
     pub ripr: ContextPacketRipr,
+    /// Matched related-test rows before the packet's display window, using
+    /// the finding's conservative retained-count fallback for legacy data.
+    pub related_tests_total: usize,
     pub related_tests: Vec<RelatedTest>,
     pub observed_values: Vec<ValueFact>,
     pub missing_discriminators: Vec<MissingDiscriminatorFact>,
@@ -58,7 +77,10 @@ impl ContextPacket {
         root: &std::path::Path,
     ) -> Self {
         Self {
-            version: "1.0",
+            // 1.1 (#8743): `classification` / `severity` / `confidence` join
+            // the packet so an agent holding the packet alone can state the
+            // verdict without re-parsing `check --json`.
+            version: "1.1",
             tool: "ripr",
             canonical_gap_id: finding.canonical_gap.as_ref().map(|gap| gap.id.clone()),
             probe: ContextPacketProbe {
@@ -87,6 +109,9 @@ impl ContextPacket {
                 changed_expression: finding.probe.expression.clone(),
             },
             source_currentness: finding.source_currentness.as_str(),
+            classification: finding.class.as_str(),
+            severity: finding.class.severity(),
+            confidence: finding.confidence,
             ripr: ContextPacketRipr {
                 reach: finding.ripr.reach.state.as_str().to_string(),
                 infect: finding.ripr.infect.state.as_str().to_string(),
@@ -94,6 +119,7 @@ impl ContextPacket {
                 observe: finding.ripr.reveal.observe.state.as_str().to_string(),
                 discriminate: finding.ripr.reveal.discriminate.state.as_str().to_string(),
             },
+            related_tests_total: finding.related_tests_total(),
             related_tests: finding
                 .related_tests
                 .iter()
@@ -130,7 +156,7 @@ mod tests {
             Path::new("."),
         );
 
-        assert_eq!(packet.version, "1.0");
+        assert_eq!(packet.version, "1.1");
         assert_eq!(packet.tool, "ripr");
         assert_eq!(packet.canonical_gap_id, None);
         assert_eq!(packet.probe.id, "probe:src_lib_rs:9:predicate");
@@ -152,6 +178,7 @@ mod tests {
         let mut finding = sample_finding();
         finding.related_tests = vec![related("t1"), related("t2"), related("t3")];
         finding.activation.observed_values.push(ValueFact {
+            file: None,
             line: 11,
             text: "assert_eq!(x, 1)".to_string(),
             value: "1".to_string(),

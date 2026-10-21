@@ -27,6 +27,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/field_match_foreign_option_constant/input --diff <cwd>/fixtures/field_match_foreign_option_constant/diff.patch --mode fast probe:src_lib.rs:match_arm:c8726ad2
   ripr context --root <cwd>/fixtures/field_match_foreign_option_constant/input --diff <cwd>/fixtures/field_match_foreign_option_constant/diff.patch --mode fast --at probe:src_lib.rs:match_arm:c8726ad2
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:match_arm:c8726ad2 --root <cwd>/fixtures/field_match_foreign_option_constant/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/field_match_foreign_option_constant/input --at src/lib.rs:5 --kind match_arm
 

@@ -42,7 +42,9 @@ pub(super) const AGENT_START_HELP: &str = r#"Start a source-edit-free workflow p
 Usage: ripr agent start [--root PATH] --seam-id ID [--out PATH] [--json]
 
 Options:
-  --root PATH      Workspace root. Defaults to current directory.
+  --root PATH      Workspace root. Defaults to the current directory, then
+                   walks up to the enclosing workspace or package, or the git
+                   top level; `--root .` pins this directory.
   --seam-id ID     Select one visible seam by ID.
   --out PATH       Workflow output directory (relative to --root). Defaults to target/ripr/workflow.
   --json           Emit one machine-readable JSON document instead of the
@@ -64,10 +66,14 @@ pub(super) const AGENT_BRIEF_HELP: &str = r#"Write a bounded brief for a coding 
 Usage: ripr agent brief [--root PATH] (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json [--max-seams N]
 
 Options:
-  --root PATH      Workspace root. Defaults to current directory.
-  --diff PATH      Select a diff file and line-level working set.
+  --root PATH      Workspace root. Defaults to the current directory, then
+                   walks up to the enclosing workspace or package, or the git
+                   top level; `--root .` pins this directory.
+  --diff PATH      Select a diff file and line-level working set. An existing
+                   file typed relative to a member directory is bound to it.
   --base REV       Derive the working set from a base revision.
-  --files PATHS    Comma-separated repo-relative file paths.
+  --files PATHS    Comma-separated repo-relative file paths; from a member
+                   directory, existing files bind to that directory.
   --seam-id ID     Select one visible seam by ID.
   --json           Required until a human brief surface exists.
   --max-seams N    Requested seam cap. Defaults to 3 and cannot exceed 10.
@@ -87,9 +93,12 @@ Usage: ripr agent packet [--root PATH] --seam-id ID --json
        ripr agent packet [--root PATH] --gap-ledger PATH --gap-id ID --json
 
 Options:
-  --root PATH        Workspace root. Defaults to current directory.
+  --root PATH        Workspace root. Defaults to the current directory, then
+                     walks up to the enclosing workspace or package, or the git
+                     top level; `--root .` pins this directory.
   --seam-id ID       Select one visible seam by ID.
-  --gap-ledger PATH  Explicit gap decision ledger JSON.
+  --gap-ledger PATH  Explicit gap decision ledger JSON, read as typed from
+                     the current directory.
   --gap-id ID        Select a GapRecord by gap_id or canonical_gap_id.
   --json             Required until a human packet surface exists.
 
@@ -105,7 +114,9 @@ pub(super) const AGENT_CARD_HELP: &str = r#"Hand off one seam as the compact def
 Usage: ripr agent card [--root PATH] --seam-id ID [--json]
 
 Options:
-  --root PATH      Workspace root. Defaults to current directory.
+  --root PATH      Workspace root. Defaults to the current directory, then
+                   walks up to the enclosing workspace or package, or the git
+                   top level; `--root .` pins this directory.
   --seam-id ID     Select one visible seam by ID.
   --json           Emit the versioned repair_card.v1 JSON document. Without
                    this flag the same typed fields render as a compact human
@@ -122,10 +133,11 @@ generate tests, edit files, change cache behavior, or touch LSP/MCP surfaces.
 Refusal contract (#5007): a deliberate named refusal — seam id not found,
 policy-omitted seam, witness analysis unavailable, unnameable portable
 workspace identity, or builder/budget refusal — exits `3`. Under `--json`
-stderr carries one versioned `agent_card_refusal` envelope (`schema_version`
+stdout carries one versioned `agent_card_refusal` envelope (`schema_version`
 `0.1`) naming the typed `error.kind`, the asked-for `seam_id`, the verbatim
-human prose, and one typed `remedy_route`; without `--json` stderr carries the
-prose rendering only. Stdout stays empty on every refusal. Operational
+human prose, and one typed `remedy_route`, and stderr carries the prose
+rendering; without `--json` stdout stays empty and stderr carries the prose
+rendering only. Operational
 failures (an unreadable config or a failed probe) stay exit `2` with human
 prose only, like the sibling verify and repair commands.
 "#;
@@ -135,7 +147,9 @@ pub(super) const AGENT_STUB_HELP: &str = r#"Write a compiling Rust test stub for
 Usage: ripr agent stub [--root PATH] (--seam-id ID | --at FILE:LINE [--kind FAMILY]) [--write] [--json]
 
 Options:
-  --root PATH      Workspace root. Defaults to current directory.
+  --root PATH      Workspace root. Defaults to the current directory, then
+                   walks up to the enclosing workspace or package, or the git
+                   top level; `--root .` pins this directory.
   --seam-id ID     Select one visible seam by ID.
   --at FILE:LINE   Select the gap at a `ripr check` finding location.
   --kind FAMILY    With --at: the finding's probe family (`predicate`,
@@ -167,8 +181,9 @@ grip so the stub can disclose it. A strongly_gripped seam is still a
 scaffold (`state: ready`, exit 0) and reuses the packet/repair wording
 ("configured off for strongly_gripped seams and is not included in agent
 results"). Side-effect and call-presence gaps, async, unsafe, and generic
-owners are refused with a named reason (exit `3`); stdout stays empty on a
-refusal.
+owners are refused with a named reason (exit `3`); under `--json` stdout
+carries the `rust_test_stub` document with `state: refused` and stderr carries
+the prose; without `--json` stdout stays empty on a refusal.
 "#;
 
 pub(super) const AGENT_VERIFY_HELP: &str = r#"Verify static-evidence movement between a before and after snapshot.
@@ -176,7 +191,9 @@ pub(super) const AGENT_VERIFY_HELP: &str = r#"Verify static-evidence movement be
 Usage: ripr agent verify [--root PATH] --before PATH --after PATH --json
 
 Options:
-  --root PATH      Workspace root. Defaults to current directory.
+  --root PATH      Workspace root. Defaults to the current directory, then
+                   walks up to the enclosing workspace or package, or the git
+                   top level; `--root .` pins this directory.
   --before PATH    Before `repo-exposure-json` snapshot.
   --after PATH     After `repo-exposure-json` snapshot.
   --json           Required until a human verify surface exists.
@@ -204,9 +221,15 @@ pub(super) const AGENT_VERIFY_EXECUTE_HELP: &str = r#"Execute one validated prod
 Usage: ripr agent verify-execute [--root PATH] --packet PATH --result-json PATH --authorize --json [--cancel-after-ms N]
 
 Options:
-  --root PATH          Workspace root. Defaults to current directory.
-  --packet PATH        One producer-emitted agent packet JSON under --root.
-  --result-json PATH   New result path under --root; existing files are refused.
+  --root PATH          Workspace root. Defaults to the current directory, then
+                       walks up to the enclosing workspace or package, or the
+                       git top level; `--root .` pins this directory.
+  --packet PATH        One producer-emitted agent packet JSON under --root. An
+                       existing file typed relative to a member directory is
+                       bound to it.
+  --result-json PATH   New result path under --root; existing files are
+                       refused. A relative path resolves against the resolved
+                       root, not the current directory.
   --authorize          Required explicit authorization for process execution.
   --cancel-after-ms N  Optional bounded cancellation request.
   --json               Required machine-readable output.
@@ -237,8 +260,11 @@ pub(super) const AGENT_RECEIPT_HELP: &str = r#"Write a provenance receipt with b
 Usage: ripr agent receipt [--root PATH] --verify-json PATH --seam-id ID [--attempt ID] --json [--test NAME] [--command CMD] [--out PATH]
 
 Options:
-  --root PATH         Workspace root. Defaults to current directory.
-  --verify-json PATH  JSON emitted by `ripr agent verify`.
+  --root PATH         Workspace root. Defaults to the current directory, then
+                      walks up to the enclosing workspace or package, or the
+                      git top level; `--root .` pins this directory.
+  --verify-json PATH  JSON emitted by `ripr agent verify`. An existing file
+                      typed relative to a member directory is bound to it.
   --seam-id ID        Select one seam from the verify JSON.
   --attempt ID        Bind the receipt to one repair attempt by id. Without
                       it the seam must have exactly one repair attempt; the
@@ -246,7 +272,9 @@ Options:
   --json              Required until a human receipt surface exists.
   --test NAME         Optional focused test added or changed by the agent.
   --command CMD       Optional verification command that was run. Repeatable.
-  --out PATH          Write the JSON receipt to a file instead of stdout.
+  --out PATH          Write the JSON receipt to a file instead of stdout. A
+                      relative path resolves against the resolved root, not
+                      the current directory.
 
 The receipt command narrows a saved agent verify artifact to one seam and adds
 handoff metadata for review. The verify JSON path and the before/after snapshot
@@ -262,7 +290,9 @@ pub(super) const AGENT_STATUS_HELP: &str = r#"Report local agent-loop artifact s
 Usage: ripr agent status [--root PATH] [--store PATH] [--attempt ID] [--json] [--out PATH]
 
 Options:
-  --root PATH      Workspace root. Defaults to current directory.
+  --root PATH      Workspace root. Defaults to the current directory, then
+                   walks up to the enclosing workspace or package, or the git
+                   top level; `--root .` pins this directory.
   --store PATH     Explicit repair-attempt store, resolved against --root.
                    Defaults to `target/ripr/repair-attempts`. Missing explicit
                    stores do not fall back to the default.
@@ -293,7 +323,9 @@ pub(super) const AGENT_REVIEW_SUMMARY_HELP: &str = r#"Summarize agent-loop artif
 Usage: ripr agent review-summary [--root PATH] [--json]
 
 Options:
-  --root PATH      Workspace root. Defaults to current directory.
+  --root PATH      Workspace root. Defaults to the current directory, then
+                   walks up to the enclosing workspace or package, or the git
+                   top level; `--root .` pins this directory.
   --json           Emit the machine-readable review summary. Human Markdown is the default.
 
 The review-summary command reads existing agent-loop artifacts and joins agent
@@ -310,7 +342,13 @@ Usage: ripr agent repair [--root PATH] [--store PATH] --seam-id ID --phase befor
            [--verify-authorized --verify-authority ID] [--verify-rollback]
 
 Options:
-  --root PATH          Workspace root. Defaults to current directory.
+  --root PATH          Workspace root. Defaults to the current directory, then
+                       walks up to the enclosing workspace or package, or the git
+                       top level; `--root .` pins this directory. A member-
+                       relative `file:line` --seam-id is refused when a
+                       workspace-root file with the same path suffix exists,
+                       even without a root finding there; use `--root .` or
+                       a seam or gap ID.
   --store PATH         Explicit repair-attempt store, resolved against --root.
                        Defaults to `target/ripr/repair-attempts`. Missing
                        explicit stores do not fall back to the default.
@@ -318,10 +356,14 @@ Options:
                        packet, the after-phase result, or the verification
                        receipt). Without it stdout is a short summary and the
                        documents stay in their files under target/ripr/.
-  --seam-id ID         Select one visible seam by ID; required for `before` and
-                       the compatibility selector for `after`. `ripr pilot
-                       --root .` lists seam IDs; `ripr check` finding IDs
-                       (`probe:...`) are not seam IDs.
+  --seam-id ID         Select one visible seam; required for `before` and the
+                       compatibility selector for `after`. For `--phase before`,
+                       a seam ID, a `ripr check` finding ID (`probe:` /
+                       `repo-probe:`), a canonical gap ID, or a `file:line`
+                       location naming exactly one repair-eligible seam
+                       resolves to that seam. `--phase after` keeps exact seam
+                       IDs. An unmapped ID refuses with the `ripr pilot`
+                       recovery route.
   --attempt ID         Select one durable repair attempt; valid for `after`
                        and `verify` (verify accepts only `--attempt`).
   --phase before|after|verify
@@ -406,3 +448,41 @@ Environment variables:
                                     if the value is empty or 0; it does not
                                     change any verdict.
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::AGENT_REPAIR_HELP;
+
+    #[test]
+    fn agent_repair_help_seam_id_names_before_phase_finding_id_acceptance() -> Result<(), String> {
+        // #8686: pin the `--seam-id` entry, not AGENT_HELP.
+        let seam_id = AGENT_REPAIR_HELP
+            .split("  --seam-id ID")
+            .nth(1)
+            .and_then(|rest| rest.split("  --attempt ID").next())
+            .ok_or("AGENT_REPAIR_HELP must have a --seam-id entry before --attempt")?;
+        for needle in [
+            "`ripr check` finding ID",
+            "`probe:`",
+            "`repo-probe:`",
+            "canonical gap ID",
+            "`file:line`",
+            "`--phase before`",
+            "`--phase after` keeps exact seam",
+            "unmapped ID refuses",
+            "`ripr pilot`",
+        ] {
+            if !seam_id.contains(needle) {
+                return Err(format!(
+                    "AGENT_REPAIR_HELP --seam-id omitted {needle:?}: {seam_id}"
+                ));
+            }
+        }
+        if seam_id.contains("are not seam IDs") {
+            return Err(format!(
+                "stale pre-#8556 wording must not remain on --seam-id: {seam_id}"
+            ));
+        }
+        Ok(())
+    }
+}

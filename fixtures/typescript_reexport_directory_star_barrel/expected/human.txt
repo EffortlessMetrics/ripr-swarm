@@ -29,6 +29,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_reexport_directory_star_barrel/input --diff <cwd>/fixtures/typescript_reexport_directory_star_barrel/diff.patch --mode fast probe:src_utils.ts:typescript_preview:a6254543
   ripr context --root <cwd>/fixtures/typescript_reexport_directory_star_barrel/input --diff <cwd>/fixtures/typescript_reexport_directory_star_barrel/diff.patch --mode fast --at probe:src_utils.ts:typescript_preview:a6254543
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_utils.ts:typescript_preview:a6254543 --root <cwd>/fixtures/typescript_reexport_directory_star_barrel/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr: Refresh Diagnostics` no longer appears dead during a long analysis. The server answers `ripr.refresh` as soon as the scheduler accepts (and deduplicates) the queued request instead of parking the request until the in-flight run finishes, and the VS Code client shows an immediate "ripr refresh queued: analysis is in progress." acknowledgement while analysis is running or queued, before awaiting the response (#8733).

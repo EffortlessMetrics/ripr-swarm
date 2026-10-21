@@ -39,7 +39,11 @@ pub mod json;
 pub(crate) mod limited_check;
 pub(crate) mod markdown;
 pub(crate) mod mutation_calibration;
-pub use mutation_calibration::{CargoMutantsOutcomeRecord, parse_cargo_mutants_outcomes_json};
+pub(crate) mod oracle_phrase;
+pub use mutation_calibration::{
+    CargoMutantsLocationJoin, CargoMutantsOutcomeRecord, CargoMutantsRuntimeSpan,
+    CargoMutantsSeamLocation, join_cargo_mutants_location, parse_cargo_mutants_outcomes_json,
+};
 pub(crate) mod next_action;
 pub(crate) mod next_step;
 pub(crate) mod observed_values;
@@ -59,6 +63,7 @@ pub(crate) mod pr_evidence_ledger;
 pub(crate) mod pr_inline_comment_github;
 pub(crate) mod pr_inline_comment_publish_plan;
 pub(crate) mod pr_review_front_panel;
+pub(crate) mod pr_summary_comment;
 pub(crate) mod preview_actionability;
 pub(crate) mod python_repair_card;
 pub mod receipt_lifecycle;

@@ -31,6 +31,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/boundary_named_constant/input --diff <cwd>/fixtures/boundary_named_constant/diff.patch --mode fast probe:src_lib.rs:predicate:70700926
   ripr context --root <cwd>/fixtures/boundary_named_constant/input --diff <cwd>/fixtures/boundary_named_constant/diff.patch --mode fast --at probe:src_lib.rs:predicate:70700926
+  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:predicate:70700926 --root <cwd>/fixtures/boundary_named_constant/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/boundary_named_constant/input --at src/lib.rs:30 --kind predicate
 
