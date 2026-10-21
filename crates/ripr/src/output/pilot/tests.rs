@@ -3375,7 +3375,7 @@ fn multiline_match_heads_follow_changed_lines_without_moving_seam_identity() -> 
                     .iter()
                     .zip([&[2, 3, 4, 5][..], &[6, 7, 8, 9][..], &[11][..]])
             {
-                assert!(head.span().is_none(), "calibration remains line-only");
+                assert_eq!(head.span().is_none(), head.display_line() == 2);
                 for line in 1..=14 {
                     let diff = format!(
                         "diff --git a/src/classify.rs b/src/classify.rs\n--- a/src/classify.rs\n+++ b/src/classify.rs\n@@ -{line} +{line} @@\n-old\n+new\n"

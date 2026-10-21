@@ -823,7 +823,8 @@ const UNMATCHED_NO_CONTAINING_SEAM: &str = "no_containing_seam";
 ///    overlap and stay ambiguous; source order, length and ID never break
 ///    the tie. Span-less seams do not compete with a containment match.
 /// 2. Line fallback. With no containing span, seams without a span (match
-///    arms, or snapshots older than `repo-exposure-json` 0.4) on the
+///    keyword shapes, legacy arms from snapshots older than 0.5, or other
+///    entries from snapshots older than `repo-exposure-json` 0.4) on the
 ///    mutant's start line join by `file_line`, unique or ambiguous. A mutant
 ///    without a complete span uses this fallback over every seam on its line.
 /// 3. Otherwise the mutant is unmatched. When the file has seam spans that
@@ -2901,7 +2902,7 @@ mod tests {
         assert!(report.ambiguous_file_line.is_empty());
     }
 
-    /// Span-less seams (match arms) cannot block a unique containment match;
+    /// Legacy span-less arm seams cannot block a unique containment match;
     /// they join only as the line fallback when no span contains the mutant.
     /// A runtime record without a complete span keeps the line join over
     /// every seam on its line, and an explicit seam_id beats geometry.

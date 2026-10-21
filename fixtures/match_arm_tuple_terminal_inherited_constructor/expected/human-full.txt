@@ -53,7 +53,7 @@ Drill in:
   ripr explain --root <cwd>/fixtures/match_arm_tuple_terminal_inherited_constructor/input --diff <cwd>/fixtures/match_arm_tuple_terminal_inherited_constructor/diff.patch --mode fast probe:src_work_queue.rs:match_arm:e2ddad8e
   ripr context --root <cwd>/fixtures/match_arm_tuple_terminal_inherited_constructor/input --diff <cwd>/fixtures/match_arm_tuple_terminal_inherited_constructor/diff.patch --mode fast --at probe:src_work_queue.rs:match_arm:e2ddad8e
 
-WARNING ./src/work_queue.rs:30
+NOTE ./src/work_queue.rs:30
   id: probe:src_work_queue.rs:match_arm:bb954c10
 
 Changed
@@ -68,7 +68,7 @@ Probe
   canonical gap: gap:rust:src/work_queue.rs:terminalize_proof:match_arm:match_arm:true_false=>lit726571756573745f6964656e746974795f7631
 
 Static exposure
-  weakly_exposed (warning, confidence 0.92)
+  weakly_exposed (note, confidence 0.92)
 
 Evidence
   - reach yes: Related tests appear to reach terminalize_proof: terminal_projection_0

@@ -1708,6 +1708,14 @@ owner = "product-output"
 standalone_reason = "Issues #8743, #8744 and #8746 record the agent context packet clarity contract: the ripr context packet contract is 1.1 and states the exposure verdict outright (classification, severity resolved through the caller severity config, and confidence, wire-identical to the ripr check --json finding fields) so packet consumers never derive the class from the underdetermined stage states, and the context refusal envelope is keyed with the packet version; the human evidence window glosses the unknown sink row with the same contract."
 
 [[artifact]]
+id = "RIPR-SPEC-0286"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0286-empty-diff-base-candidate.md"
+status = "proposed"
+owner = "product-cli"
+standalone_reason = "Issue #9013 records the empty-diff base-candidate contract: a branch is advised as --base only when its root-scoped diff survives the changed-Rust-line and changed-file guards (rename destinations counted, submodule parity with the loader), ranking Rust-bearing then smallest diffs, so ripr never recommends a command it would refuse."
+
+[[artifact]]
 id = "RIPR-SPEC-0285"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0285-python-framework-scan-bounded-deterministic-string-aware.md"

@@ -39,7 +39,7 @@ pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
     }
     // #5208: an unreleased generator cannot pin itself — that version does
     // not exist on crates.io, so the install step would fail. The workflow
-    // pins the latest release instead; say so loudly, on stderr like the
+    // pins the latest release instead; say so calmly, on stderr like the
     // root warning, in both dry-run and real runs.
     if options.ci.is_some() {
         let generator = env!("CARGO_PKG_VERSION");
@@ -47,7 +47,7 @@ pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
         if pinned != generator {
             let refresh = workflow_refresh_guidance(&options.root);
             eprintln!(
-                "ripr: warning: this ripr ({generator}) is not released, so the generated workflow pins the latest release ({pinned}) instead of the generator. After upgrading ripr, {refresh}"
+                "ripr: note: this build of ripr ({generator}) is a development version, so the generated workflow installs ripr {pinned}, the latest published release. Nothing is needed now; once {generator} is published, upgrade ripr, then {refresh}"
             );
         }
     }

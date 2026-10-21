@@ -64,3 +64,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_slice_table_boundary (6)
+
+Reason:
+RIPR-SPEC-0001: diff-check reach evidence names only tests whose relation establishes reach (#9033)
+
+Command:
+`cargo xtask goldens bless rust_slice_table_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
