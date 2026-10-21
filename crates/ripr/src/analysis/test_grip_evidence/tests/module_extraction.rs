@@ -488,7 +488,10 @@ fn module_extraction_visibility_keeps_existing_helper_witness() -> Result<(), St
         "[package]\nname = \"module-motion-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
     )
     .map_err(|error| error.to_string())?;
-    fs::write(root.join("src/lib.rs"), "mod child {\nfn compute() -> i32 { 9 }\npub(super) fn exercise() -> i32 { compute() }\n}\n#[cfg(test)] mod tests {\n#[test]\nfn through_wrapper() { assert_eq!(super::child::exercise(), 9); }\n}\n")
+    // The sibling call enters the coarse direct-name candidate set. Privacy
+    // removes that candidate for child::compute, then the independent wrapper
+    // must survive the final veto. A wrapper-only test would miss that path.
+    fs::write(root.join("src/lib.rs"), "mod child {\nfn compute() -> i32 { 9 }\npub(super) fn exercise() -> i32 { compute() }\n}\nmod other { pub(super) fn compute() -> i32 { 99 } }\n#[cfg(test)] mod tests {\n#[test]\nfn through_wrapper() { assert_eq!(super::other::compute(), 99); assert_eq!(super::child::exercise(), 9); }\n}\n")
         .map_err(|error| error.to_string())?;
     let index = build_index(&root, &[PathBuf::from("src/lib.rs")])?;
     assert_eq!(index.tests().len(), 1);
