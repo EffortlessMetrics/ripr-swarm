@@ -1302,7 +1302,7 @@ mod check_fast_selector_tests {
             "ripr-check-fast-workspace-{}-{nonce}",
             std::process::id()
         ));
-        std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
         let result = (|| {
             let git = |args: &[&str]| run_fixture_git(&root, args);
             git(&["init", "--initial-branch=main"])?;
