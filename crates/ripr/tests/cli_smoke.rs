@@ -23127,6 +23127,15 @@ fn check_gitignored_files_are_disclosed_not_silent() -> Result<(), String> {
         "pub fn built() -> u8 { 3 }\n",
     )
     .map_err(|err| format!("write bgen.rs: {err}"))?;
+    // Cargo build output under the root `target/` is noise, not a staging
+    // candidate: it must never be named by the disclosure.
+    std::fs::create_dir_all(root.join("target/release/build/crunchy-x/out"))
+        .map_err(|err| format!("create root target out: {err}"))?;
+    std::fs::write(
+        root.join("target/release/build/crunchy-x/out/lib.rs"),
+        "pub fn out() {}\n",
+    )
+    .map_err(|err| format!("write build output lib.rs: {err}"))?;
     // Fixture precondition: git's own default status hides both files — the
     // silence this test pins the disclosure for.
     let status = common::fixture_git::fixture_git_output(&root, &["status", "--porcelain"])?;
@@ -23167,6 +23176,14 @@ fn check_gitignored_files_are_disclosed_not_silent() -> Result<(), String> {
             ));
         }
     }
+    if ignored
+        .iter()
+        .any(|path| path.as_str().is_some_and(|p| p.starts_with("target/")))
+    {
+        return Err(format!(
+            "JSON must not name root target/ build output; got:\n{report}"
+        ));
+    }
 
     // Human and human-full name the files and the force intent-to-add repair
     // (`git add -N` refuses ignored paths, verified against real git).
@@ -23188,6 +23205,11 @@ fn check_gitignored_files_are_disclosed_not_silent() -> Result<(), String> {
                     "{label} must disclose {expected:?}; got:\n{rendered}"
                 ));
             }
+        }
+        if rendered.contains("crunchy-x") {
+            return Err(format!(
+                "{label} must not name root target/ build output; got:\n{rendered}"
+            ));
         }
     }
 
