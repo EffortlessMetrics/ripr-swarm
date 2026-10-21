@@ -16,7 +16,7 @@ Start here:
   Changed behavior: Unit::Fortnight =>
   Related test (1 of 3 matched rows): src/lib.rs:36 seconds_total
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
-    - reach yes: Related tests appear to reach seconds: seconds_total, bridge_fortnight, from_str_fortnight
+    - reach yes: Related tests appear to reach seconds: seconds_total
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 12 more detail line(s) in --format human-full
 

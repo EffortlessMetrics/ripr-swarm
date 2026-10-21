@@ -217,7 +217,7 @@ fn reminted_probe_id(entry: &ClassifiedSeam, prefix: &str, ordinal: u32) -> Opti
                 &sanitized,
                 family.as_str(),
                 &owner.0,
-                &super::normalize_expression(entry.seam.expression()),
+                &super::normalize_rust_expression(entry.seam.expression()),
                 ordinal,
             )
             .0
@@ -575,7 +575,7 @@ mod tests {
             &crate::analysis::sanitize_path(entry.seam.file()),
             "predicate",
             entry.seam.owner(),
-            &crate::analysis::normalize_expression(entry.seam.expression()),
+            &crate::analysis::normalize_rust_expression(entry.seam.expression()),
             1,
         )
         .0;
@@ -608,6 +608,41 @@ mod tests {
         assert!(probe_id_names_seam(&id, &twin, &seams));
     }
 
+    #[test]
+    fn line_comment_terminators_do_not_reverse_to_the_other_value() {
+        let commented = classified_gap_with_expression(
+            "src/pricing.rs::equal",
+            88,
+            "x == concat!(\"a\", // \"b\",\n        \"c\")",
+            "concat value",
+        );
+        let active = classified_gap_with_expression(
+            "src/pricing.rs::equal",
+            88,
+            "x == concat!(\"a\", //\n        \"b\", \"c\")",
+            "concat value",
+        );
+        // Fixed expected payload hashes use this fixture's path and owner;
+        // the old flat payload was shared by both source expressions.
+        for prefix in ["probe", "repo-probe"] {
+            let old = format!("{prefix}:src_pricing.rs:predicate:e4b79a1b");
+            let commented_id = format!("{prefix}:src_pricing.rs:predicate:60ee2017");
+            let active_id = format!("{prefix}:src_pricing.rs:predicate:1862f384");
+            for (entry, own, other) in [
+                (&commented, &commented_id, &active_id),
+                (&active, &active_id, &commented_id),
+            ] {
+                let sole = std::slice::from_ref(entry);
+                assert!(
+                    !probe_id_names_seam(&old, entry, sole),
+                    "ambiguous old ID must be stale"
+                );
+                assert!(probe_id_names_seam(own, entry, sole));
+                assert!(!probe_id_names_seam(other, entry, sole));
+            }
+        }
+    }
+
     /// #8166 review: a sole sharing seam plus an explicit ordinal names
     /// nothing for either family. An invented `.999` is stale, and a real
     /// `.2` whose second occurrence was seam-filtered (so only the first
@@ -621,7 +656,7 @@ mod tests {
                 &crate::analysis::sanitize_path(entry.seam.file()),
                 "predicate",
                 entry.seam.owner(),
-                &crate::analysis::normalize_expression(entry.seam.expression()),
+                &crate::analysis::normalize_rust_expression(entry.seam.expression()),
                 ordinal,
             )
             .0
@@ -665,7 +700,7 @@ mod tests {
                 &crate::analysis::sanitize_path(first.seam.file()),
                 "predicate",
                 first.seam.owner(),
-                &crate::analysis::normalize_expression(first.seam.expression()),
+                &crate::analysis::normalize_rust_expression(first.seam.expression()),
                 ordinal,
             )
             .0
@@ -716,7 +751,7 @@ mod tests {
                 &crate::analysis::sanitize_path(seams[0].seam.file()),
                 "predicate",
                 seams[0].seam.owner(),
-                &crate::analysis::normalize_expression(seams[0].seam.expression()),
+                &crate::analysis::normalize_rust_expression(seams[0].seam.expression()),
                 ordinal,
             )
             .0

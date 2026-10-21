@@ -1678,6 +1678,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy(
         oracle_policy,
         languages,
         &crate::config::RustLanguageConfig::default(),
+        &crate::config::LanguagesConfig::default(),
     )
 }
 
@@ -1686,6 +1687,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
     oracle_policy: &OraclePolicy,
     languages: &[LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
+    language_config: &crate::config::LanguagesConfig,
 ) -> Result<AnalysisResult, String> {
     let mut findings: Vec<Finding> = Vec::new();
     let mut rust_diagnostic_origins =
@@ -1728,9 +1730,11 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
             continue;
         }
         let attempted = match language {
-            LanguageId::TypeScript | LanguageId::JavaScript => {
-                analyze_typescript_repo(options, oracle_policy)
-            }
+            LanguageId::TypeScript | LanguageId::JavaScript => analyze_typescript_repo(
+                options,
+                oracle_policy,
+                &language_config.typescript.handwritten_files,
+            ),
             LanguageId::Python => analyze_python_repo(options, oracle_policy),
             LanguageId::Perl => analyze_perl_repo(options, oracle_policy),
             LanguageId::Rust => {
@@ -2225,14 +2229,17 @@ fn analyze_python_diff(
 fn analyze_typescript_repo(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,
+    handwritten: &[String],
 ) -> Result<LanguageRepoResult, String> {
-    TypeScriptAdapter.analyze_repo(options, oracle_policy)
+    let _ = oracle_policy;
+    TypeScriptAdapter::analyze_repo_with_handwritten_env(options, handwritten)
 }
 
 #[cfg(not(feature = "lang-typescript"))]
 fn analyze_typescript_repo(
     _options: &AnalysisOptions,
     _oracle_policy: &OraclePolicy,
+    _handwritten: &[String],
 ) -> Result<LanguageRepoResult, String> {
     unavailable_language(LanguageId::TypeScript)
 }
@@ -4309,6 +4316,49 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn repo_pipeline_threads_typescript_handwritten_files_to_repo_mode() -> Result<(), String> {
+        let root = temp_root("repo-ts-handwritten")?;
+        write(
+            &root.join("dist/handwritten.ts"),
+            "export function f(a: number): number {\n  if (a > 0) {\n    return 1;\n  }\n  return 0;\n}\n",
+        )?;
+        let options = AnalysisOptions {
+            root: root.clone(),
+            base: None,
+            diff_file: None,
+            mode: AnalysisMode::Draft,
+            resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
+            include_unchanged_tests: false,
+            resolve_tsconfig_paths: false,
+            perl_facts_path: None,
+            perl_producer_failure: None,
+            git_timeout: None,
+            git_candidate: None,
+            production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
+        };
+        let mut declared = crate::config::LanguagesConfig::default();
+        declared.typescript.handwritten_files = vec!["dist/handwritten.ts".to_string()];
+        let run = |config: &crate::config::LanguagesConfig| {
+            run_repo_pipeline_with_oracle_policy_and_rust_config(
+                &options,
+                &OraclePolicy::default(),
+                &[LanguageId::TypeScript],
+                &crate::config::RustLanguageConfig::default(),
+                config,
+            )
+        };
+        let with_decl = run(&declared);
+        let without_decl = run(&crate::config::LanguagesConfig::default());
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(!with_decl?.findings.is_empty());
+        assert!(without_decl?.findings.is_empty());
+        Ok(())
+    }
+
     #[test]
     fn repo_mode_counts_cargo_vendor_crates_as_a_partial_rust_run() -> Result<(), String> {
         let root = temp_root("repo-vendored-skip")?;
@@ -4342,6 +4392,7 @@ mod tests {
             &OraclePolicy::default(),
             &[LanguageId::Rust],
             &crate::config::RustLanguageConfig::default(),
+            &crate::config::LanguagesConfig::default(),
         )?;
         let rust_run = result
             .language_runs

@@ -444,6 +444,16 @@ Defaults-first adoption evidence should cover:
   when a workspace-root file with the same path suffix exists, even without a
   root finding there, with `--root .` or a seam, gap or finding ID as the
   escape hatches;
+- the same implicit-root parity for the artifact-consuming `agent brief`,
+  `agent packet`, `agent receipt`, `agent review-summary`,
+  `agent verify-execute` and `context` from a workspace member directory, so a
+  loop started by `agent start` reads and writes the workspace `target/ripr`;
+  existing member-relative `--files`, `--diff`, `--verify-json` and `--packet`
+  files bind to the invocation directory, a relative `agent receipt --out` and
+  `agent verify-execute --result-json` resolve against the resolved root (not
+  the current directory), `--gap-ledger`, `context --diff` and `context --from`
+  stay read as typed from the current directory, `--root .` is the opt-out,
+  and a root-resolution failure under `--json` keeps the refusal envelope;
 - shared cache-root parity, real nested and linked-worktree boundaries,
   inherited-selector isolation, and the gitless saved-diff route;
 - built-in missing-config behavior matching the generated init profile's
