@@ -31,13 +31,15 @@ pub(crate) fn source_value_evidence_line(fact: &ValueFact) -> String {
 /// it. The value is read from a related test, which is usually not in the diff,
 /// so a bare line number cannot be found. Check JSON keeps the bare spelling.
 pub(crate) fn source_value_evidence_line_with_file(fact: &ValueFact) -> String {
+    // A multi-line string value would otherwise break the one-row layout of
+    // the human evidence list (#9165); JSON keeps the raw value.
+    let value = crate::output::related_test_miss::single_line_evidence_text(&fact.value);
+    let context = fact.context.as_str().replace('_', " ");
     let Some(file) = &fact.file else {
-        return source_value_evidence_line(fact);
+        return format!("source {context} value {value} at line {}", fact.line);
     };
     format!(
-        "source {} value {} at {}:{}",
-        fact.context.as_str().replace('_', " "),
-        fact.value,
+        "source {context} value {value} at {}:{}",
         crate::output::path::display_path(file),
         fact.line
     )
@@ -97,6 +99,38 @@ mod tests {
             value: line.to_string(),
             context,
         }
+    }
+
+    #[test]
+    fn human_value_line_keeps_a_multi_line_string_value_on_one_row() {
+        // #9165: a snapshot-style string literal spans lines; the human row
+        // collapses it, and the JSON spelling still carries the raw value.
+        let mut multi = fact(44, ValueContext::AssertionArgument);
+        multi.file = Some(std::path::PathBuf::from("tests/test_expr.rs"));
+        multi.value = "\"\n    Expr::Range {\n        limits: HalfOpen,\n    }\n    \"".to_string();
+
+        let human = source_value_evidence_line_with_file(&multi);
+        assert!(!human.contains('\n'), "{human:?}");
+        assert_eq!(
+            human,
+            "source assertion argument value \" Expr::Range { limits: HalfOpen, } \" at tests/test_expr.rs:44"
+        );
+        assert!(source_value_evidence_line(&multi).contains('\n'));
+
+        // Without a recorded file the human row is still one line.
+        multi.file = None;
+        let bare = source_value_evidence_line_with_file(&multi);
+        assert!(!bare.contains('\n'), "{bare:?}");
+        assert!(bare.ends_with(" at line 44"), "{bare:?}");
+
+        // Negative control: a single-line value is unchanged.
+        let mut single = fact(7, ValueContext::AssertionArgument);
+        single.file = Some(std::path::PathBuf::from("tests/pricing.rs"));
+        single.value = "\"a  b\"".to_string();
+        assert_eq!(
+            source_value_evidence_line_with_file(&single),
+            "source assertion argument value \"a  b\" at tests/pricing.rs:7"
+        );
     }
 
     #[test]

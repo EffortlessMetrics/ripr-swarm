@@ -188,7 +188,10 @@ fn evidence_path<T>(
             )
         );
         if let Some(oracle) = &test.oracle {
-            line.push_str(&format!(": {oracle}"));
+            line.push_str(&format!(
+                ": {}",
+                crate::output::related_test_miss::single_line_evidence_text(oracle)
+            ));
         }
         // A matched row keeps its oracle projection and adds the reason it
         // still misses, so the oracle kind and strength stay readable.

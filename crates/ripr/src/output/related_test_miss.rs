@@ -130,6 +130,18 @@ fn link_label(reason: RelationReason) -> Option<&'static str> {
     }
 }
 
+/// Human-output spelling of assertion or value text that must stay on one
+/// evidence row: text that spans lines (a snapshot body, a closure test
+/// body, a multi-line string literal) collapses its whitespace the way the
+/// `checked` row does; single-line text is returned byte-for-byte (#9165).
+pub(crate) fn single_line_evidence_text(value: &str) -> String {
+    if value.contains(['\n', '\r']) {
+        one_line(value)
+    } else {
+        value.to_string()
+    }
+}
+
 fn one_line(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -168,6 +180,23 @@ mod tests {
             oracle_projection(&OracleStrength::Strong, &OracleKind::ExactValue, true),
             "strong exact value oracle"
         );
+    }
+
+    #[test]
+    fn single_line_evidence_text_collapses_only_multi_line_text() {
+        // #9165: a closure or snapshot oracle spans lines; the row keeps one.
+        assert_eq!(
+            single_line_evidence_text("scope(|scope| {\n    scope.spawn(f);\n})\n.unwrap();"),
+            "scope(|scope| { scope.spawn(f); }) .unwrap();"
+        );
+        assert_eq!(single_line_evidence_text("a\r\nb"), "a b");
+        // Negative controls: single-line text is untouched, including its
+        // inner spacing and trailing `;`.
+        assert_eq!(
+            single_line_evidence_text("assert_eq!(a,  b);"),
+            "assert_eq!(a,  b);"
+        );
+        assert_eq!(single_line_evidence_text(""), "");
     }
 
     fn test_with(miss: Option<RelatedTestMiss>, reason: Option<RelationReason>) -> RelatedTest {
