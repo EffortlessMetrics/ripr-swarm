@@ -79,6 +79,12 @@ probes. An inline bound may use its enclosing struct, impl or type-alias item
 as declaration authority only when the whole changed line is contained by that
 item and the item has no expression or macro descendants. Const expressions
 and macro types retain existing fallback evidence.
+A named field declared inside an enum variant, or a whole one-line variant with
+named fields, is likewise a type declaration (#8999): it stays one
+`static_unknown` probe, while a variant constructed in a body keeps
+`field_construction`. A discriminant, macro syntax or expression inside the
+variant, or a shared line, withholds that authority. Deleted-only struct and
+enum field declarations keep their removed-side lexical probe.
 Real expressions on a shared line
 keep their existing parser-owned runtime probes. Comments, strings and macro
 token trees cannot establish declaration authority. Removed bounds require
