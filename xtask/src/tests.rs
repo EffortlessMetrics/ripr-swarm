@@ -31285,12 +31285,29 @@ covered_by_windows = ["cargo test windows_second"] # keep this selector
 covered_by_unix = ["cargo test unix_second"]
 covered_by = ["cargo test common_second"]
 "#;
+        let unicode_source =
+            source.replace("is still not an entry", "café 🦀 is still not an entry");
         for (case, source, multiline_command) in [
             ("lf", source.to_string(), "cargo test first\n[[allow]]\n"),
             (
                 "crlf",
                 source.replace('\n', "\r\n"),
                 "cargo test first\r\n[[allow]]\r\n",
+            ),
+            (
+                "unicode",
+                unicode_source.clone(),
+                "cargo test first\n[[allow]]\n",
+            ),
+            (
+                "unicode-crlf",
+                unicode_source.replace('\n', "\r\n"),
+                "cargo test first\r\n[[allow]]\r\n",
+            ),
+            (
+                "no-final-newline",
+                source.trim_end_matches('\n').to_string(),
+                "cargo test first\n[[allow]]\n",
             ),
         ] {
             // Preserve the selected TOML authority's newline bytes, rather
@@ -31337,6 +31354,30 @@ covered_by = ["cargo test common_second"]
                     ),
                 ],
                 "{case}: command order and attribution must come from parsed entries"
+            );
+            // Exercise rendered field diagnostics as well as entry attribution.
+            // Multibyte text, multiline strings and CRLF must keep physical lines.
+            let invalid = format!(
+                "{}\nmystery = \"unknown field\"\n",
+                source.trim_end_matches(['\r', '\n'])
+            );
+            write(&path, &invalid);
+            assert_eq!(
+                parse_file_policy_allowlist(&path.to_string_lossy()).err(),
+                Some(format!(
+                    "{}:29 unsupported non-Rust allowlist field `mystery`",
+                    path.display()
+                )),
+                "{case}"
+            );
+            write(&path, &source.replace("glob = \"docs/*.md\"", "glob = 42"));
+            assert_eq!(
+                parse_file_policy_allowlist(&path.to_string_lossy()).err(),
+                Some(format!(
+                    "{}:20 string value must be quoted (got: 42)",
+                    path.display()
+                )),
+                "{case}"
             );
         }
         Ok(())
