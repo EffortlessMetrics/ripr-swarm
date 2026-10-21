@@ -407,6 +407,7 @@ tests = [
   "crates/ripr/tests/cli_smoke/selector_recovery_scope.rs::committed_check_printed_drill_ins_preserve_unstaged_scope",
   "crates/ripr/tests/cli_smoke/selector_recovery_scope.rs::committed_check_printed_drill_ins_preserve_staged_scope",
   "crates/ripr/tests/cli_smoke/selector_recovery_scope.rs::committed_drill_in_scope_conflicts_refuse_before_input_reads",
+  "crates/ripr/tests/cli_smoke/selector_recovery_scope.rs::committed_context_from_nested_cwd_selects_the_check_finding",
   "crates/ripr/tests/cli_smoke/unknown_explain.rs::unknown_explain_real_reasons_have_supported_actions_in_every_mode",
   "crates/ripr/tests/cli_smoke/unknown_explain.rs::unknown_explain_repair_preserves_decidable_recipes"
 ]

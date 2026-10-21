@@ -302,3 +302,66 @@ fn committed_drill_in_scope_conflicts_refuse_before_input_reads() -> Result<(), 
     }
     Ok(())
 }
+
+/// A manual committed drill-in from a nested cwd resolves the same root as
+/// check/explain, even when the worktree contains a different finding.
+#[test]
+fn committed_context_from_nested_cwd_selects_the_check_finding() -> Result<(), String> {
+    let fixture = selector_scope_fixture()?;
+    let nested = fixture.root.join("src");
+    let run = |args: &[&str]| {
+        run_command(env!("CARGO_BIN_EXE_ripr"), Some(&nested), args)
+            .map_err(|err| format!("nested CLI: {err}"))
+    };
+    let check = run(&["check", "--base", "HEAD~1", "--committed", "--json"])?;
+    assert_success(&check);
+    assert_eq!(first_finding_id(&check.stdout)?, fixture.committed);
+    let root = fixture.root.to_string_lossy().into_owned();
+    for explicit_root in [false, true] {
+        for command in ["explain", "context"] {
+            let mut args = vec![command, "--base", "HEAD~1", "--committed"];
+            if explicit_root {
+                args.extend_from_slice(&["--root", &root]);
+            }
+            if command == "context" {
+                args.push("--at");
+            }
+            args.push(&fixture.committed);
+            let selected = run(&args)?;
+            assert_success(&selected);
+            if command == "context" {
+                let packet: serde_json::Value = serde_json::from_slice(&selected.stdout)
+                    .map_err(|err| format!("nested context JSON: {err}"))?;
+                assert_eq!(packet["probe"]["id"], fixture.committed);
+            } else {
+                assert!(String::from_utf8_lossy(&selected.stdout).contains(&fixture.committed));
+            }
+        }
+    }
+    // Explicit `--root .` opts out of discovery and keeps the nested scope.
+    let narrow = run(&[
+        "check",
+        "--root",
+        ".",
+        "--base",
+        "HEAD~1",
+        "--committed",
+        "--json",
+    ])?;
+    assert_success(&narrow);
+    assert!(!String::from_utf8_lossy(&narrow.stdout).contains(&fixture.committed));
+    let missed = run(&[
+        "context",
+        "--root",
+        ".",
+        "--base",
+        "HEAD~1",
+        "--committed",
+        "--at",
+        &fixture.committed,
+    ])?;
+    assert_eq!(missed.status.code(), Some(2));
+    assert!(missed.stdout.is_empty());
+    ignore_remove_dir_all(&fixture.root);
+    Ok(())
+}
