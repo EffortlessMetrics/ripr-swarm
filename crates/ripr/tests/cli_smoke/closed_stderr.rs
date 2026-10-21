@@ -19,6 +19,18 @@ fn run(root: &Path, args: &[&str], closed: bool) -> Result<Output, std::io::Erro
     command.output()
 }
 
+/// Spawn with stdout's reader closed before the child starts, so the refusal
+/// document cannot be delivered.
+#[cfg(feature = "lang-rust")]
+fn run_closed_stdout(root: &Path, args: &[&str]) -> Result<Output, std::io::Error> {
+    let mut command = probe_command(env!("CARGO_BIN_EXE_ripr"));
+    command.current_dir(root).args(args).stdin(Stdio::null());
+    let (reader, writer) = std::io::pipe()?;
+    drop(reader);
+    command.stdout(writer);
+    command.output()
+}
+
 #[test]
 fn malformed_config_json_keeps_exit_two_with_closed_stderr() -> TestResult {
     let root = unique_temp_workspace("closed-stderr-config");
@@ -124,7 +136,7 @@ fn execution_failure_and_typed_refusal_keep_distinct_exits_with_closed_stderr() 
 /// an internal-error exit. Parse the readable envelope first to reject fixture
 /// setup failures, then close the pipe reader before spawning the real CLI.
 #[cfg(feature = "lang-rust")]
-fn assert_stderr_refusal_survives_sink_loss(
+fn assert_refusal_survives_sink_loss(
     root: &Path,
     args: &[&str],
     version: &str,
@@ -133,10 +145,8 @@ fn assert_stderr_refusal_survives_sink_loss(
     refusal: &str,
 ) -> TestResult {
     let normal = run(root, args, false)?;
-    let mut documents = serde_json::Deserializer::from_slice(&normal.stderr).into_iter::<Value>();
-    let envelope = documents
-        .next()
-        .ok_or("missing stderr refusal envelope")??;
+    let envelope: Value = serde_json::from_slice(&normal.stdout)
+        .map_err(|error| format!("missing stdout refusal envelope: {error}: {normal:?}"))?;
     assert_eq!(envelope["schema_version"], version, "{args:?}");
     assert_eq!(envelope["kind"], kind, "{args:?}");
     assert_eq!(
@@ -154,13 +164,28 @@ fn assert_stderr_refusal_survives_sink_loss(
         };
         assert_eq!(identity, "missing-stderr-seam");
     }
-    assert!(normal.stdout.is_empty(), "{args:?}: {normal:?}");
     assert_eq!(normal.status.code(), Some(3), "{args:?}: {normal:?}");
-    let prose = String::from_utf8_lossy(&normal.stderr[documents.byte_offset()..]);
-    assert!(prose.contains("ripr: agent "), "{args:?}: {prose}");
+    let prose = String::from_utf8_lossy(&normal.stderr);
+    assert!(prose.starts_with("ripr: agent "), "{args:?}: {prose}");
+
+    // Channel pin: the prose is stderr-only and stdout is exactly one JSON
+    // document (`from_slice` above rejects trailing text).
+    assert!(
+        !String::from_utf8_lossy(&normal.stdout).contains("ripr: agent "),
+        "{args:?}: prose leaked into stdout: {normal:?}"
+    );
 
     let closed = run(root, args, true)?;
-    assert!(closed.stdout.is_empty(), "{args:?}: {closed:?}");
+    assert!(!closed.stdout.is_empty(), "{args:?}: {closed:?}");
+    let closed_envelope: Value = serde_json::from_slice(&closed.stdout)
+        .map_err(|error| format!("closed-stderr stdout is not one JSON document: {error}"))?;
+    assert_eq!(closed_envelope["kind"], kind, "{args:?}");
+    assert_eq!(closed_envelope, envelope, "{args:?}: JSON changed");
+    assert_eq!(closed.stdout, normal.stdout, "{args:?}: JSON changed");
+    assert!(
+        !String::from_utf8_lossy(&closed.stdout).contains("ripr: agent "),
+        "{args:?}: prose leaked into stdout: {closed:?}"
+    );
     assert_eq!(closed.status.code(), Some(3), "{args:?}: {closed:?}");
 
     // The JSON path must retain the existing human-only refusal behavior.
@@ -183,7 +208,7 @@ fn unknown_card_json_refusal_keeps_exit_three_with_closed_stderr() -> TestResult
     let root = unique_temp_workspace("closed-stderr-unknown-card");
     super::init_producer_fixture_repo(&root)?;
     let _cleanup = DeclaredHunkScratch(root.clone());
-    assert_stderr_refusal_survives_sink_loss(
+    assert_refusal_survives_sink_loss(
         &root,
         &[
             "agent",
@@ -207,7 +232,7 @@ fn unknown_stub_json_refusal_keeps_exit_three_with_closed_stderr() -> TestResult
     let root = unique_temp_workspace("closed-stderr-unknown-stub");
     super::init_producer_fixture_repo(&root)?;
     let _cleanup = DeclaredHunkScratch(root.clone());
-    assert_stderr_refusal_survives_sink_loss(
+    assert_refusal_survives_sink_loss(
         &root,
         &[
             "agent",
@@ -233,7 +258,7 @@ fn resolved_stub_json_refusal_keeps_exit_three_with_closed_stderr() -> TestResul
     let _cleanup = DeclaredHunkScratch(root.clone());
     let source = "pub async fn value(n: i32) -> bool {\n    n > 3\n}\n";
     std::fs::write(root.join("src/lib.rs"), source)?;
-    assert_stderr_refusal_survives_sink_loss(
+    assert_refusal_survives_sink_loss(
         &root,
         &[
             "agent",
@@ -285,5 +310,88 @@ fn ready_stub_json_keeps_exit_zero_with_closed_stderr() -> TestResult {
         assert_eq!(document["written"], false);
         assert_eq!(output.status.code(), Some(0), "{output:?}");
     }
+    Ok(())
+}
+
+/// When the refusal JSON cannot be written to stdout, no machine answer was
+/// delivered: the command is an operational failure (exit 2), not decision 3.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn unknown_card_and_stub_json_refusal_exit_two_with_closed_stdout() -> TestResult {
+    let root = unique_temp_workspace("closed-stdout-unknown-refusal");
+    super::init_producer_fixture_repo(&root)?;
+    let _cleanup = DeclaredHunkScratch(root.clone());
+    for command in ["card", "stub"] {
+        let args = [
+            "agent",
+            command,
+            "--root",
+            ".",
+            "--seam-id",
+            "missing-stdout-seam",
+            "--json",
+        ];
+        let normal = run(&root, &args, false)?;
+        assert_eq!(normal.status.code(), Some(3), "{args:?}: {normal:?}");
+        assert!(!normal.stdout.is_empty(), "{args:?}: {normal:?}");
+        let closed = run_closed_stdout(&root, &args)?;
+        assert_eq!(closed.status.code(), Some(2), "{args:?}: {closed:?}");
+        assert!(closed.stdout.is_empty(), "{args:?}: {closed:?}");
+    }
+    Ok(())
+}
+
+/// `agent packet --json` with an unknown seam id refuses with exit 3, but a
+/// closed stdout reader means the envelope was not delivered: exit 2.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn unknown_packet_json_refusal_exit_two_with_closed_stdout() -> TestResult {
+    let root = unique_temp_workspace("closed-stdout-unknown-packet");
+    super::init_producer_fixture_repo(&root)?;
+    let _cleanup = DeclaredHunkScratch(root.clone());
+    let args = [
+        "agent",
+        "packet",
+        "--root",
+        ".",
+        "--seam-id",
+        "missing-stdout-seam",
+        "--json",
+    ];
+    let normal = run(&root, &args, false)?;
+    assert_eq!(normal.status.code(), Some(3), "{args:?}: {normal:?}");
+    assert!(!normal.stdout.is_empty(), "{args:?}: {normal:?}");
+    let closed = run_closed_stdout(&root, &args)?;
+    assert_eq!(closed.status.code(), Some(2), "{args:?}: {closed:?}");
+    assert!(closed.stdout.is_empty(), "{args:?}: {closed:?}");
+    Ok(())
+}
+
+/// The post-resolution stub refusal (`owner_async`) also exits 2 when its
+/// document cannot reach stdout, and writes nothing.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn resolved_stub_json_refusal_exit_two_with_closed_stdout() -> TestResult {
+    let root = unique_temp_workspace("closed-stdout-resolved-stub");
+    super::init_producer_fixture_repo(&root)?;
+    let _cleanup = DeclaredHunkScratch(root.clone());
+    let source = "pub async fn value(n: i32) -> bool {\n    n > 3\n}\n";
+    std::fs::write(root.join("src/lib.rs"), source)?;
+    let args = [
+        "agent",
+        "stub",
+        "--root",
+        ".",
+        "--at",
+        "src/lib.rs:2",
+        "--kind",
+        "predicate",
+        "--write",
+        "--json",
+    ];
+    let closed = run_closed_stdout(&root, &args)?;
+    assert_eq!(closed.status.code(), Some(2), "{args:?}: {closed:?}");
+    assert!(closed.stdout.is_empty(), "{args:?}: {closed:?}");
+    assert_eq!(std::fs::read_to_string(root.join("src/lib.rs"))?, source);
     Ok(())
 }

@@ -24,6 +24,7 @@ use crate::cli::commands_agent_support::{
 };
 use crate::cli::commands_context::{
     config_load_refusal, ensure_command_root, load_root_input_and_config, refuse_json_envelope,
+    refuse_json_envelope_checked,
 };
 use crate::config::{RiprConfig, load_for_root};
 use crate::core_error::CoreError;
@@ -227,10 +228,11 @@ pub(in crate::cli) fn agent(args: &[String]) -> Result<(), CommandError> {
     match command {
         AgentCommand::Start(options) => run_agent_start(options).map_err(CommandError::from),
         AgentCommand::Brief(options) => run_agent_brief(options).map_err(CommandError::from),
-        AgentCommand::Packet(options) => run_agent_packet(options).map_err(CommandError::from),
+        AgentCommand::Packet(options) => run_agent_packet(options),
         // #5007: `agent card` refusals are typed like its siblings: the
         // adapter classifies deliberate named refusals (rendering the
-        // versioned `agent_card_refusal` envelope on stderr under `--json`)
+        // versioned `agent_card_refusal` envelope on stdout under `--json`,
+        // with the prose on stderr)
         // and maps them to the decision exit code 3; operational failures
         // stay exit 2.
         AgentCommand::Card(options) => super::agent_card::run_agent_card(options),
@@ -493,14 +495,15 @@ fn add_agent_brief_provenance_warning(root: &Path, selection: &mut AgentBriefSel
     }
 }
 
-fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {
+fn run_agent_packet(options: AgentPacketOptions) -> Result<(), CommandError> {
     let json = options.json;
     // #7331 review: the root check is below argv parsing, so a `--json`
     // packet run with an unusable `--root` refuses through the same
     // envelope instead of exiting 2 with empty stdout.
     if let Err(err) = ensure_command_root(&options.root, "agent packet") {
         let error = CoreError::repository_root_unusable(err);
-        return Err(refuse_agent_packet(&options, error, json));
+        let message = refuse_agent_packet(&options, error, json).unwrap_or_else(|failure| failure);
+        return Err(CommandError::Failure(message));
     }
     match render_agent_packet(&options) {
         Ok(rendered) => {
@@ -512,17 +515,36 @@ fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {
         // before the prose error reaches stderr. This is the exact step
         // `agent brief`'s documented `next.inspect_packet` loop drives, so
         // the machine channel survives the failure.
-        Err(error) => Err(refuse_agent_packet(&options, error, json)),
+        //
+        // An unknown `--seam-id` is a typed refusal, not a could-not-complete
+        // failure: exit 3, like `agent card` and `agent stub` for the same
+        // cause. Every other packet failure stays exit 2.
+        Err(error) => {
+            let unknown_seam = error.check_failure_kind()
+                == Some(crate::core_error::CheckFailureKind::SeamIdUnknown);
+            match refuse_agent_packet(&options, error, json) {
+                Ok(message) if unknown_seam => Err(CommandError::Decision(message)),
+                Ok(message) | Err(message) => Err(CommandError::Failure(message)),
+            }
+        }
     }
 }
 
 /// The refusal envelope context for `agent packet --json` (#7331): the
 /// packet schema version and repo scope.
-fn refuse_agent_packet(options: &AgentPacketOptions, error: CoreError, json: bool) -> String {
+///
+/// `Err` means the envelope could not be rendered or written to stdout, so no
+/// machine answer was delivered (an operational failure even for an unknown
+/// seam); `Ok` is the prose error for stderr.
+fn refuse_agent_packet(
+    options: &AgentPacketOptions,
+    error: CoreError,
+    json: bool,
+) -> Result<String, String> {
     if !json {
-        return error.to_string();
+        return Ok(error.to_string());
     }
-    refuse_json_envelope(
+    refuse_json_envelope_checked(
         app::AGENT_SEAM_PACKET_SCHEMA_VERSION,
         "repo",
         None,
