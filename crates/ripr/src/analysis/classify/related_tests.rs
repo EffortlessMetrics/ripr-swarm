@@ -957,7 +957,15 @@ fn find_related_tests_with_candidates<'a>(
             test.calls.iter().any(|call| {
                 chain.hops.iter().any(|hop| {
                     hop.caller.name == call.name
-                        && super::helper_transfer::is_direct_call_site(&call.text, &hop.caller.name)
+                        && (super::helper_transfer::is_direct_call_site(
+                            &call.text,
+                            &hop.caller.name,
+                        ) || own_crate_qualified_entry_call(
+                            index,
+                            test,
+                            &hop.caller,
+                            &call.text,
+                        ))
                         // #6780 Devin review: a test-local closure or nested
                         // fn named like the hop caller shadows it, so the
                         // call never reaches the helper.
@@ -1570,6 +1578,51 @@ fn declares_module(stripped: &str, name: &str) -> bool {
         let found = previous_is_mod && word == name;
         previous_is_mod = word == "mod";
         found
+    })
+}
+
+/// #8999: whether `call_text` is an integration test's call of the helper
+/// chain's entry `caller`, spelled through the package's own library name
+/// (`rr::order_discount(..)` with no `use`).
+///
+/// Fail-closed admit, only for the one shape whose identity is established:
+/// the test sits under `tests/` of the root package, the entry is a
+/// module-level item of that package's `src/lib.rs` (a recognized library
+/// root, so a binary's modules never match), and the call is spelled exactly
+/// `<crate>::<entry>(` with `<crate>` one of the root manifest's package or
+/// `[lib]` names. A test that declares or renames that crate name, binds the
+/// entry name locally, or any workspace member / nested package / absolute
+/// path keeps the existing refusal.
+fn own_crate_qualified_entry_call(
+    index: &RustIndex,
+    test: &TestSummary,
+    caller: &FunctionSummary,
+    call_text: &str,
+) -> bool {
+    if !super::call_identity::under_tests_dir(&test.file)
+        || path_is_absolute_form(&test.file)
+        || path_is_absolute_form(&caller.file)
+        || package_prefix(&test.file).is_some()
+        || package_prefix(&caller.file).is_some()
+    {
+        return false;
+    }
+    let is_library_root_item = super::owner_pin::target_root(&caller.file, index, &BTreeSet::new())
+        .is_some_and(|root| root == Path::new("src/lib.rs"))
+        && super::call_identity::definition_module_path(caller)
+            .is_some_and(|module| module.is_empty());
+    if !is_library_root_item {
+        return false;
+    }
+    let Some(facts) = index.files().get(&test.file) else {
+        return false;
+    };
+    let stripped_file = strip_comments_and_strings(&facts.source);
+    index.package_names.iter().any(|crate_name| {
+        is_qualified_owner_call(call_text, &format!("{crate_name}::{}", caller.name))
+            && !declares_module(&stripped_file, crate_name)
+            && !body_binds_owner_name(&test.body, crate_name)
+            && !super::owner_pin::file_renames_to(&facts.source, crate_name)
     })
 }
 

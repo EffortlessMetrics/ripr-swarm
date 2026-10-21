@@ -11170,6 +11170,13 @@ tests = [
   "crates/ripr/tests/helper_wrapper_reach.rs::weak_oracle_does_not_lift_the_effect_target_rule",
   "crates/ripr/tests/helper_wrapper_reach.rs::effect_macro_exception_needs_every_hop_through_the_macro",
   "crates/ripr/tests/helper_wrapper_reach.rs::user_type_between_owner_and_caller_abstains",
+  "crates/ripr/tests/crate_qualified_entry_reach.rs::imported_spelling_is_the_linked_baseline",
+  "crates/ripr/tests/crate_qualified_entry_reach.rs::own_crate_qualified_entry_call_links",
+  "crates/ripr/tests/crate_qualified_entry_reach.rs::another_crate_qualifier_does_not_link",
+  "crates/ripr/tests/crate_qualified_entry_reach.rs::a_longer_path_does_not_link",
+  "crates/ripr/tests/crate_qualified_entry_reach.rs::a_test_module_named_like_the_crate_does_not_link",
+  "crates/ripr/tests/crate_qualified_entry_reach.rs::a_renamed_import_of_the_crate_name_does_not_link",
+  "crates/ripr/tests/crate_qualified_entry_reach.rs::an_entry_outside_the_crate_root_does_not_link",
 ]
 fixtures = [
   "fixtures/one_hop_field_projection",
