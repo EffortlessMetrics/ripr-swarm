@@ -1718,6 +1718,8 @@ mod tests {
         Ok(())
     }
 
+    /// Plainness now comes from `non_plain_drop_types`, the per-source scan the
+    /// run-scoped index is built from (#9209); the table is unchanged.
     #[test]
     fn a_drop_impl_with_a_body_is_not_plain() {
         let plain =
@@ -1778,7 +1780,7 @@ mod tests {
     /// returned record type.
     #[test]
     fn drop_plainness_scans_the_corpus_once_per_index() -> Result<(), String> {
-        let index = drop_index(&[
+        let mut index = drop_index(&[
             ("src/a.rs", "pub struct Row { pub total: u32 }\n"),
             (
                 "src/b.rs",
@@ -1799,7 +1801,19 @@ mod tests {
         }
         let scans = DROP_SCAN_COUNT.with(|count| count.get());
         if scans != 3 {
-            return Err(format!("expected one scan per file (3), saw {scans}"));
+            return Err(format!(
+                "expected one scan per file (3) after 150 lookups, saw {scans}; \
+                 a per-lookup rebuild would give 450"
+            ));
+        }
+        // Mutation invalidates the memo: the next lookup rebuilds (3 more).
+        index.call_identity_memos.clear();
+        if !drop_is_plain(&index, "Row") {
+            return Err("Row should stay plain after a rebuild".to_string());
+        }
+        let rebuilt = DROP_SCAN_COUNT.with(|count| count.get());
+        if rebuilt != 6 {
+            return Err(format!("expected a rebuild after clear (6), saw {rebuilt}"));
         }
         Ok(())
     }
