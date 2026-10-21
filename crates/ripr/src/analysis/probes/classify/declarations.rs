@@ -40,6 +40,58 @@ pub(super) fn type_bound_lines(
         .collect()
 }
 
+/// Whether each line touches a type-bound construct, even when the line also
+/// holds other code (`fn f<T: Clone>(`, `where T: Clone {`, `x: impl Clone,`).
+/// Overlap, not containment: grouping a wrapped signature's lines must never
+/// drop a bound that shares a line with parameters or the body opener. A
+/// failed parse or unreadable line fails closed to `true` (#8999).
+pub(super) fn header_bound_lines(
+    source: &str,
+    lines: &[crate::analysis::diff::ChangedLine],
+) -> Vec<bool> {
+    let Some(parse) = parse_clean_source_file(source) else {
+        return vec![true; lines.len()];
+    };
+    let root = parse.tree();
+    let bounds = root
+        .syntax()
+        .descendants()
+        .filter(|node| {
+            ast::WhereClause::can_cast(node.kind())
+                || ast::WherePred::can_cast(node.kind())
+                || ast::TypeBoundList::can_cast(node.kind())
+        })
+        .map(|node| {
+            let range = node.text_range();
+            u32::from(range.start()) as usize..u32::from(range.end()) as usize
+        })
+        .collect::<Vec<_>>();
+    // Line start offsets once, so the pass stays linear in the file.
+    let starts = std::iter::once(0)
+        .chain(source.match_indices('\n').map(|(at, _)| at + 1))
+        .collect::<Vec<_>>();
+    lines
+        .iter()
+        .map(|line| {
+            let Some(&start) = line
+                .new_side_line
+                .checked_sub(1)
+                .and_then(|at| starts.get(at))
+            else {
+                return true;
+            };
+            let end = starts
+                .get(line.new_side_line)
+                .copied()
+                .unwrap_or(source.len());
+            let range = start..end;
+            bounds
+                .iter()
+                .any(|bound| bound.start < range.end && range.start < bound.end)
+        })
+        .collect()
+}
+
 /// This fallback is used only after ordinary parser-owned expressions have
 /// been considered. It never promotes exposure or drops the changed source.
 /// Exact current-line equality prevents borrowing new-side context for a

@@ -9,7 +9,7 @@ use super::binding_predicate::{
     resolve_changed_binding_uses,
 };
 use super::classify::{
-    added_type_bound_lines, is_structural_delimiter_line,
+    added_header_bound_lines, added_type_bound_lines, is_structural_delimiter_line,
     parser_probe_shapes_for_changed_line_against, removed_type_bounds, should_ignore_changed_line,
 };
 use super::expectations::{expected_sinks, required_oracles};
@@ -194,7 +194,7 @@ pub(crate) fn probes_for_file_with_relations(
     // Type-bound lines of a wrapped signature are declarations of their own
     // (one visible `static_unknown` each) and are never grouped away; parsed
     // lazily, only when a line sits in a wrapped signature (#8999).
-    let signature_bounds = std::cell::OnceCell::<Vec<bool>>::new();
+    let signature_cx = SignatureContext::default();
     for (added_index, added) in changed.added_lines.iter().enumerate() {
         let text = added.text.trim();
         // Blank and comment-only lines are never probed. The other
@@ -235,9 +235,21 @@ pub(crate) fn probes_for_file_with_relations(
         if should_ignore_changed_line(text) {
             continue;
         }
-        if opens_new_function_with_added_body(index, changed, added_index, &signature_bounds)
-            || continues_changed_signature(index, changed, added_index, &probes, &signature_bounds)
+        if opens_new_function_with_added_body(index, changed, added_index, &signature_cx) {
+            continue;
+        }
+        if let Some(carrier) =
+            signature_carrier_probe(index, changed, added_index, &probes, &signature_cx)
         {
+            // Same logical declaration change: the retained probe carries this
+            // line's new text and its old counterpart so no edited parameter
+            // loses its evidence.
+            let counterpart = replaced_line_counterpart(added.new_side_line, changed);
+            let probe = &mut probes[carrier].probe;
+            append_signature_text(&mut probe.after, text);
+            if let Some(counterpart) = counterpart.as_deref() {
+                append_signature_text(&mut probe.before, counterpart);
+            }
             continue;
         }
         let propagation_subject = propagation_subjects.get(&added.new_side_line);
@@ -1038,6 +1050,14 @@ fn neutral_spelling(line: &str) -> String {
     out
 }
 
+/// Per-file state for wrapped-signature handling (#8999): header-bound lines
+/// parsed lazily once, and each function's body-opening line found once.
+#[derive(Default)]
+struct SignatureContext {
+    bounds: std::cell::OnceCell<Vec<bool>>,
+    open_lines: std::cell::RefCell<std::collections::BTreeMap<usize, Option<usize>>>,
+}
+
 /// The line holding the body-opening `{` of `function`, when its signature
 /// spans physical lines (`start_line..=open_line`). `None` for a body-less
 /// declaration, a one-line body (`fn f() { x }`) or an unreadable shape: a
@@ -1047,6 +1067,7 @@ fn signature_open_line(
     path: &Path,
     function: &crate::analysis::rust_index::FunctionSummary,
     line: usize,
+    cx: &SignatureContext,
 ) -> Option<usize> {
     /// Bound on the downward walk; a longer header is not grouped.
     const MAX_SIGNATURE_LINES: usize = 64;
@@ -1055,6 +1076,22 @@ fn signature_open_line(
     if line < function.start_line || line - function.start_line > MAX_SIGNATURE_LINES {
         return None;
     }
+    if let Some(found) = cx.open_lines.borrow().get(&function.start_line) {
+        return *found;
+    }
+    let found = scan_signature_open_line(index, path, function, MAX_SIGNATURE_LINES);
+    cx.open_lines
+        .borrow_mut()
+        .insert(function.start_line, found);
+    found
+}
+
+fn scan_signature_open_line(
+    index: &RustIndex,
+    path: &Path,
+    function: &crate::analysis::rust_index::FunctionSummary,
+    max_lines: usize,
+) -> Option<usize> {
     let facts = find_file_facts(index, path)?;
     let count = function.end_line.checked_sub(function.start_line)?;
     // Only a bounded window from the `fn` line is masked (that line starts in
@@ -1065,7 +1102,7 @@ fn signature_open_line(
         .source
         .lines()
         .skip(function.start_line.checked_sub(1)?)
-        .take(count.min(MAX_SIGNATURE_LINES) + 1)
+        .take(count.min(max_lines) + 1)
         .collect::<Vec<_>>()
         .join("\n");
     let masked = mask_comments_and_strings(&window);
@@ -1096,18 +1133,18 @@ fn opens_new_function_with_added_body(
     index: &RustIndex,
     changed: &ChangedFile,
     added_index: usize,
-    signature_bounds: &std::cell::OnceCell<Vec<bool>>,
+    cx: &SignatureContext,
 ) -> bool {
     let line = changed.added_lines[added_index].new_side_line;
     let Some(function) = find_owner_function(index, &changed.path, line) else {
         return false;
     };
-    let Some(open_line) = signature_open_line(index, &changed.path, function, line) else {
+    let Some(open_line) = signature_open_line(index, &changed.path, function, line, cx) else {
         return false;
     };
     line <= open_line
         && function.end_line > open_line
-        && !is_signature_type_bound(index, changed, added_index, signature_bounds)
+        && !is_signature_type_bound(index, changed, added_index, cx)
         && changed
             .added_lines
             .iter()
@@ -1123,35 +1160,29 @@ fn opens_new_function_with_added_body(
         })
 }
 
-/// Whether an earlier added line of the same multi-line signature already
-/// carries the signature's probe, so this physical line is the same logical
-/// declaration change rather than a second one (#8999). The first retained
-/// line keeps the probe (its id and span stay stable); only lines of one
-/// function's header from `fn` through the body-opening line group.
-fn continues_changed_signature(
+/// The position of the emitted probe that already carries this multi-line
+/// signature's change, when this added line is a later physical line of the
+/// same declaration (#8999). The first retained line keeps the probe (its id
+/// and span stay stable); only lines of one function's header from `fn`
+/// through the body-opening line group. Reads emitted probes, never assumes
+/// one: a carrier line a later filter dropped leaves this line its own probe.
+fn signature_carrier_probe(
     index: &RustIndex,
     changed: &ChangedFile,
     added_index: usize,
     emitted: &[SeededProbe],
-    signature_bounds: &std::cell::OnceCell<Vec<bool>>,
-) -> bool {
+    cx: &SignatureContext,
+) -> Option<usize> {
     let line = changed.added_lines[added_index].new_side_line;
-    let Some(function) = find_owner_function(index, &changed.path, line) else {
-        return false;
-    };
-    let Some(open_line) = signature_open_line(index, &changed.path, function, line) else {
-        return false;
-    };
+    let function = find_owner_function(index, &changed.path, line)?;
+    let open_line = signature_open_line(index, &changed.path, function, line, cx)?;
     if line > open_line
         || line <= function.start_line
-        || is_signature_type_bound(index, changed, added_index, signature_bounds)
+        || is_signature_type_bound(index, changed, added_index, cx)
     {
-        return false;
+        return None;
     }
-    // Group only into a probe that was actually emitted: a carrier line that
-    // a later filter dropped (block comment, ignored text) must not leave the
-    // signature with no probe at all.
-    emitted.iter().any(|seeded| {
+    emitted.iter().position(|seeded| {
         let carried = seeded.probe.location.line;
         carried >= function.start_line
             && carried < line
@@ -1159,26 +1190,41 @@ fn continues_changed_signature(
                 .added_lines
                 .iter()
                 .position(|other| other.new_side_line == carried)
-                .is_some_and(|earlier| {
-                    !is_signature_type_bound(index, changed, earlier, signature_bounds)
-                })
+                .is_some_and(|earlier| !is_signature_type_bound(index, changed, earlier, cx))
     })
 }
 
-/// Whether added line `added_index` is a generic or `where` type-bound
-/// declaration: it keeps its own `static_unknown` probe (a changed bound is
-/// disclosed) instead of being grouped into the signature's.
+/// Append one grouped signature line's text to a retained probe's before/after
+/// evidence, space-separated like the original parameter list.
+fn append_signature_text(slot: &mut Option<String>, text: &str) {
+    let text = text.trim();
+    if text.is_empty() {
+        return;
+    }
+    match slot {
+        Some(existing) => {
+            existing.push(' ');
+            existing.push_str(text);
+        }
+        None => *slot = Some(text.to_string()),
+    }
+}
+
+/// Whether added line `added_index` touches a type bound anywhere on the line
+/// (`where`, a bound predicate, `<T: Clone>`, `impl Trait`): such a line keeps
+/// its own probe so a changed bound is disclosed, and a bound sharing a line
+/// with parameters or the body opener is never grouped away.
 fn is_signature_type_bound(
     index: &RustIndex,
     changed: &ChangedFile,
     added_index: usize,
-    signature_bounds: &std::cell::OnceCell<Vec<bool>>,
+    cx: &SignatureContext,
 ) -> bool {
-    signature_bounds
-        .get_or_init(|| added_type_bound_lines(index, changed))
+    cx.bounds
+        .get_or_init(|| added_header_bound_lines(index, changed))
         .get(added_index)
         .copied()
-        .unwrap_or(false)
+        .unwrap_or(true)
 }
 
 /// Whether `text` holds `fn <name>` (raw `r#` spelling included).
@@ -4248,6 +4294,64 @@ mod tests {
             .map(|probe| probe.location.line)
             .collect::<Vec<_>>();
         assert_eq!(lines, vec![2], "{probes:?}");
+        // The retained probe carries every grouped line's new text and old
+        // counterpart, so the second edited parameter keeps its evidence.
+        let after = probes[0].after.as_deref().unwrap_or_default();
+        let before = probes[0].before.as_deref().unwrap_or_default();
+        assert!(
+            after.contains("amount: u32,") && after.contains("years: u8,"),
+            "{probes:?}"
+        );
+        assert!(
+            before.contains("amount: u64,") && before.contains("years: u32,"),
+            "{probes:?}"
+        );
+    }
+
+    fn all_added_probes(source: &str) -> Vec<Probe> {
+        let path = PathBuf::from("src/lib.rs");
+        let mut index = RustIndex::default();
+        index.insert_file_only(
+            path.clone(),
+            crate::analysis::rust_index::summarize_file(path.clone(), source.to_string()),
+        );
+        let added_lines = source
+            .lines()
+            .enumerate()
+            .map(|(offset, text)| ChangedLine {
+                line: offset + 1,
+                new_side_line: offset + 1,
+                text: text.to_string(),
+            })
+            .collect();
+        let changed = ChangedFile {
+            path,
+            added_lines,
+            removed_lines: Vec::new(),
+        };
+        probes_for_file(Path::new("workspace"), &changed, &index)
+    }
+
+    /// #8999 review: a bound that shares a line with parameters or the body
+    /// opener is not grouped away from a new wrapped function.
+    #[test]
+    fn probes_for_file_keeps_bound_sharing_a_header_line_in_new_wrapped_function() {
+        let generic = all_added_probes("fn f<T: Clone>(\n    a: T,\n) -> T {\n    a.clone()\n}\n");
+        assert!(
+            generic.iter().any(|probe| probe.location.line == 1),
+            "inline generic bound lost: {generic:?}"
+        );
+        let opener =
+            all_added_probes("fn f<T>(\n    a: T,\n) -> T\nwhere T: Clone {\n    a.clone()\n}\n");
+        assert!(
+            opener.iter().any(|probe| probe.location.line == 4),
+            "where bound sharing the body opener lost: {opener:?}"
+        );
+        // Control: the plain parameter and return lines are still grouped away.
+        assert!(
+            generic.iter().all(|probe| probe.location.line != 2),
+            "{generic:?}"
+        );
     }
 
     /// #8999 negative: grouping stops at the signature. A changed body line
@@ -4334,7 +4438,7 @@ mod tests {
             crate::analysis::rust_index::summarize_file(path.clone(), source.to_string()),
         );
         let function = find_owner_function(&index, &path, line)?;
-        signature_open_line(&index, &path, function, line)
+        signature_open_line(&index, &path, function, line, &SignatureContext::default())
     }
 
     /// #8999 review: the signature extent is claimed only when unambiguous.
