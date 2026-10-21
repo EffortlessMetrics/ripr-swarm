@@ -5187,7 +5187,9 @@ mod source_currentness_tests {
             removed_lines: vec![macro_line(3, "#[derive(Clone)]")],
         };
         let probes = probes_for_file(Path::new("workspace"), &both, &index);
-        assert_eq!(probes.len(), 2, "{probes:?}");
+        // A positionally paired edit reads as one probe carrying both sides.
+        assert_eq!(probes.len(), 1, "{probes:?}");
+        assert_eq!(probes[0].before.as_deref(), Some("#[derive(Clone)]"));
         assert!(
             probes
                 .iter()
