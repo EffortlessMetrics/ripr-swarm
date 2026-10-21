@@ -525,6 +525,151 @@ mod tests {
         assert!(report.warnings[0].contains("expected check output object with findings array"));
     }
 
+    #[test]
+    fn typescript_limitation_samples_are_stable_across_permutations() -> Result<(), String> {
+        // Include both sides of the cap: sorting the first three encountered
+        // samples would pass the small cases but lose different rows at four.
+        let findings: Vec<Value> = ["a", "b", "c", "d", "e"]
+            .into_iter()
+            .map(|id| {
+                serde_json::json!({
+                    "id": id,
+                    "language": "typescript",
+                    "probe": {"file": format!("src/{id}.ts"), "line": 7},
+                    "static_limit_kind": "missing_import_graph",
+                    "evidence": [
+                        "typescript_limitation: typescript_import_graph_unresolved",
+                        "typescript_limitation: typescript_import_graph_unresolved"
+                    ]
+                })
+            })
+            .collect();
+        for count in 0..=findings.len() {
+            assert_sample_permutations(&findings[..count])?;
+            let report = report_for_findings(&findings[..count]);
+            assert_eq!(report.summary.findings_total, count);
+            assert_eq!(report.summary.typescript_family_findings_total, count);
+            assert_eq!(report.summary.limitations_total, count);
+            if count == 0 {
+                assert!(report.limitations.is_empty());
+                continue;
+            }
+            assert_eq!(report.limitations.len(), 1);
+            let entry = &report.limitations[0];
+            assert_eq!(entry.kind, "typescript_import_graph_unresolved");
+            assert_eq!(entry.count, count);
+            assert_eq!(
+                entry.sources,
+                ["static_limit_kind", "typescript_limitation"]
+            );
+            assert_eq!(
+                entry
+                    .samples
+                    .iter()
+                    .map(|sample| sample.finding_id.as_str())
+                    .collect::<Vec<_>>(),
+                ["a", "b", "c"][..count.min(3)]
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn typescript_limitation_samples_use_all_fields_and_keep_duplicates() -> Result<(), String> {
+        // Same finding ID is accepted input, not a request to mint or dedup IDs.
+        // Every serialized field must break ties, including missing locations.
+        let findings = [
+            serde_json::json!({"id":"same", "language":"javascript", "probe":{}}),
+            serde_json::json!({"id":"same", "language":"javascript", "probe":{"file":"a.ts"}}),
+            serde_json::json!({"id":"same", "language":"javascript", "probe":{"file":"a.ts", "line":1}}),
+            serde_json::json!({"id":"same", "language":"javascript", "probe":{"file":"a.ts", "line":2}}),
+            serde_json::json!({"id":"same", "language":"typescript", "probe":{}}),
+        ].map(|mut finding| {
+            finding["evidence"] = serde_json::json!([
+                "typescript_limitation: typescript_import_graph_unresolved"
+            ]);
+            finding
+        });
+        assert_sample_permutations(&findings)?;
+        let report = report_for_findings(&findings);
+        assert_eq!(report.limitations[0].count, 5);
+        assert_eq!(
+            report.limitations[0].samples,
+            vec![
+                TypeScriptLimitationSample {
+                    finding_id: "same".into(),
+                    language: "javascript".into(),
+                    file: None,
+                    line: None
+                },
+                TypeScriptLimitationSample {
+                    finding_id: "same".into(),
+                    language: "javascript".into(),
+                    file: Some("a.ts".into()),
+                    line: None
+                },
+                TypeScriptLimitationSample {
+                    finding_id: "same".into(),
+                    language: "javascript".into(),
+                    file: Some("a.ts".into()),
+                    line: Some(1)
+                },
+            ]
+        );
+        let duplicates = vec![findings[0].clone(); 4];
+        let duplicate_report = report_for_findings(&duplicates);
+        assert_eq!(duplicate_report.limitations[0].count, 4);
+        assert_eq!(duplicate_report.limitations[0].samples.len(), 3);
+        assert!(
+            duplicate_report.limitations[0]
+                .samples
+                .iter()
+                .all(|sample| sample == &report.limitations[0].samples[0])
+        );
+        Ok(())
+    }
+
+    fn report_for_findings(findings: &[Value]) -> TypeScriptLimitationLeaderboardReport {
+        build_typescript_limitation_leaderboard_report(TypeScriptLimitationLeaderboardInput {
+            root: ".".to_string(),
+            generated_at: "123".to_string(),
+            check_output_path: "check.json".to_string(),
+            check_output_json: Ok(serde_json::json!({"findings": findings}).to_string()),
+        })
+    }
+
+    fn assert_sample_permutations(findings: &[Value]) -> Result<(), String> {
+        let expected = report_for_findings(findings);
+        let json = render_typescript_limitation_leaderboard_json(&expected)?;
+        let markdown = render_typescript_limitation_leaderboard_markdown(&expected);
+        fn visit(
+            findings: &mut [Value],
+            at: usize,
+            json: &str,
+            markdown: &str,
+        ) -> Result<(), String> {
+            if at == findings.len() {
+                let report = report_for_findings(findings);
+                assert_eq!(
+                    render_typescript_limitation_leaderboard_json(&report)?,
+                    json
+                );
+                assert_eq!(
+                    render_typescript_limitation_leaderboard_markdown(&report),
+                    markdown
+                );
+                return Ok(());
+            }
+            for index in at..findings.len() {
+                findings.swap(at, index);
+                visit(findings, at + 1, json, markdown)?;
+                findings.swap(at, index);
+            }
+            Ok(())
+        }
+        visit(&mut findings.to_vec(), 0, &json, &markdown)
+    }
+
     fn sample_check_output() -> String {
         r#"{
   "findings": [
