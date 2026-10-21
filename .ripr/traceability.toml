@@ -16950,10 +16950,11 @@ metrics = [
 
 [[behavior]]
 id = "RIPR-SPEC-0289"
-name = "Edit-cage parse-error refusal leads with the plain fix-the-syntax-error hint"
+name = "Edit-cage selected-file parse refusal gives conditional restart guidance"
 spec = "docs/specs/RIPR-SPEC-0289-edit-cage-parse-error-hint.md"
 tests = [
-  "crates/ripr/src/cli/commands/agent.rs::tests::unparseable_new_test_refusal_leads_with_the_plain_hint",
+  "crates/ripr/src/cli/commands/agent.rs::tests::unparseable_selected_file_refusal_leads_with_the_plain_hint",
+  "crates/ripr/tests/cli_smoke/selected_file_parse_refusal.rs::selected_file_parse_refusal_reaches_actual_consumers",
   "crates/ripr/src/cli/commands/agent.rs::tests::other_inline_region_refusals_do_not_lead_with_the_parse_hint",
 ]
 fixtures = []

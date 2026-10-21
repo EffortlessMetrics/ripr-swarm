@@ -2298,11 +2298,8 @@ fn authored_test_changed(
 /// baseline born ambiguous when one was — and the fresh-attempt route from a
 /// clean state.
 ///
-/// #8991: when the refusal is the inline-region cage reporting that the
-/// attempt's newly written test does not parse, the first line is the plain
-/// "the test written for this attempt does not parse — fix the syntax error
-/// and start the attempt again." statement; the refused-path listing and the
-/// bounded-recovery detail below it are unchanged.
+/// #8991: a whole-file parse or analysis-budget refusal leads with an
+/// actionable hint without attributing the failure to a newly written test.
 fn repair_after_cage_recovery_lines(
     root: &Path,
     store: Option<&Path>,
@@ -2318,19 +2315,17 @@ fn repair_after_cage_recovery_lines(
     }
     let attempt_id = after.attempt_id.as_str();
     let mut lines = Vec::new();
-    // #8991: when the cage refusal is that the attempt's newly written test
-    // does not parse, lead with the plain statement — the user just wrote
-    // the test and needs the syntax error named, not only the region
-    // machinery and the line-ending recovery. The bounded-recovery detail
-    // below is unchanged.
+    // The observer parses the whole selected file with a nesting budget.
+    // Its unparseable label establishes neither a test-local cause nor a
+    // syntax error, so the restart advice preserves that uncertainty.
     if after
         .verdict
         .violations
         .iter()
-        .any(crate::edit_cage::refusal_is_unparseable_new_test)
+        .any(crate::edit_cage::refusal_is_unparseable_selected_file)
     {
         lines.push(
-            "the test written for this attempt does not parse — fix the syntax error and start the attempt again."
+            "the selected file could not be parsed for the inline test region (syntax errors or an analysis limit); if there is a syntax error, fix it, then start a new attempt."
                 .to_string(),
         );
     }
@@ -4047,13 +4042,10 @@ mod tests {
         Ok(())
     }
 
-    /// #8991: when the cage refusal is that the attempt's newly written test
-    /// does not parse, the narration leads with the plain
-    /// fix-the-syntax-error statement, and the existing bounded-recovery
-    /// detail — the refused-path listing, the region observation, and the
-    /// CRLF-aware undo route — still follows verbatim below it.
+    /// Whole-file parse refusal retains conditional syntax/restart advice
+    /// and the bounded recovery detail without unsupported test attribution.
     #[test]
-    fn unparseable_new_test_refusal_leads_with_the_plain_hint() -> Result<(), String> {
+    fn unparseable_selected_file_refusal_leads_with_the_plain_hint() -> Result<(), String> {
         let after = crate::app::repair_attempt::RepairAttemptAfter {
             attempt_id: crate::app::repair_attempt::RepairAttemptId::parse(
                 "repair-attempt-0123456789abcdef01234567",
@@ -4084,7 +4076,7 @@ mod tests {
             .ok_or_else(|| "the refusal must narrate at least one line".to_string())?;
         assert_eq!(
             first,
-            "the test written for this attempt does not parse — fix the syntax error and start the attempt again.",
+            "the selected file could not be parsed for the inline test region (syntax errors or an analysis limit); if there is a syntax error, fix it, then start a new attempt.",
             "the refusal must lead with the plain statement: {lines:?}"
         );
         let joined = lines.join("\n");

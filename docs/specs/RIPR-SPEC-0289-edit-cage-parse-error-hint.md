@@ -1,4 +1,4 @@
-# RIPR-SPEC-0289: Edit-cage parse-error refusal leads with the plain fix-the-syntax-error hint
+# RIPR-SPEC-0289: Edit-cage selected-file parse refusal gives conditional restart guidance
 
 Status: proposed
 
@@ -20,129 +20,103 @@ Linked plan:
 
 Linked issues:
 
-- #8991 (edit-cage parse-error terminal refusal has no "fix the syntax
-  error" hint)
+- #8991 (actionable guidance for the edit-cage unparseable refusal)
 
 Linked PRs:
 
-- None yet
+- #8993
 
 Support-tier impact:
 
-- None. This changes only refusal narration for the agent repair loop; it
-  adds no analyzer claim. Claim boundaries remain governed by
+- None. Refusal narration adds no analyzer claim. See
   [support tiers](../status/SUPPORT_TIERS.md).
 
 Policy impact:
 
-- Register this spec in `policy/doc-artifacts.toml` and
-  `.ripr/traceability.toml`.
-- No new public command. No schema, manifest, or envelope field changes: the
-  refusal narration lines already flow to stderr, the recorded
-  `last_after_refusal.reason`, and the `--json` refusal/failure envelopes'
-  `narration`, so every surface that renders the refusal carries the new
-  first line through the one renderer.
+- Registered in `policy/doc-artifacts.toml` and `.ripr/traceability.toml`.
+- No schema, manifest, envelope field, command or refusal-decision change.
 
 ## Problem
 
-When an agent-repair attempt's newly written test has a parse error, the
-after phase goes terminal with an `OutsideInlineTestRegion ... unparseable`
-refusal. The narration named the refused path and then a long CRLF-oriented
-recovery paragraph, but never said the plain thing the user needs: the test
-they just wrote does not parse — fix the syntax error and start the attempt
-again. The user had to infer the actual problem from the refusal vocabulary
-("unparseable inline test region", line-ending recovery prose) while the
-attempt was already terminal.
+The inline-region observer parses the entire selected file with an analysis
+nesting budget. Its `unparseable` reason can mean malformed tests, malformed
+production with unchanged tests, or syntactically valid source beyond that
+budget. It establishes neither a newly written test nor a test-local syntax
+error. Recovery guidance must help users restart without claiming such a cause.
 
 ## Behavior
 
-### Rule 1: the parse-error refusal leads with the plain statement
+### Rule 1: preserve the observation's uncertainty
 
-When the after-phase verdict refuses the attempt with an
-`OutsideInlineTestRegion` violation whose region-observation detail reports
-`unparseable` (the attempt's newly written test does not parse), the
-recovery narration's first line is:
+An `OutsideInlineTestRegion` violation whose region detail reports
+`unparseable` leads recovery narration with:
 
-> the test written for this attempt does not parse — fix the syntax error
-> and start the attempt again.
+> the selected file could not be parsed for the inline test region (syntax errors or an analysis limit); if there is a syntax error, fix it, then start a new attempt.
 
-The statement names the newly written test specifically; it is not a general
-syntax complaint and does not fire for any other refusal reason.
+Syntax advice is conditional. Other reasons sharing this violation kind,
+including `production_edit`, do not gain the hint.
 
-### Rule 2: the existing bounded-recovery detail stays secondary, verbatim
+### Rule 2: retain bounded recovery
 
-Below the new first line, the narration is unchanged: the refused-path
-listing with the violation's `OutsideInlineTestRegion` reason (including the
-`` `mod <name>`: unparseable `` detail), the terminal-attempt statement, and
-the CRLF-aware undo route (`core.autocrlf` line-ending flip warning,
-`git stash` aside, fresh `--phase before`, `git stash pop`, new `--attempt`
-command). No recovery step, warning, or ordering below the first line
-changes.
+The existing refused-path listing, original region-observation detail,
+terminal-attempt statement and CRLF-aware undo route follow unchanged. The
+hint does not authorize continuing the terminal attempt or changing the cage.
 
-### Rule 3: one renderer owns the wording, so every surface benefits
+### Rule 3: test the actual consumers
 
-The narration is owned by the edit-cage refusal renderer
-(`repair_after_cage_recovery_lines`). The narrated lines are what stderr
-prints, what the after phase records as `last_after_refusal.reason`, and
-what the `--json` `repair_after_refusal` / `repair_after_failure` envelopes
-serialize under `narration`, so the human surface, the recorded refusal
-projected by `ripr agent status`, and the JSON envelopes all carry the new
-first line without per-surface edits. The detection predicate
-(`refusal_is_unparseable_new_test`) is owned beside the violation-reason
-producer in `edit_cage`, which owns the region-observation label vocabulary
-and the `` `mod <name>`: <label> `` detail spelling.
+`repair_after_cage_recovery_lines` owns the narration. The after phase emits
+it on stderr, records it as sentences in `last_after_refusal.reason`, and serializes it in
+the JSON failure envelope's `narration`. `agent status` projects the durable
+refusal. Test these consumers through actual after-phase executions rather
+than assuming parity from a fabricated verdict alone.
 
 ## Required Evidence
 
-- An after phase whose inline-region observation reports `unparseable`
-  narrates the plain first line exactly, followed by the unchanged
-  refused-path listing and the CRLF-aware undo route.
-- An after phase whose inline-region violation names any other reason (for
-  example `production_edit`) does not carry the parse hint and keeps its
-  existing narration.
-- The recorded refusal (`last_after_refusal.reason`) and the `--json`
-  failure envelope's `narration` carry the same first line the human
-  surface prints.
+- Malformed added test, malformed production-only source with the existing
+  inline module byte-identical, and valid over-budget source all produce the
+  conditional hint through actual after-phase stderr, JSON and recording.
+- Raw Rust parsing accepts the over-budget control without syntax errors.
+- An ordinary production edit produces `production_edit`, retains recovery,
+  and has no parse hint on those surfaces.
+- A valid inserted discriminating test completes with a compliant verdict
+  and no recorded refusal.
+- Unit tests pin the literal first line and unchanged recovery detail.
 
 ## Non-Goals
 
-- Changing when the refusal fires, what the cage refuses, or how the
-  inline-region observation reaches the verdict.
-- Changing the CRLF / line-ending recovery behavior, the undo route, or any
-  recovery wording below the new first line.
-- Altering the attempt state machine, the terminal-finish record, the
-  retry budget, or the refusal recording/routing (#8766, RIPR-SPEC-0282).
-- Changing the `Incomparable`-with-empty-violations narration (#7204) or
-  any other refusal family.
-- Changing the violation reason text held in the attempt manifest; only
-  the rendered refusal narration gains the lead line.
+- Changing observer reasons, refusal admission, cage policy, attempt state,
+  retry budget, receipt authority, CRLF handling or the undo route.
+- Diagnosing whether an observed parse refusal is a test or production error,
+  or proving whether a syntax error exists.
+- Changing other refusal families or stored violation reasons.
 
 ## Acceptance Examples
 
-1. A newly written test with a syntax error ends the attempt terminal; the
-   refusal's first line reads "the test written for this attempt does not
-   parse — fix the syntax error and start the attempt again.", and the
-   `unparseable` region detail plus the CRLF-aware undo route still follow.
-2. A production edit beside a valid new test keeps the existing narration
-   with no parse hint.
+1. A malformed added test gets conditional syntax advice and a fresh-attempt
+   route, without attributing the error to a particular test.
+2. Malformed production with unchanged tests gets the same honest hint.
+3. Valid production with 300 nested blocks gets analysis-limit guidance even
+   though raw Rust parsing reports zero syntax errors.
+4. A parseable production edit gets its existing refusal without that hint.
+5. A valid inserted boundary test remains admissible and completes normally.
 
 ## Test Mapping
 
 - `crates/ripr/src/cli/commands/agent.rs`:
-  `unparseable_new_test_refusal_leads_with_the_plain_hint`,
+  `unparseable_selected_file_refusal_leads_with_the_plain_hint`,
   `other_inline_region_refusals_do_not_lead_with_the_parse_hint`.
+- `crates/ripr/tests/cli_smoke/selected_file_parse_refusal.rs`:
+  `selected_file_parse_refusal_reaches_actual_consumers`.
 
 ## Implementation Mapping
 
 - `crates/ripr/src/cli/commands/agent.rs`:
-  `repair_after_cage_recovery_lines` owns the refusal narration and the new
-  lead line.
+  `repair_after_cage_recovery_lines` owns narration.
 - `crates/ripr/src/edit_cage/mod.rs`:
-  `refusal_is_unparseable_new_test` owns the detection predicate beside the
-  `OutsideInlineTestRegion` reason producer (`evaluate_edit_cage`).
-- `docs/REPAIR_ATTEMPT.md`: records the lead line in the terminal-attempt
-  recovery narration contract.
+  `refusal_is_unparseable_selected_file` detects the producer's reason beside
+  `evaluate_edit_cage` without assigning a test-local cause.
+- `docs/REPAIR_ATTEMPT.md`: terminal-attempt recovery contract.
 
 ## Metrics
 
-- `unit_test_pass_rate`: the mapped tests pass. Target: 100 percent.
+- `unit_test_pass_rate`: mapped tests pass. Target: 100 percent.

@@ -113,6 +113,9 @@ mod retained_evidence_guidance;
 mod same_line_owner_tail;
 #[path = "cli_smoke/sample_output.rs"]
 mod sample_output;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/selected_file_parse_refusal.rs"]
+mod selected_file_parse_refusal;
 #[path = "cli_smoke/shell_words.rs"]
 mod shell_words;
 #[cfg(all(unix, feature = "lang-rust"))]
