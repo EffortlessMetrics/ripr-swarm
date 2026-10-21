@@ -892,6 +892,14 @@ mod tests {
             std::process::id(),
             NEXT_ROOT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
+        std::fs::create_dir(&root).ok()?;
+        struct CleanupGuard(PathBuf);
+        impl Drop for CleanupGuard {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _guard = CleanupGuard(root.clone());
         let mut paths = Vec::new();
         for (relative, source) in files {
             let path = root.join(relative);
@@ -899,9 +907,7 @@ mod tests {
             std::fs::write(&path, source).ok()?;
             paths.push(PathBuf::from(*relative));
         }
-        let index = crate::analysis::rust_index::build_index(&root, &paths);
-        let _ = std::fs::remove_dir_all(&root);
-        let index = index.ok()?;
+        let index = crate::analysis::rust_index::build_index(&root, &paths).ok()?;
         let owner = index
             .functions()
             .iter()
