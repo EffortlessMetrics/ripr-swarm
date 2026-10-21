@@ -932,6 +932,100 @@ mod tests {
         })
     }
 
+    // Owner-level cancellation control: no refresh/scheduler or total drain
+    // latency claim. Runtime teardown owns any task left by the outer budget.
+    fn terminal_cancellation_preserves_custody(terminal: &str) -> Result<(), String> {
+        use std::future::Future;
+
+        runtime()?.block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                let (tracker, recorder) = tracker_with_recorder();
+                let sink = Arc::new(HeldProgressSink {
+                    recorder: Arc::clone(&recorder),
+                    hold_begin: true,
+                    entered: tokio::sync::Notify::new(),
+                    release: tokio::sync::Notify::new(),
+                });
+                tracker.install_test_sink(sink.clone());
+                let announcing = Arc::clone(&tracker);
+                let phase = if terminal == "end_queued" {
+                    AnalysisProgressPhase::Queued
+                } else {
+                    AnalysisProgressPhase::Analyzing
+                };
+                let announce = tokio::spawn(async move {
+                    announcing.begin(&test_request(41), phase).await;
+                });
+                sink.entered.notified().await;
+                if recorder.events() != [ProgressEvent::Create { token: progress_token(41) }] {
+                    return Err(format!("SETUP: Begin was not held: {:?}", recorder.events()));
+                }
+
+                // Poll the actual terminal owner exactly to its waiting point.
+                // Dropping this future models cancellation of its awaiting caller.
+                let mut ending = Box::pin(async {
+                    match terminal {
+                        "end" => tracker.end(41, AnalysisProgressEnd::Cancelled).await,
+                        "end_queued" => tracker.end_queued(AnalysisProgressEnd::Cancelled).await,
+                        _ => tracker.end_all(AnalysisProgressEnd::Cancelled).await,
+                    }
+                });
+                let pending = std::future::poll_fn(|cx| {
+                    std::task::Poll::Ready(ending.as_mut().poll(cx).is_pending())
+                }).await;
+                drop(ending);
+                if !pending {
+                    return Err(format!("SETUP: {terminal} did not reach its held-Begin wait"));
+                }
+                sink.release.notify_one();
+                announce.await.map_err(|error| format!("announce failed: {error}"))?;
+                // A cancellation-safe owner may already arrange terminal
+                // delivery itself; only require the released Begin here.
+                if !matches!(recorder.events().as_slice(), [
+                    ProgressEvent::Create { token: create },
+                    ProgressEvent::Begin { token: begin, .. },
+                    ..
+                ] if create == &progress_token(41) && begin == create) {
+                    return Err(format!("SETUP: released Begin did not complete: {:?}", recorder.events()));
+                }
+
+                // Retry the same owner, then both guard-like and whole-tracker
+                // cleanup. Neither absent custody nor a duplicate End may pass.
+                match terminal {
+                    "end" => tracker.end(41, AnalysisProgressEnd::Cancelled).await,
+                    "end_queued" => tracker.end_queued(AnalysisProgressEnd::Cancelled).await,
+                    _ => tracker.end_all(AnalysisProgressEnd::Cancelled).await,
+                }
+                tracker.end(41, AnalysisProgressEnd::Cancelled).await;
+                tracker.end_all(AnalysisProgressEnd::Cancelled).await;
+                let events = recorder.events();
+                if !matches!(events.as_slice(), [
+                    ProgressEvent::Create { token: create },
+                    ProgressEvent::Begin { token: begin, .. },
+                    ProgressEvent::End { token: end, .. },
+                ] if create == &progress_token(41) && begin == create && end == create) {
+                    return Err(format!("{terminal}: canceled terminal owner lost custody or duplicated End: {events:?}"));
+                }
+                Ok(())
+            }).await.map_err(|_elapsed| "terminal cancellation exchange exceeded 5 seconds".to_string())?
+        })
+    }
+
+    #[test]
+    fn terminal_cancellation_end_retains_retry_custody() -> Result<(), String> {
+        terminal_cancellation_preserves_custody("end")
+    }
+
+    #[test]
+    fn terminal_cancellation_queued_drain_retains_retry_custody() -> Result<(), String> {
+        terminal_cancellation_preserves_custody("end_queued")
+    }
+
+    #[test]
+    fn terminal_cancellation_all_drain_retains_retry_custody() -> Result<(), String> {
+        terminal_cancellation_preserves_custody("end_all")
+    }
+
     #[test]
     fn detached_announcement_registers_before_its_task_is_polled() -> Result<(), String> {
         runtime()?.block_on(async {
