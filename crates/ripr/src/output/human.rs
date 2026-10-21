@@ -3643,6 +3643,94 @@ mod tests {
         assert!(digest.contains("  Missing discriminator:"), "{digest}");
     }
 
+    // #9033: a `no_static_path` finding's Evidence block already says
+    // `reach no`, `observation no` and `discriminator no`; the Weakness list
+    // and the digest pointer must not restate them as more problems, but must
+    // keep a distinct entry, and a stage that does not read `no` keeps its
+    // entry. Other classes keep every entry.
+    #[test]
+    fn no_static_path_weakness_list_drops_restated_evidence() -> Result<(), String> {
+        let restated = [
+            "No static test path reaches the changed owner",
+            "No relevant oracle was detected",
+            "No strong discriminator was detected",
+        ];
+        let distinct = "No detected boundary input for the changed predicate";
+        let mut finding = sample_finding();
+        finding.missing = restated
+            .iter()
+            .chain(std::iter::once(&distinct))
+            .map(|line| (*line).to_string())
+            .collect();
+        finding.activation.missing_discriminators.clear();
+        finding.class = ExposureClass::NoStaticPath;
+        let no = |summary: &str| stage(StageState::No, Confidence::Low, summary);
+        finding.ripr.reach = no("No static test path found for the changed owner");
+        finding.ripr.reveal.observe = no("No reachable test oracle found");
+        finding.ripr.reveal.discriminate = no("No assertion can discriminate");
+        // Fixture construction: the Evidence block prints all three stages.
+        let full = render_finding(&finding);
+        for line in [
+            "  - reach no: ",
+            "  - observation no: ",
+            "  - discriminator no: ",
+        ] {
+            if !full.contains(line) {
+                return Err(format!("fixture lost its evidence line {line:?}:\n{full}"));
+            }
+        }
+        let lines = super::evidence_lines::weakness_lines(&finding);
+        assert_eq!(lines, vec![distinct.to_string()], "{lines:?}");
+        if full.contains("  - No relevant oracle was detected")
+            || full.contains("  - No static test path reaches the changed owner")
+        {
+            return Err(format!(
+                "rendered Weakness list kept a restatement:\n{full}"
+            ));
+        }
+        // The digest pointer names an entry the Weakness list still shows.
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+        if !digest.contains(&format!("  Missing discriminator: {distinct}")) {
+            return Err(format!("digest names a dropped entry:\n{digest}"));
+        }
+
+        // A typed static limitation is the analyzer naming what it could not
+        // bind, so the digest labels it as an analyzer limit.
+        let mut limited = finding.clone();
+        limited.missing = vec![
+            "Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established".to_string(),
+        ];
+        limited.activation.missing_discriminators.clear();
+        let digest = super::sections::render_finding_digest_with_config(
+            &limited,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+        if !digest.contains("  Analyzer limit: Typed static limitation (") {
+            return Err(format!("typed limitation lost its label:\n{digest}"));
+        }
+
+        // A stage that is not `no` keeps its entry.
+        finding.ripr.reveal.observe = stage(StageState::Unknown, Confidence::Low, "unknown");
+        let lines = super::evidence_lines::weakness_lines(&finding);
+        if !lines
+            .iter()
+            .any(|line| line == "No relevant oracle was detected")
+        {
+            return Err(format!("an unknown observation lost its entry: {lines:?}"));
+        }
+
+        // Other classes keep every entry.
+        finding.class = ExposureClass::ReachableUnrevealed;
+        let lines = super::evidence_lines::weakness_lines(&finding);
+        assert_eq!(lines.len(), 4, "other classes keep every entry: {lines:?}");
+        Ok(())
+    }
+
     // #3317 follow-up (RIPR-SPEC-0162): the why-hint must not assert the
     // propagation the class marks unknown, and unknown-class limitation
     // prose renders under the Analyzer limit label — while a real

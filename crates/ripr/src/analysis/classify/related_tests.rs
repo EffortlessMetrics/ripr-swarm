@@ -1027,7 +1027,15 @@ fn find_related_tests_with_candidates<'a>(
             test.calls.iter().any(|call| {
                 chain.hops.iter().any(|hop| {
                     hop.caller.name == call.name
-                        && super::helper_transfer::is_direct_call_site(&call.text, &hop.caller.name)
+                        && (super::helper_transfer::is_direct_call_site(
+                            &call.text,
+                            &hop.caller.name,
+                        ) || own_crate_qualified_entry_call(
+                            index,
+                            test,
+                            &hop.caller,
+                            &call.text,
+                        ))
                         // #6780 Devin review: a test-local closure or nested
                         // fn named like the hop caller shadows it, so the
                         // call never reaches the helper.
@@ -1646,6 +1654,143 @@ fn declares_module(stripped: &str, name: &str) -> bool {
         previous_is_mod = word == "mod";
         found
     })
+}
+
+/// Whether comment-and-string-stripped `source` may bind `name` to something
+/// other than a crate: an item (`mod`/`fn`/`struct`/`enum`/`union`/`trait`/
+/// `type`/`const`/`static`) or a `let`/`mut` binding named `name`, a closure
+/// parameter (`|name|`) or a typed parameter/field (`name:` but not `name::`).
+/// Conservative on purpose: any such mention refuses.
+fn file_may_bind_name(stripped: &str, name: &str) -> bool {
+    const BINDERS: [&str; 11] = [
+        "mod", "fn", "struct", "enum", "union", "trait", "type", "const", "static", "let", "mut",
+    ];
+    let bytes = stripped.as_bytes();
+    let mut previous_word = "";
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if !is_ident_char(char::from(bytes[index])) {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < bytes.len() && is_ident_char(char::from(bytes[index])) {
+            index += 1;
+        }
+        let mut word = &stripped[start..index];
+        // `r#name` is the identifier `name`: read it as one word.
+        if word == "r"
+            && bytes.get(index) == Some(&b'#')
+            && bytes
+                .get(index + 1)
+                .is_some_and(|byte| is_ident_char(char::from(*byte)))
+        {
+            index += 1;
+            let raw_start = index;
+            while index < bytes.len() && is_ident_char(char::from(bytes[index])) {
+                index += 1;
+            }
+            word = &stripped[raw_start..index];
+        }
+        if word == name {
+            let before = stripped[..start].trim_end().chars().next_back();
+            let after = stripped[index..].trim_start();
+            if BINDERS.contains(&previous_word)
+                || before == Some('|')
+                || (after.starts_with(':') && !after.starts_with("::"))
+            {
+                return true;
+            }
+        }
+        previous_word = word;
+    }
+    false
+}
+
+/// #8999: whether `call_text` is an integration test's call of the helper
+/// chain's entry `caller`, spelled through the package's own library name
+/// (`rr::order_discount(..)` with no `use`).
+///
+/// Fail-closed admit, only for the one shape whose identity is established:
+/// the test sits under `tests/` of the root package, the entry is a
+/// module-level item of that package's `src/lib.rs` (a recognized library
+/// root, so a binary's modules never match), and the call is spelled exactly
+/// `<crate>::<entry>(` with `<crate>` the root manifest's library identifier
+/// (`[lib] name`, else the package name). A test that declares, renames or imports that crate name
+/// (or globs anything), binds it locally, or any workspace member / nested
+/// package / absolute path keeps the existing refusal.
+fn own_crate_qualified_entry_call(
+    index: &RustIndex,
+    test: &TestSummary,
+    caller: &FunctionSummary,
+    call_text: &str,
+) -> bool {
+    if !super::call_identity::under_tests_dir(&test.file)
+        || path_is_absolute_form(&test.file)
+        || path_is_absolute_form(&caller.file)
+        || package_prefix(&test.file).is_some()
+        || package_prefix(&caller.file).is_some()
+    {
+        return false;
+    }
+    let is_library_root_item = super::owner_pin::target_root(&caller.file, index, &BTreeSet::new())
+        .is_some_and(|root| root == Path::new("src/lib.rs"))
+        && super::call_identity::definition_module_path(caller)
+            .is_some_and(|module| module.is_empty());
+    if !is_library_root_item {
+        return false;
+    }
+    // Only a test-crate root (`tests/<name>.rs`, `tests/<name>/main.rs`):
+    // a module child (`tests/api/child.rs`, `tests/common/mod.rs`) resolves
+    // paths from a parent file whose bindings this scan does not read.
+    let normalized_test = normalize_path(&test.file);
+    let test_segments: Vec<&str> = normalized_test.split('/').collect();
+    let is_test_crate_root = match test_segments.as_slice() {
+        ["tests", file] => file.ends_with(".rs"),
+        ["tests", _, "main.rs"] => true,
+        _ => false,
+    };
+    if !is_test_crate_root {
+        return false;
+    }
+    let Some(facts) = index.files().get(&test.file) else {
+        return false;
+    };
+    if facts.source.contains("include!") {
+        return false;
+    }
+    // The one identifier the package's library is imported as: `[lib] name`
+    // when set, else the package name (hyphens folded). The package name is
+    // not a second spelling when `[lib] name` differs.
+    let Some(crate_name) = index.root_library_name.as_deref() else {
+        return false;
+    };
+    let stripped_file = strip_comments_and_strings(&facts.source);
+    // Any import that may bind the crate name to something else, in the
+    // file or in the test body: a glob, or a path ending in that name
+    // (`use some_dep::qual_reach;`). `as` renames are read by
+    // `file_renames_to`.
+    let may_rebind_crate_name = |source: &str| {
+        super::reveal::flattened_use_paths(source)
+            .iter()
+            .any(|import| {
+                let unraw = |name: &str| name.strip_prefix("r#").unwrap_or(name).to_string();
+                import.path.ends_with('*')
+                    || import.path.rsplit("::").next().map(unraw).as_deref() == Some(crate_name)
+                    || import.alias.as_deref().map(unraw).as_deref() == Some(crate_name)
+            })
+    };
+    // The call fact's text is the whole source line: match the own-crate
+    // spelling only in code, never in a string or comment beside a foreign
+    // call of the same name.
+    let code_line = mask_comments_and_strings(call_text);
+    is_qualified_owner_call(&code_line, &format!("{crate_name}::{}", caller.name))
+        && !file_may_bind_name(&stripped_file, crate_name)
+        && !body_binds_owner_name(&test.body, crate_name)
+        && !super::owner_pin::file_renames_to(&facts.source, crate_name)
+        && !super::owner_pin::file_renames_to(&facts.source, &format!("r#{crate_name}"))
+        && !may_rebind_crate_name(&facts.source)
+        && !may_rebind_crate_name(&test.body)
 }
 
 /// Whether `text` invokes the owner through the dependency's declared name,

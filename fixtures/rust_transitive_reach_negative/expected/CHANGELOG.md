@@ -374,3 +374,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_transitive_reach_negative (18)
+
+Reason:
+RIPR-SPEC-0122: no_static_path Weakness list no longer restates the Evidence block (#9033)
+
+Command:
+`cargo xtask goldens bless rust_transitive_reach_negative --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
