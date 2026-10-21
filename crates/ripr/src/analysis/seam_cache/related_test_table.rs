@@ -691,6 +691,22 @@ pub(super) mod tests {
             2,
             "a warm seam must carry the cold contradiction count"
         );
+        // Zero is a real count, stored and decoded as zero.
+        let zero = serde_json::to_value(Body {
+            seams: vec![seam(2, Vec::new())],
+        })
+        .map_err(|err| err.to_string())?;
+        assert_eq!(
+            zero["seams"]["seams"][0]["evidence"]["statically_contradicted_related_tests"],
+            0
+        );
+        let decoded_zero: Body = serde_json::from_value(zero).map_err(|err| err.to_string())?;
+        assert_eq!(
+            decoded_zero.seams[0]
+                .evidence
+                .statically_contradicted_related_tests,
+            0
+        );
         let mut stale = encoded;
         let Some(evidence) = stale["seams"]["seams"][0]["evidence"].as_object_mut() else {
             return Err("missing evidence object".to_owned());
