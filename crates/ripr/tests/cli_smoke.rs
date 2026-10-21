@@ -15288,7 +15288,10 @@ fn baseline_create_writes_reviewed_ledger_and_refuses_overwrite() -> Result<(), 
     assert_eq!(recovered["entries"].as_array().map(Vec::len), Some(1));
     // A retry has a fresh timestamp; its debt identity and evidence must match.
     for field in ["identity", "evidence", "decision", "path"] {
-        assert_eq!(recovered["entries"][0][field], original["entries"][0][field]);
+        assert_eq!(
+            recovered["entries"][0][field],
+            original["entries"][0][field]
+        );
     }
     assert!(!workspace.join(".ripr/gate-baseline.json").exists());
 
