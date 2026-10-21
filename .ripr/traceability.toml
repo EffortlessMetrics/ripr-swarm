@@ -17034,3 +17034,22 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0292"
+name = "Mutation spot check calibration-schema admission"
+spec = "docs/specs/RIPR-SPEC-0292-spot-check-schema-admission.md"
+tests = [
+  "xtask/src/reports/mutation_spot_check.rs::tests::calibration_schema_0_3_classifies_and_unknown_versions_are_refused",
+  "xtask/src/reports/mutation_spot_check.rs::tests::calibration_without_span_joins_or_with_missing_records_is_refused",
+]
+fixtures = []
+code = [
+  "xtask/src/reports/mutation_spot_check.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0292-spot-check-schema-admission.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
