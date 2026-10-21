@@ -14,6 +14,8 @@
 //! user's interpreter or `npm install`, and static movement is a separate
 //! axis from project verification.
 
+#![cfg(any(feature = "lang-python", feature = "lang-typescript"))]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -23,16 +25,26 @@ mod common;
 
 use common::fixture_git::{fixture_git_ok, fixture_git_output};
 
+/// Owns a launch directory and removes the whole tree on success and on every
+/// early error.
+struct TempDirGuard(PathBuf);
+
+impl Drop for TempDirGuard {
+    fn drop(&mut self) {
+        if let Ok(()) = std::fs::remove_dir_all(&self.0) {}
+    }
+}
+
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-fn temp_dir(label: &str) -> Result<PathBuf, String> {
+fn temp_dir(label: &str) -> Result<TempDirGuard, String> {
     let counter = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
         "ripr-installed-{label}-{}-{counter}",
         std::process::id()
     ));
     std::fs::create_dir_all(&dir).map_err(|error| format!("create {}: {error}", dir.display()))?;
-    Ok(dir)
+    Ok(TempDirGuard(dir))
 }
 
 fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
@@ -59,13 +71,14 @@ fn materialize(
     head: &str,
     label: &str,
     ripr_toml: Option<&str>,
-) -> Result<(PathBuf, PathBuf), String> {
+) -> Result<(TempDirGuard, PathBuf, PathBuf), String> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let source = manifest_dir
         .join("../../fixtures")
         .join(fixture)
         .join("repository");
-    let launch = temp_dir(label)?;
+    let guard = temp_dir(label)?;
+    let launch = guard.0.clone();
     let root = launch.join("sélected root").join("repo");
     copy_tree(&source.join("base"), &root)?;
     fixture_git_ok(&root, &["init", "-q", "-b", "main"])?;
@@ -85,7 +98,7 @@ fn materialize(
     let decoy = launch.join("decoy");
     std::fs::create_dir_all(&decoy).map_err(|error| format!("decoy: {error}"))?;
     fixture_git_ok(&decoy, &["init", "-q"])?;
-    Ok((root, decoy))
+    Ok((guard, root, decoy))
 }
 
 fn ripr(launch: &Path, args: &[&str]) -> Result<(bool, String), String> {
@@ -107,6 +120,15 @@ fn decoy_untouched(decoy: &Path) -> Result<(), String> {
     Err(format!("decoy launch root was written: {status:?}"))
 }
 
+fn expect_exit(ok: bool, want_success: bool, label: &str) -> Result<(), String> {
+    if ok == want_success {
+        return Ok(());
+    }
+    Err(format!(
+        "{label}: expected success={want_success}, got success={ok}"
+    ))
+}
+
 fn need<'a>(text: &'a str, needle: &str, label: &str) -> Result<&'a str, String> {
     if text.contains(needle) {
         return Ok(text);
@@ -114,10 +136,11 @@ fn need<'a>(text: &'a str, needle: &str, label: &str) -> Result<&'a str, String>
     Err(format!("{label}: expected `{needle}` in:\n{text}"))
 }
 
+#[cfg(feature = "lang-python")]
 #[test]
 fn python_flat_layout_journey_stays_in_selected_root_and_ends_in_manual_route() -> Result<(), String>
 {
-    let (root, decoy) = materialize("blind_journey_installed_python", "head", "py", None)?;
+    let (_guard, root, decoy) = materialize("blind_journey_installed_python", "head", "py", None)?;
     let root_arg = root.to_string_lossy().into_owned();
 
     let (ok, check) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
@@ -147,29 +170,29 @@ fn python_flat_layout_journey_stays_in_selected_root_and_ends_in_manual_route() 
         "check offers no repair start",
     )?;
 
-    let (_, repair) = ripr(
-        &decoy,
-        &[
-            "repair",
-            "probe:pricing_core.py:python_preview:6705c5d5",
-            "--root",
-            &root_arg,
-        ],
-    )?;
+    // Feed `repair` the exact finding id that `check` printed, not a literal.
+    let probe = check
+        .split_whitespace()
+        .find(|token| token.starts_with("probe:"))
+        .ok_or_else(|| format!("check printed no probe id:\n{check}"))?;
+    let (repair_ok, repair) = ripr(&decoy, &["repair", probe, "--root", &root_arg])?;
+    expect_exit(repair_ok, false, "repair of an unbound finding id")?;
     need(
         &repair,
         "names no seam in the selected root",
         "repair refuses stale or unbound id",
     )?;
 
-    let (_, pilot) = ripr(&decoy, &["pilot", "--root", &root_arg])?;
+    let (pilot_ok, pilot) = ripr(&decoy, &["pilot", "--root", &root_arg])?;
+    expect_exit(pilot_ok, true, "pilot")?;
     need(
         &pilot,
         "no_python_findings",
         "pilot reports no Python findings for a committed-diff gap",
     )?;
 
-    let (_, status) = ripr(&decoy, &["agent", "status", "--root", &root_arg])?;
+    let (status_ok, status) = ripr(&decoy, &["agent", "status", "--root", &root_arg])?;
+    expect_exit(status_ok, true, "agent status")?;
     need(
         &status,
         "Status selects no next command",
@@ -184,11 +207,12 @@ fn python_flat_layout_journey_stays_in_selected_root_and_ends_in_manual_route() 
     decoy_untouched(&decoy)
 }
 
+#[cfg(feature = "lang-typescript")]
 #[test]
 fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() -> Result<(), String>
 {
     let toml = "[languages]\nenabled = [\"typescript\"]\n";
-    let (root, decoy) = materialize(
+    let (_guard, root, decoy) = materialize(
         "blind_journey_installed_typescript",
         "head",
         "ts",
@@ -222,17 +246,20 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
         "no repair start offered",
         "check offers no repair start",
     )?;
-    let (_, status) = ripr(&decoy, &["agent", "status", "--root", &root_arg])?;
+    let (status_ok, status) = ripr(&decoy, &["agent", "status", "--root", &root_arg])?;
+    expect_exit(status_ok, true, "agent status")?;
     // Before pilot, status routes to pilot; pilot routes to check; status then
     // terminates with the manual route instead of cycling.
     need(&status, "ripr pilot", "status routes to pilot first")?;
-    let (_, pilot) = ripr(&decoy, &["pilot", "--root", &root_arg])?;
+    let (pilot_ok, pilot) = ripr(&decoy, &["pilot", "--root", &root_arg])?;
+    expect_exit(pilot_ok, true, "pilot")?;
     need(
         &pilot,
         "analyze the TypeScript diff: ripr check",
         "pilot routes to check",
     )?;
-    let (_, status) = ripr(&decoy, &["agent", "status", "--root", &root_arg])?;
+    let (status_ok, status) = ripr(&decoy, &["agent", "status", "--root", &root_arg])?;
+    expect_exit(status_ok, true, "agent status")?;
     need(
         &status,
         "Status selects no next command",
@@ -240,42 +267,62 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
     )?;
     decoy_untouched(&decoy)?;
 
-    for variant in [
-        "variant-let-binding",
-        "variant-imported-constant",
-        "variant-reach-barrier",
-    ] {
-        let (vroot, vdecoy) = materialize(
+    // Variants that must stay unresolved, paired with whether the product
+    // currently fails closed. The two `false` rows are known fail-open
+    // defects (#9107): they pin today's behavior and must flip to `true`
+    // when that issue is fixed.
+    let variants = [
+        ("variant-let-binding", true),
+        ("variant-reassignment", true),
+        ("variant-shadowing", true),
+        ("variant-imported-constant", true),
+        ("variant-object-namespace-write", false),
+        ("variant-enum-computed-initializer", false),
+        ("variant-nonliteral-arithmetic", true),
+        ("variant-reach-barrier", true),
+    ];
+    for (variant, fails_closed) in variants {
+        let (_vguard, vroot, vdecoy) = materialize(
             "blind_journey_installed_typescript",
             variant,
             "tsv",
             Some(toml),
         )?;
         let vroot_arg = vroot.to_string_lossy().into_owned();
-        let (_, out) = ripr(
+        let (out_ok, out) = ripr(
             &vdecoy,
             &["check", "--root", &vroot_arg, "--base", "HEAD~1"],
         )?;
-        need(&out, "repair packet is not ready", variant)?;
+        expect_exit(out_ok, true, variant)?;
         decoy_untouched(&vdecoy)?;
-        if out.contains("the repair packet is complete") {
-            return Err(format!("{variant} projected a delegatable packet:\n{out}"));
+        let projected = out.contains("the repair packet is complete");
+        if fails_closed {
+            need(&out, "repair packet is not ready", variant)?;
+            if projected {
+                return Err(format!("{variant} projected a delegatable packet:\n{out}"));
+            }
+        } else if !projected {
+            return Err(format!(
+                "{variant} now fails closed; flip its row to true (#9107):\n{out}"
+            ));
         }
     }
     Ok(())
 }
 
+#[cfg(feature = "lang-typescript")]
 #[test]
-fn typescript_without_enabling_config_is_not_a_clean_result() -> Result<(), String> {
+fn typescript_excluded_by_config_is_not_a_clean_result() -> Result<(), String> {
     // Pinned to Rust only so no-config project detection cannot enable TypeScript.
-    let (root, decoy) = materialize(
+    let (_guard, root, decoy) = materialize(
         "blind_journey_installed_typescript",
         "head",
         "tsoff",
         Some("[languages]\nenabled = [\"rust\"]\n"),
     )?;
     let root_arg = root.to_string_lossy().into_owned();
-    let (_, out) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    let (out_ok, out) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    expect_exit(out_ok, true, "check with TypeScript excluded")?;
     need(&out, "analysis incomplete", "incomplete analysis")?;
     need(
         &out,
