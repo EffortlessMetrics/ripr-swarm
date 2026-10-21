@@ -3,6 +3,7 @@ mod framing;
 mod gaps;
 mod protocol;
 mod repair;
+mod repair_admission;
 mod repair_card;
 mod server;
 mod transport;
