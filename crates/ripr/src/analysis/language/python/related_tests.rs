@@ -467,6 +467,9 @@ pub(super) fn related_test_relation(
     if let Some(class) = dunder_method_class(owner) {
         return dunder_method_relation(test, owner, class);
     }
+    if bare_name_bound_to_other_module(test, owner) {
+        return None;
+    }
     if body_calls_owner(&test.body_text, owner) || exception_assertion_calls_owner(test, owner) {
         return Some(PythonRelationKind::SyntacticCall);
     }
@@ -514,6 +517,43 @@ pub(super) fn related_test_relation(
         return Some(PythonRelationKind::FixtureName);
     }
     None
+}
+
+/// Whether the test imports the free-function owner's bare name (under any
+/// alias) from a different
+/// module and has no import that reaches the owner's module (#8759). In a flat
+/// package two modules each define `quote`; a test that does
+/// `from pkg.a import quote` and calls `quote(...)` exercises `pkg.a`, so the
+/// call text must not relate it to `pkg/b.py::quote`. Only affirmative
+/// evidence withholds the relation: a test with no import of the name (local
+/// definition, star import from elsewhere, in-file use) keeps the name-based
+/// relation, and so does a test that also imports the owner's module or a
+/// package re-exporting it. The owner's own file never withholds.
+fn bare_name_bound_to_other_module(test: &PythonTest, owner: &PythonOwner) -> bool {
+    if owner.is_module_owner()
+        || owner.qualified_name != owner.name
+        || matches!(
+            owner.owner_kind,
+            Some(OwnerKind::Method | OwnerKind::ClassMethod)
+        )
+        || test.file == owner.file
+    {
+        return false;
+    }
+    let binds_name =
+        |import: &PythonImport| import.imported != "*" && import.imported == owner.name;
+    if !test.imports.iter().any(binds_name) {
+        return false;
+    }
+    !test.imports.iter().any(|import| {
+        import_source_module_matches_owner(import, owner, &test.file)
+            || imported_module_matches_owner(import, owner, &test.file)
+            || imports_owner_module(import, owner)
+            || !submodule_receivers(import, owner, &test.file).is_empty()
+            // A relative or unresolved source cannot be told from the
+            // owner's module: fail closed on the relation.
+            || (import.source_module.starts_with('.') && binds_name(import))
+    })
 }
 
 /// Whether a fixture the test names calls the owner by the rules a test body

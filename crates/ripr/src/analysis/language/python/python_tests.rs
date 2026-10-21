@@ -4258,3 +4258,44 @@ fn python_structural_lines_are_recognized() {
         assert!(!is_python_structural_line(behavioral), "{behavioral:?}");
     }
 }
+
+#[test]
+fn same_named_function_in_unimported_module_is_not_related() -> Result<(), String> {
+    let owner_in = |file: &str| -> Result<PythonOwner, String> {
+        extract_owners(
+            Path::new(file),
+            "def quote(total):\n    return round(total * 1.07, 2)\n",
+        )
+        .into_iter()
+        .find(|owner| owner.name == "quote")
+        .ok_or_else(|| format!("expected quote owner in {file}"))
+    };
+    let owner_a = owner_in("pkg/a.py")?;
+    let owner_b = owner_in("pkg/b.py")?;
+    let related = |source: &str, owner: &PythonOwner| -> Result<usize, String> {
+        let tests = extract_tests(Path::new("tests/test_a.py"), source);
+        if tests.len() != 1 {
+            return Err(format!("expected one test, got {}", tests.len()));
+        }
+        Ok(related_test_candidates(owner, &tests).len())
+    };
+
+    let imports_a = "from pkg.a import quote\n\ndef test_a():\n    assert quote(100.0) == 107.0\n";
+    // Positive control: the module the test imports.
+    assert_eq!(related(imports_a, &owner_a)?, 1);
+    // The same-named function in a module the test never imports.
+    assert_eq!(related(imports_a, &owner_b)?, 0);
+    // An aliased import of the other module is still the other module.
+    let aliased = "from pkg.a import quote as q\n\ndef test_a():\n    assert q(100.0) == 107.0\n";
+    assert_eq!(related(aliased, &owner_b)?, 0);
+    // Importing the owner's module as well as the other one keeps the relation.
+    let both = "from pkg.a import quote\nimport pkg.b\n\ndef test_a():\n    assert quote(100.0) == 107.0\n    assert pkg.b.quote(1.0) == 1.07\n";
+    assert_eq!(related(both, &owner_b)?, 1);
+    // No import of the name at all (local definition, star import) stays
+    // name-related: only affirmative evidence withholds the relation.
+    let no_import = "def test_a():\n    assert quote(100.0) == 107.0\n";
+    assert_eq!(related(no_import, &owner_b)?, 1);
+    let star = "from pkg.a import *\n\ndef test_a():\n    assert quote(100.0) == 107.0\n";
+    assert_eq!(related(star, &owner_b)?, 1);
+    Ok(())
+}

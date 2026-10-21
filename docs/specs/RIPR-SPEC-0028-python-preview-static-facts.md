@@ -241,6 +241,11 @@ directory named `src` (the PyPA src layout, including monorepo
 root, so `from pricing.discounts import f` identifies `src/pricing/discounts.py`
 while the repository-relative `src.pricing.discounts` form still matches. Bare
 file stems and arbitrary path suffixes never count as module identity.
+A test that imports a free-function owner's name from a module that is not the
+owner's (under any alias) and has no import reaching the owner's module is not
+related to that owner, even if its call text matches the name (#8759); a test
+with no import of the name, a star import, or one in the owner's own file keeps
+the name-based relation.
 
 A package whose `__init__.py` re-exports a top-level function or class under
 its own name is also an import path of that owner: `from .time import
