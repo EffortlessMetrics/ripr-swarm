@@ -19,6 +19,7 @@ fn motion_case(
     placement: Placement,
     value: i32,
     wrong_owner: bool,
+    imported: bool,
 ) -> Result<(AuthorityFixtureRoot, RustIndex, RepoSeam), String> {
     let root = claim_index_fixture_root(4680)?;
     fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
@@ -53,10 +54,16 @@ fn motion_case(
     } else {
         call
     };
+    let import = if imported {
+        format!("use {};\n", call.trim_end_matches("()"))
+    } else {
+        String::new()
+    };
+    let call = if imported { "compute()" } else { call };
     let expected = if wrong_owner { 99 } else { 9 };
     let source = format!(
         "{declaration}\nmod other {{ pub(super) fn compute() -> i32 {{ 99 }} }}\n\
-         #[cfg(test)]\nmod tests {{\n\
+         #[cfg(test)]\nmod tests {{\n{import}\
          #[test]\nfn exact_value() {{ assert_eq!({call}, {expected}); }}\n}}\n"
     );
     fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
@@ -130,7 +137,7 @@ fn module_extraction_parent_inline_and_file_child_keep_direct_observer() -> Resu
     for placement in PLACEMENTS {
         // Two independent roots for each form also challenge absolute-root leakage.
         for _ in 0..2 {
-            let (_root, index, seam) = motion_case(placement, 9, false)?;
+            let (_root, index, seam) = motion_case(placement, 9, false, false)?;
             let evidence = evidence_for_seam(&seam, &index);
             assert_eq!(
                 evidence.related_tests.len(),
@@ -167,7 +174,7 @@ fn module_extraction_parent_inline_and_file_child_keep_direct_observer() -> Resu
 #[test]
 fn module_extraction_same_named_sibling_cannot_observe_owner() -> Result<(), String> {
     for placement in PLACEMENTS {
-        let (_root, index, seam) = motion_case(placement, 9, true)?;
+        let (_root, index, seam) = motion_case(placement, 9, true, false)?;
         let evidence = evidence_for_seam(&seam, &index);
         assert!(
             evidence.related_tests.is_empty(),
@@ -185,7 +192,20 @@ fn module_extraction_same_named_sibling_cannot_observe_owner() -> Result<(), Str
 #[test]
 fn module_extraction_changed_value_keeps_semantic_discriminator() -> Result<(), String> {
     for placement in PLACEMENTS {
-        let (_root, index, seam) = motion_case(placement, 10, false)?;
+        // The current contradiction authority deliberately leaves qualified
+        // assertion operands not evaluable. Use an explicit direct import for
+        // this discriminator; the qualified relation is exercised separately.
+        // First require the unchanged imported observer to establish evidence.
+        let (_baseline_root, baseline_index, baseline_seam) =
+            motion_case(placement, 9, false, true)?;
+        let baseline = evidence_for_seam(&baseline_seam, &baseline_index);
+        assert_eq!(
+            baseline.discriminate.state,
+            StageState::Yes,
+            "{placement:?}: {baseline:?}"
+        );
+        assert_eq!(baseline.statically_contradicted_related_tests, 0);
+        let (_root, index, seam) = motion_case(placement, 10, false, true)?;
         let evidence = evidence_for_seam(&seam, &index);
         assert_eq!(
             evidence.statically_contradicted_related_tests, 1,
