@@ -916,6 +916,9 @@ mod tests {
             "from typing import final as f\n\nf = wrapper\n\n@f\ndef rate(n):\n    return n + 1\n",
             "from typing import final\n\nfor final in wrappers:\n    pass\n\n@final\ndef rate(n):\n    return n + 1\n",
             "import typing\n\n@typing.final(wrapper)\ndef rate(n):\n    return n + 1\n",
+            // a walrus rebind inside the marker's own decorator line
+            "from typing import final\n\ndef w(f):\n    return lambda n: 0\n\n@final(final := w)\ndef other(n):\n    return n\n\n@final\ndef rate(n):\n    return n + 1\n",
+            "import typing\n\nshim = None\n\n@typing.final(typing := shim)\ndef other(n):\n    return n\n\n@typing.final\ndef rate(n):\n    return n + 1\n",
             // parentheses inside string literals must not balance the call
             "from typing import final\n\n@final\n@wrap(\"(\")[0] or g(\")\")\ndef rate(n):\n    return n + 1\n",
             "from typing import final\n\n@final\n@wrap(\"(\") if c else g(\")\")\ndef rate(n):\n    return n + 1\n",

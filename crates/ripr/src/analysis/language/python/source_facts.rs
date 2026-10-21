@@ -1957,7 +1957,9 @@ fn name_bound_outside_typing_import(source: &str, name: &str) -> bool {
             true
         } else if let Some(rest) = trimmed.strip_prefix('@') {
             let head = rest.split('(').next().unwrap_or_default();
-            head.split('.').next() == Some(name)
+            // The call arguments are scanned too: `@final(final := wrapper)`
+            // rebinds the name on its own decorator line.
+            head.split('.').next() == Some(name) && !contains_word(&rest[head.len()..], name)
         } else {
             false
         };
