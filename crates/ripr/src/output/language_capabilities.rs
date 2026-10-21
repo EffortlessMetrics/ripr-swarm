@@ -108,6 +108,7 @@ pub(crate) fn render_human(language: Option<LanguageId>) -> String {
             if let Some(limit) = cell.limit {
                 out.push_str(&format!("      limit: {limit}\n"));
             }
+            out.push_str(&format!("      proof: {}\n", cell.proof_refs.join(", ")));
         }
     }
     out.push_str(
@@ -172,6 +173,14 @@ mod tests {
         let text = render_human(Some(LanguageId::TypeScript));
         assert!(text.contains("supported_with_required_fallback"), "{text}");
         assert!(text.contains("typescript_diff_first"), "{text}");
+        assert!(text.contains("proof: "), "{text}");
+        assert!(
+            CAPABILITY_CELLS
+                .iter()
+                .filter(|cell| cell.language == LanguageId::TypeScript)
+                .all(|cell| cell.proof_refs.iter().all(|spec| text.contains(spec))),
+            "{text}"
+        );
         assert!(text.contains("not_proven"), "{text}");
     }
 }
