@@ -301,6 +301,9 @@ pub(crate) fn render_with_config(
     // this additive, only-when-bounded disclosure sits beside it so the shared
     // incomplete-outcome predicate can fail closed on a findings prefix.
     if let (Some(bound), Some(at)) = (findings_bound.as_ref(), analysis_outcome_close_at) {
+        // `at` was recorded before the findings array was appended, so it must
+        // sit on a char boundary inside the buffer.
+        debug_assert!(at <= out.len() && out.is_char_boundary(at));
         out.insert_str(
             at,
             &format!(
