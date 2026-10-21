@@ -36,7 +36,7 @@
 //!
 //! PR C projection: the same pass also emits the public `Finding`s
 //! ([`PythonRepoEvidence::findings`]) by running the diff-mode classifier
-//! (`classify_change_with_context`) over each representative behavior line,
+//! (`classify_change_with_value_origins`) over each representative behavior line,
 //! so repo-mode findings are indistinguishable in shape from diff-mode
 //! findings and retain native Python identity. [`partial_disclosure`]
 //! renders the typed partial/capped run state for the pipeline's shared
@@ -109,7 +109,7 @@ pub(in crate::analysis::language::python) struct PythonRepoEvidence {
     pub(in crate::analysis::language::python) limitations: Vec<PythonRepoLimitation>,
     /// Public `Finding` projection over the production behavior items,
     /// in production-file order and ascending line order within each file.
-    /// Built by `classify_change_with_context` — the same classifier diff
+    /// Built by `classify_change_with_value_origins` — the same classifier diff
     /// mode uses — so findings are shape-identical to diff-mode findings
     /// with native Python identity (`language: python`, preview status,
     /// `gap:python:` canonical gaps); no Rust `SeamKind` bridge (#3039).
@@ -569,7 +569,7 @@ fn load_facts_with_source(
 /// with relations matched once per owner against the evidence pool.
 ///
 /// The public `Finding`s are built in the same pass by
-/// [`classify_change_with_context`] — the same classifier diff mode runs on
+/// [`classify_change_with_value_origins`] — the same classifier diff mode runs on
 /// a changed line — so repo-mode findings are shape-identical to diff-mode
 /// findings (#3554 PR C). `old_line_text` is `None` (repo mode has no diff
 /// side); the classifier's currentness derivation then records
