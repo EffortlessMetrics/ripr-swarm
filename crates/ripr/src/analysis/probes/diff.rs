@@ -4283,9 +4283,18 @@ mod tests {
     /// #8999: two physical lines of one existing signature changing is one
     /// declaration change: one probe, kept on the first changed line.
     #[test]
-    fn probes_for_file_groups_changed_wrapped_signature_lines_into_one_probe() {
-        let (index, changed) =
-            wrapped_signature_change(&[2, 3], &[(2, "    amount: u32,"), (3, "    years: u8,")]);
+    fn probes_for_file_groups_changed_wrapped_signature_lines_into_one_probe() -> Result<(), String>
+    {
+        // A parsed diff, so the removed lines carry the parser's real
+        // coordinates and the positional old counterparts pair as in production.
+        let diff = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,4 +1,4 @@\n pub fn price(\n-    amount: u32,\n-    years: u8,\n+    amount: u64,\n+    years: u32,\n ) -> u64\n where\n";
+        let (index, _) = wrapped_signature_change(&[], &[]);
+        let changed = crate::analysis::diff::parse_unified_diff(diff)
+            .into_iter()
+            .next()
+            .ok_or_else(|| "diff fixture yields no changed file".to_string())?;
+        assert_eq!(changed.added_lines.len(), 2);
+        assert_eq!(changed.removed_lines.len(), 2);
 
         let probes = probes_for_file(Path::new("workspace"), &changed, &index);
 
@@ -4299,13 +4308,14 @@ mod tests {
         let after = probes[0].after.as_deref().unwrap_or_default();
         let before = probes[0].before.as_deref().unwrap_or_default();
         assert!(
-            after.contains("amount: u32,") && after.contains("years: u8,"),
+            after.contains("amount: u64,") && after.contains("years: u32,"),
             "{probes:?}"
         );
         assert!(
-            before.contains("amount: u64,") && before.contains("years: u32,"),
+            before.contains("amount: u32,") && before.contains("years: u8,"),
             "{probes:?}"
         );
+        Ok(())
     }
 
     fn all_added_probes(source: &str) -> Vec<Probe> {

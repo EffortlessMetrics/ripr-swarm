@@ -59,10 +59,15 @@ Comment and string text is masked before this reading.
    signature lines seed no probe.
 2. Changed signature: when several added lines of one signature change, the
    first emitted probe stays on the first changed line (its id and span are
-   unchanged); later added lines of that signature seed none. Grouping reads a
-   probe actually emitted for an earlier line, never an assumed one.
-3. Generic and `where` type-bound declaration lines are exempt from both rules
-   and keep their own `static_unknown` probe.
+   unchanged); later added lines of that signature seed none, and their new
+   text and old counterpart are appended (space-separated) to the retained
+   probe's `after` and `before` so no edited parameter loses its evidence.
+   Grouping reads a probe actually emitted for an earlier line, never an
+   assumed one.
+3. Any header line that touches a type bound (`where`, a bound predicate,
+   `<T: Clone>`, `impl Trait`), even when it shares the line with parameters
+   or the body opener, is exempt from both rules and keeps its own probe. An
+   unparseable file treats every line as bound (no grouping).
 4. A parameter inserted into an existing wrapped signature (the `fn` line is
    not added) is a changed signature and keeps its probe.
 
