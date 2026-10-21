@@ -3600,6 +3600,7 @@ fn refresh_base_argument_recovers_a_repository_without_a_main_default_branch() -
     for bad in [
         json!({ "base": "" }),
         json!({ "base": 7 }),
+        json!({ "base": "a".repeat(257) }),
         json!({ "other": 1 }),
     ] {
         let reply = session.call_tool("bad-args", "ripr_refresh", bad.clone(), timeout)?;

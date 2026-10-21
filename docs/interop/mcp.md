@@ -177,7 +177,8 @@ document, schema `ripr-mcp-workspace-status-v1`. It wraps:
   source edit, verification execution, mutation execution, and model provider
   all `none`;
 - a `ripr-mcp-session-v1` session block: the current desired input (workspace
-  diff against the default branch, draft mode, the workspace's own
+  diff against the resolved default branch or the explicit `ripr_refresh`
+  `base` with `base_revision` when present, draft mode, the workspace's own
   configuration), the current
   attempt state (`no_snapshot`, `in_flight`, `completed`, `failed`), the last
   completed snapshot identity, last-known-good state, freshness relative to
