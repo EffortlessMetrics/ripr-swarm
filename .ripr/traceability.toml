@@ -10783,6 +10783,7 @@ tests = [
   "crates/ripr/tests/rust_discovery_comments.rs::comment_and_string_module_mentions_do_not_register_tests",
   "crates/ripr/tests/rust_discovery_comments.rs::real_cfg_and_renamed_modules_keep_collected_tests",
   "crates/ripr/tests/rust_discovery_comments.rs::an_incomplete_module_walk_cannot_drop_test_credit",
+  "crates/ripr/tests/rust_discovery_comments.rs::a_leading_bom_does_not_change_the_module_walk",
   "crates/ripr/src/analysis/facts/index_tests.rs::file_function_membership_retains_only_handle_capacity",
   "crates/ripr/src/analysis/facts/index_tests.rs::compact_membership_preserves_occurrences_replacement_and_finalized_slots",
   "crates/ripr/src/analysis/facts/index_tests.rs::shared_harness_demotion_splits_only_disagreeing_containing_paths",
