@@ -7346,6 +7346,25 @@ fn builtin_protocol_entry_credits_the_dunder_owner() -> Result<(), String> {
 }
 
 #[test]
+fn protocol_entry_receiver_read_in_bracketed_call_arguments_is_still_credited() -> Result<(), String>
+{
+    for test_src in [
+        "import unittest\nfrom src.nr import numeric_range\n\n\nclass T(unittest.TestCase):\n    def test_reads(self):\n        r = numeric_range(0)\n        self.assertEqual(len(r), 0)\n        self.assertEqual(list(reversed(r)), [])\n",
+        "import unittest\nfrom src.nr import numeric_range\n\n\nclass T(unittest.TestCase):\n    def test_reads(self):\n        r = numeric_range(0)\n        self.assertEqual(len( r ), 0)\n        self.assertEqual(list(reversed(r)), [])\n",
+        "import unittest\nfrom src.nr import numeric_range\n\n\nclass T(unittest.TestCase):\n    def test_reads(self):\n        r = numeric_range(0)\n        self.assertEqual(max((r), 0), 0)\n        self.assertEqual(list(reversed(r)), [])\n",
+    ] {
+        let (finding, relations) = classify_reversed_guard(test_src)?;
+        assert_eq!(
+            relations,
+            vec![("test_reads".to_string(), "protocol_entry_call")],
+            "{test_src}"
+        );
+        assert_eq!(finding.class, ExposureClass::Exposed, "{test_src}");
+    }
+    Ok(())
+}
+
+#[test]
 fn protocol_entry_stays_uncredited_without_a_bound_owner_receiver() -> Result<(), String> {
     for test_src in [
         // Another dunder's entry point does not reach `__reversed__`.
@@ -7412,6 +7431,15 @@ fn protocol_entry_stays_uncredited_without_a_bound_owner_receiver() -> Result<()
         "from src.nr import numeric_range\n\n\ndef test_paren_comma():\n    r = numeric_range(0)\n    (r), x = [1], 2\n    assert list(reversed(r)) == [1]\n",
         "from src.nr import numeric_range\n\n\ndef test_list_comma():\n    r = numeric_range(0)\n    [r], x = [1], 2\n    assert list(reversed(r)) == [1]\n",
         "from src.nr import numeric_range\n\n\ndef test_for_paren_comma():\n    r = numeric_range(0)\n    for (r), x in [([1], 2)]:\n        pass\n    assert list(reversed(r)) == [1]\n",
+        // Spaced and nested bracketed targets also rebind the receiver (#9178).
+        "from src.nr import numeric_range\n\n\ndef test_spaced_paren_comma():\n    r = numeric_range(0)\n    ( r), x = [1], 2\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_spaced_list_comma():\n    r = numeric_range(0)\n    [ r ], x = [1], 2\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_nested_paren_tuple():\n    r = numeric_range(0)\n    ((r), x) = [1], 2\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_nested_list_tuple():\n    r = numeric_range(0)\n    [[r], x] = [[1], 2]\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_nested_double_paren():\n    r = numeric_range(0)\n    ((r)) = [1]\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_for_nested_paren_tuple():\n    r = numeric_range(0)\n    for ((r), x) in [(([1]), 2)]:\n        pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_for_spaced_paren_comma():\n    r = numeric_range(0)\n    for ( r), x in [([1], 2)]:\n        pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_for_double_paren():\n    r = numeric_range(0)\n    for (( r )) in [[1]]:\n        pass\n    assert list(reversed(r)) == [1]\n",
         "from src.nr import numeric_range\n\n\ndef test_string():\n    assert \"reversed(numeric_range(0))\"\n",
     ] {
         let (finding, relations) = classify_reversed_guard(test_src)?;

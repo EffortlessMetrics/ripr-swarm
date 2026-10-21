@@ -644,9 +644,10 @@ fn binds_in_target_list(body: &str, var: &str) -> bool {
 }
 
 /// Whether the `var` occurrence just after `before` and just before `after`
-/// binds it through a chained assignment (`x = r = [1]`), or a single-element
-/// bracketed target (`[r] = ...`, `(r) = ...`, `for (r) in ...`,
-/// `with a as [r]`). A bare call argument `f(r)` is not a binding.
+/// binds it through a chained assignment (`x = r = [1]`), or a bracketed target
+/// of one or more nested single-element brackets (`[r] = ...`, `( r), x = ...`,
+/// `((r), x) = ...`, `for ((r), x) in ...`, `with a as [r]`). A bare call
+/// argument `f(r)` is not a binding.
 fn chained_or_bracketed_target(body: &str, idx: usize, before: &str, after: &str) -> bool {
     let line_start = body[..idx].rfind('\n').map_or(0, |at| at + 1);
     let not_line_start = !body[line_start..idx].trim().is_empty();
@@ -654,25 +655,46 @@ fn chained_or_bracketed_target(body: &str, idx: usize, before: &str, after: &str
     if not_line_start && plain_assign(after) {
         return true;
     }
-    let Some(closer) = after.chars().next().filter(|c| matches!(c, ']' | ')')) else {
-        return false;
-    };
-    let opener = if closer == ']' { '[' } else { '(' };
-    if !before.ends_with(opener) {
+    // Peel each matching `(` ... `)` / `[` ... `]` pair around the name, so
+    // spacing and nesting (`(( r ))`) do not change the reading.
+    let mut head_end = before.len();
+    let mut rest = after;
+    let mut peeled = false;
+    while let Some(closer) = rest.chars().next().filter(|c| matches!(c, ']' | ')')) {
+        let opener = if closer == ']' { '[' } else { '(' };
+        if !body
+            .get(..head_end)
+            .is_some_and(|head| head.ends_with(opener))
+        {
+            break;
+        }
+        head_end -= 1;
+        head_end = body
+            .get(..head_end)
+            .map_or(head_end, |head| head.trim_end_matches([' ', '\t']).len());
+        rest = rest[1..].trim_start_matches([' ', '\t']);
+        peeled = true;
+    }
+    if !peeled {
         return false;
     }
-    let rest = after[1..].trim_start_matches([' ', '\t']);
+    let head = body.get(..head_end).unwrap_or("");
     plain_assign(rest)
-        || (rest.starts_with(',') && opener_is_target_position(&body[line_start..idx - 1]))
+        || (rest.starts_with(',')
+            && opener_is_target_position(head.get(line_start.min(head.len())..).unwrap_or("")))
         || rest.starts_with("in ")
-        || before[..before.len() - 1].trim_end().ends_with(" as")
+        || head.trim_end().ends_with(" as")
 }
 
 /// Whether text before a bracket opener puts it in a binding-target position
-/// (line start, or after `for`, `as`, `,` or `*`) rather than a call argument
-/// list (`len(r), 0` in `self.assertEqual(len(r), 0)`).
+/// (line start, or after `for`, `as`, `,`, `*` or another opener that is itself
+/// in target position) rather than a call argument list (`len(r), 0` in
+/// `self.assertEqual(len(r), 0)`).
 fn opener_is_target_position(head: &str) -> bool {
     let head = head.trim_end();
+    if let Some(outer) = head.strip_suffix(['(', '[']) {
+        return opener_is_target_position(outer);
+    }
     head.is_empty()
         || head.ends_with([',', '*'])
         || head
