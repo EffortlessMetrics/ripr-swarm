@@ -1,6 +1,6 @@
-//! #8389: the slice-cardinality witness fact names the test file that holds
-//! the witnessing call. `ValueFact::file` is serde-skipped, so this reads the
-//! typed `check_workspace` output rather than JSON.
+//! #8389: value facts retain their source locations through classification.
+//! Exercise typed provenance, human windows and JSON's separate ranked cap;
+//! the machine value objects omit the file field while retaining fact counts.
 
 use ripr::{CheckInput, Mode, OutputFormat, check_workspace};
 use std::path::{Path, PathBuf};
