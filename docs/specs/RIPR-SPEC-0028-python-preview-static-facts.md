@@ -792,9 +792,14 @@ Expected static evidence:
   `typing_extensions` spelling covers `final` and `override` only) return the
   function unchanged, so the owner emits no `decorator_indirection`;
 - a rebound receiver, a competing alias, a local same-named decorator, a
-  module-level `def`, `class` or assignment that redefines the marker name or
-  its receiver, or a marker written as a call (`@final(wrapper)`) stays
-  `decorator_indirection`; `typing.overload`, `abc.abstractmethod`,
+  marker written as a call (`@final(wrapper)`), a file where the marker name
+  appears anywhere other than a `@name` decorator line or a `typing` /
+  `typing_extensions` import (a `def`, `class`, assignment, tuple or loop
+  target, nested or class-scope rebind, `try`/`except` import fallback), a
+  star import from another module, or any decorator in the file that is not
+  a plain dotted name (`@registry["x"]`, `@(lambda f: g)`) stays
+  `decorator_indirection`. This is a lexical fail-closed screen, not a scope
+  analysis, so an unrelated mention of the name also keeps the limit; `typing.overload`, `abc.abstractmethod`,
   `contextlib.contextmanager` and `property` also stay limited.
 
 Simple route decorator repair:

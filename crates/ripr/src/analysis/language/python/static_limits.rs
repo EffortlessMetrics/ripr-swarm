@@ -889,6 +889,7 @@ mod tests {
         for plain in [
             "from typing import final\n\n@final\ndef rate(n):\n    return n + 1\n",
             "import typing\n\n@typing.final\ndef rate(n):\n    return n + 1\n",
+            "from typing import (\n    final,\n    override,\n)\n\n@final\ndef rate(n):\n    return n + 1\n",
         ] {
             assert_eq!(parsed_limit(plain)?, None, "{plain}");
         }
@@ -900,6 +901,16 @@ mod tests {
             "from typing import final\n\nfinal = make_wrapper()\n\n@final\ndef rate(n):\n    return n + 1\n",
             // the module receiver is rebound after the import
             "import typing\n\ntyping = shim\n\n@typing.final\ndef rate(n):\n    return n + 1\n",
+            // conditional, try/except, tuple-target and star-import rebinds
+            "from typing import final\nimport os\n\nif os.environ.get(\"X\"):\n    def final(fn):\n        return lambda n: 0\n\n@final\ndef rate(n):\n    return n + 1\n",
+            "from typing import final\n\ntry:\n    from helpers import final\nexcept ImportError:\n    pass\n\n@final\ndef rate(n):\n    return n + 1\n",
+            "from typing import final\n\nfinal, other = make()\n\n@final\ndef rate(n):\n    return n + 1\n",
+            "from typing import final\nfrom helpers import *\n\n@final\ndef rate(n):\n    return n + 1\n",
+            // class-scope rebind of the marker
+            "from typing import override\n\nclass A(B):\n    def override(fn):\n        return lambda *a: 0\n\n    @override\n    def rate(self, n):\n        return n + 1\n",
+            // an unreadable decorator stacked with the marker
+            "from typing import final\n\n@final\n@registry[\"x\"]\ndef rate(n):\n    return n + 1\n",
+            "from typing import final\n\n@final\n@(lambda f: wrapper)\ndef rate(n):\n    return n + 1\n",
         ] {
             assert_eq!(parsed_limit(wrapped)?, limited, "{wrapped}");
         }

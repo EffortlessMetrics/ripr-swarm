@@ -667,7 +667,7 @@ pub(super) fn extract_source_facts(file: &Path, source: &str) -> PythonSourceFac
         &module_constants,
         &mut snapshot.owners,
     );
-    mark_rebound_decorators(&module.body, &mut snapshot.owners);
+    mark_rebound_decorators(source, &mut snapshot.owners);
     snapshot
         .owners
         .push(module_owner(file, source, module_range, &imports));
@@ -1810,47 +1810,95 @@ fn dotted_dir(file: &Path) -> String {
         .unwrap_or_default()
 }
 
-/// Records, per owner, the decorators whose first name segment the module
-/// redefines (`def final`, `class final`, `final = ...`), so an import match
-/// is not trusted for them.
-fn mark_rebound_decorators(statements: &[Stmt], owners: &mut [PythonOwner]) {
-    let mut bound: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    for stmt in statements {
-        match stmt {
-            Stmt::FunctionDef(function) => {
-                bound.insert(function.name.to_string());
-            }
-            Stmt::AsyncFunctionDef(function) => {
-                bound.insert(function.name.to_string());
-            }
-            Stmt::ClassDef(class) => {
-                bound.insert(class.name.to_string());
-            }
-            Stmt::Assign(assign) => {
-                for target in &assign.targets {
-                    if let Expr::Name(name) = target {
-                        bound.insert(name.id.to_string());
-                    }
-                }
-            }
-            Stmt::AnnAssign(assign) => {
-                if let Expr::Name(name) = assign.target.as_ref() {
-                    bound.insert(name.id.to_string());
-                }
-            }
-            _ => {}
-        }
-    }
+/// Records, per owner, the decorators whose first name segment the file binds
+/// anywhere other than the one typing import, so an import match is not
+/// trusted for them (`def final`, `final = ...`, a nested or class-scope
+/// rebind, a tuple or loop target, a `try`/`except` import fallback).
+///
+/// This is deliberately a lexical, fail-closed screen rather than a scope
+/// analysis: the name must occur only on `@name...` decorator lines and on
+/// `typing`/`typing_extensions` import statements. A star import from another
+/// module, or any decorator the screen cannot read as a plain dotted name
+/// (`@registry["x"]`, `@(lambda f: g)`), withholds trust for the whole file.
+fn mark_rebound_decorators(source: &str, owners: &mut [PythonOwner]) {
+    let distrust_all = typing_markers_distrusted(source);
     for owner in owners {
         let rebound: Vec<String> = owner
             .decorators
             .iter()
             .filter(|decorator| {
                 let first = decorator.split('.').next().unwrap_or_default();
-                bound.contains(first)
+                distrust_all || name_bound_outside_typing_import(source, first)
             })
             .cloned()
             .collect();
         owner.unplain_decorators.extend(rebound);
     }
+}
+
+/// Whether a decorator line or star import makes any marker unprovable.
+fn typing_markers_distrusted(source: &str) -> bool {
+    source.lines().any(|line| {
+        let line = line.trim_start();
+        if let Some(rest) = line.strip_prefix('@') {
+            let rest = rest.trim_end();
+            let head = rest.split('(').next().unwrap_or_default();
+            return head.is_empty()
+                || !head
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
+                || head.starts_with('.')
+                || head.ends_with('.');
+        }
+        line.starts_with("from ")
+            && line.contains("import")
+            && line.contains('*')
+            && !is_typing_import_line(line)
+    })
+}
+
+fn is_typing_import_line(line: &str) -> bool {
+    [
+        "from typing import",
+        "from typing_extensions import",
+        "import typing",
+    ]
+    .iter()
+    .any(|prefix| line.starts_with(prefix))
+        && !line.contains(';')
+}
+
+fn name_bound_outside_typing_import(source: &str, name: &str) -> bool {
+    let mut in_typing_block = false;
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        let allowed = if in_typing_block {
+            true
+        } else if is_typing_import_line(trimmed) {
+            true
+        } else if let Some(rest) = trimmed.strip_prefix('@') {
+            let head = rest.split('(').next().unwrap_or_default();
+            head.split('.').next() == Some(name)
+        } else {
+            false
+        };
+        if is_typing_import_line(trimmed) && trimmed.contains('(') && !trimmed.contains(')') {
+            in_typing_block = true;
+        } else if in_typing_block && trimmed.contains(')') {
+            in_typing_block = false;
+        }
+        if !allowed && contains_word(line, name) {
+            return true;
+        }
+    }
+    false
+}
+
+fn contains_word(line: &str, word: &str) -> bool {
+    line.match_indices(word).any(|(start, _)| {
+        let before = line[..start].chars().next_back();
+        let after = line[start + word.len()..].chars().next();
+        let is_ident = |c: char| c.is_alphanumeric() || c == '_';
+        !before.is_some_and(is_ident) && !after.is_some_and(is_ident)
+    })
 }
