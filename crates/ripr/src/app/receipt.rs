@@ -475,6 +475,25 @@ fn validate_receipt_structure(value: &serde_json::Value, path: &Path) -> Result<
         }
     }
 
+    // A present `canonical_gap_id` must be a nonblank string: SPEC-0079 binds
+    // a receipt to a gap identity, and `check_receipt` must not coerce a
+    // null/numeric/blank value to "" and then report structural validity.
+    match value["canonical_gap_id"].as_str() {
+        Some(id) if !id.trim().is_empty() => {}
+        Some(_) => {
+            return Err(format!(
+                "receipt at {} is malformed: `canonical_gap_id` must not be blank",
+                path.display()
+            ));
+        }
+        None => {
+            return Err(format!(
+                "receipt at {} is malformed: `canonical_gap_id` must be a string",
+                path.display()
+            ));
+        }
+    }
+
     // Validate verify_status is a known value.
     let status = value["verify_status"].as_str().ok_or_else(|| {
         format!(

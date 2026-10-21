@@ -28,6 +28,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/multi_hunk_removed_line_wrong_target/input --diff <cwd>/fixtures/multi_hunk_removed_line_wrong_target/diff.patch --mode fast probe:src_lib.rs:static_unknown:17e03c34
   ripr context --root <cwd>/fixtures/multi_hunk_removed_line_wrong_target/input --diff <cwd>/fixtures/multi_hunk_removed_line_wrong_target/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:17e03c34
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:static_unknown:17e03c34 --root <cwd>/fixtures/multi_hunk_removed_line_wrong_target/input` for the full gate's answer
 
 Hidden:
   4 finding(s) omitted: 3 lower-priority, 1 base-side evidence (not candidate edit targets).

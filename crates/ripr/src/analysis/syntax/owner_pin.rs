@@ -39,6 +39,10 @@ pub(crate) struct OwnerPinAssertions {
     parsed: bool,
     functions: BTreeMap<FunctionKey, FunctionAssertions>,
     module_declarations: BTreeMap<(usize, String), ModuleDeclarationAdmission>,
+    /// Whether any item in the file may rebind `test` (#6749), judged
+    /// without regard to scope. A macro-generated test is not in the file's
+    /// text, so its expansion cannot see these items; the file answers for it.
+    file_binds_test: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -200,6 +204,13 @@ impl OwnerPinAssertions {
         }
     }
 
+    /// Whether some `use` or `extern crate` of the file binds `test`,
+    /// whatever module holds it. For tests whose own module is not in the
+    /// file's text.
+    pub(crate) fn file_binds_test(&self) -> bool {
+        self.file_binds_test
+    }
+
     /// The check helper `function` borrows `assertion` from (#6482), or
     /// `None` when the assertion is the test's own or unknown. Callers ask
     /// only after [`Self::refusal`] admitted the assertion.
@@ -312,7 +323,9 @@ pub(crate) enum MacroBindingKind {
     /// `#[macro_use]` on an `extern crate` or a module ripr did not resolve
     /// to an indexed file; the text is the item it is attached to.
     MacroUse(String),
-    /// A glob import from outside the workspace; the text is its path.
+    /// A glob import from outside the workspace and the manifest-verified
+    /// standard crates (`std`, `core`; `alloc` stays foreign, #8388); the
+    /// text is its path.
     ForeignGlob(String),
     /// A `macro_rules!` or `macro` definition with the trusted name.
     Definition,
@@ -472,6 +485,9 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
         if json_namespace_rebound(&node) {
             names.insert("json".to_string());
         }
+        if renames_standard_crate(&node) {
+            return MacroBindingCandidates::Any;
+        }
         if let Some(name) = ast::MacroRules::cast(node.clone())
             .and_then(|item| item.name())
             .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()))
@@ -547,6 +563,19 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
     MacroBindingCandidates::Names(names)
 }
 
+/// An `extern crate other as std;` (or `core`, `alloc`) alias.
+fn renames_standard_crate(node: &SyntaxNode) -> bool {
+    ast::ExternCrate::cast(node.clone())
+        .and_then(|item| item.rename())
+        .and_then(|rename| rename.name())
+        .is_some_and(|name| {
+            matches!(
+                name.text().trim_start_matches("r#"),
+                "std" | "core" | "alloc"
+            )
+        })
+}
+
 // [`macro_binding_candidates`] is a stored over-approximation of this scan:
 // a new site kind, or a wider existing one, must widen it too and bump
 // `FILE_FACT_CACHE_SCHEMA_VERSION`, or cached candidates hide the new sites.
@@ -562,6 +591,7 @@ fn macro_binding_ambiguities(
     if !(trusted.contains(&"json") && source.contains("serde_json")
         || source.contains("macro")
         || source.contains("use")
+        || source.contains("extern")
         || source.contains("no_implicit_prelude")
         || source.contains('!'))
     {
@@ -628,6 +658,18 @@ fn macro_binding_ambiguities(
             })
     };
     for node in parse.tree().syntax().descendants() {
+        // `extern crate other as std;` at a crate root rebinds the name for
+        // every file, so a standard-root glob elsewhere cannot be trusted.
+        if let Some(rename) = ast::ExternCrate::cast(node.clone()).and_then(|k| k.rename())
+            && rename.name().is_some_and(|name| {
+                matches!(
+                    name.text().trim_start_matches("r#"),
+                    "std" | "core" | "alloc"
+                )
+            })
+        {
+            ambiguous.extend(all(line_of(&node), MacroBindingKind::Import, false));
+        }
         // An extern-crate alias or module in another file can defeat this
         // import's root even when that file never mentions `json` itself.
         if trusted.contains(&"json") && json_namespace_rebound(&node) {
@@ -844,7 +886,46 @@ fn macro_binding_ambiguities(
                 || packages
                     .iter()
                     .any(|package| package.replace('-', "_") == root);
+            // #8388: a glob rooted at the standard crates (`use
+            // core::simd::prelude::*`) names only items the standard library
+            // defines, and its one `assert_eq!` is the standard macro, so it
+            // cannot rebind a trusted name. A workspace package, module or
+            // alias taking the root's name can, which `drop_in_shadowed`
+            // already answers for the drop-in crates; that case, and every
+            // glob from any other root, stays a foreign glob.
+            // A plain import that binds the root name (`use crate::other::std;`)
+            // also takes it over for the module; `use x as std` is a rename
+            // and is caught by `drop_in_shadowed`.
+            let root_imported = || {
+                parse
+                    .tree()
+                    .syntax()
+                    .descendants()
+                    .filter_map(ast::UseTree::cast)
+                    .filter(|item| {
+                        item.star_token().is_none()
+                            && item.use_tree_list().is_none_or(|list| {
+                                // `use other::std::{self}` binds `std` too.
+                                list.use_trees()
+                                    .any(|leaf| leaf.syntax().text().to_string().trim() == "self")
+                            })
+                    })
+                    .any(|item| {
+                        item.path()
+                            .and_then(|path| path.segment())
+                            .and_then(|segment| segment.name_ref())
+                            .is_some_and(|name| name.text().trim_start_matches("r#") == root)
+                    })
+            };
+            let standard_root = matches!(root, "std" | "core" | "alloc") && !root_imported();
             for item in tree.syntax().descendants().filter_map(ast::UseTree::cast) {
+                if item.star_token().is_some()
+                    && standard_root
+                    && !drop_in_shadowed(root, external)
+                    && drop_in_verified(root)
+                {
+                    continue;
+                }
                 if item.star_token().is_some() && !own {
                     let path = import.syntax().text().to_string();
                     let line = line_of(&node);
@@ -1798,6 +1879,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
         return result;
     };
     result.parsed = true;
+    result.file_binds_test = file_binds_test_name(parse.tree().syntax());
     let lines = LineIndex::new(source);
     let empty_macros = local_empty_macros(parse.tree().syntax());
     let json_uses = literal_json_uses(&parse.tree());
@@ -2627,7 +2709,9 @@ fn item_context_refusal(item: &SyntaxNode) -> Option<AssertionContextRefusal> {
 /// the body, so it keeps the test out of the pin.
 fn runs_body_unchanged(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     if attr.simple_name().as_deref() == Some("test") {
-        return true;
+        return test
+            .parent()
+            .is_some_and(|module| builtin_test_attribute_holds(&module));
     }
     if attr.excl_token().is_some() {
         return false;
@@ -2651,6 +2735,79 @@ fn runs_body_unchanged(attr: &ast::Attr, test: &SyntaxNode) -> bool {
         bare_lock_bound_in_module(&path, &module) && serial_test_path_is_the_crate(&module)
     };
     admitted && lock_arguments_are_bare_keys(attr)
+}
+
+/// Whether a bare `#[test]` in `module` is libtest's built-in attribute. An
+/// import that binds the name `test` (`use skipper::serial as test`) makes it
+/// another attribute macro that may replace the body, in this module or, by
+/// `use super::*`, in an enclosing module of this file. A glob of another
+/// crate is refused by the macro-binding authority, and one of the
+/// workspace's own modules is not seen into.
+fn builtin_test_attribute_holds(module: &SyntaxNode) -> bool {
+    !extern_crate_binds_test(module)
+        && module_use_leaves(module)
+            .iter()
+            .all(|leaf| match &leaf.binding {
+                UseBinding::Name(binding) => unraw(binding) != "test",
+                UseBinding::Glob => {
+                    let Some(levels) = super_glob_levels(leaf) else {
+                        return true;
+                    };
+                    let mut parent = Some(module.clone());
+                    for _ in 0..levels {
+                        parent = parent.and_then(|items| enclosing_module_items(&items));
+                    }
+                    parent.is_none_or(|parent| builtin_test_attribute_holds(&parent))
+                }
+            })
+}
+
+/// Whether a direct `extern crate .. as test;` of `module` rebinds `test`.
+fn extern_crate_binds_test(module: &SyntaxNode) -> bool {
+    module
+        .children()
+        .filter_map(ast::ExternCrate::cast)
+        .any(|item| {
+            item.rename()
+                .and_then(|rename| rename.name())
+                .is_some_and(|name| unraw(name.text()) == "test")
+        })
+}
+
+/// How many modules up a `super::*` / `super::super::*` glob reaches.
+fn super_glob_levels(leaf: &UseLeaf) -> Option<usize> {
+    (!leaf.path.is_empty() && leaf.path.iter().all(|segment| segment == "super"))
+        .then_some(leaf.path.len())
+}
+
+/// The item list or source file around the module whose items are `module`,
+/// when this file holds it.
+fn enclosing_module_items(module: &SyntaxNode) -> Option<SyntaxNode> {
+    module
+        .parent()
+        .filter(|owner| ast::Module::can_cast(owner.kind()))
+        .and_then(|owner| owner.parent())
+}
+
+/// Scope-blind: whether any `use` or `extern crate` of the file binds
+/// `test`.
+fn file_binds_test_name(file: &SyntaxNode) -> bool {
+    file.descendants().any(|item| {
+        if let Some(extern_crate) = ast::ExternCrate::cast(item.clone()) {
+            return extern_crate
+                .rename()
+                .and_then(|rename| rename.name())
+                .is_some_and(|name| unraw(name.text()) == "test");
+        }
+        let Some(tree) = ast::Use::cast(item).and_then(|import| import.use_tree()) else {
+            return false;
+        };
+        let mut leaves = Vec::new();
+        flatten_use_tree(&tree, &[], &mut leaves);
+        leaves.iter().any(
+            |leaf| matches!(&leaf.binding, UseBinding::Name(binding) if unraw(binding) == "test"),
+        )
+    })
 }
 
 /// `tokio::test`, rooted or not. Only the crate-qualified path: a bare

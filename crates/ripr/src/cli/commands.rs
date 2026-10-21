@@ -42,7 +42,8 @@ mod swarm_command;
 mod task_first;
 
 pub(super) use agent::{
-    agent, before_phase_stdout, run_before_repair_with_identity, translate_agent_repair_seam_id,
+    agent, before_phase_stdout, resolve_agent_repair_root, run_before_repair_with_identity,
+    translate_agent_repair_seam_id,
 };
 pub(super) use context::context;
 // Flag-documenting help bodies live beside their parsers so `cli::help`
@@ -133,6 +134,7 @@ mod check_fanout;
 pub(super) use check::check;
 #[cfg(unix)]
 pub(super) use check::check_with_interrupt_flags;
+pub(super) use check::{bind_member_selector_file, resolve_implicit_command_root};
 
 #[path = "commands/review_comments.rs"]
 mod review_comments;
@@ -258,9 +260,7 @@ pub(super) fn zero(args: &[String]) -> Result<(), String> {
         return Ok(());
     };
     if subcommand != "status" {
-        return Err(format!(
-            "unknown zero subcommand {subcommand:?}; expected `status`"
-        ));
+        return Err(unknown_value("zero subcommand", subcommand, &["status"]));
     }
     ripr_zero_status(rest)
 }
@@ -282,8 +282,18 @@ pub(super) fn policy(args: &[String]) -> Result<(), String> {
         "preview-promote" => policy_preview_promotion(rest),
         "waiver-aging" => policy_waiver_aging(rest),
         "suppression-health" => policy_suppression_health(rest),
-        _ => Err(format!(
-            "unknown policy subcommand {subcommand:?}; expected `readiness`, `operations`, `history`, `promote`, `preview-promote`, `waiver-aging`, or `suppression-health`"
+        _ => Err(unknown_value(
+            "policy subcommand",
+            subcommand,
+            &[
+                "readiness",
+                "operations",
+                "history",
+                "promote",
+                "preview-promote",
+                "waiver-aging",
+                "suppression-health",
+            ],
         )),
     }
 }
@@ -298,8 +308,10 @@ pub(super) fn pr_ledger(args: &[String]) -> Result<(), String> {
         return Ok(());
     };
     if subcommand != "record" {
-        return Err(format!(
-            "unknown pr-ledger subcommand {subcommand:?}; expected `record`"
+        return Err(unknown_value(
+            "pr-ledger subcommand",
+            subcommand,
+            &["record"],
         ));
     }
     pr_evidence_ledger_record(rest)
@@ -321,8 +333,10 @@ pub(super) fn pr_comments(args: &[String]) -> Result<(), String> {
         "existing" => pr_comments_github::pr_comments_existing(rest),
         "requests" => pr_comments_github::pr_comments_requests(rest),
         "summary" => pr_comments_github::pr_comments_summary(rest),
-        _ => Err(format!(
-            "unknown pr-comments subcommand {subcommand:?}; expected `plan`, `existing`, `requests`, or `summary`"
+        _ => Err(unknown_value(
+            "pr-comments subcommand",
+            subcommand,
+            &["plan", "existing", "requests", "summary"],
         )),
     }
 }
@@ -337,8 +351,10 @@ pub(super) fn pr_review(args: &[String]) -> Result<(), String> {
         return Ok(());
     };
     if subcommand != "front-panel" {
-        return Err(format!(
-            "unknown pr-review subcommand {subcommand:?}; expected `front-panel`"
+        return Err(unknown_value(
+            "pr-review subcommand",
+            subcommand,
+            &["front-panel"],
         ));
     }
     pr_review_front_panel(rest)
@@ -354,8 +370,10 @@ pub(super) fn coverage_grip(args: &[String]) -> Result<(), String> {
         return Ok(());
     };
     if subcommand != "frontier" {
-        return Err(format!(
-            "unknown coverage-grip subcommand {subcommand:?}; expected `frontier`"
+        return Err(unknown_value(
+            "coverage-grip subcommand",
+            subcommand,
+            &["frontier"],
         ));
     }
     coverage_grip_frontier(rest)
@@ -373,8 +391,10 @@ pub(super) fn assistant_loop(args: &[String]) -> Result<(), String> {
     match subcommand.as_str() {
         "proof" => assistant_loop_proof(rest),
         "health" => assistant_loop_health(rest),
-        _ => Err(format!(
-            "unknown assistant-loop subcommand {subcommand:?}; expected `proof` or `health`"
+        _ => Err(unknown_value(
+            "assistant-loop subcommand",
+            subcommand,
+            &["proof", "health"],
         )),
     }
 }
@@ -501,8 +521,17 @@ pub(super) fn reports(args: &[String]) -> Result<(), String> {
         "gap-ledger" => gap_decision_ledger(rest),
         "ts-limitations" => typescript_limitations(rest),
         "ts-false-actionable" => typescript_false_actionable(rest),
-        _ => Err(format!(
-            "unknown reports subcommand {subcommand:?}; expected `index`, `ci-packet`, `ci-summary`, `gap-ledger`, `ts-limitations`, or `ts-false-actionable`"
+        _ => Err(unknown_value(
+            "reports subcommand",
+            subcommand,
+            &[
+                "index",
+                "ci-packet",
+                "ci-summary",
+                "gap-ledger",
+                "ts-limitations",
+                "ts-false-actionable",
+            ],
         )),
     }
 }
@@ -1180,8 +1209,10 @@ pub(super) fn calibrate(args: &[String]) -> Result<(), String> {
         return Ok(());
     };
     if subcommand != "cargo-mutants" {
-        return Err(format!(
-            "unknown calibrate subcommand {subcommand:?}; expected `cargo-mutants`"
+        return Err(unknown_value(
+            "calibrate subcommand",
+            subcommand,
+            &["cargo-mutants"],
         ));
     }
 
@@ -2807,6 +2838,9 @@ enum DiffReportFormat {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct DiffOptions {
     root: PathBuf,
+    /// `true` when `--root` was typed, so implicit workspace-root resolution
+    /// must not rewrite `.` (#8872). Same opt-out as `ripr check`.
+    root_explicit: bool,
     /// `None` when `--base` was omitted; resolved by the loader's base
     /// authority at run time, never defaulted to a literal branch here.
     base: Option<String>,
@@ -2829,8 +2863,25 @@ pub(super) fn diff(args: &[String]) -> Result<(), String> {
         help::print_diff_help();
         return Ok(());
     }
-    let options = parse_diff_options(args)?;
+    let mut options = parse_diff_options(args)?;
     let json = matches!(options.format, DiffReportFormat::Json);
+    // #8872: same implicit root `ripr check` uses; `--root .` opts out. A
+    // resolution failure is a post-argv failure, so a JSON run still gets the
+    // refusal envelope (#7331), keyed to the root as typed.
+    let typed_root = options.root.clone();
+    if let Err(error) = resolve_implicit_command_root(&mut options.root, options.root_explicit) {
+        if !json {
+            return Err(error);
+        }
+        return Err(crate::cli::commands_context::refuse_json_envelope(
+            DIFF_REFUSAL_SCHEMA_VERSION,
+            "diff",
+            Some(options.mode.as_str()),
+            &typed_root,
+            options.base.as_deref(),
+            crate::core_error::CoreError::from(error),
+        ));
+    }
     // #7331: every post-argv-parse failure of a JSON diff run writes the
     // shared refusal envelope (the diff report's own schema version) to
     // stdout before the prose error reaches stderr. Argv usage errors above
@@ -2925,6 +2976,7 @@ pub(super) fn diff(args: &[String]) -> Result<(), String> {
 fn parse_diff_options(args: &[String]) -> Result<DiffOptions, String> {
     let mut options = DiffOptions {
         root: PathBuf::from("."),
+        root_explicit: false,
         base: None,
         head: "HEAD".to_string(),
         mode: Mode::Draft,
@@ -2939,6 +2991,7 @@ fn parse_diff_options(args: &[String]) -> Result<DiffOptions, String> {
             "--root" => {
                 i += 1;
                 options.root = PathBuf::from(expect_value(args, i, "--root")?);
+                options.root_explicit = true;
             }
             "--base" => {
                 i += 1;
@@ -3098,6 +3151,7 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // `--worktree` matches `ripr check --worktree`: the finding may come
     // from uncommitted edits the committed-history diff never sees.
     let mut worktree = false;
+    let mut committed = false;
     // #8739: same meaning as `ripr check --quiet`: stderr progress only.
     let mut quiet = false;
     let mut root_explicitly_provided = false;
@@ -3124,6 +3178,7 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
                 from_artifact = Some(PathBuf::from(expect_value(args, i, "--from")?));
             }
             "--worktree" => worktree = true,
+            "--committed" => committed = true,
             "--mode" => {
                 i += 1;
                 input.mode = parse_mode(expect_value(args, i, "--mode")?)?;
@@ -3176,21 +3231,37 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     if from_artifact.is_none() && base_explicitly_provided && input.diff_file.is_some() {
         return Err(base_with_diff_conflict_error("explain"));
     }
-    worktree_scope_conflict(
+    drill_in_scope_conflict(
         "explain",
         worktree,
+        committed,
         input.diff_file.is_some(),
         from_artifact.is_some(),
     )?;
-    if selector.is_none() && !worktree {
+    if selector.is_none() && !worktree && !committed {
         return Err(missing_selector_error(
             "missing finding selector",
             "ripr check --json",
         ));
     }
-    resolve_worktree_root(&mut input, worktree, root_explicitly_provided)?;
+    // #8872: the implicit workspace root `ripr check` uses (this subsumes the
+    // `--worktree` resolution); `--root .` opts out. A member-relative
+    // `file:line` selector binds to the invocation directory.
+    let prefix = resolve_implicit_command_root(&mut input.root, root_explicitly_provided)?;
+    // With `--from` or `--diff` the named file need not exist in the working
+    // tree (for example a file the diff deletes), so a selector that binds to
+    // nothing is not refused. It is anchored to the invocation directory
+    // instead (never left as a bare suffix that could match a sibling member's
+    // finding); with an unmoved root it is used as typed.
+    let replay = from_artifact.is_some() || input.diff_file.is_some();
+    let selector = selector
+        .map(|item| bind_member_drill_in_selector(prefix.as_deref(), &input.root, item, replay))
+        .transpose()?;
     let config = load_for_root(&input.root)?;
     apply_to_check_input(&mut input, &config, explicit);
+    let worktree_from_default =
+        !worktree && dirty_tree_default_is_worktree(&input, from_artifact.is_some(), committed);
+    let worktree = worktree || worktree_from_default;
     let Some(selector) = selector else {
         return Err(missing_selector_error(
             "missing finding selector",
@@ -3238,6 +3309,7 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
                 &config,
                 explicit.mode,
                 worktree,
+                worktree_from_default,
                 progress_sink,
             )?
         }
@@ -3263,29 +3335,89 @@ pub(super) fn missing_selector_error(what: &str, listing: &str) -> String {
     )
 }
 
-/// A `--worktree` drill-in without `--root` resolves the implicit project
-/// root the same way `ripr check --worktree` does, so a manual invocation
-/// from a project subdirectory analyzes the scope that listed the finding.
-/// An explicit `--root` is kept as given.
-pub(super) fn resolve_worktree_root(
-    input: &mut CheckInput,
-    worktree: bool,
-    root_explicitly_provided: bool,
-) -> Result<(), String> {
-    if worktree && !root_explicitly_provided {
-        check::resolve_implicit_workspace_root(input)?;
+/// #8872/#8902: bind a member-relative `file:line` drill-in selector (`explain`
+/// and `context`) to the invocation directory. With `--from`/`--diff`
+/// (`replay`) the named file need not exist in the working tree (for example a
+/// file the diff deletes), so a selector that binds to nothing is not refused:
+/// it is anchored to the invocation directory instead (never left as a bare
+/// suffix that could match a sibling member's finding); with an unmoved root it
+/// is used as typed.
+fn bind_member_drill_in_selector(
+    prefix: Option<&str>,
+    root: &Path,
+    item: String,
+    replay: bool,
+) -> Result<String, String> {
+    match check::bind_member_selector_item(prefix, root, &item) {
+        Err(_) if replay => match prefix {
+            Some(prefix) => {
+                // Normalize `./` first so `./pkg/x.rs:2` is not prefixed twice.
+                let bare = item.trim_start_matches("./");
+                let anchored = if bare.starts_with(&format!("{prefix}/")) {
+                    bare.to_string()
+                } else {
+                    format!("{prefix}/{bare}")
+                };
+                match anchored.rsplit_once(':') {
+                    Some((file, _)) => {
+                        check::refuse_root_shadowed_selector(root, file).map(|()| anchored)
+                    }
+                    None => Ok(anchored),
+                }
+            }
+            None => Ok(item),
+        },
+        bound => bound,
     }
-    Ok(())
 }
 
-/// `--worktree` is its own diff source, like in `ripr check`: it cannot sit
-/// beside `--diff`, and an artifact from `--from` already fixes the scope.
-pub(super) fn worktree_scope_conflict(
+/// `ripr check` reads the working tree by default when it holds uncommitted
+/// tracked edits, and prints finding ids from that run. `explain`/`context`
+/// must resolve those ids against the same subject, so a live-repository
+/// drill-in without a supplied scope (`--diff`, `--from`, candidate tree)
+/// follows the shared `app::diff_source` default instead of re-analysing
+/// committed history only.
+pub(super) fn dirty_tree_default_is_worktree(
+    input: &CheckInput,
+    from_artifact: bool,
+    committed: bool,
+) -> bool {
+    !committed
+        && !from_artifact
+        && input.diff_file.is_none()
+        && input.git_candidate.is_none()
+        && app::diff_source::select_live_diff_source(
+            &input.root,
+            app::diff_source::DiffSourceRequest::Default,
+            input.git_timeout,
+        )
+        .is_working_tree()
+}
+
+/// Explicit live sources are mutually exclusive and cannot override a supplied
+/// diff or an artifact. These are argv errors, before root or input reads.
+pub(super) fn drill_in_scope_conflict(
     command: &str,
     worktree: bool,
+    committed: bool,
     diff_file: bool,
     from_artifact: bool,
 ) -> Result<(), String> {
+    if committed && worktree {
+        return Err(format!(
+            "{command} --committed and --worktree select different diff sources; pass one"
+        ));
+    }
+    if committed && diff_file {
+        return Err(format!(
+            "{command} --committed cannot be combined with --diff"
+        ));
+    }
+    if committed && from_artifact {
+        return Err(format!(
+            "{command} --committed cannot be combined with --from: the artifact already records the diff it was written from"
+        ));
+    }
     if worktree && diff_file {
         return Err(format!(
             "{command} --worktree cannot be combined with --diff"
@@ -3651,7 +3783,7 @@ mod tests {
         assert_eq!(
             reports(&args(&["unknown"])),
             Err(
-                "unknown reports subcommand \"unknown\"; expected `index`, `ci-packet`, `ci-summary`, `gap-ledger`, `ts-limitations`, or `ts-false-actionable`"
+                "unknown reports subcommand \"unknown\". Accepted: index, ci-packet, ci-summary, gap-ledger, ts-limitations, ts-false-actionable."
                     .to_string()
             )
         );
@@ -4534,7 +4666,7 @@ mod tests {
         );
         assert_eq!(
             pr_review(&args(&["bogus"])),
-            Err("unknown pr-review subcommand \"bogus\"; expected `front-panel`".to_string())
+            Err("unknown pr-review subcommand \"bogus\". Accepted: front-panel.".to_string())
         );
     }
 
@@ -4585,7 +4717,7 @@ mod tests {
         );
         assert_eq!(
             zero(&args(&["unknown"])),
-            Err("unknown zero subcommand \"unknown\"; expected `status`".to_string())
+            Err("unknown zero subcommand \"unknown\". Accepted: status.".to_string())
         );
         assert_eq!(
             parse_ripr_zero_status_options(&args(&[])),
@@ -4714,7 +4846,7 @@ mod tests {
         assert_eq!(
             policy(&args(&["unknown"])),
             Err(
-                "unknown policy subcommand \"unknown\"; expected `readiness`, `operations`, `history`, `promote`, `preview-promote`, `waiver-aging`, or `suppression-health`"
+                "unknown policy subcommand \"unknown\". Accepted: readiness, operations, history, promote, preview-promote, waiver-aging, suppression-health."
                     .to_string()
             )
         );
@@ -4748,7 +4880,14 @@ mod tests {
         assert_eq!(
             parse_policy_promotion_options(&args(&["--to", "strict"])),
             Err(
-                "unknown policy promotion target \"strict\"; expected `visible-only`, `acknowledgeable`, `baseline-check`, or `calibrated-gate`"
+                "unknown policy promotion target \"strict\". Accepted: visible-only, acknowledgeable, baseline-check, calibrated-gate."
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            parse_policy_promotion_options(&args(&["--to", "visble-only"])),
+            Err(
+                "unknown policy promotion target \"visble-only\". Did you mean `visible-only`? Accepted: visible-only, acknowledgeable, baseline-check, calibrated-gate."
                     .to_string()
             )
         );
@@ -4774,7 +4913,14 @@ mod tests {
         assert_eq!(
             parse_policy_preview_promotion_options(&args(&["--language", "ruby"])),
             Err(
-                "unknown preview promotion language \"ruby\"; expected `typescript` or `python`"
+                "unknown preview promotion language \"ruby\". Accepted: typescript, python."
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            parse_policy_preview_promotion_options(&args(&["--language", "pythn"])),
+            Err(
+                "unknown preview promotion language \"pythn\". Did you mean `python`? Accepted: typescript, python."
                     .to_string()
             )
         );
@@ -5864,7 +6010,7 @@ language = "rust"
         );
         assert_eq!(
             pr_ledger(&args(&["unknown"])),
-            Err("unknown pr-ledger subcommand \"unknown\"; expected `record`".to_string())
+            Err("unknown pr-ledger subcommand \"unknown\". Accepted: record.".to_string())
         );
         assert_eq!(
             parse_pr_evidence_ledger_options(&args(&[
@@ -6106,7 +6252,7 @@ language = "rust"
         );
         assert_eq!(
             pr_comments(&args(&["publish"])),
-            Err("unknown pr-comments subcommand \"publish\"; expected `plan`, `existing`, `requests`, or `summary`".to_string())
+            Err("unknown pr-comments subcommand \"publish\". Accepted: plan, existing, requests, summary.".to_string())
         );
         assert_eq!(
             parse_pr_comments_plan_options(&args(&["--mode", "post"])),
@@ -6576,7 +6722,7 @@ language = "rust"
         );
         assert_eq!(
             coverage_grip(&args(&["unknown"])),
-            Err("unknown coverage-grip subcommand \"unknown\"; expected `frontier`".to_string())
+            Err("unknown coverage-grip subcommand \"unknown\". Accepted: frontier.".to_string())
         );
         assert_eq!(
             parse_coverage_grip_frontier_options(&args(&["--coverage", "coverage.json"])),
@@ -7009,7 +7155,7 @@ language = "rust"
         assert_eq!(calibrate(&args(&[])), Ok(()));
         assert_eq!(
             calibrate(&args(&["runtime"])),
-            Err("unknown calibrate subcommand \"runtime\"; expected `cargo-mutants`".to_string())
+            Err("unknown calibrate subcommand \"runtime\". Accepted: cargo-mutants.".to_string())
         );
         assert_eq!(
             parse_calibrate_cargo_mutants_options(&args(&["--repo-exposure-json", "repo.json"])),
@@ -7419,7 +7565,10 @@ language = "rust"
         );
         assert_eq!(
             init(&args(&["--ci", "gitlab"])),
-            Err("unknown init --ci provider \"gitlab\". Accepted: github.".to_string())
+            Err(
+                "unknown init --ci provider \"gitlab\". Did you mean `github`? Accepted: github."
+                    .to_string()
+            )
         );
     }
 
@@ -8058,8 +8207,8 @@ language = "rust"
         // The DX bar from #5409: a workflow an adopter can read in one sitting.
         let line_count = workflow.lines().count();
         assert!(
-            line_count <= 166,
-            "generated workflow is {line_count} lines; #5409 set 150, and the summary comment step took it to 165"
+            line_count <= 175,
+            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, and #4452 added step env bindings"
         );
 
         assert!(workflow.contains("RIPR_UPLOAD_SARIF: \"true\""));
@@ -8140,6 +8289,10 @@ language = "rust"
         assert!(summary.contains("github.actor != 'dependabot[bot]'"));
         assert!(summary.contains("continue-on-error: true"));
         assert!(summary.contains("| ripr pr-comments summary --root . --raw -"));
+        assert!(summary.contains("PR_NUMBER: ${{ github.event.pull_request.number }}"));
+        assert!(summary.contains("PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}"));
+        assert!(summary.contains("REPO: ${{ github.repository }}"));
+        assert!(summary.contains("--pull-request \"$PR_NUMBER\" --head-sha \"$PR_HEAD_SHA\""));
         assert!(summary.contains("done < target/ripr/review/summary/summary.tsv"));
         assert_step_before(&workflow, "Run RIPR", "Publish RIPR summary comment");
 
@@ -8161,9 +8314,12 @@ language = "rust"
         assert!(existing_comments.contains("env.RIPR_COMMENT_MODE != 'off'"));
         assert!(existing_comments.contains("GH_TOKEN: ${{ github.token }}"));
         assert!(existing_comments.contains("gh api --paginate --slurp"));
+        assert!(existing_comments.contains("PR_NUMBER: ${{ github.event.pull_request.number }}"));
         assert!(
-            existing_comments.contains("pulls/${{ github.event.pull_request.number }}/comments")
+            existing_comments.contains("PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}")
         );
+        assert!(existing_comments.contains("REPO: ${{ github.repository }}"));
+        assert!(existing_comments.contains("pulls/$PR_NUMBER/comments"));
         // The command's default output is the file the packet's plan reads.
         assert!(include_str!("commands/pr_comments_github.rs").contains(
             "const DEFAULT_EXISTING_OUT: &str = \"target/ripr/review/existing-comments.json\";"
@@ -8176,11 +8332,14 @@ language = "rust"
         assert!(
             publish_comments.contains("hashFiles('target/ripr/review/comment-publish-plan.json')")
         );
+        assert!(publish_comments.contains("PR_NUMBER: ${{ github.event.pull_request.number }}"));
         assert!(
-            publish_comments.contains("--head-sha \"${{ github.event.pull_request.head.sha }}\"")
+            publish_comments.contains("PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}")
         );
+        assert!(publish_comments.contains("REPO: ${{ github.repository }}"));
+        assert!(publish_comments.contains("--head-sha \"$PR_HEAD_SHA\""));
         assert!(publish_comments.contains(
-            "gh api --method \"$method\" \"repos/${{ github.repository }}/$endpoint\" --input \"$request\""
+            "gh api --method \"$method\" \"repos/$REPO/$endpoint\" --input \"$request\""
         ));
 
         // The packet writes the plan the publish step reads, and the comment

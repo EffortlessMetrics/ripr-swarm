@@ -72,11 +72,11 @@ pub(crate) const WORKFLOW_TAGS: &[&str] = &[
 pub(crate) enum CommandOperation {
     /// Reads workspace state and writes nothing.
     ReadOnly,
-    /// Writes product artifacts, by default under `target/ripr/` or an
-    /// explicit `--out` path.
+    /// Writes product artifacts, including disposable analysis cache entries,
+    /// by default under `target/ripr/` or an explicit output/cache path.
     WritesArtifacts,
-    /// Mutates durable state outside a single product-artifact write (cache
-    /// entries, installed workflows, ledgers the next run consumes).
+    /// Mutates managed state beyond generating artifacts (cache eviction,
+    /// installed workflows, ledgers the next run consumes).
     StateChanging,
 }
 
@@ -277,6 +277,11 @@ const READS_ONLY: CommandEffects = CommandEffects {
     may_use_network: false,
     may_start_child_process: false,
 };
+
+/// Fresh explain/context analysis can populate this disposable cache. The
+/// stored-finding route may skip that work, so the output role is conditional.
+pub(crate) const INSPECTION_CACHE_OUTPUT: &str =
+    "fresh analysis may populate target/ripr/cache/ (RIPR_CACHE_DIR overrides)";
 
 /// Analysis rows recompute static facts and may start one bounded child
 /// process (Git revision resolution through `crate::git`, or a workspace
@@ -2107,7 +2112,7 @@ const METADATA: &[CommandMetadata] = &[
         summary: "Explain one finding against the current diff.",
         task: "Inspect a finding",
         workflows: &["inspect-change"],
-        operation: CommandOperation::ReadOnly,
+        operation: CommandOperation::WritesArtifacts,
         cost: CommandCost::Analysis,
         effects: ANALYSIS_RUNNER,
         primary_inputs: &[
@@ -2115,7 +2120,7 @@ const METADATA: &[CommandMetadata] = &[
             "the current diff (--base or --diff)",
         ],
         outputs: CommandOutputs {
-            default: None,
+            default: Some(INSPECTION_CACHE_OUTPUT),
             optional: &[],
         },
         state_target: None,
@@ -2124,7 +2129,7 @@ const METADATA: &[CommandMetadata] = &[
         next_routes: &["context", "check"],
         stop_states: &[],
         exit: EXIT_COMPLETED_OR_FAILED,
-        limitations: "recomputes analysis context for the finding; it does not change analysis scope.",
+        limitations: "fresh analysis can populate the disposable cache; --from uses the saved finding without rerunning the full analysis.",
         not_applicable_reason: None,
     },
     CommandMetadata {
@@ -2132,7 +2137,7 @@ const METADATA: &[CommandMetadata] = &[
         summary: "Collect the tests and seams related to one finding.",
         task: "Hand off a finding",
         workflows: &["inspect-change"],
-        operation: CommandOperation::ReadOnly,
+        operation: CommandOperation::WritesArtifacts,
         cost: CommandCost::Analysis,
         effects: ANALYSIS_RUNNER,
         primary_inputs: &[
@@ -2140,7 +2145,7 @@ const METADATA: &[CommandMetadata] = &[
             "the current diff (--base or --diff)",
         ],
         outputs: CommandOutputs {
-            default: None,
+            default: Some(INSPECTION_CACHE_OUTPUT),
             optional: &[],
         },
         state_target: None,
@@ -2149,7 +2154,7 @@ const METADATA: &[CommandMetadata] = &[
         next_routes: &["explain", "repair"],
         stop_states: &[],
         exit: EXIT_COMPLETED_OR_FAILED,
-        limitations: "bounded by --max-related-tests; it is context collection, not a fix.",
+        limitations: "bounded by --max-related-tests; fresh analysis can populate the disposable cache; --from uses a saved finding.",
         not_applicable_reason: None,
     },
     CommandMetadata {
@@ -2977,8 +2982,8 @@ mod tests {
 
     #[test]
     fn readonly_row_declaring_a_product_write_is_rejected() -> Result<(), String> {
-        let rows = with_mutated_row("cmd:explain", |row| {
-            row.outputs.default = Some("target/ripr/reports/explain.json");
+        let rows = with_mutated_row("cmd:cache.status", |row| {
+            row.outputs.default = Some("target/ripr/reports/cache-status.json");
         })?;
         expect_single_violation(&rows, "read-only but declares product writes")
     }
@@ -2986,7 +2991,7 @@ mod tests {
     #[test]
     fn write_claim_without_an_output_role_is_rejected() -> Result<(), String> {
         let rows = with_mutated_row("cmd:explain", |row| {
-            row.operation = CommandOperation::WritesArtifacts;
+            row.outputs.default = None;
         })?;
         expect_single_violation(&rows, "writes artifacts but declares no output role")
     }
