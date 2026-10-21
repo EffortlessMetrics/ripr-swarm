@@ -6390,6 +6390,7 @@ mod tests {
         assert!(!is_first_run_repairable_gap(&record_ref));
     }
 
+    #[cfg(feature = "lang-typescript")]
     #[test]
     fn typescript_preview_gap_ledger_is_selected_for_start_here() -> Result<(), String> {
         let repo = temp_typescript_repo("first-pr-typescript-preview")?;
@@ -6683,6 +6684,11 @@ mod tests {
         for case in cases {
             let case_id = string_path(case, &["id"])
                 .ok_or_else(|| "first_successful_pr case is missing id".to_string())?;
+            // Without `lang-typescript` first-use detection is inert (same
+            // as `ripr check`), so the TypeScript route does not apply.
+            if cfg!(not(feature = "lang-typescript")) && case_id.starts_with("typescript-") {
+                continue;
+            }
             assert_first_successful_pr_case(&corpus, &case_id)?;
         }
         Ok(())
@@ -6724,6 +6730,7 @@ mod tests {
         })
     }
 
+    #[cfg(feature = "lang-typescript")]
     fn ledger_with_typescript_repairable_gap() -> Value {
         json!({
             "schema_version": "0.1",
@@ -7097,6 +7104,7 @@ mod tests {
         fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))
     }
 
+    #[cfg(feature = "lang-typescript")]
     fn temp_typescript_repo(name: &str) -> Result<PathBuf, String> {
         let path = write_temp_root(&env::temp_dir(), name)?;
         fs::write(
