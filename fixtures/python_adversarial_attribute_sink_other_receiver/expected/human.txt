@@ -35,6 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_adversarial_attribute_sink_other_receiver/input --diff <cwd>/fixtures/python_adversarial_attribute_sink_other_receiver/diff.patch --mode fast probe:src_session.py:python_preview:a8af27c6
   ripr context --root <cwd>/fixtures/python_adversarial_attribute_sink_other_receiver/input --diff <cwd>/fixtures/python_adversarial_attribute_sink_other_receiver/diff.patch --mode fast --at probe:src_session.py:python_preview:a8af27c6
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_session.py:python_preview:a8af27c6 --root <cwd>/fixtures/python_adversarial_attribute_sink_other_receiver/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

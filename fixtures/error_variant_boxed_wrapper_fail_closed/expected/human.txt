@@ -14,7 +14,7 @@ Start here:
   Static exposure: weak (severity: warning, confidence 0.92)
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: try_checksum_summary(payload).map_err(Into::into)
-  Missing discriminator: Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
+  Analyzer limit: Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
   Related test: tests/errors.rs:4 checksum_summary_pins_wrong_sibling_variant (ripr could not confirm that this assertion observes the changed behavior)
   Next step: Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically
     establish that this boxed wrapper conversion carries the callee's error variant, so an existing
@@ -28,6 +28,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/diff.patch --mode fast probe:src_lib.rs:error_path:51fc5156
   ripr context --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input --diff <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/diff.patch --mode fast --at probe:src_lib.rs:error_path:51fc5156
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:error_path:51fc5156 --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/error_variant_boxed_wrapper_fail_closed/input --at src/lib.rs:29 --kind error_path
 

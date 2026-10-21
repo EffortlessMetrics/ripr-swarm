@@ -1,6 +1,7 @@
 mod adapter;
 pub(crate) mod fn_signature;
 pub(crate) mod lexical;
+mod local_assertion_macros;
 mod local_test_macros;
 mod module_tree;
 mod name_scope;
@@ -8,6 +9,7 @@ mod nesting;
 mod owner_pin;
 mod pattern_pin;
 pub(crate) mod run_memo;
+pub(crate) use owner_pin::debug_assert_eq_calls;
 pub(crate) use owner_pin::macro_binding_candidates;
 pub(crate) use owner_pin::{
     AssertionContextRefusal, HelperLoan, MacroBindingCandidates, MacroBindingKind,
@@ -26,6 +28,7 @@ pub(crate) mod ra;
 pub use adapter::{
     LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange,
 };
+pub(crate) use local_assertion_macros::{LocalMacroCall, MacroArm, local_macro_calls};
 pub(crate) use local_test_macros::{
     GeneratedTestPins, expand_local_test_macros, generated_test_pins,
 };

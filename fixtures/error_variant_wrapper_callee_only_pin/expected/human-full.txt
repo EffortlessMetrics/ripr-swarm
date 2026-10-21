@@ -35,11 +35,6 @@ return Err("callee pin should observe ParseSummaryError::MalformedSource".into()
 }; misses: no call to the changed code found; linked by name only
   - source enum variant value ParseSummaryError::MalformedSource at line 6
 
-Weakness
-  - No relevant oracle was detected
-  - No static test path reaches the changed owner
-  - No strong discriminator was detected
-
 Next step
   ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists
 Drill in:
@@ -75,8 +70,6 @@ return Err("callee pin should observe ParseSummaryError::MalformedSource".into()
   - source enum variant value ParseSummaryError::MalformedSource at line 6
 
 Weakness
-  - No relevant oracle was detected
-  - No static test path reaches the changed owner
   - Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
 
 Next step

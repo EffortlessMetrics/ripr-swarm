@@ -2159,8 +2159,9 @@ fn validate_spellings_parse_language_without_out_or_cases() -> Result<(), String
 
 #[test]
 fn declared_validation_keeps_every_ledger_but_perl_mandatory() -> Result<(), String> {
-    // The declared funnel is the single coverage-mode decision: the Perl
-    // corpus validates structurally with no coverage attached, while every
+    // The declared funnel is the single coverage-mode decision: a Perl
+    // corpus without a ledger validates structurally with no coverage
+    // attached (#8775), while every
     // other corpus keeps its spec-example ledger mandatory (#6686 review for
     // Rust, #7650 for TypeScript and Python) — deleting that ledger fails
     // instead of dropping the coverage floor from `check-all`. (The gated
@@ -2183,7 +2184,17 @@ fn declared_validation_keeps_every_ledger_but_perl_mandatory() -> Result<(), Str
         assert!(err.contains(coverage::LEDGER_FILE), "{name}: {err}");
     }
 
-    let (corpus, coverage) = validated_corpus_declared(&perl_corpus_dir())?;
+    // Perl carries a ledger now, so it is gated (the gated validation needs
+    // the repo-relative specs tree, so the `check-all` run proves it); the
+    // ledgerless fallback stays only until #8775 makes the ledger mandatory
+    // there too.
+    let perl = perl_corpus_dir();
+    assert_eq!(corpus_coverage_mode(&perl), CorpusCoverage::Gated);
+    let leaf = perl.file_name().ok_or("corpus dir has no name")?;
+    let copy = crate::tests::temp_dir("verdict-declared-perl-ledgerless").join(leaf);
+    crate::tests::copy_dir_recursive(&perl, &copy)?;
+    fs::remove_file(copy.join(coverage::LEDGER_FILE)).map_err(|err| err.to_string())?;
+    let (corpus, coverage) = validated_corpus_declared(&copy)?;
     assert!(coverage.is_none());
     assert!(!corpus.cases.is_empty());
     Ok(())

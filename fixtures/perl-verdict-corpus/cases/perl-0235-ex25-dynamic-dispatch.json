@@ -53,6 +53,9 @@
     "packet": "packets/perl-0235-ex25-dynamic-dispatch.json",
     "sha256": "ef2155d2c090bf47403964c1d95d0403ec4bb3e9dd6a2f86d7975f1bde2ab92e",
     "provenance": "edited_producer",
-    "edits": "Started from the producer packet of perl-test2-summary-deep-is-count, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"observed_sink\": null}; append to limitations: {\"evidence_refs\": [], \"kind\": \"dynamic_dispatch\", \"limitation_id\": \"dynamic-dispatch\", \"message\": \"the owner is reached through dynamic dispatch\"}; the packet fingerprint was recomputed."
-  }
+    "edits": "Started from the producer packet of perl-test2-summary-deep-is-count, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"observed_sink\": null}; append to limitations: {\"evidence_refs\": [], \"kind\": \"dynamic_dispatch\", \"limitation_id\": \"dynamic-dispatch\", \"message\": \"the owner is reached through dynamic dispatch\"}; the packet fingerprint was recomputed. The retained oracle facts predate the producer pin: its `isnt` oracle stays `strong_exact` here, where the pinned producer now emits `weak_smoke` (RIPR-SPEC-0235 rule 17 demotes it either way)."
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0235#25"
+  ]
 }
