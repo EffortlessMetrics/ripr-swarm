@@ -559,7 +559,7 @@ fn binding_confined(body: &str, binding: &str) -> bool {
         let before = body[..at].trim_end();
         let in_macro = ranges
             .iter()
-            .any(|&(start, end)| start <= at && at < end && !body[start..end].contains('|'));
+            .any(|&(start, end)| start <= at && at < end && plain_arguments(&body[start..end]));
         let to_string_receiver = body[after..]
             .trim_start()
             .strip_prefix(".to_string")
@@ -575,6 +575,18 @@ fn binding_confined(body: &str, binding: &str) -> bool {
         }
     }
     typed_lets == 1
+}
+
+/// Macro arguments that are plain expressions: no blocks, closures or
+/// patterns (`{`, `|`, `=>`, `match`, `if`, `let`), where a name could be
+/// bound rather than used. A nested macro's own arguments are judged on their
+/// own range, so a binder in an enclosing macro's block never counts.
+fn plain_arguments(arguments: &str) -> bool {
+    !arguments.contains(['{', '|'])
+        && !arguments.contains("=>")
+        && !arguments
+            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .any(|token| matches!(token, "match" | "if" | "let"))
 }
 
 /// Byte ranges of the arguments of every standard formatting macro call.
@@ -1105,5 +1117,22 @@ mod tests {
         let owner = ["fmt::Debug for DecodeError"];
         let body = "format!(\"{:?}\", crate::Error::DecodeError(inner));";
         assert!(reasons(&owner, 0, &[body]).is_empty());
+    }
+
+    #[test]
+    fn binders_nested_inside_formatting_macro_arguments_refuse() {
+        let owner = ["fmt::Debug for DecodeError"];
+        let typed = "let e = DecodeError::InvalidByte(0, 1);\n";
+        for nested in [
+            "format!(\"{}\", match r { Ok(e) => format!(\"{:?}\", e), Err(_) => String::new() });",
+            "format!(\"{}\", if let Some(e) = f { format!(\"{:?}\", e) } else { String::new() });",
+            "format!(\"{}\", { let W { e, .. } = w; format!(\"{:?}\", e) });",
+        ] {
+            let body = format!("{typed}{nested}");
+            assert!(reasons(&owner, 0, &[&body]).is_empty(), "{body}");
+        }
+        // A plain nested macro still credits.
+        let body = format!("{typed}format!(\"{{}}\", format!(\"{{:?}}\", e));");
+        assert!(direct(&reasons(&owner, 0, &[&body]), "t0"), "{body}");
     }
 }

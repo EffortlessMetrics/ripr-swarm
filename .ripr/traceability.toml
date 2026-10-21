@@ -16999,6 +16999,7 @@ tests = [
   "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::variant_named_like_the_type_is_not_the_type",
   "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::rebinding_in_scope_of_the_macro_refuses",
   "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::crate_qualified_variant_named_like_the_type_is_not_the_type",
+  "crates/ripr/src/analysis/classify/related_tests/fmt_dispatch.rs::tests::binders_nested_inside_formatting_macro_arguments_refuse",
 ]
 fixtures = []
 code = [

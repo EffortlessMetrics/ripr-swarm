@@ -77,7 +77,11 @@ link is established from syntax:
    formatting macro or the receiver of `.to_string()`. Any other whole-word
    occurrence (a pattern, closure or `fn` parameter, struct shorthand, match
    arm, another expression or call) leaves it untyped. This is a closed list
-   of allowed shapes, not an enumeration of binders.
+   of allowed shapes, not an enumeration of binders. Macro arguments count
+   only when plain: arguments containing a block, closure, `match`, `if`,
+   `let` or `=>` never vouch for an occurrence, so a binder inside an
+   enclosing macro's block is refused (a nested macro is judged on its own
+   arguments).
 
 Existing shadow checks for the owner's type and trait still apply. Derived
 `Debug` has no indexed `fmt` owner and is out of scope.
