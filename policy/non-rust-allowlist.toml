@@ -516,6 +516,24 @@ covered_by = [
 ]
 
 [[allow]]
+glob = ".github/ovsx/package-lock.json"
+kind = "editor_extension_lockfile"
+owner = "lsp/editor"
+surface = "release"
+classification = "metadata"
+reason = "Pinned npm graph for the ovsx publisher used only by publish-extension.yml's Open VSX job (#3798)."
+covered_by = []
+
+[[allow]]
+glob = ".github/ovsx/package.json"
+kind = "editor_extension_manifest"
+owner = "lsp/editor"
+surface = "release"
+classification = "config"
+reason = "Manifest pinning ovsx for publish-extension.yml's Open VSX job (#3798)."
+covered_by = []
+
+[[allow]]
 glob = "editors/vscode/package-lock.json"
 kind = "editor_extension_lockfile"
 owner = "lsp/editor"
