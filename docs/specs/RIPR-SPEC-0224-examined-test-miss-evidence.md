@@ -237,12 +237,16 @@ written and must not copy these gaps.
   JSON, MCP and the context packet carry no label.
 - `output::related_test_miss::oracle_projection` owns the oracle phrase of a
   related-test row, after "uses" (#8388): `<strength> <kind> oracle` for a
-  graded row; `<kind> oracle, not graded against this probe` when the
+  graded row (a multi-word kind that already leads with the strength word is
+  not doubled: `smoke_only` with strength `smoke` reads `smoke only oracle`,
+  #8711; the shared `output::oracle_phrase` helper owns that join); `<kind> oracle, not graded against this probe` when the
   strength is `unknown` (the probe family has no typed oracle relationships,
   so the assertion is not graded, not of unknown quality); `an unclassified
   oracle, not graded against this probe` when the kind is also `unknown` and
   an assertion was selected; and `no oracle` when no assertion was selected.
-  Pinned by `oracle_projection_separates_ungraded_assertions_from_absent_ones`.
+  Pinned by `oracle_projection_separates_ungraded_assertions_from_absent_ones`
+  and the fixture-honesty matcher test
+  `evidence_promotion_human_oracle_line_accepts_deduplicated_smoke_only_wording`.
   Finding hover, fix-site diagnostic links, seam diagnostic links and targeted
   agent briefs use this same phrase (#8951). The diagnostic witness owns the
   selected test; prose does not reselect a stronger row. Finding hover retains

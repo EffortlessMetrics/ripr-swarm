@@ -4289,13 +4289,20 @@ fn std_thread_item(path: &ast::PathExpr, function: &ast::Fn) -> Option<String> {
         .collect();
     // `::thread::` names an extern crate `thread`, never the imported std
     // module, so only `::std::thread::` keeps its leading `::`.
-    let (item, needs_import) = if let Some(item) = text
+    // A bare `scope(..)` / `spawn(..)` (#8999) names std's function only
+    // through exactly one `use std::thread::<item>;` in the function's own
+    // module, and only when nothing else in the file is named `<item>`.
+    let (item, needs_import, bare) = if let Some(item) = text
         .strip_prefix("::std::thread::")
         .or_else(|| text.strip_prefix("std::thread::"))
     {
-        (item, false)
+        (item, false, false)
+    } else if let Some(item) = text.strip_prefix("thread::") {
+        (item, true, false)
+    } else if matches!(text.as_str(), "scope" | "spawn") {
+        (text.as_str(), true, true)
     } else {
-        (text.strip_prefix("thread::")?, true)
+        return None;
     };
     if !item
         .chars()
@@ -4325,7 +4332,8 @@ fn std_thread_item(path: &ast::PathExpr, function: &ast::Fn) -> Option<String> {
             ra_ap_syntax::NodeOrToken::Node(node) => node,
         };
         if let Some(name) = ast::Name::cast(node.clone()) {
-            if matches!(name.text().trim_start_matches("r#"), "std" | "thread") {
+            let name = name.text().trim_start_matches("r#");
+            if matches!(name, "std" | "thread") || bare && name == item {
                 return None;
             }
             continue;
@@ -4396,7 +4404,19 @@ fn std_thread_item(path: &ast::PathExpr, function: &ast::Fn) -> Option<String> {
             .syntax()
             .parent()
             .filter(|parent| ast::Use::can_cast(parent.kind()));
-        if path_text == "std::thread" && tree.rename().is_none() && direct_use.is_some() {
+        let std_item_import = bare
+            && path_text == format!("std::thread::{item}")
+            && tree.rename().is_none()
+            && direct_use.is_some();
+        if std_item_import {
+            // Only the whole `use std::thread::<item>;` imports the std
+            // function; any other leaf ending in `<item>` may be another.
+            imported |= direct_use
+                .and_then(|parent| parent.parent())
+                .is_some_and(|container| container == module);
+        } else if bare && last == item {
+            return None;
+        } else if path_text == "std::thread" && tree.rename().is_none() && direct_use.is_some() {
             imported |= direct_use
                 .and_then(|parent| parent.parent())
                 .is_some_and(|container| container == module);

@@ -83,6 +83,15 @@ This obligation does not change artifact-root ownership, input filtering,
 configuration precedence, or output schemas. Newline-containing and non-UTF-8
 path advice is outside this bounded contract.
 
+### Doctor blocking and advisory marks (#9033)
+
+Doctor's human output marks a blocking failure with `!` and an advisory with
+`~`. A failed core check or a failed required runtime probe is blocking: it
+uses `!` and the run exits 2. An advisory never changes the exit status: the
+artifact root not covered by git ignore rules, the artifact root tracked by
+git, and an unwritable cache each use `~`. `ripr doctor --help` documents both
+marks. This obligation does not change JSON fields or output schemas.
+
 ### Suppression manifest declarations
 
 The configured suppression file and explicit `--suppression-policy` input share
@@ -375,10 +384,20 @@ is written to `.gitignore`, Git ignores `build/cache*/nested/a.json` and leaves
 reports the artifact root as ignored. The changed-scope disclosure recommends
 the same escaped rule when it excluded a file under that root.
 
+### Doctor advisories never block
+
+Given a repository whose ignore rules do not cover the artifact root, or whose
+index tracks an artifact root, or whose cache directory is unwritable, doctor
+prints each advisory starting with `~ ` and exits with the status of its core
+checks alone; only a failed core check or required runtime probe prints `!`
+and exits 2.
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/diff/path.rs::tests::artifact_root_gitignore_entry_escapes_patterns_separately_from_paths`
   pins literal rule escaping and unchanged raw path spelling.
+- `crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_tracking_untrack_names_only_indexed_roots`
+  pins the `~ ` advisory mark on the tracked-artifacts warning.
 - `crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_ignore_advice_covers_only_the_literal_root`
   feeds the actual advice to Git and distinguishes descendants from siblings
   (Unix-only literal-star filesystem fixture).

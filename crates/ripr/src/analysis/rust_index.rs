@@ -160,7 +160,7 @@ pub(crate) fn include_resolution_disclosure(index: &RustIndex) -> Option<String>
 
 /// Concrete next step appended when a file has more than one claiming parent
 /// module (`rust_module_ambiguous_parent`).
-const MODULE_AMBIGUOUS_PARENT_NEXT_STEP: &str = "To resolve rust_module_ambiguous_parent, give each listed file one owner: declare it from a single parent `mod` item (drop duplicate `#[path]` declarations and keep only one of `<name>.rs` or `<name>/mod.rs`); a shared `tests/<name>/mod.rs` helper needs the same `mod <name>;` declaration, with the same `#[cfg(test)]` gating, in every integration test.";
+const MODULE_AMBIGUOUS_PARENT_NEXT_STEP: &str = "rust_module_ambiguous_parent means more than one parent `mod` item (or both `<name>.rs` and `<name>/mod.rs`) claims a listed file, so ripr cannot pick one module context for it. This can be a valid layout (for example a bench or example crate that includes the same file through several `#[path]` items, or one file compiled into several crates); no change is needed if it builds. Mutually exclusive `#[cfg(X)]` / `#[cfg(not(X))]` declarations of one module are not reported. To give ripr one owner, declare the file from a single parent `mod` item; a shared `tests/<name>/mod.rs` helper needs the same `mod <name>;` declaration, with the same `#[cfg(test)]` gating, in every integration test.";
 
 /// Closing sentence of [`module_composition_disclosure`] (#4378) and
 /// [`include_resolution_disclosure`].
@@ -1763,6 +1763,7 @@ fn feature_gated_test() {}
                     line: 4,
                     path_target: ModulePathTarget::Unknown,
                     requires_test: false,
+                    cfg_guard: None,
                 }],
                 ..FileFacts::default()
             },
