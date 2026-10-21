@@ -925,6 +925,37 @@ fn missing_discriminator_facts(
     missing
 }
 
+/// Whether the owner may compare something other than the caller's value for
+/// `name`: a `let` shadow before the probe line, a `mut` binding or borrow, or
+/// any assignment to it. Conservative on purpose; a true result only declines
+/// the intermediate-input reading and keeps the gap (#9147).
+fn parameter_may_be_rebound(owner: &FunctionSummary, name: &str, predicate_line: usize) -> bool {
+    if owner_declares_local(owner, name, predicate_line) {
+        return true;
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    masked.match_indices(name).any(|(start, _)| {
+        let before = &masked[..start];
+        let after = masked[start + name.len()..].trim_start();
+        if before.chars().next_back().is_some_and(is_word)
+            || masked[start + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+        {
+            return false;
+        }
+        let before = before.trim_end();
+        let assigned =
+            after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>")
+                || ["+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="]
+                    .iter()
+                    .any(|operator| after.starts_with(operator));
+        assigned || before.ends_with("mut")
+    })
+}
+
 /// Whether an observed exact input of the compared parameter separates the old
 /// and new returned comparison when only its integer-literal threshold moved
 /// (`x > 100` to `x > 102`: `thr(101)` is true before and false after). Such an
@@ -979,7 +1010,10 @@ fn observed_input_separates_threshold_move(
         return false;
     };
     let parameters = function_parameters(owner);
-    if old_left != new_left || !parameters.contains(&new_left) {
+    if old_left != new_left
+        || !parameters.contains(&new_left)
+        || parameter_may_be_rebound(owner, &new_left, view.location.line)
+    {
         return false;
     }
     call_values_for_owner(owner, &parameters, related_tests, helper_chain, index)

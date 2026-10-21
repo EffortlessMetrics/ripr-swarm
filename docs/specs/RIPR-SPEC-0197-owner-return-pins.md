@@ -2573,3 +2573,5 @@ The check only ever removes a downgrade: it declines, and the gap stays, for a
 suffixed or computed literal, a non-parameter or reversed left operand, a
 non-integer input or an operator-family change it cannot evaluate. Inputs on
 the same side of both thresholds keep the gap.
+
+The intermediate-input reading also declines when the owner may compare a value other than the caller's: a `let` shadow of the parameter before the compared line, a `mut` binding or borrow of it, or any assignment to it (`x += 5`). The gap stays in those cases (#9147).

@@ -20,6 +20,13 @@ impl Drop for TempRepo {
 /// Findings on line 2 of a one-function crate whose `src/lib.rs` line 2
 /// changed from `old` to `new`, checked against the integration `test`.
 fn findings(new: &str, old: &str, test: &str) -> Result<Vec<Finding>, String> {
+    findings_after("", new, old, test)
+}
+
+/// [`findings`] with `prefix` (whole lines) ahead of the changed line, which
+/// then sits on line `2 + prefix lines`.
+fn findings_after(prefix: &str, new: &str, old: &str, test: &str) -> Result<Vec<Finding>, String> {
+    let changed_line = 2 + prefix.lines().count();
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let repo = TempRepo {
@@ -40,11 +47,16 @@ fn findings(new: &str, old: &str, test: &str) -> Result<Vec<Finding>, String> {
     )?;
     write(
         "src/lib.rs",
-        &format!("pub fn thr(x: i32) -> bool {{\n{new}\n}}\n"),
+        &format!("pub fn thr(x: i32) -> bool {{\n{prefix}{new}\n}}\n"),
     )?;
     write("tests/it.rs", test)?;
     let diff = format!(
-        "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn thr(x: i32) -> bool {{\n-{old}\n+{new}\n }}\n"
+        "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,{n} +1,{n} @@\n pub fn thr(x: i32) -> bool {{\n{ctx}-{old}\n+{new}\n }}\n",
+        n = changed_line + 1,
+        ctx = prefix
+            .lines()
+            .map(|line| format!(" {line}\n"))
+            .collect::<String>(),
     );
     write("diff.patch", &diff)?;
     let output = check_workspace(CheckInput {
@@ -60,7 +72,7 @@ fn findings(new: &str, old: &str, test: &str) -> Result<Vec<Finding>, String> {
     Ok(output
         .findings
         .into_iter()
-        .filter(|finding| finding.probe.location.line == 2)
+        .filter(|finding| finding.probe.location.line == changed_line)
         .collect())
 }
 
@@ -363,5 +375,41 @@ fn an_input_outside_the_moved_range_keeps_the_multi_value_threshold_gap() -> Res
         "use thr::thr;\n\n#[test]\nfn below() {\n    assert!(!thr(99));\n}\n\n#[test]\nfn above() {\n    assert!(thr(103));\n}\n",
     )?;
     assert_gap_named(&findings, true)?;
+    Ok(())
+}
+
+#[test]
+fn a_shadowed_parameter_does_not_take_the_intermediate_input() -> Result<(), String> {
+    // The compared `x` is the local 500, not the caller's 101, so 101 says
+    // nothing about the moved threshold and the gap stays.
+    let findings = findings_after(
+        "    let x = 500;\n",
+        "    x > 102",
+        "    x > 100",
+        INTERMEDIATE_INPUT,
+    )?;
+    let return_value = family(&findings, "return_value")?;
+    assert_ne!(
+        return_value.class,
+        ExposureClass::Exposed,
+        "{return_value:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_mutated_parameter_does_not_take_the_intermediate_input() -> Result<(), String> {
+    let findings = findings_after(
+        "    x += 5;\n",
+        "    x > 102",
+        "    x > 100",
+        INTERMEDIATE_INPUT,
+    )?;
+    let return_value = family(&findings, "return_value")?;
+    assert_ne!(
+        return_value.class,
+        ExposureClass::Exposed,
+        "{return_value:?}"
+    );
     Ok(())
 }
