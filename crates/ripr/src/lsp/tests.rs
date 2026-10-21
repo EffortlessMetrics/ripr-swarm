@@ -219,9 +219,45 @@ fn watched_file_batch_preserves_config_and_workspace_graph_signals() -> Result<(
         WatchedFileChanges {
             config_changed: true,
             workspace_graph_changed: true,
+            typescript_input_changed: false,
             diagnostics_input_changed: false,
         }
     );
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn watched_typescript_inputs_reload_config_and_refresh_analysis() -> Result<(), String> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let backend_root = root.clone();
+    let (service, _socket) =
+        LspService::new(move |client| Backend::new(client, backend_root.clone()));
+    let backend = service.inner();
+    backend.initialize_test_workspace_root();
+
+    // (path, event type, expect a TypeScript analysis refresh)
+    let cases = [
+        ("tsconfig.json", FileChangeType::CHANGED, true),
+        ("src/cart.ts", FileChangeType::CREATED, true),
+        ("src/cart.ts", FileChangeType::DELETED, true),
+        // An ordinary save of an existing source file is not an input.
+        ("src/cart.ts", FileChangeType::CHANGED, false),
+    ];
+    for (relative, typ, refresh) in cases {
+        let uri = file_uri_for_path(&root.join(relative))
+            .map_err(|err| format!("{relative} URI failed: {err}"))?;
+        let changes = vec![FileEvent { uri, typ }];
+        assert_eq!(
+            backend.watched_file_change_kinds(&changes),
+            WatchedFileChanges {
+                config_changed: true,
+                typescript_input_changed: refresh,
+                ..WatchedFileChanges::default()
+            },
+            "{relative} {typ:?}"
+        );
+    }
     Ok(())
 }
 
@@ -12615,6 +12651,137 @@ fn generic_client_analysis_failure_is_shown_once_and_only_to_generic_clients() -
         if !shown.is_empty() {
             return Err(format!(
                 "a successful analysis must not be shown: {shown:?}"
+            ));
+        }
+        Ok(())
+    })
+}
+
+/// A committed fixture whose working tree adds one Python file that the
+/// default configuration does not enable (#8585).
+fn disabled_python_change_fixture(name: &str) -> Result<TempLspRoot, String> {
+    let root = boundary_gap_git_fixture_root(name)?;
+    std::fs::create_dir_all(root.path().join("zpy"))
+        .map_err(|err| format!("create zpy failed: {err}"))?;
+    std::fs::write(
+        root.path().join("zpy/pricing.py"),
+        "def price():\n    return 1\n",
+    )
+    .map_err(|err| format!("write pricing.py failed: {err}"))?;
+    run_lsp_scope_git(root.path(), &["add", "-A"])?;
+    Ok(root)
+}
+
+fn unavailable_language_notices(shown: &[serde_json::Value]) -> Vec<&serde_json::Value> {
+    shown
+        .iter()
+        .filter(|params| {
+            params["message"]
+                .as_str()
+                .is_some_and(|text| text.contains("python") && text.contains("not enabled"))
+        })
+        .collect()
+}
+
+#[test]
+#[cfg(not(feature = "lang-python"))]
+fn rust_only_build_reports_no_unavailable_python_row_for_a_changed_py_file() -> Result<(), String> {
+    // A build without the Python adapter routes no `.py` change to a preview
+    // advisory (`detect_preview_advisories` keeps only Perl for an adapter
+    // that is not compiled in), so the typed `unavailable_languages` field is
+    // empty and a generic client gets no per-language notice. The sibling
+    // `generic_client_is_told_once_...` test therefore needs the adapter
+    // compiled in; the `--no-default-features --features lang-rust` lane
+    // exercises this contract instead of that one.
+    work_done_progress_runtime()?.block_on(async {
+        let root = disabled_python_change_fixture("rust-only-no-python-row")?;
+        let (shown, statuses) =
+            refresh_show_messages(root.path(), serde_json::json!({}), "HEAD", 1).await?;
+        let succeeded = statuses
+            .iter()
+            .filter(|status| status["state"] == "succeeded")
+            .collect::<Vec<_>>();
+        if succeeded.is_empty()
+            || succeeded
+                .iter()
+                .any(|status| status["unavailable_languages"] != serde_json::json!([]))
+        {
+            return Err(format!(
+                "a build without the Python adapter must publish an empty typed row set: {statuses:?}"
+            ));
+        }
+        if !unavailable_language_notices(&shown).is_empty() {
+            return Err(format!(
+                "no per-language notice is owed when the adapter is not compiled in: {shown:?}"
+            ));
+        }
+        Ok(())
+    })
+}
+
+// Requires the Python adapter to be compiled in: the typed unavailable row
+// and its notice come from a disabled-but-available preview advisory. The
+// Rust-only feature lane (`--no-default-features --features lang-rust`) never
+// produces one, which made this test fail there deterministically (it looked
+// load-dependent only because that lane runs on a subset of PRs).
+#[test]
+#[cfg(feature = "lang-python")]
+fn generic_client_is_told_once_when_a_changed_language_is_not_enabled() -> Result<(), String> {
+    // #8585: a generic editor renders neither the log nor
+    // `ripr/analysisStatus`, so changed files of a language whose adapter is
+    // not enabled must reach it as one bounded notice per language, not
+    // silently read as a clean run. The VS Code integration renders the
+    // typed `unavailable_languages` status field instead.
+    work_done_progress_runtime()?.block_on(async {
+        let root = disabled_python_change_fixture("disabled-language-notice")?;
+
+        let (shown, statuses) =
+            refresh_show_messages(root.path(), serde_json::json!({}), "HEAD", 2).await?;
+        let rows = statuses
+            .iter()
+            .filter(|status| status["state"] == "succeeded")
+            .map(|status| status["unavailable_languages"].clone())
+            .collect::<Vec<_>>();
+        if rows.is_empty() || rows.iter().any(|row| row[0]["language"] != "python") {
+            return Err(format!(
+                "every succeeded status must carry the typed python row: {statuses:?}"
+            ));
+        }
+        let notices = unavailable_language_notices(&shown);
+        if notices.len() != 1 {
+            return Err(format!(
+                "one notice per language across repeated refreshes, got {shown:?}"
+            ));
+        }
+        let text = notices[0]["message"].as_str().unwrap_or_default();
+        if notices[0]["type"].as_u64() != Some(2)
+            || !text.contains("[languages] enabled")
+            || text.chars().count() > 241
+            || text.contains('\n')
+        {
+            return Err(format!(
+                "the notice must be a bounded one-line warning naming recovery: {shown:?}"
+            ));
+        }
+
+        let (shown, statuses) = refresh_show_messages(
+            root.path(),
+            serde_json::json!({"experimental": {"riprEditor": {"version": "0.1", "commands": []}}}),
+            "HEAD",
+            1,
+        )
+        .await?;
+        if !unavailable_language_notices(&shown).is_empty() {
+            return Err(format!(
+                "the riprEditor integration renders this from its status: {shown:?}"
+            ));
+        }
+        if !statuses
+            .iter()
+            .any(|status| status["unavailable_languages"][0]["file_count"] == 1)
+        {
+            return Err(format!(
+                "the integration must still receive the typed row: {statuses:?}"
             ));
         }
         Ok(())

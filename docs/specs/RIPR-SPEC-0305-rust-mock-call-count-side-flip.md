@@ -1,4 +1,4 @@
-# RIPR-SPEC-0295: Rust mock call-count side flip
+# RIPR-SPEC-0305: Rust mock call-count side flip
 
 Status: proposed
 
@@ -164,7 +164,7 @@ expected count. When the mock drops, it also panics if the method ran
 fewer times than expected.
 
 When the rule holds, the discriminate stage reads `Yes` with high
-confidence and the evidence line names RIPR-SPEC-0295. The finding then
+confidence and the evidence line names RIPR-SPEC-0305. The finding then
 reads `exposed`.
 
 ## Required Evidence

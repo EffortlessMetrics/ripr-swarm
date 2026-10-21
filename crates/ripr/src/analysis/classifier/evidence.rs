@@ -60,6 +60,10 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     /// related `assert_eq!` was refused for an analyzer limit, so the gap
     /// rests on what ripr could not read (RIPR-SPEC-0240).
     pub(in crate::analysis) refusals_are_analyzer_limits: bool,
+    /// #8051: related direct-call tests (labelled `name` (file:line)) whose
+    /// bare `debug_assert_eq!` the owner-return pin would admit as
+    /// `assert_eq!`. Never credit; the gap-admission post-pass reads it.
+    pub(in crate::analysis) debug_assert_eq_pins: Vec<String>,
     /// #8600: some related test (before the render cap trims the rows) has a
     /// line at the per-line call-fact budget, so a call there may be missing.
     pub(in crate::analysis) related_call_budget_saturated: bool,
@@ -799,7 +803,7 @@ impl ClassifiedProbeEvidence {
         // RIPR-SPEC-0227 rule 3 pairs its own oracles: both sides of the
         // guard's edge are asserted in one test, so the #4828 same-test
         // pairing below has nothing left to establish.
-        // RIPR-SPEC-0295 pairs the same way: one test calls the owner on
+        // RIPR-SPEC-0305 pairs the same way: one test calls the owner on
         // both sides of the edge under one mock call count.
         let guard_side_flip = side_flip::guard::discrimination(context, &observe, &discriminate)
             .or_else(|| side_flip::mock_count::discrimination(context, &observe, &discriminate));
@@ -1070,6 +1074,68 @@ impl ClassifiedProbeEvidence {
                 && refusals.all(|refusal| is_limit(&refusal))
         };
 
+        // #8051: the owner pin's own admission, spelled `debug_assert_eq!`.
+        // Only a gap reads it, and only as a profile limit.
+        let debug_assert_eq_pins: Vec<String> = owner_return_pin
+            .as_ref()
+            .map(|pin| {
+                context
+                    .related_tests
+                    .iter()
+                    .filter(|(test, reason)| {
+                        *reason == RelationReason::DirectOwnerCall
+                            && test.body.as_str().contains("debug_assert_eq")
+                            && !crate::analysis::classify::is_ignored(test)
+                    })
+                    .filter(|(test, _)| {
+                        let Some(facts) = context.index.files().get(&test.file) else {
+                            return false;
+                        };
+                        pin_syntax
+                            .debug_assert_eq_calls(
+                                &test.file,
+                                &facts.source,
+                                test.start_line,
+                                test.end_line,
+                            )
+                            .into_iter()
+                            .any(|(line, text)| {
+                                let assertion = OracleFact {
+                                    line,
+                                    text,
+                                    kind: OracleKind::ExactValue,
+                                    strength: OracleStrength::Strong,
+                                    observed_tokens: Vec::new(),
+                                    ok_value_observed: None,
+                                };
+                                pin.admits_debug_assert_eq(
+                                    test,
+                                    &assertion,
+                                    context.index,
+                                    &|file, name| {
+                                        context.index.files().get(file).is_some_and(|facts| {
+                                            context.test_file_imports_foreign_callee_name(
+                                                file,
+                                                &facts.source,
+                                                name,
+                                            )
+                                        })
+                                    },
+                                    pin_syntax,
+                                )
+                            })
+                    })
+                    .map(|(test, _)| {
+                        format!(
+                            "`{}` ({}:{})",
+                            test.name,
+                            test.file.display().to_string().replace('\\', "/"),
+                            test.start_line
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let related_call_budget_saturated = context
             .related_tests
             .iter()
@@ -1091,6 +1157,7 @@ impl ClassifiedProbeEvidence {
             reach_ruled_out,
             assertion_refusal,
             refusals_are_analyzer_limits,
+            debug_assert_eq_pins,
             related_call_budget_saturated,
         }
     }

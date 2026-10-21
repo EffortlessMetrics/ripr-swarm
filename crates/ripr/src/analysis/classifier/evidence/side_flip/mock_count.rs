@@ -1,4 +1,4 @@
-//! RIPR-SPEC-0295: a mockall call-count expectation observes a guard's
+//! RIPR-SPEC-0305: a mockall call-count expectation observes a guard's
 //! side flip.
 //!
 //! ```text
@@ -60,7 +60,7 @@
 use super::guard::{INTEGER_TYPES, flipped, integer_literal, is_equality, line_of, parameter_name};
 use super::*;
 
-pub(super) const MOCK_COUNT_SIDE_FLIP: &str = "A mock call-count expectation observes the guard's side flip: one test calls the owner on both sides of this guard's edge, and a mockall `times(N)` on the method only the guarded block calls fails when the edge moves (RIPR-SPEC-0295)";
+pub(super) const MOCK_COUNT_SIDE_FLIP: &str = "A mock call-count expectation observes the guard's side flip: one test calls the owner on both sides of this guard's edge, and a mockall `times(N)` on the method only the guarded block calls fails when the edge moves (RIPR-SPEC-0305)";
 
 /// mockall expectation-chain methods that configure matching or returned
 /// values and leave the call count alone. `times`, `once` and `never` are

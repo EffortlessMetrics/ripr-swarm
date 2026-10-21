@@ -150,6 +150,11 @@ fn branch_dispatch_cannot_qualify_even_when_every_child_succeeds() -> Result<(),
 fn ready_and_main_authorities_keep_real_child_result_checks() -> Result<(), String> {
     for (event, reference, status) in [
         ("pull_request", "refs/pull/10/merge", "admitted"),
+        (
+            "merge_group",
+            "refs/heads/gh-readonly-queue/main/pr-10-aaaa",
+            "admitted",
+        ),
         ("workflow_dispatch", "refs/heads/main", "not_applicable"),
         ("workflow_dispatch", "refs/heads/master", "not_applicable"),
         ("push", "refs/heads/main", "not_applicable"),
@@ -205,6 +210,59 @@ fn ready_and_main_authorities_keep_real_child_result_checks() -> Result<(), Stri
             &[("DOCS_ONLY", "true"), ("DOCS_GATE_RESULT", "skipped")]
         )?
         .0
+    );
+    Ok(())
+}
+
+#[test]
+fn refused_admission_summary_names_the_concrete_detail() -> Result<(), String> {
+    let detail = "missing or placeholder PR body line(s): Governing issue or accepted claim:, Acceptance delta (one sentence):";
+    let (success, report) = run_result(
+        &workflow()?,
+        "pull_request",
+        "refs/pull/10/merge",
+        "failure",
+        "refused",
+        &[
+            ("ADMISSION_REASON", "claim_identity_missing"),
+            ("ADMISSION_DETAIL", detail),
+        ],
+    )?;
+    assert!(!success, "refused admission must fail the result: {report}");
+    assert!(
+        report.contains("claim_identity_missing") && report.contains(detail),
+        "result summary must name the single concrete refusal reason, got: {report}"
+    );
+    Ok(())
+}
+
+#[test]
+fn hard_cut_refusal_of_admitted_candidate_names_the_cut_reason() -> Result<(), String> {
+    let cut_detail = "the active hard-cut freeze refuses ordinary qualification";
+    let (success, report) = run_result(
+        &workflow()?,
+        "pull_request",
+        "refs/pull/10/merge",
+        "failure",
+        "admitted",
+        &[
+            ("ADMISSION_REASON", "candidate_current_unique_bounded"),
+            ("ADMISSION_DETAIL", ""),
+            ("ADMISSION_CUT_STATUS", "refused"),
+            ("ADMISSION_CUT_REASON", "cut_frozen"),
+            ("ADMISSION_CUT_DETAIL", cut_detail),
+        ],
+    )?;
+    assert!(!success, "hard-cut refusal must fail the result: {report}");
+    assert!(
+        report.contains("hard-cut admission refused: cut_frozen")
+            && report.contains(cut_detail)
+            && report.contains("- admission cut reason: `cut_frozen`"),
+        "result must carry the hard-cut refusal reason, got: {report}"
+    );
+    assert!(
+        !report.contains("candidate_current_unique_bounded —"),
+        "result must not pair the success reason with the cut detail, got: {report}"
     );
     Ok(())
 }

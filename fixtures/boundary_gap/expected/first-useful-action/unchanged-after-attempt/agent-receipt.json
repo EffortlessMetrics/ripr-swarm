@@ -10,12 +10,12 @@
   "provenance": {
     "after_artifact": {
       "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
-      "sha256": "sha256:90aecce2027817b8058d656d00e3abe7e48d00f815cdd38fe6fcb38d98bb9dff"
+      "sha256": "sha256:6ced29cca9121e71cc5f7a9841885f0be10863ee5b3345a2bb6c8bcabe8d66ae"
     },
     "after_class": "weakly_gripped",
     "before_artifact": {
       "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json",
-      "sha256": "sha256:90aecce2027817b8058d656d00e3abe7e48d00f815cdd38fe6fcb38d98bb9dff"
+      "sha256": "sha256:6ced29cca9121e71cc5f7a9841885f0be10863ee5b3345a2bb6c8bcabe8d66ae"
     },
     "before_class": "weakly_gripped",
     "command_template_version": "0.1",
@@ -32,7 +32,7 @@
     "seam_id": "67fc764ba37d77bd",
     "verify_artifact": {
       "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-verify.json",
-      "sha256": "sha256:0f4994173c507d10c68eb331d65d2f82f8a75b19e19036a0917c5cc351d6cf98"
+      "sha256": "sha256:452c83f378a5181984fa9c3aea85ea7b4dac4d94db180925f21875ec3d0f5887"
     },
     "workflow_artifact": null
   },

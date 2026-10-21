@@ -1114,6 +1114,65 @@ fn outcome_help_matches_the_enforced_canonical_gap_contract() -> Result<(), Stri
     Ok(())
 }
 
+/// #9033: `--phase before` resolves a `ripr check` finding ID, so neither the
+/// group help nor the missing-`--seam-id` refusal may say those IDs are not
+/// seam IDs, and the group help points a newcomer at `ripr repair` first.
+#[test]
+fn agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve() -> Result<(), String> {
+    let stdout = normalized(&rendered_help(&["agent", "--help"])?);
+    assert_contains(
+        "agent help",
+        &stdout,
+        "Repair path (start here): ripr repair [<item>] # edit one focused test ripr continue The same transaction with explicit phases:",
+    )?;
+    assert_contains(
+        "agent help",
+        &stdout,
+        "`--phase before` also accepts a `ripr check` finding ID (`probe:...` or `repo-probe:...`)",
+    )?;
+    if stdout.contains("are not seam IDs") {
+        return Err("agent help still says finding IDs are not seam IDs".to_string());
+    }
+    // The inspect-change catalog entry carries the same claim in its repair
+    // handoff step and stop condition.
+    let catalog = normalized(&rendered_help(&["help", "workflow", "inspect-change"])?);
+    assert_contains(
+        "inspect-change workflow",
+        &catalog,
+        "`ripr repair` also accepts a probe: finding ID, a canonical gap ID or a file:line naming one repair-eligible seam",
+    )?;
+    for stale in ["finding ID is not a seam ID", "repair refuses a probe:"] {
+        if catalog.contains(stale) {
+            return Err(format!(
+                "inspect-change workflow still says {stale:?}: {catalog}"
+            ));
+        }
+    }
+    in_help_workspace(|root| {
+        let output = run_ripr_in(
+            &["agent", "repair", "--phase", "before", "--root", "."],
+            Some(root),
+        )?;
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert_contains(
+            "missing --seam-id refusal",
+            &stderr,
+            "requires --seam-id <id>",
+        )?;
+        assert_contains(
+            "missing --seam-id refusal",
+            &stderr,
+            "pass a `ripr check` finding ID (`probe:...` or `repo-probe:...`)",
+        )?;
+        if stderr.contains("are not seam IDs") {
+            return Err(format!(
+                "refusal still says finding IDs are not seam IDs: {stderr}"
+            ));
+        }
+        Ok(())
+    })
+}
+
 #[test]
 fn agent_help_makes_repair_primary_without_removing_control_surfaces() -> Result<(), String> {
     for args in [["agent", "--help"].as_slice(), ["agent"].as_slice()] {
