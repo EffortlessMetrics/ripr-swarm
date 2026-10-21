@@ -400,9 +400,9 @@ fn unknown_attempt(attempt_id: &str, root_present: bool) -> AttemptFailure {
     let (detail, recovery) = if root_present {
         (
             format!(
-                "no repair attempt or receipt `{attempt_id}` exists in this session or in the durable store of this workspace root"
+                "no repair attempt or receipt `{attempt_id}` is held by this server session, and no durable attempt manifest in this workspace root's store has that identity. Transactions created by ripr_prepare_repair live only in this server's memory (they are never written to the durable store), so one from an earlier server process or past the 64-entry superseded bound is gone"
             ),
-            "prepare the item with ripr_prepare_repair, or discover durable attempts with ripr_list_repair_attempts",
+            "if the id came from ripr_prepare_repair, call ripr_refresh and ripr_prepare_repair again to create a current transaction; durable attempts come from the CLI repair workflow and are listed by ripr_list_repair_attempts",
         )
     } else {
         (
@@ -449,9 +449,9 @@ fn load_durable_attempt(
     Err(AttemptFailure::new(
         CODE_ATTEMPT_NOT_FOUND,
         format!(
-            "no repair attempt `{attempt_id}` exists in the durable store of this workspace root"
+            "no durable repair attempt manifest `{attempt_id}` exists in this workspace root's store. Transactions created by ripr_prepare_repair are in-memory session state and never appear in the durable store"
         ),
-        "discover durable attempt ids with ripr_list_repair_attempts, then retry the selected id",
+        "discover durable attempt ids with ripr_list_repair_attempts, then retry the selected id; for an id from ripr_prepare_repair, call ripr_refresh and ripr_prepare_repair again",
     ))
 }
 
@@ -1008,6 +1008,7 @@ mod tests {
             workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            desired_base: None,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -1023,6 +1024,7 @@ mod tests {
             workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            desired_base: None,
             superseded_order: std::collections::VecDeque::new(),
         };
         for index in 0..MAX_SUPERSEDED_TOMBSTONES + 10 {
@@ -1054,6 +1056,7 @@ mod tests {
             workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            desired_base: None,
             superseded_order: std::collections::VecDeque::new(),
         };
         let total = MAX_SUPERSEDED_TOMBSTONES + 10;
@@ -1220,11 +1223,15 @@ mod tests {
     }
 
     #[test]
-    fn producer_named_missing_discriminator_keeps_its_typed_refusal() -> Result<(), String> {
+    fn producer_named_missing_discriminator_on_a_non_weak_class_keeps_its_typed_refusal()
+    -> Result<(), String> {
         // The unpopulated state must not swallow the honest actionable
         // refusal: a producer that names the missing discriminator still
         // answers `missing_discriminator`.
+        // A non-weak class: on a weakly exposed finding the named value is
+        // the repair target and no longer refuses (#8717).
         let mut named_missing = super::super::gaps::test_finding()?;
+        named_missing.class = crate::domain::ExposureClass::ReachableUnrevealed;
         named_missing.canonical_gap = None;
         named_missing.activation.missing_discriminators.push(
             crate::domain::MissingDiscriminatorFact {

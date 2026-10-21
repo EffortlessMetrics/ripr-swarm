@@ -615,8 +615,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.88";
 /// `0.91`: same call-fact budget withholding as full `1.85` (#8600).
 /// `0.92`: same cached observed-value test file as full `1.86` (#8948).
 /// `0.93`: same module-motion target and private relation evidence as full `1.87`.
-/// `0.94`: same `debug_` assertion limit as full `1.88` (#8051).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.94";
+/// `0.94`: the cache body carries `statically_contradicted_related_tests`.
+/// `0.95`: same `debug_` assertion limit as full `1.88` (#8051).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.95";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -751,8 +752,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.94";
 /// `0.91`: same call-fact budget withholding as full `1.85` (#8600).
 /// `0.92`: same cached observed-value test file as full `1.86` (#8948).
 /// `0.93`: same module-motion target and private relation evidence as full `1.87`.
-/// `0.94`: same `debug_` assertion limit as full `1.88` (#8051).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.94";
+/// `0.94`: the cache body carries `statically_contradicted_related_tests`.
+/// `0.95`: same `debug_` assertion limit as full `1.88` (#8051).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.95";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4716,9 +4718,10 @@ mod tests {
         // 0.85 -> 0.86: same composed golden-file, early error-variant and
         // returned-element field pins as full 1.80.
         // 0.92 -> 0.93: same module-motion evidence as full 1.87 (#4680).
-        // 0.93 -> 0.94: same `debug_` assertion limit as full 1.88 (#8051).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.94");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.94");
+        // 0.93 -> 0.94: the cache body carries `statically_contradicted_related_tests`.
+        // 0.94 -> 0.95: same `debug_` assertion limit as full 1.88 (#8051).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.95");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.95");
     }
 
     #[test]
