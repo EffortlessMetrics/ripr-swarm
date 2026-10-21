@@ -49,7 +49,7 @@ Drill in:
   ripr explain --root <cwd>/fixtures/field_match_unexecuted_assertion/input --diff <cwd>/fixtures/field_match_unexecuted_assertion/diff.patch --mode fast probe:src_lib.rs:match_arm:afe43b21
   ripr context --root <cwd>/fixtures/field_match_unexecuted_assertion/input --diff <cwd>/fixtures/field_match_unexecuted_assertion/diff.patch --mode fast --at probe:src_lib.rs:match_arm:afe43b21
 
-Finding 2: WARNING ./src/lib.rs:4
+Finding 2: NOTE ./src/lib.rs:4
   id: probe:src_lib.rs:match_arm:177cb929
 Changed
   before: Some(ms) => 1,
@@ -61,7 +61,7 @@ Probe
   owner:  src/lib.rs::charge
   canonical gap: gap:rust:src/lib.rs:charge:match_arm:match_arm:some_ms=>1
 Static exposure
-  reachable_unrevealed (warning, confidence 0.79)
+  reachable_unrevealed (note, confidence 0.79)
 Evidence
   shared evidence: E1, E2
   - propagation yes: Changed behavior appears to influence match arm result: 1
@@ -77,7 +77,7 @@ Drill in:
   ripr explain --root <cwd>/fixtures/field_match_unexecuted_assertion/input --diff <cwd>/fixtures/field_match_unexecuted_assertion/diff.patch --mode fast probe:src_lib.rs:match_arm:177cb929
   ripr context --root <cwd>/fixtures/field_match_unexecuted_assertion/input --diff <cwd>/fixtures/field_match_unexecuted_assertion/diff.patch --mode fast --at probe:src_lib.rs:match_arm:177cb929
 
-Finding 3: WARNING ./src/lib.rs:4
+Finding 3: NOTE ./src/lib.rs:4
   id: probe:src_lib.rs:return_value:afaabce9
 Changed
   before: Some(ms) => 1,
@@ -89,7 +89,7 @@ Probe
   owner:  src/lib.rs::charge
   canonical gap: gap:rust:src/lib.rs:charge:return_value:return_value:some_ms=>1
 Static exposure
-  reachable_unrevealed (warning, confidence 0.66)
+  reachable_unrevealed (note, confidence 0.66)
 Evidence
   shared evidence: E1, E2
   - propagation weak: Propagation witness is incomplete for returned value: Some(ms) => ms as u64

@@ -36,6 +36,8 @@ mod source_role_corpus;
 mod summary;
 mod sync_memo;
 mod syntax;
+mod test_changes;
+pub(crate) use test_changes::{DiffTestChanges, diff_test_changes};
 pub(crate) mod test_grip_evidence;
 pub(crate) mod test_stub;
 mod value_resolution;
@@ -86,7 +88,8 @@ pub use language::{
     PartialDiffStopReason,
 };
 pub(crate) use probes::{
-    fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression, sanitize_path,
+    fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
+    normalize_rust_expression, sanitize_path,
 };
 #[cfg(test)]
 pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustIndex, RustSyntaxAdapter};
