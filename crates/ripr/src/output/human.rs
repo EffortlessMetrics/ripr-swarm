@@ -190,10 +190,13 @@ fn render_no_scope_note(output: &CheckOutput) -> String {
 }
 
 /// The note an empty human result carries. An explicit `--base` that resolves
-/// to an empty range (for example `--base HEAD`, or the base branch while on
-/// it) used to print only "No diff-derived static exposure probes found.",
-/// leaving a reader to guess whether ripr ran at all (#9033). Both the
-/// default and the explicit base now say the range held no changed files.
+/// to a range with no analyzable changed files (for example `--base HEAD`, or
+/// the base branch while on it) used to print only "No diff-derived static
+/// exposure probes found.", leaving a reader to guess whether ripr ran at all
+/// (#9033). The wording stays narrower than the default-base note on purpose:
+/// `NoScope` with zero changed files also covers ranges that only delete
+/// files, change submodule pointers, or touch ripr's own artifacts, so this
+/// note never claims that no behavior changed.
 fn empty_scope_note(output: &CheckOutput) -> Option<String> {
     if output.unanalyzed_working_tree {
         return None;
@@ -208,12 +211,22 @@ fn empty_scope_note(output: &CheckOutput) -> Option<String> {
         ) && outcome.counts.changed_file_count == 0
     });
     // A preview-language run can leave the Rust file count at zero while the
-    // diff did change files, so the "no changed files" claim needs them absent.
-    (nothing_in_scope
-        && output.base.is_some()
+    // diff did change files, so the note needs them absent.
+    if !(nothing_in_scope
         && output.preview_language_advisories.is_empty()
         && output.language_runs.is_empty())
-    .then(|| render_no_scope_note(output))
+    {
+        return None;
+    }
+    let base = output.base.as_deref()?;
+    let range = if crate::output::analyzed_revisions::is_working_tree_read(output) {
+        format!("the working tree has no analyzable changed files against `{base}`")
+    } else {
+        format!("`{base}...HEAD` has no analyzable changed files")
+    };
+    Some(format!(
+        "\nNote: {range}, so there was nothing to analyze. Deleted files, submodule pointer changes and files ripr does not analyze are not counted, so this empty result does NOT mean no behavior changed.\n",
+    ))
 }
 
 pub(crate) fn render_bounded_with_config_and_navigation(
@@ -1320,52 +1333,108 @@ mod tests {
         })
     }
 
-    /// #9033: an explicit `--base` whose range holds no changed files (for
-    /// example `--base HEAD`) must say so, not end on the bare "No diff-derived
-    /// static exposure probes found." line. Both human forms carry the note.
+    /// #9033: an explicit `--base` whose range holds no analyzable changed
+    /// files (for example `--base HEAD`) must say so, not end on the bare "No
+    /// diff-derived static exposure probes found." line, and must not claim
+    /// that no behavior changed: `NoScope` with zero changed files also covers
+    /// ranges that only delete files. Both human forms and the working-tree
+    /// read carry the narrower note.
     #[test]
     fn explicit_base_with_an_empty_range_explains_the_empty_result() -> Result<(), String> {
-        let output = empty_range_output(
+        let config = RiprConfig::default();
+        let range = empty_range_output(
             Some("HEAD"),
             crate::analysis_outcome::AnalysisOutcomeKind::NoScope,
             0,
         )?;
-        let config = RiprConfig::default();
-        for rendered in [
-            render_with_config(&output, &config),
-            render_full_with_config(&output, &config),
-        ] {
-            assert!(
-                rendered.contains(
-                    "Note: `HEAD...HEAD` contains no changed files, so there was nothing to analyze."
-                ),
-                "{rendered}"
-            );
+        let mut worktree = range.clone();
+        worktree.analyzed_revisions = Some(crate::analysis::AnalyzedRevisions {
+            base_ref: "HEAD".to_string(),
+            base_commit: Some("1a2b3c4d5e6f".to_string()),
+            merge_base_commit: None,
+            head_commit: Some("1a2b3c4d5e6f".to_string()),
+            working_tree: true,
+        });
+        let cases = [
+            (
+                &range,
+                "Note: `HEAD...HEAD` has no analyzable changed files, so there was nothing to analyze.",
+            ),
+            (
+                &worktree,
+                "Note: the working tree has no analyzable changed files against `HEAD`, so there was nothing to analyze.",
+            ),
+        ];
+        for (output, expected) in cases {
+            for rendered in [
+                render_with_config(output, &config),
+                render_full_with_config(output, &config),
+            ] {
+                assert!(rendered.contains(expected), "{rendered}");
+                assert!(
+                    rendered.contains("does NOT mean no behavior changed"),
+                    "{rendered}"
+                );
+                assert!(
+                    !rendered.contains("contains no changed files"),
+                    "{rendered}"
+                );
+                assert!(
+                    !rendered.contains("an empty result here means"),
+                    "{rendered}"
+                );
+            }
         }
         Ok(())
     }
 
-    /// #9033 discriminators: the note is a claim about an empty range, so it
-    /// stays off when files were analyzed or no base names a range.
+    /// #9033 discriminators: the note stays off when files were analyzed, no
+    /// base names a range, or another disclosure owns the empty result
+    /// (unanalyzed working-tree edits, preview-language advisories, language
+    /// runs). Checked on both the bounded and the full render.
     #[test]
-    fn empty_range_note_requires_a_base_and_no_changed_files() -> Result<(), String> {
+    fn empty_range_note_is_suppressed_when_it_would_be_untrue_or_redundant() -> Result<(), String> {
+        use crate::analysis_outcome::AnalysisOutcomeKind;
         let config = RiprConfig::default();
-        let analyzed = empty_range_output(
-            Some("main"),
-            crate::analysis_outcome::AnalysisOutcomeKind::NoChangedLines,
-            1,
-        )?;
-        let no_base = empty_range_output(
-            None,
-            crate::analysis_outcome::AnalysisOutcomeKind::NoScope,
-            0,
-        )?;
-        for output in [analyzed, no_base] {
-            let rendered = render_with_config(&output, &config);
-            assert!(
-                !rendered.contains("contains no changed files"),
-                "{rendered}"
-            );
+        let mut cases = vec![
+            (
+                "files analyzed",
+                empty_range_output(Some("main"), AnalysisOutcomeKind::NoChangedLines, 1)?,
+            ),
+            (
+                "no base",
+                empty_range_output(None, AnalysisOutcomeKind::NoScope, 0)?,
+            ),
+        ];
+        let mut unanalyzed = empty_range_output(Some("main"), AnalysisOutcomeKind::NoScope, 0)?;
+        unanalyzed.unanalyzed_working_tree = true;
+        cases.push(("unanalyzed working tree", unanalyzed));
+        let mut advisory = empty_range_output(Some("main"), AnalysisOutcomeKind::NoScope, 0)?;
+        advisory.preview_language_advisories = vec![PreviewLanguageAdvisory {
+            language: "typescript".to_string(),
+            file_count: 1,
+            sample_paths: vec!["src/a.ts".to_string()],
+            javascript_file_count: 0,
+            enabled: true,
+        }];
+        cases.push(("preview advisory", advisory));
+        let mut run = empty_range_output(Some("main"), AnalysisOutcomeKind::NoScope, 0)?;
+        run.language_runs = vec![crate::analysis::LanguageRun {
+            language: "perl".to_string(),
+            status: crate::analysis::LanguageRunStatus::Failed,
+            reason: Some("boom".to_string()),
+        }];
+        cases.push(("language run", run));
+        for (label, output) in &cases {
+            for rendered in [
+                render_with_config(output, &config),
+                render_full_with_config(output, &config),
+            ] {
+                assert!(
+                    !rendered.contains("has no analyzable changed files"),
+                    "{label}: {rendered}"
+                );
+            }
         }
         Ok(())
     }
