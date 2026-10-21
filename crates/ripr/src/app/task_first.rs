@@ -1726,7 +1726,7 @@ pub(crate) mod tests {
     fn decide_several_candidates_select_instead_of_starting() -> Result<(), String> {
         let eligible = vec!["seam:a".to_string(), "seam:b".to_string()];
         let spec = repair_start_command_spec(".", "seam:a");
-        match decide_repair_start(&facts(&eligible, 2, &[], Some(&spec)))? {
+        match decide_repair_start(&facts(&eligible, 2, &[], 0, Some(&spec)))? {
             RepairStartDecision::Action(action) => {
                 if action.action_class() != NextActionClass::ChooseItem {
                     return Err("several candidates must choose, not run".to_string());
@@ -1751,11 +1751,11 @@ pub(crate) mod tests {
     fn decide_single_candidate_starts_only_with_spec_and_head() -> Result<(), String> {
         let eligible = vec!["seam:demo".to_string()];
         let spec = repair_start_command_spec(".", "seam:demo");
-        match decide_repair_start(&facts(&eligible, 1, &[], Some(&spec)))? {
+        match decide_repair_start(&facts(&eligible, 1, &[], 0, Some(&spec)))? {
             RepairStartDecision::Start { seam_id } if seam_id == "seam:demo" => {}
             _ => return Err("one offered candidate at a fresh HEAD must start".to_string()),
         }
-        let mut headless = facts(&eligible, 1, &[], Some(&spec));
+        let mut headless = facts(&eligible, 1, &[], 0, Some(&spec));
         headless.head = None;
         if matches!(
             decide_repair_start(&headless)?,

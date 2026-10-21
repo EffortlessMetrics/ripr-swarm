@@ -1092,7 +1092,7 @@ mod tests {
     #[test]
     fn no_eligible_seam_message_separates_setup_from_limitation() -> Result<(), String> {
         let root = Path::new("/ripr-task-first-root");
-        let setup = no_eligible_seam_message(root, 0, &["ignored reason".to_string()]);
+        let setup = no_eligible_seam_message(root, 0, &["ignored reason".to_string()], 1);
         if !setup.starts_with("no seams visible under ")
             || setup.contains("none repair-eligible")
             || setup.contains("ignored reason")
@@ -1100,7 +1100,7 @@ mod tests {
         {
             return Err(format!("zero seams must be the setup outcome:\n{setup}"));
         }
-        let one = no_eligible_seam_message(root, 1, &[]);
+        let one = no_eligible_seam_message(root, 1, &[], 0);
         if !one.starts_with("1 visible seam under ") || one.contains("seams under") {
             return Err(format!("one seam must be singular:\n{one}"));
         }
@@ -1114,6 +1114,7 @@ mod tests {
                 "repair route not ready".to_string(),
                 "configured off".to_string(),
             ],
+            2,
         );
         for expected in [
             "3 visible seams under ",
@@ -1123,6 +1124,13 @@ mod tests {
             if !several.contains(expected) {
                 return Err(format!("limitation must carry {expected:?}:\n{several}"));
             }
+        }
+        // A bounded reason list discloses the omitted remainder (#8728).
+        let bounded = no_eligible_seam_message(root, 5, &["repair route not ready".to_string()], 4);
+        if !bounded.contains("(and 3 more; run `ripr pilot --root ") {
+            return Err(format!(
+                "bounded reasons must disclose the rest:\n{bounded}"
+            ));
         }
         Ok(())
     }
