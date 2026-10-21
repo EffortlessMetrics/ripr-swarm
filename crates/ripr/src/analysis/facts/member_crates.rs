@@ -475,9 +475,14 @@ impl MemberCrates {
             return false;
         }
         let relative = |path: &str| lexical(&package.join(path));
+        // `[lib] path` may sit in the package root, making the library
+        // directory an ancestor of these target directories.
         if file_abs == relative("src/main.rs")
             || file_abs.starts_with(relative("src/bin"))
             || file_abs == relative("build.rs")
+            || ["tests", "benches", "examples", "target"]
+                .iter()
+                .any(|dir| file_abs.starts_with(relative(dir)))
         {
             return false;
         }
@@ -851,6 +856,24 @@ mod tests {
         assert!(
             !MemberCrates::default().is_proc_macro_library_file(Path::new("derive/src/lib.rs"))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_package_root_lib_path_still_excludes_target_directories() -> Result<(), String> {
+        let manifest = "[package]\nname = \"derive\"\nversion = \"0.1.0\"\n[lib]\nproc-macro = true\npath = \"lib.rs\"\n";
+        let answers = proc_macro_files(
+            &[("derive/Cargo.toml", manifest)],
+            &[
+                "derive/lib.rs",
+                "derive/expand/mod.rs",
+                "derive/tests/it.rs",
+                "derive/benches/b.rs",
+                "derive/examples/e.rs",
+                "derive/build.rs",
+            ],
+        )?;
+        assert_eq!(answers, [true, true, false, false, false, false]);
         Ok(())
     }
 
