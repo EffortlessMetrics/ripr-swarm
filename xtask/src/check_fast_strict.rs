@@ -119,7 +119,15 @@ fn validate_fast_report(files: &[String], report: &str) -> Result<(), String> {
         .ok_or_else(|| "success report has no bounded Ran/Skipped sections".to_string())?;
 
     let categories = super::super::categorize_changed_files(files);
-    let mut required = Vec::new();
+    // Match the runner's unconditional floor even for a valid empty diff.
+    let mut required = vec![
+        "fmt --check",
+        "check-static-language",
+        "check-command-catalog",
+        "check-generated",
+        "check-generated-clean",
+        "check-lint-policy",
+    ];
     if categories.support_tiers {
         required.push("check-support-tiers");
     }
@@ -138,7 +146,11 @@ fn validate_fast_report(files: &[String], report: &str) -> Result<(), String> {
         required.push("check-workflows");
     }
     if categories.policy {
-        required.extend(["check-process-policy", "check-network-policy"]);
+        required.extend([
+            "check-covered-by",
+            "check-process-policy",
+            "check-network-policy",
+        ]);
     }
     if categories.fixture {
         required.push("check-fixture-contracts");
@@ -346,6 +358,152 @@ mod tests {
                 }
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn committed_policy_paths_require_literal_complete_receipts() -> Result<(), String> {
+        // These paths and obligations are an independent oracle for the actual
+        // check_fast_gates table, never derived from categorize_changed_files.
+        const FLOOR: [&str; 6] = [
+            "fmt --check",
+            "check-static-language",
+            "check-command-catalog",
+            "check-generated",
+            "check-generated-clean",
+            "check-lint-policy",
+        ];
+        const POLICY: [&str; 3] = [
+            "check-covered-by",
+            "check-process-policy",
+            "check-network-policy",
+        ];
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-receipt-obligations-{}-{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(std::env::temp_dir()).map_err(|error| error.to_string())?;
+        std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+        let git = |args: &[&str]| -> Result<(), String> {
+            let args = args
+                .iter()
+                .map(|arg| (*arg).to_string())
+                .collect::<Vec<_>>();
+            let output = crate::run::capture_output_in_dir(
+                "git",
+                &args,
+                &root,
+                "receipt obligation fixture Git",
+            )?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(format!("fixture Git {args:?}: {}", output.stderr))
+            }
+        };
+        let result = (|| {
+            git(&["init", "--initial-branch=main"])?;
+            git(&["config", "user.name", "Receipt fixture"])?;
+            git(&["config", "user.email", "receipt@example.invalid"])?;
+            git(&[
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "base",
+            ])?;
+            let mut accepted_omissions = Vec::new();
+            for (path, policy) in [
+                ("policy/process-allowlist.toml", true),
+                (".ripr/traceability.toml", true),
+                ("policy-not/process-allowlist.toml", false),
+                (".ripr-not/traceability.toml", false),
+                ("docs/policy/process-allowlist.toml", false),
+            ] {
+                git(&["update-ref", "refs/remotes/origin/main", "HEAD"])?;
+                let file = root.join(path);
+                std::fs::create_dir_all(file.parent().ok_or("fixture parent missing")?)
+                    .map_err(|error| error.to_string())?;
+                std::fs::write(&file, "# receipt control\n").map_err(|error| error.to_string())?;
+                git(&["add", "--", path])?;
+                git(&[
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "-m",
+                    "selected path",
+                ])?;
+                let files = crate::changed_files_vs_base(&root)?;
+                assert_eq!(files, [path], "native committed selector inventory");
+                let mut gates = FLOOR.to_vec();
+                if policy {
+                    gates.extend(POLICY);
+                }
+                let report = |omitted: Option<&str>| {
+                    let ran = gates
+                        .iter()
+                        .filter(|gate| Some(**gate) != omitted)
+                        .map(|gate| format!("- {gate}"))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    // Put an omitted receipt under Skipped too: it is not execution.
+                    format!(
+                        "# check-fast report\n\nStatus: pass\n\nRan:\n{ran}\n\nSkipped:\n- {}\n",
+                        omitted.unwrap_or("none")
+                    )
+                };
+                let paths = files.iter().map(String::as_str).collect::<Vec<_>>();
+                selected_receipt(&paths, &report(None)).0?;
+                for gate in &gates {
+                    let (result, receipt) = selected_receipt(&paths, &report(Some(gate)));
+                    let Some(error) = result.err() else {
+                        accepted_omissions.push(format!("{path}: {gate}"));
+                        continue;
+                    };
+                    assert!(error.contains(gate), "{error}");
+                    assert!(
+                        receipt.contains("Selector: fast_report_mismatch"),
+                        "{receipt}"
+                    );
+                }
+            }
+            assert!(
+                accepted_omissions.is_empty(),
+                "accepted missing receipts: {accepted_omissions:?}"
+            );
+            Ok(())
+        })();
+        let cleanup = std::fs::remove_dir_all(&root).map_err(|error| error.to_string());
+        result.and(cleanup)
+    }
+
+    #[test]
+    fn empty_selector_requires_each_unconditional_receipt() -> Result<(), String> {
+        selected_receipt(&[], EMPTY_FAST_REPORT).0?;
+        let mut accepted = Vec::new();
+        for gate in [
+            "fmt --check",
+            "check-static-language",
+            "check-command-catalog",
+            "check-generated",
+            "check-generated-clean",
+            "check-lint-policy",
+        ] {
+            let report = EMPTY_FAST_REPORT.replace(&format!("- {gate}\n"), "");
+            match selected_receipt(&[], &report).0 {
+                Ok(()) => accepted.push(gate),
+                Err(error) => assert!(error.contains(gate), "{error}"),
+            }
+        }
+        assert!(
+            accepted.is_empty(),
+            "empty selector accepted missing receipts: {accepted:?}"
+        );
         Ok(())
     }
 

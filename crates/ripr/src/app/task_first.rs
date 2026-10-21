@@ -254,6 +254,10 @@ fn collect_no_eligible_reasons<'a>(
     (reasons, distinct.len())
 }
 
+/// How to widen the seam budget, named once so every truncation refusal gives
+/// the same actionable recovery. The cap is an environment variable, not a flag.
+pub(crate) const WIDEN_SEAM_BUDGET: &str = "rerun with a wider seam budget (set RIPR_REPO_EXPOSURE_SEAM_LIMIT to a larger count, or 0 to remove the cap)";
+
 /// Gather the live authorities and decide one repair start. A truncated seam
 /// inventory fails closed: selecting from a partial list could hide
 /// candidates and silently pick first.
@@ -265,7 +269,7 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
         && info.analyzed < info.total
     {
         return Err(format!(
-            "repair start refused: the seam inventory is truncated ({} of {} seams); rerun with a wider seam budget",
+            "repair start refused: the seam inventory is truncated ({} of {} seams); {WIDEN_SEAM_BUDGET}",
             info.analyzed, info.total
         ));
     }
@@ -373,7 +377,7 @@ pub(crate) fn resolve_repair_subject_outcome(
         && info.analyzed < info.total
     {
         return Err(format!(
-            "repair item refused: the seam inventory is truncated ({} of {} seams); rerun with a wider seam budget",
+            "repair item refused: the seam inventory is truncated ({} of {} seams); {WIDEN_SEAM_BUDGET}",
             info.analyzed, info.total
         ));
     }
@@ -625,6 +629,33 @@ fn check_state(root: &Path, state: &GateState, seam_id: &str) -> Option<RepairSt
 /// One-shot form of [`RepairStartGate`] for callers that check one seam.
 pub(crate) fn repair_start_refusal(root: &Path, seam_id: &str) -> Option<RepairStartRefusal> {
     RepairStartGate::new(root).check(seam_id)
+}
+
+/// The production file whose uncommitted changes make the before phase refuse
+/// `seam_id` (#9033), read from the inventory the before phase already loaded
+/// (no second load) and the same held-inline-target predicate the edit cage
+/// applies. Asked before any workflow artifact is written, it lets a start
+/// refuse with nothing on disk. `None` when the inventory does not name the
+/// seam or its target is committed.
+pub(crate) fn held_inline_start_file(
+    root: &Path,
+    seam_id: &str,
+    classified: &[crate::analysis::ClassifiedSeam],
+) -> Option<String> {
+    let entry = classified
+        .iter()
+        .find(|entry| entry.seam.id().as_str() == seam_id)?;
+    held_inline_target(root, &repair_packet_eligibility(entry).readiness)
+}
+
+/// The refusal for a start held by an uncommitted production target: states
+/// that no attempt started and what to do about it (#9033).
+pub(crate) fn uncommitted_start_refusal_message(root: &Path, seam_id: &str, file: &str) -> String {
+    format!(
+        "No repair attempt started. Commit or stash `{file}`, then run `ripr repair {} --root {}`. A repair confined to its inline `#[cfg(test)]` module starts only from the committed file",
+        shell_arg(seam_id),
+        shell_arg(&bound_root(&root.to_string_lossy()))
+    )
 }
 
 /// The gate applied to one classified seam: [`repair_refusal_reason`], the
