@@ -132,6 +132,17 @@ impl DropInManifests {
         verdict
     }
 
+    /// [`Self::verified`] for a crate-qualified or glob root, routing the
+    /// standard roots (`std`, `core`, `alloc`) to their own proof; `alloc`
+    /// has none and stays unverified.
+    pub(crate) fn verified_root(&self, file: &Path, krate: &str) -> bool {
+        if matches!(krate, "std" | "core" | "alloc") {
+            self.unbound_standard_root(file, krate)
+        } else {
+            self.verified(file, krate)
+        }
+    }
+
     /// Closed declaration proof for an implicit std/core root, not a
     /// registry-package verdict or general standard-library identity.
     pub(crate) fn unbound_standard_root(&self, file: &Path, krate: &str) -> bool {

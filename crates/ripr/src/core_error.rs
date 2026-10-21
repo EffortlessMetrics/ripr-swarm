@@ -101,6 +101,8 @@ pub(crate) enum CheckFailureKind {
     /// The `ripr check` wall-clock budget ran out before analysis finished
     /// (#5369). The run produced no findings: a refusal, never a clean pass.
     AnalysisTimeout,
+    /// The shared diff parser refused part of an agent brief working set.
+    DiffInputUnsupported,
 }
 
 impl CheckFailureKind {
@@ -116,6 +118,7 @@ impl CheckFailureKind {
             Self::SeamIdUnknown => "seam_id_unknown",
             Self::SelectorMiss => "selector_miss",
             Self::AnalysisTimeout => "analysis_timeout",
+            Self::DiffInputUnsupported => "diff_input_unsupported",
         }
     }
 
@@ -132,6 +135,7 @@ impl CheckFailureKind {
             Self::SeamIdUnknown => "analysis/seam-inventory",
             Self::SelectorMiss => "analysis/selector",
             Self::AnalysisTimeout => "analysis/timeout",
+            Self::DiffInputUnsupported => "analysis/diff-input",
         }
     }
 }
@@ -248,6 +252,14 @@ impl CoreError {
     pub(crate) fn analysis_timeout(detail: impl Into<String>) -> Self {
         Self::CheckFailure {
             kind: CheckFailureKind::AnalysisTimeout,
+            detail: detail.into(),
+        }
+    }
+
+    /// A brief diff contains regions the shared parser could not examine.
+    pub(crate) fn diff_input_unsupported(detail: impl Into<String>) -> Self {
+        Self::CheckFailure {
+            kind: CheckFailureKind::DiffInputUnsupported,
             detail: detail.into(),
         }
     }

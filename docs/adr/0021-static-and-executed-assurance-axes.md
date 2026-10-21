@@ -48,3 +48,13 @@ Costs and limits:
 - the command runner and final receipt binding require separate implementation
   slices; and
 - this decision does not itself add gate authority or runtime mutation proof.
+
+## Alternatives Considered
+
+- **One overloaded assurance field.** Rejected: names such as `verify_command`
+  or a receipt would then read as executed or runtime proof (see Context).
+- **Infer a stronger state from a neighboring field.** Rejected explicitly in
+  the Decision: no consumer may derive `verified`, `killed`, `survived`,
+  `adequate`, or `proven` from command presence, exit status, or a receipt.
+- **Add command execution first and define vocabulary later.** Not chosen: the
+  gate and receipt trust work needs the vocabulary before execution exists.

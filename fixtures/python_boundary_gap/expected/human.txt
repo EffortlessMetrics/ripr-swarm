@@ -35,6 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_boundary_gap/input --diff <cwd>/fixtures/python_boundary_gap/diff.patch --mode fast probe:src_discount.py:python_preview:d1182145
   ripr context --root <cwd>/fixtures/python_boundary_gap/input --diff <cwd>/fixtures/python_boundary_gap/diff.patch --mode fast --at probe:src_discount.py:python_preview:d1182145
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_discount.py:python_preview:d1182145 --root <cwd>/fixtures/python_boundary_gap/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

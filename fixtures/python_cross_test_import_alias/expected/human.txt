@@ -35,6 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_cross_test_import_alias/input --diff <cwd>/fixtures/python_cross_test_import_alias/diff.patch --mode fast probe:src_shop.py:python_preview:3e5b25e0
   ripr context --root <cwd>/fixtures/python_cross_test_import_alias/input --diff <cwd>/fixtures/python_cross_test_import_alias/diff.patch --mode fast --at probe:src_shop.py:python_preview:3e5b25e0
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_shop.py:python_preview:3e5b25e0 --root <cwd>/fixtures/python_cross_test_import_alias/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

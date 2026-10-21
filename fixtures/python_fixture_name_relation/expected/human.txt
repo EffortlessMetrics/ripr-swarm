@@ -30,6 +30,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_fixture_name_relation/input --diff <cwd>/fixtures/python_fixture_name_relation/diff.patch --mode fast probe:src_pricing.py:python_preview:af67021e
   ripr context --root <cwd>/fixtures/python_fixture_name_relation/input --diff <cwd>/fixtures/python_fixture_name_relation/diff.patch --mode fast --at probe:src_pricing.py:python_preview:af67021e
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_pricing.py:python_preview:af67021e --root <cwd>/fixtures/python_fixture_name_relation/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

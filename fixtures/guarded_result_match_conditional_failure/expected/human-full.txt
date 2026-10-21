@@ -31,8 +31,6 @@ Evidence
 
 Weakness
   - No exact error variant discriminator was detected
-  - No relevant oracle was detected
-  - No static test path reaches the changed owner
   - missing discriminator ParseError::InvalidData: No exact error variant assertion for ParseError::InvalidData
 
 Stop reasons:
@@ -67,9 +65,6 @@ Evidence
   - local flow reaches error variant: Result::Err(ParseError::InvalidData) (line 18)
 
 Weakness
-  - No relevant oracle was detected
-  - No static test path reaches the changed owner
-  - No strong discriminator was detected
   - missing discriminator ParseError::InvalidData: No exact error variant assertion for ParseError::InvalidData
 
 Stop reasons:

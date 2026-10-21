@@ -35,6 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_pytest_raises/input --diff <cwd>/fixtures/python_pytest_raises/diff.patch --mode fast probe:src_quantity.py:python_preview:9c7db092
   ripr context --root <cwd>/fixtures/python_pytest_raises/input --diff <cwd>/fixtures/python_pytest_raises/diff.patch --mode fast --at probe:src_quantity.py:python_preview:9c7db092
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_quantity.py:python_preview:9c7db092 --root <cwd>/fixtures/python_pytest_raises/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

@@ -7,6 +7,8 @@
 //! represent safely fall back to the full test set. Cross-package relations consume
 //! path-dependency adjacency owned by `analysis/workspace`.
 
+mod fmt_dispatch;
+
 use super::super::rust_index::{
     FunctionSummary, RustIndex, TestSummary, extract_identifier_tokens,
 };
@@ -20,6 +22,10 @@ use crate::analysis::workspace::{PathDependencyAdjacency, PathDependencyGraphSta
 use crate::domain::{Probe, RelationConfidence, RelationReason};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+
+mod equality_dispatch;
+
+pub(in crate::analysis) use equality_dispatch::is_partial_eq_method;
 
 /// Per-pass workspace dependency context for the #2972 cross-crate admit.
 /// Built once per classification pass in the Rust adapter and shared by
@@ -89,11 +95,18 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     by_path_trigram: BTreeMap<[u8; RELATION_TRIGRAM_WIDTH], Vec<usize>>,
     by_test_stem: BTreeMap<String, Vec<usize>>,
     by_function_name: BTreeMap<String, Vec<usize>>,
+    /// Tests whose body spells `assert_eq!`/`assert_ne!` (or a `debug_`
+    /// twin): candidates for an owner a comparison macro runs without
+    /// naming it (`PartialEq::eq`, #8999).
+    by_equality_assert: Vec<usize>,
     common_tokens: CommonTestTokens,
     // Deny-only, per-pass memo. No-property suites leave it empty, so probes
     // do not rescan ordinary bodies or property token trees.
     property_only_calls: BTreeMap<usize, BTreeSet<String>>,
     all_tests: Vec<usize>,
+    /// Tests whose body may format a value (`format!`, `write!`, `to_string`),
+    /// the candidates for a changed `Display`/`Debug` `fmt` owner.
+    fmt_dispatch_tests: Vec<usize>,
     /// Run-scoped reveal memo filled lazily from the same index; valid for
     /// exactly as long as the candidate lists above are.
     file_use_statements: super::FileUseStatements,
@@ -128,6 +141,12 @@ impl RelatedTestCandidateIndex {
 
         for (test_index, test) in index.tests().iter().enumerate() {
             candidates.all_tests.push(test_index);
+            if fmt_dispatch::body_may_dispatch_fmt(&test.body) {
+                candidates.fmt_dispatch_tests.push(test_index);
+            }
+            if test.body.contains("assert_eq!") || test.body.contains("assert_ne!") {
+                candidates.by_equality_assert.push(test_index);
+            }
             let refused =
                 crate::analysis::extract::property_macros::property_only_call_names(&test.body);
             if !refused.is_empty() {
@@ -281,6 +300,15 @@ impl RelatedTestCandidateIndex {
             {
                 scan_all = true;
             }
+        }
+
+        // A changed `Display`/`Debug` `fmt` is reached through formatting
+        // that never spells `fmt`.
+        if owner_fn.is_some_and(fmt_dispatch::is_fmt_dispatch_owner) {
+            selected.extend(self.fmt_dispatch_tests.iter().copied());
+        }
+        if owner_fn.is_some_and(equality_dispatch::has_partial_eq_shape) {
+            extend_bucket(&mut selected, Some(self.by_equality_assert.as_slice()));
         }
 
         if owner_fn.is_none() {
@@ -742,6 +770,8 @@ fn find_related_tests_with_candidates<'a>(
         }
     }
     let owner_name_is_unique = workspace_complete && same_name_function_count == 1;
+    // #8999: a user `PartialEq::eq`/`ne` a comparison macro runs unnamed.
+    let equality_owner = owner_fn.and_then(|owner| equality_dispatch::equality_owner(owner, index));
     // Same-crate trait impls share a method name (`size_hint` on WhileSome
     // and Combinations). The uniqueness bypass above only gates *cross-crate*
     // package-prefix filtering; this count is the receiver-identity gate
@@ -777,8 +807,19 @@ fn find_related_tests_with_candidates<'a>(
     // For module-level struct/field probes (owner_fn is None) derive the package
     // prefix from the probe's source file so cross-crate spurious matches are
     // still filtered out.
+    //
+    // #7617: a relative probe path under `--root` is joined onto the root
+    // (`ws/member/src/lib.rs`) while test paths are root-relative, so the
+    // prefix comes from the root-relative `probe_path`. An absolute probe
+    // keeps deriving no prefix, as before.
     let struct_package_prefix = if owner_fn.is_none() {
-        package_prefix(&probe.location.file)
+        if path_is_absolute_form(&probe.location.file) {
+            package_prefix(&probe.location.file)
+        } else {
+            probe_path
+                .as_deref()
+                .and_then(|relative| package_prefix(Path::new(relative)))
+        }
     } else {
         None
     };
@@ -845,6 +886,8 @@ fn find_related_tests_with_candidates<'a>(
         .iter()
         .filter_map(|token| test_name_word_token(token, common_words))
         .collect();
+    let fmt_context: std::cell::OnceCell<Option<fmt_dispatch::FmtContext>> =
+        std::cell::OnceCell::new();
     for test_index in candidate_indices {
         let test = index.tests().at(test_index);
         // Compute calls_owner BEFORE the package-prefix guard so a cross-crate
@@ -861,10 +904,48 @@ fn find_related_tests_with_candidates<'a>(
                     .contains(owner_name)
             }
         };
-        let calls_owner = !owner_name.is_empty()
+        let calls_owner_by_name = !owner_name.is_empty()
             && !property_only_owner_call
             && (test.calls.iter().any(|call| call.name == owner_name)
                 || body_contains_owner_call(&test.body, owner_name));
+        // A formatting macro or `to_string()` on a value typed as the owner's
+        // self type runs a changed `Display`/`Debug` `fmt` without naming it.
+        let dispatches_to_fmt = owner_fn.is_some_and(|owner| {
+            fmt_context
+                .get_or_init(|| fmt_dispatch::FmtContext::new(index, owner))
+                .as_ref()
+                .is_some_and(|context| {
+                    fmt_dispatch::test_dispatches_to_fmt(
+                        test,
+                        owner,
+                        &indexed_same_name_ids,
+                        context,
+                    )
+                })
+        });
+        let calls_owner = calls_owner_by_name || dispatches_to_fmt;
+        // #8999: `assert_eq!(a, b)` over two values of the owner's type runs
+        // the owner's `PartialEq::eq` with no call fact naming it. A distinct
+        // signal from `calls_owner`: it bypasses none of the cross-package
+        // guards below, so only an in-package, same-file test can use it.
+        // Evaluated independently of `calls_owner`: a name-only `Other::eq`
+        // call elsewhere in the test must not hide a real macro dispatch.
+        let equality_asserts_owner = !property_only_owner_call
+            && match (owner_fn, equality_owner.as_ref()) {
+                (Some(owner), Some(equality)) => {
+                    equality_dispatch::test_asserts_equality_through_owner(
+                        test,
+                        owner,
+                        equality,
+                        index
+                            .files()
+                            .get(&test.file)
+                            .map(|facts| facts.data().source.as_ref()),
+                        index,
+                    )
+                }
+                _ => false,
+            };
         // #3714: captured `calls` facts only — the same authority as
         // `calls_owner`. Never overrides owner attribution. A same-named
         // local definition or binding in the test body defeats the admit
@@ -946,7 +1027,15 @@ fn find_related_tests_with_candidates<'a>(
             test.calls.iter().any(|call| {
                 chain.hops.iter().any(|hop| {
                     hop.caller.name == call.name
-                        && super::helper_transfer::is_direct_call_site(&call.text, &hop.caller.name)
+                        && (super::helper_transfer::is_direct_call_site(
+                            &call.text,
+                            &hop.caller.name,
+                        ) || own_crate_qualified_entry_call(
+                            index,
+                            test,
+                            &hop.caller,
+                            &call.text,
+                        ))
                         // #6780 Devin review: a test-local closure or nested
                         // fn named like the hop caller shadows it, so the
                         // call never reaches the helper.
@@ -961,6 +1050,7 @@ fn find_related_tests_with_candidates<'a>(
         });
 
         if calls_owner
+            && !equality_asserts_owner
             && !calls_helper_entry
             && call_identity.as_ref().is_some_and(|identity| {
                 identity.resolve_test(test, index) == super::CallTarget::Other
@@ -1070,6 +1160,7 @@ fn find_related_tests_with_candidates<'a>(
             !calls_owner && !assertions_reference_owner && calls_helper_entry;
 
         if !calls_owner
+            && !equality_asserts_owner
             && !assertions_reference_owner
             && !same_file_or_named
             && !helper_chain_reaches
@@ -1089,7 +1180,9 @@ fn find_related_tests_with_candidates<'a>(
         // Determine the single highest-priority reason for the match so the
         // emitted `RelatedTest` can carry `relation_reason` /
         // `relation_confidence` tags for consumer filtering.
-        let reason = if calls_owner {
+        let reason = if equality_asserts_owner {
+            RelationReason::DirectOwnerCall
+        } else if calls_owner {
             // A unique owner name, or a receiver resolved to this impl, is a
             // direct call. An impl method whose name has other workspace
             // definitions cannot be `direct_owner_call` until the receiver
@@ -1109,6 +1202,7 @@ fn find_related_tests_with_candidates<'a>(
                 &indexed_same_name_ids,
                 test_source,
                 index,
+                dispatches_to_fmt,
             )
         } else if helper_chain_reaches {
             // The test calls a function that reaches the owner through
@@ -1560,6 +1654,143 @@ fn declares_module(stripped: &str, name: &str) -> bool {
         previous_is_mod = word == "mod";
         found
     })
+}
+
+/// Whether comment-and-string-stripped `source` may bind `name` to something
+/// other than a crate: an item (`mod`/`fn`/`struct`/`enum`/`union`/`trait`/
+/// `type`/`const`/`static`) or a `let`/`mut` binding named `name`, a closure
+/// parameter (`|name|`) or a typed parameter/field (`name:` but not `name::`).
+/// Conservative on purpose: any such mention refuses.
+fn file_may_bind_name(stripped: &str, name: &str) -> bool {
+    const BINDERS: [&str; 11] = [
+        "mod", "fn", "struct", "enum", "union", "trait", "type", "const", "static", "let", "mut",
+    ];
+    let bytes = stripped.as_bytes();
+    let mut previous_word = "";
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if !is_ident_char(char::from(bytes[index])) {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < bytes.len() && is_ident_char(char::from(bytes[index])) {
+            index += 1;
+        }
+        let mut word = &stripped[start..index];
+        // `r#name` is the identifier `name`: read it as one word.
+        if word == "r"
+            && bytes.get(index) == Some(&b'#')
+            && bytes
+                .get(index + 1)
+                .is_some_and(|byte| is_ident_char(char::from(*byte)))
+        {
+            index += 1;
+            let raw_start = index;
+            while index < bytes.len() && is_ident_char(char::from(bytes[index])) {
+                index += 1;
+            }
+            word = &stripped[raw_start..index];
+        }
+        if word == name {
+            let before = stripped[..start].trim_end().chars().next_back();
+            let after = stripped[index..].trim_start();
+            if BINDERS.contains(&previous_word)
+                || before == Some('|')
+                || (after.starts_with(':') && !after.starts_with("::"))
+            {
+                return true;
+            }
+        }
+        previous_word = word;
+    }
+    false
+}
+
+/// #8999: whether `call_text` is an integration test's call of the helper
+/// chain's entry `caller`, spelled through the package's own library name
+/// (`rr::order_discount(..)` with no `use`).
+///
+/// Fail-closed admit, only for the one shape whose identity is established:
+/// the test sits under `tests/` of the root package, the entry is a
+/// module-level item of that package's `src/lib.rs` (a recognized library
+/// root, so a binary's modules never match), and the call is spelled exactly
+/// `<crate>::<entry>(` with `<crate>` the root manifest's library identifier
+/// (`[lib] name`, else the package name). A test that declares, renames or imports that crate name
+/// (or globs anything), binds it locally, or any workspace member / nested
+/// package / absolute path keeps the existing refusal.
+fn own_crate_qualified_entry_call(
+    index: &RustIndex,
+    test: &TestSummary,
+    caller: &FunctionSummary,
+    call_text: &str,
+) -> bool {
+    if !super::call_identity::under_tests_dir(&test.file)
+        || path_is_absolute_form(&test.file)
+        || path_is_absolute_form(&caller.file)
+        || package_prefix(&test.file).is_some()
+        || package_prefix(&caller.file).is_some()
+    {
+        return false;
+    }
+    let is_library_root_item = super::owner_pin::target_root(&caller.file, index, &BTreeSet::new())
+        .is_some_and(|root| root == Path::new("src/lib.rs"))
+        && super::call_identity::definition_module_path(caller)
+            .is_some_and(|module| module.is_empty());
+    if !is_library_root_item {
+        return false;
+    }
+    // Only a test-crate root (`tests/<name>.rs`, `tests/<name>/main.rs`):
+    // a module child (`tests/api/child.rs`, `tests/common/mod.rs`) resolves
+    // paths from a parent file whose bindings this scan does not read.
+    let normalized_test = normalize_path(&test.file);
+    let test_segments: Vec<&str> = normalized_test.split('/').collect();
+    let is_test_crate_root = match test_segments.as_slice() {
+        ["tests", file] => file.ends_with(".rs"),
+        ["tests", _, "main.rs"] => true,
+        _ => false,
+    };
+    if !is_test_crate_root {
+        return false;
+    }
+    let Some(facts) = index.files().get(&test.file) else {
+        return false;
+    };
+    if facts.source.contains("include!") {
+        return false;
+    }
+    // The one identifier the package's library is imported as: `[lib] name`
+    // when set, else the package name (hyphens folded). The package name is
+    // not a second spelling when `[lib] name` differs.
+    let Some(crate_name) = index.root_library_name.as_deref() else {
+        return false;
+    };
+    let stripped_file = strip_comments_and_strings(&facts.source);
+    // Any import that may bind the crate name to something else, in the
+    // file or in the test body: a glob, or a path ending in that name
+    // (`use some_dep::qual_reach;`). `as` renames are read by
+    // `file_renames_to`.
+    let may_rebind_crate_name = |source: &str| {
+        super::reveal::flattened_use_paths(source)
+            .iter()
+            .any(|import| {
+                let unraw = |name: &str| name.strip_prefix("r#").unwrap_or(name).to_string();
+                import.path.ends_with('*')
+                    || import.path.rsplit("::").next().map(unraw).as_deref() == Some(crate_name)
+                    || import.alias.as_deref().map(unraw).as_deref() == Some(crate_name)
+            })
+    };
+    // The call fact's text is the whole source line: match the own-crate
+    // spelling only in code, never in a string or comment beside a foreign
+    // call of the same name.
+    let code_line = mask_comments_and_strings(call_text);
+    is_qualified_owner_call(&code_line, &format!("{crate_name}::{}", caller.name))
+        && !file_may_bind_name(&stripped_file, crate_name)
+        && !body_binds_owner_name(&test.body, crate_name)
+        && !super::owner_pin::file_renames_to(&facts.source, crate_name)
+        && !super::owner_pin::file_renames_to(&facts.source, &format!("r#{crate_name}"))
+        && !may_rebind_crate_name(&facts.source)
+        && !may_rebind_crate_name(&test.body)
 }
 
 /// Whether `text` invokes the owner through the dependency's declared name,
@@ -3087,6 +3318,7 @@ fn owner_call_relation_reason(
     same_name_ids: &[&str],
     test_source: Option<&str>,
     index: &RustIndex,
+    fmt_dispatch_resolved: bool,
 ) -> RelationReason {
     let indexed_same_name_count = same_name_ids.len();
     let Some(owner) = owner_fn else {
@@ -3224,7 +3456,9 @@ fn owner_call_relation_reason(
     }) {
         return RelationReason::WeakTokenSubstring;
     }
-    if indexed_same_name_count <= 1 {
+    // The formatting dispatch already bound the value to this impl's type
+    // and trait, and refused a second `fmt` for the same pair.
+    if indexed_same_name_count <= 1 || fmt_dispatch_resolved {
         return RelationReason::DirectOwnerCall;
     }
     let impl_trait = owner_dispatch_trait(owner);
@@ -5164,6 +5398,49 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             .into_iter()
             .map(|(_, reason)| reason)
             .collect()
+    }
+
+    /// Related-test relation for the free `kb` owner when the test's call
+    /// facts come from the real extractor (not hand-built facts).
+    fn free_kb_relation_from_extracted_calls(body: &str) -> Vec<RelationReason> {
+        let owner = free_function("src/lib.rs", "kb");
+        let mut test = test_with_call("tests/units.rs", "test_comparison", body, "kb");
+        test.calls = crate::analysis::extract::extract_call_facts(body, 1);
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "size.into() * KB");
+        find_related_tests(&probe, Some(&owner), &index, true, None, None)
+            .into_iter()
+            .map(|(_, reason)| reason)
+            .collect()
+    }
+
+    /// #8999: a test that calls the free function only through a local alias
+    /// of its module path is a direct owner call; an alias of a same-named
+    /// associated function, a local closure, or a quoted token is not.
+    #[test]
+    fn given_free_fn_when_test_calls_it_through_a_local_alias_then_direct_owner_call() {
+        assert_eq!(
+            free_kb_relation_from_extracted_calls("let f = units::kb;\nassert_eq!(f(1), 1000);"),
+            vec![RelationReason::DirectOwnerCall]
+        );
+        for body in [
+            // associated function of a type, not the free function
+            "let f = ByteSize::kb;\nassert_eq!(f(1), 1000);",
+            // local closure named like the owner
+            "let kb = |x: u64| x * 1000;\nlet f = kb;\nassert_eq!(f(1), 1000);",
+            // alias never called; the owner name only appears quoted
+            "let f = units::kb;\nassert_eq!(g(1), \"kb(1)\");",
+        ] {
+            assert_ne!(
+                free_kb_relation_from_extracted_calls(body),
+                vec![RelationReason::DirectOwnerCall],
+                "{body}"
+            );
+        }
     }
 
     /// #6713: `ByteSize::kb(1000)` calls the associated function, never the
@@ -8298,6 +8575,47 @@ fn crate_c_score_test() {
         );
         let names: Vec<&str> = related.iter().map(|(test, _)| test.name.as_str()).collect();
         assert_eq!(names, ["root_inline"]);
+        assert_eq!(related[0].1, RelationReason::SameTestFile);
+    }
+
+    #[test]
+    fn relative_root_ownerless_probe_keeps_its_own_inline_tests() {
+        // #7617: under a relative `--root ws`, the probe path is
+        // `ws/member/src/lib.rs` but test paths are root-relative. The
+        // package guard must come from the root-relative path, or it carries
+        // the root (`ws/member/`) and drops the file's own inline tests.
+        let mut index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: vec![
+                test("src/lib.rs", "root_inline", "assert!(true);"),
+                test("member/src/lib.rs", "own_inline", "assert!(true);"),
+            ],
+            ..Default::default()
+        });
+        for file in ["src/lib.rs", "member/src/lib.rs"] {
+            index.insert_file_only(
+                PathBuf::from(file),
+                crate::analysis::rust_index::summarize_file(
+                    PathBuf::from(file),
+                    "fn f() {}\n".to_string(),
+                ),
+            );
+        }
+        let mut probe = probe("ws/member/src/lib.rs", "marker");
+        probe.owner = None;
+        let candidates = RelatedTestCandidateIndex::new(&index).with_analysis_root(Path::new("ws"));
+
+        let related = find_related_tests_with_candidate_index(
+            &probe,
+            None,
+            &index,
+            true,
+            None,
+            None,
+            &candidates,
+        );
+
+        let names: Vec<&str> = related.iter().map(|(test, _)| test.name.as_str()).collect();
+        assert_eq!(names, ["own_inline"]);
         assert_eq!(related[0].1, RelationReason::SameTestFile);
     }
 

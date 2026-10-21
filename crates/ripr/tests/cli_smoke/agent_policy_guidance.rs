@@ -54,19 +54,14 @@ fn omitted_seam(label: &str) -> Result<(PathBuf, String), Box<dyn std::error::Er
 
 fn card_envelope(output: &Output) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     assert_eq!(output.status.code(), Some(3), "{output:?}");
-    assert!(output.stdout.is_empty(), "{output:?}");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let end = stderr
-        .find("\n}\n")
-        .ok_or("card refusal envelope must terminate")?
-        + 3;
-    let envelope: serde_json::Value = serde_json::from_str(&stderr[..end])?;
+    let envelope: serde_json::Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(envelope["schema_version"], "0.1", "{envelope}");
     assert_eq!(envelope["kind"], "agent_card_refusal", "{envelope}");
     let message = envelope["error"]["message"]
         .as_str()
         .ok_or("card refusal must carry prose")?;
-    assert_eq!(stderr[end..].trim(), format!("ripr: {message}"));
+    assert_eq!(stderr.trim(), format!("ripr: {message}"));
     Ok(envelope)
 }
 
@@ -253,7 +248,7 @@ fn genuinely_unknown_seam_keeps_pilot_guidance_under_omitting_policy()
     let (root, _) = omitted_seam("policy omitted unknown control")?;
     let root_arg = root.display().to_string();
     let unknown = "0000000000000000";
-    for (command, code) in [("card", 3), ("packet", 2), ("repair", 2)] {
+    for (command, code) in [("card", 3), ("packet", 3), ("repair", 2)] {
         let mut args = vec![
             "agent",
             command,

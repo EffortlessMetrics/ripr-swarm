@@ -6,7 +6,8 @@ Owner: product-analysis
 
 Created: 2026-10-14
 
-Linked issues: [#7392](https://github.com/EffortlessMetrics/ripr-swarm/issues/7392).
+Linked issues: [#7392](https://github.com/EffortlessMetrics/ripr-swarm/issues/7392),
+[#9002](https://github.com/EffortlessMetrics/ripr-swarm/issues/9002).
 
 Support-tier impact: Python preview adapter output only; no support-tier
 change. See: [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md).
@@ -47,6 +48,17 @@ bind:
   strong related call that binds no row (a `*args` unpack or unreadable
   argument list), and entries without source (repo mode, deleted lines,
   the old test harness).
+- Fallthrough (#9002): a changed return that follows a simple `if X:` in its
+  own block whose body ends in a top-level `return`/`raise` (no `elif`/`else`
+  chain) runs only for inputs that fail `X`. When every strong related call
+  provably satisfies at least one such preceding early-exit condition, the
+  finding fails closed to `weakly_exposed` with missing discriminator
+  `not (X)`; the reason says each call satisfies at least one early-exit
+  condition, since different calls may take different exits. Lines inside
+  triple-quoted strings are not code and are never read as early exits. A
+  call that misses every exit, a non-terminating or nested-only `return`
+  body, a chained `elif`/`else`, and unreadable guards keep the existing
+  verdict.
 - Equality follows Python semantics for scalar literals: `True == 1` and
   `False == 0` hold, and `2 == True` does not, so a bool call argument is
   not excluded by a numeric guard (or vice versa).
@@ -80,19 +92,34 @@ guard predicate (a pure-expression change).
 
 ## Acceptance Examples
 
-- `def quote(total): if total > 1000: return round(total * 1.02, 2)` with
-  the only strong test asserting `quote(100.0) == 105.0` reads
-  `weakly_exposed`, naming `total > 1000` with the observed `total = 100.0`.
-- The same owner with a test asserting `quote(2000.0) == 2040.0` stays
-  `exposed`.
-- `if total > 1000 or force:` with a test calling `quote(100.0, True)`
-  stays `exposed`: the `or` makes the guard unreadable and the gate fails
-  open rather than excluding the row.
-- `def quote(total): total = 2000; if total > 1000: ...` keeps `exposed`
-  for `quote(100.0)`: the rebinding means the call binding cannot exclude
-  the row.
-- `if flag == 1:` with `quote(True)` stays `exposed` (`True == 1` in
-  Python).
+1. `def quote(total): if total > 1000: return round(total * 1.02, 2)` with
+   the only strong test asserting `quote(100.0) == 105.0` reads
+   `weakly_exposed`, naming `total > 1000` with the observed `total = 100.0`.
+2. The same owner with a test asserting `quote(2000.0) == 2040.0` stays
+   `exposed`.
+3. `if total > 1000 or force:` with a test calling `quote(100.0, True)`
+   stays `exposed`: the `or` makes the guard unreadable and the gate fails
+   open rather than excluding the row.
+4. `def quote(total): total = 2000; if total > 1000: ...` keeps `exposed`
+   for `quote(100.0)`: the rebinding means the call binding cannot exclude
+   the row.
+5. `if flag == 1:` with `quote(True)` stays `exposed` (`True == 1` in
+   Python).
+
+## Call-Row Excerpt
+
+The strong call rows the gate reads carry display text (#8777, #8788). The
+text is display only and never feeds a decision:
+
+- A physical line of at most 240 bytes is shown whole (trimmed).
+- A longer line is cut to a window of at most 240 bytes that starts up to 60
+  bytes before the call name, on character boundaries.
+- A call that fits the window is kept whole: the lead shrinks by the exact
+  call extent (name through the closing parenthesis, whitespace before `(`
+  included), and the start rounds toward the call so a multibyte character
+  never costs the call its trailing bytes.
+- `...` marks a side only where visible text was cut, never for indentation
+  or trailing whitespace alone.
 
 ## Test Mapping
 

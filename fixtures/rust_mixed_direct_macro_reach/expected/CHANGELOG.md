@@ -38,3 +38,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_mixed_direct_macro_reach (4)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless rust_mixed_direct_macro_reach --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_mixed_direct_macro_reach (5)
+
+Reason:
+RIPR-SPEC-0001: diff-check reach evidence names only tests whose relation establishes reach (#9033)
+
+Command:
+`cargo xtask goldens bless rust_mixed_direct_macro_reach --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

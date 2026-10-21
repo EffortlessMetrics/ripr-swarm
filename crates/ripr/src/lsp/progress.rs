@@ -14,9 +14,9 @@
 //! - deduplicated requests never reach this module, so they create no token;
 //! - the denominator for real percentages is unknown, so no percentage is
 //!   ever emitted — title/message + phase only;
-//! - a terminal end is sent exactly once per token: `end*` removes the token
-//!   from the registry before notifying, so every later end for the same
-//!   generation is a no-op;
+//! - terminal intent suppresses new announcements/reports; registry custody
+//!   survives cancellation while cleanup waits. End sends serialize per token,
+//!   and successful cleanup removes the entry before releasing its token lock;
 //! - progress is best-effort: a client error on
 //!   `window/workDoneProgress/create` is logged and the token is dropped
 //!   (per the spec no progress notifications may follow a failed create);
@@ -175,6 +175,15 @@ impl ProgressSink for Client {
 struct TokenRecord {
     token: String,
     phase: AnalysisProgressPhase,
+    // Terminal intent retains registry custody while awaited cleanup can be
+    // canceled, and suppresses late Begin/report even before cleanup completes.
+    terminal: Option<AnalysisProgressEnd>,
+    // Shared by same-token senders and retryable terminal cleanup.
+    notifications: Arc<tokio::sync::Mutex<TokenNotifications>>,
+}
+
+#[derive(Default)]
+struct TokenNotifications {
     /// True once the `$/progress` begin notification has actually been sent.
     /// A token ended while `started == false` is removed silently: per the LSP
     /// spec no progress notifications may precede a begin, and none may follow
@@ -192,20 +201,17 @@ fn progress_token(generation: u64) -> String {
 
 /// Owns the progress-token registry for accepted analysis generations.
 ///
-/// Exactly-once terminal semantics come from the registry: a token is only
-/// ended after it has been removed, so concurrent or repeated terminal
-/// paths (outcome end, cancellation guard, invalidation drain, shutdown
-/// drain) cannot emit two ends for one token.
+/// Terminal intent and per-token serialization keep cleanup retryable while
+/// waiting, silence late announcements/reports, and prevent concurrent or
+/// repeated terminal paths from completing two ends for one token.
 pub(super) struct AnalysisProgressTracker {
     client: Client,
     sink: Mutex<Arc<dyn ProgressSink>>,
     supported: AtomicBool,
-    tokens: Mutex<BTreeMap<u64, TokenRecord>>,
+    tokens: Arc<Mutex<BTreeMap<u64, TokenRecord>>>,
     /// Liveness bound for the `window/workDoneProgress/create` round trip
-    /// (#5278). `begin` runs on the interactive refresh path inside the
-    /// transport's task pipeline, so an unanswered create must fail like
-    /// every other server→client request instead of pinning the pipeline
-    /// alive-but-silent.
+    /// (#5278). Announcement is detached from refresh (#9149); the bound
+    /// also limits how long that best-effort task waits for the client.
     client_request_timeout: std::time::Duration,
 }
 
@@ -223,7 +229,7 @@ impl AnalysisProgressTracker {
             client,
             sink: Mutex::new(sink),
             supported: AtomicBool::new(false),
-            tokens: Mutex::new(BTreeMap::new()),
+            tokens: Arc::new(Mutex::new(BTreeMap::new())),
             client_request_timeout,
         }
     }
@@ -264,34 +270,58 @@ impl AnalysisProgressTracker {
         self.sink.lock().ok().map(|sink| Arc::clone(&sink))
     }
 
-    /// Begin progress for an accepted generation. A create failure is
-    /// logged and the token is dropped: per the spec no progress
-    /// notifications may follow a failed create, and analysis state is
-    /// unaffected (best-effort).
-    pub(super) async fn begin(&self, request: &RefreshRequest, phase: AnalysisProgressPhase) {
+    /// Register before spawning the announcement so termination can always
+    /// remove an accepted token, even before the task is first polled.
+    fn register(&self, request: &RefreshRequest, phase: AnalysisProgressPhase) -> bool {
         if !self.supported.load(Ordering::SeqCst) {
+            return false;
+        }
+        let Ok(mut tokens) = self.tokens.lock() else {
+            return false;
+        };
+        if tokens.contains_key(&request.generation) {
+            return false;
+        }
+        tokens.insert(
+            request.generation,
+            TokenRecord {
+                token: progress_token(request.generation),
+                phase,
+                terminal: None,
+                notifications: Arc::new(tokio::sync::Mutex::new(TokenNotifications::default())),
+            },
+        );
+        true
+    }
+
+    /// Progress is advisory: an unanswered create must not hold refresh or
+    /// shutdown in the transport's request pipeline (#9149).
+    pub(super) fn begin_detached(
+        self: &Arc<Self>,
+        request: &RefreshRequest,
+        phase: AnalysisProgressPhase,
+    ) -> Option<tokio::task::JoinHandle<()>> {
+        if !self.register(request, phase) {
+            return None;
+        }
+        let tracker = Arc::clone(self);
+        let request = request.clone();
+        Some(tokio::spawn(
+            async move { tracker.announce(&request).await },
+        ))
+    }
+
+    #[cfg(test)]
+    pub(super) async fn begin(&self, request: &RefreshRequest, phase: AnalysisProgressPhase) {
+        if self.register(request, phase) {
+            self.announce(request).await;
+        }
+    }
+
+    async fn announce(&self, request: &RefreshRequest) {
+        let Some(notifications) = self.notification_state(request.generation) else {
             return;
-        }
-        {
-            // Register BEFORE the sink awaits so a concurrent end() always
-            // finds the generation and terminates it cleanly instead of
-            // leaking a begin without an end.
-            let Ok(mut tokens) = self.tokens.lock() else {
-                return;
-            };
-            if tokens.contains_key(&request.generation) {
-                return;
-            }
-            tokens.insert(
-                request.generation,
-                TokenRecord {
-                    token: progress_token(request.generation),
-                    phase,
-                    started: false,
-                    last_stage: None,
-                },
-            );
-        }
+        };
         let Some(sink) = self.sink() else {
             return;
         };
@@ -325,6 +355,20 @@ impl AnalysisProgressTracker {
                 .await;
             return;
         }
+        let mut notifications = notifications.lock().await;
+        let phase = {
+            let Ok(tokens) = self.tokens.lock() else {
+                return;
+            };
+            let Some(record) = tokens.get(&request.generation) else {
+                // Terminated while create was pending: #1971 requires silence.
+                return;
+            };
+            if record.terminal.is_some() {
+                return;
+            }
+            record.phase
+        };
         sink.notify(
             token.clone(),
             ProgressNotificationValue::Begin {
@@ -333,16 +377,30 @@ impl AnalysisProgressTracker {
             },
         )
         .await;
-        if let Ok(mut tokens) = self.tokens.lock()
-            && let Some(record) = tokens.get_mut(&request.generation)
-        {
-            record.started = true;
-        }
+        // A terminal owner may have marked this entry while Begin was
+        // sending. Cleanup must observe this completed Begin and send End
+        // after acquiring the same token lock.
+        notifications.started = true;
+    }
+
+    fn notification_state(
+        &self,
+        generation: u64,
+    ) -> Option<Arc<tokio::sync::Mutex<TokenNotifications>>> {
+        let tokens = self.tokens.lock().ok()?;
+        tokens
+            .get(&generation)
+            .map(|record| Arc::clone(&record.notifications))
     }
 
     /// Move a queued token to `analyzing` on the SAME token when the queued
-    /// request starts. No-op for tokens already analyzing or unknown.
+    /// request starts. An unstarted token records the new phase silently.
+    /// No-op for tokens already analyzing or unknown.
     pub(super) async fn transition_to_analyzing(&self, generation: u64) {
+        let Some(notifications) = self.notification_state(generation) else {
+            return;
+        };
+        let notifications = notifications.lock().await;
         let token = {
             let Ok(mut tokens) = self.tokens.lock() else {
                 return;
@@ -350,10 +408,15 @@ impl AnalysisProgressTracker {
             let Some(record) = tokens.get_mut(&generation) else {
                 return;
             };
-            if !record.started || record.phase != AnalysisProgressPhase::Queued {
+            if record.terminal.is_some() || record.phase != AnalysisProgressPhase::Queued {
                 return;
             }
             record.phase = AnalysisProgressPhase::Analyzing;
+            if !notifications.started {
+                // A delayed create must announce the current phase when it
+                // succeeds, rather than claiming the promoted request is queued.
+                return;
+            }
             record.token.clone()
         };
         let Some(sink) = self.sink() else {
@@ -371,6 +434,10 @@ impl AnalysisProgressTracker {
     /// Bounded report at the real phase boundary where analysis results are
     /// about to be published.
     pub(super) async fn report_publishing(&self, generation: u64) {
+        let Some(notifications) = self.notification_state(generation) else {
+            return;
+        };
+        let notifications = notifications.lock().await;
         let token = {
             let Ok(tokens) = self.tokens.lock() else {
                 return;
@@ -378,7 +445,10 @@ impl AnalysisProgressTracker {
             let Some(record) = tokens.get(&generation) else {
                 return;
             };
-            if !record.started || record.phase != AnalysisProgressPhase::Analyzing {
+            if record.terminal.is_some()
+                || !notifications.started
+                || record.phase != AnalysisProgressPhase::Analyzing
+            {
                 return;
             }
             record.token.clone()
@@ -411,6 +481,10 @@ impl AnalysisProgressTracker {
     /// unsupported clients, unknown generations, unstarted tokens, tokens
     /// still queued, terminal stages, and consecutive duplicate stages.
     pub(super) async fn report_stage(&self, generation: u64, stage: AnalysisProgressStage) {
+        let Some(notifications) = self.notification_state(generation) else {
+            return;
+        };
+        let mut notifications = notifications.lock().await;
         if !self.supported.load(Ordering::SeqCst) {
             return;
         }
@@ -424,13 +498,16 @@ impl AnalysisProgressTracker {
             let Some(record) = tokens.get_mut(&generation) else {
                 return;
             };
-            if !record.started || record.phase != AnalysisProgressPhase::Analyzing {
+            if record.terminal.is_some()
+                || !notifications.started
+                || record.phase != AnalysisProgressPhase::Analyzing
+            {
                 return;
             }
-            if record.last_stage == Some(stage) {
+            if notifications.last_stage == Some(stage) {
                 return;
             }
-            record.last_stage = Some(stage);
+            notifications.last_stage = Some(stage);
             record.token.clone()
         };
         let Some(sink) = self.sink() else {
@@ -445,95 +522,107 @@ impl AnalysisProgressTracker {
         .await;
     }
 
-    /// Terminate one generation's token. Exactly-once: the token is removed
-    /// before the end notification, so later ends for the same generation
-    /// are no-ops.
+    /// Mark one token terminal before awaiting its sender. Registry custody
+    /// remains available if the waiting cleanup future is canceled.
     pub(super) async fn end(&self, generation: u64, end: AnalysisProgressEnd) {
-        let record = {
+        let notifications = {
             let Ok(mut tokens) = self.tokens.lock() else {
                 return;
             };
-            tokens.remove(&generation)
+            let Some(record) = tokens.get_mut(&generation) else {
+                return;
+            };
+            record.terminal.get_or_insert(end);
+            Arc::clone(&record.notifications)
         };
-        let Some(record) = record else {
-            return;
-        };
-        if !record.started {
-            // Removed cleanly without a notification: no begin was ever sent.
-            return;
-        }
-        let token = record.token;
-        let Some(sink) = self.sink() else {
-            return;
-        };
-        sink.notify(
-            token,
-            ProgressNotificationValue::End {
-                message: end.message(),
-            },
-        )
-        .await;
+        self.finish_end(generation, notifications).await;
     }
 
-    /// Terminate every token still in `queued` phase. Used by root/config
-    /// invalidation and cancellation paths where a queued request is dropped
-    /// without ever starting; the active (analyzing) token is left for the
-    /// refresh loop's outcome-based end.
+    async fn finish_end(
+        &self,
+        generation: u64,
+        notifications: Arc<tokio::sync::Mutex<TokenNotifications>>,
+    ) {
+        let notifications = notifications.lock_owned().await;
+        let (token, end) = {
+            let Ok(tokens) = self.tokens.lock() else {
+                return;
+            };
+            let Some(record) = tokens.get(&generation) else {
+                return;
+            };
+            let Some(end) = &record.terminal else {
+                return;
+            };
+            (record.token.clone(), end.clone())
+        };
+        // #1971: never send End for a token whose Begin was not sent.
+        if notifications.started
+            && let Some(sink) = self.sink()
+        {
+            // A transport can enqueue End before its send future completes.
+            // Keep that one send and its lock alive even if the awaiting
+            // caller is canceled; a retry must not send a second End.
+            let tokens = Arc::clone(&self.tokens);
+            let delivery = tokio::spawn(async move {
+                sink.notify(
+                    token,
+                    ProgressNotificationValue::End {
+                        message: end.message(),
+                    },
+                )
+                .await;
+                if let Ok(mut tokens) = tokens.lock() {
+                    tokens.remove(&generation);
+                }
+                drop(notifications);
+            });
+            let _ = delivery.await;
+        } else if let Ok(mut tokens) = self.tokens.lock() {
+            tokens.remove(&generation);
+        }
+    }
+
+    /// Mark every queued token before awaiting cleanup. Cancellation cannot
+    /// drop the unvisited entries of a bulk drain; their terminal intent also
+    /// prevents a delayed create from announcing them in the meantime.
     pub(super) async fn end_queued(&self, end: AnalysisProgressEnd) {
-        let drained = {
+        let pending = {
             let Ok(mut tokens) = self.tokens.lock() else {
                 return;
             };
-            let queued: Vec<u64> = tokens
-                .iter()
+            tokens
+                .iter_mut()
                 .filter(|(_, record)| record.phase == AnalysisProgressPhase::Queued)
-                .map(|(generation, _)| *generation)
-                .collect();
-            queued
-                .into_iter()
-                .filter_map(|generation| tokens.remove(&generation))
-                .filter(|record| record.started)
-                .map(|record| record.token)
+                .map(|(generation, record)| {
+                    record.terminal.get_or_insert_with(|| end.clone());
+                    (*generation, Arc::clone(&record.notifications))
+                })
                 .collect::<Vec<_>>()
         };
-        let Some(sink) = self.sink() else {
-            return;
-        };
-        for token in drained {
-            sink.notify(
-                token,
-                ProgressNotificationValue::End {
-                    message: end.message(),
-                },
-            )
-            .await;
+        for (generation, notifications) in pending {
+            self.finish_end(generation, notifications).await;
         }
     }
 
-    /// Terminate every open token. Used on shutdown when the scheduler
-    /// stops accepting and running work.
+    /// Mark every open token before awaiting cleanup. A drain still awaits
+    /// each token's in-flight notification; this is not a total shutdown
+    /// latency bound. Unvisited records retain registry custody on cancellation.
     pub(super) async fn end_all(&self, end: AnalysisProgressEnd) {
-        let drained = {
+        let pending = {
             let Ok(mut tokens) = self.tokens.lock() else {
                 return;
             };
-            std::mem::take(&mut *tokens)
-                .into_values()
-                .filter(|record| record.started)
-                .map(|record| record.token)
+            tokens
+                .iter_mut()
+                .map(|(generation, record)| {
+                    record.terminal.get_or_insert_with(|| end.clone());
+                    (*generation, Arc::clone(&record.notifications))
+                })
                 .collect::<Vec<_>>()
         };
-        let Some(sink) = self.sink() else {
-            return;
-        };
-        for token in drained {
-            sink.notify(
-                token,
-                ProgressNotificationValue::End {
-                    message: end.message(),
-                },
-            )
-            .await;
+        for (generation, notifications) in pending {
+            self.finish_end(generation, notifications).await;
         }
     }
 }
@@ -761,6 +850,395 @@ mod tests {
         })
     }
 
+    /// Real create/send suspension points, rather than manually inserting
+    /// an unstarted record, expose late success and begin/end races.
+    struct HeldProgressSink {
+        recorder: Arc<RecordingSink>,
+        hold_begin: bool,
+        entered: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+    }
+
+    impl ProgressSink for HeldProgressSink {
+        fn create(&self, token: String) -> BoxFuture<'_, Result<(), String>> {
+            Box::pin(async move {
+                self.recorder.create(token).await?;
+                if !self.hold_begin {
+                    self.entered.notify_one();
+                    self.release.notified().await;
+                }
+                Ok(())
+            })
+        }
+
+        fn notify(&self, token: String, value: ProgressNotificationValue) -> BoxFuture<'_, ()> {
+            Box::pin(async move {
+                if self.hold_begin && matches!(value, ProgressNotificationValue::Begin { .. }) {
+                    self.entered.notify_one();
+                    self.release.notified().await;
+                }
+                self.recorder.notify(token, value).await;
+            })
+        }
+    }
+
+    #[test]
+    fn late_create_success_never_revives_terminated_tokens() -> Result<(), String> {
+        runtime()?.block_on(async {
+            for terminal in ["end", "end_queued", "end_all"] {
+                let (tracker, recorder) = tracker_with_recorder();
+                let sink = Arc::new(HeldProgressSink {
+                    recorder: Arc::clone(&recorder),
+                    hold_begin: false,
+                    entered: tokio::sync::Notify::new(),
+                    release: tokio::sync::Notify::new(),
+                });
+                tracker.install_test_sink(sink.clone());
+                let announcing = Arc::clone(&tracker);
+                let announce = tokio::spawn(async move {
+                    announcing
+                        .begin(&test_request(7), AnalysisProgressPhase::Queued)
+                        .await;
+                });
+                sink.entered.notified().await;
+                match terminal {
+                    "end" => tracker.end(7, AnalysisProgressEnd::Cancelled).await,
+                    "end_queued" => tracker.end_queued(AnalysisProgressEnd::Superseded).await,
+                    _ => tracker.end_all(AnalysisProgressEnd::Cancelled).await,
+                }
+                sink.release.notify_one();
+                announce
+                    .await
+                    .map_err(|error| format!("announce task failed: {error}"))?;
+                if recorder.events()
+                    != [ProgressEvent::Create {
+                        token: progress_token(7),
+                    }]
+                {
+                    return Err(format!(
+                        "{terminal}: late create revived terminated token: {:?}",
+                        recorder.events()
+                    ));
+                }
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn termination_during_begin_send_ends_the_started_token_exactly_once() -> Result<(), String> {
+        runtime()?.block_on(async {
+            let (tracker, recorder) = tracker_with_recorder();
+            let sink = Arc::new(HeldProgressSink {
+                recorder: Arc::clone(&recorder),
+                hold_begin: true,
+                entered: tokio::sync::Notify::new(),
+                release: tokio::sync::Notify::new(),
+            });
+            tracker.install_test_sink(sink.clone());
+            let announcing = Arc::clone(&tracker);
+            let announce = tokio::spawn(async move {
+                announcing
+                    .begin(&test_request(8), AnalysisProgressPhase::Analyzing)
+                    .await;
+            });
+            sink.entered.notified().await;
+            let ending = Arc::clone(&tracker);
+            let end = tokio::spawn(async move {
+                ending.end_all(AnalysisProgressEnd::Cancelled).await;
+                ending.end(8, AnalysisProgressEnd::Cancelled).await;
+            });
+            // Poll the competing termination while begin is still held.
+            tokio::task::yield_now().await;
+            sink.release.notify_one();
+            announce
+                .await
+                .map_err(|error| format!("announce task failed: {error}"))?;
+            end.await
+                .map_err(|error| format!("end task failed: {error}"))?;
+            let events = recorder.events();
+            if !matches!(events.as_slice(), [
+                ProgressEvent::Create { token: create },
+                ProgressEvent::Begin { token: begin, .. },
+                ProgressEvent::End { token: end, .. },
+            ] if create == &progress_token(8) && begin == create && end == create)
+            {
+                return Err(format!(
+                    "begin/end must stay ordered and end exactly once: {events:?}"
+                ));
+            }
+            Ok(())
+        })
+    }
+
+    // Owner-level cancellation control: no refresh/scheduler or total drain
+    // latency claim. Runtime teardown owns any task left by the outer budget.
+    fn terminal_cancellation_preserves_custody(terminal: &str) -> Result<(), String> {
+        use std::future::Future;
+
+        fn events_for(sink: &RecordingSink, generation: u64) -> Vec<ProgressEvent> {
+            let expected = progress_token(generation);
+            sink.events()
+                .into_iter()
+                .filter(|event| match event {
+                    ProgressEvent::Create { token }
+                    | ProgressEvent::Begin { token, .. }
+                    | ProgressEvent::Report { token, .. }
+                    | ProgressEvent::End { token, .. } => token == &expected,
+                })
+                .collect()
+        }
+
+        runtime()?.block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                let (tracker, recorder) = tracker_with_recorder();
+                let phase = if terminal == "end_queued" {
+                    AnalysisProgressPhase::Queued
+                } else {
+                    AnalysisProgressPhase::Analyzing
+                };
+                let generations: &[u64] = if terminal == "end" { &[41] } else { &[41, 42] };
+                // The later registry entry must also survive cancellation of
+                // a drain waiting at its first held token. Start it before
+                // installing the suspended-Begin sink.
+                if terminal != "end" {
+                    tracker.begin(&test_request(42), phase).await;
+                }
+                let sink = Arc::new(HeldProgressSink {
+                    recorder: Arc::clone(&recorder),
+                    hold_begin: true,
+                    entered: tokio::sync::Notify::new(),
+                    release: tokio::sync::Notify::new(),
+                });
+                tracker.install_test_sink(sink.clone());
+                let announcing = Arc::clone(&tracker);
+                let announce = tokio::spawn(async move {
+                    announcing.begin(&test_request(41), phase).await;
+                });
+                sink.entered.notified().await;
+                if events_for(&recorder, 41) != [ProgressEvent::Create { token: progress_token(41) }] {
+                    return Err(format!("SETUP: Begin was not held: {:?}", recorder.events()));
+                }
+
+                // Poll the actual terminal owner exactly to its waiting point.
+                // Dropping this future models cancellation of its awaiting caller.
+                let mut ending = Box::pin(async {
+                    match terminal {
+                        "end" => tracker.end(41, AnalysisProgressEnd::Cancelled).await,
+                        "end_queued" => tracker.end_queued(AnalysisProgressEnd::Cancelled).await,
+                        _ => tracker.end_all(AnalysisProgressEnd::Cancelled).await,
+                    }
+                });
+                let pending = std::future::poll_fn(|cx| {
+                    std::task::Poll::Ready(ending.as_mut().poll(cx).is_pending())
+                }).await;
+                drop(ending);
+                if !pending {
+                    return Err(format!("SETUP: {terminal} did not reach its held-Begin wait"));
+                }
+                sink.release.notify_one();
+                announce.await.map_err(|error| format!("announce failed: {error}"))?;
+                // A cancellation-safe owner may already arrange terminal
+                // delivery itself; only require the released Begin here.
+                if !matches!(events_for(&recorder, 41).as_slice(), [
+                    ProgressEvent::Create { token: create },
+                    ProgressEvent::Begin { token: begin, .. },
+                    ..
+                ] if create == &progress_token(41) && begin == create) {
+                    return Err(format!("SETUP: released Begin did not complete: {:?}", recorder.events()));
+                }
+
+                // Retry the same owner, then both guard-like and whole-tracker
+                // cleanup. Neither absent custody nor a duplicate End may pass.
+                match terminal {
+                    "end" => tracker.end(41, AnalysisProgressEnd::Cancelled).await,
+                    "end_queued" => tracker.end_queued(AnalysisProgressEnd::Cancelled).await,
+                    _ => tracker.end_all(AnalysisProgressEnd::Cancelled).await,
+                }
+                // A retained cleanup task may deliver End independently of
+                // the retried caller. Observe that delivery before challenging
+                // repeated cleanup; do not depend on which task runs first.
+                for generation in generations {
+                    tokio::time::timeout(std::time::Duration::from_millis(200), async {
+                        loop {
+                            if recorder.events().iter().any(|event| matches!(event,
+                                ProgressEvent::End { token, .. } if token == &progress_token(*generation)
+                            )) {
+                                break;
+                            }
+                            tokio::task::yield_now().await;
+                        }
+                    }).await.map_err(|_elapsed| format!(
+                        "{terminal}: canceled terminal owner lost generation {generation}; no End after retry: {:?}",
+                        recorder.events()
+                    ))?;
+                }
+                tracker.end(41, AnalysisProgressEnd::Cancelled).await;
+                tracker.end_all(AnalysisProgressEnd::Cancelled).await;
+                for generation in generations {
+                    let events = events_for(&recorder, *generation);
+                    if !matches!(events.as_slice(), [
+                        ProgressEvent::Create { token: create },
+                        ProgressEvent::Begin { token: begin, .. },
+                        ProgressEvent::End { token: end, .. },
+                    ] if create == &progress_token(*generation) && begin == create && end == create) {
+                        return Err(format!("{terminal}: canceled terminal owner lost custody or duplicated End: {events:?}"));
+                    }
+                }
+                Ok(())
+            }).await.map_err(|_elapsed| "terminal cancellation exchange exceeded 5 seconds".to_string())?
+        })
+    }
+
+    #[test]
+    fn terminal_cancellation_end_retains_retry_custody() -> Result<(), String> {
+        terminal_cancellation_preserves_custody("end")
+    }
+
+    #[test]
+    fn terminal_cancellation_queued_drain_retains_retry_custody() -> Result<(), String> {
+        terminal_cancellation_preserves_custody("end_queued")
+    }
+
+    #[test]
+    fn terminal_cancellation_all_drain_retains_retry_custody() -> Result<(), String> {
+        terminal_cancellation_preserves_custody("end_all")
+    }
+
+    #[test]
+    fn terminal_cancellation_after_end_delivery_does_not_duplicate() -> Result<(), String> {
+        use std::future::Future;
+
+        struct DeliveredEndSink {
+            recorder: Arc<RecordingSink>,
+            entered: tokio::sync::Notify,
+            release: tokio::sync::Notify,
+        }
+        impl ProgressSink for DeliveredEndSink {
+            fn create(&self, token: String) -> BoxFuture<'_, Result<(), String>> {
+                self.recorder.create(token)
+            }
+            fn notify(&self, token: String, value: ProgressNotificationValue) -> BoxFuture<'_, ()> {
+                Box::pin(async move {
+                    let is_end = matches!(value, ProgressNotificationValue::End { .. });
+                    self.recorder.notify(token, value).await;
+                    if is_end {
+                        self.entered.notify_one();
+                        self.release.notified().await;
+                    }
+                })
+            }
+        }
+        runtime()?.block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                for terminal in ["end", "end_queued", "end_all"] {
+                    let (tracker, recorder) = tracker_with_recorder();
+                    let sink = Arc::new(DeliveredEndSink {
+                        recorder: Arc::clone(&recorder),
+                        entered: tokio::sync::Notify::new(),
+                        release: tokio::sync::Notify::new(),
+                    });
+                    tracker.install_test_sink(sink.clone());
+                    tracker.begin(&test_request(51), AnalysisProgressPhase::Queued).await;
+                    let mut ending = Box::pin(async {
+                        match terminal {
+                            "end" => tracker.end(51, AnalysisProgressEnd::Cancelled).await,
+                            "end_queued" => tracker.end_queued(AnalysisProgressEnd::Cancelled).await,
+                            _ => tracker.end_all(AnalysisProgressEnd::Cancelled).await,
+                        }
+                    });
+                    let pending = std::future::poll_fn(|cx| {
+                        std::task::Poll::Ready(ending.as_mut().poll(cx).is_pending())
+                    }).await;
+                    if !pending {
+                        return Err(format!("SETUP: {terminal} did not await End delivery"));
+                    }
+                    sink.entered.notified().await;
+                    drop(ending);
+                    let mut retry = Box::pin(tracker.end_all(AnalysisProgressEnd::Cancelled));
+                    let retry_pending = std::future::poll_fn(|cx| {
+                        std::task::Poll::Ready(retry.as_mut().poll(cx).is_pending())
+                    }).await;
+                    let before_release = recorder.events();
+                    sink.release.notify_one();
+                    if retry_pending {
+                        retry.await;
+                    }
+                    tracker.end_all(AnalysisProgressEnd::Cancelled).await;
+                    let events = recorder.events();
+                    if !matches!(events.as_slice(), [
+                        ProgressEvent::Create { token: create },
+                        ProgressEvent::Begin { token: begin, .. },
+                        ProgressEvent::End { token: end, .. },
+                    ] if create == &progress_token(51) && begin == create && end == create) {
+                        return Err(format!("{terminal}: cancellation duplicated or lost End: before={before_release:?}; final={events:?}"));
+                    }
+                }
+                Ok(())
+            }).await.map_err(|_elapsed| "partial-End cancellation exchange exceeded 5 seconds".to_string())?
+        })
+    }
+
+    #[test]
+    fn detached_announcement_registers_before_its_task_is_polled() -> Result<(), String> {
+        runtime()?.block_on(async {
+            let (tracker, recorder) = tracker_with_recorder();
+            let announcement = tracker
+                .begin_detached(&test_request(12), AnalysisProgressPhase::Analyzing)
+                .ok_or_else(|| "supported generation was not registered".to_string())?;
+            // No yield: shutdown wins before the announcement task runs.
+            tracker.end_all(AnalysisProgressEnd::Cancelled).await;
+            announcement
+                .await
+                .map_err(|error| format!("announcement failed: {error}"))?;
+            if !recorder.events().is_empty() {
+                return Err(format!(
+                    "terminated registration was announced: {:?}",
+                    recorder.events()
+                ));
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn queued_promotion_during_create_announces_the_current_phase() -> Result<(), String> {
+        runtime()?.block_on(async {
+            let (tracker, recorder) = tracker_with_recorder();
+            let sink = Arc::new(HeldProgressSink {
+                recorder: Arc::clone(&recorder),
+                hold_begin: false,
+                entered: tokio::sync::Notify::new(),
+                release: tokio::sync::Notify::new(),
+            });
+            tracker.install_test_sink(sink.clone());
+            let announcement = tracker
+                .begin_detached(&test_request(13), AnalysisProgressPhase::Queued)
+                .ok_or_else(|| "supported queued generation was not registered".to_string())?;
+            sink.entered.notified().await;
+            tracker.transition_to_analyzing(13).await;
+            sink.release.notify_one();
+            announcement
+                .await
+                .map_err(|error| format!("announcement failed: {error}"))?;
+            tracker.end(13, AnalysisProgressEnd::Complete).await;
+            tracker.end_all(AnalysisProgressEnd::Cancelled).await;
+            let events = recorder.events();
+            if !matches!(events.as_slice(), [
+                ProgressEvent::Create { token: create },
+                ProgressEvent::Begin { token: begin, message, .. },
+                ProgressEvent::End { token: end, .. },
+            ] if create == &progress_token(13) && begin == create && end == create
+                && message == "analyzing workspace (did_save)")
+            {
+                return Err(format!(
+                    "delayed announcement used a stale phase or lost its end: {events:?}"
+                ));
+            }
+            Ok(())
+        })
+    }
+
     #[test]
     fn capability_absent_client_sees_no_progress_traffic() -> Result<(), String> {
         runtime()?.block_on(async {
@@ -807,8 +1285,10 @@ mod tests {
                     TokenRecord {
                         token: progress_token(7),
                         phase: AnalysisProgressPhase::Queued,
-                        started: false,
-                        last_stage: None,
+                        terminal: None,
+                        notifications: Arc::new(tokio::sync::Mutex::new(
+                            TokenNotifications::default(),
+                        )),
                     },
                 );
             }
