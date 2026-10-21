@@ -522,7 +522,8 @@ impl Backend {
             scope,
             reason,
         );
-        self.emit_progress_for_decision(&decision).await;
+        // Dropping the handle detaches announcement from refresh completion.
+        drop(self.emit_progress_for_decision(&decision).await);
         let mut request = match decision {
             RefreshDecision::Start(request) => {
                 let request = *request;
@@ -1927,13 +1928,14 @@ impl Backend {
     /// `analyzing`, `Queued` begins as `queued` (and first terminates the
     /// token of the pending generation it replaced, which will never run).
     /// `Deduplicated` and `Stopped` are not accepted work and emit nothing.
-    pub(super) async fn emit_progress_for_decision(&self, decision: &RefreshDecision) {
+    pub(super) async fn emit_progress_for_decision(
+        &self,
+        decision: &RefreshDecision,
+    ) -> Option<tokio::task::JoinHandle<()>> {
         match decision {
-            RefreshDecision::Start(request) => {
-                self.progress
-                    .begin(request, AnalysisProgressPhase::Analyzing)
-                    .await;
-            }
+            RefreshDecision::Start(request) => self
+                .progress
+                .begin_detached(request, AnalysisProgressPhase::Analyzing),
             RefreshDecision::Queued {
                 generation,
                 superseded_pending,
@@ -1945,12 +1947,28 @@ impl Backend {
                 }
                 if let Some(request) = self.refresh_scheduler.pending_request(*generation) {
                     self.progress
-                        .begin(&request, AnalysisProgressPhase::Queued)
-                        .await;
+                        .begin_detached(&request, AnalysisProgressPhase::Queued)
+                } else {
+                    None
                 }
             }
-            RefreshDecision::Deduplicated | RefreshDecision::Stopped => {}
+            RefreshDecision::Deduplicated | RefreshDecision::Stopped => None,
         }
+    }
+
+    /// Lifecycle tests deliberately wait for the detached task before
+    /// exercising later transitions of an already-started token.
+    #[cfg(test)]
+    pub(super) async fn emit_recorded_progress_for_decision(
+        &self,
+        decision: &RefreshDecision,
+    ) -> Result<(), String> {
+        if let Some(announcement) = self.emit_progress_for_decision(decision).await {
+            announcement
+                .await
+                .map_err(|error| format!("progress announcement failed: {error}"))?;
+        }
+        Ok(())
     }
 
     /// Terminal end for one attempt, derived from the same outcome and
@@ -12385,8 +12403,10 @@ mod work_done_progress_guard_tests {
             };
             let first = first.as_ref().clone();
             backend
-                .emit_progress_for_decision(&RefreshDecision::Start(Box::new(first.clone())))
-                .await;
+                .emit_recorded_progress_for_decision(&RefreshDecision::Start(Box::new(
+                    first.clone(),
+                )))
+                .await?;
             let second = backend.refresh_scheduler.request(
                 PathBuf::from("/workspace"),
                 LspAnalysisConfig::default(),
@@ -12398,7 +12418,7 @@ mod work_done_progress_guard_tests {
             if !matches!(second, RefreshDecision::Queued { .. }) {
                 return Err(format!("expected Queued decision, got {second:?}"));
             }
-            backend.emit_progress_for_decision(&second).await;
+            backend.emit_recorded_progress_for_decision(&second).await?;
 
             // Dropping the armed guard simulates the refresh future being
             // cancelled mid-flight: it cancels the active and queued work and
@@ -12494,7 +12514,9 @@ mod work_done_progress_guard_tests {
                 return Err(format!("expected Start decision, got {decision:?}"));
             };
             let request = request.as_ref().clone();
-            backend.emit_progress_for_decision(&decision).await;
+            backend
+                .emit_recorded_progress_for_decision(&decision)
+                .await?;
 
             // The deadline timer fired: the attempt token carries the named
             // DeadlineExceeded kind.
