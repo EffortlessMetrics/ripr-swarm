@@ -157,16 +157,19 @@ pub(crate) enum CommandExitContract {
     /// `ripr receipt check`: `orphan_receipt` / `receipt_gap_mismatch` are
     /// could-not-complete (`2`), not a decision (`3`).
     ReceiptCheck,
+    /// `ripr doctor`: a completed diagnosis with failed checks is `3`
+    /// (#5102); usage/operational failures before a report are `2`.
+    DoctorFindings,
 }
 
 /// What stdout carries when a command exits `3`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RefusalStdout {
-    /// Artifact stream stays empty (`agent verify`, `agent card`, `agent stub`).
+    /// Artifact stream stays empty (`agent verify`).
     Empty,
     /// Refusal JSON document is on stdout (`agent verify-execute`).
     Document,
-    /// Refusal JSON is on stdout only with `--json` (`agent repair`).
+    /// Refusal JSON is on stdout only with `--json` (`agent repair`, `agent card`, `agent stub`, `agent packet`).
     JsonOptional,
 }
 
@@ -197,6 +200,7 @@ const EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT: CommandExitContract =
         stdout_on_refusal: RefusalStdout::JsonOptional,
     };
 const EXIT_RECEIPT_CHECK: CommandExitContract = CommandExitContract::ReceiptCheck;
+const EXIT_DOCTOR_FINDINGS: CommandExitContract = CommandExitContract::DoctorFindings;
 
 /// Implemented mapping an orchestrator actually branches on. A metadata row
 /// whose `exit` field disagrees is a catalog integrity failure (#5066).
@@ -204,8 +208,12 @@ fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
     match id {
         "cmd:check" | "cmd:diff" => Some(EXIT_ADVISORY_FINDINGS),
         "cmd:gate.evaluate" => Some(EXIT_GATE_EVALUATE),
-        "cmd:agent.verify" | "cmd:agent.card" | "cmd:agent.stub" => {
-            Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT)
+        "cmd:agent.verify" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+        // Unknown-seam and the other named refusals exit 3; under `--json`
+        // the refusal document is on stdout, prose on stderr. If that
+        // document cannot be rendered or written, the exit is 2, not 3.
+        "cmd:agent.card" | "cmd:agent.stub" | "cmd:agent.packet" => {
+            Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT)
         }
         // #6305: the façade's selection/setup/limitation outcomes exit 3
         // with prose on stderr and an empty stdout, like the card family.
@@ -213,6 +221,7 @@ fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
         "cmd:agent.verify-execute" => Some(EXIT_TYPED_REFUSAL_STDOUT_DOCUMENT),
         "cmd:agent.repair" => Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
         "cmd:receipt.check" => Some(EXIT_RECEIPT_CHECK),
+        "cmd:doctor" => Some(EXIT_DOCTOR_FINDINGS),
         _ => None,
     }
 }
@@ -355,6 +364,28 @@ const METADATA: &[CommandMetadata] = &[
         stop_states: &[],
         exit: EXIT_COMPLETED_OR_FAILED,
         limitations: "prints text and, with --json, the versioned machine command catalog; performs no analysis, compilation, test, process, network, mutation, or product-artifact work.",
+        not_applicable_reason: None,
+    },
+    CommandMetadata {
+        id: "cmd:capabilities",
+        summary: "Show per-language, framework and mode capability status.",
+        task: "Check configuration",
+        workflows: &["setup"],
+        operation: CommandOperation::ReadOnly,
+        cost: CommandCost::Small,
+        effects: READS_ONLY,
+        primary_inputs: &[],
+        outputs: CommandOutputs {
+            default: None,
+            optional: &[],
+        },
+        state_target: None,
+        json_support: true,
+        example: "ripr capabilities --json",
+        next_routes: &["doctor", "check"],
+        stop_states: &[],
+        exit: EXIT_COMPLETED_OR_FAILED,
+        limitations: "prints the static capability registry for this build; reads no repository, runs nothing, and does not report per-repository enablement or promote a support tier.",
         not_applicable_reason: None,
     },
     CommandMetadata {
@@ -1857,7 +1888,7 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr agent packet --root . --seam-id ID --json",
         next_routes: &["agent verify", "swarm queue"],
         stop_states: &[],
-        exit: EXIT_COMPLETED_OR_FAILED,
+        exit: EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT,
         limitations: "--json is required until a human packet surface exists.",
         not_applicable_reason: None,
     },
@@ -1879,7 +1910,7 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr agent card --root . --seam-id ID",
         next_routes: &["agent packet", "agent repair"],
         stop_states: &[],
-        exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
+        exit: EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT,
         limitations: "the complete canonical packet stays behind the explicit `ripr agent packet` route; the card never embeds it.",
         not_applicable_reason: None,
     },
@@ -1903,7 +1934,7 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr agent stub --root . --at src/lib.rs:12",
         next_routes: &["agent repair"],
         stop_states: &[],
-        exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
+        exit: EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT,
         limitations: "the stub stops at a labelled todo!() for the expected value; --write is the only path that edits files, and only the owner file's test module or a new tests/ file.",
         not_applicable_reason: None,
     },
@@ -2175,7 +2206,7 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr doctor",
         next_routes: &["init", "config validate"],
         stop_states: &["missing tools print as skipped with the reason and do not fail the run"],
-        exit: EXIT_COMPLETED_OR_FAILED,
+        exit: EXIT_DOCTOR_FINDINGS,
         limitations: "reports environment readiness; it does not run verification.",
         not_applicable_reason: None,
     },

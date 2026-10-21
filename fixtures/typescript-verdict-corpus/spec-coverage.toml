@@ -598,3 +598,26 @@ reason = "acceptance examples are bullet prose, not numbered; no corpus case cit
 id = "RIPR-SPEC-0285"
 scope = "out"
 reason = "doctor/repo-input framework-scan admission, ordering, and string-awareness hygiene; not an exposure-verdict example a corpus case labels"
+[[spec]]
+id = "RIPR-SPEC-0290"
+scope = "out"
+reason = "pilot start-command root rendering; not an exposure-verdict example a corpus case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0292"
+scope = "out"
+reason = "xtask spot-check admission by report schema version; not an exposure-verdict example a corpus case labels"
+[[spec]]
+id = "RIPR-SPEC-0297"
+scope = "out"
+reason = "static related-test admission for Display/Debug fmt dispatch; not an exposure-verdict example a corpus case labels"
+[[spec]]
+id = "RIPR-SPEC-0296"
+scope = "out"
+reason = "xtask dx-scoreboard first-run budget counting grain; not an exposure-verdict example a corpus case labels"
+
+
+[[spec]]
+id = "RIPR-SPEC-0300"
+scope = "out"
+reason = "probe-seeding hygiene for wrapped Rust signatures; not an exposure-verdict example a corpus case labels"

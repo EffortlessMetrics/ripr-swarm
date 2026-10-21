@@ -28,7 +28,7 @@ Next: drill into the top finding:
   ripr context --root <cwd>/fixtures/unwrap_err_sibling_variant/input --diff <cwd>/fixtures/unwrap_err_sibling_variant/diff.patch --mode fast --at probe:src_lib.rs:return_value:e88897cd
   no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:return_value:e88897cd --root <cwd>/fixtures/unwrap_err_sibling_variant/input` for the full gate's answer
 Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/unwrap_err_sibling_variant/input --at src/lib.rs:11 --kind return_value
+  ripr agent stub --root <cwd>/fixtures/unwrap_err_sibling_variant/input --at src/lib.rs:12 --kind return_value
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

@@ -1873,6 +1873,40 @@ pub(crate) fn empty_local_macro_invocation_ranges(
         .collect()
 }
 
+/// #8051: every bare `debug_assert_eq!` call in `source`, as (line, text) in
+/// the same spelling [`owner_pin_assertions`] keys its context by. Empty when
+/// the file does not parse cleanly. The caller keeps the per-file result and
+/// filters it to a test's lines.
+pub(crate) fn debug_assert_eq_calls(source: &str) -> Vec<(usize, String)> {
+    let Some(parse) = parse_clean_source_file(source) else {
+        return Vec::new();
+    };
+    let lines = LineIndex::new(source);
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+        .filter(|call| {
+            call.path().is_some_and(|path| {
+                path.syntax()
+                    .text()
+                    .to_string()
+                    .split_whitespace()
+                    .collect::<String>()
+                    == "debug_assert_eq"
+            })
+        })
+        .map(|call| {
+            let range = call.syntax().text_range();
+            (
+                lines.line(range.start()),
+                slice_macro_call_text(source, range.start(), range.end()),
+            )
+        })
+        .collect()
+}
+
 pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAssertions {
     let mut result = OwnerPinAssertions::default();
     let Some(parse) = parse_clean_source_file(source) else {
@@ -2000,12 +2034,13 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             .descendants()
             .filter_map(ast::MacroCall::cast)
         {
-            // `assert!` is collected for the bool-owner pin; the classify
+            // `assert!` is collected for the bool-owner pin and
+            // `debug_assert_eq!` for its profile limit (#8051); the classify
             // side decides which spelling a pin may use.
             if call.path().is_none_or(|path| {
                 !names_candidate_assertion(
                     &path.syntax().text().to_string(),
-                    &["assert_eq", "assert"],
+                    &["assert_eq", "assert", "debug_assert_eq"],
                 )
             }) {
                 continue;
@@ -4236,13 +4271,20 @@ fn std_thread_item(path: &ast::PathExpr, function: &ast::Fn) -> Option<String> {
         .collect();
     // `::thread::` names an extern crate `thread`, never the imported std
     // module, so only `::std::thread::` keeps its leading `::`.
-    let (item, needs_import) = if let Some(item) = text
+    // A bare `scope(..)` / `spawn(..)` (#8999) names std's function only
+    // through exactly one `use std::thread::<item>;` in the function's own
+    // module, and only when nothing else in the file is named `<item>`.
+    let (item, needs_import, bare) = if let Some(item) = text
         .strip_prefix("::std::thread::")
         .or_else(|| text.strip_prefix("std::thread::"))
     {
-        (item, false)
+        (item, false, false)
+    } else if let Some(item) = text.strip_prefix("thread::") {
+        (item, true, false)
+    } else if matches!(text.as_str(), "scope" | "spawn") {
+        (text.as_str(), true, true)
     } else {
-        (text.strip_prefix("thread::")?, true)
+        return None;
     };
     if !item
         .chars()
@@ -4272,7 +4314,8 @@ fn std_thread_item(path: &ast::PathExpr, function: &ast::Fn) -> Option<String> {
             ra_ap_syntax::NodeOrToken::Node(node) => node,
         };
         if let Some(name) = ast::Name::cast(node.clone()) {
-            if matches!(name.text().trim_start_matches("r#"), "std" | "thread") {
+            let name = name.text().trim_start_matches("r#");
+            if matches!(name, "std" | "thread") || bare && name == item {
                 return None;
             }
             continue;
@@ -4343,7 +4386,19 @@ fn std_thread_item(path: &ast::PathExpr, function: &ast::Fn) -> Option<String> {
             .syntax()
             .parent()
             .filter(|parent| ast::Use::can_cast(parent.kind()));
-        if path_text == "std::thread" && tree.rename().is_none() && direct_use.is_some() {
+        let std_item_import = bare
+            && path_text == format!("std::thread::{item}")
+            && tree.rename().is_none()
+            && direct_use.is_some();
+        if std_item_import {
+            // Only the whole `use std::thread::<item>;` imports the std
+            // function; any other leaf ending in `<item>` may be another.
+            imported |= direct_use
+                .and_then(|parent| parent.parent())
+                .is_some_and(|container| container == module);
+        } else if bare && last == item {
+            return None;
+        } else if path_text == "std::thread" && tree.rename().is_none() && direct_use.is_some() {
             imported |= direct_use
                 .and_then(|parent| parent.parent())
                 .is_some_and(|container| container == module);

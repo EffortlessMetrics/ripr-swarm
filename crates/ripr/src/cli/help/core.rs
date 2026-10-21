@@ -445,7 +445,7 @@ Exit status:
 "#;
 pub(super) const EXPLAIN_HELP: &str = r#"Print why ripr flagged a specific change.
 
-Usage: ripr explain [--root PATH] [--base REV] [--worktree|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] [--quiet] <finding-id|file:line>
+Usage: ripr explain [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] [--quiet] <finding-id|file:line>
 
 Options:
   --root PATH  Workspace root. Defaults to the current directory, then
@@ -460,6 +460,10 @@ Options:
   --quiet      Suppress analysis progress and heartbeats on stderr, like
                `ripr check --quiet`. Does not change stdout, exit codes, or
                error reporting.
+  --committed  Analyze committed history only (base...HEAD), even when the
+               working tree is dirty. Not combinable with --worktree, --diff
+               or --from. Without a supplied scope, dirty repositories use
+               the same worktree default as `ripr check`.
   --worktree   Analyze staged and unstaged tracked edits, like
                `ripr check --worktree`, so a finding listed from uncommitted
                edits can be selected. Not combinable with --diff or --from.
@@ -502,14 +506,24 @@ The packet is always JSON, for an agent or tool to consume; `--json` is
 accepted and changes nothing. To read the same finding as prose, run
 `ripr explain` with the same selector.
 
-Usage: ripr context [--root PATH] [--base REV] [--worktree|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json] [--quiet]
+Usage: ripr context [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json] [--quiet]
 
 Options:
+  --root PATH  Workspace root. Defaults to the current directory, then
+               walks up to the enclosing workspace or package, or the git
+               top level; `--root .` pins this directory. A member-relative
+               `file:line` selector binds to the directory you ran from like
+               `ripr explain`; --diff and --from paths are read as typed from
+               the current directory.
   --finding ID
                Select the finding by id or `file:line`, like `--at`.
   --quiet      Suppress analysis progress and heartbeats on stderr, like
                `ripr check --quiet`. Does not change stdout, exit codes, or
                error reporting.
+  --committed  Analyze committed history only (base...HEAD), even when the
+               working tree is dirty. Not combinable with --worktree, --diff
+               or --from. Without a supplied scope, dirty repositories use
+               the same worktree default as `ripr check`.
   --worktree   Analyze staged and unstaged tracked edits, like
                `ripr check --worktree` (see `ripr explain --help`).
   --from PATH  Load findings from a check artifact written by
@@ -541,6 +555,25 @@ Performance:
   Use --from to skip re-analysis when you already ran
   `ripr check --write-artifact PATH` (see `ripr explain --help`).
 "#;
+pub(super) const CAPABILITIES_HELP: &str = r#"Show what ripr can establish per language, framework and mode.
+
+Usage: ripr capabilities [--language NAME] [--json]
+
+Options:
+  --language NAME  Narrow to one language: rust, typescript, javascript,
+                   python or perl.
+  --json           Emit the versioned machine-readable registry.
+
+Each cell names a language, framework, mode (diff or repo) and family
+(static_facts or repair_routing) with one closed support state, a tier
+ceiling, the limit or fallback to honor, and the specs that define the claim.
+A combination with no cell is not_proven.
+
+This is a static registry for this build. Adapter availability (compiled or
+not) is reported separately and never changes a cell. It does not say whether
+a language is enabled for a repository; use `ripr doctor` for that. It reads
+no repository, runs nothing and promotes no support tier.
+"#;
 pub(super) const DOCTOR_HELP: &str = r#"Diagnose the local ripr setup (workspace, config, toolchains, paths).
 
 Usage: ripr doctor [--root PATH] [--json] [--profile analysis|source-build]
@@ -556,9 +589,15 @@ line, then compact passing groups. `-v`/`--verbose` prints binary identity,
 config defaults, test surfaces, Perl preview, known limitations, and start-here
 detail. `--json` is unchanged and remains the complete typed report.
 
-The JSON report is machine-readable advisory setup evidence. A `fail` status or
-non-zero exit means at least one core check failed; it is not a release or gate
-decision.
+The JSON report is machine-readable advisory setup evidence. A `fail` status
+means at least one core check failed; it is not a release or gate decision.
+A completed run with failed checks exits 3; exit 2 means the run could not
+complete (for example a usage error, where no check ran).
+
+Marks: `!` is a blocking failure that fails the run (exit 3); `~` is an
+advisory (for example artifacts under target/ripr not covered by git ignore
+rules, tracked artifacts, an unwritable cache, unanalyzed languages) and never
+changes the exit status.
 
 Checks:
   - root directory exists

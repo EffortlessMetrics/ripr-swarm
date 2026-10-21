@@ -24,7 +24,7 @@ Static exposure
   weakly_exposed (warning, confidence 0.92)
 
 Evidence
-  - reach yes: Related tests appear to reach tax: tax_is_owed, subtotal_multiplies
+  - reach yes: Related tests appear to reach tax: tax_is_owed
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Complete propagation witness reaches returned value: subtotal * 8 / 100
   - observation yes: A related test observes a value or effect near the changed behavior

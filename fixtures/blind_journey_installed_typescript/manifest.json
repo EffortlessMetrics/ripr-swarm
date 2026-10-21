@@ -13,34 +13,34 @@
   "node_identity": "node v22.14.0",
   "npm_identity": "npm 10.9.2",
   "runner_identity": "vitest 3.2.4 via the package-lock.json-selected npm runner",
-  "lockfile_note": "the retained package-lock.json root entry backs the npm-runner selection used by the printed command; full dependency locking belongs to the journey environment, which records the installed node/npm/vitest identities above"
+  "lockfile_note": "the base and head snapshots' package-lock.json are the full npm lockfile for vitest 3.2.4 (generated with `npm install --package-lock-only --ignore-scripts`, `npm ci` succeeds); the variant snapshots still retain the root-entry skeleton until their own lockfiles land (#9104); the journey environment records the installed node/npm/vitest identities above"
  },
  "repository": {
   "identity": "fixtures/blind_journey_installed_typescript/repository",
   "default_base_ref": "main",
   "snapshots": {
    "base": {
-    "commit": "5d48dbf2080a1596bfb267593402ab8b38cd63fa",
-    "tree": "5a86f441fd9e21c2f2e1963c5dc3ef58d2840578",
+    "commit": "7634ae2d3c1ce78b8c2eae627a57b2c898360c2d",
+    "tree": "b4bb5899f84b70b72859c032aa0fb5714b938000",
     "files": {
-     "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
+     "package-lock.json": "a93951553edc81a4be8db16f3e7012d3bb06a84cddf746bcf7c4af88192f3b51",
      "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
      "src/pricing.ts": "90729bd40d79fa2580a2bdbd3ecda07e5a1ea371eebaf73d970b18095d1423d8",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
     }
    },
    "head": {
-    "commit": "94339d4e11d39461f5fec6893453cd9073609f5a",
-    "tree": "8da68b121a26fbbb50a96d2c11c54a3628db4dc9",
+    "commit": "437162917bfbcba77c0ed8b36f34da9e2dd98eca",
+    "tree": "69ad833aac73ac2350850282cbf3ddab714185ea",
     "files": {
-     "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
+     "package-lock.json": "a93951553edc81a4be8db16f3e7012d3bb06a84cddf746bcf7c4af88192f3b51",
      "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
      "src/pricing.ts": "d5305cef7b658d2b658de2ade29832b7991205373a167b52450fb8b91dbe1500",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
     }
    },
    "variant-let-binding": {
-    "commit": "0df41e78033463d4a506a12189a77d2889d5b61c",
+    "commit": "610741e9999f5fb229aa1289d0b7300046161631",
     "tree": "30f83a8fc868a7bc2d91981fb14bb5a03a6b95b0",
     "files": {
      "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
@@ -50,7 +50,7 @@
     }
    },
    "variant-reassignment": {
-    "commit": "30bc6938ed104b69056324a86760f647818457a1",
+    "commit": "f626bf455a8a0d47d45928e49f295b6afe1b0c7d",
     "tree": "afd28c7e75c32083e4a4fb21a2e893604c5dc103",
     "files": {
      "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
@@ -60,7 +60,7 @@
     }
    },
    "variant-shadowing": {
-    "commit": "d7a7d61fd7e3998de2d306d8f834b1fe45708fcc",
+    "commit": "c27c29c63a39dde59c8842b770c34e81ae6c83f5",
     "tree": "cd6aef1e0edfa31d25c0aa794c86d1ba8e02da11",
     "files": {
      "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
@@ -70,7 +70,7 @@
     }
    },
    "variant-imported-constant": {
-    "commit": "1c39e0396b7a13cb8099d0f2fdc3241bd6d09aed",
+    "commit": "82a103315879e10fb862027a7d83a6fbb3f89789",
     "tree": "e69e259ab36958446bb08c7416164550acc63cb5",
     "files": {
      "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
@@ -81,7 +81,7 @@
     }
    },
    "variant-object-namespace-write": {
-    "commit": "7923c0a1949798e5d2e4852a17f70a5efa0150c4",
+    "commit": "925faba1ca374a59f0cda3a077700227dbb83465",
     "tree": "6fd139f3a5c8e2cf29817f46e96388bb07419970",
     "files": {
      "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
@@ -91,7 +91,7 @@
     }
    },
    "variant-enum-computed-initializer": {
-    "commit": "a1acaf82c19f82345ec9b9af526ee6ac0681acae",
+    "commit": "d6e30b12609ece564d179065238ee27ccf9fd1f9",
     "tree": "d802fbd63d7d3aee5c7ab07fae27a400646d85cc",
     "files": {
      "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
@@ -101,7 +101,7 @@
     }
    },
    "variant-nonliteral-arithmetic": {
-    "commit": "fd9b8b4116c44daf80541861ae907cc4c324cfdf",
+    "commit": "61f0ceaf86882f53bca2176e48ae2d1d9f6b64a9",
     "tree": "b0432c297b291cef884299389f9baae6493e5eca",
     "files": {
      "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
@@ -111,7 +111,7 @@
     }
    },
    "variant-reach-barrier": {
-    "commit": "b2c2cda458029d64ebf470a4f50637b99ee163f3",
+    "commit": "9c553e0d2ad57c0dd217fe9a84eb87cc8f73ee58",
     "tree": "3b3ae62869b666121e7eeaaace61e996a2a0db83",
     "files": {
      "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
@@ -127,7 +127,7 @@
    "GIT_AUTHOR_DATE=2026-10-04T00:00:00Z GIT_COMMITTER_DATE=2026-10-04T00:00:00Z git commit -m 'base: exclusive discount threshold with below/above tests'",
    "write the head snapshot files (repository/head/*) and `git add -A`",
    "GIT_AUTHOR_DATE=2026-10-04T00:01:00Z GIT_COMMITTER_DATE=2026-10-04T00:01:00Z git commit -m 'head: move discount threshold to include exactly 10000'",
-   "for each variant, branch variant/<name> at the base commit, write the variant snapshot files (repository/variant-<name>/*), and commit with the same fixed one-minute-stepped dates to reproduce the variant commit"
+   "for each variant, branch variant/<name> at the base commit, write the variant snapshot files (repository/variant-<name>/*), and commit as 'variant: <name>' (<name> is the directory suffix without the `variant-` prefix, e.g. 'variant: let-binding') with GIT_AUTHOR_DATE and GIT_COMMITTER_DATE 2026-10-04T00:0N:00Z, where N is 2 for let-binding and increments by one in the order the snapshots are listed under `repository.snapshots`"
   ],
   "recipe_note": "Pinned author/committer identity, fixed timestamps and core.autocrlf=false make every commit and tree object reproducible; the recorded commit and tree identities were reproduced twice from this recipe before being committed."
  },
@@ -155,7 +155,7 @@
    "agent_receipt": "ripr agent receipt --root <selected-root> --attempt <repair-attempt-id> --verify-json target/ripr/workflow/agent-verify.json --seam-id seam-pricing-threshold-equality --json --out target/ripr/reports/agent-receipt.json",
    "verification": "vitest run test/pricing.test.ts"
   },
-  "substitution_contract": "<selected-root> and <repair-attempt-id> are the only placeholders; the product prints concrete values and the scripted transcript records the printed bytes literally, executed from a foreign launch directory against the selected root; the printed vitest command runs in the documented npm environment selected by the retained lockfile."
+  "substitution_contract": "<selected-root> and <repair-attempt-id> are the only placeholders; the product prints concrete values and the scripted transcript records the printed bytes literally, executed from a foreign launch directory against the selected root; the printed vitest command runs in the documented npm environment selected by the retained package.json and package-lock.json of the base and head snapshots."
  },
  "journey_scenario_ids": [
   "installed_typescript_positive_journey_emits_receipt",
@@ -218,7 +218,7 @@
   "limitations": [
    "the scripted rows bind the retained fixture snapshots by content digest and recorded git identity; the frozen-candidate run through the #4510 harness rebinds live process and package identities",
    "recorded command output bytes are the retained literal observations of the printed route; the real installed run may print equivalent concrete roots and attempt ids",
-   "the retained lockfile root entry backs the npm-runner selection; the full npm dependency tree and the installed node/npm/vitest identities belong to the journey environment recorded in the transcript"
+   "only the base and head snapshots retain a full npm lockfile so far; the variant snapshots retain the root-entry skeleton that backs the npm-runner selection until their lockfiles land (#9104), and the installed node/npm/vitest identities belong to the journey environment recorded in the transcript"
   ],
   "non_claims": [
    "no installed usefulness, candidate qualification or blind acceptance is claimed",

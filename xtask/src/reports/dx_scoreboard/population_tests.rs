@@ -328,11 +328,11 @@ fn perl_projection_keeps_producer_and_edited_contributions_separate() -> Result<
     // Independently counted committed rows: producer 27 (15 discriminated,
     // 12 not fully), edited 33. Do not derive these expectations via summarize.
     for (rate, expected) in [
-        ("false_verdict_rate", (2, 27)),
-        ("false_actionable_rate", (1, 15)),
+        ("false_verdict_rate", (1, 27)),
+        ("false_actionable_rate", (0, 15)),
         ("false_exposed_rate", (1, 12)),
         ("false_silent_rate", (0, 12)),
-        ("abstention_rate", (15, 27)),
+        ("abstention_rate", (17, 27)),
     ] {
         let selected = records.population(&format!("by_packet_provenance.producer.{rate}"))?;
         assert_eq!(selected.totals()?, expected);
@@ -352,7 +352,7 @@ fn perl_projection_keeps_producer_and_edited_contributions_separate() -> Result<
             }
         );
     }
-    assert_eq!(records.population("abstention_rate")?.totals()?, (20, 60));
+    assert_eq!(records.population("abstention_rate")?.totals()?, (22, 60));
     assert_eq!(
         records
             .population("by_packet_provenance.edited_producer.abstention_rate")?
@@ -538,11 +538,11 @@ fn perl_scoreboard_measures_without_blessing_an_absent_baseline() -> Result<(), 
     assert_eq!(current["gate"]["status"], "no_baseline");
     assert_eq!(current["gate"]["failed_instruments"], json!([]));
     for (metric, n, d, status) in [
-        ("false_verdict", 2_u32, 27_u32, "below_target"),
-        ("false_actionable", 1, 15, "below_target"),
+        ("false_verdict", 1_u32, 27_u32, "meets_target"),
+        ("false_actionable", 0, 15, "meets_target"),
         ("false_exposed", 1, 12, "below_target"),
         ("false_silent", 0, 12, "meets_target"),
-        ("abstention", 15, 27, "below_target"),
+        ("abstention", 17, 27, "below_target"),
     ] {
         let id = format!("trust.perl_verdict_corpus_{metric}");
         let row = current["metrics"]

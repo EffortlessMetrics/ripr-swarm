@@ -76,6 +76,31 @@ default branch before `ripr_refresh` (a commit on the default branch itself
 leaves an empty diff), or use `ripr check --worktree --format json` outside
 MCP.
 
+When the repository's default branch is not `main` or `master` (for example
+`trunk`) and there is no `origin/main`, the default base cannot be resolved and
+`ripr_refresh` fails with `analysis_failed` naming candidate branches. Retry
+`ripr_refresh` with its optional `base` argument (`{"base": "trunk"}`): it is
+the only way to choose a base from inside MCP, since `ripr mcp` has no `--base`
+flag. Each refresh states its own base, so omitting `base` returns to the
+default branch. The additions are explicit-base-only so a base-less caller
+sees the unchanged v1 shapes: `ripr_refresh` adds `requested_base` and
+`ripr_workspace_status` reports `session.current_desired_input.base:
+explicit` with `base_revision` only after a refresh named a base, and the
+committed snapshot's `session.analysis_outcome.identity.base_revision` names
+the base it analyzed even when the worktree is clean and `scope` is null. A
+directory with a project marker but no usable Git work tree is a validated
+root, but refresh needs Git; status then adds `workspace.root.git_work_tree`
+(`not_detected`, or `marker_invalid` when the nearest `.git` is neither a
+directory nor a gitfile whose first line is `gitdir: <path>`) with a
+limitation instead of leaving that to the first failed refresh. The field is a
+bounded marker probe, not a Git invocation, and is absent when a plausible
+marker exists: absence does not mean Git accepted it.
+
+`ripr_refresh` is read-only with respect to source, but the shared analysis
+writes its warm cache under the root's `target/ripr/`. Cargo projects normally
+gitignore `target/`; in a repository that does not, those files show as
+untracked in `git status` and are never source.
+
 ## Progressive flow
 
 ```text
@@ -131,7 +156,7 @@ runs no tests or verification and grants no execution or edit authority.
 | Surface | Name |
 | --- | --- |
 | Tool (no arguments) | `ripr_workspace_status` |
-| Tool (no arguments) | `ripr_refresh` |
+| Tool (`base?`) | `ripr_refresh` |
 | Tool (`snapshot_id?`, `offset?`, `limit?`, `file?`, `class?`, `language?`, `repair_ready?`) | `ripr_list_gaps` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_get_gap` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_prepare_repair` |
@@ -160,7 +185,8 @@ document, schema `ripr-mcp-workspace-status-v1`. It wraps:
   source edit, verification execution, mutation execution, and model provider
   all `none`;
 - a `ripr-mcp-session-v1` session block: the current desired input (workspace
-  diff against the default branch, draft mode, the workspace's own
+  diff against the resolved default branch or the explicit `ripr_refresh`
+  `base` with `base_revision` when present, draft mode, the workspace's own
   configuration), the current
   attempt state (`no_snapshot`, `in_flight`, `completed`, `failed`), the last
   completed snapshot identity, last-known-good state, freshness relative to
@@ -298,7 +324,24 @@ identity, an empty `command_routes` list with the typed limitation (concrete
 typed `CommandSpec` routes are published only by the durable CLI before
 phase), the shared non-claims, and the resource links. An ineligible item
 returns `repair_packet_ready: false` with the typed ineligibility reason and
-`attempt: null` — no attempt is created and no field is guessed.
+`attempt: null` — no attempt is created and no field is guessed. The reasons
+the shared seam-level repair gate behind `ripr repair` contributes are
+`seam_already_gripped` (the seam's existing tests already grip it),
+`seam_gate_refused` (route not ready, cross-language limits or policy
+omission), `seam_ambiguous` (several seams name the item), `seam_not_found`
+(no classified seam names it) and `seam_inventory_truncated` (the repo-wide
+seam inventory is truncated by the seam limit, or its completeness could not
+be established, so `ripr repair` refuses every item; widen the budget with
+`RIPR_REPO_EXPOSURE_SEAM_LIMIT`).
+
+The truncation refusal covers repair readiness (`ripr_list_gaps`,
+`ripr_get_gap`, `ripr_prepare_repair`). `ripr_get_repair_card` is a read-only
+card projection of the shared card producer over the refresh's diff-scoped
+inventory and is out of scope for #9108 (tracked in #9231): it does not start an attempt, and it
+does not yet mirror `ripr agent card`'s own incomplete-inventory refusal. Read
+readiness from `repair_packet_ready` and `repair_ineligibility`, not from the
+card's `readiness.repair_ready`, when the seam limit may have truncated the
+inventory.
 
 `ripr_get_repair_attempt` (and `ripr://repair-attempt/{attempt_id}`) reads
 one transaction by identity: session transactions answer first; otherwise
@@ -383,6 +426,10 @@ store is plain filesystem state and is re-read live at card-read time, so the
 card's attempt block matches `ripr agent status` at that moment; in-memory
 session transactions never ride a card. The next-action display binds the
 portable root `.` and is presentation only, never execution authority.
+The card's `subject.canonical_gap_id` is the bound finding's own id, the same
+readable id `ripr_list_gaps` and `ripr_get_gap` return (#8638), so it can be passed back
+to those tools (they do not accept the seam-side hash); that hash rides additively as
+`subject.seam_content_gap_id`.
 
 ## Typed failures
 
@@ -414,7 +461,12 @@ workspace identity, a card over its detail budget); `policy_omitted` and
 cannot reach them; the rest stay reserved for the slices that own those
 states (they are named now so the wire contract
 stays stable). Tool argument shape violations use standard Invalid Params;
-unknown tools use Method Not Found with the available names in `error.data`.
+unknown tools use Invalid Params (MCP: the `tools/call` method exists; the
+name argument is wrong) with the available names in `error.data`. Unknown
+methods use Method Not Found (`Method not found: <method>`). `ripr_list_gaps`
+rejects a `language` filter that is not a language wire string (`rust`,
+`typescript`, `javascript`, `python`, `perl`) with Invalid Params listing the
+allowed values, instead of returning an indistinguishable empty page.
 
 ## What it does not do
 
@@ -448,12 +500,19 @@ The instructions (returned by both `initialize` and `server/discover`) and the
 tool descriptions state positively what each tool returns, its bounds, and
 what it does not do. Protocol errors keep standard JSON-RPC codes. The pinned
 official Rust SDK owns negotiation, dispatch, correlation and cancellation.
-Syntax-invalid JSON is ignored; well-formed messages with invalid typed
-shapes receive Invalid Request and the transport can read the next frame.
+Every message that cannot be typed is answered, so a client never waits on
+silence: syntax-invalid JSON (including nesting past the parser limit) receives
+Parse error (`-32700`, null id) and well-formed JSON that is not a request the
+SDK can type (null or fractional id, wrong `jsonrpc` version, missing method)
+receives Invalid Request (`-32600`); the transport then reads the next frame.
+The reply carries the request id when a string or integer one is readable. An
+over-cap message is answered `-32600` with its id when a top-level string or
+integer `id` member lies within its first 4 KiB, otherwise null.
 Unknown request IDs are omitted in SDK-dispatched error responses, while
 transport-level protocol errors (well-formed messages with invalid typed
 shapes) carry an explicit null id per JSON-RPC; readable IDs remain
-correlated. Messages are capped at 256 KiB and response envelopes at
+correlated, except that ids over 16 KiB (serialized) are rejected at receive
+with `-32600` and `id: null` rather than echoed. Messages are capped at 256 KiB and response envelopes at
 128 KiB; the 1-byte newline delimiter is appended after the cap check, so a
 wire frame is at most 128 KiB+1 (pinned by
 `exactly_max_response_bytes_passes_and_one_more_falls_back`). The bound is
@@ -465,11 +524,12 @@ answered and a fixed reserve for the JSON-RPC frame fields and the
 `resultType` field a `2026-07-28` peer keeps, so an over-bound response
 fails closed with `result_too_large` before the wire cap is reached for
 any legal request id, however much client-controlled id escaping adds
-(#7768). A request id so large that even the typed `result_too_large`
-refusal cannot fit its ID falls back to the correlated generic error; if
-even a correlated fallback cannot fit its readable ID, the service
-terminates with the bounded stderr reason `MCP output limit`, without
-substituting an ID.
+(#7768). Request ids are correlation tokens: a request whose JSON-serialized
+id exceeds 16384 bytes is refused at receive with a bounded `-32600` frame
+carrying `"id": null` (the id is never echoed) and the session stays alive,
+so an id can never grow a reply past the response cap. The terminal
+`MCP output limit` stderr reason remains the fail-closed backstop for any
+response that still cannot be encoded.
 Partial reads and writes retain their state across cancellation. EOF closes
 the SDK service, so scripted clients must await replies before closing stdin.
 Stdout carries only protocol messages; operational errors go to stderr, and

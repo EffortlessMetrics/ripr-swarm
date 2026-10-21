@@ -24,6 +24,8 @@ use crate::output::pilot::ranking::{top_actionable_seams, withheld_static_limita
 use crate::output::python_repair_card::PythonRepairCard;
 use std::path::{Path, PathBuf};
 
+#[cfg(unix)]
+mod native_artifacts;
 mod spec_0237;
 mod timeout_retry;
 
@@ -2017,6 +2019,32 @@ fn pilot_repair_line_follows_the_canonical_pilot_decision() -> Result<(), String
     Ok(())
 }
 
+/// #8992: the offered repair start route renders the root through
+/// `root_path_display` before `bound_root`, so a Unix checkout whose path
+/// contains a literal backslash still names the user's checkout; `display_path`
+/// would have rewritten the backslash into a separator and the pasted command
+/// would target a different directory. On Windows `\` is a separator and the
+/// rendered root keeps stable `/` separators, exactly as before.
+#[test]
+fn pilot_repair_start_preserves_a_literal_backslash_unix_root() -> Result<(), String> {
+    let entry = route_ready_entry(&["tests/pricing.rs"]);
+    let root = Path::new("/tmp/team\\repo");
+    let route = commands::repair_start_command(root, &entry)
+        .ok_or_else(|| "eligible seam must offer a repair start".to_string())?;
+    if cfg!(unix) {
+        assert!(
+            route.contains("--root '/tmp/team\\repo'"),
+            "route must keep the literal backslash: {route}"
+        );
+    } else {
+        assert!(
+            route.contains("tmp/team/repo"),
+            "route must render stable separators on Windows: {route}"
+        );
+    }
+    Ok(())
+}
+
 fn discovered_files(
     entries: &[(crate::domain::LanguageId, &str)],
 ) -> Vec<(crate::domain::LanguageId, PathBuf)> {
@@ -3347,7 +3375,7 @@ fn multiline_match_heads_follow_changed_lines_without_moving_seam_identity() -> 
                     .iter()
                     .zip([&[2, 3, 4, 5][..], &[6, 7, 8, 9][..], &[11][..]])
             {
-                assert!(head.span().is_none(), "calibration remains line-only");
+                assert_eq!(head.span().is_none(), head.display_line() == 2);
                 for line in 1..=14 {
                     let diff = format!(
                         "diff --git a/src/classify.rs b/src/classify.rs\n--- a/src/classify.rs\n+++ b/src/classify.rs\n@@ -{line} +{line} @@\n-old\n+new\n"
