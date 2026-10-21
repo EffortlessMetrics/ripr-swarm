@@ -60,6 +60,7 @@ mod boundary;
 mod classify;
 mod deleted_lines;
 mod guard_activation;
+mod wrapped_call;
 use classify::{PythonNoBehaviorContext, classify_change_with_context};
 #[cfg(test)]
 use classify::{classify_change, classify_change_with_old};

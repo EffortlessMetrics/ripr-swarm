@@ -781,7 +781,7 @@ fn write_bound_repo_exposure_fixture(
     let placeholder = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
     let raw = format!(
         r#"{{
-  "schema_version": "0.4",
+  "schema_version": "0.5",
   "artifact": {{
     "kind": "repo_exposure",
     "schema_version": "1",
@@ -998,7 +998,7 @@ fn bind_repo_exposure_fixture_with_worktree(
     worktree: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(source)?)?;
-    value["schema_version"] = serde_json::Value::String("0.4".to_string());
+    value["schema_version"] = serde_json::Value::String("0.5".to_string());
     value["run_status"] = serde_json::Value::String("complete".to_string());
     let head = concrete_fixture_repository_head(root)?;
     let root_identity = root.canonicalize()?.to_string_lossy().replace('\\', "/");
@@ -4283,7 +4283,7 @@ fn check_repo_exposure_json_refusal_emits_the_refused_envelope() -> Result<(), S
     let value: serde_json::Value = serde_json::from_str(&stdout)
         .map_err(|err| format!("repo-exposure refusal must parse as JSON: {err}\n{stdout}"))?;
     for (pointer, expected) in [
-        ("/schema_version", "0.4"),
+        ("/schema_version", "0.5"),
         ("/scope", "repo"),
         ("/run_status", "refused"),
         ("/limitations/0/category", "base_unresolvable"),
@@ -10500,7 +10500,7 @@ fn agent_verify_rejects_unsupported_repo_exposure_schema() -> Result<(), Box<dyn
     write_bound_repo_exposure_fixture(&root, &before, seam)?;
     write_bound_repo_exposure_fixture(&root, &after, seam)?;
     let altered = std::fs::read_to_string(&before)?
-        .replace("\"schema_version\": \"0.4\"", "\"schema_version\": \"9.0\"");
+        .replace("\"schema_version\": \"0.5\"", "\"schema_version\": \"9.0\"");
     std::fs::write(&before, altered)?;
 
     let before_path = before.display().to_string();
@@ -14908,15 +14908,22 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     // pins the end-to-end wiring and consistency.
     let generator = env!("CARGO_PKG_VERSION");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let warned = stderr.contains("is not released");
-    if warned {
+    let noted = stderr.contains("is a development version");
+    if noted {
+        // The pin is compiled into the binary, so the note must say to
+        // upgrade ripr before refreshing (the same old binary re-pins).
+        let upgrade_at = stderr.find("upgrade ripr, then refresh");
+        assert!(
+            upgrade_at.is_some(),
+            "note must say to upgrade ripr first: {stderr}"
+        );
         // The warning names the fallback pin; both install routes must
         // carry exactly it (#5244 review: positive exact pins, not just
         // the absence of the generator version).
         let pinned = stderr
-            .split("pins the latest release (")
+            .split("installs ripr ")
             .nth(1)
-            .and_then(|rest| rest.split(") instead").next())
+            .and_then(|rest| rest.split(", the latest published release").next())
             .ok_or_else(|| format!("warning must name the fallback pin: {stderr}"))?;
         assert!(
             workflow.contains(&format!("          version={pinned}\n")),
@@ -14939,7 +14946,7 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
             "a warned run must not self-pin the fallback either"
         );
         assert!(
-            stderr.contains("pins the latest release")
+            stderr.contains("the latest published release")
                 && stderr.contains("ripr init --ci github --force"),
             "missing unreleased-generator warning: {stderr}"
         );
@@ -15216,12 +15223,14 @@ fn init_force_replaces_a_symlinked_config_without_writing_its_target() -> Result
 
 #[test]
 fn baseline_create_writes_reviewed_ledger_and_refuses_overwrite() -> Result<(), String> {
-    let workspace = unique_temp_workspace("baseline-create");
+    let workspace = unique_temp_workspace("baseline create it's quoted");
     std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
-    let source = workspace_root().join(
+    let fixture = workspace_root().join(
         "fixtures/boundary_gap/expected/calibrated-gate/visible-only-advisory/gate-decision.json",
     );
-    let out = workspace.join(".ripr/gate-baseline.json");
+    let source = workspace.join("gate decision it's current.json");
+    std::fs::copy(fixture, &source).map_err(|e| format!("copy gate decision: {e}"))?;
+    let out = workspace.join("chosen baseline it's ledger.json");
     let source_arg = source.display().to_string();
     let out_arg = out.display().to_string();
 
@@ -15251,8 +15260,55 @@ fn baseline_create_writes_reviewed_ledger_and_refuses_overwrite() -> Result<(), 
         &out_arg,
     ]);
     assert_failure(&overwrite);
+    assert_eq!(overwrite.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&overwrite.stderr);
-    assert!(stderr.contains("--force"));
+    assert_eq!(
+        std::fs::read_to_string(&out).map_err(|e| format!("read refused output: {e}"))?,
+        baseline,
+        "refusing overwrite must preserve the baseline"
+    );
+    assert_eq!(
+        stderr.contains("On Windows, use Git Bash (not WSL)"),
+        cfg!(windows),
+        "overwrite shell guidance must match the running host: {stderr}"
+    );
+    let retry = stderr
+        .split_once("rerun `")
+        .and_then(|(_, rest)| rest.split_once("` to overwrite it"))
+        .map(|(command, _)| command)
+        .ok_or_else(|| format!("missing overwrite recovery command: {stderr}"))?;
+    let retry_args = if cfg!(windows) {
+        printed_ripr_args(retry)?
+    } else {
+        let words = shell_words::posix_words(retry)?;
+        if words.first().map(String::as_str) != Some("ripr") {
+            return Err(format!("unexpected recovery program: {retry}"));
+        }
+        words.into_iter().skip(1).collect()
+    };
+    // Replacing a sentinel proves the retry writes to the chosen output.
+    std::fs::write(&out, "existing baseline must be replaced\n")
+        .map_err(|e| format!("seed overwrite witness: {e}"))?;
+    let retry_refs: Vec<&str> = retry_args.iter().map(String::as_str).collect();
+    let recovered = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&workspace), &retry_refs)
+        .map_err(|e| format!("replay {retry}: {e}"))?;
+    assert_success(&recovered);
+    let recovered_baseline =
+        std::fs::read_to_string(&out).map_err(|e| format!("read recovered baseline: {e}"))?;
+    let original: serde_json::Value = serde_json::from_str(&baseline).map_err(|e| e.to_string())?;
+    let recovered: serde_json::Value =
+        serde_json::from_str(&recovered_baseline).map_err(|e| e.to_string())?;
+    assert_eq!(recovered["source_report"], original["source_report"]);
+    assert_eq!(recovered["summary"]["entries"], 1);
+    assert_eq!(recovered["entries"].as_array().map(Vec::len), Some(1));
+    // A retry has a fresh timestamp; its debt identity and evidence must match.
+    for field in ["identity", "evidence", "decision", "path"] {
+        assert_eq!(
+            recovered["entries"][0][field],
+            original["entries"][0][field]
+        );
+    }
+    assert!(!workspace.join(".ripr/gate-baseline.json").exists());
 
     let dry_run_out = workspace.join(".ripr/dry-run-baseline.json");
     let dry_run_out_arg = dry_run_out.display().to_string();
@@ -18042,6 +18098,9 @@ fn pilot_names_typescript_diff_first_route_when_repo_has_no_rust_seams() -> Resu
                 "package.json",
                 "{\"name\":\"pilot-lang-ts\",\"version\":\"0.0.0\"}\n",
             ),
+            // Pinned: with no ripr.toml, TypeScript project detection would
+            // enable the preview; this test covers the disabled-route wording.
+            ("ripr.toml", "[languages]\nenabled = [\"rust\"]\n"),
             ("src/pricing.ts", base),
             (
                 "tests/pricing.test.ts",
@@ -30393,6 +30452,63 @@ fn check_missing_base_advice_does_not_assume_origin_remote()
     assert!(
         !stderr.contains("git fetch origin"),
         "the repair must not assume an `origin` remote: {stderr}"
+    );
+    std::fs::remove_dir_all(&root)?;
+    Ok(())
+}
+
+/// #8652: through the public `check` path, an unqualified base that only
+/// exists as a remote-tracking ref names that full ref, and the suggested
+/// ref then loads instead of failing again.
+#[test]
+fn check_missing_base_advice_names_the_resolvable_remote_tracking_ref()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("missing-base-remote-tracking");
+    std::fs::create_dir_all(root.join("src"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    std::fs::write(root.join("src/lib.rs"), "")?;
+    init_git_fixture_repo(&root)?;
+    let add = run_command(
+        "git",
+        Some(&root),
+        &["remote", "add", "origin", "https://example.test/fork.git"],
+    )?;
+    assert!(add.status.success(), "fixture must gain `origin`: {add:?}");
+    let tracking = run_command(
+        "git",
+        Some(&root),
+        &["update-ref", "refs/remotes/origin/topic", "HEAD"],
+    )?;
+    assert!(
+        tracking.status.success(),
+        "fixture must gain the tracking ref: {tracking:?}"
+    );
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root.display().to_string(),
+        "--base",
+        "topic",
+    ]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--base refs/remotes/origin/topic"),
+        "the public failure must name the resolvable tracking ref: {stderr}"
+    );
+    let suggested = run_ripr(&[
+        "check",
+        "--root",
+        &root.display().to_string(),
+        "--base",
+        "refs/remotes/origin/topic",
+    ]);
+    assert!(
+        suggested.status.success(),
+        "the suggested base must load through `check`: {suggested:?}"
     );
     std::fs::remove_dir_all(&root)?;
     Ok(())
