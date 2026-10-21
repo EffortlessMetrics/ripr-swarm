@@ -96,7 +96,7 @@ pub(super) fn measure_editor_refresh(
     )?;
     // A didOpen the server already holds state for schedules no refresh, so
     // only wait for the opening refresh when one starts.
-    match session.wait_attempt(deadline, Some(OPENING_GRACE)) {
+    match session.wait_attempt(deadline, "did_open", Some(OPENING_GRACE)) {
         Wait::Terminal(state) if state != "succeeded" => {
             return Err(format!("opening refresh ended `{state}`"));
         }
@@ -122,7 +122,7 @@ pub(super) fn measure_editor_refresh(
     )?;
     // From here a stall or a crash is the product's behavior, not the
     // instrument's: report the elapsed time with a non-succeeded state.
-    let state = match session.wait_attempt(deadline, None) {
+    let state = match session.wait_attempt(deadline, "did_save", None) {
         Wait::Terminal(state) => state,
         Wait::NoAttempt | Wait::Deadline => "no_terminal_status".to_string(),
         Wait::Closed => "lsp_closed".to_string(),
@@ -140,22 +140,41 @@ pub(super) fn measure_editor_refresh(
 fn changed_rust_file(checkout: &Path, base: &str) -> Result<Option<PathBuf>, String> {
     let names = super::git(
         Some(checkout),
-        &["diff", "--name-only", "--diff-filter=AM", base, "HEAD"],
+        &[
+            "diff",
+            "--name-only",
+            "-z",
+            "--diff-filter=AM",
+            base,
+            "HEAD",
+        ],
     )?;
+    // NUL-separated, so Git does not quote a name with unusual bytes.
     Ok(names
-        .lines()
-        .map(str::trim)
-        .filter(|line| line.ends_with(".rs"))
+        .split('\0')
+        .filter(|name| name.ends_with(".rs"))
         .map(PathBuf::from)
         .find(|relative| checkout.join(relative).is_file()))
 }
 
 /// `file://` URI with every byte outside the unreserved set (and `/`)
 /// percent-encoded, so a checkout path holding a space or `#` stays one URI.
+/// A drive-absolute Windows path becomes `file:///C:/dir`, the form the
+/// server's URI parser reads.
 fn file_uri(path: &Path) -> String {
+    let text = path.display().to_string().replace('\\', "/");
+    let drive = text.as_bytes();
+    let drive_absolute = drive.len() >= 2 && drive[0].is_ascii_alphabetic() && drive[1] == b':';
     let mut uri = String::from("file://");
-    for byte in path.display().to_string().bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'.' | b'_' | b'~') {
+    if drive_absolute {
+        uri.push('/');
+    }
+    for (index, byte) in text.bytes().enumerate() {
+        let drive_colon = drive_absolute && index == 1;
+        if byte.is_ascii_alphanumeric()
+            || matches!(byte, b'/' | b'-' | b'.' | b'_' | b'~')
+            || drive_colon
+        {
             uri.push(char::from(byte));
         } else {
             uri.push_str(&format!("%{byte:02X}"));
@@ -277,7 +296,12 @@ impl Session {
     /// terminal status re-published for an earlier attempt cannot end it.
     /// An attempt that ends `superseded` hands over to the next one.
     /// `start_grace` bounds how long to wait for any attempt to start.
-    fn wait_attempt(&mut self, deadline: Instant, start_grace: Option<Duration>) -> Wait {
+    fn wait_attempt(
+        &mut self,
+        deadline: Instant,
+        reason: &str,
+        start_grace: Option<Duration>,
+    ) -> Wait {
         let start_by = start_grace.map(|grace| Instant::now() + grace);
         let mut current: Option<String> = None;
         loop {
@@ -293,11 +317,20 @@ impl Session {
                 Ok(None) => return Wait::Deadline,
                 Err(()) => return Wait::Closed,
             };
-            let Some((state, attempt)) = analysis_status(&message) else {
+            let Some(status) = analysis_status(&message) else {
                 continue;
             };
+            let AnalysisStatus {
+                state,
+                attempt,
+                reason: attempt_reason,
+            } = status;
             if !TERMINAL_STATES.contains(&state.as_str()) {
-                current = attempt;
+                // Only an attempt started by this phase's own event counts:
+                // an earlier request still in flight must not stand in for it.
+                if attempt_reason.as_deref() == Some(reason) {
+                    current = attempt;
+                }
                 continue;
             }
             if attempt.is_some() && attempt == current {
@@ -358,18 +391,25 @@ impl Drop for Session {
     }
 }
 
-/// `(state, attempt_id)` of a `ripr/analysisStatus` notification.
-fn analysis_status(message: &Value) -> Option<(String, Option<String>)> {
+/// State, attempt id and reason of a `ripr/analysisStatus` notification.
+struct AnalysisStatus {
+    state: String,
+    attempt: Option<String>,
+    reason: Option<String>,
+}
+
+fn analysis_status(message: &Value) -> Option<AnalysisStatus> {
     if message.get("method").and_then(Value::as_str) != Some("ripr/analysisStatus") {
         return None;
     }
     let params = message.get("params")?;
     let state = params.get("state")?.as_str()?.to_string();
-    let attempt = params
-        .get("attempt_id")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    Some((state, attempt))
+    let text = |key: &str| params.get(key).and_then(Value::as_str).map(str::to_string);
+    Some(AnalysisStatus {
+        state,
+        attempt: text("attempt_id"),
+        reason: text("reason"),
+    })
 }
 
 /// The reply a client owes a server-to-client request, or `None` when the
@@ -455,12 +495,13 @@ mod tests {
     fn analysis_status_reads_state_and_attempt() {
         let status = json!({"method": "ripr/analysisStatus",
             "params": {"state": "running", "attempt_id": "4"}});
+        let parsed = analysis_status(&status).map(|s| (s.state, s.attempt, s.reason));
         assert_eq!(
-            analysis_status(&status),
-            Some(("running".to_string(), Some("4".to_string())))
+            parsed,
+            Some(("running".to_string(), Some("4".to_string()), None))
         );
         let other = json!({"method": "$/progress", "params": {"state": "succeeded"}});
-        assert_eq!(analysis_status(&other), None);
+        assert!(analysis_status(&other).is_none());
     }
 
     #[test]
@@ -468,6 +509,10 @@ mod tests {
         assert_eq!(
             file_uri(Path::new("/tmp/a b#c/x_y-z.rs")),
             "file:///tmp/a%20b%23c/x_y-z.rs"
+        );
+        assert_eq!(
+            file_uri(Path::new(&["C:", "work", "src", "lib.rs"].join("\\"))),
+            "file:///C:/work/src/lib.rs"
         );
     }
 
