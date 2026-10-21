@@ -21,6 +21,9 @@ mod artifact_mode_precedence;
 mod baseline_path_values;
 #[path = "../src/build_commit_record.rs"]
 mod build_commit_record;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/candidate_config_recovery.rs"]
+mod candidate_config_recovery;
 #[cfg(any(feature = "lang-python", feature = "lang-typescript"))]
 #[path = "cli_smoke/check_artifact_stdin.rs"]
 mod check_artifact_stdin;

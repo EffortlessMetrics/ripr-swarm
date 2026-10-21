@@ -265,6 +265,14 @@ and initialization options supply only the keys the pull did not return.
 Given ripr.toml contains an unknown key or invalid value,
 when ripr loads the config,
 then the user-facing error names the config path and parse problem.
+
+Given --candidate-tree selects an immutable tree with malformed ripr.toml,
+when check refuses that config,
+then the human diagnostic explains how to fix or remove the candidate's file
+and rerun with a new candidate-tree identity; editing only the worktree file
+cannot repair that immutable subject. A config-free candidate uses the built-in
+defaults, not a parent or worktree config. The JSON refusal retains its redacted
+first-line message, config_invalid identity and analysis/config-load route.
 ```
 
 ### Duplicate suppression declarations fail closed
@@ -500,6 +508,8 @@ Current tests:
 - `crates/ripr/src/config.rs::tests::parse_error_hint_matches_discovery_after_the_broken_file_is_removed`
 - `crates/ripr/src/config.rs::tests::unreadable_config_error_ends_with_a_recovery_line`
 - `crates/ripr/tests/cli_smoke.rs::check_json_malformed_config_emits_redacted_refusal`
+- `crates/ripr/tests/cli_smoke/candidate_config_recovery.rs::malformed_candidate_config_names_recovery_without_changing_json_refusal`
+- `crates/ripr/tests/cli_smoke/candidate_config_recovery.rs::repaired_and_config_free_candidates_ignore_a_broken_worktree_config`
 - `crates/ripr/tests/cli_smoke.rs::doctor_verbose_malformed_config_omits_the_loader_recovery_line`
 - `crates/ripr/src/workspace_status.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`
 - `crates/ripr/src/app/python_repair_binding.rs::tests::dangling_ripr_toml_symlink_is_subject_config_not_defaults`
