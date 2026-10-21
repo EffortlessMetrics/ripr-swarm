@@ -4596,6 +4596,8 @@ mod tests {
         ];
         match ripr_artifact_tracking(&root, &artifact_roots) {
             DoctorArtifactTracking::Tracked { warning } => {
+                // #9033: an advisory never wears the blocking `!` mark.
+                assert!(warning.starts_with("~ "), "{warning}");
                 assert!(
                     warning.contains("rm --cached -r -- .ripr-cache/repo-seam-facts"),
                     "{warning}"
