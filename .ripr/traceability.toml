@@ -471,6 +471,11 @@ id = "RIPR-SPEC-0005"
 name = "repo seam inventory and test grip"
 spec = "docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md"
 tests = [
+  "crates/ripr/tests/match_arm_geometry.rs::attributed_and_comma_less_arms_keep_complete_body_spans",
+  "crates/ripr/src/analysis/syntax/ra/probe_shape_walk_tests.rs::arm_geometry_refuses_macro_arrows_and_invalid_source",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::given_match_and_predicate_shapes_when_repo_inventory_runs_then_arms_have_full_spans",
+  "crates/ripr/src/app/repair_card_handoff.rs::tests::parsed_match_arm_geometry_keeps_nested_ownership_and_head_ambiguity",
+  "crates/ripr/tests/match_arm_geometry.rs::multiline_pattern_uses_its_start_line_and_unicode_columns",
   "crates/ripr/tests/snapshot_return_admission.rs::snapshot_of_an_unrelated_value_cannot_close_the_owner_return",
   "crates/ripr/tests/snapshot_return_admission.rs::snapshot_of_the_owner_result_binding_keeps_its_grade",
   "crates/ripr/tests/snapshot_return_admission.rs::snapshot_of_the_direct_owner_call_keeps_its_grade",
@@ -533,7 +538,6 @@ tests = [
   "crates/ripr/src/analysis/seams.rs::tests::byte_span_with_shared_starts_matches_single_shot",
   "crates/ripr/src/analysis/seams.rs::tests::byte_span_refuses_mid_character_offsets",
   "crates/ripr/src/analysis/seams.rs::tests::seam_id_is_stable_when_span_attaches",
-  "crates/ripr/src/analysis/seam_inventory.rs::tests::given_match_and_predicate_shapes_when_repo_inventory_runs_then_only_predicate_has_span",
   "crates/ripr/src/analysis/seams.rs::tests::seam_kind_round_trips_through_str",
   "crates/ripr/src/analysis/seams.rs::tests::required_discriminator_carries_kind_via_as_str",
   "crates/ripr/src/analysis/seams.rs::tests::expected_sink_str_covers_all_variants",
@@ -896,6 +900,7 @@ id = "RIPR-SPEC-0006"
 name = "mutation calibration reports"
 spec = "docs/specs/RIPR-SPEC-0006-mutation-calibration.md"
 tests = [
+  "crates/ripr/tests/match_arm_geometry.rs::full_arm_source_range_joins_its_arm_in_both_inventories",
   "crates/ripr/src/output/mutation_calibration.rs::tests::mutation_calibration_summarizes_static_runtime_agreement",
   "crates/ripr/src/output/mutation_calibration.rs::tests::agreement_buckets_disclose_counting_units_and_unmatched_overlap",
   "crates/ripr/src/output/mutation_calibration.rs::tests::mutation_calibration_joins_by_seam_id_then_file_line_and_keeps_ambiguous",
@@ -7038,7 +7043,13 @@ tests = [
   "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_names_the_add_remote_step_for_an_unconfigured_qualifier",
   "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_keeps_a_qualified_ref_generic_when_remotes_are_unknown",
   "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_never_interpolates_a_hostile_qualifier",
-  "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_ignores_explicit_ref_paths_for_qualifier_detection"
+  "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_ignores_explicit_ref_paths_for_qualifier_detection",
+  "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_names_the_remote_tracking_form_it_can_resolve",
+  "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_no_remote_arm_names_remote_tracking_refs",
+  "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_tracking_advice_is_not_shadowed_by_a_tag",
+  "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_probes_every_configured_remote",
+  "crates/ripr/src/analysis/diff/load.rs::tests::missing_ref_repair_probes_nested_branch_names",
+  "crates/ripr/tests/cli_smoke.rs::check_missing_base_advice_names_the_resolvable_remote_tracking_ref"
 ]
 fixtures = []
 code = [
@@ -13908,8 +13919,8 @@ tests = [
   "crates/ripr/tests/support/mcp_scope_contract.rs::status_and_refresh_advertise_committed_scope_variants",
   "crates/ripr/tests/mcp_stdio.rs::refreshed_gap_filters_narrow_real_stdio_and_replay_bound_continuation",
   "crates/ripr/tests/mcp_stdio.rs::empty_gap_pages_keep_structured_outcomes_at_the_response_bound",
-  "crates/ripr/tests/mcp_stdio.rs::long_request_ids_refuse_typed_before_the_wire_cap",
-  "crates/ripr/tests/mcp_stdio.rs::window_sized_envelope_refuses_typed_instead_of_dropping_structured_content",
+  "crates/ripr/tests/mcp_stdio.rs::oversized_request_id_is_rejected_with_null_id_and_the_session_survives",
+  "crates/ripr/src/mcp/transport_tests.rs::oversized_request_id_is_rejected_with_null_id_and_the_session_continues",
   "crates/ripr/src/mcp/protocol.rs::tests::tool_result_fits_and_refuses_at_the_id_aware_envelope_budget",
   "crates/ripr/src/mcp/server_tests.rs::long_request_id_refuses_typed_at_the_id_aware_boundary",
   "crates/ripr/src/mcp/server_tests.rs::window_sized_gap_item_refuses_typed_instead_of_dropping_structured_content",
@@ -17095,6 +17106,30 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0282-repair-attempt-after-refusal-retry-budget.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0286"
+name = "empty-diff base candidate must be analyzable"
+spec = "docs/specs/RIPR-SPEC-0286-empty-diff-base-candidate.md"
+tests = [
+  "crates/ripr/src/analysis/diff/load.rs::tests::another_base_candidate_rejects_a_diff_over_the_changed_line_guard",
+  "crates/ripr/src/analysis/diff/load.rs::tests::another_base_candidate_rejects_a_diff_over_the_changed_file_guard",
+  "crates/ripr/src/analysis/diff/load.rs::tests::another_base_candidate_counts_renamed_rust_lines",
+  "crates/ripr/src/analysis/diff/load.rs::tests::another_base_candidate_prefers_the_smallest_analyzable_diff",
+  "crates/ripr/src/analysis/diff/load.rs::tests::numstat_new_path_unwraps_rename_and_quote_forms",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/diff/load.rs",
+  "crates/ripr/src/analysis/diff/parse.rs",
+  "crates/ripr/src/analysis/language/rust/mod.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0286-empty-diff-base-candidate.md",
 ]
 metrics = [
   "unit_test_pass_rate",
