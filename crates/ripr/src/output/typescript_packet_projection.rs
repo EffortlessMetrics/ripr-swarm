@@ -428,6 +428,20 @@ pub(crate) fn typescript_target_assertion_shape_with_boundary_facts(
         return observed_shape;
     }
     let Some(comparison) = parse_static_comparison(discriminator, boundary_parameters) else {
+        // A member-path operand (mutable object property, enum member) is
+        // never resolved to a value here, so the observed call is not shown
+        // to hit the boundary: fail closed (#9107).
+        if let Some(operand) = unresolved_member_boundary(discriminator) {
+            return TargetAssertionShape::UnboundOperand {
+                shape: format!(
+                    "expect({}(/* boundary input for {discriminator} */)){expected_clause}",
+                    call.callee
+                ),
+                observed_call: observed.to_string(),
+                discriminator: discriminator.to_string(),
+                operand,
+            };
+        }
         return observed_shape;
     };
     let placeholder_shape = || {
@@ -673,17 +687,9 @@ enum BoundaryReach {
     UnboundOperand(String),
 }
 
-/// Parse a discriminator like `user.length == 3` into a static comparison.
-///
-/// Conservative: only `<ident>` / `<ident>.length` receivers and int, plain
-/// string, constant-shaped (`UPPER_CASE`), or plain identifier boundaries are
-/// recognized; anything else stays undecided. A literal or constant side is
-/// preferred as the boundary in either operand order, so `LIMIT == amount`
-/// never reads `amount` as the boundary.
-fn parse_static_comparison(
-    discriminator: &str,
-    boundary_parameters: Option<&TypeScriptBoundaryParametersFact>,
-) -> Option<StaticComparison> {
+/// Split a discriminator at its first comparison operator into trimmed
+/// `(left, op, right)` sides.
+fn split_static_comparison(discriminator: &str) -> Option<(&str, StaticComparisonOp, &str)> {
     const OPS: [(&str, StaticComparisonOp); 8] = [
         ("===", StaticComparisonOp::Equal),
         ("!==", StaticComparisonOp::NotEqual),
@@ -712,6 +718,47 @@ fn parse_static_comparison(
     let (position, len, op) = best?;
     let left = discriminator[..position].trim();
     let right = discriminator[position + len..].trim();
+    Some((left, op, right))
+}
+
+/// A dotted member path (`pricingConfig.discountThreshold`,
+/// `DiscountTier.Volume`) that is not a `.length` probe: its value can be a
+/// mutable object property or an enum member, neither of which this
+/// projection resolves (#9107).
+fn is_unresolved_member_operand(operand: &str) -> bool {
+    let operand = operand.trim();
+    let mut segments = operand.split('.');
+    let first_ok = segments.next().is_some_and(is_plain_identifier);
+    let mut rest = 0usize;
+    let rest_ok = segments.all(|segment| {
+        rest += 1;
+        is_plain_identifier(segment)
+    });
+    first_ok && rest_ok && rest >= 1 && !operand.ends_with(".length")
+}
+
+/// The member-path operand of an otherwise unparseable discriminator, so the
+/// packet fails closed instead of keeping the observed shape (#9107).
+fn unresolved_member_boundary(discriminator: &str) -> Option<String> {
+    let (left, _, right) = split_static_comparison(discriminator)?;
+    [right, left]
+        .into_iter()
+        .find(|side| is_unresolved_member_operand(side))
+        .map(ToString::to_string)
+}
+
+/// Parse a discriminator like `user.length == 3` into a static comparison.
+///
+/// Conservative: only `<ident>` / `<ident>.length` receivers and int, plain
+/// string, constant-shaped (`UPPER_CASE`), or plain identifier boundaries are
+/// recognized; anything else stays undecided. A literal or constant side is
+/// preferred as the boundary in either operand order, so `LIMIT == amount`
+/// never reads `amount` as the boundary.
+fn parse_static_comparison(
+    discriminator: &str,
+    boundary_parameters: Option<&TypeScriptBoundaryParametersFact>,
+) -> Option<StaticComparison> {
+    let (left, op, right) = split_static_comparison(discriminator)?;
     // The analysis side keeps operand order (`DISCOUNT_THRESHOLD <= amount`
     // becomes `DISCOUNT_THRESHOLD == amount`), so a boundary written first
     // is read with the operator mirrored (#4215 review).
@@ -2389,6 +2436,60 @@ mod tests {
         );
         validate_agent_gap_record_packet(&record)
             .map_err(|error| format!("derived literal boundary must be delegatable: {error}"))
+    }
+
+    /// #9107: a member-path boundary (mutable object property, enum member)
+    /// is never resolved, so the packet fails closed with a precise reason
+    /// even if the observed input looks plausible; the single immutable
+    /// same-file numeric const still resolves (alternate proof below and in
+    /// `resolved_constant_boundary_with_input_fact_is_delegatable`).
+    #[test]
+    fn member_path_boundaries_fail_closed_while_immutable_const_resolves() -> Result<(), String> {
+        for (label, discriminator, operand) in [
+            (
+                "object property",
+                "subtotal == pricingConfig.discountThreshold",
+                "pricingConfig.discountThreshold",
+            ),
+            (
+                "enum member",
+                "subtotal == DiscountTier.Volume",
+                "DiscountTier.Volume",
+            ),
+            (
+                "mirrored object property",
+                "pricingConfig.discountThreshold == subtotal",
+                "pricingConfig.discountThreshold",
+            ),
+        ] {
+            let mut finding = boundary_finding("discountedTotal(10001)", "9501", discriminator);
+            finding.probe.owner = Some(SymbolId(
+                "typescript:src/pricing.ts::discountedTotal".to_string(),
+            ));
+            let record = typescript_gap_record_for(&finding)
+                .ok_or_else(|| format!("{label}: record must project"))?;
+            let error = match validate_agent_gap_record_packet(&record) {
+                Ok(()) => return Err(format!("{label}: member boundary must fail closed")),
+                Err(error) => error.to_string(),
+            };
+            assert!(error.contains(operand), "{label}: {error}");
+            let route = record
+                .repair_route
+                .as_ref()
+                .ok_or_else(|| format!("{label}: repair route must be present"))?;
+            assert!(
+                route
+                    .assertion_shape
+                    .as_deref()
+                    .is_some_and(|shape| shape.contains("/* boundary input for ")),
+                "{label}: {:?}",
+                route.assertion_shape
+            );
+        }
+        // `.length` probes are not member boundaries and keep their verdict.
+        assert!(!is_unresolved_member_operand("items.length"));
+        assert!(is_unresolved_member_operand("DiscountTier.Volume"));
+        Ok(())
     }
 
     /// The onboarding `tsapp` shape: the constant resolved on the analysis

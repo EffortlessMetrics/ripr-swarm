@@ -268,16 +268,15 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
     decoy_untouched(&decoy)?;
 
     // Variants that must stay unresolved, paired with whether the product
-    // currently fails closed. The two `false` rows are known fail-open
-    // defects (#9107): they pin today's behavior and must flip to `true`
-    // when that issue is fixed.
+    // fails closed. The object-property and enum rows were fail-open
+    // defects until #9107; every row now fails closed.
     let variants = [
         ("variant-let-binding", true),
         ("variant-reassignment", true),
         ("variant-shadowing", true),
         ("variant-imported-constant", true),
-        ("variant-object-namespace-write", false),
-        ("variant-enum-computed-initializer", false),
+        ("variant-object-namespace-write", true),
+        ("variant-enum-computed-initializer", true),
         ("variant-nonliteral-arithmetic", true),
         ("variant-reach-barrier", true),
     ];
