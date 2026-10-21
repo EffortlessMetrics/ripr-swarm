@@ -428,6 +428,10 @@ fn placeholders(format: &str) -> Option<Vec<Placeholder<'_>>> {
             b'{' => {
                 let end = at + 1 + format[at + 1..].find('}')?;
                 let inner = &format[at + 1..end];
+                // A nested brace is a dynamic spec (`{0:{width}}`): fail closed.
+                if inner.contains('{') {
+                    return None;
+                }
                 let (arg, spec) = inner.split_once(':').unwrap_or((inner, ""));
                 if spec.contains('$') || spec.contains('*') {
                     return None;
@@ -851,6 +855,9 @@ mod tests {
         // The Display placeholder takes the other argument; hex ignores `e`.
         assert!(!display(&format!("{ctor}format!(\"{{0}}\", 1, e);")));
         assert!(!display(&format!("{ctor}format!(\"{{:x}}\", e);")));
+        assert!(!display(&format!(
+            "{ctor}format!(\"{{0:{{width}}}}\", e, width = 5);"
+        )));
         assert!(!display(&format!("{ctor}format!(\"{{{{}}}}\", e);")));
         assert!(!display(&format!(
             "{ctor}format!(\"{{v}}\", v = 1, w = e);"
