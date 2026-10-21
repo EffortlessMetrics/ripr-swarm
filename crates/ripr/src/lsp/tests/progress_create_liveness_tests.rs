@@ -60,9 +60,10 @@ async fn withheld_create_exchange(reply_late: bool) -> Result<(), String> {
                 let message = read_lsp_message(&mut reader).await?;
                 match message["method"].as_str() {
                     Some("window/workDoneProgress/create") => {
-                        if create.replace(message.clone()).is_some() {
+                        if create.is_some() {
                             return Err(format!("duplicate create: {message}"));
                         }
+                        create = Some(message.clone());
                         // Deliberately do not answer this request.
                     }
                     Some("$/progress") => return Err(format!(
@@ -80,7 +81,7 @@ async fn withheld_create_exchange(reply_late: bool) -> Result<(), String> {
                     return Ok::<(), String>(());
                 }
             }
-        }).await.map_err(|_| format!(
+        }).await.map_err(|_elapsed| format!(
             "refresh blocked by unanswered create after {:?}; create={create:?}; failed_attempt={saw_failed_attempt}",
             started.elapsed()
         ))??;
@@ -151,7 +152,7 @@ async fn withheld_create_exchange(reply_late: bool) -> Result<(), String> {
     };
     let result = tokio::time::timeout(Duration::from_secs(10), exchange)
         .await
-        .map_err(|_| "withheld-create exchange blocked shutdown".to_string())
+        .map_err(|_elapsed| "withheld-create exchange blocked shutdown".to_string())
         .and_then(|result| result);
     if let Err(error) = result {
         server.abort();
