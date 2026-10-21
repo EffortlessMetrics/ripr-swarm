@@ -3517,6 +3517,8 @@ tests = [
   "xtask/src/main.rs::tests::dogfood_language_preview_scenarios_cover_projection_boundaries",
   "xtask::tests::dogfood_real_repair_attempt_receipts_are_checked",
   "xtask::tests::dogfood_python_real_repo_eval_receipts_are_checked",
+  "crates/ripr/src/analysis/language/python/parse_budget.rs::tests::unbalanced_brackets_in_separate_strings_do_not_accumulate",
+  "crates/ripr/tests/python_parse_nesting.rs::unbalanced_bracket_string_literals_do_not_trip_the_nesting_budget",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -3602,6 +3604,7 @@ code = [
   "crates/ripr/src/analysis/language/python.rs",
   "crates/ripr/src/analysis/language/python/oracles/unittest_list.rs",
   "crates/ripr/src/analysis/language/python/static_limits.rs",
+  "crates/ripr/src/analysis/language/python/parse_budget.rs",
   "crates/ripr/src/domain/probe.rs",
   "crates/ripr/src/analysis/language/mod.rs",
   "crates/ripr/src/analysis/language/router.rs",
