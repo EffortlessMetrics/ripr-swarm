@@ -5,7 +5,7 @@ use super::{
     python_callee_start_has_boundary, python_prefix_hides_code, python_string_literal_value,
 };
 use crate::domain::{ExposureClass, OracleKind, OracleStrength, OwnerKind, RelatedTest};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 #[cfg(test)]
@@ -306,22 +306,45 @@ pub(super) fn related_tests_for_candidates(
 }
 
 pub(super) fn verify_command_for_test(test: &PythonTest) -> Option<String> {
+    verify_command_for_test_on(test, cfg!(windows))
+}
+
+/// [`verify_command_for_test`] with the host made explicit so both shell
+/// grammars are testable anywhere (#4378 pattern).
+pub(super) fn verify_command_for_test_on(test: &PythonTest, windows: bool) -> Option<String> {
     let path = normalized_path(&test.file);
     match test.framework {
         "pytest" => {
             let node = test.qualified_name.replace('.', "::");
+            // #8752: the quoting grammar must match the host's default shell
+            // or the suggested command fails for exactly the paths that need
+            // quoting. On Windows the node id sits inside the quotes: cmd
+            // only strips surrounding quotes when an argument both starts and
+            // ends with one, so `pytest "path"::test` would hand pytest the
+            // quote bytes as part of the file name. A token with bytes cmd
+            // or PowerShell expand inside double quotes gets no command.
+            let selector = if windows {
+                shell_quote_file_arg_for_host(&format!("{path}::{node}"), true)?
+            } else {
+                format!("{}::{node}", shell_quote_file_arg_for_host(&path, false)?)
+            };
             Some(format!(
-                "{} {}::{node}",
-                crate::domain::PYTEST_VERIFY_PROGRAM,
-                shell_quote_file_arg(&path)
+                "{} {selector}",
+                crate::domain::PYTEST_VERIFY_PROGRAM
             ))
         }
         "unittest" => {
-            let module = shell_quote_file_arg(&unittest_module_for_path(&path)?);
-            Some(format!(
-                "python -m unittest {module}.{}",
-                test.qualified_name
-            ))
+            let module = unittest_module_for_path(&path)?;
+            let selector = if windows {
+                shell_quote_file_arg_for_host(&format!("{module}.{}", test.qualified_name), true)?
+            } else {
+                format!(
+                    "{}.{}",
+                    shell_quote_file_arg_for_host(&module, false)?,
+                    test.qualified_name
+                )
+            };
+            Some(format!("python -m unittest {selector}"))
         }
         _ => None,
     }
@@ -338,28 +361,55 @@ fn unittest_module_for_path(path: &str) -> Option<String> {
     Some(module_path.replace(['/', '\\'], "."))
 }
 
-/// Quote one path or module token for a POSIX shell.
+/// Quote one path or module token for the host's default shell grammar.
 ///
-/// Suggested verify commands are text an agent may paste into a shell. The
-/// TypeScript command uses the same character class: a relative path made of
-/// ASCII letters, digits, `.`, `_`, `/`, and `-` stays readable, and any other
-/// byte is single-quoted so `$()`, backticks, spaces, and quotes are not
-/// expanded. Stored node ids and test-file paths stay the raw spelling; only
-/// the command text is quoted. This does not run the command.
-fn shell_quote_file_arg(file_str: &str) -> String {
-    if !file_str.is_empty()
-        && file_str
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'))
-    {
-        return file_str.to_string();
+/// Suggested verify commands are text an agent may paste into a shell, so the
+/// quoting must match the host's grammar or the command fails for exactly the
+/// paths that need quoting (#8752). A relative path made of ASCII letters,
+/// digits, `.`, `_`, `/`, `-` stays readable (`:` too on Windows, where it is
+/// not a metachar and the pytest `::` separator must not force quotes); any
+/// other byte is quoted so spaces, unicode, and shell metacharacters reach
+/// the test runner intact. On POSIX hosts the quote is single-quote escaping
+/// (`'\''`), so `$()`, backticks, spaces, and quotes are not expanded. On
+/// Windows hosts the quote is double quotes — the common denominator of cmd
+/// and PowerShell for literal text — but both shells still expand some bytes
+/// inside double quotes (PowerShell: `$()`, `$var`, and backtick escapes;
+/// cmd: `%VAR%`). A token carrying any of those bytes gets no paste-ready
+/// command at all: the verify route stays silent rather than emitting a
+/// command whose paste executes the file name. An embedded `"` in a
+/// quotable token is doubled per the PowerShell grammar; cmd has no
+/// representation for an embedded quote, which stays a documented limit.
+/// Stored node ids and test-file paths stay the raw spelling; only the
+/// command text is quoted. This does not run the command.
+fn shell_quote_file_arg_for_host(file_str: &str, windows: bool) -> Option<String> {
+    let in_safe_class = |c: char| {
+        c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-') || (windows && c == ':')
+    };
+    if !file_str.is_empty() && file_str.chars().all(in_safe_class) {
+        return Some(file_str.to_string());
     }
-    format!("'{}'", file_str.replace('\'', "'\\''"))
+    if windows {
+        if file_str.contains(['$', '`', '%']) {
+            return None;
+        }
+        return Some(format!("\"{}\"", file_str.replace('"', "\"\"")));
+    }
+    Some(format!("'{}'", file_str.replace('\'', "'\\''")))
 }
 
 pub(super) fn python_repair_placement(
     class: &ExposureClass,
     related_candidates: &[PythonRelatedCandidate<'_>],
+) -> Option<PythonRepairPlacement> {
+    python_repair_placement_on(class, related_candidates, cfg!(windows))
+}
+
+/// [`python_repair_placement`] with the host made explicit so both shell
+/// grammars are testable anywhere (#4378 pattern).
+pub(super) fn python_repair_placement_on(
+    class: &ExposureClass,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    windows: bool,
 ) -> Option<PythonRepairPlacement> {
     if !matches!(class, ExposureClass::WeaklyExposed) {
         return None;
@@ -368,7 +418,7 @@ pub(super) fn python_repair_placement(
         .iter()
         .filter(|candidate| candidate.relation.uses_oracle())
         .find_map(|candidate| {
-            verify_command_for_test(candidate.test).map(|command| (candidate, command))
+            verify_command_for_test_on(candidate.test, windows).map(|command| (candidate, command))
         })?;
     let path = normalized_path(&candidate.test.file);
     // Public rows use bare names, so two classes/frameworks in one file can
@@ -1667,6 +1717,44 @@ pub(super) fn import_source_module_matches_owner(
     names_owner_module && module_name_identifies_owner_for(owner, &import.source_module, test_file)
 }
 
+/// Identity index over the parsed tests: a related test is joined back to its
+/// source facts by `(file, name)`. Built once per finding so the join is a hash
+/// lookup rather than a scan of every test per related test (which made a
+/// finding with N related tests cost O(N^2)). Insertion keeps source order, so
+/// `matching` yields the same tests in the same order as a linear filter.
+pub(super) struct TestLookup<'a> {
+    by_name: HashMap<&'a str, Vec<&'a PythonTest>>,
+}
+
+impl<'a> TestLookup<'a> {
+    pub(super) fn new(all_tests: &'a [PythonTest]) -> Self {
+        let mut by_name: HashMap<&'a str, Vec<&'a PythonTest>> = HashMap::new();
+        for test in all_tests {
+            by_name.entry(test.name.as_str()).or_default().push(test);
+        }
+        Self { by_name }
+    }
+
+    /// Every test whose file and name equal the related test's.
+    pub(super) fn matching<'b>(
+        &'b self,
+        related: &'b RelatedTest,
+    ) -> impl Iterator<Item = &'a PythonTest> + 'b {
+        self.by_name
+            .get(related.name.as_str())
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(move |test| test.file == related.file)
+    }
+
+    /// Number of distinct test names indexed.
+    #[cfg(test)]
+    pub(super) fn identity_count(&self) -> usize {
+        self.by_name.len()
+    }
+}
+
 /// Free-function module-identity evidence: a strong observing test imports the
 /// owner's function *from the owner's module*. This is what distinguishes a
 /// genuine `from src.handler import validate` from a same-named function pulled in
@@ -1674,14 +1762,12 @@ pub(super) fn import_source_module_matches_owner(
 /// not identity-bearing for a free-function owner.
 pub(super) fn strong_test_imports_owner_from_module(
     strong_tests: &[&RelatedTest],
-    all_tests: &[PythonTest],
+    all_tests: &TestLookup<'_>,
     owner: &PythonOwner,
 ) -> bool {
     strong_tests.iter().any(|related_test| {
-        all_tests.iter().any(|test| {
-            test.name == related_test.name
-                && test.file == related_test.file
-                && super::test_activation::activation_control(test).is_none()
+        all_tests.matching(related_test).any(|test| {
+            super::test_activation::activation_control(test).is_none()
                 && test.imports.iter().any(|import| {
                     import.imported == owner.name
                         && import_source_module_matches_owner(import, owner, &test.file)
@@ -1743,11 +1829,21 @@ pub(super) fn first_parenthesized_string_argument(text: &str) -> Option<String> 
 
 pub(super) fn contains_call_name(body_text: &str, call_name: &str) -> bool {
     let needle = format!("{call_name}(");
-    body_text.match_indices(&needle).any(|(idx, _)| {
-        python_callee_start_has_boundary(body_text, idx)
-            && !line_prefix_looks_like_comment_or_string(body_text, idx)
-            && !is_definition_name(body_text, idx)
-    })
+    body_text
+        .match_indices(&needle)
+        .any(|(idx, _)| is_bare_call_site(body_text, idx))
+}
+
+/// Whether a `name(` at byte `idx` is a bare call: an identifier boundary (no
+/// attribute receiver), outside comments, strings and docstrings, and not a
+/// `def` / `class` header. The one definition both `contains_call_name`
+/// (test-to-owner calls) and `module_callees::bare_callees` (owner-to-helper
+/// edges) use, so the two cannot drift (#4568).
+pub(super) fn is_bare_call_site(text: &str, idx: usize) -> bool {
+    python_callee_start_has_boundary(text, idx)
+        && !line_prefix_looks_like_comment_or_string(text, idx)
+        && !python_text_hides_code(text, idx)
+        && !is_definition_name(text, idx)
 }
 
 /// `def name(` / `async def name(` / `class name(` defines `name`; it does not
@@ -2005,16 +2101,14 @@ pub(super) fn strong_test_calls_owner_method_on_bound_receiver(
     owner_class_token: Option<&String>,
     method_name: Option<&String>,
     strong_tests: &[&RelatedTest],
-    all_tests: &[PythonTest],
+    all_tests: &TestLookup<'_>,
 ) -> bool {
     let (Some(class), Some(method)) = (owner_class_token, method_name) else {
         return false;
     };
     strong_tests.iter().any(|related_test| {
-        all_tests.iter().any(|test| {
-            test.name == related_test.name
-                && test.file == related_test.file
-                && super::test_activation::activation_control(test).is_none()
+        all_tests.matching(related_test).any(|test| {
+            super::test_activation::activation_control(test).is_none()
                 && owner_class_locals(test, owner, class).iter().any(|local| {
                     body_calls_method_on_owner_bound_receiver(&test.body_text, local, method)
                 })
@@ -2030,16 +2124,14 @@ pub(super) fn strong_test_calls_owner_method_on_bound_receiver(
 pub(super) fn strong_tests_import_only_rival_modules(
     owner: &PythonOwner,
     strong_tests: &[&RelatedTest],
-    all_tests: &[PythonTest],
+    all_tests: &TestLookup<'_>,
 ) -> bool {
     if owner.ambiguous_src_modules.is_empty() || strong_tests.is_empty() {
         return false;
     }
     strong_tests.iter().all(|related_test| {
-        all_tests.iter().any(|test| {
-            test.name == related_test.name
-                && test.file == related_test.file
-                && super::test_activation::activation_control(test).is_none()
+        all_tests.matching(related_test).any(|test| {
+            super::test_activation::activation_control(test).is_none()
                 && test
                     .imports
                     .iter()
@@ -2322,28 +2414,66 @@ pub(super) fn python_text_hides_code(text: &str, idx: usize) -> bool {
         || inside_triple_quoted_string(text, idx)
 }
 
+/// Whether `idx` falls inside an open triple-quoted string. A small lexer:
+/// triple delimiters inside ordinary single-line strings (`'"""'`) and `#`
+/// comments do not open a docstring, and a backslash escapes the next char.
 fn inside_triple_quoted_string(text: &str, idx: usize) -> bool {
-    let mut open: Option<&str> = None;
+    let mut triple: Option<&str> = None;
     let mut cursor = 0;
     while cursor < idx {
         let rest = &text[cursor..];
-        match open {
-            Some(delimiter) if rest.starts_with(delimiter) => {
-                open = None;
+        if let Some(delimiter) = triple {
+            if let Some(escaped) = rest.strip_prefix('\\') {
+                cursor += 1 + escaped.chars().next().map_or(0, char::len_utf8);
+            } else if rest.starts_with(delimiter) {
+                triple = None;
                 cursor += delimiter.len();
+            } else {
+                cursor += rest.chars().next().map_or(1, char::len_utf8);
             }
-            None if rest.starts_with("\"\"\"") => {
-                open = Some("\"\"\"");
-                cursor += 3;
+            continue;
+        }
+        if rest.starts_with("\"\"\"") {
+            triple = Some("\"\"\"");
+            cursor += 3;
+        } else if rest.starts_with("'''") {
+            triple = Some("'''");
+            cursor += 3;
+        } else if rest.starts_with('#') || rest.starts_with('"') || rest.starts_with('\'') {
+            let len = if rest.starts_with('#') {
+                rest.find('\n').unwrap_or(rest.len())
+            } else {
+                single_line_string_len(rest)
+            };
+            // `idx` inside a comment or a (possibly backslash-continued)
+            // string literal is hidden code, not a call.
+            if idx < cursor + len {
+                return true;
             }
-            None if rest.starts_with("'''") => {
-                open = Some("'''");
-                cursor += 3;
-            }
-            _ => cursor += rest.chars().next().map_or(1, char::len_utf8),
+            cursor += len;
+        } else {
+            cursor += rest.chars().next().map_or(1, char::len_utf8);
         }
     }
-    open.is_some()
+    triple.is_some()
+}
+
+/// Byte length of the ordinary single-line string literal at the start of
+/// `rest` (which begins with its quote): through the closing quote, or to the
+/// end of the line when unterminated.
+fn single_line_string_len(rest: &str) -> usize {
+    let quote = rest.as_bytes()[0];
+    let bytes = rest.as_bytes();
+    let mut index = 1;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' => index += 2,
+            b'\n' => return index,
+            byte if byte == quote => return index + 1,
+            _ => index += 1,
+        }
+    }
+    rest.len()
 }
 
 pub(super) fn same_stem_related(test: &PythonTest, owner: &PythonOwner) -> bool {

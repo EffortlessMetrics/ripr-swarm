@@ -1,0 +1,47 @@
+{
+  "case_id": "py-spec0201-ex02-same-class-name-from-other-module",
+  "subject_id": "authored-py-pytest-self-reach",
+  "diff": "cases/py-spec0201-ex02-same-class-name-from-other-module.diff",
+  "anchor": {
+    "file": "reach/table_other.py",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "pytest_same_class_name_other_module",
+  "hard_case": "the test constructs a `Table` imported from another package, not the edited class",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return 3",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the edited line returns a different value whenever it runs; no test reaches it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`return 2` becomes `return 3` in `reach/table_other.py`. The test imports `Table` from `other.models`, a different class with the same name, so the edit is never run. RIPR-SPEC-0201 example 2: a same-named class from another module is silent `no_static_path`.",
+  "labeling_observation": {
+    "ripr_commit": "006eaf8",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0201#2"
+  ]
+}

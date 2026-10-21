@@ -969,3 +969,24 @@ evidence, historical/noncurrent status, weak/unchanged movement and incomplete
 receipt routing remain unchanged; the producer-equality and tamper tests remain
 strict. The receipt is an existing portable negative-control input, not a new
 receipt-presentation golden.
+
+### #8592 — classified-cache generation parity
+
+The unchanged-after-attempt before/after corpus generation moves from 1.83 to
+1.84 for check-helper argument pins (RIPR-SPEC-0197). Content commitments and
+dependent verify/receipt byte hashes follow that exact change. Routing,
+unchanged movement, incomplete receipt and all tamper controls remain.
+
+### #8600 — classified-cache generation parity
+
+The unchanged-after-attempt before/after corpus generation moves from 1.84 to
+1.85 for the call-fact budget withholding on repo seams. Content commitments
+and dependent verify/receipt byte hashes follow that exact change. Routing,
+unchanged movement, incomplete receipt and all tamper controls remain.
+
+### #8948 — classified-cache generation parity
+
+The unchanged-after-attempt before/after corpus generation moves from 1.85 to
+1.86 for the cached observed-value test file. Content commitments and
+dependent verify/receipt byte hashes follow that exact change. Routing,
+unchanged movement, incomplete receipt and all tamper controls remain.
