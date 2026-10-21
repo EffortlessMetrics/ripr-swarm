@@ -7391,6 +7391,17 @@ fn protocol_entry_stays_uncredited_without_a_bound_owner_receiver() -> Result<()
         // The entry sits in a comment (also a trailing one) or a string.
         "from src.nr import numeric_range\n\n\ndef test_trailing_comment():\n    x = 1  # reversed(numeric_range(0))\n    assert x\n",
         "from src.nr import numeric_range\n\n\ndef test_comment():\n    # reversed(numeric_range(0))\n    assert True\n",
+        // Chained and single-element rebinding of the receiver.
+        "from src.nr import numeric_range\n\n\ndef test_chained_assign():\n    r = numeric_range(0)\n    x = r = [1]\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_list_target():\n    r = numeric_range(0)\n    [r] = [[1]]\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_paren_target():\n    r = numeric_range(0)\n    (r) = [1]\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_for_paren():\n    r = numeric_range(0)\n    for (r) in [[1]]:\n        pass\n    assert list(reversed(r)) == [1]\n",
+        "from src.nr import numeric_range\n\n\ndef test_with_list():\n    r = numeric_range(0)\n    with a as [r]:\n        pass\n    assert list(reversed(r)) == [1]\n",
+        // Test-local shadowing of the entry or a wrapper by a tuple or annotated binding.
+        "from src.nr import numeric_range\n\n\ndef test_tuple_entry():\n    a, reversed = 1, f\n    assert list(reversed(numeric_range(0))) == []\n",
+        "from src.nr import numeric_range\n\n\ndef test_annotated_wrapper():\n    list: Callable = f\n    assert list(reversed(numeric_range(0))) == []\n",
+        // An unasserted entry does not relate the test to the dunder.
+        "from src.nr import numeric_range\n\n\ndef test_unasserted_entry():\n    x = list(reversed(numeric_range(3)))\n    assert numeric_range(3).stop == 3\n",
         "from src.nr import numeric_range\n\n\ndef test_string():\n    assert \"reversed(numeric_range(0))\"\n",
     ] {
         let (finding, relations) = classify_reversed_guard(test_src)?;
@@ -7437,16 +7448,16 @@ fn protocol_entry_outside_the_assertion_or_under_an_unordered_wrapper_is_not_cre
 }
 
 #[test]
-fn protocol_entry_inside_an_opaque_wrapper_relates_but_is_not_credited() -> Result<(), String> {
+fn protocol_entry_inside_an_opaque_wrapper_stays_uncertain_and_uncredited() -> Result<(), String> {
     let (finding, relations) = classify_reversed_guard(
         "from src.nr import numeric_range\n\n\ndef test_wrapped():\n    assert always_true(reversed(numeric_range(0))) == True\n",
     )?;
     assert_eq!(
         relations,
-        vec![("test_wrapped".to_string(), "protocol_entry_call")]
+        vec![("test_wrapped".to_string(), "dunder_protocol")],
+        "an entry that is not an asserted operand does not relate as protocol_entry_call"
     );
     assert_ne!(finding.class, ExposureClass::Exposed);
-    assert_eq!(finding.oracle_alignment.as_deref(), Some("orthogonal"));
     assert_ne!(
         finding.alignment_reason.as_deref(),
         Some("strong_oracle_observes_owner_protocol_entry"),

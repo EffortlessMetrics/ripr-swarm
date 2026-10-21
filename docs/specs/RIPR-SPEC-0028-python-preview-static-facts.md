@@ -344,7 +344,13 @@ comments, strings, and docstrings:
   exception is a builtin protocol entry applied to a sole argument bound to the
   owner class (`reversed(Class(0))` for `__reversed__`, likewise `len`, `bool`,
   `iter`, `next`, `hash`, `str`, `repr`): it relates as `protocol_entry_call`,
-  an oracle-eligible relation. Extra, keyword, starred or trailing-comma
+  an oracle-eligible relation, and only when an assertion takes the entry as an
+  asserted operand (an unasserted entry elsewhere in the body does not relate).
+  The entry, the `list`/`tuple` wrapper and the receiver must keep their
+  bindings: a builtin shadowed by an import, a module or test-local binding
+  (including tuple and annotated targets), or a receiver rebound by a chained,
+  bracketed, loop, `with`, walrus or augmented target, or not the whole bound
+  value, is not credited. Extra, keyword, starred or trailing-comma
   arguments are not the entry and fall back to `dunder_protocol`. A dunder
   owner with no related test, in a workspace whose tests import its class,
   its module, or anything from a package above it, reads `static_unknown`

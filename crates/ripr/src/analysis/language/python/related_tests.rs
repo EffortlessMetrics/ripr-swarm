@@ -638,8 +638,33 @@ fn binds_in_target_list(body: &str, var: &str) -> bool {
                     || (after.starts_with(':') && !after.starts_with(":="))
                     || before.ends_with(',')
                     || before.ends_with('*')
+                    || chained_or_bracketed_target(body, idx, before, after)
             }
     })
+}
+
+/// Whether the `var` occurrence just after `before` and just before `after`
+/// binds it through a chained assignment (`x = r = [1]`), or a single-element
+/// bracketed target (`[r] = ...`, `(r) = ...`, `for (r) in ...`,
+/// `with a as [r]`). A bare call argument `f(r)` is not a binding.
+fn chained_or_bracketed_target(body: &str, idx: usize, before: &str, after: &str) -> bool {
+    let line_start = body[..idx].rfind('\n').map_or(0, |at| at + 1);
+    let not_line_start = !body[line_start..idx].trim().is_empty();
+    let plain_assign = |rest: &str| rest.starts_with('=') && !rest.starts_with("==");
+    if not_line_start && plain_assign(after) {
+        return true;
+    }
+    let Some(closer) = after.chars().next().filter(|c| matches!(c, ']' | ')')) else {
+        return false;
+    };
+    let opener = if closer == ']' { '[' } else { '(' };
+    if !before.ends_with(opener) {
+        return false;
+    }
+    let rest = after[1..].trim_start_matches([' ', '\t']);
+    plain_assign(rest)
+        || rest.starts_with("in ")
+        || before[..before.len() - 1].trim_end().ends_with(" as")
 }
 
 /// Whether the construction at `idx` is the whole right-hand side of its
@@ -660,6 +685,7 @@ fn construction_is_whole_value(body: &str, idx: usize, construct: &str) -> bool 
 fn builtin_is_shadowed(test: &PythonTest, name: &str) -> bool {
     test.imports.iter().any(|import| import.alias == name)
         || test_rebinds_import_alias(test, name)
+        || test.constant_rebinding.rebinds(name)
         || test.constant_rebinding.module_opaque
         || test
             .constant_rebinding
@@ -697,11 +723,14 @@ fn owner_protocol_entry_calls(
     calls
 }
 
-/// Whether the test body applies a builtin protocol entry of the owner dunder
-/// to a receiver built from the owner class (`reversed(Range(0))`).
+/// Whether an assertion of the test takes a builtin protocol entry of the owner
+/// dunder on a receiver built from the owner class as an asserted operand
+/// (`assert list(reversed(Range(0))) == []`). An unasserted entry elsewhere in
+/// the body does not relate the test.
 fn protocol_entry_in_body(test: &PythonTest, owner: &PythonOwner) -> bool {
-    super::test_activation::activation_control(test).is_none()
-        && !owner_protocol_entry_calls(&test.body_text, test, owner).is_empty()
+    test.assertions
+        .iter()
+        .any(|assertion| oracle_operand_protocol_entry(&assertion.gate_text, test, owner))
 }
 
 /// Whether an assertion's text takes a protocol entry of the owner dunder on a
