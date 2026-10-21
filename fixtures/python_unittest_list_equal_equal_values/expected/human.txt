@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/labels.py:labels:return_value:return_value:[1_true]
   Changed behavior: return [1, True]
   Missing discriminator: A strong Python list oracle reaches `labels`, but static evidence cannot establish that list equality discriminates this change. Review the old and new return values under Python…
-  Related test: tests/test_labels.py:4 test_labels
+  Related test: tests/test_labels.py:4 test_labels (ripr could not confirm that this assertion observes the changed behavior)
   Evidence: reach yes · infection yes · propagation yes · observation weak · discriminator weak
     - reach yes: 1 related Python test(s) found for owner `labels`
     - infection yes: Changed Python return expression can alter the owner return value: `return [1, True]`

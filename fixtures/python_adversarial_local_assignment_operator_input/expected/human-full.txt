@@ -37,7 +37,7 @@ Evidence
   - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
   - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
   - local flow reaches unknown sink: total = base - bonus (line 2) — ripr could not classify where the changed value ends up; propagation confidence is limited
-  - related test tests/test_calc.py:4 test_base_unchanged uses strong exact value oracle: assert base == 10
+  - related test tests/test_calc.py:4 test_base_unchanged uses strong exact value oracle: assert base == 10; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
 
 Weakness
   - A strong Python oracle reaches `compute`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output

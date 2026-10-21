@@ -79,7 +79,9 @@
           "line": 6,
           "oracle_strength": "weak",
           "oracle_kind": "broad_error",
-          "oracle": "pytest.raises(ValueError)"
+          "oracle": "pytest.raises(ValueError)",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
         }
       ],
       "repair_placement": {

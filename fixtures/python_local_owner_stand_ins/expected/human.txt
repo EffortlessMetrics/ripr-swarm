@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/shop.py:fee:return_value:return_value:amount*3
   Changed behavior: return amount * 3
   Missing discriminator (1 of 2): A strong Python oracle reaches `fee`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an…
-  Related test (1 of 7 matched rows): tests/test_aliased_mock.py:5 test_local_aliased_mock
+  Related test (1 of 7 matched rows): tests/test_aliased_mock.py:5 test_local_aliased_mock (ripr could not confirm that this assertion observes the changed behavior)
   Suggested test file: tests/test_aliased_mock.py
   Suggested test: test_local_aliased_mock
   Test node: tests/test_aliased_mock.py::test_local_aliased_mock

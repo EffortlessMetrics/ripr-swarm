@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/calc.py:compute:predicate_boundary:predicate:total=base-bonus
   Changed behavior: total = base - bonus
   Missing discriminator: A strong Python oracle reaches `compute`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add…
-  Related test: tests/test_calc.py:4 test_base_unchanged
+  Related test: tests/test_calc.py:4 test_base_unchanged (ripr could not confirm that this assertion observes the changed behavior)
   Suggested test file: tests/test_calc.py
   Suggested test: test_base_unchanged
   Test node: tests/test_calc.py::test_base_unchanged

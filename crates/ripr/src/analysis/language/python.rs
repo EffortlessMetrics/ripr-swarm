@@ -76,6 +76,7 @@ mod probe_shape;
 mod reexports;
 mod related_tests;
 mod repo;
+mod row_miss;
 mod sink_alignment;
 mod source_facts;
 mod table_rows;
@@ -1077,6 +1078,9 @@ mod reexport_tests;
 
 #[cfg(test)]
 mod replaced_block_tests;
+
+#[cfg(test)]
+mod row_miss_tests;
 
 #[cfg(test)]
 mod tests;

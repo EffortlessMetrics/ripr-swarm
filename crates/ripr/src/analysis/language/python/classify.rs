@@ -18,6 +18,7 @@ use super::related_tests::{
     helper_owner_call_candidates, python_repair_placement, related_test_candidates,
     related_tests_for_candidates, verify_command_for_test,
 };
+use super::row_miss::{RowMissChange, annotate_row_misses};
 use super::sink_alignment::{SinkAlignment, classify_sink_alignment_with_old};
 use super::static_limits::{implicit_dunder_dispatch_limit, static_limit_for_focused_change};
 use super::table_rows::python_unvaried_table_operand;
@@ -298,7 +299,7 @@ pub(super) fn classify_change_for_owner(
         Vec::new()
     };
     related_candidates.extend(helper_callers.iter().map(|helper| helper.candidate));
-    let related = related_tests_for_candidates(&related_candidates, Some(&focus));
+    let mut related = related_tests_for_candidates(&related_candidates, Some(&focus));
     let alignment =
         classify_sink_alignment_with_old(owner, line_text, old_line_text, &related, all_tests);
     let static_limit =
@@ -1018,6 +1019,21 @@ pub(super) fn classify_change_for_owner(
             placement.location_reason
         ));
     }
+    // Row-local misses are explanation only (#5491): written after the class
+    // and every stage are final, and read by no decision above.
+    annotate_row_misses(
+        &mut related,
+        &related_candidates,
+        &class,
+        static_limit.is_some(),
+        &RowMissChange {
+            owner,
+            line_text,
+            old_line_text,
+            focus: &focus,
+        },
+        all_tests,
+    );
     for candidate in related_candidates {
         let test = candidate.test;
         evidence.push(format!(

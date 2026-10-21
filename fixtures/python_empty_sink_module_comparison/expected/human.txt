@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/constants.py:<module>:predicate_boundary:predicate:x=1
   Changed behavior: x = 1
   Missing discriminator: A strong Python oracle reaches `<module>`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add…
-  Related test: tests/test_constants.py:4 test_constants
+  Related test: tests/test_constants.py:4 test_constants (ripr could not confirm that this assertion observes the changed behavior)
   Suggested test file: tests/test_constants.py
   Suggested test: test_constants
   Test node: tests/test_constants.py::test_constants

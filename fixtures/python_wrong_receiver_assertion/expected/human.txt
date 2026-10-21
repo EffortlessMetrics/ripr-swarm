@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/cart.py:Cart.total:return_value:return_value:amount*3
   Changed behavior: return amount * 3
   Missing discriminator (1 of 2): A strong Python oracle reaches `total`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an…
-  Related test: tests/test_cart.py:4 test_total_on_another_receiver
+  Related test: tests/test_cart.py:4 test_total_on_another_receiver (ripr could not confirm that this assertion observes the changed behavior)
   Suggested test file: tests/test_cart.py
   Suggested test: test_total_on_another_receiver
   Test node: tests/test_cart.py::test_total_on_another_receiver

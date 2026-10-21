@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/checkout.py:checkout_payload:field_value:field_construction:return_status_paid_event_receipt.sent_id_order_id
   Changed behavior: return {"status": "paid", "event": "receipt.sent", "id": order_id}
   Missing discriminator (1 of 2): Related Python test reaches `checkout_payload` but the strongest extracted oracle is `smoke_only`; add or strengthen a focused assertion for the changed field or object value
-  Related test: tests/test_checkout.py:4 test_checkout_payload_smoke
+  Related test: tests/test_checkout.py:4 test_checkout_payload_smoke (assertion too weak to tell the old behavior from the new)
   Suggested test file: tests/test_checkout.py
   Suggested test: test_checkout_payload_smoke
   Test node: tests/test_checkout.py::test_checkout_payload_smoke

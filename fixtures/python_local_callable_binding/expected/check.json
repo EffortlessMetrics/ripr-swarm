@@ -79,7 +79,9 @@
           "line": 7,
           "oracle_strength": "smoke",
           "oracle_kind": "smoke_only",
-          "oracle": "self.assertTrue(stop(3))"
+          "oracle": "self.assertTrue(stop(3))",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
         }
       ],
       "repair_placement": {

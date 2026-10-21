@@ -117,18 +117,49 @@ unsupported state as unknown and fabricates no reason conforms.
 
 | miss | Rust | Python | TypeScript | Perl v1 |
 | --- | --- | --- | --- | --- |
-| `no_call_path` | yes | pending #5491 | pending #5495 | no |
-| `no_assertion` | yes | pending #5491 | pending #5495 | no |
-| `assertion_not_observing` | yes | pending #5491 | pending #5495 | no (#3223) |
+| `no_call_path` | yes | yes (heuristic-only relations) | pending #5495 | no |
+| `no_assertion` | yes | no (#6657) | pending #5495 | no |
+| `assertion_not_observing` | yes | no (credit-only alignment; `is_unmatched` coupling) | pending #5495 | no (#3223) |
 | `assertion_not_credited` | yes | no (#5446) | no (#5446) | no |
-| `weak_assertion` | yes | pending #5491 | pending #5495 | no |
-| `missing_input` | yes | pending #5491 | pending #5495 | no (#4061, perl-lsp-swarm#17237, #5562) |
-| `missing_exact_assertion` | yes | pending #5491 | pending #5495 | no |
-| `observation_unconfirmed` | yes | pending #5491 | pending #5495 | yes |
+| `weak_assertion` | yes | yes (weak and smoke only) | pending #5495 | no |
+| `missing_input` | yes | yes (predicate boundary, row-owned) | pending #5495 | no (#4061, perl-lsp-swarm#17237, #5562) |
+| `missing_exact_assertion` | yes | no (no row-owned fact) | pending #5495 | no |
+| `observation_unconfirmed` | yes | yes (strong assertion not credited by its own row) | pending #5495 | yes |
 
 "Pending" means the row-evidence prerequisites in this spec have landed or are
 tracked, and the producer has not yet mapped them. Perl's narrower coverage is
 a capability difference, not a parity failure.
+
+Python (#5491) writes a miss only on a `weakly_exposed` finding without a
+static limit, one row at a time, in `python/row_miss.rs`:
+
+- `no_call_path`: `dunder_protocol`, `same_stem`, `test_name_similarity` and
+  `fixture_name` rows. Fixture-owner, helper-owner and activation-limited rows
+  keep no miss.
+- `weak_assertion`: the family-selected assertion is weak or smoke. A medium
+  assertion (a mock that may pin the changed call) keeps no miss.
+- `missing_input`: a strong family-selected assertion on a predicate change
+  whose own owner calls all bind, resolve both compared operands and place
+  neither on the boundary. An unresolved operand or an unreadable call is
+  unknown, and another row's input never counts.
+- `observation_unconfirmed`: a strong family-selected assertion that the row,
+  evaluated alone, does not credit as observing the changed sink. Python's
+  alignment only credits; no credit never becomes an affirmative mismatch.
+
+Python does not yet write:
+
+- `no_assertion`: `extraction_complete_no_assertion` is not a proven absence
+  while the cross-file blind spots of #6657 (conftest autouse fixtures,
+  plugins, ini `filterwarnings`, bare sibling imports) are unaccounted for.
+- `assertion_not_observing`: alignment cannot separate an affirmative sibling
+  sink from an unresolved one, and the value marks a row examined-only
+  (`RelatedTest::is_unmatched`), which `oracle_related_tests` and its
+  decisional consumers read; emitting it would move ordering and witnesses.
+- `missing_exact_assertion`: `missing_discriminators` is finding-wide and no
+  row-owned observed-surface fact exists.
+- `assertion_not_credited`: no typed proven refusal (#5446). Skipped, xfail
+  and expected-failure tests keep the classifier's `static_unknown` and no
+  oracle credit.
 
 ### Projection law
 
@@ -215,8 +246,9 @@ excluded from deterministic identity.
 
 ### Assertion admission prerequisite (Python, TypeScript)
 
-Python and TypeScript record no miss yet. Before a producer (#5491, #5495)
-may write a `no_assertion` miss, each extracted test carries an assertion
+Python records `weak_assertion`, `no_call_path`, `missing_input` and
+`observation_unconfirmed` only; TypeScript records no miss yet. Before a
+producer (#5491, #5495) may write a `no_assertion` miss, each extracted test carries an assertion
 admission state, computed fail-closed from the test's syntax:
 
 - `recognized_assertion_present`: the oracle extractor credited an assertion.
@@ -397,8 +429,9 @@ actionability or rendered output.
   unknown is RIPR-SPEC-0221's admission rule.
 - Splitting `assertion_not_credited` into proven-inert and admission-unproven
   cases; that needs the typed admission refusal from #5359.
-- Python and TypeScript miss producers (#5491, #5495) are not yet landed; the
-  contract and their prerequisites are specified here, the mapping is not.
+- The TypeScript miss producer (#5495) is not yet landed, and the Python
+  producer (#5491) maps only the subset in the capability table; the
+  remaining Python reasons wait on #6657, #5446 and row-owned facts.
   Richer Perl reasons that need row-owned facts (#5562).
 - Any producer implementation, parser, call-graph or oracle expansion,
   support-tier promotion, or runtime or mutation-kill claim.

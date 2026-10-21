@@ -79,7 +79,9 @@
           "line": 5,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
-          "oracle": "assert fee(10) == 30"
+          "oracle": "assert fee(10) == 30",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         },
         {
           "name": "test_local_def",
@@ -87,7 +89,9 @@
           "line": 4,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
-          "oracle": "assert fee(10) == 30"
+          "oracle": "assert fee(10) == 30",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         },
         {
           "name": "test_local_lambda",
@@ -95,7 +99,9 @@
           "line": 4,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
-          "oracle": "assert fee(10) == 30"
+          "oracle": "assert fee(10) == 30",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         },
         {
           "name": "test_match_capture_stand_in",
@@ -103,7 +109,9 @@
           "line": 4,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
-          "oracle": "assert fee(10) == 30"
+          "oracle": "assert fee(10) == 30",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         },
         {
           "name": "test_local_mock",
@@ -111,7 +119,9 @@
           "line": 5,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
-          "oracle": "assert fee(10) == 30"
+          "oracle": "assert fee(10) == 30",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         },
         {
           "name": "test_module_level_stand_in",
@@ -119,7 +129,9 @@
           "line": 6,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
-          "oracle": "assert fee(10) == 30"
+          "oracle": "assert fee(10) == 30",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         },
         {
           "name": "test_walrus_stand_in",
@@ -127,7 +139,9 @@
           "line": 4,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
-          "oracle": "assert fee(10) == 30"
+          "oracle": "assert fee(10) == 30",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "repair_placement": {

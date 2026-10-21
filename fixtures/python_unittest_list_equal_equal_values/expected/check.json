@@ -69,7 +69,9 @@
           "line": 4,
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
-          "oracle": "self.assertListEqual(labels(), [1, True])"
+          "oracle": "self.assertListEqual(labels(), [1, True])",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "stop_reasons": [],

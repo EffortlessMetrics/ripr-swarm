@@ -598,3 +598,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_broad_boolean_assertion (21)
+
+Reason:
+RIPR-SPEC-0224 / #5491: Python related-test rows now carry truthful typed miss and why (explanation only; class, stages, order unchanged)
+
+Command:
+`cargo xtask goldens bless python_broad_boolean_assertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

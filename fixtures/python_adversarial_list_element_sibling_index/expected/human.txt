@@ -21,7 +21,7 @@ Start here:
   Canonical gap: gap:python:src/routes.py:route_order:return_value:return_value:[index_browse_detail]
   Changed behavior: return ["index", "browse", "detail"]
   Missing discriminator (1 of 2): A strong Python oracle reaches `route_order`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated.…
-  Related test: tests/test_routes.py:4 test_first
+  Related test: tests/test_routes.py:4 test_first (ripr could not confirm that this assertion observes the changed behavior)
   Suggested test file: tests/test_routes.py
   Suggested test: test_first
   Test node: tests/test_routes.py::test_first

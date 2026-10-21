@@ -79,7 +79,9 @@
           "line": 7,
           "oracle_strength": "weak",
           "oracle_kind": "relational_check",
-          "oracle": "self.assertIn(\"coupon expired\", result.output)"
+          "oracle": "self.assertIn(\"coupon expired\", result.output)",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
         }
       ],
       "repair_placement": {
