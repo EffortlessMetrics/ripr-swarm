@@ -266,6 +266,19 @@ reach through them keeps the limitations above. A generated test whose
 transcriber calls a helper macro from another file is indexed for reach, but
 an assertion inside that helper is refused like any untrusted macro.
 
+## Macro Definition Edits
+
+A changed line that lies wholly inside a `macro_rules!` definition (matcher or
+transcriber text, including `#`, `use` and `mod` lines that the transcriber
+emits) is macro token text, not a Rust expression. The probe seeder emits one
+`static_unknown` probe per definition and diff side (keyed by name and start
+line) and no expression-family probe, so a matcher arm such as
+`($args:ident) => {` is never graded `weakly_exposed`. A line that also holds
+code outside the definition's byte extent keeps normal seeding, and lines in an
+inline test module stay test evidence. Only `macro_rules!` is covered (including
+raw-identifier names); macros 2.0 are not. An unclosed definition runs to the
+end of the file, which is an approximation for an edit in progress.
+
 ## Wire Format
 
 | Field | Value when fires | Value when not fires |
@@ -346,6 +359,10 @@ an assertion inside that helper is refused like any untrusted macro.
 
 ## Test Mapping
 
+- `crates/ripr/src/analysis/probes/diff.rs::tests::macro_rules_definition_lines_seed_one_static_unknown_not_expression_probes`
+- `crates/ripr/src/analysis/probes/diff.rs::tests::macro_inside_an_inline_test_module_seeds_no_probe`
+- `crates/ripr/src/analysis/probes/diff.rs::tests::attribute_only_edit_inside_a_macro_seeds_unknown_on_both_sides`
+- `crates/ripr/src/analysis/probes/diff.rs::tests::a_line_mixing_a_macro_definition_and_other_code_keeps_normal_seeding`
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_entry_path_stops_at_owner_macro_then_macro_witness_is_captured`
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_macro_definition_does_not_name_owner_then_macro_witness_is_none`
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_test_invokes_owner_macro_directly_then_macro_witness_is_captured`
@@ -388,6 +405,7 @@ an assertion inside that helper is refused like any untrusted macro.
 | Macro witness producer | `crates/ripr/src/analysis/classify/transitive_reach.rs` |
 | Same-file test generator expansion | `crates/ripr/src/analysis/syntax/local_test_macros.rs` |
 | Generated test indexing | `crates/ripr/src/analysis/facts/macro_generated_tests.rs` |
+| Macro definition extents | `crates/ripr/src/analysis/probes/macro_definition.rs` |
 | Generated test assertion admission | `crates/ripr/src/analysis/classify/owner_pin.rs` |
 | Classifier export | `crates/ripr/src/analysis/classify/mod.rs` |
 | Diff/repo-mode wiring | `crates/ripr/src/analysis/language/rust/mod.rs` |

@@ -16,7 +16,7 @@ use super::expectations::{expected_sinks, required_oracles};
 use super::family::delta_for_family;
 use super::ids::{diff_probe_id, normalize_expression};
 use super::lexical::{classify_changed_line, is_accumulator_rewrite_of};
-use super::macro_definition::{definition_at, macro_definitions};
+use super::macro_definition::MacroMap;
 use crate::analysis::diagnostic_origin::ParserByteSpan;
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::cfg_predicates::{attributes_require_test, split_leading_attribute};
@@ -183,10 +183,9 @@ pub(crate) fn probes_for_file_with_relations(
     // #8999: a line inside a `macro_rules!` definition is matcher/transcriber
     // token text, not a Rust expression. One `static_unknown` probe per
     // definition names that limit; no expression-family probe is seeded.
-    let added_macros = find_file_facts(index, &changed.path)
-        .map(|facts| macro_definitions(&facts.source))
-        .unwrap_or_default();
-    let removed_macros = old_source.map(macro_definitions).unwrap_or_default();
+    let added_macros =
+        find_file_facts(index, &changed.path).map(|facts| MacroMap::new(&facts.source));
+    let removed_macros = old_source.map(MacroMap::new);
     // One probe per definition per diff side, keyed by (name, start line) so
     // same-named definitions (for example cfg-exclusive pairs) stay distinct.
     let mut added_macro_seeded = std::collections::BTreeSet::<(String, usize)>::new();
@@ -194,13 +193,29 @@ pub(crate) fn probes_for_file_with_relations(
 
     for (added_index, added) in changed.added_lines.iter().enumerate() {
         let text = added.text.trim();
-        if should_ignore_changed_line(text)
+        // Blank and comment-only lines are never probed. The other
+        // `should_ignore_changed_line` exclusions (`#`, `use`, `mod`) apply
+        // after macro membership: inside a `macro_rules!` transcriber they
+        // are emitted tokens, so an edit there is a macro-definition edit.
+        if text.is_empty()
+            || text.starts_with("//")
             || skip_added[added_index]
             || added_block_comments.contains(&added.new_side_line)
         {
             continue;
         }
-        if let Some(definition) = definition_at(&added_macros, added.new_side_line) {
+        if changed_line_is_test_evidence(
+            index,
+            &changed.path,
+            added.new_side_line,
+            &test_module_ranges,
+        ) {
+            continue;
+        }
+        if let Some(definition) = added_macros
+            .as_ref()
+            .and_then(|map| map.owner_of_line(added.new_side_line))
+        {
             if added_macro_seeded.insert((definition.name.clone(), definition.start_line)) {
                 let before = removed_before(added.new_side_line, text, changed, &added_run_starts);
                 probes.push(SeededProbe::from_probe(build_probe(
@@ -213,12 +228,7 @@ pub(crate) fn probes_for_file_with_relations(
             }
             continue;
         }
-        if changed_line_is_test_evidence(
-            index,
-            &changed.path,
-            added.new_side_line,
-            &test_module_ranges,
-        ) {
+        if should_ignore_changed_line(text) {
             continue;
         }
         if opens_new_function_with_added_body(index, changed, added.new_side_line, text) {
@@ -479,7 +489,8 @@ pub(crate) fn probes_for_file_with_relations(
     let represented_short_lines = represented_short_replacements(changed, &probes);
     for (removed_index, removed) in changed.removed_lines.iter().enumerate() {
         let text = removed.text.trim();
-        if should_ignore_changed_line(text)
+        if text.is_empty()
+            || text.starts_with("//")
             || skip_removed[removed_index]
             || removed_block_comments.contains(&removed.line)
         {
@@ -516,7 +527,10 @@ pub(crate) fn probes_for_file_with_relations(
         if guard_edit_counterparts.contains(&removed.line) {
             continue;
         }
-        if let Some(definition) = definition_at(&removed_macros, removed.line) {
+        if let Some(definition) = removed_macros
+            .as_ref()
+            .and_then(|map| map.owner_of_line(removed.line))
+        {
             if removed_macro_seeded.insert((definition.name.clone(), definition.start_line)) {
                 probes.push(SeededProbe::from_probe(build_probe(
                     &build_context,
@@ -526,6 +540,9 @@ pub(crate) fn probes_for_file_with_relations(
                     None,
                 )));
             }
+            continue;
+        }
+        if should_ignore_changed_line(text) {
             continue;
         }
         let families = if removed_bounds.lines[removed_index] {
@@ -5126,6 +5143,92 @@ mod source_currentness_tests {
             probes
                 .iter()
                 .all(|probe| probe.family == ProbeFamily::StaticUnknown)
+        );
+    }
+    fn macro_line(number: usize, text: &str) -> ChangedLine {
+        ChangedLine {
+            line: number,
+            new_side_line: number,
+            text: text.to_string(),
+        }
+    }
+
+    /// Devin: an edited macro inside an inline `#[cfg(test)]` module is test
+    /// evidence, not a production probe; the production macro is the control.
+    #[test]
+    fn macro_inside_an_inline_test_module_seeds_no_probe() {
+        let source = "macro_rules! prod {\n    () => { 1 };\n}\n#[cfg(test)]\nmod tests {\n    macro_rules! helper {\n        () => { 2 };\n    }\n}\n";
+        let path = PathBuf::from("src/macros.rs");
+        let changed = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![macro_line(2, "() => { 1 };"), macro_line(7, "() => { 2 };")],
+            removed_lines: vec![],
+        };
+        let index = macro_source_index(&path, source);
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        let lines = probes
+            .iter()
+            .map(|probe| probe.location.line)
+            .collect::<Vec<_>>();
+        assert_eq!(lines, vec![2], "test-module macro stays out: {probes:?}");
+        assert_eq!(probes[0].family, ProbeFamily::StaticUnknown);
+    }
+
+    /// Devin: an attribute-only edit inside a transcriber is a macro edit on
+    /// both diff sides, despite the general `#` line exclusion.
+    #[test]
+    fn attribute_only_edit_inside_a_macro_seeds_unknown_on_both_sides() {
+        let source = "macro_rules! m {\n    () => {\n        #[derive(Clone, Debug)]\n        struct S;\n    };\n}\n";
+        let path = PathBuf::from("src/macros.rs");
+        let index = macro_source_index(&path, source);
+        let both = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![macro_line(3, "#[derive(Clone, Debug)]")],
+            removed_lines: vec![macro_line(3, "#[derive(Clone)]")],
+        };
+        let probes = probes_for_file(Path::new("workspace"), &both, &index);
+        assert_eq!(probes.len(), 2, "{probes:?}");
+        assert!(
+            probes
+                .iter()
+                .all(|probe| probe.family == ProbeFamily::StaticUnknown)
+        );
+        let removed_only = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![],
+            removed_lines: vec![macro_line(3, "#[derive(Clone)]")],
+        };
+        let probes = probes_for_file(Path::new("workspace"), &removed_only, &index);
+        assert_eq!(probes.len(), 1, "{probes:?}");
+        assert_eq!(probes[0].family, ProbeFamily::StaticUnknown);
+        // Control: the same attribute outside any macro is still ignored.
+        let plain = macro_source_index(&path, "#[derive(Clone, Debug)]\nstruct S;\n");
+        let outside = ChangedFile {
+            path,
+            added_lines: vec![macro_line(1, "#[derive(Clone, Debug)]")],
+            removed_lines: vec![],
+        };
+        assert!(probes_for_file(Path::new("workspace"), &outside, &plain).is_empty());
+    }
+
+    /// Devin: a one-line macro definition sharing its line with changed code
+    /// outside its extent must not swallow that code.
+    #[test]
+    fn a_line_mixing_a_macro_definition_and_other_code_keeps_normal_seeding() {
+        let text = "fn f() { macro_rules! m { () => { 1 } } let n = 3; if n > 4 { go(); } }";
+        let path = PathBuf::from("src/macros.rs");
+        let index = macro_source_index(&path, &format!("{text}\n"));
+        let changed = ChangedFile {
+            path,
+            added_lines: vec![macro_line(1, text)],
+            removed_lines: vec![],
+        };
+        let probes = probes_for_file(Path::new("workspace"), &changed, &index);
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.family != ProbeFamily::StaticUnknown),
+            "code outside the macro extent keeps an expression probe: {probes:?}"
         );
     }
 }

@@ -9365,6 +9365,10 @@ tests = [
   "crates/ripr/tests/mixed_macro_reach.rs::weak_direct_without_a_test_macro_route_keeps_the_gap",
   "crates/ripr/tests/mixed_macro_reach.rs::unrelated_macro_with_weak_direct_keeps_the_gap",
   "crates/ripr/tests/mixed_macro_reach.rs::lexical_transitive_route_with_weak_direct_keeps_the_gap",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::macro_rules_definition_lines_seed_one_static_unknown_not_expression_probes",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::macro_inside_an_inline_test_module_seeds_no_probe",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::attribute_only_edit_inside_a_macro_seeds_unknown_on_both_sides",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::a_line_mixing_a_macro_definition_and_other_code_keeps_normal_seeding",
   "fixtures/rust_mixed_direct_macro_reach/expected/check.json",
 ]
 fixtures = [
@@ -9383,6 +9387,8 @@ code = [
   "crates/ripr/src/analysis/syntax/local_test_macros.rs",
   "crates/ripr/src/analysis/facts/macro_generated_tests.rs",
   "crates/ripr/src/analysis/classify/owner_pin.rs",
+  "crates/ripr/src/analysis/probes/macro_definition.rs",
+  "crates/ripr/src/analysis/probes/diff.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0117-rust-macro-reach-limitation.md",

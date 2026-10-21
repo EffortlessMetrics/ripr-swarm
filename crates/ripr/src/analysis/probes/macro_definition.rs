@@ -15,6 +15,9 @@ pub(super) struct MacroDefinition {
     pub name: String,
     pub start_line: usize,
     pub end_line: usize,
+    /// Byte offset of `macro_rules` and one past the closing delimiter.
+    pub start_byte: usize,
+    pub end_byte: usize,
 }
 
 fn is_ident_byte(byte: u8) -> bool {
@@ -50,7 +53,14 @@ pub(super) fn macro_definitions(source: &str) -> Vec<MacroDefinition> {
         if bytes.get(bang) != Some(&b'!') {
             continue;
         }
-        let name_start = skip_ws(bytes, bang + 1);
+        let mut name_start = skip_ws(bytes, bang + 1);
+        // A raw identifier (`r#type`) is a legal macro name.
+        if bytes.get(name_start) == Some(&b'r')
+            && bytes.get(name_start + 1) == Some(&b'#')
+            && bytes.get(name_start + 2).is_some_and(|b| is_ident_byte(*b))
+        {
+            name_start += 2;
+        }
         let mut name_end = name_start;
         while bytes.get(name_end).is_some_and(|b| is_ident_byte(*b)) {
             name_end += 1;
@@ -84,6 +94,8 @@ pub(super) fn macro_definitions(source: &str) -> Vec<MacroDefinition> {
                 name,
                 start_line: line_of(at),
                 end_line: line_of(bytes.len()),
+                start_byte: at,
+                end_byte: bytes.len(),
             });
             break;
         };
@@ -91,20 +103,59 @@ pub(super) fn macro_definitions(source: &str) -> Vec<MacroDefinition> {
             name,
             start_line: line_of(at),
             end_line: line_of(end),
+            start_byte: at,
+            end_byte: end + 1,
         });
         cursor = end + 1;
     }
     found
 }
 
-/// The definition whose extent holds `line`, if any.
-pub(super) fn definition_at(
-    definitions: &[MacroDefinition],
-    line: usize,
-) -> Option<&MacroDefinition> {
-    definitions
-        .iter()
-        .find(|definition| definition.start_line <= line && line <= definition.end_line)
+/// The macro definitions of one source file plus its line offsets, so a
+/// changed line can be tested for being macro text *entirely*.
+pub(super) struct MacroMap {
+    definitions: Vec<MacroDefinition>,
+    line_starts: Vec<usize>,
+    source: String,
+}
+
+impl MacroMap {
+    pub(super) fn new(source: &str) -> Self {
+        let mut line_starts = vec![0usize];
+        line_starts.extend(source.match_indices('\n').map(|(at, _)| at + 1));
+        Self {
+            definitions: macro_definitions(source),
+            line_starts,
+            source: source.to_string(),
+        }
+    }
+
+    /// The definition that owns the whole trimmed content of 1-based `line`.
+    /// A line that also holds code outside the definition's byte extent
+    /// (`fn f() { macro_rules! m { () => { 1 } } let n = 3; }`) is mixed and
+    /// owned by nobody, so normal seeding still sees its other code. A
+    /// trailing `;` after the closing delimiter belongs to the definition.
+    pub(super) fn owner_of_line(&self, line: usize) -> Option<&MacroDefinition> {
+        let start = *self.line_starts.get(line.checked_sub(1)?)?;
+        let end = self
+            .line_starts
+            .get(line)
+            .copied()
+            .unwrap_or(self.source.len());
+        let text = self.source.get(start..end)?;
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        let content_start = start + (text.len() - text.trim_start().len());
+        let content_end = content_start + trimmed.len();
+        self.definitions.iter().find(|definition| {
+            // Allow the item-terminating `;` right after the definition.
+            let def_end = definition.end_byte
+                + usize::from(self.source.as_bytes().get(definition.end_byte) == Some(&b';'));
+            definition.start_byte <= content_start && content_end <= def_end
+        })
+    }
 }
 
 #[cfg(test)]
@@ -118,9 +169,10 @@ mod tests {
         assert_eq!(defs.len(), 1);
         assert_eq!(defs[0].name, "m");
         assert_eq!((defs[0].start_line, defs[0].end_line), (2, 6));
-        assert!(definition_at(&defs, 1).is_none());
-        assert!(definition_at(&defs, 4).is_some());
-        assert!(definition_at(&defs, 7).is_none());
+        let map = MacroMap::new(source);
+        assert!(map.owner_of_line(1).is_none());
+        assert!(map.owner_of_line(4).is_some());
+        assert!(map.owner_of_line(7).is_none());
     }
 
     #[test]
@@ -185,5 +237,22 @@ mod tests {
         assert_eq!(defs.len(), 2);
         assert_eq!(defs[0].start_line, 1);
         assert_eq!(defs[1].start_line, 3);
+    }
+
+    #[test]
+    fn raw_identifier_macro_names_are_definitions() {
+        let defs = macro_definitions("macro_rules! r#type {\n    () => {};\n}\n");
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0].name, "type");
+        assert_eq!(defs[0].end_line, 3);
+    }
+
+    #[test]
+    fn a_mixed_line_is_owned_by_no_definition() {
+        let source = "fn f() { macro_rules! m { () => { 1 } } let n = 3; if n > 4 { go(); } }\nmacro_rules! solo { () => { 2 } }\nmacro_rules! tail { () => { 3 } };\n";
+        let map = MacroMap::new(source);
+        assert!(map.owner_of_line(1).is_none(), "code outside the extent");
+        assert_eq!(map.owner_of_line(2).map(|d| d.name.as_str()), Some("solo"));
+        assert_eq!(map.owner_of_line(3).map(|d| d.name.as_str()), Some("tail"));
     }
 }
