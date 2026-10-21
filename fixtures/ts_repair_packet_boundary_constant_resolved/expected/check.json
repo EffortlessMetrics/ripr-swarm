@@ -69,8 +69,8 @@
           "oracle": "expect(...).toBe(...)",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "missing_input",
-          "why": "no test input reaches `amount == DISCOUNT_THRESHOLD`"
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         },
         {
           "name": "discounts far above threshold",
@@ -81,8 +81,8 @@
           "oracle": "expect(...).toBe(...)",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
-          "miss": "missing_input",
-          "why": "no test input reaches `amount == DISCOUNT_THRESHOLD`"
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {

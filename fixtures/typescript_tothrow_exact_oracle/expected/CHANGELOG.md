@@ -443,3 +443,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_tothrow_exact_oracle (24)
+
+Reason:
+RIPR-SPEC-0224: typescript row-local miss narrowed after review (#5495): no_assertion, missing_input and assertion_not_observing withheld; class, stages and decision fields unchanged
+
+Command:
+`cargo xtask goldens bless typescript_tothrow_exact_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

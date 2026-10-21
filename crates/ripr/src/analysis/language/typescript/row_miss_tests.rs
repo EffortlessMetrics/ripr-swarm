@@ -50,18 +50,27 @@ const CALC_CHANGE: Change = Change {
 
 /// The finding classified from `test_source`, with the tempdir removed.
 fn classify(change: &Change, test_source: &str) -> Result<Finding, String> {
+    classify_file(change, TEST_FILE, test_source)
+}
+
+fn classify_file(change: &Change, test_file: &str, test_source: &str) -> Result<Finding, String> {
     let root = ts_unique_tempdir("row-miss")?;
-    let result = classify_in(&root, change, test_source);
+    let result = classify_in(&root, change, test_file, test_source);
     let _ = std::fs::remove_dir_all(&root);
     result
 }
 
-fn classify_in(root: &Path, change: &Change, test_source: &str) -> Result<Finding, String> {
+fn classify_in(
+    root: &Path,
+    change: &Change,
+    test_file: &str,
+    test_source: &str,
+) -> Result<Finding, String> {
     std::fs::create_dir_all(root.join("src")).map_err(|err| format!("mkdir src: {err}"))?;
     std::fs::create_dir_all(root.join("tests")).map_err(|err| format!("mkdir tests: {err}"))?;
     std::fs::write(root.join(OWNER_FILE), OWNER_SOURCE)
         .map_err(|err| format!("write owner: {err}"))?;
-    std::fs::write(root.join(TEST_FILE), test_source)
+    std::fs::write(root.join(test_file), test_source)
         .map_err(|err| format!("write test: {err}"))?;
     let module_line = OWNER_SOURCE.lines().nth(change.line - 1);
     if module_line != Some(change.text) {
@@ -71,7 +80,7 @@ fn classify_in(root: &Path, change: &Change, test_source: &str) -> Result<Findin
         ));
     }
     let owners = extract_owners(Path::new(OWNER_FILE), OWNER_SOURCE);
-    let tests = extract_tests(Path::new(TEST_FILE), test_source);
+    let tests = extract_tests(Path::new(test_file), test_source);
     if tests.is_empty() {
         return Err(format!("fixture parsed to no tests: {test_source}"));
     }
@@ -155,16 +164,15 @@ fn heuristic_reference_row_is_no_call_path() -> Result<(), String> {
     Ok(())
 }
 
-/// Established absence of any assertion-like construct on a real owner-call path.
+/// Established absence of any assertion-like construct on a real owner-call
+/// path still gets no `no_assertion`: the single-file admission scan cannot
+/// see setup files or runner plugins (`admission.rs` blind spots).
 #[test]
-fn proven_no_assertion_row_is_no_assertion() -> Result<(), String> {
+fn established_no_assertion_row_keeps_no_miss() -> Result<(), String> {
     let source = format!("{IMPORT}test('calls only', () => {{\n  applyDiscount(1);\n}});\n");
     let finding = classify(&RETURN_CHANGE, &source)?;
     weakly(&finding);
-    assert_eq!(
-        miss_of(&finding, "calls only")?,
-        Some(RelatedTestMiss::NoAssertion)
-    );
+    assert_eq!(miss_of(&finding, "calls only")?, None);
     Ok(())
 }
 
@@ -219,24 +227,23 @@ fn mixed_rows_keep_their_own_miss() -> Result<(), String> {
         miss_of(&finding, "truthy")?,
         Some(RelatedTestMiss::WeakAssertion)
     );
-    assert_eq!(
-        miss_of(&finding, "bare")?,
-        Some(RelatedTestMiss::NoAssertion)
-    );
+    assert_eq!(miss_of(&finding, "bare")?, None);
     assert_eq!(miss_of(&finding, "custom")?, None);
     Ok(())
 }
 
-/// A strong assertion whose input misses the boundary the owner pins.
+/// A strong assertion whose own input misses the boundary the owner pins.
+/// `missing_input` is withheld (its shared prose over-claims), so the row
+/// reports the unconfirmed observation.
 #[test]
-fn strong_row_off_the_boundary_is_missing_input() -> Result<(), String> {
+fn strong_row_off_the_boundary_is_observation_unconfirmed() -> Result<(), String> {
     let source =
         format!("{IMPORT}test('below', () => {{\n  expect(applyDiscount(50)).toBe(50);\n}});\n");
     let finding = classify(&PREDICATE_CHANGE, &source)?;
     weakly(&finding);
     assert_eq!(
         miss_of(&finding, "below")?,
-        Some(RelatedTestMiss::MissingInput)
+        Some(RelatedTestMiss::ObservationUnconfirmed)
     );
     Ok(())
 }
@@ -252,7 +259,7 @@ fn boundary_input_from_another_row_is_not_borrowed() -> Result<(), String> {
     weakly(&finding);
     assert_eq!(
         miss_of(&finding, "below")?,
-        Some(RelatedTestMiss::MissingInput)
+        Some(RelatedTestMiss::ObservationUnconfirmed)
     );
     assert_eq!(
         miss_of(&finding, "at boundary weak")?,
@@ -264,7 +271,7 @@ fn boundary_input_from_another_row_is_not_borrowed() -> Result<(), String> {
 /// A strong assertion of another behavior family (an error variant for a
 /// changed return) observes another sink.
 #[test]
-fn strong_wrong_family_row_is_assertion_not_observing() -> Result<(), String> {
+fn strong_wrong_family_row_is_observation_unconfirmed() -> Result<(), String> {
     let source = format!(
         "{IMPORT}test('throws', () => {{\n  expect(() => applyDiscount(1)).toThrow(RangeError);\n}});\n"
     );
@@ -272,7 +279,7 @@ fn strong_wrong_family_row_is_assertion_not_observing() -> Result<(), String> {
     weakly(&finding);
     assert_eq!(
         miss_of(&finding, "throws")?,
-        Some(RelatedTestMiss::AssertionNotObserving)
+        Some(RelatedTestMiss::ObservationUnconfirmed)
     );
     Ok(())
 }
@@ -330,11 +337,11 @@ fn module_entry_row_with_unresolved_assertion_has_no_miss() -> Result<(), String
 #[test]
 fn exposed_finding_rows_have_no_miss() -> Result<(), String> {
     let source = format!(
-        "{IMPORT}test('exact', () => {{\n  expect(applyDiscount(100)).toBe(90);\n}});\ntest('bare', () => {{\n  applyDiscount(2);\n}});\n"
+        "{IMPORT}test('exact', () => {{\n  expect(applyDiscount(100)).toBe(90);\n}});\ntest('bare', () => {{\n  expect(applyDiscount(2)).toBeTruthy();\n}});\n"
     );
     let finding = classify(&RETURN_CHANGE, &source)?;
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
-    // The bare row would be `no_assertion` inside a gap finding.
+    // The weak row would be `weak_assertion` inside a gap finding.
     assert!(
         finding.related_tests.iter().all(|row| row.miss.is_none()),
         "{:?}",
@@ -347,7 +354,8 @@ fn exposed_finding_rows_have_no_miss() -> Result<(), String> {
 /// `weakly_exposed` finding earn none under any other class or a static limit.
 #[test]
 fn class_gate_withholds_every_row_miss() -> Result<(), String> {
-    let source = format!("{IMPORT}test('bare', () => {{\n  applyDiscount(1);\n}});\n");
+    let source =
+        format!("{IMPORT}test('bare', () => {{\n  expect(applyDiscount(1)).toBeTruthy();\n}});\n");
     let root = ts_unique_tempdir("row-miss-gate")?;
     std::fs::create_dir_all(root.join("src")).map_err(|err| format!("mkdir: {err}"))?;
     let owner = extract_owners(Path::new(OWNER_FILE), OWNER_SOURCE)
@@ -386,11 +394,193 @@ fn class_gate_withholds_every_row_miss() -> Result<(), String> {
     };
     assert_eq!(
         run(ExposureClass::WeaklyExposed, false),
-        vec![Some(RelatedTestMiss::NoAssertion)]
+        vec![Some(RelatedTestMiss::WeakAssertion)]
     );
     assert_eq!(run(ExposureClass::WeaklyExposed, true), vec![None]);
     assert_eq!(run(ExposureClass::Exposed, false), vec![None]);
     assert_eq!(run(ExposureClass::StaticUnknown, false), vec![None]);
     assert_eq!(run(ExposureClass::NoStaticPath, false), vec![None]);
+    Ok(())
+}
+
+fn rejected_source(body: &str) -> String {
+    format!("import {{ applyDiscount }} from '../src/pricing';\n{body}")
+}
+
+/// A body-local declaration shadows the owner name: the call reaches the
+/// local, so the row has no path to the changed owner.
+#[test]
+fn local_shadow_row_is_no_call_path() -> Result<(), String> {
+    let source = "import { applyDiscount as ad } from '../src/pricing';\ntest('discounts', () => {\n  function applyDiscount(x: number) { return 42; }\n  expect(ad).toBeDefined();\n  expect(applyDiscount(100)).toBe(42);\n});\n";
+    let finding = classify(&RETURN_CHANGE, source)?;
+    weakly(&finding);
+    assert_eq!(
+        miss_of(&finding, "discounts")?,
+        Some(RelatedTestMiss::NoCallPath)
+    );
+    Ok(())
+}
+
+#[test]
+fn unrelated_destructure_row_is_no_call_path() -> Result<(), String> {
+    let source = rejected_source(
+        "test('discounts', () => {\n  const { applyDiscount } = require('../src/factory');\n  expect(applyDiscount(100)).toBe(90);\n});\n",
+    );
+    let finding = classify(&RETURN_CHANGE, &source)?;
+    weakly(&finding);
+    assert_eq!(
+        miss_of(&finding, "discounts")?,
+        Some(RelatedTestMiss::NoCallPath)
+    );
+    Ok(())
+}
+
+/// A mocked owner module or a fabricated spy value is a call to a
+/// replacement. It is never `no_call_path` (its prose says no call was
+/// found), and never `assertion_not_observing`.
+#[test]
+fn mock_and_spy_rows_are_never_no_call_path_or_not_observing() -> Result<(), String> {
+    let mock = rejected_source(
+        "vi.mock('../src/pricing');\ntest('discounts', () => {\n  expect(applyDiscount(100)).toBe(90);\n});\n",
+    );
+    let spy = "import * as pricing from '../src/pricing';\nimport { applyDiscount } from '../src/pricing';\ntest('discounts', () => {\n  vi.spyOn(pricing, 'applyDiscount').mockReturnValue(42);\n  expect(applyDiscount(100)).toBe(42);\n});\n".to_string();
+    // The mock registration is assertion-like setup, so admission is
+    // unresolved and the row keeps no reason; the spy row has an admitted
+    // assertion whose observation of the owner is unconfirmed.
+    for (source, expected) in [
+        (mock, None),
+        (spy, Some(RelatedTestMiss::ObservationUnconfirmed)),
+    ] {
+        let finding = classify(&RETURN_CHANGE, &source)?;
+        weakly(&finding);
+        assert_eq!(miss_of(&finding, "discounts")?, expected, "{source}");
+    }
+    Ok(())
+}
+
+/// A bare owner-name call with no declaration anchor: identity is possible
+/// but unconfirmed.
+#[test]
+fn unanchored_owner_name_row_is_observation_unconfirmed() -> Result<(), String> {
+    let source =
+        "test('applyDiscount works', () => {\n  expect(applyDiscount(100)).toBe(90);\n});\n";
+    let finding = classify_file(&RETURN_CHANGE, "tests/helper.test.ts", source)?;
+    weakly(&finding);
+    assert_eq!(
+        miss_of(&finding, "applyDiscount works")?,
+        Some(RelatedTestMiss::ObservationUnconfirmed)
+    );
+    Ok(())
+}
+
+#[test]
+fn unresolved_alias_row_is_observation_unconfirmed() -> Result<(), String> {
+    let source = "test('discounts', () => {\n  const { applyDiscount } = require('@app/pricing');\n  expect(applyDiscount(100)).toBe(90);\n});\n";
+    let finding = classify(&RETURN_CHANGE, source)?;
+    weakly(&finding);
+    assert_eq!(
+        miss_of(&finding, "discounts")?,
+        Some(RelatedTestMiss::ObservationUnconfirmed)
+    );
+    Ok(())
+}
+
+/// A weak assertion of another family says nothing about any sink.
+#[test]
+fn weak_only_wrong_family_row_keeps_no_miss() -> Result<(), String> {
+    let source = rejected_source(
+        "test('throws', () => {\n  expect(() => applyDiscount(1)).toThrow();\n});\n",
+    );
+    let finding = classify(&RETURN_CHANGE, &source)?;
+    weakly(&finding);
+    assert_eq!(miss_of(&finding, "throws")?, None);
+    Ok(())
+}
+
+/// A strong predicate row whose boundary input is computed is not the
+/// witness; its own observation stays unconfirmed.
+#[test]
+fn non_witness_predicate_row_is_observation_unconfirmed() -> Result<(), String> {
+    let source = rejected_source(
+        "test('computed', () => {\n  expect(applyDiscount(Number('100'))).toBe(90);\n});\n",
+    );
+    let finding = classify(&PREDICATE_CHANGE, &source)?;
+    weakly(&finding);
+    assert_eq!(
+        miss_of(&finding, "computed")?,
+        Some(RelatedTestMiss::ObservationUnconfirmed)
+    );
+    Ok(())
+}
+
+/// The miss is non-decisional: no row is `is_unmatched`, and the decision
+/// readers (gap next step, witness) give the same answer with the misses
+/// stripped. Row order is the candidate order and is compared too.
+#[test]
+fn stripping_the_miss_changes_no_decision_surface() -> Result<(), String> {
+    let cases = [
+        (
+            &RETURN_CHANGE,
+            rejected_source(
+                "test('truthy', () => {\n  expect(applyDiscount(1)).toBeTruthy();\n});\ntest('throws', () => {\n  expect(() => applyDiscount(1)).toThrow(RangeError);\n});\n",
+            ),
+        ),
+        (
+            &PREDICATE_CHANGE,
+            rejected_source("test('below', () => {\n  expect(applyDiscount(50)).toBe(50);\n});\n"),
+        ),
+    ];
+    for (change, source) in cases {
+        let finding = classify(change, &source)?;
+        assert!(
+            finding.related_tests.iter().any(|row| row.miss.is_some()),
+            "fixture must carry a miss: {:?}",
+            finding.related_tests
+        );
+        assert!(finding.related_tests.iter().all(|row| !row.is_unmatched()));
+        let mut stripped = finding.clone();
+        for row in &mut stripped.related_tests {
+            row.miss = None;
+        }
+        let order = |f: &Finding| {
+            f.related_tests
+                .iter()
+                .map(|row| (row.name.clone(), row.line, row.oracle_strength.rank()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(order(&finding), order(&stripped));
+        assert_eq!(
+            crate::domain::DiagnosticWitness::from_finding(&finding),
+            crate::domain::DiagnosticWitness::from_finding(&stripped)
+        );
+        let next = |f: &Finding| {
+            crate::analysis::classify::exact_oracle_gap_next_step(
+                &f.probe,
+                &f.class,
+                &f.related_tests,
+                &f.activation.missing_discriminators,
+                true,
+            )
+        };
+        assert_eq!(next(&finding), next(&stripped));
+    }
+    Ok(())
+}
+
+/// Pins the blessed `typescript_negated_t_oracle` rows: both negated-`t`
+/// assertion rows carry `observation_unconfirmed`, never a decision-bearing
+/// reason.
+#[test]
+fn negated_t_oracle_fixture_pins_row_misses() -> Result<(), String> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/typescript_negated_t_oracle/expected/check.json");
+    let text =
+        std::fs::read_to_string(&path).map_err(|err| format!("{}: {err}", path.display()))?;
+    let misses: Vec<&str> = text
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("\"miss\": \""))
+        .filter_map(|rest| rest.split('"').next())
+        .collect();
+    assert_eq!(misses, vec!["observation_unconfirmed"; 2], "{text}");
     Ok(())
 }

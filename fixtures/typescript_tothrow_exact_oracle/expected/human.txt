@@ -20,7 +20,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: if (input.trim() === "") {
   Missing discriminator: Related test reaches `parseUser` but the strongest extracted oracle is `unknown`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow`…
-  Related test (1 of 3 matched rows): tests/parser.test.ts:5 empty user throws exact message (asserts, but not on the changed value)
+  Related test (1 of 3 matched rows): tests/parser.test.ts:5 empty user throws exact message (ripr could not confirm that this assertion observes the changed behavior)
   Next step — TypeScript preview advisory: add a test that exercises the changed behavior with an
     exact-value assertion (`toBe` / `toEqual` / `toStrictEqual`); no actionable repair packet is
     emitted until the target shape is explicit

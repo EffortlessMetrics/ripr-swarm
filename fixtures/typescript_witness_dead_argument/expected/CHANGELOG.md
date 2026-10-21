@@ -216,3 +216,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_witness_dead_argument (19)
+
+Reason:
+RIPR-SPEC-0224: typescript row-local miss narrowed after review (#5495): no_assertion, missing_input and assertion_not_observing withheld; class, stages and decision fields unchanged
+
+Command:
+`cargo xtask goldens bless typescript_witness_dead_argument --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

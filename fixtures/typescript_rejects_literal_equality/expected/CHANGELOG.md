@@ -115,3 +115,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_rejects_literal_equality (10)
+
+Reason:
+RIPR-SPEC-0224: typescript row-local miss narrowed after review (#5495): no_assertion, missing_input and assertion_not_observing withheld; class, stages and decision fields unchanged
+
+Command:
+`cargo xtask goldens bless typescript_rejects_literal_equality --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

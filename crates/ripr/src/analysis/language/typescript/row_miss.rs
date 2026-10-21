@@ -16,16 +16,26 @@
 //! satisfies another row. A row whose own evidence is unresolved keeps
 //! `miss: None`; there is no fill-every-row fallback.
 //!
-//! Shipped tokens: `no_call_path`, `no_assertion`, `assertion_not_observing`,
-//! `weak_assertion`, `missing_input` and `observation_unconfirmed`.
+//! Shipped tokens: `no_call_path`, `weak_assertion` and
+//! `observation_unconfirmed`.
 //!
 //! Deliberately not emitted:
 //!
-//! - `assertion_not_credited`: reserved for a typed established refusal (#5446),
-//!   which TypeScript does not produce;
+//! - `assertion_not_observing`: `RelatedTest::is_unmatched` reads it as a
+//!   decision input (gap next-step choice, witness and row triage), so
+//!   emitting it would change TypeScript behavior. Rows that would have
+//!   carried it get `observation_unconfirmed` or no miss.
+//! - `no_assertion`: the admission scan sees one file and cannot see project
+//!   setup files or runner plugins (`admission.rs` known blind spots), so
+//!   `NoAssertionLike` is not strong enough to claim absence.
+//! - `missing_input`: the shared prose says "no test input reaches ...",
+//!   stronger than a single-file static reading supports. A row whose own
+//!   boundary fact says its input misses the boundary gets
+//!   `observation_unconfirmed` instead.
+//! - `assertion_not_credited`: reserved for a typed established refusal
+//!   (#5446), which TypeScript does not produce;
 //! - `missing_exact_assertion`: the TypeScript model carries no row-owned
-//!   changed-observable or exact-discriminator fact. `MissingDiscriminatorFact`
-//!   is finding-wide, so the token would require borrowing it.
+//!   changed-observable or exact-discriminator fact.
 //!
 //! Bun bridge findings are built in `bun_bridge.rs`, never reach this module,
 //! and keep `miss: None`.
@@ -102,23 +112,16 @@ pub(crate) fn ts_row_miss(
         Disp::RejectedLocalShadow | Disp::RejectedUnrelatedImportOrDestructure => {
             Some(RelatedTestMiss::NoCallPath)
         }
-        // The call reaches a replacement. An admitted strong family
-        // assertion observes that replacement; anything weaker or unproven
-        // leaves only the missing path.
+        // The call reaches a replacement, so the row does call something, but
+        // whether the assertion observes the changed owner is unknown.
         Disp::RejectedOwnerModuleMock | Disp::RejectedSpyFabrication => {
-            match (admission, selection.assertion()) {
-                (TypeScriptAssertionAdmission::Recognized, Some(assertion))
-                    if is_strong(&assertion.oracle_strength) =>
-                {
-                    Some(RelatedTestMiss::AssertionNotObserving)
-                }
-                _ => Some(RelatedTestMiss::NoCallPath),
-            }
+            admitted_assertion_row(admission, test)
+                .then_some(RelatedTestMiss::ObservationUnconfirmed)
         }
         // Identity is possible but unproved, or the binding cannot be placed.
         // A relationship exists only when an assertion was admitted.
         Disp::OwnerNameCallUnanchored | Disp::UnresolvedAliasOrReexport => {
-            (admission == TypeScriptAssertionAdmission::Recognized && !test.assertions.is_empty())
+            admitted_assertion_row(admission, test)
                 .then_some(RelatedTestMiss::ObservationUnconfirmed)
         }
         // The path is established (a module entry's path is real but
@@ -129,6 +132,11 @@ pub(crate) fn ts_row_miss(
     }
 }
 
+/// A relationship exists only when an assertion was admitted.
+fn admitted_assertion_row(admission: TypeScriptAssertionAdmission, test: &TypeScriptTest) -> bool {
+    admission == TypeScriptAssertionAdmission::Recognized && !test.assertions.is_empty()
+}
+
 fn established_path_miss(
     context: &TsRowMissContext<'_>,
     candidate: &TypeScriptRelatedCandidate<'_>,
@@ -137,27 +145,22 @@ fn established_path_miss(
     admission: TypeScriptAssertionAdmission,
     selection: TypeScriptAssertionSelection<'_>,
 ) -> Option<RelatedTestMiss> {
-    // 2. Assertion admission. Only established absence is `no_assertion`;
-    // an unresolved assertion-like construct stays unknown.
-    match admission {
-        TypeScriptAssertionAdmission::NoAssertionLike => {
-            return Some(RelatedTestMiss::NoAssertion);
-        }
-        TypeScriptAssertionAdmission::Unresolved => return None,
-        TypeScriptAssertionAdmission::Recognized => {}
+    // 2. Assertion admission. Absence is never claimed (see the module docs),
+    // so an unresolved or merely unobserved test keeps no reason.
+    if admission != TypeScriptAssertionAdmission::Recognized {
+        return None;
     }
     let assertion = match selection {
         TypeScriptAssertionSelection::Selected(assertion) => assertion,
-        // Every admitted assertion observes another behavior family; a strong
-        // one is typed evidence that it observes another sink. A weak one
-        // proves nothing about a sink, so the row stays unknown.
+        // Every admitted assertion observes another behavior family. A strong
+        // one leaves the observed sink unconfirmed; a weak one says nothing.
         TypeScriptAssertionSelection::NoFamilyRelevant => {
             return candidate
                 .test
                 .assertions
                 .iter()
                 .any(|assertion| is_strong(&assertion.oracle_strength))
-                .then_some(RelatedTestMiss::AssertionNotObserving);
+                .then_some(RelatedTestMiss::ObservationUnconfirmed);
         }
         TypeScriptAssertionSelection::NoAssertion => return None,
     };
@@ -171,10 +174,11 @@ fn established_path_miss(
     if !is_strong(strength) {
         return Some(RelatedTestMiss::WeakAssertion);
     }
-    // 4. Predicate activation: only the row's own module-derived boundary
-    // fact may say the input misses the boundary.
+    // 4. Predicate activation: the row's own module-derived boundary fact
+    // says its input misses the boundary. The stronger `missing_input` prose
+    // is withheld, so the row reports the unconfirmed observation.
     if activation == TypeScriptPredicateActivation::MissedBoundary {
-        return Some(RelatedTestMiss::MissingInput);
+        return Some(RelatedTestMiss::ObservationUnconfirmed);
     }
     // 7. Observation. A module entry's own code stands between the assertion
     // and the owner, so observation is never confirmed from here.

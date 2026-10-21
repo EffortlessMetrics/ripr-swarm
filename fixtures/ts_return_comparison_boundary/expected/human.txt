@@ -20,7 +20,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: return total > 100;
   Missing discriminator (1 of 2): Related tests reach `isLarge` with a strong oracle, but no strong assertion observes a `isLarge(...)` call at the changed predicate boundary `total == 100`; inputs on one side of…
-  Related test: tests/pricing.test.ts:3 large orders (no test input reaches `total == 100`)
+  Related test: tests/pricing.test.ts:3 large orders (ripr could not confirm that this assertion observes the changed behavior)
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `total == 100`; no actionable repair packet is emitted until verify, receipt, and
     edit-boundary fields are available

@@ -515,3 +515,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_monorepo_package_local (23)
+
+Reason:
+RIPR-SPEC-0224: typescript row-local miss narrowed after review (#5495): no_assertion, missing_input and assertion_not_observing withheld; class, stages and decision fields unchanged
+
+Command:
+`cargo xtask goldens bless typescript_monorepo_package_local --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
