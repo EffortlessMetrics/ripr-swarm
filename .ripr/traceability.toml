@@ -9123,6 +9123,12 @@ tests = [
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::wire_message_contains_honest_may_language_and_no_coverage_claim",
   "crates/ripr/src/output/human.rs::tests::human_output_surfaces_static_limitation_detail",
   "crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable",
+  "crates/ripr/src/analysis/classifier.rs::tests::given_uncalled_owner_in_manifest_proc_macro_crate_without_markers_when_classified_then_static_unknown",
+  "crates/ripr/src/analysis/classifier.rs::tests::given_non_library_target_of_proc_macro_package_when_classified_then_still_no_static_path",
+  "crates/ripr/src/analysis/classifier.rs::tests::given_proc_macro_marker_only_in_comment_or_string_of_ordinary_crate_when_classified_then_still_no_static_path",
+  "crates/ripr/src/analysis/facts/member_crates.rs::tests::a_dirty_manifest_does_not_flip_the_committed_answer",
+  "crates/ripr/tests/proc_macro_no_static_path.rs::proc_macro_library_reads_static_unknown_in_findings_json_and_human",
+  "crates/ripr/tests/proc_macro_no_static_path.rs::ordinary_library_with_the_same_source_keeps_no_static_path",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -9136,6 +9142,8 @@ code = [
   "crates/ripr/src/analysis/classify/transitive_reach.rs",
   "crates/ripr/src/analysis/classify/mod.rs",
   "crates/ripr/src/analysis/language/rust/mod.rs",
+  "crates/ripr/src/analysis/classifier.rs",
+  "crates/ripr/src/analysis/facts/member_crates.rs",
   "crates/ripr/src/output/human/sections.rs",
 ]
 outputs = [

@@ -240,6 +240,14 @@ pub(in crate::analysis) struct RevealOutcome {
     pub(in crate::analysis) owner_pin_credited: bool,
 }
 
+/// Summaries of the `no` observe/discriminate stages when no related test
+/// exists. They rest on "no reachable test", so a finding whose reach later
+/// becomes unknown (proc-macro code, #8999) replaces them.
+pub(in crate::analysis) const NO_REACHABLE_TEST_OBSERVE_SUMMARY: &str =
+    "No reachable test oracle found";
+pub(in crate::analysis) const NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY: &str =
+    "No assertion can discriminate the changed behavior without a reachable test";
+
 #[allow(
     clippy::too_many_arguments,
     reason = "reveal's grouped inputs plus the optional RIPR-SPEC-0229 arm selector"
@@ -260,12 +268,12 @@ pub(in crate::analysis) fn reveal_outcome(
             observe: StageEvidence::new(
                 StageState::No,
                 Confidence::Medium,
-                "No reachable test oracle found",
+                NO_REACHABLE_TEST_OBSERVE_SUMMARY,
             ),
             discriminate: StageEvidence::new(
                 StageState::No,
                 Confidence::Medium,
-                "No assertion can discriminate the changed behavior without a reachable test",
+                NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY,
             ),
             related: Vec::new(),
             related_total: 0,
