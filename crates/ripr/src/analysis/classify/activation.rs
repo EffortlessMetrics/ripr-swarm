@@ -864,6 +864,9 @@ fn missing_discriminator_facts(
             &mut returned_unresolved,
         )
         && returned_unresolved.is_none()
+        && !owner_fn.is_some_and(|owner| {
+            observed_input_separates_threshold_move(&view, owner, related_tests)
+        })
     {
         missing.push(fact);
     }
@@ -914,6 +917,148 @@ fn missing_discriminator_facts(
         return Vec::new();
     }
     missing
+}
+
+/// Whether the owner may compare something other than the caller's value for
+/// `name`. Coarse and fail-closed: true when `name` occurs as a token in the
+/// body before the probe line at all (any `let`, `for`, `if let`, `while let`,
+/// match-arm or closure binding, or any use that could feed a rebinding), when
+/// the probe line itself carries a binding form beside it, or when `name` is
+/// ever assigned or bound `mut`. A true result only declines the
+/// intermediate-input reading and keeps the gap (#9147).
+fn parameter_may_be_rebound(owner: &FunctionSummary, name: &str, predicate_line: usize) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let tokens = |text: &str| {
+        text.match_indices(name)
+            .filter(|(start, _)| {
+                !text[..*start].chars().next_back().is_some_and(is_word)
+                    && !text[start + name.len()..]
+                        .chars()
+                        .next()
+                        .is_some_and(is_word)
+            })
+            .map(|(start, _)| start)
+            .collect::<Vec<_>>()
+    };
+    let lines: Vec<&str> = masked.lines().collect();
+    let probe_index = predicate_line.saturating_sub(owner.start_line);
+    // The signature is everything up to the body's opening brace.
+    let body_start = masked.find('{').map_or(0, |at| at + 1);
+    let before_probe = lines
+        .iter()
+        .take(probe_index)
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n");
+    if before_probe.len() > body_start && !tokens(&before_probe[body_start..]).is_empty() {
+        return true;
+    }
+    let probe_text = if probe_index == 0 {
+        lines
+            .first()
+            .map_or("", |line| &line[body_start.min(line.len())..])
+    } else {
+        lines.get(probe_index).copied().unwrap_or("")
+    };
+    if !tokens(probe_text).is_empty()
+        && ["let ", "|", "=>", " in ", "match "]
+            .iter()
+            .any(|form| probe_text.contains(form))
+    {
+        return true;
+    }
+    tokens(&masked).into_iter().any(|start| {
+        let after = masked[start + name.len()..].trim_start();
+        let assigned =
+            after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>")
+                || ["+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="]
+                    .iter()
+                    .any(|operator| after.starts_with(operator));
+        assigned || masked[..start].trim_end().ends_with("mut")
+    })
+}
+
+/// Whether an observed exact input of the compared parameter separates the old
+/// and new returned comparison when only its integer-literal threshold moved
+/// (`x > 100` to `x > 102`: `thr(101)` is true before and false after). Such an
+/// input is a discriminator even though it equals neither threshold, so the
+/// equality-boundary gap must not be borrowed (#9147). Fail-closed: any shape
+/// this cannot read exactly (a different operand, a non-parameter or reversed
+/// left side, a suffixed or computed literal, a non-integer input) declines
+/// and leaves the gap in place.
+fn observed_input_separates_threshold_move(
+    view: &Probe,
+    owner: &FunctionSummary,
+    related_tests: &[&TestSummary],
+) -> bool {
+    fn parts(expression: &str) -> Option<(&'static str, String, i128)> {
+        for operator in [">=", "<=", "==", "!=", ">", "<"] {
+            if let Some((left, right)) = expression.split_once(operator) {
+                let (left, right) = (clean_operand(left), clean_operand(right));
+                if left.is_empty() {
+                    return None;
+                }
+                return Some((operator, left, plain_integer(&right)?));
+            }
+        }
+        None
+    }
+    fn plain_integer(text: &str) -> Option<i128> {
+        let digits = text.trim().replace('_', "");
+        let unsigned = digits.strip_prefix('-').unwrap_or(&digits);
+        if unsigned.is_empty() || !unsigned.chars().all(|ch| ch.is_ascii_digit()) {
+            return None;
+        }
+        digits.parse().ok()
+    }
+    fn holds(operator: &str, value: i128, threshold: i128) -> bool {
+        match operator {
+            ">=" => value >= threshold,
+            "<=" => value <= threshold,
+            "==" => value == threshold,
+            "!=" => value != threshold,
+            ">" => value > threshold,
+            _ => value < threshold,
+        }
+    }
+    let Some(before) = view.before.as_deref() else {
+        return false;
+    };
+    let (Some((old_op, old_left, old_threshold)), Some((new_op, new_left, new_threshold))) =
+        (parts(before), parts(&view.expression))
+    else {
+        return false;
+    };
+    let parameters = function_parameters(owner);
+    if old_left != new_left
+        || !parameters.contains(&new_left)
+        || parameter_may_be_rebound(owner, &new_left, view.location.line)
+    {
+        return false;
+    }
+    // Only unqualified owner calls count: `rival::thr(101)` or `x.thr(101)`
+    // may be another function, so a qualified call is never a separating
+    // input. Helper-transferred rows are not read.
+    let call_pattern = format!("{}(", owner.name);
+    owner_call_parameter_values_where(
+        related_tests,
+        &owner.name,
+        is_free(owner),
+        &parameters,
+        |_, call| {
+            call.text.match_indices(&call_pattern).all(|(start, _)| {
+                !call.text[..start]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|ch| ch == ':' || ch == '.')
+            })
+        },
+    )
+    .iter()
+    .filter_map(|row| parameter_value(row, &new_left))
+    .filter_map(|cell| plain_integer(&cell.value))
+    .any(|value| holds(old_op, value, old_threshold) != holds(new_op, value, new_threshold))
 }
 
 #[allow(
