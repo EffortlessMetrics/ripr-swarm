@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- Match-arm selection reads an integer scrutinee computed by one division or remainder by a literal (`match status / 100`), treats a value-equal literal respelling (`3` to `0x3`) as an unchanged pattern, and lets a constant-row `for` table lend its cells to the owner call, so `for (status, want) in [(301, "redirect"), ..]` with an exact `assert_eq!` credits the arm it selects. Table rows never name an arm as unselected (RIPR-SPEC-0229 decisions 6 and 7) (#7989).
