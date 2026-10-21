@@ -28,7 +28,7 @@ Linked PRs:
 
 Support-tier impact:
 
-- None. The `rust_test_stub` document gains one optional block and the
+- None under [SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md). The `rust_test_stub` document gains one optional block and the
   human output gains two lines; no command accepts or executes anything
   new, and the repair before phase is unchanged.
 
