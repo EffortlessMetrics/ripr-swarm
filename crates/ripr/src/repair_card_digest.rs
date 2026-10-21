@@ -176,6 +176,7 @@ mod tests {
         RepairCardSubject {
             seam_id: "seam:demo".to_string(),
             canonical_gap_id: Some("gap:demo".to_string()),
+            seam_content_gap_id: None,
             finding_id: Some("probe:demo".to_string()),
         }
     }

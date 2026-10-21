@@ -3608,6 +3608,7 @@ impl UnextractedTestFinder<'_> {
             Statement::TryStatement(try_stmt) => {
                 self.visit_statements(&try_stmt.block.body);
                 if self.gap.is_none()
+                    && !super::oracle::try_catch_is_unreachable(try_stmt)
                     && let Some(handler) = &try_stmt.handler
                 {
                     self.visit_statements(&handler.body.body);

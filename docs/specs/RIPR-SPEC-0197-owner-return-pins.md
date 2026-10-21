@@ -2563,3 +2563,17 @@ the leading `return ` and trailing `;` are dropped from the changed and prior
 text before boundary extraction (#9116). Only a top-level comparison normalises;
 a comparison nested in a call, index, turbofish (`x.parse::<i32>() > 5`) or
 compound value keeps the return-value reading.
+
+When only the integer-literal threshold (or, for `==`/`!=`, the literal) of the compared owner parameter moves
+by more than one (`x > 100` to `x > 102`), an observed exact input of that
+parameter that separates the old and new comparison (`thr(101)`: true before,
+false after) is a discriminator even though it equals neither threshold, so the
+equality-boundary gap is not borrowed and the reading stays as it was (#9147).
+The check only ever removes a downgrade: it declines, and the gap stays, for a
+suffixed or computed literal, a non-parameter or reversed left operand, a
+non-integer input or an operator-family change it cannot evaluate. Inputs on
+the same side of both thresholds keep the gap.
+
+The intermediate-input reading also declines when the owner may compare a value other than the caller's: any occurrence of the parameter name in the body before the compared line (a `let`, pattern, `for`, `if let`, `match` arm or closure binding, or any other use), a binding form beside it on the compared line, a `mut` binding or borrow of it, or any assignment to it (`x += 5`). The gap stays in those cases (#9147).
+
+Only unqualified owner calls supply separating inputs: a module-qualified or method call of the same name (`rival::thr(101)`) may be another function and is never counted, and helper-transferred rows are not read (#9147).

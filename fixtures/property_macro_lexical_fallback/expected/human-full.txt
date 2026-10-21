@@ -33,9 +33,7 @@ Evidence
 
 Weakness
   - No detected boundary input for the changed predicate
-  - No relevant oracle was detected
   - No static test path reaches the changed owner
-  - No strong discriminator was detected
 
 Stop reasons:
   - macro_reach_unresolved — a candidate test path stops at a same-repo macro ripr does not expand

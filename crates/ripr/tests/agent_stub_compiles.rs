@@ -681,6 +681,91 @@ fn check_prints_the_stub_refusal_for_a_field_construction_finding() -> Result<()
     scratch.cleanup()
 }
 
+/// #8444: a finding on a continuation line holds no seam of its own, so
+/// `agent stub --at` stubs the nearest gap. `check` must print the line that
+/// stub is for, not the finding's line, and the printed command must run as
+/// printed with no substitution note.
+#[test]
+fn check_routes_a_continuation_line_finding_to_the_line_the_stub_targets() -> Result<(), String> {
+    const LIB: &str = "pub fn whole(total: u64, unit: u64) -> Option<u64> {\n    Some(\n        total / (unit + 1),\n    )\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn runs() {\n        assert!(whole(4, 2).is_some());\n    }\n}\n";
+    let scratch = Scratch::new()?;
+    let root = scratch.directory.clone();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"stub_continuation\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), LIB).map_err(|error| error.to_string())?;
+    let diff = scratch.directory.join("continuation.diff");
+    std::fs::write(
+        &diff,
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3 +3 @@\n-        total / unit,\n+        total / (unit + 1),\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let stdout = check_human(&root, &diff)?;
+    assert!(
+        stdout.contains("src/lib.rs:3"),
+        "the finding is on line 3: {stdout}"
+    );
+    let args = printed_stub_args(&stdout)
+        .ok_or_else(|| format!("a stubbable gap prints the route: {stdout}"))?;
+    assert!(
+        args.iter().any(|arg| arg == "src/lib.rs:2"),
+        "the route names the line the stub targets: {args:?}"
+    );
+    assert!(
+        !args.iter().any(|arg| arg == "src/lib.rs:3"),
+        "the route must not name the finding line, which stubs another gap: {args:?}"
+    );
+    let mut stub = ripr_command();
+    stub.args(&args).arg("--json");
+    let output = run_bounded(stub, &root, "stub", Duration::from_mins(2))?;
+    let stub_stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    assert!(output.status.success(), "{stub_stdout}");
+    let document: serde_json::Value = serde_json::from_str(&stub_stdout)
+        .map_err(|error| format!("stub JSON: {error}: {stub_stdout}"))?;
+    let substituted = document["warnings"]
+        .as_array()
+        .is_some_and(|warnings| warnings.iter().any(|w| w.to_string().contains("nearest")));
+    assert!(
+        !substituted,
+        "the printed line needs no substitution: {stub_stdout}"
+    );
+    scratch.cleanup()
+}
+
+/// #8444: when the nearest gap cannot be named by its own line (two seams
+/// share it, so `--at` refuses), `check` prints no stub command rather than
+/// one that fails or stubs a different gap.
+#[test]
+fn check_prints_no_route_when_the_nearest_gap_line_is_ambiguous() -> Result<(), String> {
+    const LIB: &str = "pub fn pair(a: u64, b: u64) -> (Option<u64>, Option<u64>) {\n    (Some(a + 1), Some(\n        b + 2,\n    ))\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn runs() {\n        assert!(pair(1, 2).0.is_some());\n    }\n}\n";
+    let scratch = Scratch::new()?;
+    let root = scratch.directory.clone();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"stub_ambiguous\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), LIB).map_err(|error| error.to_string())?;
+    let diff = scratch.directory.join("ambiguous.diff");
+    std::fs::write(
+        &diff,
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3 +3 @@\n-        b + 1,\n+        b + 2,\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let stdout = check_human(&root, &diff)?;
+    assert!(
+        stdout.contains("src/lib.rs:3"),
+        "the finding is on line 3: {stdout}"
+    );
+    assert!(
+        printed_stub_args(&stdout).is_none(),
+        "an ambiguous nearest gap must not print a stub command: {stdout}"
+    );
+    scratch.cleanup()
+}
+
 /// `check` output for a one-line change to line 2 of a scratch crate.
 fn check_for_changed_line_two(lib: &str, old: &str, new: &str) -> Result<String, String> {
     let scratch = Scratch::new()?;
@@ -695,6 +780,23 @@ fn check_for_changed_line_two(lib: &str, old: &str, new: &str) -> Result<String,
     let stdout = check_human(&root, &diff)?;
     scratch.cleanup()?;
     Ok(stdout)
+}
+
+/// #8444: the consumer's reference to a changed constant can sit on a line
+/// that holds no seam (`let cap = CAP;`); the route must name the line of the
+/// seam the stub targets, and the printed command must run with no
+/// substitution note.
+#[test]
+fn check_routes_a_changed_constant_to_the_consumer_seam_line() -> Result<(), String> {
+    const LIB: &str = "//! caps\nconst CAP: u64 = 5;\n\npub fn billed() -> u64 {\n    let cap = CAP;\n    cap + 1\n}\n";
+    let stdout = check_for_changed_line_two(LIB, "const CAP: u64 = 10;", "const CAP: u64 = 5;")?;
+    assert!(stdout.contains("Write a test for it:"), "{stdout}");
+    assert!(
+        stdout.contains("--at src/lib.rs:6 --kind return_value"),
+        "the route names the seam line, not the `let cap = CAP;` reference: {stdout}"
+    );
+    assert!(!stdout.contains("--at src/lib.rs:5 "), "{stdout}");
+    Ok(())
 }
 
 /// #8361: a changed `const` has no seam of its own, so `check` routes it to

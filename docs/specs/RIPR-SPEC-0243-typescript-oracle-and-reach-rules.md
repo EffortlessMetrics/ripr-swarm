@@ -28,6 +28,7 @@ Linked issues:
 - #7315 (literal rejection equality observes the rejected reason)
 - #8714 (conditional-branch assertion guard and disclosure)
 - #9138 (assertion after an always-exiting try/finally)
+- #9150 (bare non-throwing exit first in a try block makes its catch unreachable)
 - #8959 (lexically bound runner registrations)
 
 Linked PRs:
@@ -938,7 +939,15 @@ to `amount - 20`, and `tests/lib.test.ts` has
     the assertion after it is withheld. Undecidable shapes keep the later
     credit: `try { if (x) { return; } } finally {}`, a `catch` that falls
     through (`try { return; } catch (e) {}`), and a finalizer whose exit is
-    conditional. Assertions before the `try` and in its finalizer stay
+    conditional. When the `try` block's FIRST statement is a non-throwing
+    exit (a bare `return;`, a `return` of a plain literal, `break` or
+    `continue`), nothing can throw into the `catch`, so the `catch` never
+    runs and the `try` exits regardless of it (`try { return; } catch (e)
+    {}`, #9150). Assertions inside that unreachable `catch` are withheld too, and
+    its conditionals raise no credit gap. Any other first statement keeps the fail-closed catch
+    requirement: `try { work(); return; } catch (e) {}`, `try { return f();
+    } catch (e) {}` and `try { throw e; } catch (e) {}` stay credited.
+    Assertions before the `try` and in its finalizer stay
     credited. The one shared predicate also bounds the conditional-credit
     probe and walker.
 12. `src/lib.ts` is `export function parse(s: string): string { if (s ===
