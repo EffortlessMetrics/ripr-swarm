@@ -12832,12 +12832,13 @@ Accepted winner and losing candidate disposition (when decided): not decided
 ";
 
 #[test]
-fn pr_body_template_complete_body_passes() {
+fn pr_body_template_complete_body_passes() -> Result<(), String> {
     assert!(pr_body_template_missing_lines(COMPLETE_PR_BODY).is_empty());
     // The `gh pr view --json body` shape unwraps to the same body.
     let json = serde_json::json!({ "body": COMPLETE_PR_BODY }).to_string();
-    let body = pr_body_from_input_text(&json).expect("json body input");
+    let body = pr_body_from_input_text(&json)?;
     assert!(pr_body_template_missing_lines(&body).is_empty());
+    Ok(())
 }
 
 #[test]
