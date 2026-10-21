@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-7976-shadowed-binding",
+  "origin": "authored",
+  "version_label": "authored 2026-10-19; paired guard evidence for #7976 / #8866",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "e905d5ff33ca024c976b908ea59a00ef46c3f0b1084ec108a901bc2a83da4615"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "bb9c5e5ff1ff8ebd775db6912e797c59bbd3a4f86484f6fd94da50d3abeb5f26"
+    }
+  ]
+}

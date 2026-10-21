@@ -21,6 +21,8 @@ pub use load::{
     probe_working_tree_tracked_changes_within, resolve_base_commit, resolve_default_base_commit,
     resolve_effective_base, working_tree_has_tracked_changes,
 };
+pub(crate) use parse::parse_unified_diff_with_metadata;
+
 pub(crate) use model::lines_look_alike;
 #[allow(
     unused_imports,
@@ -29,4 +31,7 @@ pub(crate) use model::lines_look_alike;
 pub use model::{ChangedFile, ChangedLine};
 pub use parse::parse_unified_diff;
 pub(crate) use parse::parse_unified_diff_bounded_with_metadata;
-pub(crate) use path::is_ripr_artifact_path;
+pub(crate) use path::{
+    artifact_root_gitignore_entry, artifact_root_pathspec, is_ripr_artifact_path_under,
+    ripr_artifact_roots,
+};

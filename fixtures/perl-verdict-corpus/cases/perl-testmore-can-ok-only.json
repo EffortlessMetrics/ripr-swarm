@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testmore-can-ok-only.json",
-    "sha256": "135e72d52472fc532608a29d811370ad240e9d78c999c22a5b1deb90e66451cc",
+    "sha256": "b58d14a209a75f3400842217c8bd36c84bfff1dc28bca1679e4f6f631a2dc3d9",
     "provenance": "producer"
   }
 }

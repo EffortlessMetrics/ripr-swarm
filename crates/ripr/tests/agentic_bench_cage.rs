@@ -630,17 +630,25 @@ fn b6_out_of_surface_edit_fails_closed() -> Result<(), String> {
             "attempt status must report the failed state:\n{attempt_status}"
         ));
     }
-    if json_str(&attempt_status, "/next_action/step", "attempt status")? != "repair_attempt_before"
+    // #8766: the attempt's own test edit grips the seam, so the repair gate
+    // no longer admits a new start. Status must not hand over a before-phase
+    // command the same build would refuse; the undo recovery stays.
+    if let Some(step) = attempt_status
+        .pointer("/next_action/step")
+        .and_then(Value::as_str)
     {
         return Err(format!(
-            "attempt status must route recovery through a fresh before phase:\n{attempt_status}"
+            "a gripped seam must not be routed through a fresh before phase (step {step}):\n{attempt_status}"
         ));
     }
-    let command = json_str(&attempt_status, "/next_action/command", "attempt status")?;
-    if !command.contains("--phase before") || !command.contains(journey.seam_id.as_str()) {
+    let reason = json_str(
+        &attempt_status,
+        "/attempt/last_after_refusal/reason",
+        "attempt status",
+    )?;
+    if reason.contains("--phase before") || !reason.contains("undo the refused changes") {
         return Err(format!(
-            "attempt status recovery command must name the before phase for seam {}:\n{attempt_status}",
-            journey.seam_id
+            "the recorded refusal must keep the undo recovery and drop the start recipe:\n{attempt_status}"
         ));
     }
     Ok(())

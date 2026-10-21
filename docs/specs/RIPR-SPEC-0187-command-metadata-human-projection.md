@@ -83,6 +83,12 @@ Authority:
    use completed-or-failed. A contradicting `exit` field is a catalog
    integrity failure. Human help screens do not render this field (#5065).
 
+Fresh `explain` and `context` invocations run the check pipeline and may populate
+the disposable analysis cache under `target/ripr/cache/` or `RIPR_CACHE_DIR`.
+Their `WritesArtifacts` rows disclose that conditional output; stored-finding
+`--from` replay need not populate the cache. The inspect-change workflow mirrors
+these operation and output facts.
+
 Metadata lookup is static data. It does not run analysis, spawn a process,
 open a network, mutate a workspace, or write a product artifact.
 

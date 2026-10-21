@@ -526,3 +526,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_pytest_oracle_shapes (18)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless python_pytest_oracle_shapes --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

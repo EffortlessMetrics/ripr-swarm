@@ -39,6 +39,10 @@ pub(crate) struct OwnerPinAssertions {
     parsed: bool,
     functions: BTreeMap<FunctionKey, FunctionAssertions>,
     module_declarations: BTreeMap<(usize, String), ModuleDeclarationAdmission>,
+    /// Whether any item in the file may rebind `test` (#6749), judged
+    /// without regard to scope. A macro-generated test is not in the file's
+    /// text, so its expansion cannot see these items; the file answers for it.
+    file_binds_test: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -200,6 +204,13 @@ impl OwnerPinAssertions {
         }
     }
 
+    /// Whether some `use` or `extern crate` of the file binds `test`,
+    /// whatever module holds it. For tests whose own module is not in the
+    /// file's text.
+    pub(crate) fn file_binds_test(&self) -> bool {
+        self.file_binds_test
+    }
+
     /// The check helper `function` borrows `assertion` from (#6482), or
     /// `None` when the assertion is the test's own or unknown. Callers ask
     /// only after [`Self::refusal`] admitted the assertion.
@@ -312,7 +323,9 @@ pub(crate) enum MacroBindingKind {
     /// `#[macro_use]` on an `extern crate` or a module ripr did not resolve
     /// to an indexed file; the text is the item it is attached to.
     MacroUse(String),
-    /// A glob import from outside the workspace; the text is its path.
+    /// A glob import from outside the workspace and the manifest-verified
+    /// standard crates (`std`, `core`; `alloc` stays foreign, #8388); the
+    /// text is its path.
     ForeignGlob(String),
     /// A `macro_rules!` or `macro` definition with the trusted name.
     Definition,
@@ -472,13 +485,18 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
         if json_namespace_rebound(&node) {
             names.insert("json".to_string());
         }
+        if renames_standard_crate(&node) {
+            return MacroBindingCandidates::Any;
+        }
         if let Some(name) = ast::MacroRules::cast(node.clone())
             .and_then(|item| item.name())
             .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()))
         {
             names.extend(trusted(name.text()));
         }
-        if let Some(body) = macro_body_bindings(&node, &|name| trusted(name).is_some()) {
+        if let Some(body) =
+            macro_body_bindings(&node, &|name| trusted(name).is_some(), &|_, _, _| false)
+        {
             let trusted_name = ast::MacroRules::cast(node.clone())
                 .and_then(|item| item.name())
                 .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()))
@@ -545,6 +563,19 @@ pub(crate) fn macro_binding_candidates(source: &ast::SourceFile) -> MacroBinding
     MacroBindingCandidates::Names(names)
 }
 
+/// An `extern crate other as std;` (or `core`, `alloc`) alias.
+fn renames_standard_crate(node: &SyntaxNode) -> bool {
+    ast::ExternCrate::cast(node.clone())
+        .and_then(|item| item.rename())
+        .and_then(|rename| rename.name())
+        .is_some_and(|name| {
+            matches!(
+                name.text().trim_start_matches("r#"),
+                "std" | "core" | "alloc"
+            )
+        })
+}
+
 // [`macro_binding_candidates`] is a stored over-approximation of this scan:
 // a new site kind, or a wider existing one, must widen it too and bump
 // `FILE_FACT_CACHE_SCHEMA_VERSION`, or cached candidates hide the new sites.
@@ -560,6 +591,7 @@ fn macro_binding_ambiguities(
     if !(trusted.contains(&"json") && source.contains("serde_json")
         || source.contains("macro")
         || source.contains("use")
+        || source.contains("extern")
         || source.contains("no_implicit_prelude")
         || source.contains('!'))
     {
@@ -626,6 +658,18 @@ fn macro_binding_ambiguities(
             })
     };
     for node in parse.tree().syntax().descendants() {
+        // `extern crate other as std;` at a crate root rebinds the name for
+        // every file, so a standard-root glob elsewhere cannot be trusted.
+        if let Some(rename) = ast::ExternCrate::cast(node.clone()).and_then(|k| k.rename())
+            && rename.name().is_some_and(|name| {
+                matches!(
+                    name.text().trim_start_matches("r#"),
+                    "std" | "core" | "alloc"
+                )
+            })
+        {
+            ambiguous.extend(all(line_of(&node), MacroBindingKind::Import, false));
+        }
         // An extern-crate alias or module in another file can defeat this
         // import's root even when that file never mentions `json` itself.
         if trusted.contains(&"json") && json_namespace_rebound(&node) {
@@ -661,7 +705,17 @@ fn macro_binding_ambiguities(
                 ));
             }
         }
-        if let Some(body) = macro_body_bindings(&node, &|name| trusted.contains(&name)) {
+        if let Some(body) = macro_body_bindings(
+            &node,
+            &|name| trusted.contains(&name),
+            // The same rule as a `use` item outside a macro: a verified,
+            // unshadowed drop-in import keeps the assertion's meaning (#8149).
+            &|root, name, external| {
+                drop_in_crates(name).contains(&root)
+                    && !drop_in_shadowed(root, external)
+                    && drop_in_verified(root)
+            },
+        ) {
             let macro_name = ast::MacroRules::cast(node.clone())
                 .and_then(|item| item.name())
                 .or_else(|| ast::MacroDef::cast(node.clone()).and_then(|item| item.name()))
@@ -832,7 +886,46 @@ fn macro_binding_ambiguities(
                 || packages
                     .iter()
                     .any(|package| package.replace('-', "_") == root);
+            // #8388: a glob rooted at the standard crates (`use
+            // core::simd::prelude::*`) names only items the standard library
+            // defines, and its one `assert_eq!` is the standard macro, so it
+            // cannot rebind a trusted name. A workspace package, module or
+            // alias taking the root's name can, which `drop_in_shadowed`
+            // already answers for the drop-in crates; that case, and every
+            // glob from any other root, stays a foreign glob.
+            // A plain import that binds the root name (`use crate::other::std;`)
+            // also takes it over for the module; `use x as std` is a rename
+            // and is caught by `drop_in_shadowed`.
+            let root_imported = || {
+                parse
+                    .tree()
+                    .syntax()
+                    .descendants()
+                    .filter_map(ast::UseTree::cast)
+                    .filter(|item| {
+                        item.star_token().is_none()
+                            && item.use_tree_list().is_none_or(|list| {
+                                // `use other::std::{self}` binds `std` too.
+                                list.use_trees()
+                                    .any(|leaf| leaf.syntax().text().to_string().trim() == "self")
+                            })
+                    })
+                    .any(|item| {
+                        item.path()
+                            .and_then(|path| path.segment())
+                            .and_then(|segment| segment.name_ref())
+                            .is_some_and(|name| name.text().trim_start_matches("r#") == root)
+                    })
+            };
+            let standard_root = matches!(root, "std" | "core" | "alloc") && !root_imported();
             for item in tree.syntax().descendants().filter_map(ast::UseTree::cast) {
+                if item.star_token().is_some()
+                    && standard_root
+                    && !drop_in_shadowed(root, external)
+                    && drop_in_verified(root)
+                {
+                    continue;
+                }
                 if item.star_token().is_some() && !own {
                     let path = import.syntax().text().to_string();
                     let line = line_of(&node);
@@ -900,36 +993,67 @@ fn macro_binding_ambiguities(
     // own calls opaque in turn.
     let mut bound: BTreeSet<String> = ambiguous.iter().map(|(name, _)| name.clone()).collect();
     let mut reported = BTreeSet::new();
+    // Calls spelled as tokens inside another call's tree (`dbg!(vec!(..))`)
+    // are no `MacroCall` nodes: the parser keeps `vec ! (..)` flat beside a
+    // nested tree. They count as calls of their bare name too (#8446).
+    let mut sites = Vec::new();
+    for node in parse.tree().syntax().descendants() {
+        if let Some(call) = ast::MacroCall::cast(node.clone()) {
+            if let (Some(path), Some(tree)) = (call.path(), call.token_tree()) {
+                sites.push((
+                    path.syntax().text().to_string(),
+                    tree,
+                    node.clone(),
+                    Some(call),
+                ));
+            }
+        } else if let Some(tree) = ast::TokenTree::cast(node.clone())
+            && let Some(name) = nested_call_name(&tree)
+        {
+            sites.push((name, tree, node.clone(), None));
+        }
+    }
     loop {
         let before = bound.len();
-        for node in parse.tree().syntax().descendants() {
-            let Some(call) = ast::MacroCall::cast(node.clone()) else {
-                continue;
-            };
-            let Some(path) = call.path() else { continue };
-            let path = path.syntax().text().to_string();
-            if !bound.contains(path.trim_start_matches("r#")) || !is_trusted_macro(&path, trusted) {
+        for (path, tree, node, call) in &sites {
+            if !bound.contains(path.trim_start_matches("r#")) || !is_trusted_macro(path, trusted) {
                 continue;
             }
-            let Some(tree) = call.token_tree() else {
-                continue;
-            };
             let tokens: Vec<_> = tree
                 .syntax()
                 .descendants_with_tokens()
                 .filter_map(|element| element.into_token())
                 .filter(|token| !token.kind().is_trivia())
                 .collect();
+            // As for an untrusted wrapper: an attribute in the arguments may
+            // be applied by the expansion to an item.
+            if let Some(attribute) = tokens.iter().find_map(|token| {
+                let word = token.text().trim_start_matches("r#");
+                matches!(word, "macro_use" | "no_implicit_prelude").then_some(word)
+            }) {
+                return all(
+                    line_of(node),
+                    MacroBindingKind::ArgumentAttribute {
+                        wrapper: path.clone(),
+                        attribute: attribute.to_string(),
+                    },
+                    false,
+                );
+            }
             // As for an untrusted wrapper: a macro whose only definition
             // shows an expansion that cannot bind a name stays transparent.
-            if binding_free_local_wrapper(&binding_free, &call, &tokens, trusted) {
+            // A nested call has no node to locate that definition from, so
+            // it never takes the exemption.
+            if call.as_ref().is_some_and(|call| {
+                binding_free_local_wrapper(&binding_free, call, &tokens, trusted)
+            }) {
                 continue;
             }
             for token in &tokens {
                 let name = token.text().trim_start_matches("r#");
                 if trusted.contains(&name) {
                     bound.insert(name.to_string());
-                    let line = line_of(&node);
+                    let line = line_of(node);
                     if !reported.insert((name.to_string(), line, path.clone())) {
                         continue;
                     }
@@ -952,6 +1076,23 @@ fn macro_binding_ambiguities(
     ambiguous
 }
 
+/// The bare name of a macro call written as `name ! (..)` tokens directly
+/// before a nested token tree, if any. A top-level call is a `MacroCall`
+/// node whose `!` follows a path node, so it never matches.
+fn nested_call_name(tree: &ast::TokenTree) -> Option<String> {
+    let mut previous = std::iter::successors(tree.syntax().prev_sibling_or_token(), |element| {
+        element.prev_sibling_or_token()
+    })
+    .filter(|element| !matches!(element, ra_ap_syntax::NodeOrToken::Token(token) if token.kind().is_trivia()));
+    let bang = previous.next()?.into_token()?;
+    if bang.text() != "!" {
+        return None;
+    }
+    let name = previous.next()?.into_token()?;
+    (name.kind() == ra_ap_syntax::SyntaxKind::IDENT)
+        .then(|| name.text().trim_start_matches("r#").to_string())
+}
+
 /// `pretty_assertions` exports `assert_eq!`/`assert_ne!` as drop-in
 /// replacements that panic exactly when the standard macros do (they only
 /// format the diff differently), so importing one under its own name keeps
@@ -963,13 +1104,18 @@ const DROP_IN_ASSERTION_CRATES: &[&str] = &["pretty_assertions"];
 /// is the one binding that makes the bare macro expect-test's.
 const EXPECT_TEST_CRATES: &[&str] = &["expect_test"];
 
-fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
-    let crates = match name {
+/// The crates whose export under `name` is a drop-in for the trusted macro.
+fn drop_in_crates(name: &str) -> &'static [&'static str] {
+    match name {
         "assert_eq" | "assert_ne" => DROP_IN_ASSERTION_CRATES,
         "expect" | "expect_file" => EXPECT_TEST_CRATES,
         "json" => &["serde_json"],
-        _ => return false,
-    };
+        _ => &[],
+    }
+}
+
+fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
+    let crates = drop_in_crates(name);
     // Ancestor trees run inner to outer; reverse each path, then the whole.
     let mut segments: Vec<String> = item
         .syntax()
@@ -1434,6 +1580,7 @@ fn transcriber_tokens(tokens: &[ra_ap_syntax::SyntaxToken]) -> Vec<&ra_ap_syntax
 fn macro_body_bindings(
     definition: &SyntaxNode,
     trusted: &dyn Fn(&str) -> bool,
+    drop_in_ok: &dyn Fn(&str, &str, bool) -> bool,
 ) -> Option<MacroBodyBindings> {
     use ra_ap_syntax::SyntaxKind::{BANG, COLON, COLON2, COMMA, DOLLAR, R_CURLY, SEMICOLON, STAR};
     if !ast::MacroRules::can_cast(definition.kind()) && !ast::MacroDef::can_cast(definition.kind())
@@ -1493,6 +1640,23 @@ fn macro_body_bindings(
                 let mut start = index + 1;
                 while matches!(kind(start), Some(COLON | COLON2)) {
                     start += 1;
+                }
+                // `use root::name;` of a verified drop-in binds the standard
+                // assertion's meaning, as it does outside a macro (#8149).
+                // A token tree keeps `::` as two `:` tokens, so accept both.
+                let separator = if kind(start + 1) == Some(COLON2) {
+                    1
+                } else if kind(start + 1) == Some(COLON) && kind(start + 2) == Some(COLON) {
+                    2
+                } else {
+                    0
+                };
+                if separator > 0
+                    && end == start + 2 + separator
+                    && let (Some(root), Some(name)) = (word(start), word(start + 1 + separator))
+                    && drop_in_ok(root, name, start > index + 1)
+                {
+                    continue;
                 }
                 // `$crate` is this crate; any other fragment is unknown.
                 let root = if kind(start) == Some(DOLLAR) {
@@ -1754,6 +1918,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
         return result;
     };
     result.parsed = true;
+    result.file_binds_test = file_binds_test_name(parse.tree().syntax());
     let lines = LineIndex::new(source);
     let empty_macros = local_empty_macros(parse.tree().syntax());
     let json_uses = literal_json_uses(&parse.tree());
@@ -2584,7 +2749,9 @@ fn item_context_refusal(item: &SyntaxNode) -> Option<AssertionContextRefusal> {
 /// the body, so it keeps the test out of the pin.
 fn runs_body_unchanged(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     if attr.simple_name().as_deref() == Some("test") {
-        return true;
+        return test
+            .parent()
+            .is_some_and(|module| builtin_test_attribute_holds(&module));
     }
     if attr.excl_token().is_some() {
         return false;
@@ -2608,6 +2775,79 @@ fn runs_body_unchanged(attr: &ast::Attr, test: &SyntaxNode) -> bool {
         bare_lock_bound_in_module(&path, &module) && serial_test_path_is_the_crate(&module)
     };
     admitted && lock_arguments_are_bare_keys(attr)
+}
+
+/// Whether a bare `#[test]` in `module` is libtest's built-in attribute. An
+/// import that binds the name `test` (`use skipper::serial as test`) makes it
+/// another attribute macro that may replace the body, in this module or, by
+/// `use super::*`, in an enclosing module of this file. A glob of another
+/// crate is refused by the macro-binding authority, and one of the
+/// workspace's own modules is not seen into.
+fn builtin_test_attribute_holds(module: &SyntaxNode) -> bool {
+    !extern_crate_binds_test(module)
+        && module_use_leaves(module)
+            .iter()
+            .all(|leaf| match &leaf.binding {
+                UseBinding::Name(binding) => unraw(binding) != "test",
+                UseBinding::Glob => {
+                    let Some(levels) = super_glob_levels(leaf) else {
+                        return true;
+                    };
+                    let mut parent = Some(module.clone());
+                    for _ in 0..levels {
+                        parent = parent.and_then(|items| enclosing_module_items(&items));
+                    }
+                    parent.is_none_or(|parent| builtin_test_attribute_holds(&parent))
+                }
+            })
+}
+
+/// Whether a direct `extern crate .. as test;` of `module` rebinds `test`.
+fn extern_crate_binds_test(module: &SyntaxNode) -> bool {
+    module
+        .children()
+        .filter_map(ast::ExternCrate::cast)
+        .any(|item| {
+            item.rename()
+                .and_then(|rename| rename.name())
+                .is_some_and(|name| unraw(name.text()) == "test")
+        })
+}
+
+/// How many modules up a `super::*` / `super::super::*` glob reaches.
+fn super_glob_levels(leaf: &UseLeaf) -> Option<usize> {
+    (!leaf.path.is_empty() && leaf.path.iter().all(|segment| segment == "super"))
+        .then_some(leaf.path.len())
+}
+
+/// The item list or source file around the module whose items are `module`,
+/// when this file holds it.
+fn enclosing_module_items(module: &SyntaxNode) -> Option<SyntaxNode> {
+    module
+        .parent()
+        .filter(|owner| ast::Module::can_cast(owner.kind()))
+        .and_then(|owner| owner.parent())
+}
+
+/// Scope-blind: whether any `use` or `extern crate` of the file binds
+/// `test`.
+fn file_binds_test_name(file: &SyntaxNode) -> bool {
+    file.descendants().any(|item| {
+        if let Some(extern_crate) = ast::ExternCrate::cast(item.clone()) {
+            return extern_crate
+                .rename()
+                .and_then(|rename| rename.name())
+                .is_some_and(|name| unraw(name.text()) == "test");
+        }
+        let Some(tree) = ast::Use::cast(item).and_then(|import| import.use_tree()) else {
+            return false;
+        };
+        let mut leaves = Vec::new();
+        flatten_use_tree(&tree, &[], &mut leaves);
+        leaves.iter().any(
+            |leaf| matches!(&leaf.binding, UseBinding::Name(binding) if unraw(binding) == "test"),
+        )
+    })
 }
 
 /// `tokio::test`, rooted or not. Only the crate-qualified path: a bare
@@ -4036,13 +4276,20 @@ fn std_thread_item(path: &ast::PathExpr, function: &ast::Fn) -> Option<String> {
         .collect();
     // `::thread::` names an extern crate `thread`, never the imported std
     // module, so only `::std::thread::` keeps its leading `::`.
-    let (item, needs_import) = if let Some(item) = text
+    // A bare `scope(..)` / `spawn(..)` (#8999) names std's function only
+    // through exactly one `use std::thread::<item>;` in the function's own
+    // module, and only when nothing else in the file is named `<item>`.
+    let (item, needs_import, bare) = if let Some(item) = text
         .strip_prefix("::std::thread::")
         .or_else(|| text.strip_prefix("std::thread::"))
     {
-        (item, false)
+        (item, false, false)
+    } else if let Some(item) = text.strip_prefix("thread::") {
+        (item, true, false)
+    } else if matches!(text.as_str(), "scope" | "spawn") {
+        (text.as_str(), true, true)
     } else {
-        (text.strip_prefix("thread::")?, true)
+        return None;
     };
     if !item
         .chars()
@@ -4072,7 +4319,8 @@ fn std_thread_item(path: &ast::PathExpr, function: &ast::Fn) -> Option<String> {
             ra_ap_syntax::NodeOrToken::Node(node) => node,
         };
         if let Some(name) = ast::Name::cast(node.clone()) {
-            if matches!(name.text().trim_start_matches("r#"), "std" | "thread") {
+            let name = name.text().trim_start_matches("r#");
+            if matches!(name, "std" | "thread") || bare && name == item {
                 return None;
             }
             continue;
@@ -4143,7 +4391,19 @@ fn std_thread_item(path: &ast::PathExpr, function: &ast::Fn) -> Option<String> {
             .syntax()
             .parent()
             .filter(|parent| ast::Use::can_cast(parent.kind()));
-        if path_text == "std::thread" && tree.rename().is_none() && direct_use.is_some() {
+        let std_item_import = bare
+            && path_text == format!("std::thread::{item}")
+            && tree.rename().is_none()
+            && direct_use.is_some();
+        if std_item_import {
+            // Only the whole `use std::thread::<item>;` imports the std
+            // function; any other leaf ending in `<item>` may be another.
+            imported |= direct_use
+                .and_then(|parent| parent.parent())
+                .is_some_and(|container| container == module);
+        } else if bare && last == item {
+            return None;
+        } else if path_text == "std::thread" && tree.rename().is_none() && direct_use.is_some() {
             imported |= direct_use
                 .and_then(|parent| parent.parent())
                 .is_some_and(|container| container == module);

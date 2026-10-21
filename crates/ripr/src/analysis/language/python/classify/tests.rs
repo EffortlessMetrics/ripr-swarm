@@ -1,6 +1,7 @@
 //! Discriminator narration must follow the final classification, not oracle rank.
 
 use super::super::owners_tests::{extract_owners, extract_tests};
+use super::super::related_tests::TestLookup;
 use super::classify_change_with_old;
 use super::classify_change_with_source;
 use crate::domain::{ExposureClass, Finding, OracleStrength, StageState};
@@ -1522,6 +1523,93 @@ fn guarded_arm_return_value_with_activating_input_stays_exposed() -> Result<(), 
     Ok(())
 }
 
+// A return after an earlier `if X: return ...` runs only for inputs that fail
+// `X`. When every strong related call satisfies `X`, the fallthrough return
+// never runs, so the exact-value oracle cannot discriminate its change.
+#[test]
+fn fallthrough_return_after_early_exit_taken_by_every_call_is_weakly_exposed() -> Result<(), String>
+{
+    let finding = classify_added_case(
+        QUOTE_SOURCE,
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(2000.0) == 2040.0\n",
+        4,
+        "    return round(total * 1.05, 2)",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    assert!(
+        missing_boundary(&finding, "not (total > 1000)").is_some(),
+        "{finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn fallthrough_return_with_input_missing_the_early_exit_stays_exposed() -> Result<(), String> {
+    let finding = classify_added_case(
+        QUOTE_SOURCE,
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(2000.0) == 2040.0\n    assert quote(100.0) == 105.0\n",
+        4,
+        "    return round(total * 1.05, 2)",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    // A non-terminating `if` body, or one chained to `else`, does not exit.
+    for source in [
+        "def quote(total):\n    if total > 1000:\n        total = 5\n    return round(total * 1.05, 2)\n",
+        "def quote(total):\n    if total > 1000:\n        if total > 5000:\n            return 0\n    return round(total * 1.05, 2)\n",
+    ] {
+        let finding = classify_added_case(
+            source,
+            "from src.subject import quote\n\ndef test_quote():\n    assert quote(2000.0) == 2100.0\n",
+            source.lines().count(),
+            "    return round(total * 1.05, 2)",
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{source}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn fallthrough_return_with_disjoint_early_exits_words_at_least_one() -> Result<(), String> {
+    // f(20) takes the first exit and f(-1) the second: neither condition holds
+    // for every call, so the reason must not claim that.
+    let finding = classify_added_case(
+        "def f(x):\n    if x > 10:\n        return 1\n    if x < 0:\n        return 2\n    return 3\n",
+        "from src.subject import f\n\ndef test_f():\n    assert f(20) == 1\n    assert f(-1) == 2\n",
+        6,
+        "    return 3",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    let reason = missing_boundary(&finding, "not (x > 10) and not (x < 0)")
+        .ok_or_else(|| format!("missing discriminator absent: {finding:?}"))?;
+    assert!(
+        reason.contains("each strong related test input satisfies at least one preceding early-exit condition (`x > 10`, `x < 0`)"),
+        "{reason}"
+    );
+    assert!(
+        !reason.contains("every strong related test input satisfies"),
+        "{reason}"
+    );
+    Ok(())
+}
+
+#[test]
+fn fallthrough_return_ignores_early_exit_text_inside_a_docstring() -> Result<(), String> {
+    // The `if`/`return` lines live in the docstring, so they are not code and
+    // the final return stays exposed under the exact oracle.
+    let finding = classify_added_case(
+        "def quote(total):\n    \"\"\"\n    if total > 1000:\n        return 0\n    \"\"\"\n    return round(total * 1.05, 2)\n",
+        "from src.subject import quote\n\ndef test_quote():\n    assert quote(2000.0) == 2100.0\n",
+        6,
+        "    return round(total * 1.05, 2)",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
 // The gate's premise is "EVERY strong related call provably fails the
 // guard". Each of the following shapes leaves that premise unprovable, so
 // the gate must fail open and keep the oracle verdict rather than
@@ -1705,6 +1793,89 @@ fn guarded_arm_gate_stays_off_without_source() -> Result<(), String> {
     )
     .ok_or_else(|| "behavioral fixture must produce a finding".to_string())?;
     assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+// The lookup keys on name but must still honour the file, and keep every
+// same-named test in one file in source order.
+#[test]
+fn test_lookup_filters_by_file_and_keeps_source_order() -> Result<(), String> {
+    let body = "from src.subject import score\n\ndef test_dup():\n    assert score(0) == 8\n\ndef test_dup():\n    assert score(1) == 8\n\ndef test_other():\n    assert score(2) == 8\n";
+    let mut tests = extract_tests(Path::new("tests/test_a.py"), body);
+    tests.extend(extract_tests(
+        Path::new("tests/test_b.py"),
+        "from src.subject import score\n\ndef test_dup():\n    assert score(3) == 8\n",
+    ));
+    let finding = classify_case(
+        "def score(value):\n    return 8\n",
+        body,
+        2,
+        "    return 7",
+        "    return 8",
+    )?;
+    let mut related = finding
+        .related_tests
+        .first()
+        .cloned()
+        .ok_or_else(|| "fixture must relate a test".to_string())?;
+    related.name = "test_dup".to_string();
+    related.file = Path::new("tests/test_a.py").to_path_buf();
+
+    let lookup = TestLookup::new(&tests);
+    let in_a: Vec<_> = lookup.matching(&related).collect();
+    assert_eq!(
+        in_a.len(),
+        2,
+        "both same-named tests in file a, none from b"
+    );
+    assert!(
+        in_a.iter()
+            .all(|test| test.file == Path::new("tests/test_a.py"))
+    );
+    assert!(in_a[0].line < in_a[1].line, "source order is preserved");
+
+    related.file = Path::new("tests/test_b.py").to_path_buf();
+    assert_eq!(lookup.matching(&related).count(), 1);
+    related.file = Path::new("tests/test_c.py").to_path_buf();
+    assert_eq!(lookup.matching(&related).count(), 0);
+    related.file = Path::new("tests/test_a.py").to_path_buf();
+    related.name = "test_missing".to_string();
+    assert_eq!(lookup.matching(&related).count(), 0);
+    Ok(())
+}
+
+// Many trivial tests: joining each related test back to its source facts must
+// be an identity lookup, not a scan of every test (the scan made one finding
+// cost O(tests^2)). Counting assertions, not wall-clock.
+#[test]
+fn many_tests_join_related_tests_by_identity_and_keep_credit() -> Result<(), String> {
+    const TESTS: usize = 400;
+    let mut tests = String::from("from src.subject import score\n");
+    for index in 0..TESTS {
+        tests.push_str(&format!(
+            "\ndef test_score_{index}():\n    assert score({index}) == 8\n"
+        ));
+    }
+    let finding = classify_case(
+        "def score(value):\n    return 8\n",
+        &tests,
+        2,
+        "    return 7",
+        "    return 8",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert_eq!(finding.related_tests.len(), TESTS);
+
+    let extracted = extract_tests(Path::new("tests/test_subject.py"), &tests);
+    assert_eq!(extracted.len(), TESTS);
+    let lookup = TestLookup::new(&extracted);
+    assert_eq!(lookup.identity_count(), TESTS);
+    for related in &finding.related_tests {
+        let joined: Vec<_> = lookup.matching(related).collect();
+        assert_eq!(joined.len(), 1, "{}", related.name);
+        assert_eq!(joined[0].name, related.name);
+        assert_eq!(joined[0].file, related.file);
+    }
     Ok(())
 }
 
@@ -2185,6 +2356,52 @@ fn equality_predicate_parametrize_on_either_constant_stays_exposed() -> Result<(
             finding.activation.missing_discriminators.is_empty(),
             "{cases}"
         );
+    }
+    Ok(())
+}
+
+// #6585: an owner call nested in a wrapper that may ignore its argument is not
+// the value the assertion compares, so a strong exact oracle on the wrapper's
+// result does not discriminate the changed return.
+const PARSE_SOURCE: &str = "def parse(text):\n    return int(text) + 5\n";
+
+#[test]
+fn opaque_wrapper_around_owner_call_does_not_credit_exposed() -> Result<(), String> {
+    for body in [
+        "assert always_true(parse('1')) == True",
+        "assert bool(parse('1')) == True",
+        "self.assertTrue(always_true(parse('1')))",
+        "assert (always_true)(parse('1')) == True",
+        "assert always_true(parse('1')) == other.parse('2')",
+    ] {
+        let finding = classify_case(
+            PARSE_SOURCE,
+            &format!("from src.subject import parse\n\ndef test_parse():\n    {body}\n"),
+            2,
+            "    return int(text) + 1",
+            "    return int(text) + 5",
+        )?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{body}");
+    }
+    Ok(())
+}
+
+#[test]
+fn value_preserving_wrapper_around_owner_call_keeps_exposed() -> Result<(), String> {
+    for body in [
+        "assert parse('1') == 2",
+        "assert str(parse('1')) == '2'",
+        "assert round(parse('1'), 2) == 2",
+        "assert (parse('1')) == 2",
+    ] {
+        let finding = classify_case(
+            PARSE_SOURCE,
+            &format!("from src.subject import parse\n\ndef test_parse():\n    {body}\n"),
+            2,
+            "    return int(text) + 1",
+            "    return int(text) + 5",
+        )?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{body}");
     }
     Ok(())
 }
