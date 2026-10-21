@@ -353,7 +353,8 @@ mod tests {
         let root = workspace_root()?;
         let root_display = root.display().to_string();
         let full = artifact(&outcome, true)?;
-        assert!(validate_analysis_outcome_artifact(&root, &root_display, &full).is_ok());
+        validate_analysis_outcome_artifact(&root, &root_display, &full)
+            .map_err(|error| error.to_string())?;
         for complete in [
             serde_json::json!(false),
             Value::Null,
