@@ -32,6 +32,7 @@ fn run(root: &Path, limit: usize) -> Result<LanguageRepoResult, String> {
     repo::analyze_repo_with_limit(
         &repo_options(root),
         limit,
+        ts_workspace_file_limit(),
         ts_file_read_limit(),
         ts_workspace_read_budget(),
     )
@@ -50,7 +51,7 @@ fn limit_env_contract_is_positive_integer_or_named_error() {
     assert!(
         repo::resolve_repo_working_set_limit(Ok("0".to_string()))
             .err()
-            .is_some_and(|err| err.contains("positive integer"))
+            .is_some_and(|err| err.contains("positive integer, got \"0\""))
     );
     assert!(
         repo::resolve_repo_working_set_limit(Ok("abc".to_string()))
@@ -150,8 +151,8 @@ fn over_budget_repo_is_partial_and_names_recovery() -> Result<(), String> {
     assert_eq!(result.production_files, 1);
     assert_eq!(result.skipped_files, 1);
     let reason = result.partial_reason.ok_or("capped run must be partial")?;
+    assert!(reason.starts_with("typescript_repo_capped:"), "{reason}");
     assert!(reason.contains("RIPR_MAX_REPO_INDEX_FILES"), "{reason}");
-    assert!(reason.contains("capped"), "{reason}");
     Ok(())
 }
 
@@ -188,5 +189,105 @@ fn repo_run_is_deterministic() -> Result<(), String> {
     let (first, second) = (first?, second?);
     let ids = |r: &LanguageRepoResult| r.findings.iter().map(|f| f.id.clone()).collect::<Vec<_>>();
     assert_eq!(ids(&first), ids(&second));
+    Ok(())
+}
+
+#[test]
+fn unparseable_test_file_makes_the_run_partial() -> Result<(), String> {
+    let root = ts_unique_tempdir("repo-bad-test")?;
+    ts_write_file(&root.join("src/lib.ts"), TS_SRC)?;
+    ts_write_file(&root.join("test/lib.test.ts"), "describe(((( {\n")?;
+    let result = run(&root, 800);
+    let _ = std::fs::remove_dir_all(&root);
+    let reason = result?.partial_reason.ok_or("must be partial")?;
+    assert!(
+        reason.starts_with("typescript_repo_test_parse_failure:"),
+        "{reason}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_files_beyond_the_limit_do_not_cap_the_run() -> Result<(), String> {
+    let root = ts_unique_tempdir("repo-many-tests")?;
+    ts_write_file(&root.join("src/lib.ts"), TS_SRC)?;
+    for i in 0..4 {
+        ts_write_file(&root.join(format!("test/t{i}.test.ts")), TS_TEST)?;
+    }
+    let result = run(&root, 1);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+    assert_eq!(result.partial_reason, None);
+    assert_eq!(result.skipped_files, 0);
+    Ok(())
+}
+
+#[test]
+fn distinct_exposure_classes_of_one_owner_are_not_collapsed() -> Result<(), String> {
+    let root = ts_unique_tempdir("repo-dedup-class")?;
+    ts_write_file(
+        &root.join("src/lib.ts"),
+        "export function f(a: number, b: number): number {\n  if (a > 0) {\n    return 1;\n  }\n  if (b > 0) {\n    return 2;\n  }\n  return 0;\n}\n",
+    )?;
+    ts_write_file(
+        &root.join("test/f.test.ts"),
+        "import { f } from \"../src/lib\";\ndescribe(\"f\", () => {\n  it(\"a\", () => {\n    expect(f(1, 0)).toBe(1);\n  });\n});\n",
+    )?;
+    let result = run(&root, 800);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+    let classes: std::collections::BTreeSet<String> = result
+        .findings
+        .iter()
+        .map(|f| format!("{:?}", f.class))
+        .collect();
+    assert_eq!(
+        result.findings.len(),
+        classes.len(),
+        "at most one row per exposure class for the same owner/family/delta"
+    );
+    Ok(())
+}
+
+#[test]
+fn truncated_discovery_walk_is_partial() -> Result<(), String> {
+    let root = ts_unique_tempdir("repo-walk-cap")?;
+    for i in 0..6 {
+        ts_write_file(&root.join(format!("src/f{i}.ts")), TS_SRC)?;
+    }
+    let result = repo::analyze_repo_with_limit(
+        &repo_options(&root),
+        800,
+        3,
+        ts_file_read_limit(),
+        ts_workspace_read_budget(),
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let reason = result?
+        .partial_reason
+        .ok_or("truncated walk must be partial")?;
+    assert!(
+        reason.starts_with("typescript_repo_discovery_truncated:"),
+        "{reason}"
+    );
+    Ok(())
+}
+
+#[test]
+fn over_read_bound_file_leaves_the_denominator_and_is_partial() -> Result<(), String> {
+    let root = ts_unique_tempdir("repo-read-cap")?;
+    ts_write_file(&root.join("src/lib.ts"), TS_SRC)?;
+    let result = repo::analyze_repo_with_limit(
+        &repo_options(&root),
+        800,
+        ts_workspace_file_limit(),
+        8,
+        ts_workspace_read_budget(),
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+    assert!(result.findings.is_empty());
+    let reason = result.partial_reason.ok_or("unread file must be partial")?;
+    assert!(reason.contains("typescript_repo_unread:"), "{reason}");
     Ok(())
 }

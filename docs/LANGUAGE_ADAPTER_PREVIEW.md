@@ -247,14 +247,17 @@ analysis. Repo-mode analysis differs per adapter:
 - **TypeScript/JavaScript** `analyze_repo` is no longer a stub (#5545). It
   selects the production `.ts/.tsx/.mts/.cts/.js/.jsx/.mjs/.cjs` files under
   the same shared cap (#2109; default 800, `RIPR_MAX_REPO_INDEX_FILES`) and
-  runs the diff-mode owner/test/oracle/probe producers over every behavior
-  line, keeping one finding per owner, probe family and delta. Findings keep
+  runs the diff-mode owner/test/oracle/probe producers with every non-blank
+  line of each selected file treated as added (whole-file, not diff-scoped), keeping one finding per owner, probe family, delta and exposure class. Findings keep
   their `typescript` or `javascript` language identity and preview status;
   no Rust `RepoSeam` is fabricated. Test, declaration, generated, vendor and
   build files never seed findings (tests still feed the evidence index). A
   capped run, a truncated walk, an unreadable root, unreadable or
   unparseable files, or typed indexing limitations disclose a partial
-  language run and can never back an all-clear, badge or baseline claim; a
+  language run whose `partial_reason` starts with a stable `typescript_repo_*:`
+  code (`capped`, `discovery_truncated`, `links_skipped`, `unread`,
+  `test_parse_failure`, `limitations`, `root_unreadable`), joined by ` | `,
+  and can never back an all-clear, badge or baseline claim; a
   fully discovered workspace without TS/JS production source is an honest
   zero. No support-tier, gate or baseline promotion.
 

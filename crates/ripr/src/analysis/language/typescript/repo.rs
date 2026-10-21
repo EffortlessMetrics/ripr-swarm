@@ -23,8 +23,9 @@
 
 use super::{
     AnalysisOptions, ChangedFile, Finding, LanguageRepoResult, TypeScriptAdapter, is_test_file,
-    is_typescript_declaration_file, read_workspace_sources_capped, ts_file_read_limit,
-    ts_workspace_file_limit, ts_workspace_read_budget, visit_workspace_with_handwritten,
+    is_typescript_declaration_file, parse_error_reason, read_workspace_sources_capped,
+    ts_file_read_limit, ts_workspace_file_limit, ts_workspace_read_budget,
+    visit_workspace_with_handwritten,
 };
 use crate::analysis::diff::ChangedLine;
 use std::collections::BTreeSet;
@@ -46,11 +47,11 @@ pub(super) fn resolve_repo_working_set_limit(
         Err(std::env::VarError::NotPresent) => Ok(TS_REPO_FILE_LIMIT),
         Ok(raw) => {
             let parsed = raw.trim().parse::<usize>().map_err(|err| {
-                format!("{TS_REPO_FILE_LIMIT_ENV} must be a positive integer: {err}")
+                format!("{TS_REPO_FILE_LIMIT_ENV} must be a positive integer, got {raw:?}: {err}")
             })?;
             if parsed == 0 {
                 return Err(format!(
-                    "{TS_REPO_FILE_LIMIT_ENV} must be a positive integer"
+                    "{TS_REPO_FILE_LIMIT_ENV} must be a positive integer, got {raw:?}"
                 ));
             }
             Ok(parsed)
@@ -68,47 +69,48 @@ pub(super) struct RepoInput {
     /// Production files selected for analysis (sorted, within the limit).
     pub(super) production: Vec<PathBuf>,
     /// Test files discovered (evidence only; counted, never findings).
-    pub(super) tests: usize,
+    pub(super) tests: Vec<PathBuf>,
     /// Type-only declaration files (counted, never probed).
     pub(super) declarations: usize,
-    /// Production and test files beyond the working-set limit.
+    /// Production files beyond the working-set limit. Test files are the
+    /// evidence index and are not capped here; the read bounds govern them.
     pub(super) capped: usize,
     /// The discovery walk hit its entry cap, so source may be unseen.
     pub(super) discovery_truncated: bool,
+    /// Symlink/junction entries the walk did not follow.
+    pub(super) links_skipped: usize,
     /// The workspace root could not be read at all.
     pub(super) root_unreadable: bool,
 }
 
 /// Discover and partition the workspace under `limit`.
-pub(super) fn select_repo_input(root: &Path, limit: usize) -> RepoInput {
-    if !root.is_dir() {
+pub(super) fn select_repo_input(root: &Path, limit: usize, walk_limit: usize) -> RepoInput {
+    if !root.is_dir() || std::fs::read_dir(root).is_err() {
         return RepoInput {
             root_unreadable: true,
             ..RepoInput::default()
         };
     }
-    let scan = visit_workspace_with_handwritten(root, ts_workspace_file_limit(), &[]);
+    let scan = visit_workspace_with_handwritten(root, walk_limit, &[]);
     let mut files: Vec<PathBuf> = scan.files;
     files.sort();
     files.dedup();
     let mut input = RepoInput {
         discovery_truncated: scan.truncated,
+        links_skipped: scan.skipped_links,
         ..RepoInput::default()
     };
-    let mut tests = 0usize;
     for file in files {
         if is_typescript_declaration_file(&file) {
             input.declarations += 1;
         } else if is_test_file(&file) {
-            tests += 1;
+            input.tests.push(file);
         } else if input.production.len() < limit {
             input.production.push(file);
         } else {
             input.capped += 1;
         }
     }
-    input.tests = tests;
-    input.capped += tests.saturating_sub(limit);
     input
 }
 
@@ -126,10 +128,17 @@ pub(super) struct RepoSelection {
 pub(super) fn analyze_repo_with_limit(
     options: &AnalysisOptions,
     limit: usize,
+    walk_limit: usize,
     file_read_limit: u64,
     workspace_read_budget: u64,
 ) -> Result<LanguageRepoResult, String> {
-    let selection = select_and_analyze(options, limit, file_read_limit, workspace_read_budget)?;
+    let selection = select_and_analyze(
+        options,
+        limit,
+        walk_limit,
+        file_read_limit,
+        workspace_read_budget,
+    )?;
     Ok(LanguageRepoResult {
         findings: selection.findings,
         harness_projections: Vec::new(),
@@ -146,6 +155,7 @@ pub(super) fn analyze_repo(options: &AnalysisOptions) -> Result<LanguageRepoResu
     analyze_repo_with_limit(
         options,
         limit,
+        ts_workspace_file_limit(),
         ts_file_read_limit(),
         ts_workspace_read_budget(),
     )
@@ -154,26 +164,33 @@ pub(super) fn analyze_repo(options: &AnalysisOptions) -> Result<LanguageRepoResu
 fn select_and_analyze(
     options: &AnalysisOptions,
     limit: usize,
+    walk_limit: usize,
     file_read_limit: u64,
     workspace_read_budget: u64,
 ) -> Result<RepoSelection, String> {
-    let input = select_repo_input(&options.root, limit);
+    let input = select_repo_input(&options.root, limit, walk_limit);
     let mut reasons: Vec<String> = Vec::new();
     if input.root_unreadable {
-        reasons.push("workspace root could not be read, so TypeScript/JavaScript source absence is unestablished".to_string());
+        reasons.push("typescript_repo_root_unreadable: workspace root could not be read, so TypeScript/JavaScript source absence is unestablished".to_string());
     }
     if input.capped > 0 {
         reasons.push(format!(
-            "repo run capped: {} TypeScript/JavaScript file(s) beyond the working-set limit of {limit}; findings cover the selected files only. Recovery: narrow the scope with a diff-based run (--base/--diff); raise the limit via {TS_REPO_FILE_LIMIT_ENV}=<number>",
+            "typescript_repo_capped: {} TypeScript/JavaScript file(s) beyond the working-set limit of {limit}; findings cover the selected files only. Recovery: narrow the scope with a diff-based run (--base/--diff), or raise the limit via {TS_REPO_FILE_LIMIT_ENV}=<number>",
             input.capped
         ));
     }
     if input.discovery_truncated {
         reasons.push(
-            "workspace discovery hit its entry cap, so TypeScript/JavaScript source may have been missed (raise RIPR_TS_MAX_WORKSPACE_FILES)".to_string(),
+            "typescript_repo_discovery_truncated: workspace discovery hit its entry cap, so TypeScript/JavaScript source may have been missed (raise RIPR_TS_MAX_WORKSPACE_FILES)".to_string(),
         );
     }
     if input.production.is_empty() {
+        if input.links_skipped > 0 {
+            reasons.push(format!(
+                "typescript_repo_links_skipped: {} symlink/junction entr(ies) were not followed, so TypeScript/JavaScript source behind them may have been missed",
+                input.links_skipped
+            ));
+        }
         return Ok(RepoSelection {
             findings: Vec::new(),
             production_files: 0,
@@ -193,7 +210,26 @@ fn select_and_analyze(
     let unread = read.limits.len() + read.io_failures.len();
     if unread > 0 {
         reasons.push(format!(
-            "repo run partial: {unread} selected TypeScript/JavaScript file(s) could not be read within the read bounds and left the analyzed denominator"
+            "typescript_repo_unread: {unread} selected TypeScript/JavaScript file(s) could not be read within the read bounds and left the analyzed denominator"
+        ));
+    }
+    // A test file that fails to parse drops its tests from the evidence
+    // index and can flip owners to a false `no_static_path`; name it.
+    let test_read = read_workspace_sources_capped(
+        &options.root,
+        &input.tests,
+        file_read_limit,
+        workspace_read_budget,
+    );
+    let unparseable_tests = input
+        .tests
+        .iter()
+        .filter_map(|path| test_read.sources.get(path).map(|source| (path, source)))
+        .filter(|(path, source)| parse_error_reason(path, source).is_some())
+        .count();
+    if unparseable_tests > 0 {
+        reasons.push(format!(
+            "typescript_repo_test_parse_failure: {unparseable_tests} test file(s) failed to parse and left the evidence index, so related-test evidence may be missing"
         ));
     }
     let changed: Vec<ChangedFile> = input
@@ -235,12 +271,12 @@ fn select_and_analyze(
         details.dedup();
         details.truncate(3);
         reasons.push(format!(
-            "repo run partial: {} typed limitation(s) (parse failures, unindexed owner shapes or partial test extraction) bound the evidence{}",
+            "typescript_repo_limitations: {} typed limitation(s) (parse failures, unindexed owner shapes or partial test extraction) bound the evidence{}",
             diff.limitations.len(),
             if details.is_empty() {
                 String::new()
             } else {
-                format!(": {}", details.join("; "))
+                format!(": {}", details.join(" / "))
             }
         ));
     }
@@ -254,11 +290,12 @@ fn select_and_analyze(
 }
 
 /// Whole-file presentation probes every behavior line; keep one finding per
-/// (file, owner, probe family, delta) so repo evidence is one row per
-/// distinct behavior rather than one per line. Order stays the diff-mode
+/// (file, owner, probe family, delta, exposure class) so repo evidence is one
+/// row per distinct behavior rather than one per line, while a weaker class
+/// is never hidden behind a stronger row. Order stays the diff-mode
 /// order (production-file order, ascending line).
 fn representative_findings(findings: Vec<Finding>) -> Vec<Finding> {
-    let mut seen: BTreeSet<(String, Option<String>, String, String)> = BTreeSet::new();
+    let mut seen: BTreeSet<(String, Option<String>, String, String, String)> = BTreeSet::new();
     findings
         .into_iter()
         .filter(|finding| {
@@ -271,6 +308,7 @@ fn representative_findings(findings: Vec<Finding>) -> Vec<Finding> {
                     .map(|owner| format!("{owner:?}")),
                 format!("{:?}", finding.probe.family),
                 format!("{:?}", finding.probe.delta),
+                format!("{:?}", finding.class),
             ))
         })
         .collect()
@@ -280,6 +318,6 @@ fn join_reasons(reasons: &[String]) -> Option<String> {
     if reasons.is_empty() {
         None
     } else {
-        Some(reasons.join("; "))
+        Some(reasons.join(" | "))
     }
 }
