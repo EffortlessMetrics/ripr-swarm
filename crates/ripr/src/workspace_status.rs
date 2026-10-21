@@ -42,8 +42,36 @@ pub(crate) struct RootStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) identity: Option<String>,
     pub(crate) repository_markers: Vec<String>,
+    /// Whether a Git work tree contains the root (a `.git` entry at the root
+    /// or an ancestor). A project marker alone makes the root `validated`,
+    /// but every diff-scoped analysis needs Git, so `ripr_refresh` fails
+    /// closed on a root where this is `not_detected`. Absent for an
+    /// unavailable root.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) git_work_tree: Option<GitWorkTree>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) error_code: Option<RootErrorCode>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GitWorkTree {
+    Detected,
+    NotDetected,
+}
+
+/// A `.git` entry (directory, or gitfile for worktrees and submodules) at the
+/// root or any ancestor. A marker probe, not a Git invocation: it can only
+/// under-report exotic layouts (`GIT_DIR`), and refresh remains the authority.
+fn git_work_tree_for(root: &Path) -> GitWorkTree {
+    if root
+        .ancestors()
+        .any(|ancestor| ancestor.join(".git").exists())
+    {
+        GitWorkTree::Detected
+    } else {
+        GitWorkTree::NotDetected
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -174,6 +202,7 @@ impl WorkspaceStatus {
         } else {
             WorkspaceState::Unavailable
         };
+        let git_work_tree = resolved.root.git_work_tree;
         let configuration = ConfigurationStatus {
             project_config_state: resolved.project_config_state,
             project_config_identity: resolved.project_config_identity,
@@ -199,7 +228,7 @@ impl WorkspaceStatus {
                 "execute verification or mutation, load project-local provider configuration, ",
                 "or claim runtime correctness."
             ),
-            limitations: limitations(resolved.project_config_state),
+            limitations: limitations(resolved.project_config_state, git_work_tree),
         };
         (status, resolved.canonical_root)
     }
@@ -208,12 +237,20 @@ impl WorkspaceStatus {
 /// The `ripr.toml` line is a fact about this root, not a constant: a cold
 /// agent on a Python or TypeScript repository without `ripr.toml` read
 /// "ripr.toml is detected" and went looking for a file that was not there.
-fn limitations(project_config_state: ProjectConfigState) -> Vec<&'static str> {
+fn limitations(
+    project_config_state: ProjectConfigState,
+    git_work_tree: Option<GitWorkTree>,
+) -> Vec<&'static str> {
     let mut limitations =
         vec!["workspace identity is host-local and not a portable repository identifier"];
     if project_config_state == ProjectConfigState::DetectedNotLoaded {
         limitations
             .push("project-local ripr.toml is detected but not loaded by workspace discovery");
+    }
+    if git_work_tree == Some(GitWorkTree::NotDetected) {
+        limitations.push(
+            "no Git work tree contains this root; ripr_refresh needs one to compute the diff and will fail closed until the root is inside a repository (git init, or restart with --root at a repository)",
+        );
     }
     limitations.extend([
         "client launch does not establish project-configuration trust",
@@ -319,6 +356,7 @@ fn validate_root(root: PathBuf, source: RootSource) -> ResolvedRoot {
             source,
             identity: Some(root_identity(&canonical)),
             repository_markers: markers,
+            git_work_tree: Some(git_work_tree_for(&canonical)),
             error_code: None,
         },
         project_config_state,
@@ -338,6 +376,7 @@ fn unavailable_root_with_source(source: RootSource, error_code: RootErrorCode) -
             source,
             identity: None,
             repository_markers: Vec::new(),
+            git_work_tree: None,
             error_code: Some(error_code),
         },
         project_config_state: ProjectConfigState::Unavailable,

@@ -619,6 +619,7 @@ mod tests {
             workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            desired_base: None,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -643,6 +644,7 @@ mod tests {
             workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
+            desired_base: None,
             superseded_order: std::collections::VecDeque::new(),
         })
     }

@@ -72,7 +72,9 @@ The MCP surface is read-only. It exposes tools `ripr_workspace_status`,
 `ripr://repair-attempt/{attempt_id}`, `ripr://receipt/{receipt_id}`, and
 `ripr://repair-card/{canonical_id}`.
 `ripr_refresh` analyzes the committed default-branch diff through the shared
-check authority. In this snapshot, staged and unstaged tracked edits and
+check authority; its optional `base` argument selects another revision when
+the default branch cannot be resolved. Its warm cache lives under the root's
+`target/ripr/`. In this snapshot, staged and unstaged tracked edits and
 untracked files are outside the analyzed scope. `ripr check` defaults to the
 working tree when staged or unstaged tracked edits exist; shared check
 authority does not mean identical input. Use `ripr check --committed` for

@@ -76,6 +76,23 @@ default branch before `ripr_refresh` (a commit on the default branch itself
 leaves an empty diff), or use `ripr check --worktree --format json` outside
 MCP.
 
+When the repository's default branch is not `main` or `master` (for example
+`trunk`) and there is no `origin/main`, the default base cannot be resolved and
+`ripr_refresh` fails with `analysis_failed` naming candidate branches. Retry
+`ripr_refresh` with its optional `base` argument (`{"base": "trunk"}`): it is
+the only way to choose a base from inside MCP, since `ripr mcp` has no `--base`
+flag. Each refresh states its own base, so omitting `base` returns to the
+default branch, and `ripr_workspace_status` reports the requested one under
+`session.current_desired_input`. A directory with a project marker but no Git
+work tree is a validated root, but refresh needs Git; status reports
+`workspace.root.git_work_tree: not_detected` with a limitation instead of
+leaving that to the first failed refresh.
+
+`ripr_refresh` is read-only with respect to source, but the shared analysis
+writes its warm cache under the root's `target/ripr/`. Cargo projects normally
+gitignore `target/`; in a repository that does not, those files show as
+untracked in `git status` and are never source.
+
 ## Progressive flow
 
 ```text
@@ -131,7 +148,7 @@ runs no tests or verification and grants no execution or edit authority.
 | Surface | Name |
 | --- | --- |
 | Tool (no arguments) | `ripr_workspace_status` |
-| Tool (no arguments) | `ripr_refresh` |
+| Tool (`base?`) | `ripr_refresh` |
 | Tool (`snapshot_id?`, `offset?`, `limit?`, `file?`, `class?`, `language?`, `repair_ready?`) | `ripr_list_gaps` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_get_gap` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_prepare_repair` |
