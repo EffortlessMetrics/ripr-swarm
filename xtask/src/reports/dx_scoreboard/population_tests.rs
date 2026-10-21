@@ -328,9 +328,9 @@ fn perl_projection_keeps_producer_and_edited_contributions_separate() -> Result<
     // Independently counted committed rows: producer 27 (15 discriminated,
     // 12 not fully), edited 33. Do not derive these expectations via summarize.
     for (rate, expected) in [
-        ("false_verdict_rate", (4, 27)),
+        ("false_verdict_rate", (2, 27)),
         ("false_actionable_rate", (1, 15)),
-        ("false_exposed_rate", (3, 12)),
+        ("false_exposed_rate", (1, 12)),
         ("false_silent_rate", (0, 12)),
         ("abstention_rate", (15, 27)),
     ] {
@@ -538,9 +538,9 @@ fn perl_scoreboard_measures_without_blessing_an_absent_baseline() -> Result<(), 
     assert_eq!(current["gate"]["status"], "no_baseline");
     assert_eq!(current["gate"]["failed_instruments"], json!([]));
     for (metric, n, d, status) in [
-        ("false_verdict", 4_u32, 27_u32, "below_target"),
+        ("false_verdict", 2_u32, 27_u32, "below_target"),
         ("false_actionable", 1, 15, "below_target"),
-        ("false_exposed", 3, 12, "below_target"),
+        ("false_exposed", 1, 12, "below_target"),
         ("false_silent", 0, 12, "meets_target"),
         ("abstention", 15, 27, "below_target"),
     ] {

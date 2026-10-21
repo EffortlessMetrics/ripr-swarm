@@ -284,6 +284,16 @@ write. Unresolved identity/disclosure fields are explicitly null and warnings
 are empty. An exact path or a suggested seam ID can select one behavior;
 nested seams remain governed by the existing nesting rule (#7762).
 
+For an integration-file stub, `run_command` names the effective cargo test
+target (#8794): an explicit `[[test]]` entry for the file supplies the name,
+otherwise the auto-discovered name when discovery is enabled for the package
+edition. When the target name is not established (`autotests = false` without
+an entry, edition-2015 packages whose explicit entries disable discovery,
+`harness = false`, a name-only entry whose `tests/<n>.rs` and
+`tests/<n>/main.rs` both exist, an unusable `path`, a shadowed name, or
+`required-features`, which is omitted conservatively without default-feature
+resolution) the command is `null` and the human output says so.
+
 The stub producer covers free functions and methods of inherent or trait
 impls at module level whose generics are lifetimes only; a trait-impl method
 is called as `<Type as Trait>::method(..)` (#5471). A changed field of the
@@ -382,6 +392,26 @@ sends readers to `human-full` for full evidence, so that rerun must not lose
 the only runnable next commands. Library renders without CLI navigation omit
 the block.
 
+The bounded digest's top-finding drill-down also names the repair-route
+omission instead of leaving it silent (#8729): when the producer-owned gate
+computes a refusal — no canonical gap to bind, an unreadable authority, a
+seam-limit-truncated candidate set, zero or several binding seams, or an
+ineligible seam — the drill-down prints one advisory line of the shape
+`no repair start offered: <state>; run \`ripr repair <item> --root <root>\`
+for the full gate's answer`. A static-limited finding never gets the runnable
+repair line (its limitation guidance is authoritative on the same screen),
+but a refusal the pipeline did compute is still named there, so "the gate
+refused this seam" cannot read as "analysis could not decide". A run with no
+selected finding prints nothing. The refusal vocabulary is producer-owned and
+JSON fields are unchanged; this is additive human output only.
+
+The same honesty rule bounds the no-eligible reason list on the repair start
+refusal (#8728): the list renders at most three distinct reasons, and when the
+inventory's distinct-reason total exceeds the list, the message discloses the
+remainder (`and N more`) plus the per-seam detail route (`ripr pilot`), so a
+bounded list never presents three reasons as the whole story. The total
+counts distinct reasons across the whole inventory, not one per seam.
+
 A canonical-shape probe's `after` is often its parser shape, which is narrower
 than the changed line (`string.len() >= MAX`). In that case the producer cuts
 `before` to the same span of the old line (`string.len() > MAX`), so the
@@ -478,6 +508,14 @@ suggested write cannot fail on the same missing base.
   advisory)` for `exposed` findings with an observation rationale; `Missing
   discriminator` otherwise) and for both `preview_limited` safe-next-action
   arms (complete-but-advisory packet versus missing packet fields).
+- Tests for the held repair start (#8738): the default check screen does not
+  list `ripr repair <seam>` as a bare runnable action when the selected
+  edit target (an existing test target or a producer-proposed inline file)
+  is a production Rust file whose worktree or index copy differs from HEAD;
+  it prints one `Repair start (needs a committed ...)` line stating the
+  commit-or-stash requirement, naming the test route only when a stub is
+  rendered. The predicate is the edit cage's own committed-file law, deferring
+  (no hold) when it cannot be established.
 - Format parsing tests for `human-full` and `text-full`.
 - CLI unit tests for repo-scope warnings with `--base` and `--diff`, and no
   warning for diff-scoped JSON.

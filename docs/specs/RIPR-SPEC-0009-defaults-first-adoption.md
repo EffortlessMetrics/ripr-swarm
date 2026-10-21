@@ -36,6 +36,14 @@ The default contract is:
   conservative defaults and is reported as such by `ripr doctor`.
 - `ripr init` materializes repo policy. It does not unlock the useful
   experience.
+- `ripr init --ci` accepts only `github`. Unknown providers use the shared
+  CLI value-suggestion rules: nearby values such as `githb`, `githbu`, and
+  `gitlab` name `github`; distant values such as `gitlab-ci` and
+  `zzzzzzzzzzzz` list the accepted provider without a suggestion. A hint
+  never accepts or executes the rejected spelling: unknown providers exit 2,
+  write the error and accepted list to stderr, leave stdout empty, and create
+  no files. A missing provider retains the missing-value refusal. Valid
+  `github` parsing, preview, and generated file contents remain unchanged.
 - With a lossless root, successful `ripr init --ci github` names the generated
   workflow and tells the adopter to review and commit it, then open or update
   a pull request and read the advisory job summary. Blocking gates remain opt-in through the
@@ -422,6 +430,30 @@ Defaults-first adoption evidence should cover:
 - implicit-root saved-diff analysis beneath invalid Git markers matching the
   explicit-root and genuine-repository positives with nonzero changed files,
   probes, findings and related tests;
+- implicit-root parity for the task-first commands (`repair`, `pilot`, `status`,
+  `continue`, `agent stub`) from a workspace member directory, including
+  member-relative `file:line` selectors that must not reach a sibling member;
+- the same implicit-root parity for `agent start/repair/card/status/verify`,
+  `rerun`, `diff` and `explain` from a workspace member directory, with
+  member-relative `--before/--after`, `--changed-test` and `file:line` inputs
+  bound to the invocation directory when they name an existing file (an
+  unresolved `rerun --changed-test` stays RIPR-SPEC-0123's named limitation),
+  `--root .` as the opt-out, and root-resolution failures of `diff --json` and
+  `rerun --json` keeping the refusal envelope, and a member-relative
+  `file:line` for `repair`, `agent repair` and `explain` refused (fail closed)
+  when a workspace-root file with the same path suffix exists, even without a
+  root finding there, with `--root .` or a seam, gap or finding ID as the
+  escape hatches;
+- the same implicit-root parity for the artifact-consuming `agent brief`,
+  `agent packet`, `agent receipt`, `agent review-summary`,
+  `agent verify-execute` and `context` from a workspace member directory, so a
+  loop started by `agent start` reads and writes the workspace `target/ripr`;
+  existing member-relative `--files`, `--diff`, `--verify-json` and `--packet`
+  files bind to the invocation directory, a relative `agent receipt --out` and
+  `agent verify-execute --result-json` resolve against the resolved root (not
+  the current directory), `--gap-ledger`, `context --diff` and `context --from`
+  stay read as typed from the current directory, `--root .` is the opt-out,
+  and a root-resolution failure under `--json` keeps the refusal envelope;
 - shared cache-root parity, real nested and linked-worktree boundaries,
   inherited-selector isolation, and the gitless saved-diff route;
 - built-in missing-config behavior matching the generated init profile's
@@ -514,6 +546,17 @@ A valid UTF-8 absolute alias to the physical root still yields usable follow-ups
 Given a workspace with an existing ripr.toml,
 when a user runs ripr init without --force,
 then ripr exits with an actionable message and leaves the file unchanged.
+```
+
+### Init provider recovery does not initialize a rejected value
+
+```text
+Given an empty selected repository,
+when a user runs ripr init --ci githb,
+then ripr exits 2 with a github suggestion and Accepted: github on stderr,
+leaves stdout empty, and creates neither config nor workflow files.
+With gitlab-ci instead, the same refusal has no suggestion.
+With github, the existing preview and generated files retain their contract.
 ```
 
 ### Pilot points at one next action
@@ -725,6 +768,8 @@ Current tests and reports that support the contract:
 - `crates/ripr/src/cli/commands.rs::tests::init_parses_root_dry_run_and_force`
 - `crates/ripr/src/cli/commands.rs::tests::init_requires_root_value`
 - `crates/ripr/src/cli/commands.rs::tests::init_rejects_unknown_arguments`
+- `crates/ripr/tests/cli_help_hierarchy.rs::init_ci_provider_errors_recover_near_misses`
+- `crates/ripr/tests/cli_help_hierarchy.rs::init_ci_provider_valid_preview_keeps_workflow_contract`
 - `crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_is_advisory`
 - `crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_uploads_reports_and_makes_sarif_optional`
 - `crates/ripr/src/cli/commands.rs::tests::init_ci_github_writes_workflow_and_preserves_existing_config`

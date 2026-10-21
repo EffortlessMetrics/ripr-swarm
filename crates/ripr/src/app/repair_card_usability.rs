@@ -165,6 +165,8 @@ fn measurement_attempt(
         non_claims: Vec::new(),
         after: None,
         last_after_refusal: None,
+        after_refusal_count: 0,
+        after_refusal_history: Vec::new(),
         terminal_artifacts: Vec::new(),
     })
 }

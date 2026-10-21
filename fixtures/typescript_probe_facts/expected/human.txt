@@ -30,6 +30,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_probe_facts/input --diff <cwd>/fixtures/typescript_probe_facts/diff.patch --mode fast probe:src_ambiguous.ts:typescript_preview:ba5968cd
   ripr context --root <cwd>/fixtures/typescript_probe_facts/input --diff <cwd>/fixtures/typescript_probe_facts/diff.patch --mode fast --at probe:src_ambiguous.ts:typescript_preview:ba5968cd
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_ambiguous.ts:typescript_preview:ba5968cd --root <cwd>/fixtures/typescript_probe_facts/input` for the full gate's answer
 
 Hidden:
   9 lower-priority finding(s) omitted from default human output (TypeScript preview: 7, JavaScript preview: 2).

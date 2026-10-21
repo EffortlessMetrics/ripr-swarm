@@ -28,6 +28,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/binding_predicate_scope_controls/input --diff <cwd>/fixtures/binding_predicate_scope_controls/diff.patch --mode fast probe:src_lib.rs:static_unknown:c075f160
   ripr context --root <cwd>/fixtures/binding_predicate_scope_controls/input --diff <cwd>/fixtures/binding_predicate_scope_controls/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:c075f160
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:static_unknown:c075f160 --root <cwd>/fixtures/binding_predicate_scope_controls/input` for the full gate's answer
 
 Hidden:
   4 lower-priority finding(s) omitted from default human output.

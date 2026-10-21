@@ -35,3 +35,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_ffi_attribute_literals (4)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless rust_ffi_attribute_literals --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
