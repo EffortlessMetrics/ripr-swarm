@@ -10020,7 +10020,10 @@ fn swarm_server_binary_rehearsal_cannot_publish() -> Result<(), String> {
             "candidate_sha: ${{ github.sha }}",
             "candidate_sha: ${{ github.ref }}",
         ),
-        workflow.replace("candidate_ref: ${{ inputs.candidate_ref }}", "candidate_ref: \"\""),
+        workflow.replace(
+            "candidate_ref: ${{ inputs.candidate_ref }}",
+            "candidate_ref: \"\"",
+        ),
     ] {
         if validate(&broken).is_ok() {
             return Err("rehearsal publication negative control was accepted".to_string());
