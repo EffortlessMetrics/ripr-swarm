@@ -1057,10 +1057,7 @@ fn render_error_review_comments_markdown(packet: &Value) -> String {
             .and_then(Value::as_str)
             .unwrap_or(DEFAULT_HEAD)
     );
-    let bounded_document = packet
-        .get("analysis_outcome")
-        .and_then(|outcome| outcome.get("document_complete"))
-        .is_some_and(|complete| complete == &Value::Bool(false));
+    let bounded_document = packet_discloses_bounded_document(packet);
     if bounded_document {
         markdown.push_str(&bounded_document_markdown(packet));
     }
@@ -1121,9 +1118,33 @@ fn render_error_review_comments_markdown(packet: &Value) -> String {
     markdown
 }
 
+/// #9010: true when the packet carries a findings-bounded check document,
+/// either as the typed `document_complete` flag (any present value other than
+/// `true`, matching the shared fail-closed predicates) or, for the legacy
+/// shape that has no flag, as the producer's refusal line in the warning.
+fn packet_discloses_bounded_document(packet: &Value) -> bool {
+    let flagged = packet
+        .get("analysis_outcome")
+        .and_then(|outcome| outcome.get("document_complete"))
+        .is_some_and(|complete| complete != &Value::Bool(true));
+    let refused = packet
+        .get("warnings")
+        .and_then(Value::as_array)
+        .is_some_and(|warnings| {
+            warnings.iter().any(|warning| {
+                warning
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .is_some_and(|message| message.contains("findings-bounded check document"))
+            })
+        });
+    flagged || refused
+}
+
 /// #9010: the producer's bounded-document disclosure, kept visible on the
-/// error packet. The producer analysis verdict is not rewritten; only the
-/// document-completeness fact and its recovery lever are named.
+/// error packet. The producer analysis verdict is not rewritten; the
+/// document-completeness fact, the counts (or their absence), the producer
+/// verdict and the recovery lever are named.
 fn bounded_document_markdown(packet: &Value) -> String {
     let outcome = packet.get("analysis_outcome");
     let count = |key: &str| {
@@ -1132,11 +1153,30 @@ fn bounded_document_markdown(packet: &Value) -> String {
             .and_then(Value::as_u64)
     };
     let counts = match (count("findings_rendered"), count("findings_total")) {
-        (Some(rendered), Some(total)) => format!(" ({rendered} of {total} findings rendered)"),
-        _ => String::new(),
+        (Some(rendered), Some(total)) => format!("{rendered} of {total} findings rendered"),
+        _ => "finding counts unavailable".to_string(),
+    };
+    let verdict = match outcome
+        .and_then(|outcome| outcome.get("analysis_complete"))
+        .and_then(Value::as_bool)
+    {
+        Some(complete) => format!("{complete}"),
+        None => "unavailable".to_string(),
+    };
+    let kind = outcome
+        .and_then(|outcome| outcome.get("outcome"))
+        .and_then(|outcome| outcome.get("kind"))
+        .and_then(Value::as_str)
+        .unwrap_or("unavailable");
+    // A present flag that is not a boolean has no independent legacy
+    // evidence behind it, so it reads unknown rather than an invented false.
+    let completeness = match outcome.and_then(|outcome| outcome.get("document_complete")) {
+        Some(Value::Bool(false)) | None => "false",
+        Some(_) => "unknown",
     };
     format!(
-        "\n## Document completeness\n\n- Document Complete: false{counts}\n- The check document was cut by the findings byte budget, so it is a prefix and no review guidance was derived from it.\n- recovery: re-run `ripr check` with `RIPR_CHECK_FINDINGS_BYTES=0` (or a larger byte budget) for the complete document.\n"
+        "\n## Document completeness\n\n- Document Complete: {completeness} ({counts})\n- Producer analysis_complete: {verdict}; outcome kind: {}\n- The check document was cut by the findings byte budget, so it is a prefix and no review guidance was derived from it.\n- recovery: re-run `ripr check` with `RIPR_CHECK_FINDINGS_BYTES=0` (or a larger byte budget) for the complete document.\n",
+        md_escape(kind)
     )
 }
 
@@ -2266,6 +2306,7 @@ mod tests {
         let markdown = render_error_review_comments_markdown(&bounded);
         for needle in [
             "Document Complete: false (1 of 4 findings rendered)",
+            "Producer analysis_complete: true; outcome kind: complete_with_findings",
             "RIPR_CHECK_FINDINGS_BYTES=0",
         ] {
             if !markdown.contains(needle) {
@@ -2294,6 +2335,51 @@ mod tests {
             ));
         }
         assert_schema_valid(&refused, "wrapped bounded refusal packet")?;
+        let legacy_packet = {
+            let mut legacy = packet_with(outcome(json!({})))?;
+            legacy["warnings"][0]["message"] = json!(message);
+            legacy
+        };
+        let legacy_markdown = render_error_review_comments_markdown(&legacy_packet);
+        for needle in [
+            "Document Complete: false (finding counts unavailable)",
+            "Producer analysis_complete: true; outcome kind: complete_with_findings",
+            "RIPR_CHECK_FINDINGS_BYTES=0",
+        ] {
+            if !legacy_markdown.contains(needle) {
+                return Err(format!(
+                    "legacy bounded Markdown lacks {needle:?}:\n{legacy_markdown}"
+                ));
+            }
+        }
+        let mut partial = packet_with(outcome(json!({
+            "document_complete": false,
+            "findings_rendered": 1,
+            "findings_total": 4
+        })))?;
+        partial["analysis_outcome"]["analysis_complete"] = json!(false);
+        partial["analysis_outcome"]["outcome"]["kind"] = json!("partial_with_limitations");
+        let partial_markdown = render_error_review_comments_markdown(&partial);
+        if !partial_markdown
+            .contains("Producer analysis_complete: false; outcome kind: partial_with_limitations")
+        {
+            return Err(format!(
+                "the producer verdict must render distinctly:\n{partial_markdown}"
+            ));
+        }
+        let mut unknown = packet_with(outcome(json!({})))?;
+        unknown["analysis_outcome"]["document_complete"] = json!("false");
+        let unknown_markdown = render_error_review_comments_markdown(&unknown);
+        if !unknown_markdown.contains("Document Complete: unknown (finding counts unavailable)") {
+            return Err(format!(
+                "a non-boolean flag must read unknown:\n{unknown_markdown}"
+            ));
+        }
+        let control_markdown =
+            render_error_review_comments_markdown(&packet_with(outcome(json!({})))?);
+        if control_markdown.contains("Document completeness") {
+            return Err("an unbounded packet must not claim a bounded document".to_string());
+        }
         let plain =
             error_review_comments_packet(&repo, &options, "ripr review-comments failed", &receipt);
         assert_eq!(
