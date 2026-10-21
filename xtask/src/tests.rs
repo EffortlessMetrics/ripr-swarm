@@ -1339,6 +1339,33 @@ fn evidence_promotion_human_oracle_line_accepts_unclassified_ungraded_wording() 
 }
 
 #[test]
+fn evidence_promotion_human_oracle_line_accepts_deduplicated_smoke_only_wording() {
+    let line = "- related test tests/a.ts:3 t uses smoke only oracle: t.truthy(x)";
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "smoke_only",
+        "smoke"
+    ));
+    // The stutter is no longer the rendered form, and other pairs keep the
+    // full "<strength> <kind>" spelling.
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        "- related test tests/a.ts:3 t uses smoke smoke only oracle: t.truthy(x)",
+        "smoke_only",
+        "smoke"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "smoke_only",
+        "weak"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "exact_value",
+        "smoke"
+    ));
+}
+
+#[test]
 fn evidence_promotion_human_oracle_line_accepts_kind_ungraded_wording() {
     let line = "- related test tests/a.rs:3 t uses exact value oracle, not graded against this probe: assert_eq!(f(), 1)";
     assert!(super::evidence_promotion_human_oracle_line_matches(
