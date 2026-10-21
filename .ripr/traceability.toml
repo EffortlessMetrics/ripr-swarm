@@ -6514,6 +6514,9 @@ id = "RIPR-SPEC-0069"
 name = "LSP / agent feedback use case"
 spec = "docs/specs/RIPR-SPEC-0069-lsp-agent-feedback-use-case.md"
 tests = [
+  "crates/ripr/src/lsp/tests/progress_notification_isolation_tests.rs::queued_begin_cannot_hold_active_attempt_completion_and_promotion",
+  "crates/ripr/src/lsp/tests/progress_notification_isolation_tests.rs::queued_begin_cannot_hold_active_publication",
+  "crates/ripr/src/lsp/tests/progress_notification_isolation_tests.rs::end_all_preserves_order_but_still_awaits_its_suspended_token",
   "crates/ripr/src/lsp/tests/progress_create_liveness_tests.rs::unanswered_create_does_not_delay_real_refresh_or_shutdown",
   "crates/ripr/src/lsp/tests/progress_create_liveness_tests.rs::late_create_success_cannot_begin_a_finished_real_refresh",
   "crates/ripr/src/lsp/progress.rs::tests::late_create_success_never_revives_terminated_tokens",
@@ -6539,6 +6542,7 @@ tests = [
 ]
 fixtures = []
 code = [
+  "crates/ripr/src/lsp/progress.rs",
   "crates/ripr/src/lsp/backend.rs",
     "crates/ripr/src/lsp/capabilities.rs",
     "crates/ripr/src/lsp/actions.rs",
