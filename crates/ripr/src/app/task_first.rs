@@ -254,6 +254,10 @@ fn collect_no_eligible_reasons<'a>(
     (reasons, distinct.len())
 }
 
+/// How to widen the seam budget, named once so every truncation refusal gives
+/// the same actionable recovery. The cap is an environment variable, not a flag.
+pub(crate) const WIDEN_SEAM_BUDGET: &str = "rerun with a wider seam budget (set RIPR_REPO_EXPOSURE_SEAM_LIMIT to a larger count, or 0 to remove the cap)";
+
 /// Gather the live authorities and decide one repair start. A truncated seam
 /// inventory fails closed: selecting from a partial list could hide
 /// candidates and silently pick first.
@@ -265,7 +269,7 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
         && info.analyzed < info.total
     {
         return Err(format!(
-            "repair start refused: the seam inventory is truncated ({} of {} seams); rerun with a wider seam budget",
+            "repair start refused: the seam inventory is truncated ({} of {} seams); {WIDEN_SEAM_BUDGET}",
             info.analyzed, info.total
         ));
     }
@@ -322,8 +326,14 @@ pub(crate) enum RepairSubject {
 pub(crate) enum RepairSubjectOutcome {
     /// Exactly one seam, admitted by the shared repair gate.
     Seam(String),
-    /// Exactly one seam, refused by the shared repair gate.
-    Ineligible { seam_id: String, reason: String },
+    /// Exactly one seam, refused by the shared repair gate. `kind` is the
+    /// gate's own refusal kind, so a projection can name an already-gripped
+    /// seam without parsing the reason prose.
+    Ineligible {
+        seam_id: String,
+        reason: String,
+        kind: RefusalKind,
+    },
     /// Several seams name the item; the bounded seam IDs to choose from.
     Ambiguous(Vec<String>),
     /// No current seam names the item (stale or unmapped).
@@ -340,9 +350,9 @@ pub(crate) enum RepairSubjectOutcome {
 pub(crate) fn resolve_repair_subject(root: &Path, item: &str) -> Result<RepairSubject, String> {
     Ok(match resolve_repair_subject_outcome(root, item)? {
         RepairSubjectOutcome::Seam(seam_id) => RepairSubject::Seam(seam_id),
-        RepairSubjectOutcome::Ineligible { seam_id, reason } => {
-            RepairSubject::Decision(ineligible_repair_item(root, item, &seam_id, &reason))
-        }
+        RepairSubjectOutcome::Ineligible {
+            seam_id, reason, ..
+        } => RepairSubject::Decision(ineligible_repair_item(root, item, &seam_id, &reason)),
         RepairSubjectOutcome::Ambiguous(seam_ids) => {
             let seam_refs: Vec<&str> = seam_ids.iter().map(String::as_str).collect();
             RepairSubject::Decision(ambiguous_gap_item(root, item, &seam_refs))
@@ -373,29 +383,50 @@ pub(crate) fn resolve_repair_subject_outcome(
         && info.analyzed < info.total
     {
         return Err(format!(
-            "repair item refused: the seam inventory is truncated ({} of {} seams); rerun with a wider seam budget",
+            "repair item refused: the seam inventory is truncated ({} of {} seams); {WIDEN_SEAM_BUDGET}",
             info.analyzed, info.total
         ));
     }
-    let policy = AgentBriefPolicy::from_config(&config);
+    Ok(resolve_repair_subject_in(
+        &classified,
+        AgentBriefPolicy::from_config(&config),
+        item,
+    ))
+}
+
+/// The inventory-taking core of [`resolve_repair_subject_outcome`]: resolve
+/// one explicit repair item against an already-classified seam inventory and
+/// apply the shared repair-admission gate to the one seam it names. The MCP
+/// refresh runs this over its own diff-scoped inventory so a session item's
+/// repair readiness is this exact decision, not a parallel one.
+pub(crate) fn resolve_repair_subject_in(
+    classified: &[crate::analysis::ClassifiedSeam],
+    policy: AgentBriefPolicy<'_>,
+    item: &str,
+) -> RepairSubjectOutcome {
+    let outcome_for = |entry: &crate::analysis::ClassifiedSeam| {
+        let seam_id = entry.seam.id().as_str().to_string();
+        match repair_refusal(entry, policy) {
+            None => RepairSubjectOutcome::Seam(seam_id),
+            Some((kind, reason)) => RepairSubjectOutcome::Ineligible {
+                seam_id,
+                reason,
+                kind,
+            },
+        }
+    };
     if let Some(entry) = classified
         .iter()
         .find(|entry| entry.seam.id().as_str() == item)
     {
-        return Ok(match repair_refusal_reason(entry, policy) {
-            None => RepairSubjectOutcome::Seam(item.to_string()),
-            Some(reason) => RepairSubjectOutcome::Ineligible {
-                seam_id: item.to_string(),
-                reason,
-            },
-        });
+        return outcome_for(entry);
     }
     let matches: Vec<&crate::analysis::ClassifiedSeam> = classified
         .iter()
         .filter(|entry| {
             canonical_gap_identity(entry).is_some_and(|identity| identity.id == item)
                 || producer_gap_id_names_seam(item, entry)
-                || probe_id_names_seam(item, entry, &classified)
+                || probe_id_names_seam(item, entry, classified)
                 || super::selector::selector_matches_file_line(
                     crate::analysis::stable_path_text(entry.seam.file()).as_ref(),
                     entry.seam.display_line(),
@@ -404,20 +435,14 @@ pub(crate) fn resolve_repair_subject_outcome(
         })
         .collect();
     match matches.len() {
-        1 => {
-            let seam_id = matches[0].seam.id().as_str().to_string();
-            Ok(match repair_refusal_reason(matches[0], policy) {
-                None => RepairSubjectOutcome::Seam(seam_id.clone()),
-                Some(reason) => RepairSubjectOutcome::Ineligible { seam_id, reason },
-            })
-        }
-        0 => Ok(RepairSubjectOutcome::Unknown),
-        _ => Ok(RepairSubjectOutcome::Ambiguous(
+        1 => outcome_for(matches[0]),
+        0 => RepairSubjectOutcome::Unknown,
+        _ => RepairSubjectOutcome::Ambiguous(
             matches
                 .iter()
                 .map(|entry| entry.seam.id().as_str().to_string())
                 .collect(),
-        )),
+        ),
     }
 }
 
@@ -627,6 +652,33 @@ pub(crate) fn repair_start_refusal(root: &Path, seam_id: &str) -> Option<RepairS
     RepairStartGate::new(root).check(seam_id)
 }
 
+/// The production file whose uncommitted changes make the before phase refuse
+/// `seam_id` (#9033), read from the inventory the before phase already loaded
+/// (no second load) and the same held-inline-target predicate the edit cage
+/// applies. Asked before any workflow artifact is written, it lets a start
+/// refuse with nothing on disk. `None` when the inventory does not name the
+/// seam or its target is committed.
+pub(crate) fn held_inline_start_file(
+    root: &Path,
+    seam_id: &str,
+    classified: &[crate::analysis::ClassifiedSeam],
+) -> Option<String> {
+    let entry = classified
+        .iter()
+        .find(|entry| entry.seam.id().as_str() == seam_id)?;
+    held_inline_target(root, &repair_packet_eligibility(entry).readiness)
+}
+
+/// The refusal for a start held by an uncommitted production target: states
+/// that no attempt started and what to do about it (#9033).
+pub(crate) fn uncommitted_start_refusal_message(root: &Path, seam_id: &str, file: &str) -> String {
+    format!(
+        "No repair attempt started. Commit or stash `{file}`, then run `ripr repair {} --root {}`. A repair confined to its inline `#[cfg(test)]` module starts only from the committed file",
+        shell_arg(seam_id),
+        shell_arg(&bound_root(&root.to_string_lossy()))
+    )
+}
+
 /// The gate applied to one classified seam: [`repair_refusal_reason`], the
 /// edit-target predicate and the held inline target, plus the related test
 /// the by-hand work targets.
@@ -736,7 +788,7 @@ pub(crate) fn repair_start_withheld_note(
 /// file, and its related tests name the files that carry their evidence.
 /// Only that file's seams are classified, with test-grip evidence from
 /// the finding's own related-test files
-/// ([`classify_seams_in_file_with_related_at_with_config`](crate::analysis::classify_seams_in_file_with_related_at_with_config)).
+/// ([`classify_seams_in_file_with_shared_index`](crate::analysis::classify_seams_in_file_with_shared_index)).
 /// A fresh workspace inventory — full or diff-scoped — is never built
 /// here: on a large workspace either one builds a workspace-wide index
 /// and evidence context, and the full inventory additionally classified
@@ -761,6 +813,7 @@ pub(crate) fn check_repair_route(
     root: &Path,
     check_config: &crate::config::RiprConfig,
     output: &super::CheckOutput,
+    seam_index: &mut Option<crate::analysis::FileSeamIndex>,
 ) -> crate::app::CheckRepairRoute {
     use super::navigation::{CheckRepairRoute, RepairRouteRefusal};
     let Some(finding) = crate::output::human::selected_triage_finding(output, check_config) else {
@@ -803,11 +856,12 @@ pub(crate) fn check_repair_route(
                 .then_some(relative)
         })
         .collect();
-    let Ok(classified) = crate::analysis::classify_seams_in_file_with_related_at_with_config(
+    let Ok(classified) = crate::analysis::classify_seams_in_file_with_shared_index(
         root,
         &config,
         Path::new(&gap.file),
         &evidence_files,
+        seam_index,
     ) else {
         return CheckRepairRoute::Refused(RepairRouteRefusal::ClassificationFailed);
     };

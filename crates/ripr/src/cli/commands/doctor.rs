@@ -7,6 +7,7 @@
 
 use crate::analysis;
 use crate::app::Mode;
+use crate::cli::CommandError;
 use crate::cli::help;
 use crate::cli::suggest::unknown_argument;
 use crate::config::{CONFIG_FILE_NAME, DEFAULT_LSP_SEAM_DIAGNOSTICS, RiprConfig};
@@ -15,7 +16,7 @@ use crate::output;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
+pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
     let mut json_output = false;
     let mut profile = output::doctor::DoctorProfile::Analysis;
     let mut root: Option<String> = None;
@@ -32,11 +33,15 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
                     Some("analysis") => output::doctor::DoctorProfile::Analysis,
                     Some("source-build") => output::doctor::DoctorProfile::SourceBuild,
                     Some(other) => {
-                        return Err(format!(
+                        return Err(CommandError::from(format!(
                             "unknown doctor profile `{other}`; expected `analysis` or `source-build`"
+                        )));
+                    }
+                    None => {
+                        return Err(CommandError::from(
+                            "missing value for --profile".to_string(),
                         ));
                     }
-                    None => return Err("missing value for --profile".to_string()),
                 };
             }
             "--root" => {
@@ -47,28 +52,28 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
                     // pre-#4318 parser answered `missing value for --root`
                     // here. Other dash-prefixed paths stay legitimate values.
                     Some("--help" | "-h" | "--json" | "--profile" | "--root") => {
-                        return Err("missing value for --root".to_string());
+                        return Err(CommandError::from("missing value for --root".to_string()));
                     }
                     Some(value) => value,
-                    None => return Err("missing value for --root".to_string()),
+                    None => return Err(CommandError::from("missing value for --root".to_string())),
                 };
                 // #4318: a repeated documented flag is a usage mistake with a
                 // name of its own; accusing `--root` of being unknown sends
                 // the user to help for a flag they already used.
                 if let Some(existing) = &root {
-                    return Err(format!(
+                    return Err(CommandError::from(format!(
                         "doctor accepts at most one --root; found both {existing:?} and {value:?}. Run `ripr doctor --help`."
-                    ));
+                    )));
                 }
                 root = Some(value.to_string());
             }
             other if other.starts_with('-') => {
-                return Err(unknown_argument("doctor", other));
+                return Err(CommandError::from(unknown_argument("doctor", other)));
             }
             other => {
-                return Err(format!(
+                return Err(CommandError::from(format!(
                     "doctor does not accept positional arguments; got {other:?}; pass the workspace root with `--root <path>`. Run `ripr doctor --help`."
-                ));
+                )));
             }
         }
     }
@@ -146,7 +151,9 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
     if passed {
         Ok(())
     } else {
-        Err("doctor found issues".to_string())
+        // #5102: the diagnosis completed and produced its report, so failed
+        // checks are a typed decision (exit 3), not could-not-complete (2).
+        Err(CommandError::Decision("doctor found issues".to_string()))
     }
 }
 
@@ -160,7 +167,7 @@ fn doctor_json(
     detected: &[LanguageId],
     run_started: std::time::Instant,
     language_detection_elapsed: std::time::Duration,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let evaluation =
         output::doctor::evaluate_doctor_core_with_config_for_profile(root, detected, profile);
     let mut report = evaluation.report;
@@ -192,7 +199,9 @@ fn doctor_json(
     report.attach_canonical_next_action(root);
     report.elapsed_ms = Some(run_started.elapsed().as_millis() as u64);
     println!("{}", report.render_json()?);
-    output::doctor::doctor_report_result(&report)
+    // #5102: a rendered report with failed checks is a completed typed
+    // answer (exit 3); render failures above stay could-not-complete (2).
+    output::doctor::doctor_report_result(&report).map_err(CommandError::Decision)
 }
 
 /// The run's environment facts, plus the one input the human enablement tip
@@ -708,7 +717,7 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
         cache_unwritable_reason(&analysis::seam_cache::cache_base_dir(root))
     {
         lines.push(format!(
-            "! Cache not writable: {}; results stay correct but every run recomputes. \
+            "~ Cache not writable: {}; results stay correct but every run recomputes. \
 Point RIPR_CACHE_DIR at a writable directory.",
             display_text(&reason)
         ));
@@ -2610,13 +2619,13 @@ fn ripr_artifact_ignore(
     }
     DoctorArtifactIgnore::Unignored {
         warning: format!(
-            "! ripr artifacts under {} are not covered by git ignore rules; \
+            "~ ripr artifacts under {} are not covered by git ignore rules; \
              `git add -A` would commit ripr's own reports into your history. \
              Add this line to .gitignore: {}",
             artifact_roots_display(&uncovered),
             uncovered
                 .iter()
-                .map(|root| format!("/{root}/"))
+                .map(|root| analysis::artifact_root_gitignore_entry(Path::new(root)))
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
@@ -2699,7 +2708,7 @@ fn ripr_artifact_tracking(
     let untrack = untrack_artifacts_command(root, &tracked_roots);
     DoctorArtifactTracking::Tracked {
         warning: format!(
-            "! ripr artifacts under {} are tracked by git; `git add -A` keeps \
+            "~ ripr artifacts under {} are tracked by git; `git add -A` keeps \
              refreshing them and `ripr check` diffs them. Untrack them with: {untrack}",
             artifact_roots_display(
                 &tracked_roots
@@ -4203,6 +4212,8 @@ mod tests {
         match ripr_artifact_ignore(&root, &default_artifact_roots(&root)) {
             DoctorArtifactIgnore::Unignored { warning } => {
                 assert!(warning.contains("/target/ripr/"), "{warning}");
+                // #9033: an advisory never wears the blocking `!` mark.
+                assert!(warning.starts_with("~ "), "{warning}");
             }
             other => return Err(format!("expected Unignored, got {other:?}")),
         }
@@ -4406,6 +4417,60 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn ripr_artifact_ignore_advice_covers_only_the_literal_root() -> Result<(), String> {
+        use output::doctor::DoctorArtifactIgnore;
+        let root = unique_command_test_dir("literal-ignore-advice");
+        std::fs::create_dir_all(root.join("build/cache*/nested"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("empty-excludes"), "").map_err(|error| error.to_string())?;
+        crate::git::run_git(&root, &["init"]).map_err(|error| error.to_string())?;
+        // Use an absolute excludes path so neither the test host nor Git's
+        // relative config-path interpretation can supply the expected rule.
+        let excludes = root.join("empty-excludes");
+        crate::git::run_git(
+            &root,
+            &[
+                "config",
+                "core.excludesFile",
+                excludes.to_str().ok_or("non-UTF-8 path")?,
+            ],
+        )
+        .map_err(|error| error.to_string())?;
+        let roots = [PathBuf::from("build/cache*")];
+        let DoctorArtifactIgnore::Unignored { warning } = ripr_artifact_ignore(&root, &roots)
+        else {
+            return Err("expected missing ignore rule".to_string());
+        };
+        let entry = warning
+            .split_once("Add this line to .gitignore: ")
+            .ok_or("missing advice")?
+            .1;
+        assert_eq!(entry, r"/build/cache\*/");
+        std::fs::write(root.join(".gitignore"), format!("{entry}\n"))
+            .map_err(|error| error.to_string())?;
+        for (path, expected) in [
+            ("build/cache*/nested/a.json", Some(0)),
+            ("build/cache1/user.rs", Some(1)),
+            ("build/cache-other/user.rs", Some(1)),
+        ] {
+            let probe = crate::git::run_git_output_with_deadline(
+                &root,
+                &["check-ignore", "--no-index", "-q", "--", path],
+                Some(std::time::Duration::from_secs(5)),
+            )
+            .map_err(|error| error.to_string())?;
+            assert_eq!(probe.status.code(), expected, "{path}: {probe:?}");
+        }
+        assert_eq!(
+            ripr_artifact_ignore(&root, &roots),
+            DoctorArtifactIgnore::Ignored
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
     #[test]
     fn ripr_artifact_tracking_treats_configured_roots_as_literal_paths() -> Result<(), String> {
         // Owner P1 (PR #8901): a configured root such as `build/cache*` is a
@@ -4540,6 +4605,8 @@ mod tests {
         ];
         match ripr_artifact_tracking(&root, &artifact_roots) {
             DoctorArtifactTracking::Tracked { warning } => {
+                // #9033: an advisory never wears the blocking `!` mark.
+                assert!(warning.starts_with("~ "), "{warning}");
                 assert!(
                     warning.contains("rm --cached -r -- .ripr-cache/repo-seam-facts"),
                     "{warning}"
@@ -5825,7 +5892,9 @@ mod tests {
     fn doctor_requires_root_value() {
         assert_eq!(
             doctor(&args(&["--root"])),
-            Err("missing value for --root".to_string())
+            Err(CommandError::Failure(
+                "missing value for --root".to_string()
+            ))
         );
     }
 
@@ -6017,7 +6086,9 @@ mod tests {
     fn doctor_rejects_unknown_arguments() {
         assert_eq!(
             doctor(&args(&["--bogus"])),
-            Err("unknown doctor argument \"--bogus\". Run `ripr doctor --help`.".to_string())
+            Err(CommandError::Failure(
+                "unknown doctor argument \"--bogus\". Run `ripr doctor --help`.".to_string()
+            ))
         );
     }
 
@@ -6027,10 +6098,10 @@ mod tests {
     fn doctor_rejects_a_second_root_by_naming_the_condition() {
         assert_eq!(
             doctor(&args(&["--root", "a", "--root", "b"])),
-            Err(
+            Err(CommandError::Failure(
                 "doctor accepts at most one --root; found both \"a\" and \"b\". Run `ripr doctor --help`."
                     .to_string()
-            )
+            ))
         );
     }
 
@@ -6040,10 +6111,10 @@ mod tests {
     fn doctor_rejects_positional_arguments_by_naming_the_condition() {
         assert_eq!(
             doctor(&args(&["some/path"])),
-            Err(
+            Err(CommandError::Failure(
                 "doctor does not accept positional arguments; got \"some/path\"; pass the workspace root with `--root <path>`. Run `ripr doctor --help`."
                     .to_string()
-            )
+            ))
         );
     }
 
@@ -6055,7 +6126,9 @@ mod tests {
         for flag in ["--json", "--profile", "--root", "--help", "-h"] {
             assert_eq!(
                 doctor(&args(&["--root", flag])),
-                Err("missing value for --root".to_string()),
+                Err(CommandError::Failure(
+                    "missing value for --root".to_string()
+                )),
                 "a known flag cannot be the --root value: {flag}"
             );
         }
@@ -6313,18 +6386,18 @@ mod tests {
         std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
         std::fs::write(dir.join(CONFIG_FILE_NAME), "[invalid\n")
             .map_err(|err| format!("write invalid config: {err}"))?;
-        if doctor_json(
-            &dir,
-            output::doctor::DoctorProfile::Analysis,
-            &detect_languages(&dir),
-            std::time::Instant::now(),
-            std::time::Duration::ZERO,
-        )
-        .is_ok()
-        {
-            let _ = std::fs::remove_dir_all(&dir);
-            return Err("invalid JSON doctor report unexpectedly passed".to_string());
-        }
+        // #5102: the JSON report was rendered, so failed checks are a
+        // Decision (3), not could-not-complete (2).
+        assert_eq!(
+            doctor_json(
+                &dir,
+                output::doctor::DoctorProfile::Analysis,
+                &detect_languages(&dir),
+                std::time::Instant::now(),
+                std::time::Duration::ZERO,
+            ),
+            Err(CommandError::Decision("doctor found issues".to_string()))
+        );
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }
@@ -6336,9 +6409,11 @@ mod tests {
             return Err(format!("test root unexpectedly exists: {}", root.display()));
         }
         let root_arg = root.to_string_lossy().into_owned();
-        if doctor(&args(&["--root", &root_arg])).is_ok() {
-            return Err("human doctor unexpectedly passed for missing root".to_string());
-        }
+        // #5102: a completed diagnosis of a missing root is a Decision (3).
+        assert_eq!(
+            doctor(&args(&["--root", &root_arg])),
+            Err(CommandError::Decision("doctor found issues".to_string()))
+        );
         Ok(())
     }
 
@@ -6360,7 +6435,7 @@ mod tests {
 
     #[test]
     fn doctor_json_flag_accepts_explicit_root() -> Result<(), String> {
-        doctor(&args(&["--json", "--root", "."]))
+        doctor(&args(&["--json", "--root", "."])).map_err(|error| error.message().to_string())
     }
 
     // --- preview_language_enable_suggestions tests ---

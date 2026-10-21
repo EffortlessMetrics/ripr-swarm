@@ -390,7 +390,11 @@ pub(crate) fn input_boundary_fact<'a>(
     family: &ProbeFamily,
 ) -> Option<&'a MissingDiscriminatorFact> {
     match family {
-        ProbeFamily::Predicate => facts.iter().find(|fact| fact.value.contains(" == ")),
+        // A returned bare comparison reads the same boundary (#9094); no
+        // other return-value fact is spelled `left == right`.
+        ProbeFamily::Predicate | ProbeFamily::ReturnValue => {
+            facts.iter().find(|fact| fact.value.contains(" == "))
+        }
         ProbeFamily::MatchArm => facts
             .iter()
             .find(|fact| fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX)),

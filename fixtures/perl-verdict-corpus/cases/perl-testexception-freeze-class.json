@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testexception-freeze-class.json",
-    "sha256": "9114a2641e2394696f045bc15fbd46a5ca3d69e166b122245c5bd4467b55a056",
+    "sha256": "556512a614003ee9948d54a6b390e56fdbd04f3ede36912382e4857fd2ab7960",
     "provenance": "producer"
   }
 }

@@ -56,7 +56,8 @@ pub(crate) use router::{
 };
 pub(crate) use rust::{
     DIFF_SCOPE_OVERSIZED_PREFIX, GeneratedRustSources, RustAdapter, changed_let_binding,
-    is_diff_scope_oversized, is_generated_rust_file_with_patterns, mask_rust_comments_and_strings,
+    diff_changed_rust_line_limit, is_diff_scope_oversized, is_generated_rust_file_with_patterns,
+    mask_rust_comments_and_strings,
 };
 pub use rust::{
     PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffScope,
