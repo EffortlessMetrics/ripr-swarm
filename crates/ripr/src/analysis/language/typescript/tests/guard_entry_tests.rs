@@ -423,21 +423,32 @@ fn bracket_calls_and_loaders_keep_exposed() -> Result<(), String> {
             finding.missing
         );
     }
-    // A method shorthand's own parameter is not the owner's.
-    let source = "export function price(qty: number, coupon?: string): number {\n  let total = qty * 10;\n  const o = {\n    run(coupon: string) {\n      if (coupon === 'HALF') {\n        total = total / 2;\n      }\n    },\n  };\n  o.run('HALF');\n  return total;\n}\n";
-    let finding = finding_at(
-        "guard-shadow",
-        source,
-        6,
-        "        total = total / 3;",
-        "        total = total / 2;",
-        &test_with(&[("price(2)", "15")]),
-    )?;
-    assert_ne!(
-        finding.class,
-        ExposureClass::WeaklyExposed,
-        "{:?}",
-        finding.missing
-    );
+    // A method shorthand's own parameter is not the owner's, annotated or not.
+    for (label, method) in [
+        ("guard-shadow", "run(coupon: string): void {"),
+        (
+            "guard-shadow-async",
+            "async run(coupon: string): Promise<void> {",
+        ),
+        ("guard-shadow-plain", "run(coupon: string) {"),
+    ] {
+        let source = format!(
+            "export function price(qty: number, coupon?: string): number {{\n  let total = qty * 10;\n  const o = {{\n    {method}\n      if (coupon === 'HALF') {{\n        total = total / 2;\n      }}\n    }},\n  }};\n  o.run('HALF');\n  return total;\n}}\n"
+        );
+        let finding = finding_at(
+            label,
+            &source,
+            6,
+            "        total = total / 3;",
+            "        total = total / 2;",
+            &test_with(&[("price(2)", "20")]),
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
     Ok(())
 }

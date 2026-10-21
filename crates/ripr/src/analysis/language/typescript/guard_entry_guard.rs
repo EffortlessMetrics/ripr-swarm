@@ -298,7 +298,7 @@ fn body_declares_methods(owner_source: &str) -> bool {
             while next < chars.len() && chars[next].is_whitespace() {
                 next += 1;
             }
-            if chars.get(next) == Some(&'{') {
+            if opens_body_after_paren(&chars, next) {
                 // Walk back to the matching `(` and the word before it.
                 let mut depth = 0usize;
                 let mut open = None;
@@ -335,6 +335,21 @@ fn body_declares_methods(owner_source: &str) -> bool {
         at += 1;
     }
     false
+}
+
+/// Whether a body `{` follows the `)` that ends just before `next`: directly,
+/// or after a `: ReturnType` annotation (`run(c: string): Promise<void> {`).
+/// A ternary arm such as `c ? f(x) : {..}` is over-refused, which is safe.
+fn opens_body_after_paren(chars: &[char], next: usize) -> bool {
+    match chars.get(next) {
+        Some('{') => true,
+        Some(':') => chars[next + 1..]
+            .iter()
+            .take(200)
+            .take_while(|c| !matches!(c, ';' | '}' | ')'))
+            .any(|c| *c == '{'),
+        _ => false,
+    }
 }
 
 /// What the owner's parameter list shows: per parameter, whether it has a
@@ -1316,5 +1331,25 @@ mod tests {
             arms[0].text
         );
         assert!(arms[0].text.contains("x === 1") && arms[0].text.contains("x === 2"));
+    }
+
+    #[test]
+    fn annotated_methods_getters_and_async_methods_shadow_parameters() {
+        for method in [
+            "run(coupon: string): void {",
+            "get v(): number {",
+            "async run(coupon: string): Promise<void> {",
+            "run(coupon: string): Map<string, number> {",
+        ] {
+            let source = format!(
+                "function price(qty: number, coupon?: string): number {{\n  const o = {{\n    {method}\n      if (coupon === 'HALF') {{\n        qty = 1;\n      }}\n    }},\n  }};\n  return qty;\n}}\n"
+            );
+            assert!(body_declares_methods(&source), "{method}");
+            assert_eq!(
+                enclosing_conditions(&source, 1, 5, "qty = 1;"),
+                None,
+                "{method}"
+            );
+        }
     }
 }

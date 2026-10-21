@@ -16233,6 +16233,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/guard_entry_guard.rs::deeply_nested_conditions_give_up",
   "crates/ripr/src/analysis/language/typescript/guard_entry_guard.rs::bracket_indexed_calls_are_unreadable",
   "crates/ripr/src/analysis/language/typescript/guard_entry_guard.rs::nested_methods_and_comments_inside_conditions",
+  "crates/ripr/src/analysis/language/typescript/guard_entry_guard.rs::annotated_methods_getters_and_async_methods_shadow_parameters",
   "crates/ripr/src/analysis/language/typescript/conditional_assertion_tests.rs::ts_assertion_after_unconditional_exit_is_withheld",
   "crates/ripr/src/analysis/language/typescript/conditional_assertion_tests.rs::ts_assertion_after_conditional_exit_stays_credited",
   "crates/ripr/src/analysis/language/typescript/conditional_assertion_tests.rs::ts_decidable_if_exit_withholds_following_assertion",
