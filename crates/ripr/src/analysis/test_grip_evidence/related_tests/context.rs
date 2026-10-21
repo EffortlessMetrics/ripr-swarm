@@ -2140,6 +2140,11 @@ pub(in crate::analysis::test_grip_evidence) fn call_text_contains_crate_qualifie
     owner_names_by_module_path: &OwnerNamesByModulePath,
 ) -> bool {
     let cleaned = strip_comments_and_strings(text);
+    // Every match needs a literal `crate::` after cleaning, so a call without
+    // one has no candidate module however many modules the table holds.
+    if !cleaned.contains("crate::") {
+        return false;
+    }
     owner_names_by_module_path
         .iter()
         .any(|(module_path, owner_names)| {
@@ -3615,25 +3620,25 @@ pub(in crate::analysis::test_grip_evidence) fn code_contains_qualified_helper_ca
     module_path: &str,
     helper_name: &str,
 ) -> bool {
-    ["", "crate::", "self::", "super::"]
-        .into_iter()
-        .any(|prefix| {
-            code_contains_qualified_helper_call_with_prefix(code, prefix, module_path, helper_name)
-        })
-}
-
-pub(in crate::analysis::test_grip_evidence) fn code_contains_qualified_helper_call_with_prefix(
-    code: &str,
-    prefix: &str,
-    module_path: &str,
-    helper_name: &str,
-) -> bool {
-    let pattern = format!("{prefix}{module_path}::{helper_name}(");
-    code.match_indices(&pattern).any(|(start, _)| {
-        code[..start]
-            .chars()
-            .next_back()
-            .is_none_or(|before| !is_rust_path_identifier_char(before))
+    // One search for the shared `module::helper(` tail; each hit is then
+    // checked against the four admitted spellings (bare, `crate::`, `self::`,
+    // `super::`) by the text just before it. This admits exactly the hits the
+    // former per-prefix searches admitted, with one pattern allocation and
+    // one searcher instead of four.
+    let tail = format!("{module_path}::{helper_name}(");
+    code.match_indices(&tail).any(|(tail_start, _)| {
+        ["", "crate::", "self::", "super::"]
+            .into_iter()
+            .any(|prefix| {
+                code[..tail_start]
+                    .strip_suffix(prefix)
+                    .is_some_and(|before| {
+                        before
+                            .chars()
+                            .next_back()
+                            .is_none_or(|ch| !is_rust_path_identifier_char(ch))
+                    })
+            })
     })
 }
 
@@ -3854,6 +3859,87 @@ mod tests {
             qualified_helper_modules("scope_0::target()", &modules).count(),
             2048
         );
+    }
+
+    // Frozen per-prefix search the single-tail search replaced.
+    fn per_prefix_qualified_helper_call(code: &str, module_path: &str, helper_name: &str) -> bool {
+        ["", "crate::", "self::", "super::"]
+            .into_iter()
+            .any(|prefix| {
+                let pattern = format!("{prefix}{module_path}::{helper_name}(");
+                code.match_indices(&pattern).any(|(start, _)| {
+                    code[..start]
+                        .chars()
+                        .next_back()
+                        .is_none_or(|before| !is_rust_path_identifier_char(before))
+                })
+            })
+    }
+
+    #[test]
+    fn single_tail_qualified_call_search_matches_per_prefix_search() {
+        let cases: [(&str, bool); 16] = [
+            ("pkg::helpers::target()", true),
+            ("crate::pkg::helpers::target()", true),
+            ("self::pkg::helpers::target()", true),
+            ("super::pkg::helpers::target()", true),
+            ("let x = pkg::helpers::target();", true),
+            ("(crate::pkg::helpers::target())", true),
+            ("xpkg::helpers::target()", false),
+            ("xcrate::pkg::helpers::target()", false),
+            ("_self::pkg::helpers::target()", false),
+            ("::pkg::helpers::target()", false),
+            ("a::super::pkg::helpers::target()", false),
+            ("other::crate::pkg::helpers::target()", false),
+            ("pkg::helpers::target", false),
+            ("pkg::helpers::target_x()", false),
+            (
+                "crate::pkg::helpers::target( crate::pkg::helpers::target()",
+                true,
+            ),
+            (
+                "1crate::pkg::helpers::target() pkg::helpers::target()",
+                true,
+            ),
+        ];
+        for (code, expected) in cases {
+            assert_eq!(
+                per_prefix_qualified_helper_call(code, "pkg::helpers", "target"),
+                expected,
+                "frozen oracle disagrees with the fixture for {code}"
+            );
+            assert_eq!(
+                code_contains_qualified_helper_call(code, "pkg::helpers", "target"),
+                expected,
+                "{code}"
+            );
+        }
+        assert!(code_contains_qualified_helper_call("::f()", "", "f"));
+        assert_eq!(
+            code_contains_qualified_helper_call("a::f()", "", "f"),
+            per_prefix_qualified_helper_call("a::f()", "", "f")
+        );
+    }
+
+    #[test]
+    fn crate_qualified_owner_call_needs_a_crate_path() {
+        let owners = OwnerNamesByModulePath::from([(
+            "pkg::helpers".to_string(),
+            BTreeSet::from(["target".to_string()]),
+        )]);
+        for (text, expected) in [
+            ("crate::pkg::helpers::target()", true),
+            ("pkg::helpers::target()", false),
+            ("target()", false),
+            ("crate::pkg::helpers::absent()", false),
+            ("target(\"crate::pkg::helpers::target()\")", false),
+        ] {
+            assert_eq!(
+                call_text_contains_crate_qualified_owner_call(text, "target", &owners),
+                expected,
+                "{text}"
+            );
+        }
     }
 
     #[test]
