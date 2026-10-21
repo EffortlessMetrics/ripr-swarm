@@ -218,13 +218,27 @@ pub(crate) fn direct_literal_call_column(
         }) {
             return None;
         }
-        for node in operands
-            .iter()
-            .take(compared)
-            .flat_map(|operand| operand.syntax().descendants())
-        {
+        for (operand, node) in operands.iter().take(compared).flat_map(|operand| {
+            operand
+                .syntax()
+                .descendants()
+                .map(move |node| (operand.syntax().clone(), node))
+        }) {
             if let Some(call) = ast::CallExpr::cast(node.clone()) {
                 if !is_owner_call(&call, owner) {
+                    return None;
+                }
+                // The result must reach the assertion unchanged: the whole
+                // operand, or one side of a top-level comparison. Arithmetic
+                // such as `* 0` can erase the difference a boundary needs.
+                let unchanged = node == operand
+                    || node.parent().is_some_and(|parent| {
+                        parent == operand
+                            && ast::BinExpr::cast(parent).is_some_and(|bin| {
+                                matches!(bin.op_kind(), Some(ast::BinaryOp::CmpOp(_)))
+                            })
+                    });
+                if !unchanged {
                     return None;
                 }
                 let argument = call.arg_list()?.args().nth(parameter)?;

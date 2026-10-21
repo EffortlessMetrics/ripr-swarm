@@ -179,6 +179,8 @@ fn hidden_or_conditional_arguments_cannot_supply_a_length() -> Result<(), String
         "        assert_eq!(average(&[2, 4]), 3);\n        return;\n        assert_eq!(average(&[]), 0);",
         // A format argument runs only when the assertion fails.
         "        assert_eq!(1, 1, \"{}\", average(&[]));\n        assert_eq!(average(&[2, 4]), 3);",
+        // Arithmetic can erase the owner result before it is compared.
+        "        assert_eq!(average(&[]) * 0, 0);\n        assert_eq!(average(&[2, 4]), 3);",
         // Operands that may not run: short-circuit, branch and match arms.
         "        assert!(true || average(&[]) == 0);\n        assert_eq!(average(&[2, 4]), 3);",
         "        assert_eq!(if false { average(&[]) } else { 0 }, 0);\n        assert_eq!(average(&[2, 4]), 3);",
