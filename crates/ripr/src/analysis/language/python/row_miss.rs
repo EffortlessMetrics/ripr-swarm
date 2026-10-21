@@ -207,7 +207,11 @@ fn body_may_invoke_owner(body: &str, names: &[&str]) -> bool {
 fn trivial_alias_statement(body: &str, start: usize, end: usize, name: &str) -> bool {
     let line_start = body[..start].rfind('\n').map_or(0, |i| i + 1);
     let line_end = body[end..].find('\n').map_or(body.len(), |i| end + i);
-    let line = body[line_start..line_end].trim();
+    let raw_line = &body[line_start..line_end];
+    if Some(indent_of(raw_line)) != own_statement_indent(body) {
+        return false;
+    }
+    let line = raw_line.trim();
     if !starts_top_level_statement(&body[..line_start])
         || line.ends_with(['\\', '(', '[', '{', ','])
     {
@@ -219,6 +223,7 @@ fn trivial_alias_statement(body: &str, start: usize, end: usize, name: &str) -> 
     let (lhs, rhs) = (lhs.trim(), rhs.trim());
     rhs == name
         && lhs != name
+        && !lhs.starts_with("__")
         && !lhs.is_empty()
         && lhs.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         && !lhs.starts_with(|c: char| c.is_ascii_digit())
@@ -282,4 +287,20 @@ fn starts_top_level_statement(prefix: &str) -> bool {
     }
     let last = prefix.lines().rev().find(|l| !l.trim().is_empty());
     depth == 0 && last.is_none_or(|l| !l.trim_end().ends_with(['\\', ',', '(', '[', '{']))
+}
+
+fn indent_of(line: &str) -> usize {
+    line.len() - line.trim_start_matches([' ', '\t']).len()
+}
+
+/// Indent of the test function's own first body statement: the first
+/// non-blank line after its `def` header. `None` when no header is found, so
+/// nothing is exempt.
+fn own_statement_indent(body: &str) -> Option<usize> {
+    let mut lines = body.lines();
+    lines.find(|l| {
+        let t = l.trim_start();
+        t.starts_with("def ") || t.starts_with("async def ")
+    })?;
+    lines.find(|l| !l.trim().is_empty()).map(indent_of)
 }
