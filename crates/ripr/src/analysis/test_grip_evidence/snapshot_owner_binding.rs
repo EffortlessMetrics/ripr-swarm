@@ -20,7 +20,7 @@ pub(super) fn snapshot_observes_owner_result(
     if owner_name.is_empty() {
         return false;
     }
-    let snapshot = strip_oracle_text(&oracle.text);
+    let snapshot = squash_whitespace(&strip_oracle_text(&oracle.text));
     if call_text_contains_named_call(&snapshot, owner_name) {
         return true;
     }
@@ -29,7 +29,7 @@ pub(super) fn snapshot_observes_owner_result(
         // `Some(x) => x`, `|x| ..`, `x = 3`) is not the local read earlier.
         !binds_by_pattern(&snapshot, name)
             && !borrows_mutably(&snapshot, name)
-            && !assignment_target(&snapshot).is_some_and(|target| contains_word(target, name))
+            && !assigns_name(&snapshot, name)
             && name_is_direct_owner_result(name, owner_name, oracle, test)
     })
 }
@@ -141,6 +141,24 @@ pub(crate) fn local_is_owner_result_before(
     walk_bindings(code, name, owner_name, reach, true)
 }
 
+/// `text` with every whitespace run replaced by one space.
+fn squash_whitespace(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut last_space = false;
+    for ch in text.chars() {
+        if ch.is_whitespace() {
+            if !last_space {
+                out.push(' ');
+            }
+            last_space = true;
+        } else {
+            out.push(ch);
+            last_space = false;
+        }
+    }
+    out
+}
+
 /// The statement in progress. `skeleton` elides what sits inside braces
 /// (`{}`), so a binder inside a closure body is not read as a binder of the
 /// enclosing statement; `full` keeps everything, for the initializer and the
@@ -197,6 +215,10 @@ fn walk_bindings(
     reach: BindingReach,
     judge_open_statement: bool,
 ) -> bool {
+    // Keywords are matched followed by one space: every whitespace run
+    // (newline, tab, a masked comment) is one space before anything is read.
+    let squashed = squash_whitespace(code);
+    let code = squashed.as_str();
     let mut scope: Vec<(usize, bool)> = Vec::new();
     let mut depth = 0usize;
     let mut statement_depth = 0usize;
@@ -380,6 +402,7 @@ fn blank_literals_and_comments(text: &str) -> String {
             while at < chars.len() && chars[at] != '\n' {
                 at += 1;
             }
+            out.push(' ');
             continue;
         }
         if ch == '/' && next == Some('*') {
@@ -401,6 +424,7 @@ fn blank_literals_and_comments(text: &str) -> String {
                 }
                 at += 1;
             }
+            out.push(' ');
             continue;
         }
         let word_start =
@@ -430,6 +454,7 @@ fn blank_literals_and_comments(text: &str) -> String {
                     }
                     at += 1;
                 }
+                out.push(' ');
                 continue;
             }
         }
@@ -453,6 +478,7 @@ fn blank_literals_and_comments(text: &str) -> String {
                 }
                 at += 1;
             }
+            out.push(' ');
             continue;
         }
         if ch == '\'' {
@@ -464,10 +490,12 @@ fn blank_literals_and_comments(text: &str) -> String {
                     at += 1;
                 }
                 at += 1;
+                out.push(' ');
                 continue;
             }
             if chars.get(at + 2) == Some(&'\'') {
                 at += 3;
+                out.push(' ');
                 continue;
             }
         }
@@ -505,9 +533,9 @@ fn statement_binding_verdict(
             // Binders are read outside braces: a closure parameter, not a
             // pattern in the closure's body.
             let outside = trimmed.strip_prefix("let ").unwrap_or(rest);
-            let rewrites = outside.split_once('=').is_some_and(|(_, initializer)| {
-                assignment_target(initializer).is_some_and(|target| contains_word(target, name))
-            });
+            let rewrites = outside
+                .split_once('=')
+                .is_some_and(|(_, initializer)| assigns_name(initializer, name));
             return (binds_by_pattern(outside, name) || borrows_mutably(outside, name) || rewrites)
                 .then_some(BindingVerdict::Withdrawn);
         }
@@ -536,9 +564,7 @@ fn statement_binding_verdict(
     if binds_by_pattern(trimmed, name) || borrows_mutably(trimmed, name) {
         return Some(BindingVerdict::Withdrawn);
     }
-    assignment_target(trimmed)
-        .filter(|target| contains_word(target, name))
-        .map(|_| BindingVerdict::Withdrawn)
+    assigns_name(trimmed, name).then_some(BindingVerdict::Withdrawn)
 }
 
 /// `if let` / `while let` / `for` headers, match arms and closure
@@ -642,7 +668,7 @@ fn initializer_binds(skeleton: &str, name: &str) -> bool {
     };
     binds_by_pattern(initializer, name)
         || borrows_mutably(initializer, name)
-        || assignment_target(initializer).is_some_and(|target| contains_word(target, name))
+        || assigns_name(initializer, name)
 }
 
 /// A binder of `name` in the header of the brace being opened. The pattern of
@@ -820,26 +846,65 @@ fn initializer_is_owner_call(initializer: &str, owner_name: &str) -> bool {
     false
 }
 
-/// The left-hand side of the assignment in `statement` (`x = ..`, `x += ..`,
+/// The left-hand side of every assignment in `statement` (`x = ..`, `x += ..`,
 /// `x[0] = ..`, `(*x).y = ..`, `(x, y) = ..`, `Foo { x, .. } = ..`,
-/// `Some(x) = ..`): everything before the first `=` that is not part of a
-/// comparison (`==`, `!=`, `<=`, `>=`), a match arm (`=>`) or a range (`..=`).
-/// Any left-hand side that names the local is read as possibly rewriting it.
-fn assignment_target(statement: &str) -> Option<&str> {
+/// `Some(x) = ..`, the second of `y = x = 5`, the last argument of
+/// `foo(y = 2, x = 5)`): at each `=` that is not part of a comparison
+/// (`==`, `!=`, `<=`, `>=`), a match arm (`=>`) or a range (`..=`), the text
+/// back to the previous separator at the same nesting (an unmatched opener,
+/// `,`, `;`, `=>` or the previous assignment).
+fn assignment_targets(statement: &str) -> Vec<&str> {
     let bytes = statement.as_bytes();
-    let at = (0..bytes.len()).find(|&at| {
-        bytes[at] == b'='
+    let mut targets = Vec::new();
+    let mut previous_end = 0usize;
+    for at in 0..bytes.len() {
+        let assigns = bytes[at] == b'='
             && !matches!(bytes.get(at + 1), Some(b'=') | Some(b'>'))
             && !matches!(
                 at.checked_sub(1).map(|prev| bytes[prev]),
                 Some(b'=') | Some(b'!') | Some(b'.')
             )
-            && !is_comparison_angle(bytes, at)
-    })?;
-    let target = statement[..at]
-        .trim_end_matches(['+', '-', '*', '/', '%', '&', '|', '^', '<', '>'])
-        .trim();
-    (!target.is_empty()).then_some(target)
+            && !is_comparison_angle(bytes, at);
+        if !assigns {
+            continue;
+        }
+        let mut start = previous_end;
+        let mut depth = 0usize;
+        for back in (previous_end..at).rev() {
+            match bytes[back] {
+                b')' | b']' | b'}' => depth += 1,
+                b'(' | b'[' | b'{' if depth == 0 => {
+                    start = back + 1;
+                    break;
+                }
+                b'(' | b'[' | b'{' => depth -= 1,
+                b',' | b';' if depth == 0 => {
+                    start = back + 1;
+                    break;
+                }
+                b'>' if depth == 0 && back > 0 && bytes[back - 1] == b'=' => {
+                    start = back + 1;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let target = statement[start..at]
+            .trim_end_matches(['+', '-', '*', '/', '%', '&', '|', '^', '<', '>'])
+            .trim();
+        if !target.is_empty() {
+            targets.push(target);
+        }
+        previous_end = at + 1;
+    }
+    targets
+}
+
+/// Some assignment in `statement` has a left-hand side naming `name`.
+fn assigns_name(statement: &str, name: &str) -> bool {
+    assignment_targets(statement)
+        .iter()
+        .any(|target| contains_word(target, name))
 }
 
 /// `<=` / `>=` compare; `<<=` / `>>=` assign.
@@ -893,7 +958,7 @@ fn borrows_mutably(statement: &str, name: &str) -> bool {
         })
     }) || statement.match_indices("addr_of_mut").any(|(at, _)| {
         let rest = statement[at + "addr_of_mut".len()..].trim_start_matches(|ch: char| {
-            ch.is_whitespace() || matches!(ch, '!' | '(' | '*' | '&')
+            ch.is_whitespace() || matches!(ch, '!' | '(' | '[' | '{' | '*' | '&')
         });
         let rest = rest.strip_prefix("r#").unwrap_or(rest);
         rest.strip_prefix(name).is_some_and(|after| {
@@ -926,7 +991,7 @@ fn contains_word(text: &str, word: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        assignment_target, blank_literals_and_comments, initializer_is_owner_call,
+        assignment_targets, blank_literals_and_comments, initializer_is_owner_call,
         statement_binding_verdict,
     };
 
@@ -940,7 +1005,7 @@ mod tests {
             "assert!(count != 4);",
             "match count { 1 => {",
         ] {
-            assert_eq!(assignment_target(read), None, "{read}");
+            assert!(assignment_targets(read).is_empty(), "{read}");
             assert!(
                 statement_binding_verdict(
                     read,
@@ -964,7 +1029,7 @@ mod tests {
             ("*count = 2;", "*count"),
             ("record.count -= 1;", "record.count"),
         ] {
-            assert_eq!(assignment_target(write), Some(target), "{write}");
+            assert_eq!(assignment_targets(write), [target], "{write}");
         }
         assert!(matches!(
             statement_binding_verdict(
@@ -1315,6 +1380,28 @@ mod tests {
             "{n}.f[0] = 5;\n",
             "(*{n}).y = 5;\n",
             "let t = std::mem::take(&mut {n});\n",
+            "y = {n} = 5;\n",
+            "y = ({n} += 1);\n",
+            "y = foo({n} = 5);\n",
+            "y = {n} += 1;\n",
+            "y.f = {n} = 5;\n",
+            "*y = {n} = 5;\n",
+            "foo(y = 2, {n} = 5);\n",
+            "bar(a == 1, y = 2, {n} = 5);\n",
+            "let z = foo(y = 2, {n} = 5);\n",
+            "let z = (y = 2, {n} = 5);\n",
+            "let z = [y = 2, {n} = 5];\n",
+            "let z = y = {n} = 5;\n",
+            "let c = || y = {n} = 5;\n",
+            "let c = || (y = 2, {n} = 5);\n",
+            "addr_of_mut![{n}];\n",
+            "addr_of_mut!{{n}};\n",
+            "ptr::addr_of_mut!{{n}};\n",
+            "for {n} in v {\n",
+            "'a: for {n} in v {\n",
+            "for (a, {n}) in v {\n",
+            "let c = &mut {n};\n",
+            "let (a, {n}) = foo();\n",
             "fn inner({n}: u8) {\n",
             "fn f({n}: u8) { ",
             "pub fn f<T>({n}: T) {\n",
@@ -1362,20 +1449,40 @@ mod tests {
             ),
         ];
         let mut cases = 0;
+        // Every space may be a newline, a tab, a CRLF or an empty comment.
+        let spacings: [Option<&str>; 5] =
+            [None, Some("\n"), Some("\t"), Some("\r\n"), Some("/**/")];
         for (setup, reach) in modes {
             for placement in placements {
                 for shape in shapes {
-                    let hit = format!("{setup}{placement}{}", shape.replace("{n}", "x"));
-                    assert!(
-                        !super::local_is_owner_result_before(&hit, "x", "own", *reach),
-                        "binder must withdraw credit: {hit:?}"
-                    );
-                    let miss = format!("{setup}{placement}{}", shape.replace("{n}", "q"));
-                    assert!(
-                        super::local_is_owner_result_before(&miss, "x", "own", *reach),
-                        "other name must keep credit: {miss:?}"
-                    );
-                    cases += 1;
+                    for spacing in spacings {
+                        let build = |name: &str| {
+                            let text = format!("{setup}{placement}{}", shape.replace("{n}", name));
+                            let text = match spacing {
+                                Some(space) => text.replace(' ', space),
+                                None => text,
+                            };
+                            match reach {
+                                super::BindingReach::DirectOwnerCall => {
+                                    blank_literals_and_comments(&text)
+                                }
+                                super::BindingReach::OwnerCallInInitializer => {
+                                    crate::analysis::extract::mask_comments_and_strings(&text)
+                                }
+                            }
+                        };
+                        let hit = build("x");
+                        assert!(
+                            !super::local_is_owner_result_before(&hit, "x", "own", *reach),
+                            "binder must withdraw credit: {hit:?}"
+                        );
+                        let miss = build("q");
+                        assert!(
+                            super::local_is_owner_result_before(&miss, "x", "own", *reach),
+                            "other name must keep credit: {miss:?}"
+                        );
+                        cases += 1;
+                    }
                 }
             }
         }
@@ -1444,6 +1551,9 @@ mod tests {
             "run(|x| x + 1)",
             "items.iter().map(|x| x * 2).sum::<u8>()",
             "{ x = 3; x }",
+            "{ let\nx = 7; x }",
+            "{ let/**/x = 7; x }",
+            "{ y = x = 3; x }",
         ] {
             assert!(!strict_args(args), "{args}");
         }
