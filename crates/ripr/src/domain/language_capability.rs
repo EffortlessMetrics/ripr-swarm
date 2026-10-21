@@ -11,6 +11,10 @@
 //! strengthen a cell.
 
 use super::LanguageId;
+use AnalysisMode::{Diff, Repo};
+use CapabilityFamily::{RepairRouting, StaticFacts};
+use SupportState::{NotProven, SupportedWithRequiredFallback, UnsupportedWithTypedLimit};
+use TierCeiling::{Preview, UsableAlpha};
 use sha2::{Digest, Sha256};
 
 pub(crate) const LANGUAGE_CAPABILITIES_SCHEMA_VERSION: &str = "0.1";
@@ -164,11 +168,6 @@ macro_rules! cell {
         }
     };
 }
-
-use AnalysisMode::{Diff, Repo};
-use CapabilityFamily::{RepairRouting, StaticFacts};
-use SupportState::{NotProven, SupportedWithRequiredFallback, UnsupportedWithTypedLimit};
-use TierCeiling::{Preview, UsableAlpha};
 
 /// The current capability cells. Only the combinations listed here are
 /// registered; a combination with no cell is `not_proven`, never implied by a

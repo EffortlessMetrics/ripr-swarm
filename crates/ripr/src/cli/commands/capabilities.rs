@@ -53,3 +53,40 @@ pub(in crate::cli) fn capabilities(args: &[String]) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::capabilities;
+
+    fn run(args: &[&str]) -> Result<(), String> {
+        let owned: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
+        capabilities(&owned)
+    }
+
+    #[test]
+    fn help_and_valid_languages_succeed() {
+        assert_eq!(run(&["--help"]), Ok(()));
+        assert_eq!(run(&["--language", "python", "--json"]), Ok(()));
+    }
+
+    #[test]
+    fn bad_arguments_are_refused_with_a_named_reason() {
+        let missing = run(&["--language"]).err().unwrap_or_default();
+        assert!(
+            missing.contains("missing value for --language"),
+            "{missing}"
+        );
+        let flag_value = run(&["--language", "--json"]).err().unwrap_or_default();
+        assert!(flag_value.contains("missing value"), "{flag_value}");
+        let twice = run(&["--language", "rust", "--language", "perl"])
+            .err()
+            .unwrap_or_default();
+        assert!(twice.contains("at most one --language"), "{twice}");
+        let unknown = run(&["--language", "cobol"]).err().unwrap_or_default();
+        assert!(unknown.contains("cobol"), "{unknown}");
+        let option = run(&["--bogus"]).err().unwrap_or_default();
+        assert!(option.contains("capabilities"), "{option}");
+        let positional = run(&["rust"]).err().unwrap_or_default();
+        assert!(positional.contains("positional"), "{positional}");
+    }
+}
