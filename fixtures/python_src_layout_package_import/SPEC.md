@@ -36,10 +36,11 @@ cargo xtask fixtures python_src_layout_package_import
   module once the `src` import root is stripped (`src.pricing.discounts` →
   `pricing.discounts`), so the strong exact-value oracle carries free-function
   module identity, exactly as in the equivalent flat layout.
-- `src/pricing/legacy.py:2` stays `weakly_exposed` with
-  `alignment_reason = strong_oracle_observes_different_sink`: the test imports
+- `src/pricing/legacy.py:2` is `no_static_path`: the test imports
   `bulk_discount` from `pricing.discounts`, not `pricing.legacy`, so the
-  same-named call is token coincidence, not identity.
+  same-named call is token coincidence, not identity and the test is not a
+  related test of `legacy` at all (#8759; before that it read
+  `weakly_exposed` / `strong_oracle_observes_different_sink`, a false reach).
 
 ## Must Not
 
