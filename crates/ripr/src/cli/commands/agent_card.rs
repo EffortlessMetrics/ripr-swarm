@@ -360,7 +360,15 @@ pub(crate) fn agent_card_prose_lines(
             )),
         }
     }
-    if !card.limitations.is_empty() {
+    // The canonical next-action block above already prints a `limitations:`
+    // line; repeating the identical list a few lines later reads as a second,
+    // different set of caveats (#9033), so the closing copy is kept only when
+    // it adds something the block did not say.
+    let limitations_already_shown = card
+        .canonical_next_action
+        .as_ref()
+        .is_some_and(|action| action.limitations() == card.limitations.as_slice());
+    if !card.limitations.is_empty() && !limitations_already_shown {
         lines.push(format!("  limitations: {}", card.limitations.join("; ")));
     }
     if let Some(attempt) = &card.attempt {
@@ -608,6 +616,12 @@ mod tests {
     }
 
     fn prose_test_decision() -> Result<crate::domain::CanonicalNextActionV1, String> {
+        prose_test_decision_with_limitations(Vec::new())
+    }
+
+    fn prose_test_decision_with_limitations(
+        limitations: Vec<String>,
+    ) -> Result<crate::domain::CanonicalNextActionV1, String> {
         use crate::domain::{
             CommandRole, NextActionClass, NextActionCommandRef, NextActionCurrentness,
             NextActionDiffSource, NextActionProducer, NextActionSubject, NextActionTransition,
@@ -640,7 +654,7 @@ mod tests {
                 to_state: "packet_inspected".to_string(),
             }),
             Vec::new(),
-            Vec::new(),
+            limitations,
         )
     }
 
@@ -712,6 +726,34 @@ mod tests {
         let text = lines.join("\n");
         if !text.contains("  next action: none (instruction FixSiteReady") {
             return Err(format!("legacy refusal line lost:\n{text}"));
+        }
+        Ok(())
+    }
+
+    /// #9033: the canonical block already prints the limitation list, so the
+    /// closing copy appears only when the card carries something different.
+    #[test]
+    fn prose_prints_limitations_once_when_block_already_shows_them() -> Result<(), String> {
+        let count = |card: &RepairCardV1| {
+            agent_card_prose_lines(card, "ripr agent packet --seam-id seam:demo --json", None)
+                .iter()
+                .filter(|line| line.starts_with("  limitations: "))
+                .count()
+        };
+        let shared = vec!["no exact assertion location".to_string()];
+        let mut card = prose_test_card();
+        card.limitations = shared.clone();
+        card.canonical_next_action = Some(prose_test_decision_with_limitations(shared)?);
+        if count(&card) != 1 {
+            return Err("identical limitations must print exactly once".to_string());
+        }
+        card.limitations = vec!["card-only caveat".to_string()];
+        if count(&card) != 2 {
+            return Err("a card-only limitation list must still print".to_string());
+        }
+        card.canonical_next_action = None;
+        if count(&card) != 1 {
+            return Err("without a canonical block the card prints its own list".to_string());
         }
         Ok(())
     }
