@@ -1449,7 +1449,13 @@ fn crate_test_alias_gated_on_a_test_build_is_credited() -> Result<(), String> {
         ])?;
         assert_eq!(names, ["aliased"], "gate {gate}");
     }
-    for gate in ["#[cfg(not(test))]", "#[cfg(any(test, feature = \"x\"))]"] {
+    for gate in [
+        "#[cfg(not(test))]",
+        "#[cfg(any(test, feature = \"x\"))]",
+        "#[cfg(feature = \"x\")]",
+        "#[cfg(all(not(test), feature = \"x\"))]",
+        "#[cfg_attr(test, allow(unused_imports))]",
+    ] {
         let root = format!("{gate}\nuse my_macros::wrapped_test as test;\n");
         let names = alias_test_names(&[
             ("app/src/lib.rs", &root),

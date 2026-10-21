@@ -17,8 +17,11 @@
 //!
 //! - the crate root (`src/lib.rs`, else `src/main.rs`; every existing root
 //!   must agree) for `crate::test`, or the test's own file for `self::test`,
-//!   has exactly one top-level `use ... as test;` that is ungated or gated only on
-//!   `cfg(test)` (`cfg(all(test, ..))` too);
+//!   has exactly one top-level `use ... as test;` that is ungated or whose `cfg`
+//!   attributes require a test build per `cfg_predicates` (`cfg(test)`,
+//!   `cfg(all(test, <anything>))`, stacked gates); the extra `all(..)`
+//!   conjuncts are accepted by design, since a `#[crate::test]` user
+//!   implies the alias is compiled;
 //! - the aliased name resolves to exactly one `#[proc_macro_attribute]` fn
 //!   in the analyzed index; and
 //! - source of that macro's package names a known test attribute
@@ -135,7 +138,8 @@ fn proc_macro_files(
 }
 
 /// The last path segment of the single top-level `use ... as test`, ungated
-/// or gated only on test builds.
+/// or whose cfg attributes require a test build (extra `all(test, ..)`
+/// conjuncts are accepted by design).
 fn test_alias_target(source: &str) -> Option<String> {
     if !source.contains("as test") && !source.contains("as r#test") {
         return None;
