@@ -248,7 +248,7 @@ analysis. Repo-mode analysis differs per adapter:
   selects the production `.ts/.tsx/.mts/.cts/.js/.jsx/.mjs/.cjs` files under
   the same shared cap (#2109; default 800, `RIPR_MAX_REPO_INDEX_FILES`) and
   runs the diff-mode owner/test/oracle/probe producers with every non-blank
-  line of each selected file treated as added (whole-file, not diff-scoped), keeping one finding per owner, probe family, delta and exposure class. Findings keep
+  line of each selected file treated as added (whole-file, not diff-scoped), keeping one finding per owner, probe family, delta, exposure class and changed expression (identical repeated lines collapse; distinct behaviors stay separate rows). Findings keep
   their `typescript` or `javascript` language identity and preview status;
   no Rust `RepoSeam` is fabricated. Test, declaration, generated, vendor and
   build files never seed findings (tests still feed the evidence index). A

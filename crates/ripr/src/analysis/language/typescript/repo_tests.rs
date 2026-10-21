@@ -307,7 +307,15 @@ fn declared_handwritten_source_under_an_excluded_directory_is_admitted() -> Resu
     );
     let without_decl = run(&root, 800);
     let _ = std::fs::remove_dir_all(&root);
-    assert_eq!(with_decl?.production_files, 1);
+    let with_decl = with_decl?;
+    assert_eq!(with_decl.production_files, 1);
+    assert!(
+        with_decl
+            .findings
+            .iter()
+            .any(|f| f.language == Some(DomainLanguage::TypeScript)),
+        "the admitted file must be analyzed, not just counted"
+    );
     assert_eq!(without_decl?.production_files, 0);
     Ok(())
 }
