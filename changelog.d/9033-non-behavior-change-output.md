@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- `ripr check` no longer reports a visibility-qualified out-of-line module declaration (`pub mod new;`, `pub(crate) mod x;`) as an unknown-state finding with a related test and a repair hint. Like the bare `mod` form, such a line now reads as "no changed line is behavior ripr checks"; inline module bodies, lines with trailing code and visibility-qualified `use` re-exports (which can retarget an implementation) stay probed (#9033).

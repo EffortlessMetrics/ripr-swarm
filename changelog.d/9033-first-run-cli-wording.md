@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- Clearer first-run CLI output (#9033): `repair` and `continue` collapse long module-limitation lists and name `RIPR_REPO_EXPOSURE_SEAM_LIMIT` when the seam inventory is truncated; `check` no longer lists root `target/` build output as ignored sources; `explain` and `context` accept ids printed by `check` on a dirty tree; `init` and `doctor` suggest plain `ripr doctor` / `ripr check`; a flag before the command points to the right order; a clean tree on the base branch says so.

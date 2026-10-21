@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- Framework gap withholding (`rust_framework_oracle_unresolved`) now reads only executable code. An expect-test or insta snapshot operand must be bound to the owner's result where the assertion runs: a replaced, reassigned, closed-block or later binding no longer qualifies (#8925). A commented, nested-commented or raw-string environment write, owner-result binding or framework assertion no longer activates the limit, while real literal-name writes and direct owner-result comparisons keep withholding (#8926).
