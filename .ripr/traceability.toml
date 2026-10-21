@@ -13853,6 +13853,8 @@ tests = [
   "crates/ripr/src/lsp/progress_stages.rs::tests::bridge_forwards_events_without_blocking_the_producer",
   "crates/ripr/src/lsp/progress_stages.rs::tests::stalled_progress_sink_cannot_block_the_bounded_stage_drain",
   "crates/ripr/src/lsp/tests.rs::work_done_progress_stage_reports_through_real_refresh_journey",
+  "crates/ripr/src/lsp/progress.rs::tests::detached_begin_does_not_wait_for_create_and_never_begins_after_end",
+  "crates/ripr/src/lsp/progress.rs::tests::detached_begin_with_unanswered_create_is_nonblocking_and_expires_quietly",
 ]
 fixtures = []
 code = [

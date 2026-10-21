@@ -79,6 +79,15 @@ testable parity contract.
    snapshot bytes, `ripr/analysisStatus` payload, and CLI stdout are
    unchanged by emitting or dropping stage reports.
 
+7. The interactive refresh path never waits on the client for progress
+   (#9149): the token is registered synchronously and the
+   `window/workDoneProgress/create` round trip plus Begin run detached,
+   so an unanswered create cannot delay the analysis it decorates. A
+   terminal `end` that runs while the create is still in flight removes
+   the registration, and the detached task then sends no Begin (no Begin
+   is started after its End and no token leaks). Wire ordering between a
+   Begin already being submitted and a concurrent End is best-effort.
+
 ## Cross-surface parity
 
 One normalized producer event trace projects through both real
@@ -162,13 +171,16 @@ denominator honesty, and terminal state may not diverge.
 - `crates/ripr/src/lsp/progress_stages.rs::tests::bridge_forwards_events_without_blocking_the_producer`
 - `crates/ripr/src/lsp/progress_stages.rs::tests::stalled_progress_sink_cannot_block_the_bounded_stage_drain`
 - `crates/ripr/src/lsp/tests.rs::work_done_progress_stage_reports_through_real_refresh_journey`
+- `crates/ripr/src/lsp/progress.rs::tests::detached_begin_does_not_wait_for_create_and_never_begins_after_end`
+- `crates/ripr/src/lsp/progress.rs::tests::detached_begin_with_unanswered_create_is_nonblocking_and_expires_quietly`
 
 ## Implementation Mapping
 
 - `crates/ripr/src/lsp/progress_stages.rs` — stage mapping, sync/async
   bridge, parity DTO oracle
 - `crates/ripr/src/lsp/progress.rs` — `report_stage` on the token registry
-  (capability, phase, duplicate, and terminal guards)
+  (capability, phase, duplicate, and terminal guards); `begin_detached`
+  registers synchronously and announces on a spawned task (#9149)
 - `crates/ripr/src/lsp/backend.rs` — bridge + per-attempt drain task in
   `run_refresh_request` (both bounded by `STAGE_DRAIN_BUDGET`)
 - `crates/ripr/src/lsp/diagnostics.rs` — sink-bearing diagnostics entry
