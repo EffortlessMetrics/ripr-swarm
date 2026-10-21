@@ -33,10 +33,8 @@ Linked PRs:
 
 Support-tier impact:
 
-- None. The report gains in-band provenance and a reading guide it always
+- None under [SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md). The report gains in-band provenance and a reading guide it always
   owed its readers; no command accepts or executes anything new.
-- Claim boundaries remain governed by
-  [support tiers](../status/SUPPORT_TIERS.md).
 
 Policy impact:
 
