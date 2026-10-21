@@ -269,8 +269,8 @@ pub(super) fn python_boundary_evidence(
         }
     }
     let observed = observed_new || observed_old;
-    // File-blind dedup (first file in path order) so identical facts from two
-    // test files still collapse and JSON totals do not move (#8389).
+    // Preserve distinct source files while collapsing exact duplicate facts
+    // and ordering tied rows deterministically (#8389).
     crate::analysis::classify::sort_value_facts(&mut observed_values);
 
     // An operand that no strong call resolves (`item.on_hand`, a test local)

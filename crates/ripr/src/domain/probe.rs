@@ -344,8 +344,9 @@ impl ValueContext {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ValueFact {
     /// Test file the value was read from, when the producer knows it. The
-    /// human renderer prints it next to `line`. It is never serialized, so
-    /// check JSON, MCP gap evidence and evidence digests are unchanged.
+    /// human renderer can print it next to `line`. The field itself is omitted
+    /// from serde output; using it for fact identity can still change rendered
+    /// fact counts, ordering and derived evidence.
     #[serde(skip)]
     pub file: Option<PathBuf>,
     pub line: usize,

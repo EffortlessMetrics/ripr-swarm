@@ -7311,10 +7311,10 @@ fn classify_price_boundary_with_test_body(body: &str) -> Result<crate::domain::F
         .ok_or_else(|| "changed predicate should classify".to_string())
 }
 
-/// #8389: identical facts read from two test files collapse to one (the first
-/// file in path order), so the observed-value total is the single-file total.
+/// #8389: identical calls in distinct files retain both source locations,
+/// independently of the order in which related tests are discovered.
 #[test]
-fn identical_boundary_facts_from_two_test_files_dedup_to_one() -> Result<(), String> {
+fn boundary_value_facts_preserve_identical_calls_from_two_files() -> Result<(), String> {
     let owner_file = "src/pkg/mod.py";
     let owners = extract_owners(
         Path::new(owner_file),
@@ -7333,18 +7333,23 @@ fn identical_boundary_facts_from_two_test_files_dedup_to_one() -> Result<(), Str
         Ok(finding.activation.observed_values)
     };
     let single = observed(&["tests/test_a.py"])?;
+    let expected = single
+        .iter()
+        .flat_map(|fact| {
+            ["tests/test_a.py", "tests/test_b.py"].map(|file| crate::domain::ValueFact {
+                file: Some(std::path::PathBuf::from(file)),
+                ..fact.clone()
+            })
+        })
+        .collect::<Vec<_>>();
     for order in [
         ["tests/test_a.py", "tests/test_b.py"],
         ["tests/test_b.py", "tests/test_a.py"],
     ] {
         let both = observed(&order)?;
         assert!(!single.is_empty());
-        assert_eq!(both.len(), single.len(), "{both:?}");
-        assert!(
-            both.iter()
-                .all(|fact| fact.file.as_deref() == Some(Path::new("tests/test_a.py"))),
-            "{both:?}"
-        );
+        assert_eq!(both.len(), 2 * single.len(), "{both:?}");
+        assert_eq!(both, expected);
     }
     Ok(())
 }

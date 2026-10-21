@@ -4056,13 +4056,13 @@ pub(in crate::analysis) fn sort_value_facts(facts: &mut Vec<ValueFact>) {
             .then(left.context.as_str().cmp(right.context.as_str()))
             .then(left.value.cmp(&right.value))
             .then(left.text.cmp(&right.text))
-            // Same line/value/text from two files still collapses to one fact
-            // (the first file in path order), exactly as before #8389, so the
-            // JSON observed values and totals do not move.
+            // A file is part of the source location, even though machine
+            // output omits it. Break otherwise equal ties deterministically.
             .then(left.file.cmp(&right.file))
     });
     facts.dedup_by(|left, right| {
-        left.line == right.line
+        left.file == right.file
+            && left.line == right.line
             && left.text == right.text
             && left.value == right.value
             && left.context == right.context
@@ -4734,8 +4734,7 @@ mod tests {
         }));
     }
 
-    /// #8389: each equality fact names the test file that holds its call line,
-    /// and identical facts from two files collapse to the first path.
+    /// #8389: each equality fact names the test file that holds its call line.
     #[test]
     fn equality_facts_name_the_test_file_holding_their_call() {
         let owner = function(
@@ -4817,19 +4816,29 @@ mod tests {
     }
 
     #[test]
-    fn sort_value_facts_collapses_same_fact_across_files_to_first_path() {
+    fn sort_value_facts_preserves_files_and_collapses_only_exact_duplicates() {
         let fact = |file: &str| ValueFact {
             file: Some(PathBuf::from(file)),
             ..value_fact(4, "score(1)", "1", ValueContext::FunctionArgument)
         };
         for order in [["tests/b.rs", "tests/a.rs"], ["tests/a.rs", "tests/b.rs"]] {
             let mut facts = order.iter().map(|file| fact(file)).collect::<Vec<_>>();
+            facts.extend(facts.clone());
             sort_value_facts(&mut facts);
-            assert_eq!(facts.len(), 1);
-            assert_eq!(
-                facts[0].file.as_deref(),
-                Some(std::path::Path::new("tests/a.rs"))
-            );
+            assert_eq!(facts, vec![fact("tests/a.rs"), fact("tests/b.rs")]);
+        }
+    }
+
+    #[test]
+    fn sort_value_facts_breaks_same_location_value_ties_by_text() {
+        let fact = |text: &str| ValueFact {
+            file: Some(PathBuf::from("tests/a.rs")),
+            ..value_fact(4, text, "1", ValueContext::FunctionArgument)
+        };
+        for order in [["zeta", "alpha"], ["alpha", "zeta"]] {
+            let mut facts = order.iter().map(|text| fact(text)).collect::<Vec<_>>();
+            sort_value_facts(&mut facts);
+            assert_eq!(facts, vec![fact("alpha"), fact("zeta")]);
         }
     }
 
