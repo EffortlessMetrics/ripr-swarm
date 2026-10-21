@@ -2653,6 +2653,32 @@ fn get_repair_card_after_refresh_matches_cli_agent_card() -> Result<(), String> 
     if cli_card.pointer("/schema_version").and_then(Value::as_str) != Some("repair_card.v1") {
         return Err(format!("ripr agent card lost repair_card.v1: {cli_card}"));
     }
+    // #8638: one gap id scheme across surfaces. The card reports the readable
+    // id `ripr_list_gaps` returned (the id agents pass back), on both the MCP
+    // and CLI cards; the old seam-side content hash rides additively under
+    // `seam_content_gap_id` and is never what a gap tool accepts.
+    for (surface, card) in [("MCP", &mcp_card), ("CLI", &cli_card)] {
+        let card_gap_id = card
+            .pointer("/subject/canonical_gap_id")
+            .and_then(Value::as_str);
+        if card_gap_id != Some(canonical_id.as_str()) {
+            return Err(format!(
+                "{surface} card subject.canonical_gap_id {card_gap_id:?} != ripr_list_gaps canonical_id {canonical_id}"
+            ));
+        }
+        let legacy = card
+            .pointer("/subject/seam_content_gap_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let is_hash_id = legacy
+            .strip_prefix("gap:")
+            .is_some_and(|hash| hash.len() == 16 && hash.chars().all(|c| c.is_ascii_hexdigit()));
+        if !is_hash_id || legacy == canonical_id {
+            return Err(format!(
+                "{surface} card lost the additive seam_content_gap_id hash: {legacy:?}"
+            ));
+        }
+    }
     if cli_card.pointer("/repair_card_id").and_then(Value::as_str) != Some(repair_card_id) {
         return Err(format!(
             "MCP card diverged from `ripr agent card` identity: mcp={repair_card_id} cli={}",

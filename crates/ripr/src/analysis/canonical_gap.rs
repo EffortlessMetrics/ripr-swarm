@@ -240,6 +240,21 @@ pub(crate) fn producer_gap_id_names_seam(item: &str, entry: &ClassifiedSeam) -> 
     )
 }
 
+/// The readable producer gap id (`gap:rust:{file}:{owner}:...`) `ripr check`,
+/// `ripr_list_gaps` and `ripr_get_gap` print for the finding that names this
+/// seam, re-minted from the seam through the producer's own minter (#8638).
+/// This is the id agents receive and pass back; the content-hash id from
+/// [`canonical_gap_identity`] stays an internal join key.
+pub(crate) fn readable_gap_id_for_seam(entry: &ClassifiedSeam) -> Option<String> {
+    let file = crate::analysis::stable_path_text(entry.seam.file());
+    super::language::rust_gap_id_for_seam_shape(
+        &file,
+        entry.seam.owner(),
+        entry.seam.kind(),
+        entry.seam.expression(),
+    )
+}
+
 fn missing_discriminator_key(entry: &ClassifiedSeam) -> String {
     let mut missing = entry
         .evidence

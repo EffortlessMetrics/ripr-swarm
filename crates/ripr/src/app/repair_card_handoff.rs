@@ -569,7 +569,15 @@ pub(crate) fn assemble_repair_card(
         },
         subject: RepairCardSubject {
             seam_id,
-            canonical_gap_id: readiness.canonical_gap_id.clone(),
+            // #8638: the card reports the readable id `ripr check`,
+            // `ripr_list_gaps` and `ripr_get_gap` use, minted by the
+            // producer's own minter. The seam-side content hash stays the
+            // internal join key and rides additively under its own name; a
+            // seam that cannot re-mint the readable id keeps the hash so the
+            // subject never loses its gap binding.
+            canonical_gap_id: crate::analysis::canonical_gap::readable_gap_id_for_seam(entry)
+                .or_else(|| readiness.canonical_gap_id.clone()),
+            seam_content_gap_id: readiness.canonical_gap_id.clone(),
             finding_id: facts.finding_id.map(str::to_string),
         },
         instruction: &instruction,
@@ -1234,6 +1242,42 @@ mod tests {
                 ..Default::default()
             });
         entry
+    }
+
+    /// #8638: the card's `subject.canonical_gap_id` is the readable producer
+    /// id (the spelling `ripr check` prints on the finding that names the
+    /// seam), and the old content hash rides additively as
+    /// `seam_content_gap_id`.
+    #[test]
+    fn card_subject_reports_the_readable_gap_id_and_keeps_the_hash_additive() -> Result<(), String>
+    {
+        let entry = own_file_inline_entry();
+        let packet = packet_for(&entry);
+        let card = assemble_repair_card(&facts_for(&entry, &packet))?;
+        let hash = crate::analysis::canonical_gap::canonical_gap_identity(&entry)
+            .ok_or_else(|| "fixture seam must carry a canonical gap identity".to_string())?
+            .id;
+        let readable = card
+            .subject
+            .canonical_gap_id
+            .as_deref()
+            .ok_or_else(|| "card subject lost its gap id".to_string())?;
+        if !readable.starts_with("gap:rust:") || readable == hash {
+            return Err(format!(
+                "card subject gap id is not the readable form: {readable}"
+            ));
+        }
+        // Same minter as the finding side: re-minting through the producer
+        // for this seam's own shape yields the card's id.
+        if crate::analysis::canonical_gap::readable_gap_id_for_seam(&entry).as_deref()
+            != Some(readable)
+        {
+            return Err("card id diverged from the producer minter".to_string());
+        }
+        if card.subject.seam_content_gap_id.as_deref() != Some(hash.as_str()) {
+            return Err("the content hash was not kept additively".to_string());
+        }
+        Ok(())
     }
 
     /// Devin 4179587247: a compact card that allows a production file must

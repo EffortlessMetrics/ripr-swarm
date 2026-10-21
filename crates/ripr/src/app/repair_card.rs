@@ -98,7 +98,7 @@ pub(crate) fn build_repair_card(input: &RepairCardInput<'_>) -> Result<RepairCar
         return Err("subject seam and readiness seam do not identify one repair".to_string());
     }
     if let (Some(subject_gap), Some(readiness_gap)) = (
-        &input.subject.canonical_gap_id,
+        &input.subject.seam_content_gap_id,
         &input.readiness.canonical_gap_id,
     ) && subject_gap != readiness_gap
     {
@@ -424,7 +424,10 @@ mod tests {
     fn subject() -> RepairCardSubject {
         RepairCardSubject {
             seam_id: "seam:demo".to_string(),
-            canonical_gap_id: Some("gap:demo".to_string()),
+            canonical_gap_id: Some(
+                "gap:rust:src/lib.rs:demo:return_value:return_value:x".to_string(),
+            ),
+            seam_content_gap_id: Some("gap:demo".to_string()),
             finding_id: Some("probe:demo".to_string()),
         }
     }
@@ -761,7 +764,7 @@ mod tests {
         let instruction = instruction(FixInstructionState::FixSiteReady);
         let readiness = ready_readiness();
         let mut input = base_input(&instruction, &readiness);
-        input.subject.canonical_gap_id = Some("gap:other".to_string());
+        input.subject.seam_content_gap_id = Some("gap:other".to_string());
 
         assert!(matches!(build_repair_card(&input), Err(_message)));
     }
