@@ -143,3 +143,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_adversarial_mocked_barrel (13)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless typescript_adversarial_mocked_barrel --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

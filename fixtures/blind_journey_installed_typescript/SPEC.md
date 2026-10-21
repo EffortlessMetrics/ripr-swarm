@@ -15,7 +15,8 @@ This fixture commits one fresh small npm project
 (`fixtures/blind_journey_installed_typescript/repository/`): `src/pricing.ts`
 owns one discount-threshold comparison and `test/pricing.test.ts` is the
 single related Vitest test. `package.json` selects the `vitest run` script and
-the retained `package-lock.json` root entry backs the npm-runner selection.
+the `base` and `head` snapshots retain the full `package-lock.json` (vitest 3.2.4, `npm ci`-installable) that backs
+the npm-runner selection; the variant snapshots are gaining their full lockfiles one per change (#9104); until all land, each variant's manifest hash says whether it holds the full lockfile or the root-entry skeleton.
 Ten bound snapshots are retained:
 
 - `base` — the boundary is exclusive (`subtotal > DISCOUNT_THRESHOLD`); the

@@ -18,8 +18,9 @@ use crate::analysis::classify::{
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
+use crate::analysis::sync_memo::SyncMemo;
 use crate::domain::*;
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -59,6 +60,13 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     /// related `assert_eq!` was refused for an analyzer limit, so the gap
     /// rests on what ripr could not read (RIPR-SPEC-0240).
     pub(in crate::analysis) refusals_are_analyzer_limits: bool,
+    /// #8051: related direct-call tests (labelled `name` (file:line)) whose
+    /// bare `debug_assert_eq!` the owner-return pin would admit as
+    /// `assert_eq!`. Never credit; the gap-admission post-pass reads it.
+    pub(in crate::analysis) debug_assert_eq_pins: Vec<String>,
+    /// #8600: some related test (before the render cap trims the rows) has a
+    /// line at the per-line call-fact budget, so a call there may be missing.
+    pub(in crate::analysis) related_call_budget_saturated: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1063,6 +1071,73 @@ impl ClassifiedProbeEvidence {
                 && refusals.all(|refusal| is_limit(&refusal))
         };
 
+        // #8051: the owner pin's own admission, spelled `debug_assert_eq!`.
+        // Only a gap reads it, and only as a profile limit.
+        let debug_assert_eq_pins: Vec<String> = owner_return_pin
+            .as_ref()
+            .map(|pin| {
+                context
+                    .related_tests
+                    .iter()
+                    .filter(|(test, reason)| {
+                        *reason == RelationReason::DirectOwnerCall
+                            && test.body.as_str().contains("debug_assert_eq")
+                            && !crate::analysis::classify::is_ignored(test)
+                    })
+                    .filter(|(test, _)| {
+                        let Some(facts) = context.index.files().get(&test.file) else {
+                            return false;
+                        };
+                        pin_syntax
+                            .debug_assert_eq_calls(
+                                &test.file,
+                                &facts.source,
+                                test.start_line,
+                                test.end_line,
+                            )
+                            .into_iter()
+                            .any(|(line, text)| {
+                                let assertion = OracleFact {
+                                    line,
+                                    text,
+                                    kind: OracleKind::ExactValue,
+                                    strength: OracleStrength::Strong,
+                                    observed_tokens: Vec::new(),
+                                    ok_value_observed: None,
+                                };
+                                pin.admits_debug_assert_eq(
+                                    test,
+                                    &assertion,
+                                    context.index,
+                                    &|file, name| {
+                                        context.index.files().get(file).is_some_and(|facts| {
+                                            context.test_file_imports_foreign_callee_name(
+                                                file,
+                                                &facts.source,
+                                                name,
+                                            )
+                                        })
+                                    },
+                                    pin_syntax,
+                                )
+                            })
+                    })
+                    .map(|(test, _)| {
+                        format!(
+                            "`{}` ({}:{})",
+                            test.name,
+                            test.file.display().to_string().replace('\\', "/"),
+                            test.start_line
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let related_call_budget_saturated = context
+            .related_tests
+            .iter()
+            .any(|(test, _)| crate::analysis::extract::has_saturated_line(test.calls.iter()));
+
         Self {
             ripr,
             evidence,
@@ -1079,6 +1154,8 @@ impl ClassifiedProbeEvidence {
             reach_ruled_out,
             assertion_refusal,
             refusals_are_analyzer_limits,
+            debug_assert_eq_pins,
+            related_call_budget_saturated,
         }
     }
 
@@ -1263,8 +1340,11 @@ type OwnerCallerSets = BTreeMap<usize, BTreeSet<(Option<String>, String)>>;
 
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct OwnerCallerNames {
-    index_identity: Cell<Option<(usize, usize, u64)>>,
-    by_owner_slot: RefCell<OwnerCallerSets>,
+    index_identity: SyncMemo<Option<(usize, usize, u64)>>,
+    by_owner_slot: SyncMemo<OwnerCallerSets>,
+    /// Walks the memo ran, so a test can tell a hit from a recompute.
+    #[cfg(test)]
+    walks: SyncMemo<usize>,
 }
 
 impl OwnerCallerNames {
@@ -1287,7 +1367,7 @@ impl OwnerCallerNames {
         if let Some(cached) = self.by_owner_slot.borrow().get(&slot) {
             return cached.iter().any(matches);
         }
-        let callers = transitive_caller_names(owner, index);
+        let callers = self.walk(owner, index);
         let found = callers.iter().any(matches);
         self.by_owner_slot.borrow_mut().insert(slot, callers);
         found
@@ -1306,26 +1386,48 @@ impl OwnerCallerNames {
         if let Some(cached) = self.by_owner_slot.borrow().get(&slot) {
             return cached.clone();
         }
-        let callers = transitive_caller_names(owner, index);
+        let callers = self.walk(owner, index);
         self.by_owner_slot
             .borrow_mut()
             .insert(slot, callers.clone());
         callers
     }
 
-    /// The cache cells, so tests can hold a shared borrow across a repeat
-    /// query: a hit only borrows, while a recompute's `borrow_mut` panics.
+    /// The cache cells, so tests can inspect them between queries. A guard
+    /// must not be held across a query: the memo is a lock, and re-entry
+    /// panics in test builds.
     #[cfg(test)]
-    pub(in crate::analysis) fn slots_for_test(&self) -> &std::cell::RefCell<OwnerCallerSets> {
+    pub(in crate::analysis) fn slots_for_test(&self) -> &SyncMemo<OwnerCallerSets> {
         &self.by_owner_slot
+    }
+
+    fn walk(
+        &self,
+        owner: &FunctionSummary,
+        index: &RustIndex,
+    ) -> BTreeSet<(Option<String>, String)> {
+        #[cfg(test)]
+        {
+            *self.walks.borrow_mut() += 1;
+        }
+        transitive_caller_names(owner, index)
+    }
+
+    /// How many times the memo walked callers instead of serving a hit.
+    #[cfg(test)]
+    pub(in crate::analysis) fn walks_for_test(&self) -> usize {
+        *self.walks.borrow()
     }
 
     fn slot_key(&self, index: &RustIndex, owner: &FunctionSummary) -> Option<usize> {
         let identity = index.storage_identity();
-        match self.index_identity.get() {
-            None => self.index_identity.set(Some(identity)),
-            Some(bound) if bound != identity => return None,
-            Some(_) => {}
+        {
+            let mut bound = self.index_identity.borrow_mut();
+            match *bound {
+                None => *bound = Some(identity),
+                Some(bound) if bound != identity => return None,
+                Some(_) => {}
+            }
         }
         index.function_slot(owner)
     }
@@ -2174,16 +2276,14 @@ mod tests {
             1,
             "the first query populated the cache"
         );
-        // The repeat query must hit: a shared borrow is held across it, so
-        // a recompute's `borrow_mut` panics instead of silently re-walking.
-        {
-            let _guard = memo.slots_for_test().borrow();
-            assert_eq!(
-                memo.callers_for(&index, owner),
-                direct,
-                "the repeat query serves the cached set"
-            );
-        }
+        // The repeat query must hit: the walk counter does not move.
+        assert_eq!(memo.walks_for_test(), 1, "the first query walked once");
+        assert_eq!(
+            memo.callers_for(&index, owner),
+            direct,
+            "the repeat query serves the cached set"
+        );
+        assert_eq!(memo.walks_for_test(), 1, "the repeat query hit the cache");
         // The borrow-scoped predicate agrees with the walked set.
         for (ty, caller) in &direct {
             assert!(

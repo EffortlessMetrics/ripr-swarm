@@ -44,11 +44,12 @@
 pub(super) mod closure_adaptor;
 mod expected_binding;
 mod fallible_check;
+mod helper_arguments;
 pub(super) mod short_circuit;
 pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
 
 use super::super::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSummary};
-use super::call_identity::{CallTarget, OwnerCallIdentity};
+use super::call_identity::{CallTarget, ConstantTable, OwnerCallIdentity};
 use super::reveal::{
     UsePath, assertion_comparison_operands, contains_as_whole_word,
     file_imports_foreign_callee_name, file_imports_own_item, file_use_statements,
@@ -66,6 +67,7 @@ use crate::analysis::facts::drop_in::DropInManifests;
 use crate::analysis::facts::{
     DOCTEST_FUNCTION_NAME, FunctionContainer, ModulePathTarget, SourceRoleProvenanceEdgeKind,
 };
+use crate::analysis::sync_memo::SyncMemo;
 use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
 use crate::analysis::syntax::{
     AssertionContextRefusal, GeneratedTestPins, HelperLoan, MacroBindingCandidates,
@@ -81,10 +83,11 @@ use ra_ap_syntax::{
     ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasModuleItem, HasName},
 };
 use rayon::prelude::*;
-use std::cell::{OnceCell, RefCell};
+use std::cell::{Cell, OnceCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 /// The owner-side half of the pin, established once per probe.
 pub(in crate::analysis) struct OwnerReturnPin {
@@ -120,7 +123,7 @@ pub(in crate::analysis) struct OwnerReturnPin {
     drop_plain: bool,
     /// Per test file: whether the owner's trait is in scope. The trait is
     /// fixed per pin and the scan masks the whole file, so it runs once.
-    trait_scope_by_file: RefCell<BTreeMap<PathBuf, bool>>,
+    trait_scope_by_file: SyncMemo<BTreeMap<PathBuf, bool>>,
     /// Same-named module-level rivals in the owner's package, settled per
     /// test by the call's spelled path (#6544). `None` when there are none.
     /// Shared per analysis run with the relation stage's identity (#7716).
@@ -168,76 +171,89 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// Per test file, its `std`/`core`-rooted `assert_eq!` calls and which
     /// of those roots the file itself leaves unrebound (#7857). Parsed once
     /// per file, not once per assertion.
-    std_rooted: RefCell<BTreeMap<PathBuf, StdRootedCalls>>,
+    std_rooted: SyncMemo<BTreeMap<PathBuf, Arc<StdRootedCalls>>>,
+    /// #8051: per test file, its bare `debug_assert_eq!` calls, parsed once
+    /// per file rather than once per (probe, related test).
+    debug_assert_eq_calls: SyncMemo<BTreeMap<PathBuf, Arc<Vec<DebugAssertEqCall>>>>,
     fallible_dependencies:
-        RefCell<BTreeMap<PathBuf, (String, Option<crate::analysis::workspace::AnyhowIdentity>)>>,
-    ambiguous_macro_bindings: RefCell<Option<BTreeSet<String>>>,
+        SyncMemo<BTreeMap<PathBuf, (String, Option<crate::analysis::workspace::AnyhowIdentity>)>>,
+    ambiguous_macro_bindings: SyncMemo<Option<BTreeSet<String>>>,
     /// Definitions confined to one inline module or function body, keyed by
     /// file: they make a name ambiguous only for tests inside that scope.
-    scoped_macro_bindings: RefCell<Option<ScopedMacroBindings>>,
+    scoped_macro_bindings: SyncMemo<Option<ScopedMacroBindings>>,
     /// Crate-local sites keyed by the recognized target root that holds
     /// them: they make a name ambiguous only for tests in that crate.
-    crate_macro_bindings: RefCell<Option<CrateMacroBindings>>,
+    crate_macro_bindings: SyncMemo<Option<CrateMacroBindings>>,
     /// #8255: the workspace-wide sites the single trusted-macro ambiguity
     /// pass retained, completed on demand, so naming a refusal never
     /// rescans the workspace per (name, test root).
-    workspace_site_scan: RefCell<Option<WorkspaceMacroSiteIndex>>,
+    workspace_site_scan: SyncMemo<Option<WorkspaceMacroSiteIndex>>,
     /// #8255 test witness: full-index macro-site passes this run paid.
     #[cfg(test)]
-    workspace_scan_passes: std::cell::Cell<u32>,
+    workspace_scan_passes: SyncMemo<u32>,
     /// Disclosure memo: each test file's sites per refused name. A file's
     /// sites depend only on the name and the index, and parsing the file
     /// once per (probe, test, assertion) made a diff with many related tests
     /// run for an hour.
-    test_file_macro_sites: RefCell<TestFileMacroSites>,
-    by_file: RefCell<BTreeMap<PathBuf, OwnerPinAssertions>>,
+    test_file_macro_sites: SyncMemo<TestFileMacroSites>,
+    /// Per test file, read with the assertion-context macro list. A file that
+    /// is also a module parent has a second, separate entry in
+    /// `module_parents`: the two lists differ (`json`), and one shared key
+    /// made the entry depend on which probe reached the file first, which
+    /// with workers is scheduling (#8797).
+    by_file: SyncMemo<BTreeMap<PathBuf, Arc<OwnerPinAssertions>>>,
+    /// Per module-parent file, read with the plain trusted-macro list.
+    module_parents: SyncMemo<BTreeMap<PathBuf, Arc<OwnerPinAssertions>>>,
     /// #6648 (RIPR-SPEC-0279): per doc example test (file, start line), its
     /// assertion admission read from its synthetic source, parsed once per
     /// run. A doctest is its own crate, so the file holding the comment
     /// declares no function its assertions could be read under.
-    doctest_pins: RefCell<BTreeMap<(PathBuf, usize), OwnerPinAssertions>>,
+    doctest_pins: SyncMemo<BTreeMap<(PathBuf, usize), OwnerPinAssertions>>,
     /// Per file: the exact pattern pins of its tests through a verified
     /// local `assert_matches!` (#6616), parsed once per run.
-    pattern_pins: RefCell<BTreeMap<PathBuf, PatternPins>>,
-    empty_macro_ambiguities: RefCell<BTreeMap<PathBuf, BTreeSet<String>>>,
+    pattern_pins: SyncMemo<BTreeMap<PathBuf, PatternPins>>,
+    empty_macro_ambiguities: SyncMemo<BTreeMap<PathBuf, Arc<BTreeSet<String>>>>,
     /// Per file: the expansion-coordinate admission facts of the tests a
     /// same-file `macro_rules!` generated (#5334).
-    generated: RefCell<BTreeMap<PathBuf, Vec<GeneratedTestPins>>>,
-    resolved_modules: OnceCell<BTreeSet<(PathBuf, usize, String)>>,
+    generated: SyncMemo<BTreeMap<PathBuf, Vec<GeneratedTestPins>>>,
+    resolved_modules: OnceLock<BTreeSet<(PathBuf, usize, String)>>,
     /// Workspace-wide inputs to [`TargetRoots::root`], computed once.
-    target_roots: OnceCell<TargetRoots>,
+    target_roots: OnceLock<TargetRoots>,
     /// #6974: path-call memos. A path-shaped assertion is read once per
     /// probe, test and assertion, and each input below scans the workspace,
     /// so every answer is kept for the run under the key it depends on.
-    path_memo: RefCell<PathCallMemo>,
+    path_memo: SyncMemo<PathCallMemo>,
     /// #7097: per-file module scopes (direct `use`s and value-taking
     /// items), parsed once per run; `None` when the file does not parse.
     /// `Arc` so the run-scoped instance stays `Send` behind the seam
     /// walk's shared `Mutex` (#8282); the table is immutable once built.
-    file_scopes: RefCell<BTreeMap<PathBuf, Option<Arc<FileScopes>>>>,
+    file_scopes: SyncMemo<BTreeMap<PathBuf, Option<Arc<FileScopes>>>>,
     /// #7097: bare-call binding verdicts per [`BareCallKey`].
-    bare_call_memo: RefCell<BTreeMap<BareCallKey, bool>>,
+    bare_call_memo: SyncMemo<BTreeMap<BareCallKey, bool>>,
     /// #7097: out-of-line module children per (parent file, `mod` name):
     /// the composed child file, or `None` when declarations conflict.
     /// Built once per run; the index is immutable.
-    mod_children: OnceCell<BTreeMap<(PathBuf, String), Option<PathBuf>>>,
+    mod_children: OnceLock<BTreeMap<(PathBuf, String), Option<PathBuf>>>,
     /// #7172: [`unit_struct_value`]'s workspace-wide scan verdicts,
     /// computed once per run over the once-built module-name set.
     /// The index is immutable, so the memo never goes stale.
-    unit_struct_facts: OnceCell<UnitStructFacts>,
+    unit_struct_facts: OnceLock<UnitStructFacts>,
     /// RIPR-SPEC-0225 decision 9: whether the workspace is closed for
     /// iteration, a whole-index scan computed once per run.
-    iteration_closed: OnceCell<bool>,
+    iteration_closed: OnceLock<bool>,
     /// The same closed-field premise without the array iteration restriction.
-    field_projection_workspace_closed: OnceCell<bool>,
+    field_projection_workspace_closed: OnceLock<bool>,
     /// RIPR-SPEC-0225 decision 9: the names a workspace macro may declare a
     /// type under, `None` when any name may be declared.
-    macro_type_names: OnceCell<Option<BTreeSet<String>>>,
+    macro_type_names: OnceLock<Option<BTreeSet<String>>>,
     /// RIPR-SPEC-0225 decision 9: [`field_builtin_integer`] answers per
     /// [`FieldIntegerKey`]; the index is immutable, so none goes stale.
-    field_integer_memo: RefCell<BTreeMap<FieldIntegerKey, Option<&'static str>>>,
+    field_integer_memo: SyncMemo<BTreeMap<FieldIntegerKey, Option<&'static str>>>,
     withheld: WithheldMacroBindings,
 }
+
+/// #8051: one bare `debug_assert_eq!` call: its line and source text.
+type DebugAssertEqCall = (usize, String);
 
 /// #7097: a bare-call binding verdict key: owner file, owner line, owner
 /// name, test file, test line.
@@ -309,7 +325,7 @@ impl WithheldMacroBindings {
             if krate == "serde_json" {
                 drop_ins.verified_literal_json(path)
             } else {
-                drop_ins.verified(path, krate)
+                drop_ins.verified_root(path, krate)
             }
         };
         let root = withheld_crate_root(path);
@@ -358,6 +374,25 @@ fn withheld_crate_root(path: &Path) -> Option<PathBuf> {
 }
 
 impl OwnerPinSyntax {
+    /// #8051: the bare `debug_assert_eq!` calls of `file` from `start_line`
+    /// to `end_line`, from a per-file parse kept for the run.
+    pub(in crate::analysis) fn debug_assert_eq_calls(
+        &self,
+        file: &PathBuf,
+        source: &str,
+        start_line: usize,
+        end_line: usize,
+    ) -> Vec<(usize, String)> {
+        self.debug_assert_eq_calls
+            .get_or_build(file, || {
+                crate::analysis::syntax::debug_assert_eq_calls(source)
+            })
+            .iter()
+            .filter(|(line, _)| (start_line..=end_line).contains(line))
+            .cloned()
+            .collect()
+    }
+
     /// The run's memo of a whole-index verdict that `compute` reads once.
     pub(in crate::analysis) fn iteration_closed(&self, compute: impl FnOnce() -> bool) -> bool {
         *self.iteration_closed.get_or_init(compute)
@@ -698,9 +733,8 @@ impl OwnerPinSyntax {
                 )
                 .cloned();
         }
-        self.by_file
-            .borrow()
-            .get(&test.file)?
+        let assertions = self.by_file.borrow().get(&test.file).cloned()?;
+        assertions
             .helper_loan(
                 (test.start_line, test.end_line, &test.name),
                 (assertion.line, &assertion.text),
@@ -722,14 +756,11 @@ impl OwnerPinSyntax {
         let Some(facts) = index.files().get(&test.file) else {
             return false;
         };
-        let mut by_file = self.by_file.borrow_mut();
         facts.role_provenance.edges.iter().all(|edge| {
             let Some(parent) = index.files().get(&edge.parent) else {
                 return false;
             };
-            by_file
-                .entry(edge.parent.clone())
-                .or_insert_with(|| owner_pin_assertions(&parent.source, NON_RETURNING_MACROS))
+            self.module_parent_assertions(&edge.parent, &parent.source)
                 .admits_targeted_module_declaration(edge.line, &edge.declaration)
         })
     }
@@ -823,8 +854,9 @@ impl OwnerPinSyntax {
                     trusted_macro_sites_in(index, self.target_roots(index), &module_resolved);
                 *self.scoped_macro_bindings.borrow_mut() = Some(scoped);
                 #[cfg(test)]
-                self.workspace_scan_passes
-                    .set(self.workspace_scan_passes.get() + 1);
+                {
+                    *self.workspace_scan_passes.borrow_mut() += 1;
+                }
                 let mut by_root = by_root;
                 for (root, names) in &self.withheld.by_root {
                     by_root
@@ -947,8 +979,9 @@ impl OwnerPinSyntax {
         }
         retained.complete = true;
         #[cfg(test)]
-        self.workspace_scan_passes
-            .set(self.workspace_scan_passes.get() + 1);
+        {
+            *self.workspace_scan_passes.borrow_mut() += 1;
+        }
     }
 
     /// #8255 test witness: how many full-index macro-site passes this run
@@ -956,7 +989,7 @@ impl OwnerPinSyntax {
     /// completion) however many (name, test root) refusals follow.
     #[cfg(test)]
     pub(in crate::analysis) fn workspace_scan_passes(&self) -> u32 {
-        self.workspace_scan_passes.get()
+        *self.workspace_scan_passes.borrow()
     }
 
     /// File composition authority shared by assertion admission and targeted
@@ -977,7 +1010,6 @@ impl OwnerPinSyntax {
         if let Some(reason) = &facts.role_provenance.earliest_unresolved_reason {
             return Some(AssertionRefusal::UnresolvedModule(reason.clone()));
         }
-        let mut by_file = self.by_file.borrow_mut();
         for edge in &facts.role_provenance.edges {
             // Module composition already owns resolution. Include expansions
             // lack an exact declaration coordinate here, so remain unknown.
@@ -994,9 +1026,8 @@ impl OwnerPinSyntax {
             else {
                 return Some(AssertionRefusal::LexicalFallback);
             };
-            if !by_file
-                .entry(edge.parent.clone())
-                .or_insert_with(|| owner_pin_assertions(&parent.source, NON_RETURNING_MACROS))
+            if !self
+                .module_parent_assertions(&edge.parent, &parent.source)
                 .admits_module_declaration(edge.line, &edge.declaration)
             {
                 return Some(AssertionRefusal::ModuleDeclaration {
@@ -1007,6 +1038,13 @@ impl OwnerPinSyntax {
             }
         }
         None
+    }
+
+    /// A module-parent file's declaration admissions, read once per run with
+    /// the plain trusted-macro list (see `module_parents`).
+    fn module_parent_assertions(&self, file: &PathBuf, source: &str) -> Arc<OwnerPinAssertions> {
+        self.module_parents
+            .get_or_build(file, || owner_pin_assertions(source, NON_RETURNING_MACROS))
     }
 
     /// The gates every assertion of `test` shares, whatever its macro: a
@@ -1034,8 +1072,7 @@ impl OwnerPinSyntax {
         else {
             return Err(Box::new(AssertionRefusal::LexicalFallback));
         };
-        let mut empty_by_file = self.empty_macro_ambiguities.borrow_mut();
-        let empty_ambiguities = empty_by_file.entry(test.file.clone()).or_insert_with(|| {
+        let empty_ambiguities = self.empty_macro_ambiguities.get_or_build(&test.file, || {
             let names = local_empty_macro_names(&facts.source);
             if names.is_empty() {
                 return BTreeSet::new();
@@ -1060,7 +1097,7 @@ impl OwnerPinSyntax {
                 )
                 .collect()
         });
-        let mut ambiguous: BTreeSet<_> = ambiguous.union(empty_ambiguities).cloned().collect();
+        let mut ambiguous: BTreeSet<_> = ambiguous.union(&empty_ambiguities).cloned().collect();
         // Recheck provenance for every admission even when syntax is memoized.
         if facts.source.contains("json")
             && !index.drop_in_manifests.verified_literal_json(&test.file)
@@ -1155,13 +1192,10 @@ impl OwnerPinSyntax {
         // `std::assert_eq!` may expand to an early return that skips it.
         let rooted = self
             .std_rooted
-            .borrow_mut()
-            .entry(test.file.clone())
-            .or_insert_with(|| StdRootedCalls::of(&facts.source))
-            .clone();
+            .get_or_build(&test.file, || StdRootedCalls::of(&facts.source));
         let qualified: BTreeSet<String> = std_rooted_macro_path(&assertion.text, "assert_eq")
             .into_iter()
-            .chain(rooted.calls)
+            .chain(rooted.calls.iter().cloned())
             .collect();
         if let Some(path) = qualified.into_iter().find(|path| {
             !(rooted.unrebound.contains(path)
@@ -1171,14 +1205,15 @@ impl OwnerPinSyntax {
                 AssertionContextRefusal::OpaqueMacro(path),
             ));
         }
-        let mut by_file = self.by_file.borrow_mut();
         // A terminal Err-return guard is keyed by its condition; the oracle
         // text may join continuation lines or elide the Err payload.
         let guard_key = err_return_guard_twin(&assertion.text)
             .map(|(condition, _)| err_return_guard_key(condition));
-        let file_refusal = by_file
-            .entry(test.file.clone())
-            .or_insert_with(|| owner_pin_assertions(&facts.source, &assertion_context_macros()))
+        let file_refusal = self
+            .by_file
+            .get_or_build(&test.file, || {
+                owner_pin_assertions(&facts.source, &assertion_context_macros())
+            })
             .refusal(
                 (test.start_line, test.end_line, &test.name),
                 &test.body,
@@ -1232,6 +1267,22 @@ impl OwnerPinSyntax {
                     })
             })
             .collect::<Vec<_>>();
+        if !generated_verdicts.is_empty() {
+            // #6749: a generated test's module is not in the file's text, so
+            // its expansion cannot show a rebound `test`; the file answers.
+            if self
+                .by_file
+                .borrow()
+                .get(&test.file)
+                .is_some_and(|assertions| assertions.file_binds_test())
+            {
+                return Some(AssertionRefusal::Syntax(
+                    AssertionContextRefusal::TestAttribute(
+                        "#[test] (the file may rebind `test`)".to_string(),
+                    ),
+                ));
+            }
+        }
         if generated_verdicts.iter().any(|verdict| verdict.is_none()) {
             return None;
         }
@@ -1395,7 +1446,7 @@ struct TargetRoots {
     /// `examples/` and `build.rs` roots beside one.
     src_dirs: BTreeSet<PathBuf>,
     /// Per-file answers, so repeated admissions do not recompute them.
-    memo: RefCell<BTreeMap<PathBuf, Option<PathBuf>>>,
+    memo: SyncMemo<BTreeMap<PathBuf, Option<PathBuf>>>,
 }
 
 impl TargetRoots {
@@ -1420,7 +1471,7 @@ impl TargetRoots {
         Self {
             disabled,
             src_dirs,
-            memo: RefCell::default(),
+            memo: SyncMemo::default(),
         }
     }
 
@@ -1784,7 +1835,7 @@ fn workspace_macro_binding_site(
     // is independent, so files are scanned on the rayon pool in path-ordered
     // batches: the earliest file still wins, and a rebinding in an early
     // batch still stops the scan before later files are parsed.
-    // Roots memoize in a `RefCell`, so they are resolved before the pool.
+    // Roots memoize behind a lock, so they are resolved before the pool.
     let files: Vec<_> = index
         .files()
         .iter()
@@ -1826,7 +1877,11 @@ fn workspace_macro_binding_site(
     let batch = rayon::current_num_threads().max(1) * 32;
     let mut first = None;
     for chunk in files.chunks(batch) {
-        let per_file: Vec<_> = chunk.par_iter().map(scan).collect();
+        let per_file: Vec<_> = if nested_parallelism_allowed() {
+            chunk.par_iter().map(scan).collect()
+        } else {
+            chunk.iter().map(scan).collect()
+        };
         for ((path, _, _), (rebinding, site)) in chunk.iter().zip(per_file) {
             if let Some(site) = rebinding {
                 return Some(((*path).clone(), site));
@@ -1854,7 +1909,7 @@ fn test_macro_binding_site(
     test: &TestSummary,
     assertion_line: usize,
     index: &RustIndex,
-    memo: &RefCell<TestFileMacroSites>,
+    memo: &SyncMemo<TestFileMacroSites>,
     module_resolved: &dyn Fn(&Path, usize, &str) -> bool,
 ) -> Option<(PathBuf, MacroBindingSite)> {
     if !assertion_context_macros().contains(&name) {
@@ -1900,7 +1955,7 @@ fn macro_binding_sites(
             if krate == "serde_json" {
                 index.drop_in_manifests.verified_literal_json(path)
             } else {
-                index.drop_in_manifests.verified(path, krate)
+                index.drop_in_manifests.verified_root(path, krate)
             }
         },
     )
@@ -1995,31 +2050,62 @@ fn scan_macro_sites(
     module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
 ) -> Vec<(PathBuf, String, MacroBindingSite)> {
     let context_macros = assertion_context_macros();
-    files
-        .par_iter()
+    let scan_file = |(path, source, candidates): &MacroScanFile<'_>| {
         // A file whose stored candidates rule out every trusted name
         // reports no site, so it is not parsed.
-        .filter(|(_, _, candidates)| {
-            candidates.is_none_or(MacroBindingCandidates::may_bind_any_trusted)
-        })
-        .flat_map_iter(|(path, source, _)| {
-            trusted_macro_binding_sites(
-                source,
-                index.macro_scope_crates(),
-                &context_macros,
-                &|line, declaration| module_resolved(path, line, declaration),
-                &|krate| {
-                    if krate == "serde_json" {
-                        index.drop_in_manifests.verified_literal_json(path)
-                    } else {
-                        index.drop_in_manifests.verified(path, krate)
-                    }
-                },
-            )
-            .into_iter()
-            .map(|(name, site)| ((*path).clone(), name, site))
-        })
-        .collect()
+        if !candidates.is_none_or(MacroBindingCandidates::may_bind_any_trusted) {
+            return Vec::new();
+        }
+        trusted_macro_binding_sites(
+            source,
+            index.macro_scope_crates(),
+            &context_macros,
+            &|line, declaration| module_resolved(path, line, declaration),
+            &|krate| {
+                if krate == "serde_json" {
+                    index.drop_in_manifests.verified_literal_json(path)
+                } else {
+                    index.drop_in_manifests.verified_root(path, krate)
+                }
+            },
+        )
+        .into_iter()
+        .map(|(name, site)| ((*path).clone(), name, site))
+        .collect::<Vec<_>>()
+    };
+    map_scans(files, scan_file).into_iter().flatten().collect()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// What the last [`map_scans`] on this thread decided: `Some(true)` when
+    /// it took the rayon branch, `Some(false)` when it took the in-line branch.
+    static LAST_SCAN_FAN_OUT: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// Maps `scan` over `items` in order, on the rayon pool only where
+/// [`nested_parallelism_allowed`]. Every production scan that can be reached
+/// from classification goes through here, so that guard has one seam (the
+/// `#[cfg(test)]` oracle `workspace_macro_binding_site` keeps its own copy).
+fn map_scans<T: Sync, R: Send>(items: &[T], scan: impl Fn(&T) -> R + Sync + Send) -> Vec<R> {
+    if nested_parallelism_allowed() {
+        #[cfg(test)]
+        LAST_SCAN_FAN_OUT.with(|last| last.set(Some(true)));
+        items.par_iter().map(scan).collect()
+    } else {
+        #[cfg(test)]
+        LAST_SCAN_FAN_OUT.with(|last| last.set(Some(false)));
+        items.iter().map(scan).collect()
+    }
+}
+
+/// Whether a scan may fan out on the rayon pool. A probe classified on a pool
+/// worker already runs beside its siblings, and a worker blocked in a nested
+/// `par_iter` steals sibling probes onto its own stack while it may hold a
+/// memo lock that those probes need (#8756), which `SyncMemo` cannot survive.
+/// Scans reached from classification therefore run in line.
+pub(in crate::analysis) fn nested_parallelism_allowed() -> bool {
+    rayon::current_thread_index().is_none()
 }
 
 /// Route scanned sites into the ambiguity name sets, the scoped-site map,
@@ -2569,7 +2655,7 @@ impl OwnerReturnPin {
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
-            trait_scope_by_file: RefCell::default(),
+            trait_scope_by_file: SyncMemo::default(),
             identity,
         })
     }
@@ -2694,7 +2780,7 @@ impl OwnerReturnPin {
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
-            trait_scope_by_file: RefCell::default(),
+            trait_scope_by_file: SyncMemo::default(),
             identity: None,
         })
     }
@@ -2795,7 +2881,7 @@ impl OwnerReturnPin {
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
-            trait_scope_by_file: RefCell::default(),
+            trait_scope_by_file: SyncMemo::default(),
             identity: None,
         })
     }
@@ -2888,8 +2974,66 @@ impl OwnerReturnPin {
             drop_plain: Self::returned_types_drop_plain(owner, index),
             owner_file: owner.file.clone(),
             owner_start_line: owner.start_line,
-            trait_scope_by_file: RefCell::default(),
+            trait_scope_by_file: SyncMemo::default(),
             identity: None,
+        })
+    }
+
+    /// RIPR-SPEC-0197 check-helper argument pins: the test-scope texts a
+    /// borrowed helper assertion's two compared parameters stand for, read
+    /// only for a whole-return owner pin whose assertion is
+    /// `assert_eq!(a, b)` or `assert!(a == b)` over two plain parameters of
+    /// a helper that never names the owner.
+    fn substituted_helper_operands(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+        compared: &[String; 2],
+        skip: usize,
+    ) -> Option<[String; 2]> {
+        if !matches!(self.path, ReturnPathGate::Any)
+            || (test.start_line..=test.end_line).contains(&assertion.line)
+            || !compared.iter().all(|operand| is_plain_identifier(operand))
+        {
+            return None;
+        }
+        let loan = syntax.helper_loan(test, assertion, index)?;
+        // A helper that names the owner may feed it into either side.
+        if contains_as_whole_word(&mask_comments_and_strings(&loan.helper), &self.name) {
+            return None;
+        }
+        helper_arguments::substituted_operands(
+            test,
+            &loan,
+            [compared[0].as_str(), compared[1].as_str()],
+            &self.name,
+            index,
+            |operands| self.substituted_pin(operands, index).is_some(),
+            skip,
+        )
+    }
+
+    /// The owner call, the literal expected value and the call text of a
+    /// substituted helper comparison: one side is the owner call (or a
+    /// template rendering of a scalar owner's call), the other a literal.
+    fn substituted_pin<'a>(
+        &self,
+        operands: &'a [String; 2],
+        index: &RustIndex,
+    ) -> Option<(CallShape<'a>, String, Option<&'a str>)> {
+        [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
+            let expected = helper_arguments::expected_literal(&operands[other], index)?;
+            if let Some(call) = self.awaited_call_shape(&operands[at], &self.name) {
+                return Some((call, expected, Some(operands[at].as_str())));
+            }
+            let rendered = self
+                .returns_scalar
+                .then(|| helper_arguments::rendered_template_call(&operands[at], &expected))
+                .flatten()?;
+            self.awaited_call_shape(rendered, &self.name)
+                .map(|call| (call, expected, None))
         })
     }
 
@@ -2917,6 +3061,71 @@ impl OwnerReturnPin {
         imports_foreign: ForeignImport<'_>,
         syntax: &OwnerPinSyntax,
     ) -> bool {
+        self.admits_spelled(test, assertion, index, imports_foreign, syntax, "assert_eq")
+    }
+
+    /// #8051: whether a bare `debug_assert_eq!` would pin the owner under
+    /// every gate [`Self::admits`] applies to `assert_eq!`. It runs only
+    /// where debug assertions are on, so this is never credit: the
+    /// gap-admission post-pass reads it as a profile limit.
+    pub(in crate::analysis) fn admits_debug_assert_eq(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        imports_foreign: ForeignImport<'_>,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        self.admits_spelled(
+            test,
+            assertion,
+            index,
+            imports_foreign,
+            syntax,
+            "debug_assert_eq",
+        )
+    }
+
+    fn admits_spelled(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        imports_foreign: ForeignImport<'_>,
+        syntax: &OwnerPinSyntax,
+        spelling: &'static str,
+    ) -> bool {
+        // A selected check-helper argument pin that a later gate refuses
+        // (another owner of the same name, a scope or identity gate) leaves
+        // the helper's later eager calls to try: an unrelated earlier call
+        // must not hide the genuine pin.
+        let mut probe = HelperCallProbe {
+            spelling,
+            skip: 0,
+            selected: Cell::new(false),
+        };
+        loop {
+            if self.admits_candidate(test, assertion, index, imports_foreign, syntax, &probe) {
+                return true;
+            }
+            if !probe.selected.get() {
+                return false;
+            }
+            probe.skip += 1;
+            probe.selected.set(false);
+        }
+    }
+
+    fn admits_candidate(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        imports_foreign: ForeignImport<'_>,
+        syntax: &OwnerPinSyntax,
+        probe: &HelperCallProbe,
+    ) -> bool {
+        let spelling = probe.spelling;
         // A `#[should_panic]` test passes when the values differ.
         if test
             .attrs
@@ -2945,11 +3154,16 @@ impl OwnerReturnPin {
         let is_guard = err_return_guard_twin(&assertion.text).is_some();
         // A nested `format!` is read only as a rendered scalar pin, and a
         // nested `vec!` only as a single-element index.
-        let renders = !is_guard && is_assert_eq_over(&assertion.text, "format");
-        let indexes = !is_guard && is_assert_eq_over(&assertion.text, "vec");
+        let renders = !is_guard && is_assert_eq_over(&assertion.text, spelling, "format");
+        let indexes = !is_guard && is_assert_eq_over(&assertion.text, spelling, "vec");
         let reads_assert_eq = renders
             || indexes
-            || (!is_guard && is_plain_or_std_macro(&assertion.text, "assert_eq"));
+            || (!is_guard
+                && if spelling == "assert_eq" {
+                    is_plain_or_std_macro(&assertion.text, spelling)
+                } else {
+                    is_plain_macro(&assertion.text, spelling)
+                });
         let equality = if reads_assert_eq {
             None
         } else {
@@ -2973,9 +3187,37 @@ impl OwnerReturnPin {
                 unwrapped_call
             };
         let mut unwrapped = false;
+        // RIPR-SPEC-0197 check-helper argument pins: a borrowed helper
+        // assertion that compares two of the helper's own parameters reads
+        // as comparing the arguments the test's eager call passes.
+        let compared = if is_guard || renders || indexes {
+            None
+        } else if reads_assert_eq {
+            assertion_comparison_operands(&assertion.text)
+                .map(|[left, right]| [left.trim().to_string(), right.trim().to_string()])
+        } else {
+            equality.clone()
+        };
+        let substituted = compared.and_then(|compared| {
+            self.substituted_helper_operands(test, assertion, index, syntax, &compared, probe.skip)
+        });
+        if probe.skip > 0 && substituted.is_none() {
+            // Every eligible call was already tried; the plain readings
+            // below were not what the first attempt selected.
+            return false;
+        }
+        probe.selected.set(substituted.is_some());
+        let substituted_expected;
         // RIPR-SPEC-0265: the text of the owner call, when one operand is it,
         // so an adaptor gate can read the argument the call passes.
-        let (call, expected, call_text): (_, _, Option<&str>) = if reads_assert_eq {
+        let (call, expected, call_text): (_, _, Option<&str>) = if let Some(operands) = &substituted
+        {
+            let Some((call, expected, call_text)) = self.substituted_pin(operands, index) else {
+                return false;
+            };
+            substituted_expected = expected;
+            (call, substituted_expected.as_str(), call_text)
+        } else if reads_assert_eq {
             let Some(operands) = assertion_comparison_operands(&assertion.text) else {
                 return false;
             };
@@ -2984,10 +3226,7 @@ impl OwnerReturnPin {
             let rendered = (self.returns_scalar && matches!(self.path, ReturnPathGate::Any))
                 .then(|| {
                     [(0, 1), (1, 0)].into_iter().find_map(|(at, other)| {
-                        rendered_scalar_operand(operands[at])
-                            .filter(|_| is_plain_string_literal(operands[other]))
-                            // #7905: every NaN payload renders as `NaN`.
-                            .filter(|_| operands[other].trim() != "\"NaN\"")
+                        helper_arguments::rendered_template_call(operands[at], operands[other])
                             .and_then(|call| self.awaited_call_shape(call, &self.name))
                             .map(|call| (call, operands[other], None))
                     })
@@ -3067,6 +3306,7 @@ impl OwnerReturnPin {
                             operands[at],
                             &self.name,
                             self.returns_scalar,
+                            false,
                         )
                         .and_then(|text| {
                             self.awaited_call_shape(text, &self.name)
@@ -3196,10 +3436,28 @@ impl OwnerReturnPin {
                 Some(negated) => (negated.trim_start(), "false"),
                 None => (operand, "true"),
             };
-            let Some(call) = self.awaited_call_shape(operand, &self.name) else {
+            if let Some(call) = self.awaited_call_shape(operand, &self.name) {
+                (call, expected, Some(operand))
+            } else if (test.start_line..=test.end_line).contains(&assertion.line)
+                && owner_named_outside(test, &assertion.text, &self.name)
+                // `let hit = owner(..); assert!(hit);` reads like
+                // `assert_eq!(hit, true)`: the same binding rules as the
+                // `assert_eq!` reading (an immutable once-bound scalar
+                // used only in assertions) decide whether `hit` is the call.
+                && let Some(text) = let_bound_owner_call(
+                    test,
+                    assertion,
+                    operand,
+                    &self.name,
+                    self.returns_scalar,
+                    true,
+                )
+                && let Some(call) = self.awaited_call_shape(text, &self.name)
+            {
+                (call, expected, Some(text))
+            } else {
                 return false;
-            };
-            (call, expected, Some(operand))
+            }
         } else {
             return false;
         };
@@ -3212,11 +3470,14 @@ impl OwnerReturnPin {
         // registration, and an assertion attributed to it from anywhere else
         // sees bindings that are not in it.
         let loan = syntax.helper_loan(test, assertion, index);
-        let helper = loan.as_ref().map(|loan| loan.helper.clone());
+        let loaned = loan.as_ref().map(|loan| loan.helper.clone());
         let in_body = (test.start_line..=test.end_line).contains(&assertion.line);
-        if in_body == helper.is_some() {
+        if in_body == loaned.is_some() {
             return false;
         }
+        // A substituted pin reads both operands in the test's own scope, so
+        // the gates below treat it as the test's assertion, not the helper's.
+        let helper = loaned.filter(|_| substituted.is_none());
         // #6578 review: a borrowed helper assertion compares the helper's
         // parameters, which the test may fill from a fixture that calls the
         // owner (`check(want)` with `#[fixture] fn want() { weight(4) }`).
@@ -5345,7 +5606,8 @@ fn macro_invocations(masked: &str) -> Vec<(&str, usize)> {
 
 /// Keywords a `!` negation can follow; never macro names.
 const NEGATING_KEYWORDS: &[&str] = &[
-    "if", "while", "return", "match", "in", "else", "break", "let", "mut", "move", "as",
+    "if", "while", "return", "match", "in", "else", "break", "let", "mut", "move", "as", "yield",
+    "ref", "unsafe", "async",
 ];
 
 /// #6578: whether the part of the changed tail that differs from its old
@@ -7740,20 +8002,20 @@ fn std_rooted_macro_path(text: &str, macro_name: &str) -> Option<String> {
         .then(|| format!("{root}{macro_name}"))
 }
 
-/// `assert_eq!` whose only nested macros are `expansion` (`format!`, which
-/// [`rendered_scalar_operand`] reads, or `vec!`, which
+/// `spelling` (`assert_eq` or `debug_assert_eq`) whose only nested macros are `expansion` (`format!`, which
+/// [`helper_arguments::rendered_template_call`] reads, or `vec!`, which
 /// [`single_element_index`] reads).
-fn is_assert_eq_over(text: &str, expansion: &str) -> bool {
+fn is_assert_eq_over(text: &str, spelling: &str, expansion: &str) -> bool {
     let masked = mask_comments_and_strings(text);
     let invocations = macro_invocations(&masked);
     let [(first, _), nested @ ..] = invocations.as_slice() else {
         return false;
     };
-    *first == "assert_eq"
+    *first == spelling
         && !nested.is_empty()
         && nested.iter().all(|(name, _)| *name == expansion)
         && masked
-            .find("assert_eq")
+            .find(spelling)
             .is_some_and(|offset| !masked[..offset].trim_end().ends_with(':'))
 }
 
@@ -9135,6 +9397,9 @@ fn receiver_let_bindings<'a>(test: &'a TestSummary, receiver: &str) -> Option<Ve
 /// a method call, an argument, a second binding, a use before the `let`)
 /// could change or replace the value, so it fails closed.
 ///
+/// `bare_condition`: the reviewed assertion is a bool owner's `assert!(operand)`
+/// / `assert!(!operand)`, whose condition is the operand itself.
+///
 /// `scalar` (cell-0094): the owner returns a primitive scalar, so the
 /// binding is `Copy` with no interior mutability and nothing can change
 /// it. Its other uses may then also sit in any other std assertion macro
@@ -9147,6 +9412,7 @@ fn let_bound_owner_call<'a>(
     operand: &str,
     name: &str,
     scalar: bool,
+    bare_condition: bool,
 ) -> Option<&'a str> {
     let operand = operand.trim();
     if !is_plain_identifier(operand) || operand == name || operand == "self" {
@@ -9191,6 +9457,10 @@ fn let_bound_owner_call<'a>(
         // The reviewed assertion itself is always a whole operand, and
         // only once: `assert_eq!(b, b)` compares the result with itself.
         let reviewed = other.line == assertion.line && other.text == assertion.text;
+        // A bare `assert!(operand)` / `assert!(!operand)` reads the operand
+        // as the whole condition, which is the `assert_eq!(operand, bool)`
+        // operand once; the scalar check below bounds it to one mention.
+        let whole_operand = whole_operand || (reviewed && bare_condition);
         let read_only = scalar
             && !reviewed
             && READ_ONLY_ASSERTION_MACROS
@@ -9298,25 +9568,6 @@ fn let_initializer(binding: &str) -> Option<&str> {
     };
     let initializer = initializer.strip_prefix('=')?;
     (!initializer.starts_with(['=', '>'])).then(|| initializer.trim())
-}
-
-/// trap-shine-debug-exact-control: the call `operand` renders when it is
-/// exactly `format!("{}", call)` or `format!("{:?}", call)`. A primitive
-/// scalar's std `Display` and `Debug` text differs for every value but NaN,
-/// so comparing it with an exact string pins the value; the text `NaN`
-/// is refused (#7905). Width, precision,
-/// alternate and hex flags, extra arguments and other wrappers are refused.
-fn rendered_scalar_operand(operand: &str) -> Option<&str> {
-    let inner = operand
-        .trim()
-        .strip_prefix("format!")?
-        .trim_start()
-        .strip_prefix('(')?
-        .strip_suffix(')')?;
-    match split_top_level_arguments(inner)?.as_slice() {
-        [spec, call] | [spec, call, ""] if matches!(*spec, "\"{}\"" | "\"{:?}\"") => Some(call),
-        _ => None,
-    }
 }
 
 const INTEGER_TYPES: &[&str] = &[
@@ -9606,14 +9857,6 @@ fn value_guard_subject<'a>(condition: &str, assertion: &'a str) -> Option<&'a st
     spares_wrong.then_some(subject)
 }
 
-/// A plain `"..."` string literal with no escapes or inner quotes.
-fn is_plain_string_literal(text: &str) -> bool {
-    text.trim()
-        .strip_prefix('"')
-        .and_then(|rest| rest.strip_suffix('"'))
-        .is_some_and(|inner| !inner.contains(['"', '\\']))
-}
-
 /// cell-0094: whether `owner` declares a primitive scalar return type that
 /// its own file does not shadow with a same-named item or import.
 /// Residuals: a non-std glob import, a generic parameter or a
@@ -9691,7 +9934,7 @@ pub(in crate::analysis) fn expected_operand_value(
     while is_plain_identifier(&current) && current != owner.name && seen.insert(current.clone()) {
         let next = match receiver_let_bindings(test, &current) {
             Some(bindings) => match bindings.as_slice() {
-                [binding] => immutable_let_value(test, binding),
+                [binding] => immutable_let_value(index, test, binding),
                 [] => single_constant_value(index, &current, &in_scope),
                 _ => None,
             },
@@ -9710,7 +9953,7 @@ pub(in crate::analysis) fn expected_operand_value(
 /// name), unless the `let` is `mut`, so a later assignment or `push` may
 /// change it, or carries an attribute (`#[cfg(..)] let`) that may compile
 /// it away (#7066 review), as [`let_bound_owner_call`] refuses.
-fn immutable_let_value(test: &TestSummary, binding: &str) -> Option<String> {
+fn immutable_let_value(index: &RustIndex, test: &TestSummary, binding: &str) -> Option<String> {
     let masked = mask_comments_and_strings(&test.body);
     let binding_at = (binding.as_ptr() as usize).checked_sub(test.body.as_ptr() as usize)?;
     let let_at = *whole_word_offsets(masked.get(..binding_at)?, "let").last()?;
@@ -9723,7 +9966,11 @@ fn immutable_let_value(test: &TestSummary, binding: &str) -> Option<String> {
     let value = assigned_value(&binding)?;
     // #8112: an immutable binding of an interior-mutable value
     // (`let e = Cell::new(f(2)); e.set(6);`) can change after its initializer.
-    if has_interior_mutability(value) {
+    let source = index
+        .files()
+        .get(&test.file)
+        .map(|facts| facts.source.to_string());
+    if may_mutate_through_shared(declared_type(&binding), value, source.as_deref()) {
         return None;
     }
     Some(value.to_string())
@@ -9760,9 +10007,130 @@ fn has_interior_mutability(initializer: &str) -> bool {
     .any(|word| contains_as_whole_word(initializer, word))
 }
 
+/// #8112: whether a binding or `static` whose declared type is `declared`
+/// (`None` when unannotated or unreadable) and whose initializer is
+/// `initializer` can change through a shared reference. The declared type
+/// decides when it names a known interior-mutable type (refuse) or is a
+/// plain scalar (`u32`, `&'static str`, `[u8; 4]`; keep, whatever the
+/// initializer block mentions). Any other type (a user type, an alias, an
+/// unannotated binding) falls back to the initializer text. Limit: a user
+/// type that merely holds an atomic (`Counter`) is not recognized from its
+/// name; only a known interior-mutable type name in the type or the
+/// initializer text refuses it.
+fn may_mutate_through_shared(
+    declared: Option<&str>,
+    initializer: &str,
+    source: Option<&str>,
+) -> bool {
+    match declared {
+        Some(declared) if has_interior_mutability(declared) => true,
+        Some(declared)
+            if is_plain_scalar_type(declared)
+                && source.is_some_and(|source| !scalar_names_rebound(declared, source)) =>
+        {
+            false
+        }
+        _ => has_interior_mutability(initializer),
+    }
+}
+
+/// Whether every word of the type text is a primitive scalar, `str`,
+/// `'static` or an array length digit run: `u32`, `&'static str`, `[u8; 4]`.
+fn is_plain_scalar_type(declared: &str) -> bool {
+    const SCALARS: [&str; 17] = [
+        "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
+        "f32", "f64", "bool", "char", "str",
+    ];
+    let mut words = declared
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|word| !word.is_empty())
+        .peekable();
+    words.peek().is_some()
+        && words.all(|word| {
+            SCALARS.contains(&word) || word == "static" || word.chars().all(|c| c.is_ascii_digit())
+        })
+}
+
+/// Whether the file may rebind a primitive name `declared` uses, so the
+/// name no longer proves a scalar: an item keyword before it (`type u32 =
+/// ..;`, `struct u32;`), or any mention of it inside a `use` or `extern
+/// crate` statement (`use x::u32;`, `use m::{Counter, u32};`, `use x as
+/// u32;`) unless it continues a path (`use std::u32::MAX;`) or is a
+/// generic argument. A glob import (`use m::*;`) may bring any name in, so
+/// it rebinds every name. A plain cast `n as u32` or `std::u32::MAX` does
+/// not. Limits: `include!`, `#[path]` and macro-generated types are not
+/// scanned.
+fn scalar_names_rebound(declared: &str, source: &str) -> bool {
+    let masked = mask_comments_and_strings(source);
+    let is_word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let imports = |statement: &str| {
+        !whole_word_offsets(statement, "use").is_empty()
+            || !whole_word_offsets(statement, "extern").is_empty()
+    };
+    if whole_word_offsets(&masked, "use")
+        .into_iter()
+        .any(|offset| {
+            masked[offset..]
+                .split(';')
+                .next()
+                .is_some_and(|statement| statement.contains('*'))
+        })
+    {
+        return true;
+    }
+    declared
+        .split(|c: char| !is_word(c))
+        .filter(|word| !word.is_empty() && !word.chars().all(|c| c.is_ascii_digit()))
+        .any(|word| {
+            whole_word_offsets(&masked, word).into_iter().any(|offset| {
+                let before = masked[..offset].trim_end();
+                let after = masked[offset + word.len()..].trim_start();
+                let statement = before.rsplit(';').next().unwrap_or(before);
+                if imports(statement) {
+                    return !after.starts_with("::") && !before.ends_with('<');
+                }
+                if before.ends_with("::") {
+                    return !after.starts_with("::");
+                }
+                ["type", "struct", "enum", "trait", "union", "mod"]
+                    .iter()
+                    .any(|keyword| {
+                        before.ends_with(keyword)
+                            && before[..before.len() - keyword.len()]
+                                .chars()
+                                .next_back()
+                                .is_none_or(|c| !is_word(c))
+                    })
+            })
+        })
+}
+
+/// The `T` of `[: T] = value` text, when annotated.
+fn declared_type(text: &str) -> Option<&str> {
+    let trimmed = text.trim_start();
+    let after = trimmed
+        .strip_prefix(':')
+        .filter(|after| !after.starts_with(':'))?;
+    let end = assigned_value_offset(after)?;
+    let declared = after.get(..end.saturating_sub(1))?;
+    // A type holding `=` or a block (`Foo<{ A == B }>`, `[u8; { N }]`) makes
+    // the split ambiguous: treat the declared type as unknown.
+    (!declared.contains(['=', '{'])).then_some(declared)
+}
+
 /// #8112: whether `file` declares `static mut name`, whose value the test
 /// may have assigned before the assertion reads it.
 fn declares_static_mut(index: &RustIndex, file: &Path, name: &str) -> bool {
+    declares_static_with(index, file, name, true)
+}
+
+/// #8112: whether `file` declares `static name`, `mut` or not, or the
+/// `lazy_static!` form `static ref name`.
+fn declares_static(index: &RustIndex, file: &Path, name: &str) -> bool {
+    declares_static_with(index, file, name, false)
+}
+
+fn declares_static_with(index: &RustIndex, file: &Path, name: &str, require_mut: bool) -> bool {
     let Some(facts) = index.files().get(file) else {
         return false;
     };
@@ -9770,15 +10138,24 @@ fn declares_static_mut(index: &RustIndex, file: &Path, name: &str) -> bool {
     whole_word_offsets(&masked, "static")
         .into_iter()
         .any(|offset| {
-            let rest = masked[offset + "static".len()..].trim_start();
-            rest.strip_prefix("mut")
+            let mut rest = masked[offset + "static".len()..].trim_start();
+            if let Some(after) = rest
+                .strip_prefix("mut")
                 .filter(|after| after.starts_with(char::is_whitespace))
-                .is_some_and(|after| {
-                    let after = after.trim_start();
-                    after.strip_prefix(name).is_some_and(|tail| {
-                        !tail.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
-                    })
-                })
+            {
+                rest = after.trim_start();
+            } else if require_mut {
+                return false;
+            } else if let Some(after) = rest
+                .strip_prefix("ref")
+                .filter(|after| after.starts_with(char::is_whitespace))
+            {
+                // `lazy_static!` writes `static ref NAME: T = init;`.
+                rest = after.trim_start();
+            }
+            rest.strip_prefix(name).is_some_and(|tail| {
+                !tail.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
+            })
         })
 }
 
@@ -9795,9 +10172,25 @@ fn single_constant_value(
     let mut matches = constants
         .get(name)?
         .iter()
-        .filter(|(file, _)| in_scope(file));
-    let (file, initializer) = matches.next()?;
+        .filter(|(file, _, _)| in_scope(file));
+    let (file, initializer, declared) = matches.next()?;
     if matches.next().is_some() || declares_static_mut(index, file, name) {
+        return None;
+    }
+    // #8112: a non-`mut` `static` of interior-mutable declared type
+    // (`static C: AtomicUsize = ..; C.store(6)`) can change after its
+    // initializer. A `const` is rebuilt at each use, so it stays readable.
+    if declares_static(index, file, name)
+        && may_mutate_through_shared(
+            declared.as_deref(),
+            initializer,
+            index
+                .files()
+                .get(file)
+                .map(|facts| facts.source.to_string())
+                .as_deref(),
+        )
+    {
         return None;
     }
     let initializer_text = initializer.trim_start();
@@ -9811,6 +10204,11 @@ fn single_constant_value(
 /// The text after the assignment `=` of `[: T] = value`: the first `=`
 /// outside angle brackets that is not part of `==`, `=>`, `<=`, `>=` or `!=`.
 fn assigned_value(text: &str) -> Option<&str> {
+    text.get(assigned_value_offset(text)?..)
+}
+
+/// The offset just after the assignment `=` that [`assigned_value`] finds.
+fn assigned_value_offset(text: &str) -> Option<usize> {
     let bytes = text.as_bytes();
     let mut depth = 0usize;
     for (position, byte) in bytes.iter().enumerate() {
@@ -9826,7 +10224,7 @@ fn assigned_value(text: &str) -> Option<&str> {
                     Some(b'=' | b'!' | b'<' | b'>')
                 ) =>
             {
-                return text.get(position + 1..);
+                return Some(position + 1);
             }
             _ => {}
         }
@@ -9931,7 +10329,8 @@ fn expected_constant_reaches_owner(
             let Some(initializers) = constants.get(&word) else {
                 continue;
             };
-            for (file, initializer) in initializers.iter().filter(|(file, _)| in_scope(file)) {
+            for (file, initializer, _) in initializers.iter().filter(|(file, _, _)| in_scope(file))
+            {
                 if initializer_calls_owner(initializer, name, call)
                     || owner_aliases(index, file, name)
                         .iter()
@@ -10010,46 +10409,53 @@ fn initializer_calls_owner(initializer: &str, name: &str, call: &PinCall) -> boo
 /// masked initializer: one parse per file per index. Items a macro call
 /// declares (`thread_local!`, `lazy_static!`) and items of a file that does
 /// not parse cleanly are read from their text.
-fn workspace_constant_table(index: &RustIndex) -> BTreeMap<String, Vec<(PathBuf, String)>> {
-    let mut table: BTreeMap<String, Vec<(PathBuf, String)>> = BTreeMap::new();
+fn workspace_constant_table(index: &RustIndex) -> ConstantTable {
+    let mut table = ConstantTable::new();
     for (path, facts) in index.files().iter() {
         let source = &facts.source;
         if !source.contains("const") && !source.contains("static") {
             continue;
         }
-        let mut add = |name: &str, initializer: String| {
+        let mut add = |name: &str, initializer: String, declared: Option<String>| {
             let name = name.strip_prefix("r#").unwrap_or(name);
             table
                 .entry(name.to_string())
                 .or_default()
-                .push((path.clone(), initializer));
+                .push((path.clone(), initializer, declared));
         };
         let Some(parsed) = parse_clean_source_file(source) else {
             for (name, initializer) in text_declared_constants(&mask_comments_and_strings(source)) {
-                add(&name, initializer);
+                let declared = declared_type(&initializer).map(str::to_string);
+                add(&name, initializer, declared);
             }
             continue;
         };
         for node in parsed.tree().syntax().descendants() {
             let item = if let Some(item) = ast::Const::cast(node.clone()) {
-                item.name().zip(item.body())
+                item.name()
+                    .zip(item.body())
+                    .map(|(name, body)| (name, body, item.ty()))
             } else if let Some(item) = ast::Static::cast(node.clone()) {
-                item.name().zip(item.body())
+                item.name()
+                    .zip(item.body())
+                    .map(|(name, body)| (name, body, item.ty()))
             } else {
                 if let Some(macro_call) = ast::MacroCall::cast(node)
                     && let Some(tokens) = macro_call.token_tree()
                 {
                     let text = mask_comments_and_strings(&tokens.syntax().to_string());
                     for (name, initializer) in text_declared_constants(&text) {
-                        add(&name, initializer);
+                        let declared = declared_type(&initializer).map(str::to_string);
+                        add(&name, initializer, declared);
                     }
                 }
                 None
             };
-            if let Some((item_name, body)) = item {
+            if let Some((item_name, body, ty)) = item {
                 add(
                     item_name.text(),
                     mask_comments_and_strings(&body.syntax().to_string()),
+                    ty.map(|ty| mask_comments_and_strings(&ty.syntax().to_string())),
                 );
             }
         }
@@ -10099,6 +10505,48 @@ fn text_declared_constants(text: &str) -> Vec<(String, String)> {
     found
 }
 
+/// Whether a `static`, `const` or `use` item in the body names `word`
+/// (#8929): an inner-block `static EXPECTED: AtomicU32 = ..` redeclares the
+/// name after a plain top-level `let`, so the later `&EXPECTED` borrows the
+/// static, which a callee may write. The item's header up to its `=` or `;`
+/// is scanned for the word.
+fn item_names_word(masked: &str, word: &str) -> bool {
+    ["static", "const", "use"].iter().any(|keyword| {
+        whole_word_offsets(masked, keyword).into_iter().any(|at| {
+            let rest = &masked[at + keyword.len()..];
+            let end = rest.find([';', '=']).unwrap_or(rest.len());
+            let header = &rest[..end];
+            if *keyword == "use" {
+                return use_header_binds_word(header, word);
+            }
+            contains_as_whole_word(header, word)
+        })
+    })
+}
+
+/// Whether a `use` header names `word` other than as the source of a rename
+/// (`use m::word as other` imports `other`, not `word`). Every other mention
+/// (a bare import, a path segment, a group member, `word as word`) counts, so
+/// the check stays conservative (#8944).
+fn use_header_binds_word(header: &str, word: &str) -> bool {
+    whole_word_offsets(header, word).into_iter().any(|at| {
+        let tail = header[at + word.len()..].trim_start();
+        let renamed = tail
+            .strip_prefix("as")
+            .filter(|after| after.starts_with(char::is_whitespace))
+            .map(|after| {
+                // `as r#name` imports `name`: look past the raw marker.
+                let target = after.trim_start();
+                let target = target.strip_prefix("r#").unwrap_or(target);
+                let end = target
+                    .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .unwrap_or(target.len());
+                &target[..end]
+            });
+        renamed.is_none_or(|target| target.is_empty() || target == word)
+    })
+}
+
 /// #6974 review: whether the test body names the owner anywhere but the
 /// assertion under review. When it does not, no binding in the test can
 /// hold an owner call, so table-driven expected values (`#[case] want`,
@@ -10130,7 +10578,26 @@ fn expected_binding_calls_owner(test: &TestSummary, expected: &str, name: &str) 
             // name) may hold an owner call: fail closed (#6974 review).
             // A word the scan refuses only because a `let` annotation
             // names it (`let w: Window = ..`) is a type, not a binding.
-            let Some(bindings) = receiver_let_bindings(test, word) else {
+            // A statement macro may bind the word (`s!(expected);`), and the
+            // test may write through it (`EXPECTED.store(f(4))`): neither
+            // is a `let` the scan reads, so the owner may feed the operand
+            // (#7847).
+            let bindings = receiver_let_bindings(test, word);
+            // A later `let` may shadow an earlier static or item of the same
+            // name, so a plain `let` counts only when it is the name's first
+            // use, at the test body's top level (#8795).
+            let plain = bindings.as_deref().is_some_and(plain_let_values)
+                && first_use_is_top_level_let(&masked_body, word)
+                && !item_names_word(&masked_body, word);
+            let read_only = plain
+                && never_declared_mut(&masked_body, word)
+                && !named_as_segment_or_call(&masked_body, word);
+            if bound_by_macro(&masked_body, word)
+                || written_by_test(&masked_body, word, plain, read_only)
+            {
+                return true;
+            }
+            let Some(bindings) = bindings else {
                 if binds_outside_let(&masked_body, word) || let_patterns_bind(&masked_body, word) {
                     return true;
                 }
@@ -10146,6 +10613,938 @@ fn expected_binding_calls_owner(test: &TestSummary, expected: &str, name: &str) 
         }
     }
     false
+}
+
+/// #7847: whether the masked test body writes through `name` outside a
+/// `let`: an assignment to the name or a place under it (`name = ..`,
+/// `name.field = ..`, `name.0 = ..`, `name[i] += ..`), a `&mut name` borrow,
+/// or a mutating call on it or a place under it (`name.store(..)`,
+/// `name.sort()`, `name.0.push(..)`, any `*_mut`, `*_assign`, `fetch_*` or
+/// `set_*` method). Lexical and conservative, so a static the test stores
+/// the owner's value in is no independent expected value.
+///
+/// `plain` (#8795): every binding of `name` is a `let` of a plain value
+/// (`plain_let_values`), which holds no interior mutability and no callee can
+/// write through a shared borrow of it, so `&name` passed to a call is a
+/// read. Method names stay mutators regardless (a test-local type may define
+/// any `replace`/`take`). A static, a const or any other binding, and any
+/// constructor call (it may be test-local), is never plain.
+///
+/// `read_only` (#8795 Part B, implies `plain`): additionally no `mut` precedes
+/// the name anywhere, so the one binding is an immutable `let` of a literal
+/// value. Such a value has no interior mutability, so no method call on it,
+/// whatever it is called or whichever test-local trait defines it, can write
+/// the binding: `expected.replace(..)`, `.take(n)` and `.lock()` read it.
+/// Assignments (`name = ..`, `name.0 += ..`) and every other write shape
+/// stay refusals.
+fn written_by_test(masked: &str, name: &str, plain: bool, read_only: bool) -> bool {
+    whole_word_offsets(masked, name).into_iter().any(|offset| {
+        // A raw identifier (`r#NAME`) is the same name: look past its `r#`.
+        let before = strip_raw_ident_prefix(masked[..offset].trim_end());
+        // `let e: Config = ..`, `let e: crate::Config`, `let e: &Config` and
+        // `let e: (Config, u8)` annotate a type: the `=` after it assigns the
+        // binding, not the type name. Only a `let` pattern's annotation
+        // qualifies; a struct-literal field value (`S { f: EXPECTED.swap(..) }`)
+        // is an expression and stays scanned (#8795).
+        if in_let_annotation(before) {
+            return false;
+        }
+        // A mutable borrow, `addr_of_mut!` or `ref mut` scrutinee may wrap the
+        // name in groups, tuples, arrays or blocks (`&mut (x, name)`,
+        // `let (a, ref mut b) = (x, name)`): test the text before each
+        // enclosing opener as well (#8944).
+        let rest = &masked[offset + name.len()..];
+        if enclosing_heads(before)
+            .into_iter()
+            .enumerate()
+            .any(|(open, head)| {
+                mut_borrow_before(head)
+                    || addr_of_mut_before(head)
+                    || ref_mut_scrutinee(head, rest, open)
+            })
+        {
+            return true;
+        }
+        // A `let` (or `let mut`) declaration is the binding the let scan reads.
+        if before.ends_with("let") || before.ends_with("mut") {
+            return false;
+        }
+        // `write!(name, ..)` / `writeln!(name, ..)` write into their first
+        // argument; the trusted-macro list keeps `bound_by_macro` from
+        // seeing them.
+        before.ends_with("write!(")
+            || before.ends_with("writeln!(")
+            || (!plain && borrowed_into_path_call(before))
+            || place_is_written(&masked[offset + name.len()..], !read_only)
+            || (destructured_into(&masked[offset + name.len()..]) && !index_operand(before))
+    })
+}
+
+/// A name passed by shared reference as an argument to any non-macro call
+/// (`AtomicU32::store(&EXPECTED, ..)`, `write(&EXPECTED, ..)`,
+/// `Cell::set(&expected, ..)`) may be written by the callee. A plain reader
+/// callee and a macro (`assert_eq!(f(4), &EXPECTED)`) do not count.
+fn borrowed_into_path_call(before: &str) -> bool {
+    let Some(head) = before.strip_suffix('&') else {
+        return false;
+    };
+    let head = head.trim_end().trim_end_matches('&').trim_end();
+    if !head.ends_with(['(', ',']) {
+        return false;
+    }
+    let mut depth = 0usize;
+    let mut open = None;
+    for (at, c) in head.char_indices().rev() {
+        match c {
+            ')' | ']' => depth += 1,
+            '(' | '[' => {
+                if depth == 0 {
+                    open = Some(at);
+                    break;
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    let Some(open) = open else {
+        return false;
+    };
+    let callee = head[..open].trim_end();
+    if callee.ends_with('!') {
+        return false;
+    }
+    // A turbofish callee (`store::<u32>(&X, ..)`) is unreadable: refuse.
+    if callee.ends_with(['>', ')', ']', '}']) {
+        return true;
+    }
+    let path: String = callee
+        .chars()
+        .rev()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == ':')
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    let last = path
+        .rsplit_once("::")
+        .map_or(path.as_str(), |(_, last)| last);
+    !last.is_empty()
+        && ![
+            "load",
+            "get",
+            "read",
+            "eq",
+            "ne",
+            "len",
+            "clone",
+            "cmp",
+            "partial_cmp",
+            "contains",
+            "starts_with",
+            "ends_with",
+            "is_empty",
+        ]
+        .contains(&last)
+}
+
+/// Whether the masked body uses `name` anywhere as something other than the
+/// local: a field or path segment (`st().name`, `S::name`) or a callee
+/// (`name(..)`, `name!(..)`). Such a use is unrelated to the `let`, and a
+/// method on it may write, so the read-only exemption does not apply.
+fn named_as_segment_or_call(masked: &str, name: &str) -> bool {
+    whole_word_offsets(masked, name).into_iter().any(|offset| {
+        let before = strip_raw_ident_prefix(masked[..offset].trim_end());
+        let after = masked[offset + name.len()..].trim_start();
+        before.ends_with('.')
+            || before.ends_with("::")
+            || after.starts_with('(')
+            || after.starts_with('!')
+            || after.starts_with("::")
+    })
+}
+
+/// Whether no whole-word use of `name` in the masked body follows `mut`
+/// (`let mut name`, `ref mut name`, `|mut name|`, `(mut name, ..)`), so the
+/// name is never declared mutable.
+fn never_declared_mut(masked: &str, name: &str) -> bool {
+    whole_word_offsets(masked, name).into_iter().all(|offset| {
+        let before = strip_raw_ident_prefix(masked[..offset].trim_end());
+        !before.strip_suffix("mut").is_some_and(|rest| {
+            !rest
+                .as_bytes()
+                .last()
+                .is_some_and(|byte| is_ident_byte(*byte))
+        })
+    })
+}
+
+/// Whether the first whole-word use of `name` in the masked test body is a
+/// `let [mut] name` directly in the body block (brace depth one). Any earlier
+/// use, or a binding in an inner block, may name a different item.
+fn first_use_is_top_level_let(masked: &str, name: &str) -> bool {
+    let Some(first) = whole_word_offsets(masked, name).into_iter().next() else {
+        return false;
+    };
+    let before = masked[..first].trim_end();
+    if before.matches('{').count() != before.matches('}').count() + 1 {
+        return false;
+    }
+    let before = before
+        .strip_suffix("mut")
+        .filter(|rest| rest.ends_with(char::is_whitespace))
+        .map_or(before, str::trim_end);
+    before.strip_suffix("let").is_some_and(|rest| {
+        !rest
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+    })
+}
+
+/// `before` without a trailing raw-identifier marker (`r#`), which sits
+/// between a borrow operator or path and the name it makes raw.
+fn strip_raw_ident_prefix(before: &str) -> &str {
+    match before.strip_suffix("r#") {
+        Some(rest) if !rest.as_bytes().last().is_some_and(|b| is_ident_byte(*b)) => rest.trim_end(),
+        _ => before,
+    }
+}
+
+/// `before` itself and, for every bracket (`(`, `[`, `{`) that is still open
+/// at its end, the text before that opener. A borrow or `ref mut` scrutinee
+/// applies to the whole enclosing group, so `(x, name)` and `{name}` are
+/// examined as the head that precedes them (#8944). A call or index opener
+/// simply yields a head ending in the callee, which no check accepts.
+fn enclosing_heads(before: &str) -> Vec<&str> {
+    let mut heads = vec![before];
+    let mut depth = 0usize;
+    for (at, character) in before.char_indices().rev() {
+        match character {
+            ')' | ']' | '}' => depth += 1,
+            '(' | '[' | '{' => {
+                if depth == 0 {
+                    heads.push(before[..at].trim_end());
+                } else {
+                    depth -= 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    heads
+}
+
+/// `text` without a trailing balanced `<..>` generic argument list. A `->`
+/// (`fn() -> u8`) and anything inside a `{..}` const expression (`{ N > 1 }`)
+/// is no angle bracket, so neither closes or opens the list (#8960).
+fn strip_generic_args(text: &str) -> &str {
+    if !text.ends_with('>') {
+        return text;
+    }
+    let bytes = text.as_bytes();
+    let mut depth = 0usize;
+    let mut braces = 0usize;
+    for (at, character) in text.char_indices().rev() {
+        match character {
+            '}' => braces += 1,
+            '{' => braces = braces.saturating_sub(1),
+            _ if braces > 0 => {}
+            '>' if at > 0 && bytes[at - 1] == b'-' => {}
+            '>' => depth += 1,
+            '<' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return text[..at].trim_end();
+                }
+            }
+            _ => {}
+        }
+    }
+    text
+}
+
+/// `before` without the grouping and path qualifiers that sit between a
+/// borrow operator and the name it borrows: `(` (`&mut (name)`,
+/// `&mut (name).f`) and `crate::` / `self::` / `m::` path segments
+/// (`&mut crate::name`), generic/turbofish segments (`&mut <T>::name`,
+/// `&mut m::<T>::name`) and dereferences (`&mut *name`), in any combination
+/// (#8929, #8944). A call opener
+/// (`&mut foo(name)`) leaves the callee ident, so it is not a borrow of the
+/// name.
+fn peel_group_and_path(before: &str) -> &str {
+    let mut head = before.trim_end();
+    loop {
+        if let Some(rest) = head.strip_suffix('(').or_else(|| head.strip_suffix('*')) {
+            head = rest.trim_end();
+        } else if let Some(rest) = head.strip_suffix("::") {
+            let rest = rest.trim_end();
+            let stripped = strip_generic_args(rest);
+            if stripped.len() != rest.len() {
+                // A generic list qualifies the path before it, not the
+                // keyword: `match <T>::name` keeps `match` (#8960).
+                head = stripped;
+                continue;
+            }
+            let qualifier = rest.trim_end_matches(|c: char| c.is_ascii_alphanumeric() || c == '_');
+            // A raw-identifier segment (`r#m::name`) is consumed whole.
+            let raw = strip_raw_ident_prefix(qualifier);
+            // `& mut ::name` and the edition-2015 `match ::name` have an
+            // empty qualifier: keep the keyword (#8944).
+            head = if raw.len() != qualifier.len() {
+                raw
+            } else if matches!(&rest[qualifier.len()..], "mut" | "match") {
+                rest
+            } else {
+                qualifier.trim_end()
+            };
+        } else {
+            return head;
+        }
+    }
+}
+
+/// Whether `before` ends in a mutable borrow operator: `&mut`, `& mut` or
+/// `&raw mut` (with any whitespace between the tokens), optionally followed
+/// by grouping parentheses or a path qualifier (`&mut (name)`,
+/// `&mut crate::name`).
+fn mut_borrow_before(before: &str) -> bool {
+    let Some(head) = peel_group_and_path(before).strip_suffix("mut") else {
+        return false;
+    };
+    let head = head.trim_end();
+    head.ends_with('&')
+        || head
+            .strip_suffix("raw")
+            .is_some_and(|rest| rest.trim_end().ends_with('&'))
+}
+
+/// Whether `before` ends in the opener of an `addr_of_mut!` call
+/// (`addr_of_mut!(name`, `ptr::addr_of_mut!(name`,
+/// `std::ptr::addr_of_mut!((name`): the macro form of `&raw mut`, and the
+/// idiomatic spelling of a mutable static borrow in edition 2024 (#8929).
+/// Shared `addr_of!` and a longer macro name (`my_addr_of_mut!`) do not match.
+fn addr_of_mut_before(before: &str) -> bool {
+    // Peel path qualifiers and nested or spaced groups first
+    // (`addr_of_mut!(crate::name`, `addr_of_mut!( (name`).
+    let head = peel_group_and_path(before)
+        .trim_end_matches(['(', '[', '{'])
+        .trim_end();
+    let Some(head) = head.strip_suffix('!') else {
+        return false;
+    };
+    head.trim_end()
+        .strip_suffix("addr_of_mut")
+        .is_some_and(|rest| {
+            !rest
+                .as_bytes()
+                .last()
+                .is_some_and(|byte| is_ident_byte(*byte))
+        })
+}
+
+/// Whether the name is the scrutinee of a pattern that binds `ref mut`
+/// (#8929): the right side of a `let` / `if let` / `while let` whose pattern
+/// contains `ref mut`, or the head of a `match` whose arms do. `rest` is the
+/// text after the name. The binding is a mutable reference into the place,
+/// so a later `*r = ..` writes it; the scan cannot follow `r`, so it refuses.
+fn ref_mut_scrutinee(before: &str, rest: &str, open: usize) -> bool {
+    // `matches!(name, Some(ref mut r) if ..)` binds the pattern against the
+    // first argument like a `match` does (#8944).
+    if open > 0 && matches_macro_before(before) && macro_pattern_binds_ref_mut(rest, open - 1) {
+        return true;
+    }
+    let head = peel_group_and_path(before);
+    if let Some(pattern_end) = head.strip_suffix('=') {
+        // `==`, `<=`, `+=` and the like compare or assign; only a bare `=`
+        // after a `let` pattern binds.
+        let Some(at) = whole_word_offsets(pattern_end, "let")
+            .into_iter()
+            .next_back()
+        else {
+            return false;
+        };
+        let pattern = &pattern_end[at + "let".len()..];
+        // The pattern ends at a top-level `;`: a `ref mut` in an earlier
+        // statement does not bind this scrutinee (#8944).
+        if has_top_level_semicolon(pattern) {
+            return false;
+        }
+        // `if let Some(ref mut r) = a { y = name; }`: a second bare `=` at the
+        // top level of the text after `let` is the `=` of a later assignment,
+        // so this `=` binds nothing of that pattern. An annotation colon may
+        // hold an `=` (`Box<dyn I<Item = u8>>`), so it keeps the scan (#8944).
+        if has_later_bare_assignment(pattern) {
+            return false;
+        }
+        // `let ref mut r: Vec<u8>= name` closes a type annotation with the
+        // `>` before `=`, so that `>` is no `>=` comparison.
+        let annotation_close =
+            pattern_end.ends_with('>') && has_ref_mut(pattern) && has_single_colon(pattern);
+        if pattern_end.ends_with(['=', '!', '<', '+', '-', '*', '/', '%', '|', '&', '^'])
+            || (pattern_end.ends_with('>') && !annotation_close)
+        {
+            return false;
+        }
+        return has_ref_mut(pattern);
+    }
+    if head
+        .strip_suffix("match")
+        .is_some_and(|rest| !rest.as_bytes().last().is_some_and(|b| is_ident_byte(*b)))
+    {
+        // `open` brackets are still open between the `match` keyword and the
+        // name (`match ((name, 1), S { a: 1 }) { .. }` has two). The scrutinee
+        // ends only when the depth returns to zero, so a sibling `{..}` inside
+        // an outer group is never taken for the arm list (#8960). A nested
+        // brace group holding `ref mut` refuses (conservative); at depth zero
+        // after the scrutinee closed, the first `{..}` is the arm list.
+        let mut depth = open;
+        let mut closed = false;
+        let mut seen_group = false;
+        let mut at = 0usize;
+        while let Some(character) = rest[at..].chars().next() {
+            match character {
+                '(' | '[' => depth += 1,
+                ')' | ']' | '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        closed = true;
+                    }
+                }
+                ';' if depth == 0 && (closed || seen_group) => return false,
+                '{' => {
+                    let group = &rest[at..];
+                    let end = skip_balanced(group, '{', '}')
+                        .map_or(group.len(), |after| group.len() - after.len());
+                    if depth > 0 {
+                        if has_ref_mut(&group[..end]) {
+                            return true;
+                        }
+                    } else if closed {
+                        return arm_patterns_bind_ref_mut(&group[..end]);
+                    } else {
+                        if !seen_group && arm_patterns_bind_ref_mut(&group[..end]) {
+                            return true;
+                        }
+                        seen_group = true;
+                    }
+                    at += end;
+                    continue;
+                }
+                _ => {}
+            }
+            at += character.len_utf8();
+        }
+    }
+    false
+}
+
+/// Whether `before` ends in the opener of a `matches!`-family macro
+/// (`matches!(`, `std::matches!(`, `assert_matches!(`): `before` is the text
+/// before the opener, so it ends in the macro's `!`.
+fn matches_macro_before(before: &str) -> bool {
+    let Some(head) = before.trim_end().strip_suffix('!') else {
+        return false;
+    };
+    // `matches !(..)` is the same macro: rustc allows space before the `!`.
+    let head = head.trim_end();
+    ["matches", "assert_matches", "debug_assert_matches"]
+        .iter()
+        .any(|name| {
+            head.strip_suffix(name)
+                .is_some_and(|rest| !rest.as_bytes().last().is_some_and(|b| is_ident_byte(*b)))
+        })
+}
+
+/// Whether the rest of a `matches!(name, pattern if guard)` invocation holds
+/// `ref mut`. `inside` brackets are open between the macro's opener and the
+/// name; the invocation ends at the first closer that returns past it.
+fn macro_pattern_binds_ref_mut(rest: &str, inside: usize) -> bool {
+    let mut depth = inside;
+    for (at, character) in rest.char_indices() {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                if depth == 0 {
+                    return has_ref_mut(&rest[..at]);
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    has_ref_mut(rest)
+}
+
+/// Whether a `match` arm list `{ .. }` binds `ref mut` in an arm pattern or
+/// guard: the text before each top-level `=>`. A block body (`=> { .. }`) is
+/// skipped. Every other text, a non-block body included, stays part of the
+/// scanned text up to the next `=>`, because a block-like body needs no comma
+/// and the next arm's pattern may follow it directly (#8944).
+fn arm_patterns_bind_ref_mut(group: &str) -> bool {
+    let inner = group.strip_prefix('{').unwrap_or(group);
+    let bytes = inner.as_bytes();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    let mut at = 0usize;
+    while at < inner.len() {
+        match bytes[at] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b'=' if depth == 0 && bytes.get(at + 1) == Some(&b'>') => {
+                if has_ref_mut(&inner[start..at]) {
+                    return true;
+                }
+                at += 2;
+                let body = inner[at..].trim_start();
+                let body_at = inner.len() - body.len();
+                if body.starts_with('{') {
+                    at = match skip_balanced(body, '{', '}') {
+                        Some(after) => inner.len() - after.len(),
+                        None => return has_ref_mut(&inner[body_at..]),
+                    };
+                } else {
+                    at = body_at;
+                }
+                start = at;
+                continue;
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    false
+}
+
+/// Whether the text after a `let` holds a second bare `=` at its top level
+/// (not `==`, `=>`, `<=`, `>=`, `!=`, `..=` or a compound assignment) before
+/// any top-level annotation colon.
+fn has_later_bare_assignment(pattern: &str) -> bool {
+    let bytes = pattern.as_bytes();
+    let mut depth = 0usize;
+    for (at, byte) in bytes.iter().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b':' if depth == 0
+                && bytes.get(at + 1) != Some(&b':')
+                && (at == 0 || bytes[at - 1] != b':') =>
+            {
+                return false;
+            }
+            b'=' if depth == 0 => {
+                let prev = if at == 0 { b' ' } else { bytes[at - 1] };
+                let next = bytes.get(at + 1).copied().unwrap_or(b' ');
+                if !b"=!<>+-*/%|&^.".contains(&prev) && next != b'=' && next != b'>' {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Whether `text` has a `;` outside every bracket pair.
+fn has_top_level_semicolon(text: &str) -> bool {
+    let mut depth = 0usize;
+    for character in text.chars() {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ';' if depth == 0 => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Whether `text` contains the `ref mut` binding-mode tokens.
+fn has_ref_mut(text: &str) -> bool {
+    whole_word_offsets(text, "ref").into_iter().any(|at| {
+        let tail = text[at + "ref".len()..].trim_start();
+        tail.strip_prefix("mut")
+            .is_some_and(|after| !after.as_bytes().first().is_some_and(|b| is_ident_byte(*b)))
+    })
+}
+
+/// Whether the text before a name sits inside a `let` pattern's type
+/// annotation (#8795): the nearest preceding `let` has no `=`, `;`, `{` or
+/// `}` after it, and a single `:` (not a `::` path separator) separates the
+/// pattern from the name. A pattern with no annotation colon
+/// (`let (a, name) = ..`) binds the name and is not an annotation; a struct
+/// pattern's field colon sits inside `{}` and is excluded.
+fn in_let_annotation(before: &str) -> bool {
+    whole_word_offsets(before, "let")
+        .into_iter()
+        .next_back()
+        .is_some_and(|at| {
+            let tail = &before[at + "let".len()..];
+            !tail.contains(['=', ';', '{', '}']) && has_single_colon(tail)
+        })
+}
+
+fn has_single_colon(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes.iter().enumerate().any(|(at, byte)| {
+        *byte == b':'
+            && bytes.get(at + 1) != Some(&b':')
+            && (at == 0 || bytes.get(at - 1) != Some(&b':'))
+    })
+}
+
+/// Whether the name sits inside the `[..]` of an index expression
+/// (`v[name] = ..`): the nearest unclosed group before it is a `[` that
+/// directly follows an identifier or a closing bracket. The name is then an
+/// index read, not the place an enclosing assignment writes (#8795). An
+/// array pattern (`[name, ..] = p`) follows `;`, `=` or nothing, so it is not.
+fn index_operand(before: &str) -> bool {
+    let mut depth = 0usize;
+    for (at, character) in before.char_indices().rev() {
+        match character {
+            ')' | ']' | '}' => depth += 1,
+            '(' | '[' | '{' => {
+                if depth > 0 {
+                    depth -= 1;
+                    continue;
+                }
+                if character != '[' {
+                    return false;
+                }
+                let head = before[..at].trim_end();
+                // A keyword before `[` (`match [e, o] = p`, `return [e, o] = p`)
+                // starts an array pattern or value, not an index.
+                let word_start = head
+                    .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .map_or(0, |at| at + 1);
+                // A label (`break 'a [e, o] = p`, `continue 'a [..]`) is not an
+                // indexed place either.
+                if head[..word_start].ends_with('\'')
+                    || NEGATING_KEYWORDS.contains(&&head[word_start..])
+                {
+                    return false;
+                }
+                return head.chars().next_back().is_some_and(|prev| {
+                    prev.is_ascii_alphanumeric() || matches!(prev, '_' | ')' | ']')
+                });
+            }
+            ';' if depth == 0 => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Whether every `let` binding of a name (the text after the name, as
+/// `receiver_let_bindings` returns it) initializes it with a plain value: a
+/// literal, or a tuple or array (`[plain; N]` included) of plain values.
+/// Such a value is a primitive aggregate with no interior mutability and no
+/// `Deref`, so a shared borrow of it cannot be written by a callee (#8795).
+/// Named struct literals and constructor calls are never plain. No binding at all (a static, a const) is
+/// not plain.
+fn plain_let_values(bindings: &[&str]) -> bool {
+    !bindings.is_empty()
+        && bindings.iter().all(|binding| {
+            let statement = binding.trim_end().trim_end_matches(';');
+            let init = statement
+                .match_indices('=')
+                .map(|(position, _)| position)
+                .find(|position| {
+                    !matches!(statement.as_bytes().get(position + 1), Some(b'=' | b'>'))
+                        && !matches!(
+                            statement.as_bytes().get(position.wrapping_sub(1)),
+                            Some(b'=' | b'!' | b'<' | b'>')
+                        )
+                })
+                .map(|position| &statement[position + 1..]);
+            init.is_some_and(is_plain_value)
+        })
+}
+
+fn is_plain_value(expression: &str) -> bool {
+    let expression = expression.trim();
+    let unsigned = expression
+        .strip_prefix('-')
+        .map_or(expression, str::trim_start);
+    if unsigned.starts_with(|c: char| c.is_ascii_digit()) {
+        return is_numeric_literal(unsigned);
+    }
+    if unsigned.len() != expression.len() {
+        return false;
+    }
+    if matches!(expression, "true" | "false") || is_string_literal(expression) {
+        return true;
+    }
+    if expression.len() >= 3 && expression.starts_with('\'') && expression.ends_with('\'') {
+        return !expression[1..expression.len() - 1].contains('\'');
+    }
+    if let Some((element, length)) =
+        group_inner(expression, '[', ']').and_then(|inner| inner.split_once(';'))
+    {
+        let length = length.trim();
+        return is_plain_value(element)
+            && !length.is_empty()
+            && length.chars().all(|c| c.is_ascii_digit() || c == '_');
+    }
+    if let Some(inner) =
+        group_inner(expression, '(', ')').or_else(|| group_inner(expression, '[', ']'))
+    {
+        return split_top_level(inner)
+            .iter()
+            .all(|part| part.trim().is_empty() || is_plain_value(part));
+    }
+    // Anything else, including a named struct literal (it may `Deref` to an
+    // interior-mutable type) or a constructor call, is not plain.
+    false
+}
+
+/// A numeric literal: digits and `_`, at most one `.` that is followed by a
+/// digit (so `1..n` and `1.method()` are not literals), then an optional
+/// exponent or alphanumeric suffix (`1_000u32`, `0xff`, `1.5e3f64`).
+fn is_numeric_literal(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut dots = 0;
+    for (at, byte) in bytes.iter().enumerate() {
+        match byte {
+            b'.' => {
+                dots += 1;
+                if dots > 1 || !bytes.get(at + 1).is_some_and(u8::is_ascii_digit) {
+                    return false;
+                }
+            }
+            b'-' | b'+' => {
+                if !matches!(bytes.get(at.wrapping_sub(1)), Some(b'e' | b'E'))
+                    || !bytes.get(at + 1).is_some_and(u8::is_ascii_digit)
+                {
+                    return false;
+                }
+            }
+            byte if byte.is_ascii_alphanumeric() || *byte == b'_' => {}
+            _ => return false,
+        }
+    }
+    true
+}
+
+fn is_string_literal(text: &str) -> bool {
+    let text = text.strip_prefix('b').unwrap_or(text);
+    text.len() >= 2
+        && text.starts_with('"')
+        && text.ends_with('"')
+        && !text[1..text.len() - 1].contains(['"', '\\'])
+}
+
+/// The text inside `open..close` when `text` is exactly that one group.
+fn group_inner(text: &str, open: char, close: char) -> Option<&str> {
+    let rest = text.strip_prefix(open)?;
+    let after = skip_balanced(text, open, close)?;
+    if after.trim().is_empty() {
+        rest.rfind(close).map(|end| &rest[..end])
+    } else {
+        None
+    }
+}
+
+/// `text` split at commas outside any bracket pair.
+fn split_top_level(text: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    for (at, character) in text.char_indices() {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&text[start..at]);
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&text[start..]);
+    parts
+}
+
+/// Whether the place expression that continues `rest` (a chain of `.field`,
+/// `.0`, `[..]` and calls) is assigned, or ends in a mutating call. An
+/// unreadable chain fails closed.
+fn place_is_written(rest: &str, methods_mutate: bool) -> bool {
+    let mut rest = rest.trim_start();
+    loop {
+        if let Some(call) = rest.strip_prefix('.') {
+            let call = call.trim_start();
+            let method: String = call
+                .chars()
+                .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
+                .collect();
+            if method.is_empty() {
+                return true;
+            }
+            rest = call[method.len()..].trim_start();
+            // A turbofish or `?` is a shape the scan does not read.
+            if rest.starts_with("::") || rest.starts_with('?') {
+                return true;
+            }
+            if rest.starts_with('(') {
+                if methods_mutate && is_mutating_method(&method) {
+                    return true;
+                }
+                match skip_balanced(rest, '(', ')') {
+                    Some(after) => rest = after.trim_start(),
+                    None => return true,
+                }
+            }
+        } else if rest.starts_with('[') {
+            match skip_balanced(rest, '[', ']') {
+                Some(after) => rest = after.trim_start(),
+                None => return true,
+            }
+        } else if rest.starts_with('?') {
+            return true;
+        } else {
+            break;
+        }
+    }
+    assignment_operator_at(rest)
+}
+
+/// Whether the name sits in a pattern that is the left side of an assignment
+/// (`(name, _) = ..`, `[name, ..] = ..`, `S { f: name, .. } = ..`): after the
+/// enclosing group closes, an `=` (not `==` or `=>`) or compound operator
+/// follows. `rest` is the text after the name.
+fn destructured_into(rest: &str) -> bool {
+    let mut depth = 0usize;
+    for (at, character) in rest.char_indices() {
+        match character {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                if depth > 0 {
+                    depth -= 1;
+                    continue;
+                }
+                // The enclosing group closed: what follows decides.
+                // What follows may be a place chain (`(name)[0] = ..`,
+                // `m![name][i] = ..`): read it like any place expression.
+                // A bare `?` or `.await` after the group is transparent
+                // (`foo(name)?;`, `foo(name).await?`): the value is read, and
+                // only a `.`, `[` or assignment after it writes (#8929).
+                let mut tail = &rest[at..];
+                loop {
+                    let trimmed = tail.trim_start_matches([')', ']', '}']).trim_start();
+                    let trimmed = trimmed.strip_prefix('?').unwrap_or(trimmed);
+                    let trimmed = match trimmed.trim_start().strip_prefix(".await") {
+                        Some(after)
+                            if !after.as_bytes().first().is_some_and(|b| is_ident_byte(*b)) =>
+                        {
+                            after
+                        }
+                        _ => trimmed,
+                    };
+                    if trimmed.len() == tail.len() {
+                        break;
+                    }
+                    tail = trimmed;
+                }
+                return place_is_written(tail.trim_start(), true);
+            }
+            ';' if depth == 0 => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
+fn assignment_operator_at(rest: &str) -> bool {
+    rest.strip_prefix('=')
+        .is_some_and(|tail| !tail.starts_with(['=', '>']))
+        || ["+=", "-=", "*=", "/=", "%=", "|=", "&=", "^=", "<<=", ">>="]
+            .iter()
+            .any(|operator| rest.starts_with(operator))
+}
+
+/// The text after the bracket that closes the one `text` opens with.
+fn skip_balanced(text: &str, open: char, close: char) -> Option<&str> {
+    let mut depth = 0usize;
+    for (at, character) in text.char_indices() {
+        if character == open {
+            depth += 1;
+        } else if character == close {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                return Some(&text[at + close.len_utf8()..]);
+            }
+        }
+    }
+    None
+}
+
+/// Methods that may mutate their receiver (#7847). Name families cover the
+/// std mutators; an unlisted name is read-only to the scan.
+fn is_mutating_method(method: &str) -> bool {
+    const MUTATORS: &[&str] = &[
+        "store",
+        "set",
+        "with",
+        "nth",
+        "splice",
+        "replace_range",
+        "replace",
+        "swap",
+        "append",
+        "write",
+        "lock",
+        "take",
+        "clear",
+        "entry",
+        "resize",
+        "truncate",
+        "get_or_init",
+        "update",
+        "next",
+        "next_back",
+        "next_chunk",
+        "resize_with",
+        "compare_and_swap",
+        "try_lock",
+        "try_write",
+        "as_mut_ptr",
+        "reverse",
+        "split_off",
+        "rotate_left",
+        "rotate_right",
+        "replace_with",
+        "copy_within",
+    ];
+    MUTATORS.contains(&method)
+        || [
+            "push",
+            "pop",
+            "sort",
+            "fill",
+            "drain",
+            "retain",
+            "extend",
+            "insert",
+            "copy_",
+            "clone_from",
+            "remove",
+            "or_insert",
+            "get_or_insert",
+            "dedup",
+            "swap_",
+            "write_",
+            "make_ascii_",
+            "compare_exchange",
+            "next_if",
+            "peek",
+            "fetch_",
+            "set_",
+        ]
+        .iter()
+        .any(|prefix| method.starts_with(prefix))
+        || ["_mut", "_assign"]
+            .iter()
+            .any(|suffix| method.ends_with(suffix))
 }
 
 /// #6578: whether the expected operand may carry a value an rstest fixture
@@ -12035,3 +13434,13 @@ const BY_VALUE_PRELUDE_METHODS: &[&str] = &[
 
 #[cfg(test)]
 mod tests;
+
+/// Which eligible eager call of a borrowed check helper one admission attempt
+/// reads, and whether the attempt selected one (RIPR-SPEC-0197).
+struct HelperCallProbe {
+    /// The assertion macro the admission reads: `assert_eq` or (#8051, never
+    /// credit) `debug_assert_eq`.
+    spelling: &'static str,
+    skip: usize,
+    selected: Cell<bool>,
+}

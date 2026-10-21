@@ -33,10 +33,6 @@ Evidence
   - observation no: No reachable test oracle found
   - discriminator no: No assertion can discriminate the changed behavior without a reachable test
   - local flow reaches call effect: raw.parse().unwrap_or(1) (line 3)
-Weakness
-  - No relevant oracle was detected
-  - No static test path reaches the changed owner
-  - No strong discriminator was detected
 Next step
   - ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists
 Drill in:
@@ -61,10 +57,6 @@ Evidence
   - propagation yes: Changed behavior appears to influence call effect: parse_limit(raw) > 1
   shared evidence: E2, E3
   - local flow reaches call effect: parse_limit(raw) > 1 (line 8)
-Weakness
-  - No relevant oracle was detected
-  - No static test path reaches the changed owner
-  - No strong discriminator was detected
 Next step
   shared guidance: N1
 Drill in:
@@ -95,9 +87,6 @@ Evidence
   - Propagation is not statically obvious from syntax-first analysis
 Weakness
   - No detected boundary input for the changed predicate
-  - No relevant oracle was detected
-  - No static test path reaches the changed owner
-  - No strong discriminator was detected
 Next step
   shared guidance: N1
 Drill in:

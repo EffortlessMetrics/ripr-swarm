@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust test that pins a changed function's result only with a bare `debug_assert_eq!`, where the owner-return pin would credit the same `assert_eq!`, no longer reads as a missing assertion. The finding reads `static_unknown` with the new `rust_debug_assertion_profile_unresolved` limit, because the check runs under the default test profile and is compiled out under `--release`; it is not credited either. Wherever the `assert_eq!` twin keeps a gap, and for other `debug_` checks and ignored tests, the gap stays (#8051).

@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-test2-overdrawn-ok-smoke.json",
-    "sha256": "7eca8346dc52ee9d12a05e2d892408b53555895543d5cbf8abbcceb9f1c6ef0a",
+    "sha256": "6e2feb21dfb61540c6a2d5fdf3bbb60e1bb019f8aae56c980198fbc6214f0f6d",
     "provenance": "producer"
   }
 }

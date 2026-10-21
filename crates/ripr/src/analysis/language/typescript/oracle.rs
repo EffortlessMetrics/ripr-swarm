@@ -193,8 +193,128 @@ pub(crate) fn collect_callback_assertions(
     let mut out = Vec::new();
     for stmt in statements {
         collect_expect_assertions_in_statement(stmt, source, &context, &mut out);
+        if statement_completes_abruptly(stmt) {
+            break;
+        }
     }
     out
+}
+
+/// `true` when control can never fall through `stmt` to the statement after it:
+/// an unconditional `return`, `throw`, `break` or `continue`, or a block whose
+/// own statements contain one, or a
+/// `try` whose finalizer exits or whose block and catch (if any) both exit (#9138). Statements after it in the same list are dead
+/// code, so an assertion there never runs and cannot discriminate; collection
+/// withholds it, fail closed like a constant-falsy branch (#8714). Conditional
+/// exits (`if (x) return;`) are not decidable and keep the later credit.
+pub(crate) fn statement_completes_abruptly(stmt: &Statement<'_>) -> bool {
+    match stmt {
+        Statement::ReturnStatement(_)
+        | Statement::ThrowStatement(_)
+        | Statement::BreakStatement(_)
+        | Statement::ContinueStatement(_) => true,
+        Statement::BlockStatement(block) => block.body.iter().any(statement_completes_abruptly),
+        // A decidable `if` runs exactly one branch; an undecidable one exits
+        // only when both branches provably do.
+        Statement::IfStatement(if_stmt) => match constant_condition_value(&if_stmt.test) {
+            Some(true) => statement_completes_abruptly(&if_stmt.consequent),
+            Some(false) => if_stmt
+                .alternate
+                .as_ref()
+                .is_some_and(statement_completes_abruptly),
+            None => {
+                statement_completes_abruptly(&if_stmt.consequent)
+                    && if_stmt
+                        .alternate
+                        .as_ref()
+                        .is_some_and(statement_completes_abruptly)
+            }
+        },
+        // A finalizer that exits replaces the try completion. Otherwise the
+        // block must exit and so must any catch (the catch is the only other
+        // way out of the try), unless the block's first statement is a
+        // non-throwing exit, which makes the catch unreachable (#9150). A
+        // loop or `switch` is never decided here.
+        Statement::TryStatement(try_stmt) => {
+            try_stmt
+                .finalizer
+                .as_ref()
+                .is_some_and(|finalizer| finalizer.body.iter().any(statement_completes_abruptly))
+                || (try_stmt.block.body.iter().any(statement_completes_abruptly)
+                    && (try_catch_is_unreachable(try_stmt)
+                        || try_stmt.handler.as_ref().is_none_or(|handler| {
+                            handler.body.body.iter().any(statement_completes_abruptly)
+                        })))
+        }
+        _ => false,
+    }
+}
+
+/// `true` when the `try` block's first statement is a non-throwing exit, so
+/// nothing can throw into its `catch` and the handler body is dead code
+/// (#9150). Collection and the conditional-credit walker skip such a handler.
+pub(crate) fn try_catch_is_unreachable(try_stmt: &oxc_ast::ast::TryStatement<'_>) -> bool {
+    try_stmt
+        .block
+        .body
+        .first()
+        .is_some_and(statement_is_non_throwing_exit)
+}
+
+/// `true` for a statement that leaves its block without throwing and without
+/// evaluating anything that could throw: a bare `return;`, a `return` of a
+/// plain literal, `break` or `continue` (#9150). As the FIRST statement of a
+/// `try` block nothing can throw into the `catch` first, so the `catch` can
+/// never run. Anything else (`return f();`, `throw`, a call before the exit)
+/// stays undecidable and keeps the fail-closed catch requirement.
+fn statement_is_non_throwing_exit(stmt: &Statement<'_>) -> bool {
+    match stmt {
+        Statement::BreakStatement(_) | Statement::ContinueStatement(_) => true,
+        Statement::ReturnStatement(ret) => ret.argument.as_ref().is_none_or(|argument| {
+            matches!(
+                argument,
+                Expression::BooleanLiteral(_)
+                    | Expression::NumericLiteral(_)
+                    | Expression::StringLiteral(_)
+                    | Expression::NullLiteral(_)
+            )
+        }),
+        _ => false,
+    }
+}
+
+/// `true` when the statement list collects at least one assertion under
+/// generic runner-global bindings. `detect_conditional_assertion_credit`
+/// probes branch bodies with this instead of comparing first/last lines
+/// (#8714 review): a line-range check credits `if (flag) {} expect(...)`
+/// when the empty branch and the assertion share one line, while the probe
+/// reads the branch body's real collected content. Generic bindings
+/// under-disclose (a receiver-scoped AVA assertion is not probed) rather
+/// than over-credit; callers keep the extracted-assertions pre-check so the
+/// disclosure never fires where nothing was credited.
+pub(crate) fn statements_collect_assertion_probe(
+    statements: &[Statement<'_>],
+    source: &SourceText<'_>,
+) -> bool {
+    let bindings = TypeScriptAssertionBindings::default();
+    let context = AssertionContext {
+        receiver: None,
+        bindings: &bindings,
+        returns_to_runner: false,
+        literal_consts: &[],
+        match_object_consts: &[],
+    };
+    let mut probe = Vec::new();
+    for stmt in statements {
+        collect_expect_assertions_in_statement(stmt, source, &context, &mut probe);
+        if statement_completes_abruptly(stmt) && probe.is_empty() {
+            return false;
+        }
+        if !probe.is_empty() {
+            return true;
+        }
+    }
+    false
 }
 
 /// What a test body's assertions may be made through: the AVA-style callback
@@ -311,19 +431,59 @@ pub(crate) fn collect_expect_assertions_in_statement(
             }
         }
         Statement::IfStatement(if_stmt) => {
-            collect_expect_assertions_in_statement(&if_stmt.consequent, source, &nested, out);
-            if let Some(alternate) = &if_stmt.alternate {
-                collect_expect_assertions_in_statement(alternate, source, &nested, out);
+            match constant_condition_value(&if_stmt.test) {
+                // #8714: a constant-falsy condition never runs its consequent
+                // (`if (false) { ... }`, a common way to disable a check), so
+                // assertions there can never discriminate and are withheld,
+                // fail closed like a swallowed try body. The alternate runs
+                // instead and keeps collection.
+                Some(false) => {
+                    if let Some(alternate) = &if_stmt.alternate {
+                        collect_expect_assertions_in_statement(alternate, source, &nested, out);
+                    }
+                }
+                // A constant-truthy condition always runs its consequent; the
+                // alternate is the dead branch.
+                Some(true) => {
+                    collect_expect_assertions_in_statement(
+                        &if_stmt.consequent,
+                        source,
+                        &nested,
+                        out,
+                    );
+                }
+                // An unevaluated condition keeps the deliberate setup-branch
+                // recursion; `detect_conditional_assertion_credit` discloses
+                // the caveat at the analysis level (#8714).
+                None => {
+                    collect_expect_assertions_in_statement(
+                        &if_stmt.consequent,
+                        source,
+                        &nested,
+                        out,
+                    );
+                    if let Some(alternate) = &if_stmt.alternate {
+                        collect_expect_assertions_in_statement(alternate, source, &nested, out);
+                    }
+                }
             }
         }
         Statement::DoWhileStatement(do_while) => {
+            // A do-while body runs at least once even under a falsy test, so
+            // no constant-condition guard applies here (#8714).
             collect_expect_assertions_in_statement(&do_while.body, source, &nested, out);
         }
-        Statement::WhileStatement(while_stmt) => {
+        Statement::WhileStatement(while_stmt)
+            if constant_condition_value(&while_stmt.test) != Some(false) =>
+        {
             collect_expect_assertions_in_statement(&while_stmt.body, source, &nested, out);
         }
         Statement::ForStatement(for_stmt) => {
-            collect_expect_assertions_in_statement(&for_stmt.body, source, &nested, out);
+            let constantly_dead =
+                for_stmt.test.as_ref().and_then(constant_condition_value) == Some(false);
+            if !constantly_dead {
+                collect_expect_assertions_in_statement(&for_stmt.body, source, &nested, out);
+            }
         }
         Statement::ForInStatement(for_in) => {
             collect_expect_assertions_in_statement(&for_in.body, source, &nested, out);
@@ -366,6 +526,7 @@ pub(crate) fn collect_expect_assertions_in_statement(
             }
             if let Some(handler) = &try_stmt.handler
                 && !finalizer_replaces
+                && !try_catch_is_unreachable(try_stmt)
             {
                 collect_expect_assertions_from_statement_vec(
                     &handler.body.body,
@@ -803,6 +964,9 @@ pub(crate) fn collect_expect_assertions_from_statement_vec(
 ) {
     for stmt in statements {
         collect_expect_assertions_in_statement(stmt, source, context, out);
+        if statement_completes_abruptly(stmt) {
+            break;
+        }
     }
 }
 
@@ -828,25 +992,41 @@ pub(crate) fn expect_assertion_from_expression(
     };
     let matcher = outer_member.property.name.as_str();
 
-    // Inner shape is either `expect(...)` directly or an
-    // `expect(...).resolves` / `.rejects` chain.
+    // Inner shape is `expect(...)` plus up to two chain hops between the
+    // `expect(...)` call and the matcher: a `.resolves` / `.rejects` async
+    // modifier and/or a `.not` negation, in either order
+    // (`expect(x).not.toBe(y)`, `expect(x).rejects.not.toBe(y)`;
+    // RIPR-SPEC-0243 rule 2).
     let inner = &outer_member.object;
-    let async_modifier = expect_assertion_chain_modifier(inner);
-    let expect_call = expect_call_from_assertion_inner(inner)?;
+    let (expect_call, async_modifier, negated) = expect_assertion_chain(inner)?;
 
-    let mock_payload = mock_payload_from_assertion(matcher, expect_call, outer_call, source);
-    let error_payload = error_payload_from_assertion(matcher, async_modifier, outer_call, source);
+    // RIPR-SPEC-0243 rule 2 (#8712): under `.not` the matcher operand is not
+    // an expected value, so neither a mock-call payload nor an exact error
+    // payload is read.
+    let mock_payload = if negated {
+        None
+    } else {
+        mock_payload_from_assertion(matcher, expect_call, outer_call, source)
+    };
+    let error_payload = if negated {
+        None
+    } else {
+        error_payload_from_assertion(matcher, async_modifier, outer_call, source)
+    };
     // RIPR-SPEC-0262: the file's own matcher passes only on `===`. The same
     // credit carries reference identity for RIPR-SPEC-0246 rule 1; `toEqual`
-    // is also `exact_value` and must not inherit that property.
-    let credited_strict_custom = async_modifier != Some("rejects")
+    // is also `exact_value` and must not inherit that property. A negated
+    // matcher earns capped weak credit and asserts NON-identity, so it pins
+    // neither: the flag stays false for `expect(x).not.toBe(y)` (#8712).
+    let credited_strict_custom = !negated
+        && async_modifier != Some("rejects")
         && bindings.strict_matchers.iter().any(|name| name == matcher)
         && outer_call.arguments.len() == 1
         && outer_call
             .arguments
             .first()
             .is_some_and(|argument| argument.as_expression().is_some());
-    let (mut oracle_kind, oracle_strength) = if error_payload.is_some() {
+    let (mut oracle_kind, mut oracle_strength) = if error_payload.is_some() {
         (OracleKind::ExactErrorVariant, OracleStrength::Strong)
     } else if matcher == "toMatchObject" && async_modifier == Some("rejects") {
         // An error object this extraction could not read stays unresolved
@@ -860,9 +1040,9 @@ pub(crate) fn expect_assertion_from_expression(
     } else {
         oracle_for_matcher(matcher)
     };
-    let compares_reference_identity =
-        TypeScriptAssertion::jest_expect_compares_reference_identity(matcher)
-            || credited_strict_custom;
+    let compares_reference_identity = !negated
+        && (TypeScriptAssertion::jest_expect_compares_reference_identity(matcher)
+            || credited_strict_custom);
 
     // Oracle metadata (RIPR-SPEC-0085 §PR5).
     // Extract observed_expression from the first argument of `expect(...)`.
@@ -873,12 +1053,46 @@ pub(crate) fn expect_assertion_from_expression(
 
     // Extract expected_value_or_variant from the first matcher argument when it
     // is a concrete resolvable literal. Detect dynamic args to emit the
-    // typescript_dynamic_assertion_unresolved limitation.
-    let (expected_value_or_variant, has_dynamic_matcher_arg) =
+    // typescript_dynamic_assertion_unresolved limitation. RIPR-SPEC-0243 rule 2
+    // (#8712): a negated matcher operand is not an expected value, so a negated
+    // assertion carries no expected value and no expected-value evidence line.
+    let (expected_value_or_variant, has_dynamic_matcher_arg) = if negated {
+        (None, false)
+    } else {
         match instance_class_argument(matcher, async_modifier, outer_call) {
             Some(class) => (Some(class), false),
             None => extract_matcher_expected_value(matcher, &error_payload, outer_call, source),
-        };
+        }
+    };
+
+    // RIPR-SPEC-0243 rule 9 (#8713): a self-comparing exact matcher with a
+    // dynamic expected — `expect(price(150)).toBe(price(150))`, or the
+    // one-hop-local spelling `const a = price(150); expect(a).toBe(a)` — is a
+    // tautology. Both sides run the changed code with the same inputs, so the
+    // assertion passes under both sides of the diff and can never discriminate
+    // a pure change. Read `relational_check` / weak instead of `exact_value` /
+    // strong. Literal-vs-literal spellings stay strong here: the value-family
+    // observation guard and the predicate self-comparing guard already refuse
+    // them credit at the classifier.
+    if !negated
+        && has_dynamic_matcher_arg
+        && matches!(matcher, "toBe" | "toEqual" | "toStrictEqual")
+        && self_comparing_matcher_argument(outer_call, source, observed_expression.as_deref())
+    {
+        oracle_kind = OracleKind::RelationalCheck;
+        oracle_strength = OracleStrength::Weak;
+    }
+
+    // RIPR-SPEC-0243 rule 2 (#8712): a negated matcher earns capped credit —
+    // exact and relational matchers read `relational_check` / weak, the smoke
+    // list stays smoke, `toThrow*` reads `broad_error` / weak with no exact
+    // payload override, the mock list reads `mock_expectation` / weak, and
+    // anything else (including snapshots) reads `unknown` / unknown. The cap
+    // never raises a grade: chai `.not` and AVA `t.not` already read weak, and
+    // this brings the Jest/Vitest spelling to the same capped credit.
+    if negated {
+        (oracle_kind, oracle_strength) = negated_oracle_cap(matcher);
+    }
 
     // A rejection equality observes the rejected reason, not the fulfilled
     // value. Admit this new credit only for a concrete literal through a
@@ -1936,38 +2150,73 @@ pub(crate) fn chai_expect_assertion_from_expression(
     })
 }
 
-pub(crate) fn expect_assertion_chain_modifier<'a>(inner: &'a Expression<'a>) -> Option<&'a str> {
-    match inner {
-        Expression::StaticMemberExpression(inner_member) => {
-            Some(inner_member.property.name.as_str())
-                .filter(|modifier| *modifier == "resolves" || *modifier == "rejects")
+/// Unwrap the chain between `expect(...)` and the matcher call: the
+/// `expect(...)` call itself plus up to two modifier hops — a `.resolves` /
+/// `.rejects` async modifier and/or a `.not` negation, in either order
+/// (`expect(x).not.toBe(y)`, `expect(x).rejects.not.toBe(y)`,
+/// `expect(x).not.resolves.toBe(y)`; RIPR-SPEC-0243 rule 2). Returns the
+/// `expect(...)` call, the async modifier when present, and whether the chain
+/// is negated. Anything longer or unrecognized yields no assertion (fail
+/// closed), matching the previous two-hop acceptance exactly.
+pub(crate) fn expect_assertion_chain<'a>(
+    inner: &'a Expression<'a>,
+) -> Option<(&'a oxc_ast::ast::CallExpression<'a>, Option<&'a str>, bool)> {
+    let (mut async_modifier, mut negated) = (None, false);
+    let mut current = inner;
+    // Two modifier hops (`.resolves.not`) plus the terminal `expect(...)`
+    // match; a third hop yields no assertion.
+    for _ in 0..3 {
+        match current {
+            Expression::CallExpression(call) if call_expression_is_expect(call) => {
+                return Some((call, async_modifier, negated));
+            }
+            Expression::StaticMemberExpression(member) => match member.property.name.as_str() {
+                "resolves" | "rejects" if async_modifier.is_none() => {
+                    async_modifier = Some(member.property.name.as_str());
+                    current = &member.object;
+                }
+                "not" if !negated => {
+                    negated = true;
+                    current = &member.object;
+                }
+                _ => return None,
+            },
+            _ => return None,
         }
-        _ => None,
     }
+    None
 }
 
-pub(crate) fn expect_call_from_assertion_inner<'a>(
-    inner: &'a Expression<'a>,
-) -> Option<&'a oxc_ast::ast::CallExpression<'a>> {
-    match inner {
-        // Direct: expect(...).matcher(...)
-        Expression::CallExpression(inner_call) if call_expression_is_expect(inner_call) => {
-            Some(inner_call)
+/// RIPR-SPEC-0243 rule 2 (#8712): the capped oracle read for a negated Jest /
+/// Vitest matcher. Exact and relational matchers lose their strong/exact
+/// reading; the smoke list stays smoke; `toThrow*` reads broad error with no
+/// exact-payload override (the caller skips the payload extraction); the mock
+/// list reads weak; anything else, including snapshots, reads unknown.
+fn negated_oracle_cap(matcher: &str) -> (OracleKind, OracleStrength) {
+    match matcher {
+        "toBe"
+        | "toEqual"
+        | "toStrictEqual"
+        | "toContain"
+        | "toMatch"
+        | "toBeGreaterThan"
+        | "toBeGreaterThanOrEqual"
+        | "toBeLessThan"
+        | "toBeLessThanOrEqual"
+        | "toHaveLength"
+        | "toHaveProperty"
+        | "toBeInstanceOf"
+        | "toMatchObject" => (OracleKind::RelationalCheck, OracleStrength::Weak),
+        "toBeTruthy" | "toBeFalsy" | "toBeDefined" | "toBeUndefined" | "toBeNull" | "toBeNaN" => {
+            (OracleKind::SmokeOnly, OracleStrength::Smoke)
         }
-        // Async chain: expect(...).resolves.matcher(...) etc.
-        Expression::StaticMemberExpression(inner_member) => {
-            let modifier = inner_member.property.name.as_str();
-            if modifier != "resolves" && modifier != "rejects" {
-                return None;
-            }
-            match &inner_member.object {
-                Expression::CallExpression(inner_call) if call_expression_is_expect(inner_call) => {
-                    Some(inner_call)
-                }
-                _ => None,
-            }
-        }
-        _ => None,
+        "toThrow" | "toThrowError" => (OracleKind::BroadError, OracleStrength::Weak),
+        "toHaveBeenCalled"
+        | "toHaveBeenCalledWith"
+        | "toHaveBeenCalledTimes"
+        | "toHaveBeenLastCalledWith"
+        | "toHaveBeenNthCalledWith" => (OracleKind::MockExpectation, OracleStrength::Weak),
+        _ => (OracleKind::Unknown, OracleStrength::Unknown),
     }
 }
 
@@ -1976,6 +2225,126 @@ pub(crate) fn call_expression_is_expect(call: &oxc_ast::ast::CallExpression<'_>)
         &call.callee,
         Expression::Identifier(ident) if ident.name.as_str() == "expect"
     )
+}
+
+/// Static value of a branch or loop condition made of constant literals
+/// (`false`, `0`, `0x0`, `0n`, `0x0n`, `""`, `` ` ` ``, `null`), or `None`
+/// when the condition is anything else — an identifier, an env read, a call
+/// or an operation (#8714). Only the honestly decidable cases are evaluated;
+/// the deliberate setup-branch recursion keeps collecting under an
+/// unevaluated condition and `detect_conditional_assertion_credit` discloses
+/// the caveat. BigInt zero is falsy in EVERY radix (`0n`, `0x0n`, `0o0n`,
+/// `0b0n`), so the raw digits are parsed with their radix prefix rather than
+/// compared to the decimal spelling "0" (review on #8714).
+pub(crate) fn constant_condition_value(expr: &Expression<'_>) -> Option<bool> {
+    match expr {
+        Expression::BooleanLiteral(boolean) => Some(boolean.value),
+        // Numeric literals arrive parsed, so every radix (`0x0`, `0o0`,
+        // `0b0`, legacy `00`) is already a zero value here.
+        Expression::NumericLiteral(number) => Some(number.value != 0.0),
+        Expression::BigIntLiteral(bigint) => Some(bigint_zero_is_falsy(
+            bigint.value.as_str().trim_end_matches('n'),
+        )),
+        Expression::StringLiteral(string) => Some(!string.value.is_empty()),
+        // A template with no interpolations is truthy exactly when its cooked
+        // text is non-empty (review on #8714): `if (`abc`)` always runs,
+        // `if (``) ` never does.
+        Expression::TemplateLiteral(template) if template.expressions.is_empty() => {
+            Some(template.quasis.iter().any(|quasi| {
+                quasi
+                    .value
+                    .cooked
+                    .as_ref()
+                    .is_some_and(|cooked| !cooked.is_empty())
+            }))
+        }
+        Expression::NullLiteral(_) => Some(false),
+        _ => None,
+    }
+}
+
+/// `true` when the BigInt literal's digits denote zero. Zero is falsy in
+/// every radix (`0n`, `0x0n`, `0o0n`, `0b0n`), so the digits are parsed with
+/// their radix prefix rather than compared to the decimal spelling "0"
+/// (#8714 review). A value that overflows even `u128` is certainly non-zero,
+/// so an unparseable digit string reads truthy.
+fn bigint_zero_is_falsy(literal: &str) -> bool {
+    let (digits, radix) = if let Some(rest) = literal
+        .strip_prefix("0x")
+        .or_else(|| literal.strip_prefix("0X"))
+    {
+        (rest, 16)
+    } else if let Some(rest) = literal
+        .strip_prefix("0o")
+        .or_else(|| literal.strip_prefix("0O"))
+    {
+        (rest, 8)
+    } else if let Some(rest) = literal
+        .strip_prefix("0b")
+        .or_else(|| literal.strip_prefix("0B"))
+    {
+        (rest, 2)
+    } else {
+        (literal, 10)
+    };
+    u128::from_str_radix(digits, radix) != Ok(0)
+}
+
+/// RIPR-SPEC-0243 rule 9 (#8713): true when the matcher's single argument is
+/// the same token sequence as the `expect(...)` argument. Whitespace outside
+/// string literals is not part of the sequence (`expect(a).toBe( a )` is still
+/// self-comparing); whitespace inside a string literal is significant, so
+/// `expect("ab").toBe("a b")` is not self-comparing.
+fn self_comparing_matcher_argument(
+    matcher_call: &oxc_ast::ast::CallExpression<'_>,
+    source: &str,
+    observed: Option<&str>,
+) -> bool {
+    let Some(observed) = observed else {
+        return false;
+    };
+    if matcher_call.arguments.len() != 1 {
+        return false;
+    }
+    let Some(expected_text) = matcher_call
+        .arguments
+        .first()
+        .and_then(|arg| source_text_for_argument(arg, source))
+    else {
+        return false;
+    };
+    normalized_token_sequence(observed) == normalized_token_sequence(&expected_text)
+}
+
+/// Token sequence with whitespace outside string literals removed. Quotes and
+/// escapes inside a string literal are preserved so two spellings that differ
+/// only inside a string never compare equal.
+fn normalized_token_sequence(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for ch in text.chars() {
+        if let Some(open) = quote {
+            out.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => {
+                quote = Some(ch);
+                out.push(ch);
+            }
+            _ if ch.is_whitespace() => {}
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 pub(crate) fn mock_payload_from_assertion(
@@ -2410,6 +2779,7 @@ pub(crate) fn is_execution_context_assertion_matcher(matcher: &str) -> bool {
 pub(crate) fn oracle_metadata_evidence_lines(
     assertion: &TypeScriptAssertion,
     test_file: &Path,
+    evidence_line: usize,
 ) -> Vec<String> {
     let mut lines = Vec::new();
     if let Some(observed) = &assertion.observed_expression {
@@ -2425,7 +2795,7 @@ pub(crate) fn oracle_metadata_evidence_lines(
     lines.push(format!(
         "typescript_oracle_evidence_ref: {}:{}",
         normalized_path(test_file),
-        assertion.line
+        evidence_line
     ));
     lines
 }
@@ -2465,12 +2835,14 @@ pub(crate) fn collect_oracle_metadata_evidence_lines(
         .filter_map(|candidate| {
             select_family_relevant_assertion(&candidate.test.assertions, Some(probe_family))
                 .assertion()
-                .map(|assertion| (assertion, &candidate.test.file))
+                .map(|assertion| (assertion, candidate.test))
         })
         .max_by_key(|(assertion, _)| assertion.oracle_strength.rank());
 
     match strongest_assertion_with_file {
-        Some((assertion, file)) => oracle_metadata_evidence_lines(assertion, file),
+        Some((assertion, test)) => {
+            oracle_metadata_evidence_lines(assertion, &test.file, test.evidence_line(assertion))
+        }
         None => Vec::new(),
     }
 }

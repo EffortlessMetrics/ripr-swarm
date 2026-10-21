@@ -92,6 +92,9 @@ pub(crate) struct TestStubResolution {
     /// nearest gap in the same function was stubbed instead (#6298), so the
     /// substitution is stated rather than left to the generated comment.
     pub(crate) at_note: Option<String>,
+    /// The line of the seam this resolution stubs. It differs from a
+    /// requested `--at` line when the nearest gap was substituted.
+    pub(crate) seam_line: usize,
 }
 
 #[derive(Debug)]
@@ -120,10 +123,12 @@ pub(crate) fn resolve_test_stub(
                 .find(|entry| entry.seam.id().as_str() == id)
                 .ok_or_else(|| TestStubError::NotFound(format!("seam_id {id} was not found")))?;
             let source = read_owner_source(root, &entry.seam)?;
-            Ok(resolution_for(entry, source))
+            Ok(resolution_for(root, entry, source))
         }
         TestStubSelector::At { file, line, kind } => {
-            let mut resolution = resolve_at_location(root, config, file, *line, kind.as_deref())?;
+            let mut seam_index = None;
+            let mut resolution =
+                resolve_at_location(root, config, file, *line, kind.as_deref(), &mut seam_index)?;
             if resolution.grip_class.is_none() {
                 resolution.grip_class =
                     inventory_grip_class(root, config, file, &resolution.seam_id);
@@ -168,15 +173,15 @@ fn resolve_at_location(
     file: &str,
     line: usize,
     kind: Option<&str>,
+    seam_index: &mut Option<analysis::FileSeamIndex>,
 ) -> Result<TestStubResolution, TestStubError> {
     let kind = kind.and_then(|family| {
         analysis::seam_kind_for_probe_family(family).map(|seam_kind| AtKind { family, seam_kind })
     });
     match (scoped_file(root, file), kind) {
         (Some(relative), Some(_)) => {
-            let seams =
-                analysis::file_seams_without_evidence_at_with_config(root, config, &relative)
-                    .map_err(TestStubError::Operational)?;
+            let seams = analysis::scoped_file_seams(root, config, &relative, seam_index)
+                .map_err(TestStubError::Operational)?;
             let candidates = seams.iter().map(AtCandidate::Shape).collect::<Vec<_>>();
             resolve_at(root, candidates, file, line, kind)
         }
@@ -220,7 +225,7 @@ impl<'a> AtCandidate<'a> {
         }
     }
 
-    fn resolution(self, source: String) -> TestStubResolution {
+    fn resolution(self, root: &Path, source: String) -> TestStubResolution {
         match self {
             Self::Shape(seam) => {
                 let outcome = rust_test_stub(seam, None, &source);
@@ -231,9 +236,10 @@ impl<'a> AtCandidate<'a> {
                     outcome,
                     grip_class: None,
                     at_note: None,
+                    seam_line: seam.display_line(),
                 }
             }
-            Self::Classified(entry) => resolution_for(entry, source),
+            Self::Classified(entry) => resolution_for(root, entry, source),
         }
     }
 }
@@ -317,17 +323,30 @@ pub(crate) fn stub_route_for_finding(
     root: &Path,
     config: &RiprConfig,
     finding: &Finding,
+    seam_index: &mut Option<analysis::FileSeamIndex>,
 ) -> Option<StubRoute> {
     let (file, line, kind) = stub_route_location(finding, root)?;
     if let Some(name) = finding.probe.changed_const_name() {
-        let decision = const_consumer_route(root, config, &file, line, name)?;
+        let decision = const_consumer_route(root, config, &file, line, name, seam_index)?;
         return Some(StubRoute {
             finding_id: finding.id.clone(),
             decision,
         });
     }
-    let resolution = resolve_at_location(root, config, &file, line, Some(kind)).ok()?;
+    let resolution = resolve_at_location(root, config, &file, line, Some(kind), seam_index).ok()?;
     let decision = match resolution.outcome {
+        // `--at` stubs the nearest gap when the finding's line holds none
+        // (#6298). Print the line that stub is for, and only when asking for
+        // that line resolves to the same seam, so the command shown is the
+        // command that produces the stub it promises (#8444).
+        Ok(_) if resolution.at_note.is_some() => {
+            let seam_line = verified_seam_line(root, config, &file, kind, &resolution, seam_index)?;
+            StubRouteDecision::Stub {
+                file,
+                line: seam_line,
+                kind,
+            }
+        }
         Ok(_) => StubRouteDecision::Stub { file, line, kind },
         Err(refusal) => StubRouteDecision::Refused {
             reason: refusal.reason(),
@@ -337,6 +356,24 @@ pub(crate) fn stub_route_for_finding(
         finding_id: finding.id.clone(),
         decision,
     })
+}
+
+/// The line to print for a substituted `--at` resolution: the seam's own line,
+/// only when asking for that line resolves to the same seam without a
+/// substitution note, so the printed command produces the stub it promises
+/// (#8444).
+fn verified_seam_line(
+    root: &Path,
+    config: &RiprConfig,
+    file: &str,
+    kind: &str,
+    resolution: &TestStubResolution,
+    seam_index: &mut Option<analysis::FileSeamIndex>,
+) -> Option<usize> {
+    let seam_line = resolution.seam_line;
+    resolve_at_location(root, config, file, seam_line, Some(kind), seam_index)
+        .is_ok_and(|exact| exact.seam_id == resolution.seam_id && exact.at_note.is_none())
+        .then_some(seam_line)
 }
 
 /// Seam kinds a constant's consumer is tried as, most common first.
@@ -356,6 +393,7 @@ fn const_consumer_route(
     file: &str,
     const_line: usize,
     name: &str,
+    seam_index: &mut Option<analysis::FileSeamIndex>,
 ) -> Option<StubRouteDecision> {
     let source = std::fs::read_to_string(root.join(file)).ok()?;
     let lines = source.lines().collect::<Vec<_>>();
@@ -408,14 +446,28 @@ fn const_consumer_route(
             break;
         }
         for kind in CONSUMER_KINDS {
-            let Ok(resolution) = resolve_at_location(root, config, file, line, Some(kind)) else {
+            let Ok(resolution) =
+                resolve_at_location(root, config, file, line, Some(kind), seam_index)
+            else {
                 continue;
             };
             match resolution.outcome {
                 Ok(_) => {
+                    // The reference line may not hold the seam; print the
+                    // seam's own line, or skip a consumer that cannot be
+                    // reproduced exactly (#8444).
+                    let stub_line = if resolution.at_note.is_some() {
+                        match verified_seam_line(root, config, file, kind, &resolution, seam_index)
+                        {
+                            Some(seam_line) => seam_line,
+                            None => continue,
+                        }
+                    } else {
+                        line
+                    };
                     return Some(StubRouteDecision::Stub {
                         file: file.to_string(),
-                        line,
+                        line: stub_line,
                         kind,
                     });
                 }
@@ -611,6 +663,7 @@ pub(crate) fn check_stub_route(
     root: &Path,
     check_config: &RiprConfig,
     output: &CheckOutput,
+    seam_index: &mut Option<analysis::FileSeamIndex>,
 ) -> Option<StubRoute> {
     let finding = crate::output::human::selected_triage_finding(output, check_config)?;
     let (file, line, _) = stub_route_location(finding, root)?;
@@ -618,7 +671,7 @@ pub(crate) fn check_stub_route(
         return None;
     }
     let config = crate::config::load_for_root(root).ok()?;
-    stub_route_for_finding(root, &config, finding)
+    stub_route_for_finding(root, &config, finding, seam_index)
 }
 
 /// Whether the finding's expression is still on disk in the function the
@@ -759,7 +812,7 @@ fn resolve_at(
     let mut first_refusal = None;
     for candidate in candidates {
         let seam_line = candidate.seam().display_line();
-        let mut resolution = candidate.resolution(source.clone());
+        let mut resolution = candidate.resolution(root, source.clone());
         // A finding line is the changed line, which need not hold a gap of
         // its own; when the stub is for a different line, say so (#6298).
         if seam_line != line {
@@ -815,8 +868,8 @@ fn read_owner_source(root: &Path, seam: &RepoSeam) -> Result<String, TestStubErr
     })
 }
 
-fn resolution_for(entry: &ClassifiedSeam, source: String) -> TestStubResolution {
-    let outcome = rust_test_stub_for_classified_seam(entry, &source);
+fn resolution_for(root: &Path, entry: &ClassifiedSeam, source: String) -> TestStubResolution {
+    let outcome = rust_test_stub_for_classified_seam(root, entry, &source);
     TestStubResolution {
         seam_id: entry.seam.id().as_str().to_string(),
         owner: entry.seam.owner().to_string(),
@@ -824,6 +877,7 @@ fn resolution_for(entry: &ClassifiedSeam, source: String) -> TestStubResolution 
         outcome,
         grip_class: Some(entry.class),
         at_note: None,
+        seam_line: entry.seam.display_line(),
     }
 }
 
@@ -908,6 +962,17 @@ pub(crate) fn write_test_stub(
             let updated = format!("{head}{text}{tail}");
             crate::atomic_file::write(&path, updated.as_bytes(), "test stub")?;
         }
+        TestStubPlacement::ExistingIntegrationFile { .. } => {
+            let current = std::fs::read_to_string(&path)
+                .map_err(|error| format!("failed to read {}: {error}", relative.display()))?;
+            let separator = if current.ends_with('\n') || current.is_empty() {
+                ""
+            } else {
+                "\n"
+            };
+            let updated = format!("{current}{separator}{}", stub.text);
+            crate::atomic_file::write(&path, updated.as_bytes(), "test stub")?;
+        }
         TestStubPlacement::NewIntegrationFile { .. } => {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)
@@ -951,21 +1016,246 @@ pub(crate) fn package_manifest_for(root: &Path, stub: &RustTestStub) -> Option<P
     })
 }
 
-/// The command that runs just this test after the stub is in place.
-/// `manifest` is the package manifest as the caller should spell it.
-pub(crate) fn run_command(manifest: &str, stub: &RustTestStub) -> String {
-    match &stub.placement {
-        TestStubPlacement::NewIntegrationFile { file } => {
-            let target = file
-                .file_stem()
-                .map(|stem| stem.to_string_lossy().to_string())
-                .unwrap_or_default();
-            format!(
-                "cargo test --manifest-path {manifest} --test {target} {}",
-                stub.test_name
-            )
+/// The cargo target name that runs the integration file `stub` is placed in:
+/// an explicit `[[test]]` entry whose `path` is that file (its `name` wins, so
+/// `name = "pricing"` for `tests/discount.rs` yields `pricing`), otherwise the
+/// auto-discovered name (`tests/<stem>.rs` or `tests/<dir>/main.rs`) when
+/// `autotests` is not disabled. `None` when the name cannot be established:
+/// non-integration placement, no owning package, an unparsable manifest,
+/// `autotests = false` without an explicit entry, an explicit entry that
+/// shadows the inferred name, or `required-features` that a bare
+/// `cargo test --test` would not enable.
+#[cfg(test)]
+fn integration_target_name(root: &Path, manifest: &Path, stub: &RustTestStub) -> Option<String> {
+    match integration_target_lookup(root, manifest, stub) {
+        TargetLookup::Name(name) => Some(name),
+        TargetLookup::NotRegistered | TargetLookup::Unresolved => None,
+    }
+}
+
+/// Outcome of resolving an integration file's cargo test target.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TargetLookup {
+    /// The file is the target with this name.
+    Name(String),
+    /// Manifest evidence shows the file is not registered under a name ripr
+    /// can establish (discovery disabled, outside `tests/`, or a shadowed
+    /// name). Ambiguous layouts are `Unresolved`, not this.
+    NotRegistered,
+    /// The manifest, edition or an entry could not be resolved, or the target
+    /// is registered but not runnable by a bare command.
+    Unresolved,
+}
+
+pub(crate) fn integration_target_lookup(
+    root: &Path,
+    manifest: &Path,
+    stub: &RustTestStub,
+) -> TargetLookup {
+    lookup_inner(root, manifest, stub).unwrap_or(TargetLookup::Unresolved)
+}
+
+fn lookup_inner(root: &Path, manifest: &Path, stub: &RustTestStub) -> Option<TargetLookup> {
+    use TargetLookup::{Name, NotRegistered, Unresolved};
+    let (TestStubPlacement::NewIntegrationFile { file }
+    | TestStubPlacement::ExistingIntegrationFile { file }) = &stub.placement
+    else {
+        return Some(Unresolved);
+    };
+    let text = std::fs::read_to_string(root.join(manifest)).ok()?;
+    let parsed = text.parse::<toml::Table>().ok()?;
+    let package = parsed.get("package")?.as_table()?;
+    let package_dir = manifest.parent().unwrap_or(Path::new(""));
+    let relative = normalize_components(file.strip_prefix(package_dir).ok()?)?;
+    let explicit: Vec<&toml::Table> = parsed
+        .get("test")
+        .and_then(toml::Value::as_array)
+        .map(|entries| entries.iter().filter_map(toml::Value::as_table).collect())
+        .unwrap_or_default();
+    let entry_name = |entry: &toml::Table| -> Option<String> {
+        entry
+            .get("name")
+            .and_then(toml::Value::as_str)
+            .map(ToOwned::to_owned)
+    };
+    // Cargo prefers tests/<n>.rs over tests/<n>/main.rs when both exist.
+    let sibling_file_exists = |name: &str| {
+        root.join(package_dir)
+            .join("tests")
+            .join(format!("{name}.rs"))
+            .is_file()
+    };
+    let dir_main_exists = |name: &str| {
+        root.join(package_dir)
+            .join("tests")
+            .join(name)
+            .join("main.rs")
+            .is_file()
+    };
+    // A present `path` is the only candidate (an unusable one matches
+    // nothing); the name-based default applies only when `path` is absent.
+    let entry_matches = |entry: &toml::Table| -> bool {
+        match entry.get("path") {
+            Some(path) => path
+                .as_str()
+                .and_then(|path| normalize_components(Path::new(path)))
+                .is_some_and(|path| path == relative),
+            None => entry_name(entry).is_some_and(|name| {
+                relative == format!("tests/{name}.rs")
+                    || relative == format!("tests/{name}/main.rs")
+            }),
         }
-        _ => format!("cargo test --manifest-path {manifest} {}", stub.test_name),
+    };
+    let runnable = |entry: &toml::Table| {
+        // `harness = false` targets are not run by a plain test command.
+        entry
+            .get("harness")
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(true)
+    };
+    let enabled = |entry: &toml::Table| {
+        entry
+            .get("required-features")
+            .and_then(toml::Value::as_array)
+            .is_none_or(Vec::is_empty)
+    };
+    if let Some(entry) = explicit.iter().find(|entry| entry_matches(entry)) {
+        // Cargo drops a name-only entry when both layouts exist.
+        if entry.get("path").is_none()
+            && entry_name(entry)
+                .is_some_and(|name| sibling_file_exists(&name) && dir_main_exists(&name))
+        {
+            return Some(Unresolved);
+        }
+        return Some(
+            match entry_name(entry)
+                .filter(|name| !name.trim().is_empty())
+                .filter(|_| enabled(entry) && runnable(entry))
+            {
+                Some(name) => Name(name),
+                None => Unresolved,
+            },
+        );
+    }
+    // Cargo's default for `autotests`: on for edition 2018+, but in edition
+    // 2015 any explicit `[[test]]` turns legacy auto-discovery off unless
+    // `autotests = true` is written. Uncertain edition fails closed.
+    let autotests = match package.get("autotests") {
+        None => explicit.is_empty() || package_edition(root, manifest, package)? >= 2018,
+        Some(value) => value.as_bool()?,
+    };
+    if !autotests {
+        return Some(NotRegistered);
+    }
+    let Some(tail) = relative.strip_prefix("tests/") else {
+        return Some(NotRegistered);
+    };
+    let inferred = match tail.split('/').collect::<Vec<_>>()[..] {
+        [name] if name.ends_with(".rs") => name.trim_end_matches(".rs"),
+        [dir, "main.rs"] => dir,
+        _ => return Some(NotRegistered),
+    };
+    // Both tests/<n>.rs and tests/<n>/main.rs: cargo reports a duplicate target.
+    if sibling_file_exists(inferred) && dir_main_exists(inferred) {
+        return Some(Unresolved);
+    }
+    // An explicit entry with the inferred name but another path replaces the
+    // auto-discovered target, so this file is not reachable under that name.
+    if inferred.is_empty()
+        || explicit
+            .iter()
+            .any(|entry| entry_name(entry).as_deref() == Some(inferred))
+    {
+        return Some(NotRegistered);
+    }
+    Some(Name(inferred.to_string()))
+}
+
+/// The package's effective edition year: its own `edition`, or the workspace
+/// root's `[workspace.package] edition` for `edition.workspace = true`, or 2015
+/// when absent. `None` when it cannot be resolved.
+fn package_edition(root: &Path, manifest: &Path, package: &toml::Table) -> Option<u32> {
+    let parse = |value: &toml::Value| value.as_str()?.trim().parse::<u32>().ok();
+    match package.get("edition") {
+        None => Some(2015),
+        Some(value @ toml::Value::String(_)) => parse(value),
+        Some(toml::Value::Table(table)) if table.get("workspace")?.as_bool()? => {
+            let start = manifest.parent().unwrap_or(Path::new(""));
+            // Cargo reads only one workspace: the explicit `package.workspace`
+            // pointer, else the first ancestor (the manifest's own directory
+            // included) that has a `[workspace]` table. If that workspace has
+            // no `[workspace.package] edition`, the inheritance is invalid.
+            let workspace_manifest = |dir: &Path| -> Option<toml::Table> {
+                std::fs::read_to_string(root.join(dir).join("Cargo.toml"))
+                    .ok()?
+                    .parse::<toml::Table>()
+                    .ok()
+            };
+            let workspace_dir: PathBuf = match package.get("workspace") {
+                Some(pointer) => {
+                    let pointed = start.join(pointer.as_str()?);
+                    let pointed = pointed.strip_prefix(".").unwrap_or(&pointed);
+                    PathBuf::from(normalize_components(pointed)?)
+                }
+                None => start
+                    .ancestors()
+                    .find(|dir| {
+                        workspace_manifest(dir)
+                            .is_some_and(|parsed| parsed.contains_key("workspace"))
+                    })?
+                    .to_path_buf(),
+            };
+            let parsed = workspace_manifest(&workspace_dir)?;
+            parsed
+                .get("workspace")?
+                .as_table()?
+                .get("package")?
+                .as_table()?
+                .get("edition")
+                .and_then(parse)
+        }
+        Some(_) => None,
+    }
+}
+
+/// `/`-joined components of a relative path with `.` and in-package `..`
+/// resolved lexically; `None` for a `..` that escapes, roots or prefixes.
+fn normalize_components(path: &Path) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(part) => parts.push(part.to_str()?.to_string()),
+            std::path::Component::CurDir => {}
+            // Lexical `..` stays inside the package or the path is unusable.
+            std::path::Component::ParentDir => {
+                parts.pop()?;
+            }
+            _ => return None,
+        }
+    }
+    Some(parts.join("/"))
+}
+
+/// The command that runs just this test after the stub is in place.
+/// `manifest` is the package manifest as the caller should spell it and
+/// `target` the effective cargo test target from [`integration_target_name`].
+/// `None` when an integration stub's target name is not established: a
+/// command naming the file stem could fail, so none is offered.
+pub(crate) fn run_command(
+    manifest: &str,
+    stub: &RustTestStub,
+    target: Option<&str>,
+) -> Option<String> {
+    match &stub.placement {
+        TestStubPlacement::NewIntegrationFile { .. }
+        | TestStubPlacement::ExistingIntegrationFile { .. } => Some(format!(
+            "cargo test --manifest-path {manifest} --test {} {}",
+            target?, stub.test_name
+        )),
+        _ => Some(format!(
+            "cargo test --manifest-path {manifest} {}",
+            stub.test_name
+        )),
     }
 }
 
@@ -1225,14 +1515,244 @@ mod tests {
         );
         assert_eq!(orphan_manifest, None);
         assert_eq!(
-            run_command("crates/a/Cargo.toml", &inline),
-            "cargo test --manifest-path crates/a/Cargo.toml owner_boundary"
+            run_command("crates/a/Cargo.toml", &inline, None).as_deref(),
+            Some("cargo test --manifest-path crates/a/Cargo.toml owner_boundary")
         );
         assert_eq!(
-            run_command("crates/a/Cargo.toml", &integration),
-            "cargo test --manifest-path crates/a/Cargo.toml --test owner owner_boundary"
+            run_command("crates/a/Cargo.toml", &integration, Some("owner")).as_deref(),
+            Some("cargo test --manifest-path crates/a/Cargo.toml --test owner owner_boundary")
         );
+        assert_eq!(run_command("crates/a/Cargo.toml", &integration, None), None);
         Ok(())
+    }
+
+    #[test]
+    fn integration_target_name_follows_cargo_target_registration() -> Result<(), String> {
+        use crate::analysis::test_stub::TestStubPlacement;
+        let root = std::env::temp_dir().join(format!(
+            "ripr-stub-target-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("pkg")).map_err(|error| error.to_string())?;
+        let stub = |file: &str| RustTestStub {
+            placement: TestStubPlacement::ExistingIntegrationFile {
+                file: PathBuf::from(file),
+            },
+            test_name: "t".to_string(),
+            text: String::new(),
+            fill_ins: Vec::new(),
+            derived_inputs: Vec::new(),
+        };
+        let got = |tail: &str, file: &str| -> Result<Option<String>, String> {
+            std::fs::write(
+                root.join("pkg/Cargo.toml"),
+                format!(
+                    "[package]\nname = \"pkg\"\n{}{tail}",
+                    if tail.contains("edition") || tail.starts_with("[[test]]\nname = \"other\"") {
+                        ""
+                    } else {
+                        "edition = \"2021\"\n"
+                    }
+                ),
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(integration_target_name(
+                &root,
+                Path::new("pkg/Cargo.toml"),
+                &stub(file),
+            ))
+        };
+        let some = |name: &str| Some(name.to_string());
+        let result = (|| {
+            // auto-discovered: file stem, or the directory of `main.rs`
+            assert_eq!(got("", "pkg/tests/discount.rs")?, some("discount"));
+            assert_eq!(got("", "pkg/tests/grp/main.rs")?, some("grp"));
+            assert_eq!(got("", "pkg/tests/grp/helper.rs")?, None);
+            assert_eq!(got("", "pkg/src/lib.rs")?, None);
+            // an explicit entry renames the target: its name, not the stem
+            let renamed = "[[test]]\nname = \"pricing\"\npath = \"tests/discount.rs\"\n";
+            assert_eq!(got(renamed, "pkg/tests/discount.rs")?, some("pricing"));
+            // path spelling is normalized
+            let dotted = "[[test]]\nname = \"pricing\"\npath = \"./tests/discount.rs\"\n";
+            assert_eq!(got(dotted, "pkg/tests/discount.rs")?, some("pricing"));
+            // an entry without `path` defaults to tests/<name>.rs
+            let default_path = "[[test]]\nname = \"discount\"\n";
+            assert_eq!(
+                got(default_path, "pkg/tests/discount.rs")?,
+                some("discount")
+            );
+            // a sibling file keeps its own stem when another file is renamed
+            assert_eq!(got(renamed, "pkg/tests/other.rs")?, some("other"));
+            // `autotests = false`: only an explicit entry registers a target
+            let off = "autotests = false\n";
+            assert_eq!(got(off, "pkg/tests/discount.rs")?, None);
+            let off_explicit = format!("{off}{renamed}");
+            assert_eq!(
+                got(&off_explicit, "pkg/tests/discount.rs")?,
+                some("pricing")
+            );
+            // an explicit entry stealing the inferred name leaves the file unreachable
+            let stolen = "[[test]]\nname = \"discount\"\npath = \"tests/elsewhere.rs\"\n";
+            assert_eq!(got(stolen, "pkg/tests/discount.rs")?, None);
+            // a target that needs features is not runnable by a bare command
+            let gated = format!("{renamed}required-features = [\"extra\"]\n");
+            assert_eq!(got(&gated, "pkg/tests/discount.rs")?, None);
+            // `harness = false` is not run by a plain test command
+            let no_harness = format!("{renamed}harness = false\n");
+            assert_eq!(got(&no_harness, "pkg/tests/discount.rs")?, None);
+            // a pathless entry may live at tests/<name>/main.rs
+            let dir_default = "[[test]]\nname = \"grp\"\n";
+            assert_eq!(got(dir_default, "pkg/tests/grp/main.rs")?, some("grp"));
+            assert_eq!(got(dir_default, "pkg/tests/grp.rs")?, some("grp"));
+            // edition 2015: an explicit entry disables legacy auto-discovery
+            let other = "[[test]]\nname = \"other\"\npath = \"tests/other.rs\"\n";
+            let e2015 = format!("edition = \"2015\"\n{other}");
+            assert_eq!(got(&e2015, "pkg/tests/discount.rs")?, None);
+            assert_eq!(got(other, "pkg/tests/discount.rs")?, None);
+            // ...unless autotests = true is explicit
+            let e2015_on = format!("edition = \"2015\"\nautotests = true\n{other}");
+            assert_eq!(got(&e2015_on, "pkg/tests/discount.rs")?, some("discount"));
+            // 2015 with no explicit entry still auto-discovers
+            let bare = got("edition = \"2015\"\n", "pkg/tests/discount.rs")?;
+            assert_eq!(bare, some("discount"));
+            // 2018+ with an explicit entry still auto-discovers
+            let e2018 = format!("edition = \"2018\"\n{other}");
+            assert_eq!(got(&e2018, "pkg/tests/discount.rs")?, some("discount"));
+            // inherited edition comes from the workspace root
+            let inherit = format!("edition.workspace = true\n{other}");
+            let ws = |edition: &str| {
+                std::fs::write(
+                    root.join("Cargo.toml"),
+                    format!("[workspace]\nmembers = [\"pkg\"]\n[workspace.package]\nedition = \"{edition}\"\n"),
+                )
+                .map_err(|error| error.to_string())
+            };
+            ws("2021")?;
+            assert_eq!(got(&inherit, "pkg/tests/discount.rs")?, some("discount"));
+            ws("2015")?;
+            assert_eq!(got(&inherit, "pkg/tests/discount.rs")?, None);
+            // unresolvable inheritance fails closed
+            std::fs::remove_file(root.join("Cargo.toml")).map_err(|error| error.to_string())?;
+            assert_eq!(got(&inherit, "pkg/tests/discount.rs")?, None);
+            // an unusable `path` matches nothing: never fall back to the name
+            for bad in ["../shared/d.rs", "/abs/d.rs"] {
+                let entry = format!("[[test]]\nname = \"discount\"\npath = \"{bad}\"\n");
+                assert_eq!(got(&entry, "pkg/tests/discount.rs")?, None);
+            }
+            // an unparseable edition only matters when explicit entries exist
+            let future = "edition = \"future\"\n";
+            assert_eq!(got(future, "pkg/tests/discount.rs")?, some("discount"));
+            assert_eq!(
+                got(&format!("{future}{other}"), "pkg/tests/discount.rs")?,
+                None
+            );
+            // autotests = false decides without needing the edition
+            let off_inherit = format!("edition.workspace = true\nautotests = false\n{other}");
+            assert_eq!(got(&off_inherit, "pkg/tests/discount.rs")?, None);
+            // a root package inheriting from its own manifest's [workspace.package]
+            std::fs::write(
+                root.join("Cargo.toml"),
+                format!(
+                    "[package]\nname = \"rootpkg\"\nedition.workspace = true\n{other}[workspace]\n[workspace.package]\nedition = \"2021\"\n"
+                ),
+            )
+            .map_err(|error| error.to_string())?;
+            let root_stub = stub("tests/discount.rs");
+            assert_eq!(
+                integration_target_name(&root, Path::new("Cargo.toml"), &root_stub),
+                some("discount")
+            );
+            // both tests/<n>.rs and tests/<n>/main.rs: cargo reports a duplicate
+            std::fs::create_dir_all(root.join("pkg/tests/grp"))
+                .map_err(|error| error.to_string())?;
+            std::fs::write(root.join("pkg/tests/grp/main.rs"), "")
+                .map_err(|error| error.to_string())?;
+            std::fs::write(root.join("pkg/tests/grp.rs"), "").map_err(|error| error.to_string())?;
+            assert_eq!(got("", "pkg/tests/grp/main.rs")?, None);
+            assert_eq!(got("", "pkg/tests/grp.rs")?, None);
+            // in-package `..` resolves lexically; an escaping one matches nothing
+            let dotdot = "[[test]]\nname = \"pricing\"\npath = \"tests/../tests/discount.rs\"\n";
+            assert_eq!(got(dotdot, "pkg/tests/discount.rs")?, some("pricing"));
+            let escape = "[[test]]\nname = \"discount\"\npath = \"../x/../tests/discount.rs\"\n";
+            assert_eq!(got(escape, "pkg/tests/discount.rs")?, None);
+            // a name-only entry is ambiguous when both layouts exist
+            std::fs::create_dir_all(root.join("pkg/tests/amb"))
+                .map_err(|error| error.to_string())?;
+            std::fs::write(root.join("pkg/tests/amb.rs"), "").map_err(|error| error.to_string())?;
+            std::fs::write(root.join("pkg/tests/amb/main.rs"), "")
+                .map_err(|error| error.to_string())?;
+            let amb = "[[test]]\nname = \"amb\"\n";
+            assert_eq!(got(amb, "pkg/tests/amb.rs")?, None);
+            assert_eq!(got(amb, "pkg/tests/amb/main.rs")?, None);
+            // positive vs unresolved lookups
+            std::fs::write(
+                root.join("pkg/Cargo.toml"),
+                "[package]\nname = \"pkg\"\nautotests = false\n",
+            )
+            .map_err(|error| error.to_string())?;
+            let lookup = |file: &str| {
+                integration_target_lookup(&root, Path::new("pkg/Cargo.toml"), &stub(file))
+            };
+            assert_eq!(lookup("pkg/tests/discount.rs"), TargetLookup::NotRegistered);
+            // registered but not runnable by a bare command: unresolved
+            for tail in ["harness = false\n", "required-features = [\"extra\"]\n"] {
+                std::fs::write(
+                    root.join("pkg/Cargo.toml"),
+                    format!(
+                        "[package]\nname = \"pkg\"\n[[test]]\nname = \"pricing\"\npath = \"tests/discount.rs\"\n{tail}"
+                    ),
+                )
+                .map_err(|error| error.to_string())?;
+                assert_eq!(lookup("pkg/tests/discount.rs"), TargetLookup::Unresolved);
+            }
+            std::fs::write(
+                root.join("pkg/Cargo.toml"),
+                "[package]\nname = \"pkg\"\nedition = \"future\"\n[[test]]\nname = \"o\"\npath = \"tests/o.rs\"\n",
+            )
+            .map_err(|error| error.to_string())?;
+            assert_eq!(lookup("pkg/tests/discount.rs"), TargetLookup::Unresolved);
+            // only the nearest workspace counts: an inner `[workspace]` without
+            // an edition does not fall through to an outer one
+            let write = |path: &str, text: &str| -> Result<(), String> {
+                if let Some(parent) = Path::new(path).parent() {
+                    std::fs::create_dir_all(root.join(parent))
+                        .map_err(|error| error.to_string())?;
+                }
+                std::fs::write(root.join(path), text).map_err(|error| error.to_string())
+            };
+            write(
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"pkg\"]\n[workspace.package]\nedition = \"2021\"\n",
+            )?;
+            assert_eq!(got(&inherit, "pkg/tests/discount.rs")?, some("discount"));
+            write("pkg/Cargo.toml", "[workspace]\n")?;
+            let inner = format!("[package]\nname = \"in\"\nedition.workspace = true\n{other}");
+            write("pkg/in/Cargo.toml", &inner)?;
+            let nested = integration_target_lookup(
+                &root,
+                Path::new("pkg/in/Cargo.toml"),
+                &stub("pkg/in/tests/discount.rs"),
+            );
+            assert_eq!(nested, TargetLookup::Unresolved);
+            // an explicit `package.workspace` pointer selects the outer workspace
+            let pointed = format!(
+                "[package]\nname = \"in\"\nworkspace = \"../..\"\nedition.workspace = true\n{other}"
+            );
+            write("pkg/in/Cargo.toml", &pointed)?;
+            let by_pointer = integration_target_lookup(
+                &root,
+                Path::new("pkg/in/Cargo.toml"),
+                &stub("pkg/in/tests/discount.rs"),
+            );
+            assert_eq!(by_pointer, TargetLookup::Name("discount".to_string()));
+            Ok::<(), String>(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
     }
 
     #[test]
@@ -1284,13 +1804,10 @@ mod tests {
         .map_err(|error| error.to_string())?;
         let config = RiprConfig::default();
         let kind_of = |kind: Option<&str>| -> Result<(String, bool), String> {
-            let resolution = resolve_at_location(&root, &config, "src/lib.rs", 2, kind)
+            let resolution = resolve_at_location(&root, &config, "src/lib.rs", 2, kind, &mut None)
                 .map_err(|error| format!("{error:?}"))?;
-            let seams = analysis::file_seams_without_evidence_at_with_config(
-                &root,
-                &config,
-                Path::new("src/lib.rs"),
-            )?;
+            let seams =
+                analysis::scoped_file_seams(&root, &config, Path::new("src/lib.rs"), &mut None)?;
             let seam = seams
                 .iter()
                 .find(|seam| seam.id().as_str() == resolution.seam_id)

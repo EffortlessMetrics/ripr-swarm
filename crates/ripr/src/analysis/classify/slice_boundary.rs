@@ -8,7 +8,8 @@ use super::reach::relation_establishes_reach;
 use super::reveal::contains_as_whole_word;
 use crate::analysis::rust_index::FunctionSummary;
 use crate::analysis::syntax::{
-    constant_table_call_column, owner_reference_count, parse_clean_source_file,
+    constant_table_call_column, direct_literal_call_column, owner_reference_count,
+    parse_clean_source_file,
 };
 use crate::domain::{
     FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact, ProbeFamily, RelationReason,
@@ -43,6 +44,7 @@ pub(in crate::analysis) fn refine_slice_boundary(
             let equality = format!("{} == {}", values.operand, values.boundary);
             if let Some((line, source)) = values.witness {
                 gathered.activation.observed_values.push(ValueFact {
+                    file: None,
                     line,
                     text: format!(
                         "{source} | {} = {} via immutable literal slice table cardinality",
@@ -139,15 +141,41 @@ fn boundary_values(
         if calls.is_empty() {
             return Some(Err(unresolved()));
         }
-        // One ordinary call per table is the admitted family. Additional,
-        // macro-hidden or helper calls must not disappear from the absence proof.
-        if calls.len() != 1 {
-            return Some(Err(unresolved()));
-        }
-        let Some((column, text, macro_count)) =
-            constant_table_call_column(&test.body, &owner.name, position)
-        else {
-            return Some(Err(unresolved()));
+        // Either one ordinary call over a constant table, or straight-line
+        // direct calls whose slice argument is a literal in each assertion.
+        // Additional, macro-hidden or helper calls must not disappear from the
+        // absence proof.
+        let table = match calls.as_slice() {
+            [only] => constant_table_call_column(&test.body, &owner.name, position)
+                .map(|(column, text, macro_count)| (column, text, macro_count, only.line)),
+            _ => None,
+        };
+        let (rows, macro_count): (Vec<(String, usize, String)>, usize) = match table {
+            Some((column, text, macro_count, line)) => (
+                column
+                    .into_iter()
+                    .map(|cell| (cell, line, text.clone()))
+                    .collect(),
+                macro_count,
+            ),
+            None => {
+                let Some((column, macro_count)) =
+                    direct_literal_call_column(&test.body, &owner.name, position)
+                else {
+                    return Some(Err(unresolved()));
+                };
+                if column.len() != calls.len() {
+                    return Some(Err(unresolved()));
+                }
+                let mut sites: Vec<_> = calls.iter().map(|call| (call.line, &call.text)).collect();
+                sites.sort_by_key(|(line, _)| *line);
+                let rows = column
+                    .into_iter()
+                    .zip(sites)
+                    .map(|(cell, (line, text))| (cell, line, text.to_string()))
+                    .collect();
+                (rows, macro_count)
+            }
         };
         let assertions: Vec<_> = test
             .assertions
@@ -165,19 +193,17 @@ fn boundary_values(
         {
             return Some(Err(unresolved()));
         }
-        if column.len() > 64 {
-            return Some(Err(unresolved()));
-        }
-        for cell in column {
+        for (cell, line, source) in rows {
             let Some(length) = literal_slice_length(&cell) else {
                 return Some(Err(unresolved()));
             };
             if length == target && witness.is_none() {
-                witness = Some((calls[0].line, text.clone()));
+                witness = Some((line, source));
             }
             lengths.push(length);
         }
-        admitted_calls = admitted_calls.checked_add(1)?;
+        // The table path is one call; direct calls are each a use.
+        admitted_calls = admitted_calls.checked_add(calls.len())?;
     }
     if lengths.is_empty() {
         return Some(Err(unresolved()));
@@ -283,7 +309,7 @@ fn slice_parameter(owner: &FunctionSummary, name: &str) -> Option<usize> {
     })
 }
 
-fn literal_slice_length(text: &str) -> Option<usize> {
+pub(super) fn literal_slice_length(text: &str) -> Option<usize> {
     if text.len() > 4096 {
         return None;
     }
