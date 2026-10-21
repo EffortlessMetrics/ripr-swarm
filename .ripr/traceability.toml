@@ -1071,6 +1071,7 @@ tests = [
   "crates/ripr/src/app/tests/rendering_contracts.rs::configured_finding_severity_applies_to_human_json_and_github",
   "crates/ripr/src/lsp/diagnostics.rs::seam_diagnostic_tests::configured_seam_severity_can_disable_a_class",
   "crates/ripr/tests/cli_smoke.rs::doctor_reports_missing_config_defaults",
+  "crates/ripr/tests/cli_smoke.rs::doctor_exit_codes_distinguish_findings_usage_and_clean",
   "crates/ripr/tests/cli_smoke.rs::doctor_reports_loaded_config_path",
   "crates/ripr/src/cli/commands/doctor.rs::tests::doctor_enable_tip_keeps_already_enabled_languages",
   "crates/ripr/src/cli/commands/doctor.rs::tests::doctor_enable_tip_maps_javascript_to_the_typescript_entry",

@@ -127,7 +127,9 @@ Authority:
     card` / `agent stub` refuse with 3 and empty stdout; `agent
     verify-execute` refuses with 3 and a stdout document; `agent repair`
     refuses with 3 and json-optional stdout; `receipt check` orphan or gap
-    mismatch is 2, not 3. A metadata row that contradicts that mapping is a
+    mismatch is 2, not 3; `doctor` completed-with-findings is 3 under the
+    `doctor_findings` kind while its usage/operational failures stay 2
+    (#5102). A metadata row that contradicts that mapping is a
     catalog integrity failure. `stop_states` remains free-text and is not
     the exit authority. The document does not prove a given invocation's
     status.

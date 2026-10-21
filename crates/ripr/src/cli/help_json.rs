@@ -155,6 +155,11 @@ enum ExitJson {
         could_not_complete: i32,
         orphan_or_gap_mismatch: i32,
     },
+    DoctorFindings {
+        completed: i32,
+        could_not_complete: i32,
+        findings: i32,
+    },
 }
 
 const fn str_bytes_eq(left: &str, right: &str) -> bool {
@@ -212,6 +217,11 @@ fn exit_json(contract: CommandExitContract) -> ExitJson {
             completed: EXIT_COMPLETED,
             could_not_complete: EXIT_COULD_NOT_COMPLETE,
             orphan_or_gap_mismatch: EXIT_COULD_NOT_COMPLETE,
+        },
+        CommandExitContract::DoctorFindings => ExitJson::DoctorFindings {
+            completed: EXIT_COMPLETED,
+            could_not_complete: EXIT_COULD_NOT_COMPLETE,
+            findings: EXIT_DECISION_OR_REFUSAL,
         },
     }
 }
@@ -992,6 +1002,20 @@ mod tests {
         {
             return Err(format!(
                 "cmd:receipt.check mismatch must stay could-not-complete: {receipt}"
+            ));
+        }
+
+        // #5102: doctor findings are a completed typed answer (3), while a
+        // usage/operational failure before a report stays could-not-complete.
+        let doctor = command_exit_json("cmd:doctor")?;
+        if doctor["kind"] != "doctor_findings"
+            || doctor["completed"] != EXIT_COMPLETED
+            || doctor["could_not_complete"] != EXIT_COULD_NOT_COMPLETE
+            || doctor["findings"]
+                != CommandError::Decision("doctor found issues".to_string()).exit_code()
+        {
+            return Err(format!(
+                "cmd:doctor codes contradict the doctor Decision mapping: {doctor}"
             ));
         }
 

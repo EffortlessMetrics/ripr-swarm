@@ -127,6 +127,10 @@ preserves exit `3`. An earlier analysis-stage failure can still exit `2`.
 
 - **Gate failure**: `ripr gate evaluate` evaluated successfully and blocked
   the PR; the full report was still written to `--out`.
+- **Doctor findings**: `ripr doctor` completed its diagnosis and at least
+  one check failed; the full report was already written (human screen or
+  `--json` document) and stderr names `doctor found issues` (#5102). A
+  usage error or a failure before a report exists stays exit `2`.
 - **Typed refusal**: `ripr agent verify-execute` refused the packet (for
   example `verification_rejected_policy` or `verification_wrong_root`) and
   rendered the typed refusal JSON on stdout; `ripr agent repair --phase
@@ -226,9 +230,12 @@ tree; and a repair `--phase after` whose edit cage recorded a violation.
 
 ## `ripr doctor` exit codes
 
-`ripr doctor` uses the same contract: `0` when all checks pass, `2` when
-any check fails (including missing language runtimes that are enabled in
-the effective configuration).
+`ripr doctor` uses the same contract: `0` when all checks pass, `3` when
+the diagnosis completed and any check failed (including missing language
+runtimes that are enabled in the effective configuration), and `2` only
+when the run could not complete — a usage error (no check ran) or an
+operational failure before a report exists (#5102). Both the human and
+`--json` surfaces use this mapping; the report is written before exit `3`.
 
 The `Cargo.toml` check applies only when Rust is in scope for the root:
 Rust is enabled and either a Cargo.toml is found at the selected root, an
@@ -237,7 +244,7 @@ ancestor Cargo project bounded by git, or nested in this tree; Rust markers
 detected or enabled. A Python-only or TypeScript-only root with no nested
 or ancestor Cargo.toml reports `cargo_toml` as `skipped` with the reason.
 The analysis profile also skips `cargo` and `rustc`; `--profile source-build`
-still probes those tools and can exit `2` if they are missing.
+still probes those tools and can exit `3` if they are missing.
 A Cargo.toml at the selected root, an
 ancestor Cargo project bounded by git, or a nested Cargo.toml in this tree
 (for example `rust/Cargo.toml` at a polyglot git root that also has
@@ -251,7 +258,7 @@ profile, a missing `cargo` or `rustc`, or a workspace `rustc` older than
 RIPR's build MSRV, is reported as `advisory` and does not change the exit
 code: the installed binary can still analyze the workspace. A missing `cargo`
 still withholds evidence that reads `cargo metadata`. Under
-`--profile source-build`, the same conditions are failures and exit `2`. A
+`--profile source-build`, the same conditions are failures and exit `3`. A
 missing cargo or rustc names an install route on the failing check; an older
 rustc still names `rustup update stable`. Enabled language runtimes stay
 visible but do not decide that profile's exit.
