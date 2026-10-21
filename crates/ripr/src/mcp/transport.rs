@@ -119,13 +119,13 @@ fn recoverable_request_id(frame: &[u8]) -> Option<serde_json::Value> {
     let object = value.as_object()?;
     object.get("method")?.as_str()?;
     let id = object.get("id")?;
-    // An id over the request-id cap is never echoed: it could not fit the
-    // response cap and would end the session, so the null id is used instead.
-    (id.is_string() || id.is_i64() || id.is_u64())
-        .then(|| id.clone())
-        .filter(|id| {
-            serde_json::to_vec(id).is_ok_and(|bytes| bytes.len() <= super::MAX_REQUEST_ID_BYTES)
-        })
+    let echoable = id.is_string() || id.is_i64() || id.is_u64();
+    // An id over the admission bound is never echoed, even in a rejection:
+    // the reply would otherwise carry it past the response cap.
+    let within_bound = serde_json::to_vec(id)
+        .map(|serialized| serialized.len() <= super::MAX_REQUEST_ID_BYTES)
+        .unwrap_or(false);
+    (echoable && within_bound).then(|| id.clone())
 }
 impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send + 'static> Transport<RoleServer>
     for BoundedTransport<R, W>

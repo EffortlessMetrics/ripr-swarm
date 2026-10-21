@@ -303,6 +303,45 @@ async fn oversized_request_id_is_rejected_with_null_id_and_the_session_continues
 }
 
 #[tokio::test]
+async fn oversized_id_on_a_shape_invalid_request_is_not_echoed() -> Result<(), String> {
+    let over = "o".repeat(super::super::MAX_REQUEST_ID_BYTES + 1);
+    let kept = "k".repeat(64);
+    let request = |id: &str| {
+        format!("{{\"jsonrpc\":\"2.0\",\"id\":\"{id}\",\"method\":\"tools/list\",\"params\":[]}}\n")
+    };
+    let input = format!("{}{}", request(&over), request(&kept));
+    let writer = Arc::new(Mutex::new(FrameWriter::new(Vec::<u8>::new())));
+    let mut transport = BoundedTransport {
+        reader: Arc::new(Mutex::new(FrameReader::new(input.as_bytes()))),
+        writer: writer.clone(),
+        failure: Arc::new(TransportFailure::default()),
+        admission: Arc::new(Admission::default()),
+        pending_protocol_error: None,
+        writer_needs_drain: false,
+    };
+    if transport.receive().await.is_some() {
+        return Err("shape-invalid requests must not be delivered".into());
+    }
+    let guard = writer.lock().await;
+    let frames: Vec<Value> = guard
+        .output()
+        .split(|byte| *byte == b'\n')
+        .filter(|frame| !frame.is_empty())
+        .map(|frame| serde_json::from_slice(frame).map_err(|error| error.to_string()))
+        .collect::<Result<_, _>>()?;
+    if frames.len() != 2
+        || frames[0].get("id") != Some(&Value::Null)
+        || frames[0].to_string().len() > 512
+        || frames[1].get("id") != Some(&Value::String(kept))
+    {
+        return Err(format!(
+            "oversized id was echoed or in-bound id lost: {frames:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn sdk_syntax_ignore_and_typed_shape_error_recover_next_request() -> Result<(), String> {
     let input = b"{not json}\ntrue\n{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"control\",\"version\":\"1\"}}}\n";
     let writer = Arc::new(Mutex::new(FrameWriter::new(Vec::<u8>::new())));
