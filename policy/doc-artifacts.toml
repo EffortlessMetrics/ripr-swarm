@@ -1692,6 +1692,14 @@ owner = "agent-loop"
 standalone_reason = "States the repair attempt after-refusal history and 5-refusal retry budget (#8726): capped history with an uncapped count, the typed exit-3 stop that is not recorded as a refusal, and status and repair not offering a refused after command, so the behavior sits inside the spec-test-code chain; RIPR-SPEC-0011 governs only the LLM work loop."
 
 [[artifact]]
+id = "RIPR-SPEC-0283"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0283-mcp-adapter-clarity-contracts.md"
+status = "proposed"
+owner = "mcp"
+standalone_reason = "Issues #8734, #8735, #8736 and #8737 record the MCP adapter clarity contracts: the ripr://gap/{canonical_id} and ripr://repair-card/{canonical_id} routes percent-decode the captured id segment once when the raw capture misses (raw capture first, so legacy raw URIs and literal-% ids keep working) and fail closed with the typed id_ambiguous code when both the raw spelling and its decoded form name two distinct items, naming the plain-JSON-string tool route as recovery; the typed page echoes the effective inventory limit and the declared input cap is enforced at the dispatch edge; the status resource carries the same restart recovery as the status tool on an unavailable root; and the two same-shaped per-item tool descriptions disambiguate each other."
+
+[[artifact]]
 id = "RIPR-SPEC-0284"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0284-agent-context-packet-clarity.md"

@@ -3734,6 +3734,7 @@ fn generated_publish_step_sends_every_request_in_order() -> Result<(), Box<dyn E
 
 /// The summary step, replayed with a stand-in `gh`: the earlier bot comment
 /// is found in the conversation pages and PATCHed, not duplicated.
+/// Unix-only: the stand-in CLI uses a POSIX shell script.
 #[cfg(unix)]
 #[test]
 fn summary_step_updates_the_bot_comment_it_posted_before() -> Result<(), Box<dyn Error>> {
