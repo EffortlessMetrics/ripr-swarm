@@ -787,6 +787,11 @@ fn simple_cfg_guard(attributes: &[String]) -> Option<(String, bool)> {
         text.starts_with("#[cfg") || text.starts_with("#![cfg") || text.contains("cfg_attr")
     });
     let only = cfgs.next()?;
+    // An escape could hide a quote from the whitespace normalizer above;
+    // fail closed on any backslash in a cfg-like attribute.
+    if only.contains('\\') {
+        return None;
+    }
     if cfgs.next().is_some() {
         return None;
     }
@@ -795,21 +800,25 @@ fn simple_cfg_guard(attributes: &[String]) -> Option<(String, bool)> {
         Some(inner) => (inner.strip_suffix(')')?, true),
         None => (body, false),
     };
-    let simple = !predicate.is_empty()
-        && !predicate.contains(['(', ')', ','])
-        && match predicate.split_once('=') {
-            Some((name, value)) => {
-                !name.is_empty()
-                    && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-                    && value.len() >= 2
-                    && value.starts_with('"')
-                    && value.ends_with('"')
-                    && !value[1..value.len() - 1].contains('"')
-            }
-            None => predicate
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_'),
-        };
+    // Punctuation inside a quoted `name = "value"` literal is data, not a
+    // Boolean operator; a bare predicate must be a plain identifier. Any
+    // escape or inner quote in the literal fails closed.
+    let simple = match predicate.split_once('=') {
+        Some((name, value)) => {
+            !name.is_empty()
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && value.len() >= 2
+                && value.starts_with('"')
+                && value.ends_with('"')
+                && !value[1..value.len() - 1].contains(['"', '\\'])
+        }
+        None => {
+            !predicate.is_empty()
+                && predicate
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        }
+    };
     simple.then(|| (predicate.to_string(), negated))
 }
 

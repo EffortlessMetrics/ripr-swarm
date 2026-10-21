@@ -1871,6 +1871,118 @@ mod tests {
         Ok(())
     }
 
+    /// Punctuation inside a quoted cfg value is data, not a compound
+    /// predicate; a real compound predicate still fails closed.
+    #[test]
+    fn quoted_cfg_value_punctuation_is_not_a_compound_predicate() -> Result<(), String> {
+        assert_eq!(
+            cfg_pair_reason(
+                "#[cfg(mode = \"a,b)\")]",
+                "#[cfg(not(mode = \"a,b)\"))]",
+                "cfg-quoted"
+            )?,
+            None
+        );
+        assert_eq!(
+            cfg_pair_reason("#[cfg(all(a, b))]", "#[cfg(not(all(a, b)))]", "cfg-real")?.as_deref(),
+            Some(REASON_MODULE_AMBIGUOUS_PARENT)
+        );
+        Ok(())
+    }
+
+    /// A backslash escape in a cfg value fails closed (no guard, so the pair
+    /// stays ambiguous).
+    #[test]
+    fn escaped_quote_in_cfg_value_fails_closed() -> Result<(), String> {
+        assert_eq!(
+            cfg_pair_reason(
+                "#[cfg(mode = \"a\\\" b\")]",
+                "#[cfg(not(mode = \"a\\\" b\"))]",
+                "cfg-escape"
+            )?
+            .as_deref(),
+            Some(REASON_MODULE_AMBIGUOUS_PARENT)
+        );
+        Ok(())
+    }
+
+    /// Cached facts written before `cfg_guard` existed still decode.
+    #[test]
+    fn module_declaration_without_cfg_guard_still_deserializes() -> Result<(), String> {
+        let fact: crate::analysis::facts::ModuleDeclarationFact = serde_json::from_str(
+            r#"{"name":"m","line":3,"path_target":{"kind":"default"},"requires_test":false}"#,
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(fact.cfg_guard, None);
+        assert_eq!(fact.name, "m");
+        Ok(())
+    }
+
+    /// `cfg(test)` / `cfg(not(test))` stays ambiguous by design: merging
+    /// would grant a test-only role to a child that also compiles in
+    /// production.
+    #[test]
+    fn cfg_test_pair_stays_ambiguous() -> Result<(), String> {
+        assert_eq!(
+            cfg_pair_reason("#[cfg(test)]", "#[cfg(not(test))]", "cfg-test-pair")?.as_deref(),
+            Some(REASON_MODULE_AMBIGUOUS_PARENT)
+        );
+        Ok(())
+    }
+
+    /// Other attributes cannot merge distinct module identities: a
+    /// `#[path]` that redirects one alternative to a different file leaves
+    /// each child with a single owner, and alternatives with different
+    /// declared names are not merged even under complementary guards.
+    #[test]
+    fn other_attributes_do_not_merge_distinct_module_identities() -> Result<(), String> {
+        let root = temp_dir("cfg-alt-path")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "#[cfg(unix)]\n#[path = \"other.rs\"]\nmod source;\n#[cfg(not(unix))]\nmod source;\n",
+            )?,
+            write(&root, "src/source.rs", "pub fn a() -> i32 { 1 }\n")?,
+            write(&root, "src/other.rs", "pub fn b() -> i32 { 1 }\n")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+        for child in ["src/source.rs", "src/other.rs"] {
+            let provenance = &index.files().at(Path::new(child)).data().role_provenance;
+            assert_ne!(
+                provenance.earliest_unresolved_reason.as_deref(),
+                Some(REASON_MODULE_AMBIGUOUS_PARENT),
+                "{child} has one owner"
+            );
+        }
+        // Different declared names redirected to one file: not alternatives.
+        let root = temp_dir("cfg-alt-names")?;
+        write_manifest(&root)?;
+        let files = vec![
+            write(
+                &root,
+                "src/lib.rs",
+                "#[cfg(unix)]\n#[path = \"shared.rs\"]\nmod a;\n#[cfg(not(unix))]\n#[path = \"shared.rs\"]\nmod b;\n",
+            )?,
+            write(&root, "src/shared.rs", "pub fn c() -> i32 { 1 }\n")?,
+        ];
+        let index = crate::analysis::facts::build_index(&root, &files)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(
+            index
+                .files()
+                .at(Path::new("src/shared.rs"))
+                .data()
+                .role_provenance
+                .earliest_unresolved_reason
+                .as_deref(),
+            Some(REASON_MODULE_AMBIGUOUS_PARENT)
+        );
+        Ok(())
+    }
+
     /// Negative: non-complementary, compound or unguarded pairs stay
     /// ambiguous (fail closed).
     #[test]
