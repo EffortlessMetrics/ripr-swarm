@@ -1272,7 +1272,24 @@ fn changed_line_is_test_evidence(
                         && !other.source_role.is_evidence_role()
                 })
             });
-        return function.source_role.is_evidence_role() && !shares_line_with_production;
+        // A helper `fn` declared inside a `#[test]` body is itself indexed as
+        // a production-role function; it is still part of the test, so a
+        // strictly enclosing evidence-role function makes it test evidence
+        // (#9177). A same-start-line sibling is not enclosing (the strict
+        // `<` keeps the #9076 shared-line rule intact).
+        let nested_in_evidence_fn = !function.source_role.is_evidence_role()
+            && find_file_facts(index, path).is_some_and(|facts| {
+                facts.functions.iter().any(|outer| {
+                    outer.source_role.is_evidence_role()
+                        && function.start_line < outer.end_line
+                        && function.end_line <= outer.end_line
+                        && (outer.start_line < function.start_line
+                            || (outer.start_line == function.start_line
+                                && line > function.start_line))
+                })
+            });
+        return (function.source_role.is_evidence_role() && !shares_line_with_production)
+            || nested_in_evidence_fn;
     }
     // Lines outside functions but inside an inline `#[cfg(test)]` module
     // (fixture constants, raw-string data) are test evidence even when the
@@ -5501,6 +5518,98 @@ mod source_currentness_tests {
         );
         assert!(!changed_line_is_test_evidence(&index, &path, 1, &[]));
         assert!(changed_line_is_test_evidence(&index, &path, 3, &[]));
+        Ok(())
+    }
+
+    /// #9177: a helper `fn` declared inside a `#[test]` body is part of the
+    /// test, not a production candidate; a production fn's own nested helper
+    /// stays eligible.
+    #[test]
+    fn helper_fn_nested_in_a_test_fn_is_test_evidence() -> Result<(), String> {
+        let path = PathBuf::from("src/lib.rs");
+        let source = "#[test]\n\
+                      fn check_it() {\n\
+                      fn assert_send<T: Send>() {}\n\
+                      assert_send::<u8>();\n\
+                      }\n\
+                      pub fn prod(x: i32) -> i32 {\n\
+                      fn helper(y: i32) -> i32 { y + 1 }\n\
+                      helper(x)\n\
+                      }\n";
+        let mut index = RustIndex::default();
+        index.insert_file_only(
+            path.clone(),
+            crate::analysis::rust_index::summarize_file(path.clone(), source.to_string()),
+        );
+        let facts = find_file_facts(&index, &path).ok_or("file facts missing")?;
+        let nested = facts
+            .functions
+            .iter()
+            .find(|f| f.name == "assert_send")
+            .ok_or("nested helper not indexed")?;
+        assert!(
+            !nested.source_role.is_evidence_role(),
+            "fixture: the nested helper is indexed with a production role"
+        );
+        assert!(changed_line_is_test_evidence(&index, &path, 3, &[]));
+        assert!(!changed_line_is_test_evidence(&index, &path, 7, &[]));
+        Ok(())
+    }
+
+    /// A helper opened on its test's opening line owns that shared line
+    /// ambiguously, but its later body lines are still test evidence.
+    #[test]
+    fn helper_sharing_the_test_opening_line_keeps_later_lines_test_evidence() -> Result<(), String>
+    {
+        let path = PathBuf::from("src/lib.rs");
+        let source = "#[test]\n\
+                      fn check_it() { fn helper() {\n\
+                      persist();\n\
+                      } }\n";
+        let mut index = RustIndex::default();
+        index.insert_file_only(
+            path.clone(),
+            crate::analysis::rust_index::summarize_file(path.clone(), source.to_string()),
+        );
+        let facts = find_file_facts(&index, &path).ok_or("file facts missing")?;
+        let helper = facts
+            .functions
+            .iter()
+            .find(|f| f.name == "helper")
+            .ok_or("fn helper not indexed")?;
+        assert!(
+            !helper.source_role.is_evidence_role(),
+            "fixture: helper is indexed as production"
+        );
+        assert!(changed_line_is_test_evidence(&index, &path, 3, &[]));
+        Ok(())
+    }
+
+    /// A production fn that starts on a test fn's closing line is a sibling,
+    /// not a nested helper, so its probe stays production-eligible.
+    #[test]
+    fn sibling_fn_on_a_test_fns_closing_line_stays_production() -> Result<(), String> {
+        let path = PathBuf::from("src/lib.rs");
+        let source = "#[test]\n\
+                      fn check_it() {\n\
+                      assert!(true);\n\
+                      } fn live() { persist(); }\n";
+        let mut index = RustIndex::default();
+        index.insert_file_only(
+            path.clone(),
+            crate::analysis::rust_index::summarize_file(path.clone(), source.to_string()),
+        );
+        let facts = find_file_facts(&index, &path).ok_or("file facts missing")?;
+        let live = facts
+            .functions
+            .iter()
+            .find(|f| f.name == "live")
+            .ok_or("fn live not indexed")?;
+        assert!(
+            !live.source_role.is_evidence_role(),
+            "fixture: live is production"
+        );
+        assert!(!changed_line_is_test_evidence(&index, &path, 4, &[]));
         Ok(())
     }
 

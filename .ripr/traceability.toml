@@ -11101,6 +11101,7 @@ tests = [
   "crates/ripr/tests/cache_clear_safety.rs::classified_cache_cargo_home_fallback_and_relative_home_match_cold",
   "crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::same_line_production_and_test_fn_keeps_production_eligible",
   "crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::nested_same_line_test_fn_body_lines_stay_test_evidence",
+  "crates/ripr/src/analysis/probes/diff.rs::source_currentness_tests::helper_fn_nested_in_a_test_fn_is_test_evidence",
 ]
 fixtures = [
   "fixtures/rust_test_under_false_cfg_not_grip",
