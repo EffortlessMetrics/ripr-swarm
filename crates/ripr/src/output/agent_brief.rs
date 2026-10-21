@@ -374,7 +374,7 @@ mod tests {
         // must create the directory its redirect targets.
         let before = value["top_seams"][0]["verification"]["before_snapshot_command"]
             .as_str()
-            .ok_or("before_snapshot_command is a string")?;
+            .ok_or("before_snapshot_command is missing or not a string")?;
         let (prepare, check) = before
             .split_once(" && ")
             .ok_or_else(|| format!("before command prepares nothing: {before}"))?;
@@ -389,6 +389,128 @@ mod tests {
             Path::new(redirect).parent(),
             Some(Path::new(workflow_dir)),
             "{before}"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn literal_backslash_brief() -> Result<Value, String> {
+        let seams = vec![classified()];
+        let working_set = AgentBriefResolvedWorkingSet::diff(
+            "change.diff",
+            vec![AgentBriefLine::new("src/pricing.rs", 88)],
+        );
+        let config = RiprConfig::default();
+        let selection = select_agent_brief_seams(
+            &seams,
+            &working_set,
+            3,
+            AgentBriefPolicy::from_config(&config),
+        );
+        let rendered = render_agent_brief_json(
+            Path::new("/tmp/team\\repo"),
+            &Mode::Draft,
+            &config,
+            &working_set,
+            &selection,
+        )?;
+        let value: Value = serde_json::from_str(&rendered).map_err(|err| err.to_string())?;
+        assert_eq!(value["limits"]["returned"], 1);
+        Ok(value)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn agent_brief_next_commands_preserve_literal_backslash_unix_root() -> Result<(), String> {
+        let value = literal_backslash_brief()?;
+        assert_eq!(
+            value["next"]["inspect_packet"],
+            r"mkdir -p '/tmp/team\repo/target/ripr/workflow' && ripr check --root '/tmp/team\repo' --mode draft --format agent-seam-packets-json > '/tmp/team\repo/target/ripr/workflow/agent-seam-packets.json'"
+        );
+        assert_eq!(
+            value["next"]["verify_after_edit"],
+            r"ripr agent verify --root '/tmp/team\repo' --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn agent_brief_seam_verification_preserves_literal_backslash_unix_root() -> Result<(), String> {
+        let value = literal_backslash_brief()?;
+        let verification = &value["top_seams"][0]["verification"];
+        assert_eq!(
+            verification["before_snapshot_command"],
+            r"mkdir -p '/tmp/team\repo/target/ripr/workflow' && ripr check --root '/tmp/team\repo' --mode draft --format repo-exposure-json > '/tmp/team\repo/target/ripr/workflow/before.repo-exposure.json'"
+        );
+        assert_eq!(
+            verification["after_snapshot_command"],
+            r"mkdir -p '/tmp/team\repo/target/ripr/workflow' && ripr check --root '/tmp/team\repo' --mode draft --format repo-exposure-json > '/tmp/team\repo/target/ripr/workflow/after.repo-exposure.json'"
+        );
+        assert_eq!(
+            verification["verify_command"],
+            r"ripr agent verify --root '/tmp/team\repo' --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn literal_backslash_brief() -> Result<Value, String> {
+        let seams = vec![classified()];
+        let working_set = AgentBriefResolvedWorkingSet::diff(
+            "change.diff",
+            vec![AgentBriefLine::new("src/pricing.rs", 88)],
+        );
+        let config = RiprConfig::default();
+        let selection = select_agent_brief_seams(
+            &seams,
+            &working_set,
+            3,
+            AgentBriefPolicy::from_config(&config),
+        );
+        let rendered = render_agent_brief_json(
+            Path::new("/tmp/team\\repo"),
+            &Mode::Draft,
+            &config,
+            &working_set,
+            &selection,
+        )?;
+        let value: Value = serde_json::from_str(&rendered).map_err(|err| err.to_string())?;
+        assert_eq!(value["limits"]["returned"], 1);
+        Ok(value)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn agent_brief_next_commands_preserve_literal_backslash_unix_root() -> Result<(), String> {
+        let value = literal_backslash_brief()?;
+        assert_eq!(
+            value["next"]["inspect_packet"],
+            r"mkdir -p '/tmp/team\repo/target/ripr/workflow' && ripr check --root '/tmp/team\repo' --mode draft --format agent-seam-packets-json > '/tmp/team\repo/target/ripr/workflow/agent-seam-packets.json'"
+        );
+        assert_eq!(
+            value["next"]["verify_after_edit"],
+            r"ripr agent verify --root '/tmp/team\repo' --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn agent_brief_seam_verification_preserves_literal_backslash_unix_root() -> Result<(), String> {
+        let value = literal_backslash_brief()?;
+        let verification = &value["top_seams"][0]["verification"];
+        assert_eq!(
+            verification["before_snapshot_command"],
+            r"mkdir -p '/tmp/team\repo/target/ripr/workflow' && ripr check --root '/tmp/team\repo' --mode draft --format repo-exposure-json > '/tmp/team\repo/target/ripr/workflow/before.repo-exposure.json'"
+        );
+        assert_eq!(
+            verification["after_snapshot_command"],
+            r"mkdir -p '/tmp/team\repo/target/ripr/workflow' && ripr check --root '/tmp/team\repo' --mode draft --format repo-exposure-json > '/tmp/team\repo/target/ripr/workflow/after.repo-exposure.json'"
+        );
+        assert_eq!(
+            verification["verify_command"],
+            r"ripr agent verify --root '/tmp/team\repo' --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
         );
         Ok(())
     }
@@ -495,10 +617,10 @@ mod tests {
         let value = verification_json(Path::new("/tmp/team\\repo"), &Mode::Draft, "not_applicable");
         let before = value["before_snapshot_command"]
             .as_str()
-            .ok_or("before_snapshot_command is a string")?;
+            .ok_or("before_snapshot_command is missing or not a string")?;
         let verify = value["verify_command"]
             .as_str()
-            .ok_or("verify_command is a string")?;
+            .ok_or("verify_command is missing or not a string")?;
         if cfg!(unix) {
             for command in [before, verify] {
                 if !command.contains("--root '/tmp/team\\repo'") {

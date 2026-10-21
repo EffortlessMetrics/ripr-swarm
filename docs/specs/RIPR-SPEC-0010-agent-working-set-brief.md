@@ -97,6 +97,16 @@ The command should:
 The brief should use already-computed repo seam evidence and agent seam packet
 fields. It should not classify seams itself.
 
+### Selected root in generated commands
+
+The native-root spelling rule for `next.inspect_packet`,
+`next.verify_after_edit`, and each selected seam's
+`verification.before_snapshot_command`, `verification.after_snapshot_command`,
+and `verification.verify_command` is owned by
+[RIPR-SPEC-0291](RIPR-SPEC-0291-agent-brief-root-display.md).
+`verification.suggested_test_command` remains a rootless advisory Cargo filter
+and is outside that rule.
+
 ### Ranking
 
 The first implementation should use a deterministic ranking policy:
