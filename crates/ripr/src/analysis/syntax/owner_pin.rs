@@ -1873,15 +1873,11 @@ pub(crate) fn empty_local_macro_invocation_ranges(
         .collect()
 }
 
-/// #8051: every bare `debug_assert_eq!` call in `source` from `start_line`
-/// to `end_line`, as (line, text) in the same spelling
-/// [`owner_pin_assertions`] keys its context by. Empty when the file does not
-/// parse cleanly.
-pub(crate) fn debug_assert_eq_calls(
-    source: &str,
-    start_line: usize,
-    end_line: usize,
-) -> Vec<(usize, String)> {
+/// #8051: every bare `debug_assert_eq!` call in `source`, as (line, text) in
+/// the same spelling [`owner_pin_assertions`] keys its context by. Empty when
+/// the file does not parse cleanly. The caller keeps the per-file result and
+/// filters it to a test's lines.
+pub(crate) fn debug_assert_eq_calls(source: &str) -> Vec<(usize, String)> {
     let Some(parse) = parse_clean_source_file(source) else {
         return Vec::new();
     };
@@ -1908,7 +1904,6 @@ pub(crate) fn debug_assert_eq_calls(
                 slice_macro_call_text(source, range.start(), range.end()),
             )
         })
-        .filter(|(line, _)| (start_line..=end_line).contains(line))
         .collect()
 }
 

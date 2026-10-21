@@ -1012,6 +1012,17 @@ pub(in crate::analysis) fn withhold_debug_assertion_gap(finding: &mut Finding) -
     {
         return false;
     }
+    // The `assert_eq!` twin of this check is credited only when the changed
+    // behavior is also reached, activated and propagated; an off-boundary
+    // input leaves its own missing discriminator, which the twin keeps as a
+    // gap. Withholding here would hide that gap behind the profile limit.
+    let ripr = &finding.ripr;
+    if [&ripr.reach, &ripr.infect, &ripr.propagate]
+        .iter()
+        .any(|stage| stage.state != StageState::Yes)
+    {
+        return false;
+    }
     let next_step = format!(
         "{} pins this code's result with `debug_assert_eq!`, which runs under the default test profile and is compiled out with `--release`, so ripr does not report a gap. If the tests may run with `--release`, use `assert_eq!` instead.",
         checking.join(", ")

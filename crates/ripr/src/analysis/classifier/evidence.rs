@@ -1088,37 +1088,39 @@ impl ClassifiedProbeEvidence {
                         let Some(facts) = context.index.files().get(&test.file) else {
                             return false;
                         };
-                        crate::analysis::syntax::debug_assert_eq_calls(
-                            &facts.source,
-                            test.start_line,
-                            test.end_line,
-                        )
-                        .into_iter()
-                        .any(|(line, text)| {
-                            let assertion = OracleFact {
-                                line,
-                                text,
-                                kind: OracleKind::ExactValue,
-                                strength: OracleStrength::Strong,
-                                observed_tokens: Vec::new(),
-                                ok_value_observed: None,
-                            };
-                            pin.admits_debug_assert_eq(
-                                test,
-                                &assertion,
-                                context.index,
-                                &|file, name| {
-                                    context.index.files().get(file).is_some_and(|facts| {
-                                        context.test_file_imports_foreign_callee_name(
-                                            file,
-                                            &facts.source,
-                                            name,
-                                        )
-                                    })
-                                },
-                                pin_syntax,
+                        pin_syntax
+                            .debug_assert_eq_calls(
+                                &test.file,
+                                &facts.source,
+                                test.start_line,
+                                test.end_line,
                             )
-                        })
+                            .into_iter()
+                            .any(|(line, text)| {
+                                let assertion = OracleFact {
+                                    line,
+                                    text,
+                                    kind: OracleKind::ExactValue,
+                                    strength: OracleStrength::Strong,
+                                    observed_tokens: Vec::new(),
+                                    ok_value_observed: None,
+                                };
+                                pin.admits_debug_assert_eq(
+                                    test,
+                                    &assertion,
+                                    context.index,
+                                    &|file, name| {
+                                        context.index.files().get(file).is_some_and(|facts| {
+                                            context.test_file_imports_foreign_callee_name(
+                                                file,
+                                                &facts.source,
+                                                name,
+                                            )
+                                        })
+                                    },
+                                    pin_syntax,
+                                )
+                            })
                     })
                     .map(|(test, _)| {
                         format!(

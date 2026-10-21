@@ -471,3 +471,84 @@ fn a_should_panic_test_with_a_debug_check_keeps_its_panic_outcome_limit() -> Res
     );
     Ok(())
 }
+
+/// Twin parity for a predicate changed at its boundary (`>=` to `>`): the
+/// `debug_assert_eq!` spelling reads as the profile limit exactly where its
+/// `assert_eq!` twin is credited (the on-boundary input), and keeps the
+/// twin's missing-input gap where the twin keeps it (an off-boundary input).
+#[test]
+fn a_predicate_debug_check_keeps_the_off_boundary_gap_its_twin_keeps() -> Result<(), String> {
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,3 @@
+ pub fn is_big(x: u32) -> bool {
+-    x >= 10
++    x > 10
+ }
+";
+    let predicate = |macro_name: &str, call: &str| -> Result<Finding, String> {
+        let source = format!(
+            "pub fn is_big(x: u32) -> bool {{
+    x > 10
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    #[test]
+    fn big() {{
+        {macro_name}!({call});
+    }}
+}}
+"
+        );
+        let output = check(&TempRepo::create(&source, diff)?)?;
+        output
+            .findings
+            .into_iter()
+            .find(|finding| finding.probe.family == ripr::ProbeFamily::Predicate)
+            .ok_or_else(|| format!("no predicate finding for {macro_name}!({call})"))
+    };
+    let limit = |finding: &Finding| finding.static_limit_kind.map(|kind| kind.as_str());
+
+    // On the boundary the twin is credited, so the debug spelling is the limit.
+    let twin = predicate("assert_eq", "is_big(10), false")?;
+    assert_eq!(twin.class, ExposureClass::Exposed, "{twin:?}");
+    let debug = predicate("debug_assert_eq", "is_big(10), false")?;
+    assert_eq!(debug.class, ExposureClass::StaticUnknown, "{debug:?}");
+    assert_eq!(
+        limit(&debug),
+        Some("rust_debug_assertion_profile_unresolved")
+    );
+
+    // Off the boundary the twin keeps a missing-input gap, and so must the
+    // debug spelling: the profile limit would hide it.
+    let twin = predicate("assert_eq", "is_big(20), true")?;
+    assert_eq!(twin.class, ExposureClass::WeaklyExposed, "{twin:?}");
+    assert!(
+        twin.missing.iter().any(|line| line.contains("x == 10")),
+        "premise: the twin names the missing boundary input: {twin:?}"
+    );
+    let debug = predicate("debug_assert_eq", "is_big(20), true")?;
+    assert_ne!(
+        limit(&debug),
+        Some("rust_debug_assertion_profile_unresolved")
+    );
+    // The `debug_` form is not an oracle fact, so it reads as the unrevealed
+    // gap rather than the twin's weak exposure; both name the missing input.
+    assert!(
+        matches!(
+            debug.class,
+            ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+        ),
+        "{debug:?}"
+    );
+    assert!(
+        debug.missing.iter().any(|line| line.contains("x == 10")),
+        "{debug:?}"
+    );
+    Ok(())
+}

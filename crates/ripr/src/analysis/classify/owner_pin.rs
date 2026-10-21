@@ -172,6 +172,9 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// of those roots the file itself leaves unrebound (#7857). Parsed once
     /// per file, not once per assertion.
     std_rooted: SyncMemo<BTreeMap<PathBuf, Arc<StdRootedCalls>>>,
+    /// #8051: per test file, its bare `debug_assert_eq!` calls, parsed once
+    /// per file rather than once per (probe, related test).
+    debug_assert_eq_calls: SyncMemo<BTreeMap<PathBuf, Arc<Vec<DebugAssertEqCall>>>>,
     fallible_dependencies:
         SyncMemo<BTreeMap<PathBuf, (String, Option<crate::analysis::workspace::AnyhowIdentity>)>>,
     ambiguous_macro_bindings: SyncMemo<Option<BTreeSet<String>>>,
@@ -248,6 +251,9 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     field_integer_memo: SyncMemo<BTreeMap<FieldIntegerKey, Option<&'static str>>>,
     withheld: WithheldMacroBindings,
 }
+
+/// #8051: one bare `debug_assert_eq!` call: its line and source text.
+type DebugAssertEqCall = (usize, String);
 
 /// #7097: a bare-call binding verdict key: owner file, owner line, owner
 /// name, test file, test line.
@@ -368,6 +374,25 @@ fn withheld_crate_root(path: &Path) -> Option<PathBuf> {
 }
 
 impl OwnerPinSyntax {
+    /// #8051: the bare `debug_assert_eq!` calls of `file` from `start_line`
+    /// to `end_line`, from a per-file parse kept for the run.
+    pub(in crate::analysis) fn debug_assert_eq_calls(
+        &self,
+        file: &PathBuf,
+        source: &str,
+        start_line: usize,
+        end_line: usize,
+    ) -> Vec<(usize, String)> {
+        self.debug_assert_eq_calls
+            .get_or_build(file, || {
+                crate::analysis::syntax::debug_assert_eq_calls(source)
+            })
+            .iter()
+            .filter(|(line, _)| (start_line..=end_line).contains(line))
+            .cloned()
+            .collect()
+    }
+
     /// The run's memo of a whole-index verdict that `compute` reads once.
     pub(in crate::analysis) fn iteration_closed(&self, compute: impl FnOnce() -> bool) -> bool {
         *self.iteration_closed.get_or_init(compute)

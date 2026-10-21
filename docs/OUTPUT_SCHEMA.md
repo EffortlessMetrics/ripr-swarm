@@ -2239,7 +2239,7 @@ JSON fields:
   `rust_assertion_context_unresolved`, or
   `rust_log_capture_unresolved`, or
   `rust_panic_outcome_unresolved`, or
-  `rust_debug_assertion_profile_unresolved`.
+  `rust_debug_assertion_profile_unresolved`, or
   `rust_call_fact_budget`, or
   `rust_framework_oracle_unresolved`.
 - `rust_field_match_selector_unresolved`: a plain owner-parameter field selects a changed statement-free tail match. A strong oracle in a directly calling test exists, but the field value at that invocation and whether an assertion observes that invocation's return are unresolved. The match header and unique direct-arm lines may carry this metadata; computed selectors, local bindings, nested matches, guarded arms and ambiguous same-line subjects are excluded. This does not establish an `Option` type, same-invocation proof, coverage, or absence of a test gap. Finding/probe IDs, classes, RIPR stages, missing discriminators and raw class counts are unchanged. The existing typed-limitation contract withholds canonical repair-gap projection and can change repair readiness and derived gate routing; this names uncertainty, not resolved test debt. Inspect the existing call/assertion before adding a test. The optional kind uses the existing wire shape/version; consumers still require their own producer compatibility qualification.
