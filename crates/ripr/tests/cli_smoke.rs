@@ -14908,15 +14908,15 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     // pins the end-to-end wiring and consistency.
     let generator = env!("CARGO_PKG_VERSION");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let warned = stderr.contains("is not released");
+    let warned = stderr.contains("is a development version");
     if warned {
         // The warning names the fallback pin; both install routes must
         // carry exactly it (#5244 review: positive exact pins, not just
         // the absence of the generator version).
         let pinned = stderr
-            .split("pins the latest release (")
+            .split("installs ripr ")
             .nth(1)
-            .and_then(|rest| rest.split(") instead").next())
+            .and_then(|rest| rest.split(", the latest published release").next())
             .ok_or_else(|| format!("warning must name the fallback pin: {stderr}"))?;
         assert!(
             workflow.contains(&format!("          version={pinned}\n")),
@@ -14939,7 +14939,7 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
             "a warned run must not self-pin the fallback either"
         );
         assert!(
-            stderr.contains("pins the latest release")
+            stderr.contains("the latest published release")
                 && stderr.contains("ripr init --ci github --force"),
             "missing unreleased-generator warning: {stderr}"
         );
