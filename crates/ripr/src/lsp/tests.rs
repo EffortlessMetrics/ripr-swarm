@@ -12659,7 +12659,6 @@ fn generic_client_analysis_failure_is_shown_once_and_only_to_generic_clients() -
 
 /// A committed fixture whose working tree adds one Python file that the
 /// default configuration does not enable (#8585).
-#[cfg(feature = "lang-python")]
 fn disabled_python_change_fixture(name: &str) -> Result<TempLspRoot, String> {
     let root = boundary_gap_git_fixture_root(name)?;
     std::fs::create_dir_all(root.path().join("zpy"))
@@ -12673,7 +12672,6 @@ fn disabled_python_change_fixture(name: &str) -> Result<TempLspRoot, String> {
     Ok(root)
 }
 
-#[cfg(feature = "lang-python")]
 fn unavailable_language_notices(shown: &[serde_json::Value]) -> Vec<&serde_json::Value> {
     shown
         .iter()
@@ -12685,8 +12683,49 @@ fn unavailable_language_notices(shown: &[serde_json::Value]) -> Vec<&serde_json:
         .collect()
 }
 
-#[cfg(feature = "lang-python")]
 #[test]
+#[cfg(not(feature = "lang-python"))]
+fn rust_only_build_reports_no_unavailable_python_row_for_a_changed_py_file() -> Result<(), String> {
+    // A build without the Python adapter routes no `.py` change to a preview
+    // advisory (`detect_preview_advisories` keeps only Perl for an adapter
+    // that is not compiled in), so the typed `unavailable_languages` field is
+    // empty and a generic client gets no per-language notice. The sibling
+    // `generic_client_is_told_once_...` test therefore needs the adapter
+    // compiled in; the `--no-default-features --features lang-rust` lane
+    // exercises this contract instead of that one.
+    work_done_progress_runtime()?.block_on(async {
+        let root = disabled_python_change_fixture("rust-only-no-python-row")?;
+        let (shown, statuses) =
+            refresh_show_messages(root.path(), serde_json::json!({}), "HEAD", 1).await?;
+        let succeeded = statuses
+            .iter()
+            .filter(|status| status["state"] == "succeeded")
+            .collect::<Vec<_>>();
+        if succeeded.is_empty()
+            || succeeded
+                .iter()
+                .any(|status| status["unavailable_languages"] != serde_json::json!([]))
+        {
+            return Err(format!(
+                "a build without the Python adapter must publish an empty typed row set: {statuses:?}"
+            ));
+        }
+        if !unavailable_language_notices(&shown).is_empty() {
+            return Err(format!(
+                "no per-language notice is owed when the adapter is not compiled in: {shown:?}"
+            ));
+        }
+        Ok(())
+    })
+}
+
+// Requires the Python adapter to be compiled in: the typed unavailable row
+// and its notice come from a disabled-but-available preview advisory. The
+// Rust-only feature lane (`--no-default-features --features lang-rust`) never
+// produces one, which made this test fail there deterministically (it looked
+// load-dependent only because that lane runs on a subset of PRs).
+#[test]
+#[cfg(feature = "lang-python")]
 fn generic_client_is_told_once_when_a_changed_language_is_not_enabled() -> Result<(), String> {
     // #8585: a generic editor renders neither the log nor
     // `ripr/analysisStatus`, so changed files of a language whose adapter is

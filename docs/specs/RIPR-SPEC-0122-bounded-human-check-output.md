@@ -278,8 +278,8 @@ applied. If the file contains only other families, the suggestions are empty.
 
 Direct JSON stub refusals distinguish an absent selector (`seam_not_found`)
 from a suffix naming several files or disjoint same-kind seams that tie
-(`selector_ambiguous`). Both remain decisions (exit 3), with empty stdout,
-the schema `0.2` refused envelope then human guidance on stderr, and no stub
+(`selector_ambiguous`). Both remain decisions (exit 3), with the schema
+`0.2` refused envelope on stdout, human guidance on stderr, and no stub
 write. Unresolved identity/disclosure fields are explicitly null and warnings
 are empty. An exact path or a suggested seam ID can select one behavior;
 nested seams remain governed by the existing nesting rule (#7762).
