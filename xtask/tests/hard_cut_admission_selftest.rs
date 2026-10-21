@@ -92,6 +92,33 @@ fn run_scenario_body(
     missing_body: bool,
     hostile_head: bool,
 ) -> Result<(i32, String, String), String> {
+    run_scenario_full(
+        second_ref_packet_state,
+        initial_absent,
+        active,
+        missing_body,
+        hostile_head,
+        &Extras::default(),
+    )
+}
+
+/// Packet content the mock serves beyond the stock scenarios: `proposed` is the
+/// PR head's copy of the packet, `base_raw` replaces the base packet's bytes.
+#[derive(Default)]
+struct Extras {
+    proposed: Option<String>,
+    base_raw: Option<String>,
+    files: Option<&'static str>,
+}
+
+fn run_scenario_full(
+    second_ref_packet_state: &str,
+    initial_absent: bool,
+    active: Option<(&str, &str)>,
+    missing_body: bool,
+    hostile_head: bool,
+    extras: &Extras,
+) -> Result<(i32, String, String), String> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     let action_dir = root.join(".github/actions/pr-candidate-admission");
     let yaml = std::fs::read_to_string(action_dir.join("action.yml")).map_err(|e| e.to_string())?;
@@ -159,6 +186,14 @@ fn run_scenario_body(
         std::fs::write(tmp.join("files.json"), files_json).map_err(|e| e.to_string())?;
         std::fs::write(tmp.join("base_parent"), base_parent).map_err(|e| e.to_string())?;
     }
+    if let Some(proposed) = &extras.proposed {
+        std::fs::write(tmp.join("proposed.json"), proposed).map_err(|e| e.to_string())?;
+    }
+    if let Some(raw) = &extras.base_raw {
+        std::fs::write(tmp.join("active.json"), raw).map_err(|e| e.to_string())?;
+        std::fs::write(tmp.join("files.json"), extras.files.unwrap_or(PRODUCT_ONLY))
+            .map_err(|e| e.to_string())?;
+    }
     let gh = r#"#!/usr/bin/env bash
 url=""; for a in "$@"; do case "$a" in repos/*) url="$a";; esac; done
 case "$url" in
@@ -171,6 +206,9 @@ case "$url" in
       http404) echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
       *) jq -n --arg c "$(cat "$CONTROL_TMP/moved_packet.b64")" '{content: $c}' ;;
     esac ;;
+  */contents/*ref=aaaa*)
+    if [ -e "$CONTROL_TMP/proposed.json" ]; then base64 "$CONTROL_TMP/proposed.json" | tr -d '\r\n' | jq -R '{content: .}'; exit 0; fi
+    echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
   */contents/*)
     if [ -e "$CONTROL_TMP/initial_absent" ]; then echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi
     if [ -e "$CONTROL_TMP/active.json" ]; then base64 "$CONTROL_TMP/active.json" | tr -d '\r\n' | jq -R '{content: .}'; exit 0; fi
@@ -416,6 +454,156 @@ fn wrapper_admits_packet_only_pr_while_the_packet_is_active() -> Result<(), Stri
                 "packet-only PR (base parent {parent}) must admit as cut_packet_control_update, got exit {code} reason {reason:?}"
             ));
         }
+    }
+    Ok(())
+}
+
+fn packet_json(state: &str, generation: &str, sha: &str, tree: &str) -> String {
+    let bound = state != "inactive";
+    serde_json::json!({
+        "schema_version": "1",
+        "kind": "ripr_release_cut_admission",
+        "release": "0.11.0",
+        "state": state,
+        "generation": generation,
+        "controller_issue": 5114,
+        "selection_issue": 2766,
+        "observed_main": {
+            "sha": bound.then(|| sha.to_string()),
+            "tree": bound.then(|| tree.to_string())
+        },
+        "admitted": [],
+        "non_claims": ["Admission is not product qualification or merge authority."]
+    })
+    .to_string()
+}
+
+/// Runs the wrapper against an active base (cut `b…b`, base parent `b…b`) with
+/// the PR head carrying `proposed`; returns the exit code and `cut_reason`.
+fn run_control_update(proposed: String) -> Result<(i32, String), String> {
+    let extras = Extras {
+        proposed: Some(proposed),
+        ..Extras::default()
+    };
+    let (code, outputs, _) = run_scenario_full(
+        "active",
+        false,
+        Some((PACKET_ONLY, &"b".repeat(40))),
+        false,
+        false,
+        &extras,
+    )?;
+    let reason = outputs
+        .lines()
+        .find_map(|line| line.strip_prefix("cut_reason="))
+        .unwrap_or("")
+        .to_string();
+    Ok((code, reason))
+}
+
+#[test]
+fn wrapper_admits_a_sound_reopen_and_refuses_unsound_control_updates() -> Result<(), String> {
+    let (code, reason) = run_control_update(packet_json("inactive", "cut-1", "", ""))?;
+    if code != 0 || reason != "cut_packet_control_update" {
+        return Err(format!("reopening must admit, got {code} {reason:?}"));
+    }
+    let pin = packet_json(
+        "candidate_pinned",
+        "cut-1",
+        &"b".repeat(40),
+        &"c".repeat(40),
+    );
+    let (code, reason) = run_control_update(pin)?;
+    if code != 0 || reason != "cut_packet_control_update" {
+        return Err(format!(
+            "pinning the same cut must admit, got {code} {reason:?}"
+        ));
+    }
+    let moved_pin = packet_json(
+        "candidate_pinned",
+        "cut-1",
+        &"f".repeat(40),
+        &"c".repeat(40),
+    );
+    let successor = packet_json("active", "cut-2", &"d".repeat(40), &"e".repeat(40));
+    for (name, proposed) in [
+        ("a pin that moves the cut", moved_pin),
+        ("an active-to-active replacement", successor),
+        ("an unparseable packet", "{not json".to_string()),
+    ] {
+        let (code, reason) = run_control_update(proposed)?;
+        if code != 1 || reason != "cut_packet_transition_invalid" {
+            return Err(format!("{name} must be refused, got {code} {reason:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn wrapper_activation_must_bind_the_exact_live_main() -> Result<(), String> {
+    // Inactive base; live main is d…d / tree e…e (the mock's base commit).
+    // The stock inactive scenario changes product files, so only the exact
+    // binding rule is observable through a packet-only file list.
+    let extras = |sha: &str, tree: &str| Extras {
+        proposed: Some(packet_json("active", "cut-2", sha, tree)),
+        base_raw: Some(packet_json("inactive", "cut-1", "", "")),
+        files: Some(PACKET_ONLY),
+    };
+    let run = |e: Extras| -> Result<(i32, String), String> {
+        let (code, outputs, _) = run_scenario_full("inactive", false, None, false, false, &e)?;
+        let reason = outputs
+            .lines()
+            .find_map(|line| line.strip_prefix("cut_reason="))
+            .unwrap_or("")
+            .to_string();
+        Ok((code, reason))
+    };
+    let (code, reason) = run(extras(&"d".repeat(40), &"e".repeat(40)))?;
+    if code != 0 || reason != "cut_inactive" {
+        return Err(format!(
+            "exact-main activation must admit, got {code} {reason:?}"
+        ));
+    }
+    let (code, reason) = run(extras(&"b".repeat(40), &"c".repeat(40)))?;
+    if code != 1 || reason != "cut_packet_transition_invalid" {
+        return Err(format!(
+            "stale-main activation must be refused, got {code} {reason:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn wrapper_unusable_base_packet_refuses_products_but_admits_the_repair() -> Result<(), String> {
+    let broken = |files: &'static str, proposed: Option<String>| -> Result<(i32, String), String> {
+        let extras = Extras {
+            proposed,
+            base_raw: Some("{broken".to_string()),
+            files: Some(files),
+        };
+        let (code, outputs, _) = run_scenario_full("inactive", false, None, false, false, &extras)?;
+        let reason = outputs
+            .lines()
+            .find_map(|line| line.strip_prefix("cut_reason="))
+            .unwrap_or("")
+            .to_string();
+        Ok((code, reason))
+    };
+    let (code, reason) = broken(PRODUCT_ONLY, None)?;
+    if code != 1 || reason != "cut_packet_invalid" {
+        return Err(format!("product PR must be refused, got {code} {reason:?}"));
+    }
+    let (code, reason) = broken(PACKET_ONLY, Some(packet_json("inactive", "cut-1", "", "")))?;
+    if code != 0 || reason != "cut_packet_repair" {
+        return Err(format!(
+            "packet-only repair must admit, got {code} {reason:?}"
+        ));
+    }
+    let (code, reason) = broken(PACKET_ONLY, Some("{still broken".to_string()))?;
+    if code != 1 || reason != "cut_packet_invalid" {
+        return Err(format!(
+            "a repair that stays invalid must be refused, got {code} {reason:?}"
+        ));
     }
     Ok(())
 }

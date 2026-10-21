@@ -217,6 +217,7 @@ def decide(
     base_commit: dict[str, Any],
     cut_commit: dict[str, Any] | None,
     pr_files: list[dict[str, Any]],
+    proposed_packet: Any = None,
 ) -> dict[str, Any]:
     state = packet["state"]
     base_sha, base_tree, base_parents = _commit_identity(base_commit, "base_commit")
@@ -231,6 +232,19 @@ def decide(
         "base_sha": base_sha,
         "base_tree": base_tree,
     }
+    if _changed_paths(pr_files) == [PACKET_PATH] and proposed_packet is not None:
+        # A control update is the only way through or out of a freeze, so it
+        # must be sound before it can become the base every later PR reads.
+        problem = check_transition(
+            packet, proposed_packet, base_sha=base_sha, base_tree=base_tree
+        )
+        if problem is not None:
+            return {
+                **result,
+                "status": "refused",
+                "reason": "cut_packet_transition_invalid",
+                "detail": problem,
+            }
     if state == "inactive":
         return result
     if state == "candidate_pinned":
@@ -289,6 +303,101 @@ def decide(
         "reason": "cut_frozen",
         "detail": "the active hard-cut freeze refuses ordinary qualification; only a packet-only #5114/#2766 control update may qualify before #1609",
     }
+
+
+def check_transition(
+    current: dict[str, Any],
+    proposed: Any,
+    *,
+    base_sha: str,
+    base_tree: str,
+) -> str | None:
+    """Return a refusal detail when a packet-only PR proposes an unsound packet.
+
+    The proposed packet is the PR head's copy. The action never trusts it for
+    enforcement; this only keeps a malformed or mis-bound control commit from
+    landing, because a bad packet on the base would refuse every later PR.
+    """
+    try:
+        nxt = validate_packet(proposed)
+    except PacketError as error:
+        return f"the proposed packet is invalid: {error}"
+    before, after = current["state"], nxt["state"]
+    if after == "active" and before == "active":
+        return (
+            "an active cut cannot be replaced by another active cut; reopen "
+            "(inactive), land the repair, then freeze a successor cut"
+        )
+    if after == "active":
+        if (
+            nxt["observed_main"]["sha"] != base_sha
+            or nxt["observed_main"]["tree"] != base_tree
+        ):
+            return (
+                "activation must bind the exact current main: packet observed_main is "
+                f"{nxt['observed_main']['sha']}/{nxt['observed_main']['tree']} but main is "
+                f"{base_sha}/{base_tree}"
+            )
+        if nxt["generation"] == current["generation"]:
+            return "activation must name a new generation"
+    if after == "candidate_pinned" and (
+        before != "active" or nxt["observed_main"] != current["observed_main"]
+    ):
+        return "candidate_pinned may only follow an active cut and must keep its exact observed_main"
+    return None
+
+
+def watch_main(
+    packet: dict[str, Any],
+    *,
+    head_commit: dict[str, Any],
+    head_files: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Judge a commit that just landed on main against the packet it carries.
+
+    The PR path cannot stop a PR whose required check was already green when
+    the freeze began (branch protection is not strict), so a push check records
+    the movement instead of letting it extend the denominator silently.
+    """
+    head_sha, _, _ = _commit_identity(head_commit, "head_commit")
+    result = {
+        "status": "ok",
+        "reason": "cut_inactive",
+        "detail": "",
+        "cut_state": packet["state"],
+        "cut_generation": packet["generation"],
+        "head_sha": head_sha,
+    }
+    if packet["state"] != "active":
+        return result
+    cut_sha = packet["observed_main"]["sha"]
+    if _changed_paths(head_files) == [PACKET_PATH]:
+        result["reason"] = "cut_packet_control_update"
+        return result
+    return {
+        **result,
+        "status": "violation",
+        "reason": "cut_main_moved",
+        "detail": (
+            f"{head_sha} landed on main while the cut {cut_sha} is active and is not a "
+            "packet-only control commit; the denominator is no longer the cut. Reconcile "
+            "via #5114/#2768: revert it, or reopen the cut and freeze a successor"
+        ),
+    }
+
+
+def render_activation(
+    *, cut_sha: str, cut_tree: str, generation: str, admitted: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Build the activation packet for the exact product cut (operator aid)."""
+    packet = fixture_packet("active")
+    packet["generation"] = generation
+    packet["observed_main"] = {"sha": cut_sha, "tree": cut_tree}
+    packet["admitted"] = admitted
+    packet["non_claims"] = list(
+        json.loads((Path(__file__).resolve().parents[3] / PACKET_PATH).read_text(encoding="utf-8"))["non_claims"]
+    )
+    return validate_packet(packet)
 
 
 def fixture_packet(state: str = "inactive") -> dict[str, Any]:
@@ -413,7 +522,69 @@ def self_test() -> None:
     else:
         raise AssertionError("deferred row must fail")
 
-    print("release-cut-admission self-test: 14 controls passed")
+    # Packet-only control updates must be sound before they become the base.
+    inactive_p = validate_packet(fixture_packet())
+    pinned_p = validate_packet(fixture_packet("candidate_pinned"))
+    base_sha, base_tree = "d" * 40, "e" * 40
+
+    def transition(current: dict[str, Any], proposed: Any) -> str | None:
+        return check_transition(
+            current, proposed, base_sha=base_sha, base_tree=base_tree
+        )
+
+    good = fixture_packet("active")
+    good["generation"] = "cut-2"
+    good["observed_main"] = {"sha": base_sha, "tree": base_tree}
+    assert transition(inactive_p, good) is None
+    stale = fixture_packet("active")
+    stale["generation"] = "cut-2"
+    assert "exact current main" in (transition(inactive_p, stale) or "")
+    same_gen = dict(good, generation="cut-1")
+    assert "new generation" in (transition(inactive_p, same_gen) or "")
+    assert "invalid" in (transition(inactive_p, {"state": "active"}) or "")
+    active_p = validate_packet(fixture_packet("active"))
+    assert "reopen" in (transition(active_p, good) or "")
+    assert transition(active_p, fixture_packet()) is None
+    assert transition(active_p, fixture_packet("candidate_pinned")) is None
+    moved_pin = fixture_packet("candidate_pinned")
+    moved_pin["observed_main"] = {"sha": "f" * 40, "tree": "c" * 40}
+    assert "exact observed_main" in (transition(active_p, moved_pin) or "")
+    assert "only follow an active" in (
+        transition(inactive_p, fixture_packet("candidate_pinned")) or ""
+    )
+    assert pinned_p["state"] == "candidate_pinned"
+    refused = result(
+        fixture_packet(),
+        pr_files=[{"filename": PACKET_PATH}],
+        proposed_packet=stale,
+    )
+    assert refused["reason"] == "cut_packet_transition_invalid"
+    # An ordinary PR cannot use the transition path to skip the freeze.
+    assert (
+        result(active, proposed_packet=fixture_packet())["reason"] == "cut_frozen"
+    )
+
+    # Main watch: unadmitted movement under an active cut is a violation.
+    head = fixture_commit("d" * 40, "e" * 40, ["b" * 40])
+    assert watch_main(inactive_p, head_commit=head, head_files=[])["status"] == "ok"
+    verdict = watch_main(
+        active_p, head_commit=head, head_files=[{"filename": "src/lib.rs"}]
+    )
+    assert verdict["status"] == "violation" and verdict["reason"] == "cut_main_moved"
+    assert (
+        watch_main(
+            active_p, head_commit=head, head_files=[{"filename": PACKET_PATH}]
+        )["status"]
+        == "ok"
+    )
+    assert (
+        watch_main(
+            pinned_p, head_commit=head, head_files=[{"filename": "src/lib.rs"}]
+        )["status"]
+        == "ok"
+    )
+
+    print("release-cut-admission self-test: all controls passed")
 
 
 def load_json(path: Path, label: str) -> Any:
@@ -423,34 +594,57 @@ def load_json(path: Path, label: str) -> Any:
         raise PacketError(f"cannot read {label} {path}: {error}") from error
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--packet", type=Path)
-    parser.add_argument("--current", type=Path)
-    parser.add_argument("--base-commit", type=Path)
-    parser.add_argument("--cut-commit", type=Path)
-    parser.add_argument("--pr-files", type=Path)
-    parser.add_argument("--expected-head")
-    parser.add_argument("--self-test", action="store_true")
-    args = parser.parse_args()
-    if args.self_test:
-        self_test()
-        return 0
-    if not all(
-        (args.packet, args.current, args.base_commit, args.pr_files, args.expected_head)
-    ):
-        parser.error(
-            "--packet, --current, --base-commit, --pr-files and --expected-head are required"
-        )
-
+def run_watch(args: argparse.Namespace) -> int:
     try:
         packet = validate_packet(load_json(args.packet, "packet"))
+        result = watch_main(
+            packet,
+            head_commit=load_json(args.head_commit, "head commit"),
+            head_files=load_json(args.head_files, "head files"),
+        )
+    except PacketError as error:
+        result = {
+            "status": "violation",
+            "reason": "cut_packet_invalid",
+            "detail": f"the packet on main is unusable and refuses every PR: {error}",
+        }
+    print(json.dumps(result, sort_keys=True))
+    return 1 if result["status"] == "violation" else 0
+
+
+def run_admit(args: argparse.Namespace) -> int:
+    pr_files: Any = []
+    proposed: Any = None
+    try:
+        if args.proposed_packet and args.proposed_packet.exists():
+            try:
+                proposed = load_json(args.proposed_packet, "proposed packet")
+            except PacketError as error:
+                # Judged only if the PR is packet-only; validate_packet then
+                # reports it. A product PR is never refused for this.
+                proposed = {"unreadable": str(error)}
+        pr_files = load_json(args.pr_files, "PR files")
+        try:
+            packet = validate_packet(load_json(args.packet, "packet"))
+        except PacketError as error:
+            # An unusable base packet would otherwise refuse the very control
+            # update that repairs it. Only a packet-only PR carrying a valid
+            # packet is let through; everything else stays refused.
+            if _changed_paths(pr_files) == [PACKET_PATH] and proposed is not None:
+                validate_packet(proposed)
+                result = {
+                    "status": "admitted",
+                    "reason": "cut_packet_repair",
+                    "detail": f"base packet unusable ({error}); packet-only repair admitted",
+                }
+                print(json.dumps(result, sort_keys=True))
+                return 0
+            raise
         current = load_json(args.current, "PR snapshot")
         base_commit = load_json(args.base_commit, "base commit")
         cut_commit = (
             load_json(args.cut_commit, "cut commit") if args.cut_commit else None
         )
-        pr_files = load_json(args.pr_files, "PR files")
         pr_number = current.get("number")
         actual_head = ((current.get("head") or {}).get("sha") or "")
         if not isinstance(pr_number, int) or pr_number < 1:
@@ -465,6 +659,7 @@ def main() -> int:
             base_commit=base_commit,
             cut_commit=cut_commit,
             pr_files=pr_files,
+            proposed_packet=proposed,
         )
     except PacketError as error:
         result = {
@@ -474,6 +669,54 @@ def main() -> int:
         }
     print(json.dumps(result, sort_keys=True))
     return 1 if result["status"] == "refused" else 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--packet", type=Path)
+    parser.add_argument("--current", type=Path)
+    parser.add_argument("--base-commit", type=Path)
+    parser.add_argument("--cut-commit", type=Path)
+    parser.add_argument("--pr-files", type=Path)
+    parser.add_argument("--proposed-packet", type=Path)
+    parser.add_argument("--expected-head")
+    parser.add_argument("--head-commit", type=Path)
+    parser.add_argument("--head-files", type=Path)
+    parser.add_argument("--render-activation", action="store_true")
+    parser.add_argument("--cut-sha")
+    parser.add_argument("--cut-tree")
+    parser.add_argument("--generation")
+    parser.add_argument("--self-test", action="store_true")
+    args = parser.parse_args()
+    if args.self_test:
+        self_test()
+        return 0
+    if args.render_activation:
+        if not (args.cut_sha and args.cut_tree and args.generation):
+            parser.error("--cut-sha, --cut-tree and --generation are required")
+        try:
+            packet = render_activation(
+                cut_sha=args.cut_sha,
+                cut_tree=args.cut_tree,
+                generation=args.generation,
+                admitted=[],
+            )
+        except PacketError as error:
+            print(f"cannot render activation packet: {error}", file=sys.stderr)
+            return 2
+        print(json.dumps(packet, indent=2))
+        return 0
+    if args.head_commit:
+        if not (args.packet and args.head_files):
+            parser.error("--packet and --head-files are required with --head-commit")
+        return run_watch(args)
+    if not all(
+        (args.packet, args.current, args.base_commit, args.pr_files, args.expected_head)
+    ):
+        parser.error(
+            "--packet, --current, --base-commit, --pr-files and --expected-head are required"
+        )
+    return run_admit(args)
 
 
 if __name__ == "__main__":

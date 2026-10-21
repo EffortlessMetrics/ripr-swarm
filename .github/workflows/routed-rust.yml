@@ -363,6 +363,47 @@ jobs:
           if-no-files-found: ignore
           retention-days: 5
 
+  hard-cut-watch:
+    name: Hard-cut main watch
+    # A push to main is judged against the hard-cut packet it carries (#5391).
+    # Inactive is a seconds-long no-op. While a cut is active, the PR path
+    # cannot stop a PR whose required check was green before the freeze, so a
+    # non-packet commit lands red here instead of extending the denominator
+    # silently. Independent of Result: it never gates a PR or starts Rust work.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - name: Judge the landed commit against the cut packet
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          gh api "repos/${REPOSITORY}/git/commits/${HEAD_SHA}" > "$tmp/head.json"
+          gh api --paginate "repos/${REPOSITORY}/commits/${HEAD_SHA}" --jq '.files' | jq -s 'add // []' > "$tmp/files.json"
+          set +e
+          python3 .github/actions/pr-candidate-admission/release_cut_admission.py \
+            --packet policy/release-hard-cut-admission.json \
+            --head-commit "$tmp/head.json" \
+            --head-files "$tmp/files.json" | tee "$tmp/verdict.json"
+          rc=${PIPESTATUS[0]}
+          set -e
+          {
+            echo "### Hard-cut main watch"
+            echo ""
+            echo "- verdict: \`$(jq -r '.status' "$tmp/verdict.json")\` (\`$(jq -r '.reason' "$tmp/verdict.json")\`)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::hard-cut main watch: $(jq -r '.detail' "$tmp/verdict.json")"
+          fi
+          exit "$rc"
+
   result:
     # Static `Ripr Rust Small Result` only for main/manual runs and an explicit
     # merge-ready request. Any other pull_request label event is a nonrequest
