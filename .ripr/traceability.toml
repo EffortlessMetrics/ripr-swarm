@@ -1000,6 +1000,8 @@ spec = "docs/specs/RIPR-SPEC-0007-repository-configuration.md"
 tests = [
   "crates/ripr/src/analysis/diff/path.rs::tests::artifact_root_gitignore_entry_escapes_patterns_separately_from_paths",
   "crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_tracking_untrack_names_only_indexed_roots",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_ignore_names_the_gitignore_entry",
+  "crates/ripr/tests/chaos_interrupted_runs.rs::doctor_says_when_the_cache_cannot_be_written",
   "crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_ignore_advice_covers_only_the_literal_root",
   "crates/ripr/src/analysis/pipeline.rs::tests::ripr_artifact_disclosure_escapes_gitignore_metacharacters",
   "crates/ripr/tests/cli_smoke.rs::config_validate_does_not_consume_root_flag_as_a_path",
@@ -3100,14 +3102,27 @@ tests = [
   "crates/ripr/src/cli/commands/doctor.rs::tests::detect_languages_treats_modern_ts_js_extensions_as_language_markers",
   "crates/ripr/src/cli/commands/doctor.rs::tests::perl_walks_do_not_follow_directory_symlink_loops",
   "crates/ripr/src/output/json/mod.rs",
+  "crates/ripr/src/config/tests.rs::missing_config_detects_typescript_markers_and_source",
+  "crates/ripr/src/config/tests.rs::missing_config_ignores_package_json_and_plain_javascript",
+  "crates/ripr/src/config/tests.rs::explicit_config_keeps_typescript_disabled_in_a_typescript_repo",
+  "crates/ripr/src/config/typescript.rs::tests::detection_requires_a_marker_or_typescript_source",
+  "crates/ripr/src/config/typescript.rs::tests::excluded_and_generated_source_does_not_enable_detection",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::typescript_detection_inputs_change_cache_identity",
+  "crates/ripr/src/lsp/backend.rs::workspace_input_tests::typescript_detection_inputs_classify_like_the_detector",
+  "crates/ripr/src/lsp/backend.rs::workspace_input_tests::dynamic_watchers_cover_the_canonical_detection_input_set",
+  "crates/ripr/src/lsp/tests.rs::watched_typescript_inputs_reload_config_and_refresh_analysis",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
   "fixtures/typescript_mocked_module_limit",
+  "fixtures/ts_full_repo_guidance",
 ]
 code = [
   "crates/ripr/Cargo.toml",
   "crates/ripr/src/config.rs",
+  "crates/ripr/src/config/typescript.rs",
+  "crates/ripr/src/analysis/seam_cache.rs",
+  "crates/ripr/src/lsp/backend.rs",
   "crates/ripr/src/domain/language.rs",
   "crates/ripr/src/domain/probe.rs",
   "crates/ripr/src/analysis/language/mod.rs",
@@ -3502,6 +3517,8 @@ tests = [
   "xtask/src/main.rs::tests::dogfood_language_preview_scenarios_cover_projection_boundaries",
   "xtask::tests::dogfood_real_repair_attempt_receipts_are_checked",
   "xtask::tests::dogfood_python_real_repo_eval_receipts_are_checked",
+  "crates/ripr/src/analysis/language/python/parse_budget.rs::tests::unbalanced_brackets_in_separate_strings_do_not_accumulate",
+  "crates/ripr/tests/python_parse_nesting.rs::unbalanced_bracket_string_literals_do_not_trip_the_nesting_budget",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -3587,6 +3604,7 @@ code = [
   "crates/ripr/src/analysis/language/python.rs",
   "crates/ripr/src/analysis/language/python/oracles/unittest_list.rs",
   "crates/ripr/src/analysis/language/python/static_limits.rs",
+  "crates/ripr/src/analysis/language/python/parse_budget.rs",
   "crates/ripr/src/domain/probe.rs",
   "crates/ripr/src/analysis/language/mod.rs",
   "crates/ripr/src/analysis/language/router.rs",
@@ -12376,6 +12394,7 @@ tests = [
   "crates/ripr/src/cli/command_metadata.rs::tests::help_row_reports_its_machine_catalog_route",
   "crates/ripr/src/cli/command_metadata.rs::tests::production_table_is_complete_and_consistent",
   "crates/ripr/tests/task_first_facade.rs::inspection_cache_disclosure::inspection_discovery_discloses_observed_cache_writes",
+  "crates/ripr/tests/task_first_facade.rs::inspection_cache_disclosure::inventory_ignores_transient_git_lock_files",
   "crates/ripr/tests/task_first_facade.rs::inspection_cache_disclosure::saved_inspection_and_status_controls_preserve_inventories",
   "crates/ripr/src/cli/command_metadata.rs::tests::every_public_catalog_row_is_described",
   "crates/ripr/src/cli/command_metadata.rs::tests::readonly_row_declaring_a_product_write_is_rejected",

@@ -46,8 +46,13 @@ pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
         let pinned = workflow_install_version(generator);
         if pinned != generator {
             let refresh = workflow_refresh_guidance(&options.root);
+            let follow_up = if refresh.starts_with("refresh command omitted") {
+                format!("upgrade ripr and refresh the workflow ({refresh})")
+            } else {
+                format!("upgrade ripr, then {refresh}")
+            };
             eprintln!(
-                "ripr: note: this build of ripr ({generator}) is a development version, so the generated workflow installs ripr {pinned}, the latest published release. Nothing is needed now; once {generator} is published, upgrade ripr, then {refresh}"
+                "ripr: note: this build of ripr ({generator}) is a development version, so the generated workflow installs ripr {pinned}, the latest published release. Nothing is needed now; once {generator} is published, {follow_up}"
             );
         }
     }
