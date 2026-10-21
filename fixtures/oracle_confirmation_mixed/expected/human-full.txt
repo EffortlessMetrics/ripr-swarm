@@ -24,7 +24,7 @@ Static exposure
   weakly_exposed (warning, confidence 0.92)
 
 Evidence
-  - reach yes: Related tests appear to reach analyze_diff: calls_owner_without_observing_effect, unrelated_exact_oracle
+  - reach yes: Related tests appear to reach analyze_diff: calls_owner_without_observing_effect
   - infection yes: Reachable tests can plausibly activate this changed behavior
   - propagation yes: Changed behavior appears to influence call effect: record_effect(rows)
   - observation yes: A related test observes a value or effect near the changed behavior
