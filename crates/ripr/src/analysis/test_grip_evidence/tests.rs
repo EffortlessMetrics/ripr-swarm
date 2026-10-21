@@ -1,3 +1,5 @@
+mod module_extraction;
+
 use super::related_tests::context::*;
 use super::related_tests::*;
 use super::*;
