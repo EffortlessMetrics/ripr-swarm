@@ -218,7 +218,7 @@ fn cli_command_from_dispatch(
 fn unknown_command_error(command: &str) -> String {
     // A flag in command position means options were put before the command.
     if command.starts_with('-') {
-        if let Some(flag) = closest_of(command, &["--version", "--help"]) {
+        if let Some(flag) = closest_flag(command) {
             return format!(
                 "unknown command {command:?}. Did you mean `{flag}`? Run `ripr --help`."
             );
@@ -264,6 +264,39 @@ fn closest_of(command: &str, candidates: &[&'static str]) -> Option<&'static str
         .filter(|(_, distance)| *distance <= typo_budget)
         .min_by_key(|(known, distance)| (*distance, *known))
         .map(|(known, _)| known)
+}
+
+/// A top-level flag typo is one slip away (a dropped, doubled or swapped
+/// character). A wider budget would call valid command-local options such as
+/// `--head` or `--reason` typos of `--help` or `--version`.
+fn closest_flag(command: &str) -> Option<&'static str> {
+    ["--version", "--help"]
+        .into_iter()
+        .find(|flag| is_single_slip(command, flag))
+}
+
+fn is_single_slip(left: &str, right: &str) -> bool {
+    let left: Vec<char> = left.chars().collect();
+    let right: Vec<char> = right.chars().collect();
+    if left == right {
+        return false;
+    }
+    if left.len().abs_diff(right.len()) > 1 {
+        return false;
+    }
+    let common = left.iter().zip(&right).take_while(|(a, b)| a == b).count();
+    let (left_rest, right_rest) = (&left[common..], &right[common..]);
+    match left.len().cmp(&right.len()) {
+        std::cmp::Ordering::Equal => {
+            left_rest[1..] == right_rest[1..]
+                || (left_rest.len() >= 2
+                    && left_rest[0] == right_rest[1]
+                    && left_rest[1] == right_rest[0]
+                    && left_rest[2..] == right_rest[2..])
+        }
+        std::cmp::Ordering::Less => left_rest == &right_rest[1..],
+        std::cmp::Ordering::Greater => &left_rest[1..] == right_rest,
+    }
 }
 
 fn edit_distance(left: &str, right: &str) -> usize {
@@ -485,6 +518,15 @@ mod tests {
                 "unknown command \"--hepl\". Did you mean `--help`? Run `ripr --help`.".to_string()
             )
         );
+        // Valid command-local options keep the placement guidance.
+        for option in ["--head", "--reason"] {
+            assert_eq!(
+                CliCommand::from_parts(Some(option), Vec::new()),
+                Err(format!(
+                    "unknown command {option:?}; options go after the command, e.g. `ripr check {option} ...`"
+                ))
+            );
+        }
         // A flag nowhere near a top-level flag gets no invented suggestion.
         assert_eq!(
             CliCommand::from_parts(Some("--bogus"), Vec::new()),
