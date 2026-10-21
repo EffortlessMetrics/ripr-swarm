@@ -13,18 +13,17 @@
 //! policy-omitted, witness-unavailable, identity-unnameable,
 //! budget-overflow, and incomplete-inventory — renders one versioned
 //! `agent_card_refusal` document on
-//! stderr under `--json` and maps to the decision exit code 3, so an
+//! stdout under `--json` and maps to the decision exit code 3, so an
 //! orchestrator branches on the exit status and the typed `error.kind`
-//! alone. Human prose stays the non-authority rendering of the kind; the
-//! card's own stdout stays empty on a refusal, exactly like `agent verify`
-//! (its stdout is the handoff artifact).
+//! alone. Human prose stays the non-authority rendering of the kind on
+//! stderr. Without `--json` stdout stays empty on a refusal.
 
 use crate::analysis;
 use crate::app::agent_brief::AgentBriefPolicy;
 use crate::app::repair_card_handoff::AgentCardError;
 use crate::cli::CommandError;
 use crate::cli::agent::AgentCardOptions;
-use crate::cli::commands_context::{ensure_command_root, write_stderr_refusal_json};
+use crate::cli::commands_context::{ensure_command_root, write_stdout_refusal_json};
 use crate::config::load_for_root;
 use crate::domain::{AgentCardRefusalKind, RepairCardTarget, RepairCardV1};
 use crate::output;
@@ -57,16 +56,19 @@ pub(super) fn agent_card_stdout(options: AgentCardOptions) -> Result<String, Com
         Err(AgentCardError::Refusal { kind, message }) => {
             // A deliberate named refusal maps to the decision exit code 3,
             // as the verify/verify-execute/repair siblings do. Under
-            // `--json` the typed envelope is the machine answer; stdout
-            // stays empty because it is the card-artifact stream. The
-            // prose message still reaches stderr through `CommandError`,
-            // after the envelope, as the human rendering.
+            // `--json` the typed envelope is the machine answer and goes to
+            // stdout, like `check`/`agent packet`; the prose message still
+            // reaches stderr through `CommandError` as the human rendering.
             if options.json {
                 match render_agent_card_refusal(&options, kind, &message) {
                     // A JSON document, not report text: bidi characters become
                     // JSON escapes so the envelope stays parseable (#6309).
-                    Ok(rendered) => write_stderr_refusal_json(rendered),
-                    Err(render_error) => eprintln!("ripr: {render_error}"),
+                    Ok(rendered) => {
+                        write_stdout_refusal_json(rendered).map_err(CommandError::Failure)?
+                    }
+                    // No envelope could be produced, so no machine answer
+                    // exists: an operational failure (exit 2), not decision 3.
+                    Err(render_error) => return Err(CommandError::Failure(render_error)),
                 }
             }
             return Err(CommandError::Decision(message));
@@ -360,8 +362,22 @@ pub(crate) fn agent_card_prose_lines(
             )),
         }
     }
-    if !card.limitations.is_empty() {
-        lines.push(format!("  limitations: {}", card.limitations.join("; ")));
+    // The canonical next-action block above already prints a `limitations:`
+    // line; repeating its entries a few lines later reads as a second,
+    // different set of caveats (#9033), so the closing line carries only the
+    // card entries the block did not already say.
+    let already_shown: &[String] = card
+        .canonical_next_action
+        .as_ref()
+        .map_or(&[], |action| action.limitations());
+    let card_only: Vec<&str> = card
+        .limitations
+        .iter()
+        .filter(|limitation| !already_shown.contains(limitation))
+        .map(String::as_str)
+        .collect();
+    if !card_only.is_empty() {
+        lines.push(format!("  limitations: {}", card_only.join("; ")));
     }
     if let Some(attempt) = &card.attempt {
         lines.push(format!(
@@ -564,6 +580,7 @@ mod tests {
             subject: RepairCardSubject {
                 seam_id: "seam:demo".to_string(),
                 canonical_gap_id: None,
+                seam_content_gap_id: None,
                 finding_id: None,
             },
             instruction: crate::domain::FixInstructionSummary {
@@ -608,6 +625,12 @@ mod tests {
     }
 
     fn prose_test_decision() -> Result<crate::domain::CanonicalNextActionV1, String> {
+        prose_test_decision_with_limitations(Vec::new())
+    }
+
+    fn prose_test_decision_with_limitations(
+        limitations: Vec<String>,
+    ) -> Result<crate::domain::CanonicalNextActionV1, String> {
         use crate::domain::{
             CommandRole, NextActionClass, NextActionCommandRef, NextActionCurrentness,
             NextActionDiffSource, NextActionProducer, NextActionSubject, NextActionTransition,
@@ -640,7 +663,7 @@ mod tests {
                 to_state: "packet_inspected".to_string(),
             }),
             Vec::new(),
-            Vec::new(),
+            limitations,
         )
     }
 
@@ -712,6 +735,46 @@ mod tests {
         let text = lines.join("\n");
         if !text.contains("  next action: none (instruction FixSiteReady") {
             return Err(format!("legacy refusal line lost:\n{text}"));
+        }
+        Ok(())
+    }
+
+    /// #9033: the canonical block already prints its limitations, so the
+    /// closing line carries only the card entries the block did not say.
+    #[test]
+    fn prose_prints_each_limitation_once() -> Result<(), String> {
+        let limitation_lines = |card: &RepairCardV1, root: Option<&std::path::Path>| {
+            agent_card_prose_lines(card, "ripr agent packet --seam-id seam:demo --json", root)
+                .into_iter()
+                .filter(|line| line.starts_with("  limitations: "))
+                .collect::<Vec<_>>()
+        };
+        let a = "no exact assertion location".to_string();
+        let b = "card-only caveat".to_string();
+        let mut card = prose_test_card();
+        card.canonical_next_action = Some(prose_test_decision_with_limitations(vec![a.clone()])?);
+        for root in [None, Some(std::path::Path::new("/repo/checkout"))] {
+            // Identical lists: only the block's line.
+            card.limitations = vec![a.clone()];
+            let lines = limitation_lines(&card, root);
+            if lines != [format!("  limitations: {a}")] {
+                return Err(format!("identical lists must print once: {lines:?}"));
+            }
+            // Overlap: the footer repeats nothing the block said.
+            card.limitations = vec![b.clone(), a.clone()];
+            let lines = limitation_lines(&card, root);
+            if lines != [format!("  limitations: {a}"), format!("  limitations: {b}")] {
+                return Err(format!(
+                    "overlap must not repeat the shared entry: {lines:?}"
+                ));
+            }
+        }
+        // Without a canonical block the card prints its own list.
+        card.canonical_next_action = None;
+        card.limitations = vec![a.clone(), b.clone()];
+        let lines = limitation_lines(&card, None);
+        if lines != [format!("  limitations: {a}; {b}")] {
+            return Err(format!("no block: the card prints its own list: {lines:?}"));
         }
         Ok(())
     }

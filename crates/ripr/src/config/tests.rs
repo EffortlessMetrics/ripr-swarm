@@ -255,6 +255,67 @@ fn unresolvable_config_symlink_is_a_loud_error_not_defaults() -> Result<(), Stri
     Ok(())
 }
 
+/// #9033: a present-but-unreadable `ripr.toml` gets a recovery line through
+/// `load_for_root`, and the first line (the JSON summary) is unchanged.
+#[cfg(unix)]
+#[test]
+fn unreadable_config_error_ends_with_a_recovery_line() -> Result<(), String> {
+    let root = temp_root("read-hint")?;
+    std::os::unix::fs::symlink("no-such-target.toml", root.join("ripr.toml"))
+        .map_err(|err| format!("symlink failed: {err}"))?;
+    let error = match load_for_root(&root) {
+        Ok(_) => return Err("expected an error, got a config".to_string()),
+        Err(error) => error,
+    };
+    let _ = fs::remove_dir_all(&root);
+    let (first, rest) = error
+        .split_once('\n')
+        .ok_or_else(|| format!("expected a recovery line: {error}"))?;
+    assert!(
+        first.starts_with("read ") && first.contains("failed"),
+        "{error}"
+    );
+    assert_eq!(rest, CONFIG_LOAD_READ_HINT, "{error}");
+    Ok(())
+}
+
+/// #9033: the removal advice must be true when an ancestor config exists:
+/// removing the broken member file makes discovery load the ancestor's file,
+/// and the advice names that instead of promising the built-in defaults.
+#[test]
+fn parse_error_hint_matches_discovery_after_the_broken_file_is_removed() -> Result<(), String> {
+    let workspace = temp_root("nested-recovery")?;
+    write_file(&workspace.join(".git"), "")?;
+    write_file(
+        &workspace.join("ripr.toml"),
+        "[analysis]\nmode = \"deep\"\n",
+    )?;
+    let member = workspace.join("member");
+    fs::create_dir_all(&member).map_err(|err| format!("mkdir member: {err}"))?;
+    write_file(&member.join("ripr.toml"), "[bogus\n")?;
+
+    let error = match load_for_root(&member) {
+        Ok(_) => return Err("expected the broken member config to fail".to_string()),
+        Err(error) => error,
+    };
+    assert!(error.ends_with(CONFIG_LOAD_PARSE_HINT), "{error}");
+    assert!(
+        error.contains("next ripr.toml it finds in a parent directory"),
+        "{error}"
+    );
+
+    fs::remove_file(member.join("ripr.toml")).map_err(|err| format!("remove: {err}"))?;
+    let after = load_for_root(&member)?;
+    let loaded = after.source_path().map(Path::to_path_buf);
+    let _ = fs::remove_dir_all(&workspace);
+    let loaded = loaded.ok_or("removal must fall through to the ancestor config")?;
+    assert!(
+        loaded.ends_with("ripr.toml") && !loaded.starts_with(&member),
+        "{loaded:?}"
+    );
+    Ok(())
+}
+
 #[cfg(unix)]
 #[test]
 fn dangling_config_symlink_at_a_nearer_ancestor_is_not_skipped() -> Result<(), String> {
@@ -2551,6 +2612,14 @@ fn config_load_parse_error_strips_windows_verbatim_prefix() -> Result<(), String
             "Windows parse error must use plain forward-slash spelling: {windows}"
         ));
     }
+    // #9033: the parse error ends without a stray blank line and is followed by
+    // exactly one recovery line.
+    let trailing_newline = config_load_parse_error_for_host(path, "invalid ripr.toml: x\n", false);
+    if trailing_newline.contains("\n\n") || !trailing_newline.ends_with(CONFIG_LOAD_PARSE_HINT) {
+        return Err(format!(
+            "parse error must end with one recovery line: {trailing_newline:?}"
+        ));
+    }
     let unix = config_load_parse_error_for_host(path, parse_detail, false);
     if !unix.starts_with(&format!("{verbatim}: invalid ripr.toml:")) {
         return Err(format!(
@@ -2590,13 +2659,15 @@ fn config_load_parse_error_strips_windows_verbatim_prefix() -> Result<(), String
         ));
     }
     let read_windows = config_load_read_error_for_host(path, &"permission denied", true);
-    if read_windows != format!("read {expected_path} failed: permission denied") {
+    if read_windows
+        != format!("read {expected_path} failed: permission denied\n{CONFIG_LOAD_READ_HINT}")
+    {
         return Err(format!(
             "Windows read error leaked the verbatim spelling: {read_windows}"
         ));
     }
     let read_unix = config_load_read_error_for_host(path, &"permission denied", false);
-    if read_unix != format!("read {verbatim} failed: permission denied") {
+    if read_unix != format!("read {verbatim} failed: permission denied\n{CONFIG_LOAD_READ_HINT}") {
         return Err(format!(
             "Unix read error must keep verbatim text as a filename: {read_unix}"
         ));
@@ -2703,4 +2774,76 @@ fn config_error_display_keeps_unclosed_table_reason() {
         !verbose.iter().any(|line| is_toml_source_excerpt_line(line)),
         "verbose must not reprint the TOML snippet: {verbose:?}"
     );
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn missing_config_detects_typescript_markers_and_source() -> Result<(), String> {
+    for marker in crate::config::TYPESCRIPT_PROJECT_MARKERS {
+        let root = temp_root(&format!("ts-marker-{}", marker.replace('.', "-")))?;
+        write_file(&root.join(marker), "{}")?;
+        let config = load_for_root(&root)?;
+        assert_eq!(
+            config.languages().enabled_owned(),
+            vec![LanguageId::Rust, LanguageId::TypeScript],
+            "{marker} should enable TypeScript preview defaults"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+    let root = temp_root("ts-source")?;
+    write_file(&root.join("tests/cart.test.ts"), "export {};\n")?;
+    let config = load_for_root(&root)?;
+    assert_eq!(
+        config.languages().enabled_owned(),
+        vec![LanguageId::Rust, LanguageId::TypeScript]
+    );
+    let _ = fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn missing_config_ignores_package_json_and_plain_javascript() -> Result<(), String> {
+    let root = temp_root("ts-not-detected")?;
+    write_file(&root.join("package.json"), "{}")?;
+    write_file(&root.join("src/app.js"), "export {};\n")?;
+    let config = load_for_root(&root)?;
+    assert_eq!(config.languages().enabled_owned(), vec![LanguageId::Rust]);
+    let _ = fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn explicit_config_keeps_typescript_disabled_in_a_typescript_repo() -> Result<(), String> {
+    let root = temp_root("ts-explicit-rust")?;
+    write_file(&root.join("tsconfig.json"), "{}")?;
+    write_file(
+        &root.join("ripr.toml"),
+        "[languages]\nenabled = [\"rust\"]\n",
+    )?;
+    let config = load_for_root(&root)?;
+    assert_eq!(config.languages().enabled_owned(), vec![LanguageId::Rust]);
+    let _ = fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn explicit_config_wins_when_markers_and_source_both_detect() -> Result<(), String> {
+    let root = temp_root("ts-explicit-wins")?;
+    write_file(&root.join("tsconfig.json"), "{}")?;
+    write_file(&root.join("src/app.ts"), "export {};\n")?;
+    write_file(
+        &root.join("ripr.toml"),
+        "[languages]\nenabled = [\"rust\", \"typescript\"]\n",
+    )?;
+    let config = load_for_root(&root)?;
+    assert_eq!(
+        config.languages().enabled_owned(),
+        vec![LanguageId::Rust, LanguageId::TypeScript],
+        "explicit list is used verbatim: no duplicate, order preserved"
+    );
+    let _ = fs::remove_dir_all(&root);
+    Ok(())
 }

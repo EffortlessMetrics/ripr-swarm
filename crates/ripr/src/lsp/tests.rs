@@ -219,9 +219,45 @@ fn watched_file_batch_preserves_config_and_workspace_graph_signals() -> Result<(
         WatchedFileChanges {
             config_changed: true,
             workspace_graph_changed: true,
+            typescript_input_changed: false,
             diagnostics_input_changed: false,
         }
     );
+    Ok(())
+}
+
+#[cfg(feature = "lang-typescript")]
+#[test]
+fn watched_typescript_inputs_reload_config_and_refresh_analysis() -> Result<(), String> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let backend_root = root.clone();
+    let (service, _socket) =
+        LspService::new(move |client| Backend::new(client, backend_root.clone()));
+    let backend = service.inner();
+    backend.initialize_test_workspace_root();
+
+    // (path, event type, expect a TypeScript analysis refresh)
+    let cases = [
+        ("tsconfig.json", FileChangeType::CHANGED, true),
+        ("src/cart.ts", FileChangeType::CREATED, true),
+        ("src/cart.ts", FileChangeType::DELETED, true),
+        // An ordinary save of an existing source file is not an input.
+        ("src/cart.ts", FileChangeType::CHANGED, false),
+    ];
+    for (relative, typ, refresh) in cases {
+        let uri = file_uri_for_path(&root.join(relative))
+            .map_err(|err| format!("{relative} URI failed: {err}"))?;
+        let changes = vec![FileEvent { uri, typ }];
+        assert_eq!(
+            backend.watched_file_change_kinds(&changes),
+            WatchedFileChanges {
+                config_changed: true,
+                typescript_input_changed: refresh,
+                ..WatchedFileChanges::default()
+            },
+            "{relative} {typ:?}"
+        );
+    }
     Ok(())
 }
 
@@ -12648,6 +12684,48 @@ fn unavailable_language_notices(shown: &[serde_json::Value]) -> Vec<&serde_json:
 }
 
 #[test]
+#[cfg(not(feature = "lang-python"))]
+fn rust_only_build_reports_no_unavailable_python_row_for_a_changed_py_file() -> Result<(), String> {
+    // A build without the Python adapter routes no `.py` change to a preview
+    // advisory (`detect_preview_advisories` keeps only Perl for an adapter
+    // that is not compiled in), so the typed `unavailable_languages` field is
+    // empty and a generic client gets no per-language notice. The sibling
+    // `generic_client_is_told_once_...` test therefore needs the adapter
+    // compiled in; the `--no-default-features --features lang-rust` lane
+    // exercises this contract instead of that one.
+    work_done_progress_runtime()?.block_on(async {
+        let root = disabled_python_change_fixture("rust-only-no-python-row")?;
+        let (shown, statuses) =
+            refresh_show_messages(root.path(), serde_json::json!({}), "HEAD", 1).await?;
+        let succeeded = statuses
+            .iter()
+            .filter(|status| status["state"] == "succeeded")
+            .collect::<Vec<_>>();
+        if succeeded.is_empty()
+            || succeeded
+                .iter()
+                .any(|status| status["unavailable_languages"] != serde_json::json!([]))
+        {
+            return Err(format!(
+                "a build without the Python adapter must publish an empty typed row set: {statuses:?}"
+            ));
+        }
+        if !unavailable_language_notices(&shown).is_empty() {
+            return Err(format!(
+                "no per-language notice is owed when the adapter is not compiled in: {shown:?}"
+            ));
+        }
+        Ok(())
+    })
+}
+
+// Requires the Python adapter to be compiled in: the typed unavailable row
+// and its notice come from a disabled-but-available preview advisory. The
+// Rust-only feature lane (`--no-default-features --features lang-rust`) never
+// produces one, which made this test fail there deterministically (it looked
+// load-dependent only because that lane runs on a subset of PRs).
+#[test]
+#[cfg(feature = "lang-python")]
 fn generic_client_is_told_once_when_a_changed_language_is_not_enabled() -> Result<(), String> {
     // #8585: a generic editor renders neither the log nor
     // `ripr/analysisStatus`, so changed files of a language whose adapter is

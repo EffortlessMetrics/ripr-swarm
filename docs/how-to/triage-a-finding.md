@@ -46,7 +46,7 @@ including ones whose assertions did not match. Each line gives the test file, li
 test did not count as noticing the change being wrong, or what ripr could not confirm about it:
 
 ```text
-related test tests/it.rs:3 discount_runs uses none unknown oracle; misses: has no assertion
+related test tests/it.rs:3 discount_runs uses no oracle; misses: has no assertion
 ```
 
 `ripr explain` repeats the list under "Why this verdict". In JSON the same

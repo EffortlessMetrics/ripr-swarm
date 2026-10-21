@@ -445,3 +445,290 @@ fn ts_single_line_branch_holding_the_assertion_discloses() -> Result<(), String>
     );
     Ok(())
 }
+
+/// Statements after an unconditional `return`/`throw`/`break`/`continue` are
+/// dead: their assertions never run, so collection withholds them and the
+/// finding cannot reach `exposed` on them. Everything before the exit stays
+/// credited.
+#[test]
+fn ts_assertion_after_unconditional_exit_is_withheld() {
+    for exit in ["return;", "throw new Error(\"x\");", "{ return; }"] {
+        let body =
+            format!("  expect(price(150)).toBe(130);\n  {exit}\n  expect(price(150)).toBe(130);");
+        let assertions = extracted_assertions(&body);
+        assert_eq!(
+            assertions.len(),
+            1,
+            "only the assertion before `{exit}` may be credited: {assertions:?}"
+        );
+    }
+    for exit in ["break;", "continue;"] {
+        let body = format!(
+            "  for (const n of [1]) {{\n    {exit}\n    expect(price(150)).toBe(130);\n  }}"
+        );
+        assert!(
+            extracted_assertions(&body).is_empty(),
+            "assertion after `{exit}` is dead and must be withheld"
+        );
+    }
+}
+
+/// A conditional exit is not decidable, so the later assertion keeps its
+/// credit; and `return expect(..)` keeps its own returned assertion.
+#[test]
+fn ts_assertion_after_conditional_exit_stays_credited() {
+    let guarded =
+        extracted_assertions("  if (skip) {\n    return;\n  }\n  expect(price(150)).toBe(130);");
+    assert_eq!(
+        guarded.len(),
+        1,
+        "conditional exit keeps credit: {guarded:?}"
+    );
+    let returned = extracted_assertions("  return expect(price(150)).resolves.toBe(130);");
+    assert_eq!(
+        returned.len(),
+        1,
+        "returned assertion is credited: {returned:?}"
+    );
+}
+
+/// Decidable `if` exits end the list too; an undecidable one-sided exit does
+/// not (#9003 review).
+#[test]
+fn ts_decidable_if_exit_withholds_following_assertion() {
+    for exit in [
+        "if (true) { return; }",
+        "if (true) return;",
+        "if (false) { x(); } else { return; }",
+        "if (flag) { return; } else { throw new Error(\"x\"); }",
+    ] {
+        let body = format!("  {exit}\n  expect(price(150)).toBe(130);");
+        assert!(
+            extracted_assertions(&body).is_empty(),
+            "assertion after `{exit}` is dead and must be withheld"
+        );
+    }
+    for live in [
+        "if (flag) { return; }",
+        "if (false) { return; }",
+        "if (true) { x(); }",
+        "if (flag) { return; } else { x(); }",
+    ] {
+        let body = format!("  {live}\n  expect(price(150)).toBe(130);");
+        assert_eq!(
+            extracted_assertions(&body).len(),
+            1,
+            "assertion after `{live}` stays credited"
+        );
+    }
+}
+
+/// A `try` that always exits makes the statements after it dead (#9138): the
+/// finalizer replaces the completion when it exits, and without a finalizer
+/// override the block must exit and, when a catch exists, the catch must too.
+#[test]
+fn ts_assertion_after_always_exiting_try_is_withheld() {
+    for dead in [
+        "try { return; } finally { cleanup(); }",
+        "try { throw new Error(\"x\"); } finally {}",
+        "try { return; } catch (e) { return; }",
+        "try { x(); } catch (e) { return; } finally { return; }",
+        "try { x(); } finally { throw new Error(\"x\"); }",
+        "try { return; } catch (e) { throw e; } finally { cleanup(); }",
+        // A bare non-throwing exit first: the catch can never run (#9150).
+        "try { return; } catch (e) {}",
+        "try { return; } catch (e) { log(e); }",
+        "try { return 1; } catch (e) { if (y) { return; } }",
+        "try { return \"ok\"; } catch (e) {}",
+        "try { break; } catch (e) {}",
+        "try { continue; } catch (e) {}",
+        "try { return; } catch (e) {} finally { cleanup(); }",
+    ] {
+        let body = format!("  {dead}\n  expect(price(150)).toBe(130);");
+        assert!(
+            extracted_assertions(&body).is_empty(),
+            "assertion after `{dead}` is dead and must be withheld"
+        );
+    }
+}
+
+/// Undecidable or live-completing `try` shapes keep the later assertion
+/// credited: a conditional exit, a catch that falls through, a block that can
+/// complete normally, a conditional finalizer exit.
+#[test]
+fn ts_assertion_after_try_that_can_complete_stays_credited() {
+    for live in [
+        "try { if (x) { return; } } finally { cleanup(); }",
+        "try { throw new Error(\"x\"); } catch (e) {}",
+        "try { throw new Error(\"x\"); } catch (e) { log(e); }",
+        // Something can throw into the catch before the exit completes.
+        "try { work(); return; } catch (e) {}",
+        "try { return f(); } catch (e) {}",
+        "try { return a.b; } catch (e) {}",
+        "try { if (x) { return; } } catch (e) {}",
+        "try { { return; } } catch (e) {}",
+        "try { x(); } catch (e) { return; }",
+        "try { x(); } finally { cleanup(); }",
+        "try { x(); } finally { if (y) { return; } }",
+        "try { work(); return; } catch (e) { if (y) { return; } }",
+    ] {
+        let body = format!("  {live}\n  expect(price(150)).toBe(130);");
+        assert_eq!(
+            extracted_assertions(&body).len(),
+            1,
+            "assertion after `{live}` stays credited"
+        );
+    }
+}
+
+/// The finalizer's own assertions and ones before the `try` stay credited
+/// when the `try` always exits; only what follows is dead.
+#[test]
+fn ts_always_exiting_try_keeps_earlier_and_finalizer_credit() {
+    let body = "  expect(price(150)).toBe(130);\n  try { return; } finally { expect(price(150)).toBe(130); }\n  expect(price(150)).toBe(130);";
+    assert_eq!(
+        extracted_assertions(body).len(),
+        2,
+        "before-try and finalizer assertions stay; the trailing one is dead"
+    );
+}
+
+/// The shared predicate also stops the conditional-credit probe and walker, so
+/// a dead `if (flag)` after an always-exiting `try` discloses nothing, while
+/// the same shape after a completing `try` still does.
+#[test]
+fn ts_dead_conditional_after_always_exiting_try_yields_no_credit_gap() {
+    let dead =
+        "  try { return; } finally {}\n  if (flag) {\n    expect(price(150)).toBe(130);\n  }";
+    assert!(
+        credit_gap_for_body(dead).is_none(),
+        "dead `if (flag)` after an exiting try must not disclose"
+    );
+    let live = "  try { x(); } finally {}\n  if (flag) {\n    expect(price(150)).toBe(130);\n  }";
+    assert!(
+        credit_gap_for_body(live).is_some(),
+        "live conditional after a completing try still discloses"
+    );
+}
+
+/// End to end: the only strong oracle sits after an always-exiting `try`, so
+/// the changed predicate must not classify `exposed`; a completing `try`
+/// control keeps the credit.
+#[test]
+fn ts_dead_assertion_after_try_finally_return_does_not_expose() -> Result<(), String> {
+    let got = finding_for_body(
+        "  try { return; } finally { cleanup(); }\n  expect(price(150)).toBe(130);",
+    )?;
+    assert_ne!(
+        got.class,
+        ExposureClass::Exposed,
+        "an unreachable assertion must not expose the change: {got:?}"
+    );
+    // A bare non-throwing exit first makes an empty catch unreachable (#9150).
+    let bare = finding_for_body("  try { return; } catch (e) {}\n  expect(price(150)).toBe(130);")?;
+    assert_ne!(
+        bare.class,
+        ExposureClass::Exposed,
+        "the catch cannot run, so the assertion is dead: {bare:?}"
+    );
+    // Live control: work() can throw into the catch, so the assertion may run.
+    let live = finding_for_body(
+        "  try { work(); return; } catch (e) {}\n  expect(price(150)).toBe(130);",
+    )?;
+    assert_eq!(
+        live.class,
+        ExposureClass::Exposed,
+        "a throwing-capable try keeps the credited assertion: {live:?}"
+    );
+    let control =
+        finding_for_body("  try { x(); } finally { cleanup(); }\n  expect(price(150)).toBe(130);")?;
+    assert_eq!(
+        control.class,
+        ExposureClass::Exposed,
+        "a completing try keeps the credited assertion: {control:?}"
+    );
+    Ok(())
+}
+
+/// An assertion inside a provably unreachable `catch` (the `try` block opens
+/// with a non-throwing exit) never runs, so it earns no credit and raises no
+/// conditional-credit gap (#9150); a live catch keeps both.
+#[test]
+fn ts_assertion_inside_unreachable_catch_is_withheld() -> Result<(), String> {
+    let assertion = "expect(price(150)).toBe(130);";
+    for dead in ["return;", "return 1;", "break;", "continue;"] {
+        let body = format!("  try {{ {dead} }} catch (e) {{ {assertion} }}");
+        assert!(
+            extracted_assertions(&body).is_empty(),
+            "assertion in the catch after `{dead}` is dead and must be withheld"
+        );
+    }
+    let gap = "  try { return; } catch (e) {\n    if (flag) {\n      expect(price(150)).toBe(130);\n    }\n  }";
+    assert!(
+        credit_gap_for_body(gap).is_none(),
+        "a conditional inside an unreachable catch must not disclose"
+    );
+    for live in ["work(); return;", "return f();", "throw e;"] {
+        let body = format!("  try {{ {live} }} catch (e) {{ {assertion} }}");
+        assert_eq!(
+            extracted_assertions(&body).len(),
+            1,
+            "catch after `{live}` can run and stays credited"
+        );
+    }
+    let dead = finding_for_body(&format!("  try {{ return; }} catch (e) {{ {assertion} }}"))?;
+    assert_ne!(
+        dead.class,
+        ExposureClass::Exposed,
+        "an exact assertion solely in a dead catch must not expose: {dead:?}"
+    );
+    let live = finding_for_body(&format!(
+        "  try {{ work(); return; }} catch (e) {{ {assertion} }}"
+    ))?;
+    assert_eq!(
+        live.class,
+        ExposureClass::Exposed,
+        "a reachable catch keeps its credited assertion: {live:?}"
+    );
+    Ok(())
+}
+
+/// A dead conditional assertion after `return;` must not produce a
+/// conditional-credit limitation; the live assertion before it is credited.
+#[test]
+fn ts_dead_conditional_after_return_yields_no_credit_gap() {
+    let body = "  expect(price(150)).toBe(130);\n  return;\n  if (flag) {\n    expect(price(150)).toBe(130);\n  }";
+    let source = test_file(body);
+    let (tests, gap) =
+        extract_tests_and_conditional_credit_gap(Path::new("tests/lib.test.ts"), &source);
+    assert_eq!(tests.len(), 1, "fixture must register its test");
+    assert_eq!(
+        tests[0].assertions.len(),
+        1,
+        "only the live assertion counts"
+    );
+    assert!(gap.is_none(), "dead `if (flag)` must not disclose: {gap:?}");
+    assert!(
+        credit_gap_for_body(body).is_none(),
+        "standalone detector must agree"
+    );
+    let control =
+        "  expect(price(150)).toBe(130);\n  if (flag) {\n    expect(price(150)).toBe(130);\n  }";
+    assert!(
+        credit_gap_for_body(control).is_some(),
+        "live conditional control still discloses"
+    );
+}
+
+/// End to end: the only strong oracle sits after `return;`, so the changed
+/// predicate must not classify `exposed`.
+#[test]
+fn ts_dead_assertion_after_return_does_not_expose() -> Result<(), String> {
+    let got = finding_for_body("  return;\n  expect(price(150)).toBe(130);")?;
+    assert_ne!(
+        got.class,
+        ExposureClass::Exposed,
+        "an unreachable assertion must not expose the change: {got:?}"
+    );
+    Ok(())
+}

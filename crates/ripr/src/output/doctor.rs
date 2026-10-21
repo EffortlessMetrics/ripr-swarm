@@ -2474,7 +2474,9 @@ fn join_doctor_pipe_reader(
 }
 
 /// Translate the report's overall status into the doctor command's exit
-/// result.
+/// result. The CLI adapter maps the failure onto
+/// `CommandError::Decision` (exit 3, #5102): the report was rendered, so
+/// failed checks are a completed typed answer, not could-not-complete.
 pub(crate) fn doctor_report_result(report: &DoctorReport) -> Result<(), String> {
     match report.status {
         DoctorStatus::Pass => Ok(()),
@@ -4713,7 +4715,7 @@ mod tests {
                 size_display: "1.00 KB".to_string(),
                 artifact_ignore: DoctorArtifactIgnore::Ignored,
                 artifact_tracking: DoctorArtifactTracking::Tracked {
-                    warning: "! tracked".to_string(),
+                    warning: "~ tracked".to_string(),
                 },
             },
             test_surfaces: vec![DoctorTestSurface {
@@ -4751,7 +4753,7 @@ mod tests {
         assert_eq!(parsed["cache"]["artifact_ignore"], "ignored");
         assert_eq!(
             parsed["cache"]["artifact_tracking"]["tracked"]["warning"],
-            "! tracked"
+            "~ tracked"
         );
         assert_eq!(parsed["test_surfaces"][0]["framework"], "pytest");
         assert_eq!(parsed["test_surfaces"][0]["evidence"], "python: pytest");

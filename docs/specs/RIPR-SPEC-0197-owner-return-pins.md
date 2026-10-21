@@ -228,7 +228,12 @@ rule only for an assertion whose context was admitted.
    scope re-raises an unjoined thread's panic) or carries the same join chain.
    The closure `std::thread::scope` runs is itself on an ordinary path: it is
    called once on the test thread and its panic propagates. A `::thread::`
-   path names an extern crate, so it never matches. Names are not
+   path names an extern crate, so it never matches. A bare `scope(..)` or
+   `spawn(..)` (#8999) matches only when the function's own module holds
+   exactly `use std::thread::scope;` (or `spawn`) with no rename or list form,
+   and nothing else in the file is named `scope` (`spawn`) or ends a `use` in
+   that name; a local function, another import, a rename or an import in a
+   different module stays refused. Names are not
    resolved, so the test's file refuses when it holds an item, alias or
    binding named `std` or `thread`; an `extern crate thread;`; a `use` ending in `std` or `thread`
    other than exactly `use std::thread;`, or a `self` in a `use` list under
@@ -1235,7 +1240,14 @@ would. Such an assertion is a pin when:
    optionally negated by one `!`. A conjunction, a comparison, a chained
    call or a double negation pins nothing about the owner's result. Message
    arguments do not decide whether the test fails and are not read.
-3. Every other rule above holds unchanged: execution and macro admission
+3. (#9074) The condition may instead be one plain identifier (optionally negated by
+   one `!`) that the test binds once with an immutable `let` to a complete
+   owner call, read under the same binding rules as `assert_eq!(binding, true)`
+   (RIPR-SPEC-0225 rule 1): the binding is a scalar used only as a whole
+   operand of assertions after the `let`, once in this assertion. A `mut` or
+   reassigned binding, a disjunction (`assert!(hit || other)`), a copy or
+   other non-assertion use, or a binding named in the message refuses.
+4. Every other rule above holds unchanged: execution and macro admission
    (the parser collects `assert!` invocations alongside `assert_eq!`), call
    identity and binding defeats, `#[should_panic]`, and the return-path
    gate. A bool owner with an early `return` has no `Ok`/`Some` head, so the
@@ -2325,12 +2337,14 @@ assertions. This repair shares the existing callback without that larger migrati
   imported, ambiguous, shadowed and disabled declarations. The property
   quarantine integration retains its named/direct/helper mixed positives.
   The execution fixtures and their JSON/human outputs are mapped in `.ripr/traceability.toml`.
-  `bool_owner_assert_pin_matched_static_and_runtime_controls` runs thirteen
-  bool-owner layouts (both boundary sides, let-bound inputs, far inputs
-  only, one side only, a shadowing closure, an uncalled closure, a boundary
-  call or binding only in a message argument or an operand comment, and a boundary call left
-  unasserted on the assertion's line) against the rewrite and a `<`
-  mutant; only the two `exposed` layouts fail on the mutant.
+  `bool_owner_assert_pin_matched_static_and_runtime_controls` runs seventeen
+  bool-owner layouts (both boundary sides, let-bound inputs and let-bound
+  results, a crate-qualified call, far inputs only, one side only, a
+  let-bound disjunction, a reassigned mutable binding, a shadowing closure, an
+  uncalled closure, a boundary call or binding only in a message argument or
+  an operand comment, and a boundary call left unasserted on the assertion's
+  line) against the rewrite and a `<` mutant; only the four `exposed` layouts
+  fail on the mutant.
   `unit_struct_receiver_matched_static_and_runtime_controls` (#7083) pins a
   kept trait default through `Unit.advance()` and through `let unit = Unit;`,
   and refuses an impl that overrides the default; only the two `exposed`
@@ -2530,3 +2544,36 @@ existing owner-call argument pin is unavailable; this leaf does not relax that
 authority. Withheld diff-index source bindings receive the same constructor scan.
 Full frozen consumer replay is separate from fixture admission and never clears
 consumer gates, missing IDs or unrelated propagation residuals by absence.
+
+### A returned bare comparison is read at its boundary (#9094)
+
+A `return_value` probe whose changed expression is one bare relational
+comparison (`x > 101` against `x > 100`, no `&&`/`||`) is the same changed
+predicate a `predicate` probe on that line reads. When the predicate lens
+resolves a missing equality-boundary discriminator for it and its infection
+reading is `weak`, the return-value finding takes that discriminator and that
+infection reading instead of crediting `yes`, so inputs far from the threshold
+(`thr(50)`, `thr(500)`) never read `exposed`. A boundary the lens cannot read
+(`unresolved`), a compound expression, a non-comparison return value and an
+operator change (`x == 100` to `x > 101`, where an off-boundary input can
+separate the versions) keep their previous reading: the rule only downgrades and is not a runtime claim.
+
+An explicit `return x > 101;` is the same returned comparison as the tail form:
+the leading `return ` and trailing `;` are dropped from the changed and prior
+text before boundary extraction (#9116). Only a top-level comparison normalises;
+a comparison nested in a call, index, turbofish (`x.parse::<i32>() > 5`) or
+compound value keeps the return-value reading.
+
+When only the integer-literal threshold (or, for `==`/`!=`, the literal) of the compared owner parameter moves
+by more than one (`x > 100` to `x > 102`), an observed exact input of that
+parameter that separates the old and new comparison (`thr(101)`: true before,
+false after) is a discriminator even though it equals neither threshold, so the
+equality-boundary gap is not borrowed and the reading stays as it was (#9147).
+The check only ever removes a downgrade: it declines, and the gap stays, for a
+suffixed or computed literal, a non-parameter or reversed left operand, a
+non-integer input or an operator-family change it cannot evaluate. Inputs on
+the same side of both thresholds keep the gap.
+
+The intermediate-input reading also declines when the owner may compare a value other than the caller's: any occurrence of the parameter name in the body before the compared line (a `let`, pattern, `for`, `if let`, `match` arm or closure binding, or any other use), a binding form beside it on the compared line, a `mut` binding or borrow of it, or any assignment to it (`x += 5`). The gap stays in those cases (#9147).
+
+Only unqualified owner calls supply separating inputs: a module-qualified or method call of the same name (`rival::thr(101)`) may be another function and is never counted, and helper-transferred rows are not read (#9147).
