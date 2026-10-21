@@ -189,3 +189,4 @@ crates/ripr/tests/call_budget_repo_exposure.rs|Command::new|1|call-budget-repo-e
 crates/ripr/tests/call_budget_repo_exposure.rs|use std::process::Command|1|call-budget-repo-exposure|#8600: imports Command only for the bounded binary invocation described above.
 crates/ripr/tests/call_budget_slice_positive.rs|Command::new|1|call-budget-slice-positive|#8600: runs the built ripr binary over a temp workspace to pin the saturated-table reading; no network or credential operation.
 crates/ripr/tests/call_budget_slice_positive.rs|use std::process::Command|1|call-budget-slice-positive|#8600: imports Command only for the bounded binary invocation described above.
+tools/repo-policy/tests/wheel_trap_markers.rs|Command::new|1|wheel-trap-marker-proof|Bounded Linux-only replay of the checked-in wheel qualification trap generators and generated Bash wrappers with literal marker and native-status oracles; no wheel builds, network or publication.
