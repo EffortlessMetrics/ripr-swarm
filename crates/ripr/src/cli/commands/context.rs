@@ -206,8 +206,9 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
         )
     })?;
     apply_to_check_input(&mut input, &config, explicit);
-    let worktree = worktree
-        || super::dirty_tree_default_is_worktree(&input, from_artifact.is_some(), committed);
+    let worktree_from_default = !worktree
+        && super::dirty_tree_default_is_worktree(&input, from_artifact.is_some(), committed);
+    let worktree = worktree || worktree_from_default;
     // Capture the effective mode after config merging: a configured
     // `[analysis] mode` replaces the default, and later refusals must name
     // the mode analysis actually ran with, not the pre-merge default
@@ -282,6 +283,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
                 max_tests,
                 &config,
                 worktree,
+                worktree_from_default,
                 explicit.mode,
                 progress_sink,
             )
