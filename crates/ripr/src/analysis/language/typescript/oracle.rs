@@ -202,7 +202,8 @@ pub(crate) fn collect_callback_assertions(
 
 /// `true` when control can never fall through `stmt` to the statement after it:
 /// an unconditional `return`, `throw`, `break` or `continue`, or a block whose
-/// own statements contain one. Statements after it in the same list are dead
+/// own statements contain one, or a
+/// `try` whose finalizer exits or whose block and catch (if any) both exit (#9138). Statements after it in the same list are dead
 /// code, so an assertion there never runs and cannot discriminate; collection
 /// withholds it, fail closed like a constant-falsy branch (#8714). Conditional
 /// exits (`if (x) return;`) are not decidable and keep the later credit.
@@ -229,6 +230,19 @@ pub(crate) fn statement_completes_abruptly(stmt: &Statement<'_>) -> bool {
                         .is_some_and(statement_completes_abruptly)
             }
         },
+        // A finalizer that exits replaces the try completion. Otherwise the
+        // block must exit and so must any catch (the catch is the only other
+        // way out of the try). A loop or `switch` is never decided here.
+        Statement::TryStatement(try_stmt) => {
+            try_stmt
+                .finalizer
+                .as_ref()
+                .is_some_and(|finalizer| finalizer.body.iter().any(statement_completes_abruptly))
+                || (try_stmt.block.body.iter().any(statement_completes_abruptly)
+                    && try_stmt.handler.as_ref().is_none_or(|handler| {
+                        handler.body.body.iter().any(statement_completes_abruptly)
+                    }))
+        }
         _ => false,
     }
 }
