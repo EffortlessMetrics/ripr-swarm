@@ -408,6 +408,10 @@ store is plain filesystem state and is re-read live at card-read time, so the
 card's attempt block matches `ripr agent status` at that moment; in-memory
 session transactions never ride a card. The next-action display binds the
 portable root `.` and is presentation only, never execution authority.
+The card's `subject.canonical_gap_id` is the bound finding's own id, the same
+readable id `ripr_list_gaps` and `ripr_get_gap` return (#8638), so it can be passed back
+to those tools (they do not accept the seam-side hash); that hash rides additively as
+`subject.seam_content_gap_id`.
 
 ## Typed failures
 

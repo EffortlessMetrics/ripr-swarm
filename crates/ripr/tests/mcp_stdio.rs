@@ -2793,6 +2793,32 @@ fn get_repair_card_after_refresh_matches_cli_agent_card() -> Result<(), String> 
     if cli_card.pointer("/schema_version").and_then(Value::as_str) != Some("repair_card.v1") {
         return Err(format!("ripr agent card lost repair_card.v1: {cli_card}"));
     }
+    // #8638: one gap id scheme across surfaces. The card reports the readable
+    // id `ripr_list_gaps` returned (the id agents pass back), on both the MCP
+    // and CLI cards; the old seam-side content hash rides additively under
+    // `seam_content_gap_id` and is never what a gap tool accepts.
+    for (surface, card) in [("MCP", &mcp_card), ("CLI", &cli_card)] {
+        let card_gap_id = card
+            .pointer("/subject/canonical_gap_id")
+            .and_then(Value::as_str);
+        if card_gap_id != Some(canonical_id.as_str()) {
+            return Err(format!(
+                "{surface} card subject.canonical_gap_id {card_gap_id:?} != ripr_list_gaps canonical_id {canonical_id}"
+            ));
+        }
+        let legacy = card
+            .pointer("/subject/seam_content_gap_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let is_hash_id = legacy
+            .strip_prefix("gap:")
+            .is_some_and(|hash| hash.len() == 16 && hash.chars().all(|c| c.is_ascii_hexdigit()));
+        if !is_hash_id || legacy == canonical_id {
+            return Err(format!(
+                "{surface} card lost the additive seam_content_gap_id hash: {legacy:?}"
+            ));
+        }
+    }
     if cli_card.pointer("/repair_card_id").and_then(Value::as_str) != Some(repair_card_id) {
         return Err(format!(
             "MCP card diverged from `ripr agent card` identity: mcp={repair_card_id} cli={}",
@@ -2806,6 +2832,95 @@ fn get_repair_card_after_refresh_matches_cli_agent_card() -> Result<(), String> 
     if mcp_compared != cli_compared {
         return Err(format!(
             "MCP card diverged from `ripr agent card` after blanking presentation displays:\nmcp={mcp_compared}\ncli={cli_compared}"
+        ));
+    }
+    Ok(())
+}
+
+/// #8638 review (Devin): a changed `let _ = amount >= limit;` keys the
+/// finding's gap id from the whole changed line, while the seam keeps only the
+/// parser expression. The card must report the bound finding's own id, so for
+/// every listed item the card's `subject.canonical_gap_id` equals the
+/// `ripr_list_gaps` and `ripr_get_gap` id, on a `let _ =` predicate shape.
+#[test]
+fn card_gap_id_equals_list_and_get_gap_id_for_let_underscore_predicate() -> Result<(), String> {
+    const REFRESH_TIMEOUT: Duration = Duration::from_mins(3);
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let root = install_b4_repair_ready_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn gate(amount: i32, limit: i32) -> bool {\n    let _ = amount >= limit;\n    true\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        "use mcp_journey_fixture::gate;\n\n#[test]\nfn gate_runs() {\n    assert!(gate(1, 2));\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    commit_fixture(&root, "let underscore predicate")?;
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+    session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    let list = structured_tool_success(&list, "ripr_list_gaps")?;
+    let items = list
+        .pointer("/items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("ripr_list_gaps omitted items: {list}"))?;
+    let mut compared = 0_usize;
+    for (index, item) in items.iter().enumerate() {
+        let listed = item
+            .pointer("/canonical_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("list item omitted canonical_id: {item}"))?;
+        let get = session.call_tool(
+            &format!("get-{index}"),
+            "ripr_get_gap",
+            json!({ "canonical_id": listed }),
+            REPLY_TIMEOUT,
+        )?;
+        let get = structured_tool_success(&get, "ripr_get_gap")?;
+        let got = get
+            .pointer("/item/canonical_id")
+            .or_else(|| get.pointer("/canonical_id"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("ripr_get_gap omitted canonical_id: {get}"))?;
+        if got != listed {
+            return Err(format!("get_gap id {got} != list id {listed}"));
+        }
+        let card = session.call_tool(
+            &format!("card-{index}"),
+            "ripr_get_repair_card",
+            json!({ "canonical_id": listed }),
+            REPLY_TIMEOUT,
+        )?;
+        let Ok(card) = structured_tool_success(&card, "ripr_get_repair_card") else {
+            continue;
+        };
+        let card_id = card
+            .pointer("/card/subject/canonical_gap_id")
+            .and_then(Value::as_str);
+        if card_id != Some(listed) {
+            return Err(format!(
+                "card subject.canonical_gap_id {card_id:?} != list/get id {listed}"
+            ));
+        }
+        compared += 1;
+    }
+    drop(session);
+    if compared == 0 {
+        return Err(format!(
+            "no listed item produced a card for the let-underscore shape: {list}"
+        ));
+    }
+    if !items.iter().any(|item| {
+        item.pointer("/canonical_id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| id.contains("let_"))
+    }) {
+        return Err(format!(
+            "fixture lost the whole-line (`let_`) finding id shape: {list}"
         ));
     }
     Ok(())

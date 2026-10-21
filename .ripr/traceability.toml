@@ -4792,6 +4792,9 @@ tests = [
   "crates/ripr/src/analysis/language/rust/probe_shape.rs::tests::predicate_comparison_names_the_rendered_equality_boundary",
   "crates/ripr/src/analysis/language/rust/probe_shape.rs::tests::distinct_string_literals_never_share_one_gap_identity",
   "crates/ripr/src/analysis/language/rust/probe_shape.rs::tests::non_ascii_text_outside_literals_stays_lossless",
+  "crates/ripr/src/analysis/language/rust/probe_shape.rs::tests::seam_side_remint_equals_the_finding_side_id",
+  "crates/ripr/src/analysis/language/rust/probe_shape.rs::tests::finding_and_seam_paths_agree_after_stable_path_text",
+  "crates/ripr/src/mcp/gaps.rs::tests::populated_rust_gap_opens_the_discriminator_gate_only_when_nothing_is_missing",
   "crates/ripr/src/mcp/gaps.rs::tests::populated_rust_gap_opens_the_discriminator_gate_for_weak_named_or_nothing_missing",
   "crates/ripr/src/mcp/gaps.rs::tests::gap_resource_route_reads_a_nested_producer_gap_id_whole",
   "crates/ripr/src/analysis/witness/tests.rs::populated_canonical_gap_is_the_required_discriminator_source",
@@ -12805,6 +12808,9 @@ tests = [
   "crates/ripr/src/app/repair_card.rs::tests::wrong_owner_shape_records_basis_and_rejections",
   "crates/ripr/src/app/repair_card.rs::tests::effect_observer_shape_projects_observer_goal_and_improved_axis",
   "crates/ripr/src/app/repair_card.rs::tests::attempt_state_copies_without_upgrade",
+  "crates/ripr/src/app/repair_card_handoff.rs::tests::card_subject_reports_the_bound_finding_gap_id_and_keeps_the_hash_additive",
+  "crates/ripr/tests/mcp_stdio.rs::get_repair_card_after_refresh_matches_cli_agent_card",
+  "crates/ripr/tests/mcp_stdio.rs::card_gap_id_equals_list_and_get_gap_id_for_let_underscore_predicate",
 ]
 fixtures = []
 code = [
@@ -14350,6 +14356,7 @@ tests = [
   "crates/ripr/tests/mcp_sdk.rs",
   "crates/ripr/tests/mcp_stdio.rs",
   "crates/ripr/tests/mcp_stdio.rs::get_repair_card_after_refresh_matches_cli_agent_card",
+  "crates/ripr/tests/mcp_stdio.rs::card_gap_id_equals_list_and_get_gap_id_for_let_underscore_predicate",
   "crates/ripr/tests/mcp_stdio.rs::resource_reads_match_tools_after_refresh",
 ]
 code = [
