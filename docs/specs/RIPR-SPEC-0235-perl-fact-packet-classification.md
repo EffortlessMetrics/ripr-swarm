@@ -44,6 +44,9 @@ Support-tier impact:
     location. A real-producer packet (`owner:` ids, `partial` status) keeps
     its suggested location when such a relation exists. It still gets no
     canonical gap, as today.
+  - rule 16: a `reachable_unrevealed` finding whose only bound oracle is
+    `weak_broad` on a strong-eligible kind, on an owner-call relation, becomes `static_unknown` and loses
+    its gap and suggested location.
 - Every other rule, including rules 1, 10 and 14, changes no output.
   Claim boundaries remain governed by
   [support tiers](../status/SUPPORT_TIERS.md).
@@ -197,7 +200,7 @@ For each change, the first match wins:
    never strong, whatever their label. `weak_smoke`, `weak_broad`,
    `mention_only` and `unknown` strengths are never strong. A relation
    with a bound strong oracle reads `weakly_exposed`; with any other bound
-   oracle, `reachable_unrevealed`.
+   oracle, `reachable_unrevealed` (except rules 16 and 17).
 7. **Relation-kind cap, per relation.** Only `direct_owner_call` supports
    positive reachability (sink-aligned `exposed`, suggested location, row
    miss). A reachable `method_receiver` or `helper_call` relation whose own
@@ -298,6 +301,35 @@ For each change, the first match wins:
 15. **Constant stages.** Reach is `yes` when any relation binds, whatever
     its kind or hint. Infect and propagate are `unknown`. Confidence is
     `0.5`. ripr never reports a runtime mutation outcome from a packet.
+16. **Broad oracle is unknown.** A relation whose bound oracle (rule 5) has
+    strength `weak_broad` and a kind rule 6 lists as strong-eligible, on a
+    `direct_owner_call`, `method_receiver` or `helper_call` relation (the
+    kinds that earn weak oracle credit under rule 7), reads
+    `static_unknown`, not `reachable_unrevealed`. The producer grades
+    `throws_ok`, `dies_ok` and `like(dies {...}, ...)` alike as `weak_broad`
+    whatever the matcher pins (#6582), so a gap on it is wrong about as often
+    as right (corpus: 4 wrong, 3 right). Aggregation is unchanged, so a
+    `weakly_exposed` or `reachable_unrevealed` relation beside it still wins,
+    and rule 13 withholds the gap and location as for any `static_unknown`.
+    `smoke_ok`, `dies_only`, `mention_only`, `unknown_helper` and
+    `dynamic_framework_indirection` kinds stay `reachable_unrevealed`. The
+    recommended next step says the producer grades the assertion broad and that
+    no change is needed if it asserts the message, class or value.
+17. **`isnt` pins nothing.** An oracle whose recorded expression begins with
+    the call `isnt` (bare, or qualified `Test::More::`, `Test2::V0::` or
+    `Test2::V1::`) is read as `weak_smoke` when the producer graded it
+    `strong_exact` or `weak_broad`, because `isnt($got, $v)` passes for
+    every wrong result but `$v` and cannot notice the changed behavior. It
+    earns no rule 6 credit and is not a rule 16 broad oracle, so its
+    relation reads `reachable_unrevealed` unless another bound oracle
+    credits it (aggregation is unchanged). Only the leading call token is
+    read (a name such as `isnt_zero` is not `isnt`); ripr does not parse the
+    argument list. The producer fix is to grade `isnt` weak at the source;
+    this keeps older packets from earning `weakly_exposed` meanwhile
+    (corpus: `perl-test2-fee-isnt-zero`, `perl-testmore-clamp-isnt` were
+    credited, truth not discriminated; since the producer pin moved to
+    07320a4 their packets arrive `weak_smoke`, and the edited `perl-0235-*`
+    packets that keep an old-style `strong_exact` `isnt` exercise this rule).
 
 ### Decisions
 
@@ -373,6 +405,12 @@ rejected alternative. Any can be reversed later without touching the rest.
     remove the location from every real packet. Rejected: gate both
     suggestions on `packet_status: complete`. Reopen this if a corpus
     case shows a partial packet's omitted facts moving the right test.
+11. **Broad oracle.** Adopted: unknown (rule 16) until the producer grades
+    exception and regex oracles apart (#6582). Rejected: keep the gap, because
+    it was wrong for 4 of 7 corpus rows; recognize `throws_ok` or `dies_ok` in
+    the expression, because ripr does not parse Perl. Costs three correct
+    gaps (`close-out-dies-ok`, `format-entry-like`, `round-cents-like`), which
+    read `limited`; revisit when the producer separates them.
 
 ## Required Evidence
 
@@ -432,8 +470,8 @@ cases.
    `stdout_is(sub { Pricing::show(100) }, "90\n")` as `output_observer` /
    `strong_exact`: `weakly_exposed`, `unknown` / strong (unchanged).
 7. `like(Pricing::discount(100), qr/9/)` as `exact_return_assertion` /
-   `weak_broad`: `reachable_unrevealed`, `exact_value` / weak
-   (unchanged).
+   `weak_broad`: `static_unknown` (rule 16), `exact_value` / weak. Was
+   `reachable_unrevealed`.
 8. A test that only names `Pricing::discount`, as `mention_only` /
    `mention_only`: `reachable_unrevealed`, `unknown` / unknown
    (unchanged).
@@ -518,6 +556,8 @@ cases.
   `ingestion_*` (ingestion),
   `perl_packet_contract_migration_corpus_pins_real_producer_dispositions`
   (rule 1 unrecognized kinds, real-producer owner ids),
+  `perl_isnt_is_a_smoke_oracle_not_an_exact_one` (rule 17: `isnt` spellings,
+  the `weak_broad` grading, and `is` / `isnt_zero` controls),
   `relation_gate_rejects_file_proximity_only` (edits `relation_kind`
   without re-blessing; rule 14).
 - Existing: RIPR-SPEC-0108 byte-pinned reports under
@@ -541,7 +581,7 @@ cases.
   - `PerlFactPacket::classify_related_relation`: rules 4 to 7;
   - `PerlFactPacket::classify_change_from_related_tests`: rule 8;
   - `sink_aligned_observation`: rules 5 and 9;
-  - `OracleFact::is_strong_exact`: rule 6;
+  - `OracleFact::is_strong_exact`: rule 6; `is_broad_unresolved`: rule 16; `effective_strength`: rule 17;
   - `RelationKind::supports_positive_reachability`: rule 7;
   - `perl_oracle_kind_to_domain`, `perl_oracle_strength_to_domain`,
     `perl_relation_to_domain`: rule 12;

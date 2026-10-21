@@ -216,6 +216,17 @@ fn cli_command_from_dispatch(
 }
 
 fn unknown_command_error(command: &str) -> String {
+    // A flag in command position means options were put before the command.
+    if command.starts_with('-') {
+        let example = if command == "--root" {
+            "--root .".to_string()
+        } else {
+            format!("{command} ...")
+        };
+        return format!(
+            "unknown command {command:?}; options go after the command, e.g. `ripr check {example}`"
+        );
+    }
     // Version is a flag here, not a subcommand; say so instead of a bare refusal.
     if command == "version" {
         return "unknown command \"version\". Did you mean `--version`? Run `ripr --help`."
@@ -416,6 +427,21 @@ mod tests {
         assert_eq!(
             CliCommand::from_parts(Some("check"), args(&["--format", "json"])),
             Ok(CliCommand::Check(args(&["--format", "json"])))
+        );
+    }
+
+    #[test]
+    fn flag_in_command_position_says_options_go_after_the_command() {
+        assert_eq!(
+            CliCommand::from_parts(Some("--root"), args(&["."])),
+            Err(
+                "unknown command \"--root\"; options go after the command, e.g. `ripr check --root .`"
+                    .to_string()
+            )
+        );
+        assert_eq!(
+            unknown_command_error("--base"),
+            "unknown command \"--base\"; options go after the command, e.g. `ripr check --base ...`"
         );
     }
 

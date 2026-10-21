@@ -9,6 +9,16 @@ use crate::analysis::facts::{CallFact, CallText};
 /// related-test links, never a stronger finding) rather than inventing any.
 pub(crate) const MAX_CALL_FACTS_PER_LINE: usize = 256;
 
+/// Whether `line` holds [`MAX_CALL_FACTS_PER_LINE`] facts, so the budget may
+/// have dropped a call there. A proof that every call on the line is one
+/// specific call must read such a line as unknown.
+pub(crate) fn line_at_call_budget<'a>(
+    calls: impl Iterator<Item = &'a CallFact>,
+    line: usize,
+) -> bool {
+    calls.filter(|call| call.line == line).count() >= MAX_CALL_FACTS_PER_LINE
+}
+
 /// Whether any line of `calls` reached [`MAX_CALL_FACTS_PER_LINE`] facts, so
 /// the budget may have dropped a call there. An absence proof ("no other call
 /// to X") must read such a line as unknown.
@@ -453,6 +463,20 @@ let spaced = render_pipeline ("beta");
         assert!(kept.contains("g0") && kept.contains("g254"));
         assert!(!kept.contains("g255") && !kept.contains("g300"));
         assert!(has_saturated_line(calls.iter()));
+    }
+
+    #[test]
+    fn line_at_call_budget_reads_only_its_own_line() {
+        let names: Vec<String> = (0..MAX_CALL_FACTS_PER_LINE + 5)
+            .map(|index| format!("g{index}"))
+            .collect();
+        let body = format!(
+            "fn a(){{ {};}}\nfn b(){{ x.f(); }}\n",
+            names.join("().") + "()"
+        );
+        let calls = extract_call_facts(&body, 1);
+        assert!(line_at_call_budget(calls.iter(), 1));
+        assert!(!line_at_call_budget(calls.iter(), 2));
     }
 
     #[test]

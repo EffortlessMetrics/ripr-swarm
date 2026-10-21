@@ -26,6 +26,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_map_insert_count_empty/input --diff <cwd>/fixtures/rust_map_insert_count_empty/diff.patch --mode fast probe:src_lib.rs:side_effect:1e5fb897
   ripr context --root <cwd>/fixtures/rust_map_insert_count_empty/input --diff <cwd>/fixtures/rust_map_insert_count_empty/diff.patch --mode fast --at probe:src_lib.rs:side_effect:1e5fb897
+  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:side_effect:1e5fb897 --root <cwd>/fixtures/rust_map_insert_count_empty/input` for the full gate's answer
 No test stub here: the change shows up as a side effect or call, which needs an observer or mock ripr cannot write
 
 Hidden:

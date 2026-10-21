@@ -130,6 +130,10 @@ refreshing the workflow. These commands can be pasted from another directory.
 If the root cannot be represented losslessly, the refusal omits executable
 retries and names the UTF-8-parent/alias remedy; existing files remain intact.
 Where quoting differs, a labeled PowerShell form accompanies the command.
+Workflow refresh warnings from `init` and `doctor` follow the same root and
+quoting rules, including the upgrade instruction emitted by an unreleased
+generator. If the selected root cannot be represented losslessly, the warning
+remains but its executable refresh command is omitted.
 
 | Flag | Default | Notes |
 | --- | --- | --- |
@@ -355,7 +359,7 @@ Renders a single finding in human format.
 ```text
 ripr explain [--root PATH] [--base REV] [--worktree | --diff PATH] [--from PATH]
              [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH]
-             [--suppression-policy PATH] <finding-id | file:line>
+             [--suppression-policy PATH] [--quiet] <finding-id | file:line>
 ```
 
 The trailing positional argument selects the finding. Either form works:
@@ -381,7 +385,7 @@ ripr context [--root PATH] [--base REV] [--worktree | --diff PATH] [--from PATH]
              [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH]
              [--suppression-policy PATH]
              (--at | --finding) <finding-id | file:line>
-             [--max-related-tests N] [--json]
+             [--max-related-tests N] [--json] [--quiet]
 ```
 
 | Flag | Default | Notes |
@@ -389,6 +393,7 @@ ripr context [--root PATH] [--base REV] [--worktree | --diff PATH] [--from PATH]
 | `--at SELECTOR` | _(required)_ | Same selector grammar as `explain`. `--finding` is an alias. |
 | `--max-related-tests N` | `ripr.toml` `reports.max_related_tests`, otherwise `5` | Caps the number of related tests embedded in the packet. |
 | `--json` | _(off)_ | Forces JSON; `context` already returns JSON-shaped output, this flag is for parity with `check`. |
+| `--quiet` | _(off)_ | Suppresses the stderr progress stream, like `ripr check --quiet`. `explain` accepts it too. Stdout, exit codes and errors are unchanged. |
 
 ### `ripr doctor`
 
@@ -1153,6 +1158,12 @@ languages continue. The accepted managed producer values are
 | `executable` | path | `perl-ripr-facts` on PATH for the canonical producer; `perllsp` on PATH for `perllsp`/`perl-lsp` | Overrides the Perl facts exporter executable path in managed mode, but only when the user running ripr sets `RIPR_ALLOW_REPO_PERL_EXECUTABLE=1`; without it ripr ignores the key, says so, and uses the PATH default, so a cloned repository cannot choose a program for `ripr check`, `ripr doctor` or `ripr lsp` to run. No producer is invoked merely because a default executable exists. |
 | `timeout_ms` | integer ≥ 1 | `30000` | Maximum time in milliseconds for the managed producer invocation. `0` is rejected at parse time with a named error — it does not disable the timeout; remove the key for the default. |
 | `cache_dir` | path | `target/ripr/perl-facts` | Directory for generated Perl fact packets in managed mode. Must be a repository-relative path without `..`; an absolute or escaping path is a config error. |
+
+`executable` must be nonempty and contain no NUL characters. These invalid
+values fail configuration validation even when the executable opt-in is unset.
+Other executable paths retain their exact spelling, including spaces, Unicode,
+absolute paths and platform separators; validation does not probe their existence.
+Remove the key to use the producer's default exporter.
 
 A timed-out or failed managed export does not replace the previous published
 packet. Each invocation stages its output separately. Once its process has

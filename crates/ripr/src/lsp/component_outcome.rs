@@ -285,8 +285,10 @@ pub(super) const CLIENT_VISIBLE_MESSAGE_CHAR_BOUND: usize = 240;
 /// Normalize, path-redact, and size-bound one free-text detail string before
 /// it can reach a client surface. Single source for the LSP path: the
 /// backend's health-failure messages delegate here so error text is governed
-/// once (#1997). When the redacted text exceeds the bound, the result ends
-/// with `…` and still fits in the 240-character budget (#8584).
+/// once (#1997). Absolute path tokens remain redacted when they are wrapped
+/// in quotes, backticks, or brackets; the wrappers stay in place (#8724).
+/// When the redacted text exceeds the bound, the result ends with `…` and
+/// still fits in the 240-character budget (#8584).
 pub(super) fn bounded_message(message: &str) -> String {
     let normalized = message
         .chars()
@@ -297,19 +299,7 @@ pub(super) fn bounded_message(message: &str) -> String {
         .collect::<String>();
     let path_safe = normalized
         .split_whitespace()
-        .map(|token| {
-            if token.starts_with('/')
-                || token.starts_with('\\')
-                || token
-                    .as_bytes()
-                    .get(1)
-                    .is_some_and(|character| *character == b':')
-            {
-                "<path>"
-            } else {
-                token
-            }
-        })
+        .map(redact_absolute_path_token)
         .collect::<Vec<_>>()
         .join(" ");
     if path_safe.chars().count() <= CLIENT_VISIBLE_MESSAGE_CHAR_BOUND {
@@ -321,6 +311,53 @@ pub(super) fn bounded_message(message: &str) -> String {
         .collect::<String>();
     bounded.push('…');
     bounded
+}
+
+/// Quote, backtick, and bracket wrappers that can hide an absolute path
+/// at the start of a whitespace token (#8724).
+const PATH_TOKEN_LEADING_WRAPPERS: &[char] = &['`', '\'', '"', '[', '{'];
+
+/// Matching closers plus ordinary trailing sentence punctuation. The
+/// wrappers are stripped only for the path test and then put back so
+/// `` `/abs` `` becomes `` `<path>` `` rather than a rewritten sentence.
+const PATH_TOKEN_TRAILING_PUNCTUATION: &[char] =
+    &['`', '\'', '"', ']', '}', ',', '.', ';', '!', '?'];
+
+fn redact_absolute_path_token(token: &str) -> std::borrow::Cow<'_, str> {
+    let leading_len = token
+        .chars()
+        .take_while(|character| PATH_TOKEN_LEADING_WRAPPERS.contains(character))
+        .map(char::len_utf8)
+        .sum();
+    let Some((leading, remainder)) = token.split_at_checked(leading_len) else {
+        return std::borrow::Cow::Borrowed(token);
+    };
+    let trailing_len = remainder
+        .chars()
+        .rev()
+        .take_while(|character| PATH_TOKEN_TRAILING_PUNCTUATION.contains(character))
+        .map(char::len_utf8)
+        .sum();
+    let Some(core_end) = remainder.len().checked_sub(trailing_len) else {
+        return std::borrow::Cow::Borrowed(token);
+    };
+    let Some((core, trailing)) = remainder.split_at_checked(core_end) else {
+        return std::borrow::Cow::Borrowed(token);
+    };
+    if is_absolute_path_token(core) {
+        std::borrow::Cow::Owned(format!("{leading}<path>{trailing}"))
+    } else {
+        std::borrow::Cow::Borrowed(token)
+    }
+}
+
+fn is_absolute_path_token(token: &str) -> bool {
+    token.starts_with('/')
+        || token.starts_with('\\')
+        || token
+            .as_bytes()
+            .get(1)
+            .is_some_and(|character| *character == b':')
 }
 
 #[cfg(test)]
@@ -483,6 +520,52 @@ mod tests {
             bounded.chars().count(),
             super::CLIENT_VISIBLE_MESSAGE_CHAR_BOUND,
             "{bounded}"
+        );
+    }
+
+    /// #8724: a backticked POSIX path starts with a backtick, so a
+    /// leading-slash-only test left the absolute token intact.
+    #[test]
+    fn bounded_message_redacts_a_backticked_posix_path() {
+        let leaked = "/abs/root/target/debug/missing-base";
+        let message = format!("the base `{leaked}` does not resolve to a commit");
+        let bounded = super::bounded_message(&message);
+        assert_eq!(
+            bounded, "the base `<path>` does not resolve to a commit",
+            "{bounded}"
+        );
+        assert!(
+            !bounded.contains("/abs/root"),
+            "backticks must not hide the path token: {bounded}"
+        );
+    }
+
+    /// #8724: a quoted Windows drive path starts with `"` rather than
+    /// the drive letter. Assemble the drive so the local-context gate
+    /// does not see a path literal.
+    #[test]
+    fn bounded_message_redacts_a_quoted_windows_path() {
+        let drive = "D:";
+        let leaked = format!(r#""{drive}\abs\root\file.rs""#);
+        let message = format!("read {leaked} failed");
+        let bounded = super::bounded_message(&message);
+        assert_eq!(bounded, r#"read "<path>" failed"#, "{bounded}");
+        assert!(
+            !bounded.contains(r"\abs\root"),
+            "quotes must not hide the path token: {bounded}"
+        );
+    }
+
+    /// #8724: trailing sentence punctuation stays after `<path>`.
+    #[test]
+    fn bounded_message_redacts_a_path_and_keeps_trailing_punctuation() {
+        let leaked = "/abs/root/ledger.json";
+        let message = format!("read {leaked}, then retry");
+        let bounded = super::bounded_message(&message);
+        assert_eq!(bounded, "read <path>, then retry", "{bounded}");
+        assert!(
+            !bounded.contains("/abs/root"),
+            "trailing punctuation must not hide the path token: {bounded}"
         );
     }
 

@@ -41,7 +41,7 @@
         "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach expect_response: direct_owner_call_keeps_the_file_related, message_only_error_predicate_never_pins, shadowed_callee_never_credits_the_seam", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Ok(build_response(id.trim(), method)?)", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches error variant: Ok(build_response(id.trim(), method)?) (line 62)", "related test tests/protocol.rs:43 message_only_error_predicate_never_pins uses none unknown oracle", "related test tests/protocol.rs:34 shadowed_callee_never_credits_the_seam uses none unknown oracle", "related test tests/protocol.rs:55 swallowed_error_arm_never_credits uses none unknown oracle", "related test tests/protocol.rs:25 variable_binding_scrutinee_keeps_existing_weaker_meaning uses none unknown oracle", "related test tests/protocol.rs:4 direct_owner_call_keeps_the_file_related uses none unknown oracle: expect_response(\"42|workspace/refresh\", \"42\").unwrap()", "source function argument value \"42\" at line 5", "source function argument value \"42|workspace/refresh\" at line 5", "source assertion argument value \"42\" at line 6", "source function argument value \"42\" at line 26", "source function argument value \"42|workspace/refresh\" at line 26", "source assertion argument value \"42\" at line 28", "source function argument value \"42\" at line 36", "source assertion argument value \"42\" at line 37"],
+      "evidence_path": ["reach yes: Related tests appear to reach expect_response: direct_owner_call_keeps_the_file_related, message_only_error_predicate_never_pins, shadowed_callee_never_credits_the_seam", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Ok(build_response(id.trim(), method)?)", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches error variant: Ok(build_response(id.trim(), method)?) (line 62)", "related test tests/protocol.rs:43 message_only_error_predicate_never_pins uses none unknown oracle", "related test tests/protocol.rs:34 shadowed_callee_never_credits_the_seam uses none unknown oracle", "related test tests/protocol.rs:55 swallowed_error_arm_never_credits uses none unknown oracle", "related test tests/protocol.rs:25 variable_binding_scrutinee_keeps_existing_weaker_meaning uses none unknown oracle", "related test tests/protocol.rs:4 direct_owner_call_keeps_the_file_related uses none unknown oracle: expect_response(\"42|workspace/refresh\", \"42\").unwrap()", "source function argument value expected_id = \"42\" at line 5", "source function argument value raw = \"42|workspace/refresh\" at line 5", "source assertion argument value \"42\" at line 6", "source function argument value expected_id = \"42\" at line 26", "source function argument value raw = \"42|workspace/refresh\" at line 26", "source assertion argument value \"42\" at line 28", "source function argument value raw = \"42\" at line 36", "source assertion argument value \"42\" at line 37"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Ok(build_response(id.trim(), method)?)","line":62}
       ],
@@ -63,12 +63,12 @@
         "observed_values": [
           {
             "line": 5,
-            "value": "\"42\"",
+            "value": "expected_id = \"42\"",
             "context": "function_argument"
           },
           {
             "line": 5,
-            "value": "\"42|workspace/refresh\"",
+            "value": "raw = \"42|workspace/refresh\"",
             "context": "function_argument"
           },
           {
@@ -78,12 +78,12 @@
           },
           {
             "line": 26,
-            "value": "\"42\"",
+            "value": "expected_id = \"42\"",
             "context": "function_argument"
           },
           {
             "line": 26,
-            "value": "\"42|workspace/refresh\"",
+            "value": "raw = \"42|workspace/refresh\"",
             "context": "function_argument"
           },
           {
@@ -93,7 +93,7 @@
           },
           {
             "line": 36,
-            "value": "\"42\"",
+            "value": "raw = \"42\"",
             "context": "function_argument"
           },
           {
@@ -103,12 +103,12 @@
           },
           {
             "line": 44,
-            "value": "\"42\"",
+            "value": "expected_id = \"42\"",
             "context": "function_argument"
           },
           {
             "line": 44,
-            "value": "\"42|workspace/refresh\"",
+            "value": "raw = \"42|workspace/refresh\"",
             "context": "function_argument"
           },
           {
@@ -118,12 +118,12 @@
           },
           {
             "line": 56,
-            "value": "\"42\"",
+            "value": "expected_id = \"42\"",
             "context": "function_argument"
           },
           {
             "line": 56,
-            "value": "\"42|workspace/refresh\"",
+            "value": "raw = \"42|workspace/refresh\"",
             "context": "function_argument"
           },
           {
@@ -138,12 +138,12 @@
       "observed_values": [
         {
           "line": 5,
-          "value": "\"42\"",
+          "value": "expected_id = \"42\"",
           "context": "function_argument"
         },
         {
           "line": 5,
-          "value": "\"42|workspace/refresh\"",
+          "value": "raw = \"42|workspace/refresh\"",
           "context": "function_argument"
         },
         {
@@ -153,12 +153,12 @@
         },
         {
           "line": 26,
-          "value": "\"42\"",
+          "value": "expected_id = \"42\"",
           "context": "function_argument"
         },
         {
           "line": 26,
-          "value": "\"42|workspace/refresh\"",
+          "value": "raw = \"42|workspace/refresh\"",
           "context": "function_argument"
         },
         {
@@ -168,7 +168,7 @@
         },
         {
           "line": 36,
-          "value": "\"42\"",
+          "value": "raw = \"42\"",
           "context": "function_argument"
         },
         {
@@ -178,12 +178,12 @@
         },
         {
           "line": 44,
-          "value": "\"42\"",
+          "value": "expected_id = \"42\"",
           "context": "function_argument"
         },
         {
           "line": 44,
-          "value": "\"42|workspace/refresh\"",
+          "value": "raw = \"42|workspace/refresh\"",
           "context": "function_argument"
         },
         {
@@ -193,12 +193,12 @@
         },
         {
           "line": 56,
-          "value": "\"42\"",
+          "value": "expected_id = \"42\"",
           "context": "function_argument"
         },
         {
           "line": 56,
-          "value": "\"42|workspace/refresh\"",
+          "value": "raw = \"42|workspace/refresh\"",
           "context": "function_argument"
         },
         {
@@ -221,7 +221,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that it runs as the standard macro"
+          "why": "assertion not credited: ripr could not establish that this assertion counts here"
         },
         {
           "name": "shadowed_callee_never_credits_the_seam",
@@ -233,7 +233,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that it runs as the standard macro"
+          "why": "assertion not credited: ripr could not establish that this assertion counts here"
         },
         {
           "name": "swallowed_error_arm_never_credits",
@@ -245,7 +245,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that it runs as the standard macro"
+          "why": "assertion not credited: ripr could not establish that this assertion counts here"
         },
         {
           "name": "variable_binding_scrutinee_keeps_existing_weaker_meaning",
@@ -257,7 +257,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that it runs as the standard macro"
+          "why": "assertion not credited: ripr could not establish that this assertion counts here"
         },
         {
           "name": "direct_owner_call_keeps_the_file_related",
@@ -312,7 +312,7 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach expect_response: direct_owner_call_keeps_the_file_related, message_only_error_predicate_never_pins, shadowed_callee_never_credits_the_seam", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: No complete owner-bound propagation witness found for returned value: Ok(build_response(id, method)?)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: Ok(build_response(id, method)?) (line 62)", "related test tests/protocol.rs:4 direct_owner_call_keeps_the_file_related uses strong exact value oracle: assert_eq!(response.id, \"42\");", "related test tests/protocol.rs:43 message_only_error_predicate_never_pins uses none unknown oracle", "related test tests/protocol.rs:34 shadowed_callee_never_credits_the_seam uses none unknown oracle", "related test tests/protocol.rs:55 swallowed_error_arm_never_credits uses none unknown oracle", "related test tests/protocol.rs:25 variable_binding_scrutinee_keeps_existing_weaker_meaning uses none unknown oracle", "source function argument value \"42\" at line 5", "source function argument value \"42|workspace/refresh\" at line 5", "source assertion argument value \"42\" at line 6", "source function argument value \"42\" at line 26", "source function argument value \"42|workspace/refresh\" at line 26", "source assertion argument value \"42\" at line 28", "source function argument value \"42\" at line 36", "source assertion argument value \"42\" at line 37"],
+      "evidence_path": ["reach yes: Related tests appear to reach expect_response: direct_owner_call_keeps_the_file_related, message_only_error_predicate_never_pins, shadowed_callee_never_credits_the_seam", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation weak: No complete owner-bound propagation witness found for returned value: Ok(build_response(id, method)?)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: Ok(build_response(id, method)?) (line 62)", "related test tests/protocol.rs:4 direct_owner_call_keeps_the_file_related uses strong exact value oracle: assert_eq!(response.id, \"42\");", "related test tests/protocol.rs:43 message_only_error_predicate_never_pins uses none unknown oracle", "related test tests/protocol.rs:34 shadowed_callee_never_credits_the_seam uses none unknown oracle", "related test tests/protocol.rs:55 swallowed_error_arm_never_credits uses none unknown oracle", "related test tests/protocol.rs:25 variable_binding_scrutinee_keeps_existing_weaker_meaning uses none unknown oracle", "source function argument value expected_id = \"42\" at line 5", "source function argument value raw = \"42|workspace/refresh\" at line 5", "source assertion argument value \"42\" at line 6", "source function argument value expected_id = \"42\" at line 26", "source function argument value raw = \"42|workspace/refresh\" at line 26", "source assertion argument value \"42\" at line 28", "source function argument value raw = \"42\" at line 36", "source assertion argument value \"42\" at line 37"],
       "flow_sinks": [
         {"kind":"return_value","text":"Ok(build_response(id, method)?)","line":62}
       ],
@@ -334,12 +334,12 @@
         "observed_values": [
           {
             "line": 5,
-            "value": "\"42\"",
+            "value": "expected_id = \"42\"",
             "context": "function_argument"
           },
           {
             "line": 5,
-            "value": "\"42|workspace/refresh\"",
+            "value": "raw = \"42|workspace/refresh\"",
             "context": "function_argument"
           },
           {
@@ -349,12 +349,12 @@
           },
           {
             "line": 26,
-            "value": "\"42\"",
+            "value": "expected_id = \"42\"",
             "context": "function_argument"
           },
           {
             "line": 26,
-            "value": "\"42|workspace/refresh\"",
+            "value": "raw = \"42|workspace/refresh\"",
             "context": "function_argument"
           },
           {
@@ -364,7 +364,7 @@
           },
           {
             "line": 36,
-            "value": "\"42\"",
+            "value": "raw = \"42\"",
             "context": "function_argument"
           },
           {
@@ -374,12 +374,12 @@
           },
           {
             "line": 44,
-            "value": "\"42\"",
+            "value": "expected_id = \"42\"",
             "context": "function_argument"
           },
           {
             "line": 44,
-            "value": "\"42|workspace/refresh\"",
+            "value": "raw = \"42|workspace/refresh\"",
             "context": "function_argument"
           },
           {
@@ -389,12 +389,12 @@
           },
           {
             "line": 56,
-            "value": "\"42\"",
+            "value": "expected_id = \"42\"",
             "context": "function_argument"
           },
           {
             "line": 56,
-            "value": "\"42|workspace/refresh\"",
+            "value": "raw = \"42|workspace/refresh\"",
             "context": "function_argument"
           },
           {
@@ -409,12 +409,12 @@
       "observed_values": [
         {
           "line": 5,
-          "value": "\"42\"",
+          "value": "expected_id = \"42\"",
           "context": "function_argument"
         },
         {
           "line": 5,
-          "value": "\"42|workspace/refresh\"",
+          "value": "raw = \"42|workspace/refresh\"",
           "context": "function_argument"
         },
         {
@@ -424,12 +424,12 @@
         },
         {
           "line": 26,
-          "value": "\"42\"",
+          "value": "expected_id = \"42\"",
           "context": "function_argument"
         },
         {
           "line": 26,
-          "value": "\"42|workspace/refresh\"",
+          "value": "raw = \"42|workspace/refresh\"",
           "context": "function_argument"
         },
         {
@@ -439,7 +439,7 @@
         },
         {
           "line": 36,
-          "value": "\"42\"",
+          "value": "raw = \"42\"",
           "context": "function_argument"
         },
         {
@@ -449,12 +449,12 @@
         },
         {
           "line": 44,
-          "value": "\"42\"",
+          "value": "expected_id = \"42\"",
           "context": "function_argument"
         },
         {
           "line": 44,
-          "value": "\"42|workspace/refresh\"",
+          "value": "raw = \"42|workspace/refresh\"",
           "context": "function_argument"
         },
         {
@@ -464,12 +464,12 @@
         },
         {
           "line": 56,
-          "value": "\"42\"",
+          "value": "expected_id = \"42\"",
           "context": "function_argument"
         },
         {
           "line": 56,
-          "value": "\"42|workspace/refresh\"",
+          "value": "raw = \"42|workspace/refresh\"",
           "context": "function_argument"
         },
         {
@@ -504,7 +504,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that it runs as the standard macro"
+          "why": "assertion not credited: ripr could not establish that this assertion counts here"
         },
         {
           "name": "shadowed_callee_never_credits_the_seam",
@@ -516,7 +516,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that it runs as the standard macro"
+          "why": "assertion not credited: ripr could not establish that this assertion counts here"
         },
         {
           "name": "swallowed_error_arm_never_credits",
@@ -528,7 +528,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that it runs as the standard macro"
+          "why": "assertion not credited: ripr could not establish that this assertion counts here"
         },
         {
           "name": "variable_binding_scrutinee_keeps_existing_weaker_meaning",
@@ -540,7 +540,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "assertion_not_credited",
-          "why": "assertion not credited: ripr could not establish that it runs as the standard macro"
+          "why": "assertion not credited: ripr could not establish that this assertion counts here"
         }
       ],
       "stop_reasons": [],

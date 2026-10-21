@@ -1,0 +1,11 @@
+diff --git a/src/settingsLoaded.ts b/src/settingsLoaded.ts
+index 0000000..1111111 100644
+--- a/src/settingsLoaded.ts
++++ b/src/settingsLoaded.ts
+@@ -8,5 +8,5 @@
+ }
+ 
+ export function markLoaded(cfg: Flags): Flags {
+-  return { ...cfg, ok: true };
++  return { ...cfg };
+ }

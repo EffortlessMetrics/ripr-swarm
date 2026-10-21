@@ -1323,6 +1323,75 @@ Evidence
 }
 
 #[test]
+fn evidence_promotion_human_oracle_line_accepts_unclassified_ungraded_wording() {
+    let line = "- related test tests/a.rs:3 t uses an unclassified oracle, not graded against this probe: assert_eq!(f(), 1)";
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        line, "unknown", "unknown"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "exact_value",
+        "unknown"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line, "unknown", "strong"
+    ));
+}
+
+#[test]
+fn evidence_promotion_human_oracle_line_accepts_kind_ungraded_wording() {
+    let line = "- related test tests/a.rs:3 t uses exact value oracle, not graded against this probe: assert_eq!(f(), 1)";
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "exact_value",
+        "unknown"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "exact_value",
+        "strong"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "smoke_only",
+        "unknown"
+    ));
+    let stale = "- related test tests/a.rs:3 t uses unknown exact value oracle: assert_eq!(f(), 1)";
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        stale,
+        "exact_value",
+        "unknown"
+    ));
+}
+
+#[test]
+fn evidence_promotion_human_oracle_line_accepts_absent_oracle_wording() {
+    let line = "- related test tests/a.rs:3 t uses no oracle; misses: has no assertion";
+    assert!(super::evidence_promotion_human_oracle_line_matches(
+        line, "unknown", "none"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        "- related test tests/a.rs:3 t uses none unknown oracle; misses: has no assertion",
+        "unknown",
+        "none"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        "- related test tests/a.rs:3 t uses no oracles here",
+        "unknown",
+        "none"
+    ));
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line, "unknown", "weak"
+    ));
+    // An absent oracle carries no kind, so a concrete expected kind cannot match it.
+    assert!(!super::evidence_promotion_human_oracle_line_matches(
+        line,
+        "exact_value",
+        "none"
+    ));
+}
+
+#[test]
 fn evidence_promotion_semantic_assertions_accept_human_oracle_projection() {
     let assertions = vec![super::EvidencePromotionSemanticAssertion::ExpectedOracle {
         kind: "exact_value".to_string(),
@@ -11257,9 +11326,21 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
     let cases = [
         (
             "pull_request",
+            Some("labeled"),
+            Some("merge-ready"),
+            RoutedRustEventRoute::LaunchFullGate,
+        ),
+        (
+            "pull_request",
+            Some("labeled"),
+            Some("Merge-Ready"),
+            RoutedRustEventRoute::LaunchFullGate,
+        ),
+        (
+            "pull_request",
             Some("ready_for_review"),
             None,
-            RoutedRustEventRoute::LaunchFullGate,
+            RoutedRustEventRoute::WorkflowNotTriggered,
         ),
         (
             "pull_request",
@@ -11283,13 +11364,13 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             "pull_request",
             Some("labeled"),
             Some("full-ci"),
-            RoutedRustEventRoute::WorkflowNotTriggered,
+            RoutedRustEventRoute::NonrequestLabel,
         ),
         (
             "pull_request",
             Some("labeled"),
             Some("windows-ci"),
-            RoutedRustEventRoute::WorkflowNotTriggered,
+            RoutedRustEventRoute::NonrequestLabel,
         ),
         (
             "pull_request",
@@ -11313,50 +11394,46 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         );
     }
 
-    let draft_resurrected = workflow.replace(
-        "    types: [ready_for_review]",
-        "    types: [ready_for_review, synchronize]",
-    );
+    let draft_resurrected =
+        workflow.replace("    types: [labeled]", "    types: [labeled, synchronize]");
     assert!(
         routed_rust_ready_event_contract_violations(&draft_resurrected)
             .iter()
             .any(|violation| {
                 violation.contains("must be exactly") && violation.contains("synchronize")
             }),
-        "re-admitting synchronize must fail the Ready-only contract: {:?}",
+        "re-admitting synchronize must fail the merge-ready request contract: {:?}",
         routed_rust_ready_event_contract_violations(&draft_resurrected)
     );
 
-    let label_resurrected = workflow.replace(
-        "    types: [ready_for_review]",
-        "    types: [ready_for_review, labeled]",
+    let ready_resurrected = workflow.replace(
+        "    types: [labeled]",
+        "    types: [labeled, ready_for_review]",
     );
     assert!(
-        routed_rust_ready_event_contract_violations(&label_resurrected)
+        routed_rust_ready_event_contract_violations(&ready_resurrected)
             .iter()
             .any(|violation| {
-                violation.contains("must be exactly") && violation.contains("labeled")
+                violation.contains("must be exactly") && violation.contains("ready_for_review")
             }),
-        "re-admitting label events must fail the Ready-only contract: {:?}",
-        routed_rust_ready_event_contract_violations(&label_resurrected)
+        "re-admitting the Ready transition must fail the merge-ready contract: {:?}",
+        routed_rust_ready_event_contract_violations(&ready_resurrected)
     );
 
-    let edited_resurrected = workflow.replace(
-        "    types: [ready_for_review]",
-        "    types: [ready_for_review, edited]",
-    );
+    let edited_resurrected =
+        workflow.replace("    types: [labeled]", "    types: [labeled, edited]");
     assert!(
         routed_rust_ready_event_contract_violations(&edited_resurrected)
             .iter()
             .any(|violation| {
                 violation.contains("must be exactly") && violation.contains("edited")
             }),
-        "re-admitting the edited activity type must fail the Ready-only contract: {:?}",
+        "re-admitting the edited activity type must fail the merge-ready request contract: {:?}",
         routed_rust_ready_event_contract_violations(&edited_resurrected)
     );
 
     let ready_dropped = workflow.replace(
-        "    types: [ready_for_review]",
+        "    types: [labeled]",
         "    types: [opened, synchronize, reopened]",
     );
     assert!(
@@ -11367,7 +11444,7 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&ready_dropped)
     );
 
-    let missing_types = workflow.replace("    types: [ready_for_review]\n", "");
+    let missing_types = workflow.replace("    types: [labeled]\n", "");
     assert!(
         routed_rust_ready_event_contract_violations(&missing_types)
             .iter()
@@ -11384,7 +11461,7 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&cancellation_disabled)
             .iter()
             .any(|violation| violation.contains("cancel-in-progress")),
-        "disabling Ready-run cancellation must fail: {:?}",
+        "disabling merge-ready cancellation must fail: {:?}",
         routed_rust_ready_event_contract_violations(&cancellation_disabled)
     );
 
@@ -11424,9 +11501,10 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
     );
 
     let shared_group = workflow.replace(
-        "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}",
-        "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}",
+        "format('{0}-{1}-{2}', github.workflow, github.event.pull_request.number || github.ref, github.event_name)",
+        "format('{0}-{1}', github.workflow, github.event.pull_request.number || github.ref)",
     );
+    assert_ne!(shared_group, workflow, "fixture must rewrite the group");
     assert!(
         routed_rust_ready_event_contract_violations(&shared_group)
             .iter()
@@ -11448,8 +11526,12 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
     );
 
     let pseudo_result = workflow.replace(
-        "    name: Ripr Rust Small Result",
-        "    name: ${{ github.event_name == 'pull_request' && 'Ripr Rust Small Ignored Label Event' || 'Ripr Rust Small Result' }}",
+        "'Merge-ready Nonrequest' }}",
+        "'Ripr Rust Small Ignored Label Event' }}",
+    );
+    assert_ne!(
+        pseudo_result, workflow,
+        "fixture must rewrite the nonrequest name"
     );
     assert!(
         routed_rust_ready_event_contract_violations(&pseudo_result)
@@ -11460,16 +11542,89 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
     );
 
     let renamed_result = workflow.replace(
-        "    name: Ripr Rust Small Result",
-        "    name: Ripr Rust Small Draft Result",
+        "&& 'Ripr Rust Small Result' ||",
+        "&& 'Ripr Rust Small Draft Result' ||",
+    );
+    assert_ne!(
+        renamed_result, workflow,
+        "fixture must rename the required context"
     );
     assert!(
         routed_rust_ready_event_contract_violations(&renamed_result)
             .iter()
-            .any(|violation| violation.contains("must post the static")),
+            .any(|violation| violation.contains("result job must be named by exactly")),
         "renaming the required result context must fail: {:?}",
         routed_rust_ready_event_contract_violations(&renamed_result)
     );
+
+    // Negative experiments for the skipped-required-job hazard: each mutation
+    // would let a nonrequest event produce, or a request skip, the required
+    // context, and must be rejected by name.
+    let static_required_name = workflow.replace(
+        "    name: ${{ (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}",
+        "    name: Ripr Rust Small Result",
+    );
+    assert_ne!(
+        static_required_name, workflow,
+        "fixture must rewrite the result name"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&static_required_name)
+            .iter()
+            .any(|violation| violation.contains("result job must be named by exactly")),
+        "a static result name posts the required context for ordinary labels: {:?}",
+        routed_rust_ready_event_contract_violations(&static_required_name)
+    );
+    let any_label_request = workflow.replace(
+        "github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result'",
+        "github.event.label.name != '') && 'Ripr Rust Small Result'",
+    );
+    assert_ne!(
+        any_label_request, workflow,
+        "fixture must widen the request label"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&any_label_request)
+            .iter()
+            .any(|violation| violation.contains("result job must be named by exactly")),
+        "any label must not earn the required context: {:?}",
+        routed_rust_ready_event_contract_violations(&any_label_request)
+    );
+    let skippable_result = workflow.replace(
+        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Summarize routed result",
+        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Summarize routed result",
+    );
+    assert_ne!(
+        skippable_result, workflow,
+        "fixture must make the result skippable"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&skippable_result)
+            .iter()
+            .any(|violation| violation.contains("job-level `if: always()`")),
+        "a skippable result reports success when skipped: {:?}",
+        routed_rust_ready_event_contract_violations(&skippable_result)
+    );
+    for job in ["route", "detect-docs-only", "admission"] {
+        let unguarded = workflow.replace(
+            "github.event_name != 'pull_request' || github.event.label.name == 'merge-ready'\n",
+            "true\n",
+        )
+        .replace(
+            "github.event_name != 'pull_request' || github.event.label.name == 'merge-ready')\n",
+            "true)\n",
+        );
+        assert_ne!(
+            unguarded, workflow,
+            "fixture must remove the request guards"
+        );
+        let violations = routed_rust_ready_event_contract_violations(&unguarded);
+        assert!(
+            violations.iter().any(|violation| violation
+                .contains(&format!("job `{job}` must carry the request guard"))),
+            "job {job} must be guarded against nonrequest labels: {violations:?}"
+        );
+    }
 }
 
 #[test]
@@ -31130,12 +31285,29 @@ covered_by_windows = ["cargo test windows_second"] # keep this selector
 covered_by_unix = ["cargo test unix_second"]
 covered_by = ["cargo test common_second"]
 "#;
+        let unicode_source =
+            source.replace("is still not an entry", "café 🦀 is still not an entry");
         for (case, source, multiline_command) in [
             ("lf", source.to_string(), "cargo test first\n[[allow]]\n"),
             (
                 "crlf",
                 source.replace('\n', "\r\n"),
                 "cargo test first\r\n[[allow]]\r\n",
+            ),
+            (
+                "unicode",
+                unicode_source.clone(),
+                "cargo test first\n[[allow]]\n",
+            ),
+            (
+                "unicode-crlf",
+                unicode_source.replace('\n', "\r\n"),
+                "cargo test first\r\n[[allow]]\r\n",
+            ),
+            (
+                "no-final-newline",
+                source.trim_end_matches('\n').to_string(),
+                "cargo test first\n[[allow]]\n",
             ),
         ] {
             // Preserve the selected TOML authority's newline bytes, rather
@@ -31182,6 +31354,30 @@ covered_by = ["cargo test common_second"]
                     ),
                 ],
                 "{case}: command order and attribution must come from parsed entries"
+            );
+            // Exercise rendered field diagnostics as well as entry attribution.
+            // Multibyte text, multiline strings and CRLF must keep physical lines.
+            let invalid = format!(
+                "{}\nmystery = \"unknown field\"\n",
+                source.trim_end_matches(['\r', '\n'])
+            );
+            write(&path, &invalid);
+            assert_eq!(
+                parse_file_policy_allowlist(&path.to_string_lossy()).err(),
+                Some(format!(
+                    "{}:29 unsupported non-Rust allowlist field `mystery`",
+                    path.display()
+                )),
+                "{case}"
+            );
+            write(&path, &source.replace("glob = \"docs/*.md\"", "glob = 42"));
+            assert_eq!(
+                parse_file_policy_allowlist(&path.to_string_lossy()).err(),
+                Some(format!(
+                    "{}:20 string value must be quoted (got: 42)",
+                    path.display()
+                )),
+                "{case}"
             );
         }
         Ok(())
@@ -54481,52 +54677,74 @@ fn check_pr_bounded_error_lines_are_crlf_normalized_and_capped() {
 
 #[test]
 fn check_pr_failure_report_replaces_stale_success_report() -> Result<(), String> {
-    with_repo_cwd(|| {
-        // Preserve any pre-existing report so the test leaves no false
-        // failure artifact behind for a real check-pr reader.
-        let report_path = Path::new("target")
-            .join("ripr")
-            .join("reports")
-            .join("check-pr.md");
-        let original = fs::read(&report_path).ok();
-        let outcome = (|| -> Result<(), String> {
-            super::write_report("check-pr.md", &super::check_pr_report(None))?;
-            let run_a = || Err("stale-replacement probe".to_string());
-            let gates = [super::CheckPrGate {
-                name: "gate-a",
-                reproduce: "run a",
-                run: &run_a,
-            }];
-            let result = super::run_check_pr_gates(&gates, &|failure| {
-                super::write_report("check-pr.md", &super::check_pr_report(Some(failure)))
-            });
-            assert!(result.is_err());
+    let guard = acquire_test_cwd_write_guard();
+    let old = std::env::current_dir().map_err(|err| format!("capture report-test cwd: {err}"))?;
+    let temp = std::env::temp_dir();
+    fs::create_dir_all(&temp).map_err(|err| format!("create runtime temp parent: {err}"))?;
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|err| format!("report-test timestamp: {err}"))?
+        .as_nanos();
+    let root = temp.join(format!(
+        "ripr-check-pr-report-{}-{stamp}",
+        std::process::id()
+    ));
+    // Ownership starts only after this exclusive create succeeds. An occupied
+    // leaf must refuse, never borrow or recursively remove another test's state.
+    fs::create_dir(&root).map_err(|err| {
+        format!(
+            "create exclusive report-test scratch {}: {err}",
+            root.display()
+        )
+    })?;
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        std::env::set_current_dir(&root)
+            .map_err(|err| format!("enter report-test scratch: {err}"))?;
+        super::write_report("check-pr.md", &super::check_pr_report(None))?;
+        let run_a = || Err("stale-replacement probe".to_string());
+        let gates = [super::CheckPrGate {
+            // This synthetic ci-fast failure has no stable inherited comparison;
+            // the existing owner refuses it before creating comparison worktrees.
+            name: "ci-fast",
+            reproduce: "run a",
+            run: &run_a,
+        }];
+        let result = super::run_check_pr_gates(&gates, &|failure| {
+            super::write_report("check-pr.md", &super::check_pr_report(Some(failure)))
+        });
+        assert!(result.is_err());
 
-            let text = fs::read_to_string("target/ripr/reports/check-pr.md")
-                .map_err(|err| format!("read check-pr.md: {err}"))?;
-            assert!(
-                text.contains("Status: fail"),
-                "the failed current run must replace the stale success report"
-            );
-            assert!(!text.contains("Status: pass"));
-            Ok(())
-        })();
-        let restore = match &original {
-            Some(bytes) => fs::write(&report_path, bytes).map_err(|err| {
-                format!("failed to restore {}: {err}", normalize_path(&report_path))
-            }),
-            None => match fs::remove_file(&report_path) {
-                Ok(()) => Ok(()),
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(err) => Err(format!(
-                    "failed to clear {}: {err}",
-                    normalize_path(&report_path)
-                )),
-            },
-        };
-        restore?;
-        outcome
-    })
+        let text = fs::read_to_string("target/ripr/reports/check-pr.md")
+            .map_err(|err| format!("read check-pr.md: {err}"))?;
+        assert!(
+            text.contains("Status: fail"),
+            "the failed current run must replace the stale success report"
+        );
+        assert!(!text.contains("Status: pass"));
+        Ok(())
+    }));
+    // As with the existing cwd scopes, restore even after an assertion panic.
+    // A failed restoration retains the owned root instead of deleting a live cwd.
+    let restore = std::env::set_current_dir(&old).map_err(|err| {
+        format!(
+            "restore report-test cwd; retained {}: {err}",
+            root.display()
+        )
+    });
+    restore?;
+    let cleanup = fs::remove_dir_all(&root)
+        .map_err(|err| format!("remove report-test scratch {}: {err}", root.display()));
+    drop(guard);
+    match outcome {
+        Ok(result) => {
+            cleanup?;
+            result
+        }
+        Err(panic_payload) => {
+            let _ = cleanup;
+            std::panic::resume_unwind(panic_payload);
+        }
+    }
 }
 
 #[test]

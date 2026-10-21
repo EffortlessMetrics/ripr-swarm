@@ -17,7 +17,8 @@
 
 use crate::cli::command_catalog::{CommandCatalogEntry, CommandClass, catalog};
 use crate::cli::command_metadata::{
-    CommandCost, CommandMetadata, CommandOperation, WORKFLOW_TAGS, metadata_for,
+    CommandCost, CommandMetadata, CommandOperation, INSPECTION_CACHE_OUTPUT, WORKFLOW_TAGS,
+    metadata_for,
 };
 
 /// One typed workflow row. Every fact is static data; nothing here inspects a
@@ -167,17 +168,17 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
                 "cmd:explain",
                 "explain one finding against the same diff",
                 CommandCost::Analysis,
-                CommandOperation::ReadOnly,
+                CommandOperation::WritesArtifacts,
                 true,
-                &[],
+                &[INSPECTION_CACHE_OUTPUT],
             ),
             step(
                 "cmd:context",
                 "collect the tests and seams related to the finding",
                 CommandCost::Analysis,
-                CommandOperation::ReadOnly,
+                CommandOperation::WritesArtifacts,
                 true,
-                &[],
+                &[INSPECTION_CACHE_OUTPUT],
             ),
         ],
         optional_steps: &[
@@ -231,6 +232,7 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
         artifacts_written: &[
             "stdout findings (redirect to target/ripr/reports/ when a file is needed)",
             "--write-artifact PATH reusable findings artifact",
+            INSPECTION_CACHE_OUTPUT,
             "target/ripr/pilot packet (--out overrides) with the optional pilot step",
         ],
         recovery: &[

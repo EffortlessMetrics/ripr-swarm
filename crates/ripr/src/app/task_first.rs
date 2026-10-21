@@ -19,7 +19,7 @@ use crate::analysis::repair_route::{RepairPacketIneligibility, repair_packet_eli
 use crate::app::agent_brief::AgentBriefPolicy;
 use crate::app::agent_status::{AgentAttemptStatusReport, build_agent_attempt_status};
 use crate::app::repair_attempt::{
-    RepairAttemptId, RepairAttemptInventoryEntry, RepairAttemptState,
+    RepairAttemptId, RepairAttemptInventoryEntry, RepairAttemptManifest, RepairAttemptState,
     find_manifest_artifact_by_role, inventory_repair_attempts_from,
     load_repair_attempt_manifest_from,
 };
@@ -43,7 +43,13 @@ pub(crate) enum RepairStartDecision {
     Action(Box<CanonicalNextActionV1>),
     NoEligible {
         total_seams: usize,
+        /// Distinct ineligibility reasons rendered in the bounded list.
         reasons: Vec<String>,
+        /// The total count of distinct ineligibility reasons across the
+        /// visible seams (#8728). Greater than `reasons.len()` when the
+        /// bounded list was truncated; the renderer discloses the
+        /// remainder instead of presenting three as the whole story.
+        reasons_total: usize,
     },
 }
 
@@ -60,6 +66,10 @@ pub(crate) struct RepairStartFacts<'a> {
     /// Distinct ineligibility reasons across the visible seams, bounded by
     /// the gatherer. Empty when every visible seam is eligible.
     pub(crate) ineligible_reasons: &'a [String],
+    /// The total count of distinct ineligibility reasons across the
+    /// visible seams, tracked alongside the bounded list so a truncated
+    /// list can disclose its remainder (#8728).
+    pub(crate) ineligible_reasons_total: usize,
     /// The current HEAD, when it could be read.
     pub(crate) head: Option<&'a str>,
     /// The before-phase command for the single candidate, if any. Ignored
@@ -78,6 +88,7 @@ pub(crate) fn decide_repair_start(
         return Ok(RepairStartDecision::NoEligible {
             total_seams: facts.total_seams,
             reasons: facts.ineligible_reasons.to_vec(),
+            reasons_total: facts.ineligible_reasons_total,
         });
     }
     let single = facts.eligible_ids.len() == 1;
@@ -154,13 +165,53 @@ fn repair_refusal_reason(
     entry: &crate::analysis::ClassifiedSeam,
     policy: AgentBriefPolicy<'_>,
 ) -> Option<String> {
+    repair_refusal(entry, policy).map(|(_, reason)| reason)
+}
+
+/// What kind of refusal the repair gate gave, so a caller never explains an
+/// already-gripped seam with advice meant for a weak one (#8766).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RefusalKind {
+    /// The seam's existing tests already grip it on current static evidence.
+    AlreadyGripped,
+    /// The repair route is not ready for an automated start; the remaining
+    /// work is strengthening the related test by hand.
+    RouteNotReady,
+    /// Any other refusal (policy omission, cross-language limits, a class
+    /// that is not a headline target, no editable test target, ...): the
+    /// reason is stated as is, with no claim about what to do by hand.
+    Other,
+    /// The gate could not decide.
+    Unverified,
+}
+
+fn repair_refusal(
+    entry: &crate::analysis::ClassifiedSeam,
+    policy: AgentBriefPolicy<'_>,
+) -> Option<(RefusalKind, String)> {
     let eligibility = repair_packet_eligibility(entry);
     if !eligibility.eligible() {
-        return eligibility
-            .ineligibility
-            .map(|reason| ineligibility_label(reason).to_string());
+        return eligibility.ineligibility.map(|reason| {
+            let label = ineligibility_label(reason);
+            // #8766: an already-gripped seam has nothing left to repair;
+            // say so instead of the bare "not a headline repair target".
+            if reason == RepairPacketIneligibility::ClassNotHeadlineEligible
+                && entry.class == crate::analysis::seams::SeamGripClass::StronglyGripped
+            {
+                (
+                    RefusalKind::AlreadyGripped,
+                    format!("{label}: its existing tests already grip it (exposed) on current static evidence, so no static gap remains to repair"),
+                )
+            } else if reason == RepairPacketIneligibility::RouteNotReady {
+                (RefusalKind::RouteNotReady, label.to_string())
+            } else {
+                (RefusalKind::Other, label.to_string())
+            }
+        });
     }
-    policy.omission_reason_for_class(entry.class)
+    policy
+        .omission_reason_for_class(entry.class)
+        .map(|reason| (RefusalKind::Other, reason))
 }
 
 fn ineligibility_label(reason: RepairPacketIneligibility) -> &'static str {
@@ -176,6 +227,37 @@ fn ineligibility_label(reason: RepairPacketIneligibility) -> &'static str {
     }
 }
 
+/// Bound the displayed no-eligible reason list while keeping an honest
+/// distinct-reason total. The list renders at most `MAX_LISTED_REASONS`
+/// entries so the message stays bounded; the total keeps tracking every
+/// distinct reason across the whole inventory so the renderer can disclose
+/// the remainder instead of presenting the bound as the whole story (#8728).
+/// The distinctness set is intentionally separate from the displayed list:
+/// once the list fills, a repeated omitted reason must not inflate the
+/// count of distinct omitted reasons (a review finding on the first #8728
+/// pass: A, B, C, D, D reads as "two more" although only D is omitted).
+fn collect_no_eligible_reasons<'a>(
+    refusal_reasons: impl Iterator<Item = &'a str>,
+) -> (Vec<String>, usize) {
+    const MAX_LISTED_REASONS: usize = 3;
+    let mut reasons: Vec<String> = Vec::new();
+    let mut distinct: Vec<String> = Vec::new();
+    for reason in refusal_reasons {
+        if distinct.iter().any(|seen| seen == reason) {
+            continue;
+        }
+        distinct.push(reason.to_string());
+        if reasons.len() < MAX_LISTED_REASONS {
+            reasons.push(reason.to_string());
+        }
+    }
+    (reasons, distinct.len())
+}
+
+/// How to widen the seam budget, named once so every truncation refusal gives
+/// the same actionable recovery. The cap is an environment variable, not a flag.
+pub(crate) const WIDEN_SEAM_BUDGET: &str = "rerun with a wider seam budget (set RIPR_REPO_EXPOSURE_SEAM_LIMIT to a larger count, or 0 to remove the cap)";
+
 /// Gather the live authorities and decide one repair start. A truncated seam
 /// inventory fails closed: selecting from a partial list could hide
 /// candidates and silently pick first.
@@ -187,12 +269,10 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
         && info.analyzed < info.total
     {
         return Err(format!(
-            "repair start refused: the seam inventory is truncated ({} of {} seams); rerun with a wider seam budget",
+            "repair start refused: the seam inventory is truncated ({} of {} seams); {WIDEN_SEAM_BUDGET}",
             info.analyzed, info.total
         ));
     }
-    let mut eligible_ids = Vec::new();
-    let mut reasons: Vec<String> = Vec::new();
     // The before-phase packet producer refuses policy-omitted seams
     // (#4332), so the auto selector must apply the same omission: a
     // severity-off seam is never a start candidate, and the omission is
@@ -200,18 +280,18 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
     // classes this selector already excludes, or for configured-off
     // classes, so no eligible seam is lost.
     let policy = AgentBriefPolicy::from_config(&config);
+    let mut eligible_ids = Vec::new();
+    let mut refusal_reasons: Vec<String> = Vec::new();
     for entry in &classified {
         match repair_refusal_reason(entry, policy) {
             None => eligible_ids.push(entry.seam.id().as_str().to_string()),
-            Some(reason) => {
-                // Name the shared gate's own reason among the no-eligible
-                // reasons so the limitation is diagnosable.
-                if reasons.len() < 3 && !reasons.contains(&reason) {
-                    reasons.push(reason);
-                }
-            }
+            // Name the shared gate's own reason among the no-eligible
+            // reasons so the limitation is diagnosable.
+            Some(reason) => refusal_reasons.push(reason),
         }
     }
+    let (reasons, reasons_total) =
+        collect_no_eligible_reasons(refusal_reasons.iter().map(String::as_str));
     let bound = bound_root(&root.to_string_lossy());
     let head = current_git_head(root).ok();
     let spec = if eligible_ids.len() == 1 {
@@ -224,6 +304,7 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
         eligible_ids: &eligible_ids,
         total_seams: classified.len(),
         ineligible_reasons: &reasons,
+        ineligible_reasons_total: reasons_total,
         head: head.as_deref(),
         start_spec: spec.as_ref(),
     })
@@ -296,7 +377,7 @@ pub(crate) fn resolve_repair_subject_outcome(
         && info.analyzed < info.total
     {
         return Err(format!(
-            "repair item refused: the seam inventory is truncated ({} of {} seams); rerun with a wider seam budget",
+            "repair item refused: the seam inventory is truncated ({} of {} seams); {WIDEN_SEAM_BUDGET}",
             info.analyzed, info.total
         ));
     }
@@ -344,9 +425,311 @@ pub(crate) fn resolve_repair_subject_outcome(
     }
 }
 
+/// Why one named seam may not start a repair attempt right now (#8766), as
+/// computed by the shared admission gate ([`repair_refusal_reason`]).
+pub(crate) struct RepairStartRefusal {
+    /// The gate's own label, for example "repair route not ready".
+    pub(crate) reason: String,
+    /// The related test the remaining by-hand work targets, rendered as
+    /// `name` (file:line), when the seam's evidence names one.
+    pub(crate) related_test: Option<String>,
+    /// What kind of refusal this is; `Unverified` when the gate could not
+    /// decide and the start is withheld because it could not be verified.
+    pub(crate) kind: RefusalKind,
+}
+
+impl RepairStartRefusal {
+    fn unverified(reason: String) -> Self {
+        Self {
+            reason,
+            related_test: None,
+            kind: RefusalKind::Unverified,
+        }
+    }
+}
+
+/// The repair-admission gate behind every repair-start command `status` and
+/// `continue` print (#8766). It loads the seam inventory once, lazily, so a
+/// status read that checks several seams or attempts pays one load, and a
+/// read that never needs a start pays none. The verdict for one seam is the
+/// same eligibility `ripr repair` and `ripr agent repair --phase before`
+/// apply to it: [`repair_refusal_reason`], the recommended-test edit-target
+/// predicate and the held-inline-target (uncommitted production file) check.
+/// A dirty tracked tree elsewhere (the before phase's premise check) is
+/// state-dependent and deliberately not re-derived here; the start itself
+/// still re-checks it. No parallel validator.
+///
+/// Where the gate cannot decide (unreadable config, an inventory that cannot
+/// be built, a seam the inventory no longer names because seam ids move with
+/// byte offsets, or a seam beyond the seam-limit window) it does not admit by
+/// default: it returns an *unverified* refusal, so no bare start is printed
+/// and the note says the seam could not be verified.
+pub(crate) struct RepairStartGate {
+    root: std::path::PathBuf,
+    state: std::cell::OnceCell<GateState>,
+    /// Unit-test builds only: seam ids admitted regardless of the inventory.
+    #[cfg(test)]
+    admitted: Vec<String>,
+}
+
+enum GateState {
+    Loaded {
+        config: Box<crate::config::RiprConfig>,
+        classified: Vec<crate::analysis::ClassifiedSeam>,
+        truncated: bool,
+    },
+    Unavailable(String),
+    /// Unit-test builds only: admits every start.
+    #[cfg(test)]
+    Open,
+}
+
+impl RepairStartGate {
+    pub(crate) fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// The real gate: the inventory loads lazily on the first check.
+    pub(crate) fn real(root: &Path) -> Self {
+        Self {
+            root: root.to_path_buf(),
+            state: std::cell::OnceCell::new(),
+            #[cfg(test)]
+            admitted: Vec::new(),
+        }
+    }
+
+    /// The gate every production caller uses.
+    #[cfg(not(test))]
+    pub(crate) fn new(root: &Path) -> Self {
+        Self::real(root)
+    }
+
+    /// Unit-test builds: the lib's own unit tests exercise status with
+    /// fabricated seam ids in empty directories, so `new` is an explicitly
+    /// open gate there and those tests keep asserting recorded commands.
+    /// Tests that need a real verdict use [`Self::real`] or
+    /// [`Self::preloaded`]; the facade integration tests run the real binary.
+    #[cfg(test)]
+    pub(crate) fn new(root: &Path) -> Self {
+        let gate = Self::real(root);
+        let _ = gate.state.set(GateState::Open);
+        gate
+    }
+
+    /// A gate over a fixed classified inventory, for unit tests that need a
+    /// real verdict.
+    #[cfg(test)]
+    pub(crate) fn preloaded(root: &Path, classified: Vec<crate::analysis::ClassifiedSeam>) -> Self {
+        let gate = Self::real(root);
+        let _ = gate.state.set(GateState::Loaded {
+            config: Box::default(),
+            classified,
+            truncated: false,
+        });
+        gate
+    }
+
+    /// Like [`Self::preloaded`], but the named seam ids are admitted, so a
+    /// test can mix admitted and refused seams.
+    #[cfg(test)]
+    pub(crate) fn preloaded_admitting(
+        root: &Path,
+        classified: Vec<crate::analysis::ClassifiedSeam>,
+        admitted: &[&str],
+    ) -> Self {
+        let mut gate = Self::preloaded(root, classified);
+        gate.admitted = admitted.iter().map(|id| id.to_string()).collect();
+        gate
+    }
+
+    /// `None` when the gate admits a start for `seam_id`.
+    pub(crate) fn check(&self, seam_id: &str) -> Option<RepairStartRefusal> {
+        #[cfg(test)]
+        if self.admitted.iter().any(|id| id == seam_id) {
+            return None;
+        }
+        let state = self.state.get_or_init(|| load_gate_state(&self.root));
+        check_state(&self.root, state, seam_id)
+    }
+
+    /// Like [`Self::check`] for a recorded start that names no seam id: it
+    /// cannot be verified, so it is withheld without naming a seam.
+    pub(crate) fn check_optional(&self, seam_id: Option<&str>) -> Option<RepairStartRefusal> {
+        match seam_id {
+            Some(seam_id) => self.check(seam_id),
+            None => {
+                #[cfg(test)]
+                if matches!(self.state.get(), Some(GateState::Open)) {
+                    return None;
+                }
+                Some(RepairStartRefusal::unverified(
+                    "the recorded start names no seam".to_string(),
+                ))
+            }
+        }
+    }
+}
+
+fn load_gate_state(root: &Path) -> GateState {
+    let config = match load_for_root(root) {
+        Ok(config) => config,
+        Err(error) => {
+            return GateState::Unavailable(format!(
+                "the configuration could not be read ({error})"
+            ));
+        }
+    };
+    match crate::analysis::inventory_classified_seams_at_with_config(root, &config) {
+        Ok((classified, limit_info)) => GateState::Loaded {
+            truncated: limit_info
+                .as_ref()
+                .is_some_and(|info| info.analyzed < info.total),
+            config: Box::new(config),
+            classified,
+        },
+        Err(error) => {
+            GateState::Unavailable(format!("the seam inventory could not be built ({error})"))
+        }
+    }
+}
+
+fn check_state(root: &Path, state: &GateState, seam_id: &str) -> Option<RepairStartRefusal> {
+    let (config, classified, truncated) = match state {
+        GateState::Loaded {
+            config,
+            classified,
+            truncated,
+        } => (config, classified, *truncated),
+        GateState::Unavailable(why) => return Some(RepairStartRefusal::unverified(why.clone())),
+        #[cfg(test)]
+        GateState::Open => return None,
+    };
+    // The explicit-subject resolver refuses every start from a truncated
+    // inventory, so no seam in one can be verified as startable.
+    if truncated {
+        return Some(RepairStartRefusal::unverified(
+            "the seam inventory was truncated by the seam limit, and a start from a truncated inventory is refused"
+                .to_string(),
+        ));
+    }
+    let Some(entry) = classified
+        .iter()
+        .find(|entry| entry.seam.id().as_str() == seam_id)
+    else {
+        return Some(RepairStartRefusal::unverified(
+            "the current inventory no longer names this seam (seam ids change when the code shifts)"
+                .to_string(),
+        ));
+    };
+    repair_start_refusal_for_entry(root, entry, AgentBriefPolicy::from_config(config))
+}
+
+/// Whether the shared repair-admission gate refuses a start for `seam_id`.
+/// One-shot form of [`RepairStartGate`] for callers that check one seam.
+pub(crate) fn repair_start_refusal(root: &Path, seam_id: &str) -> Option<RepairStartRefusal> {
+    RepairStartGate::new(root).check(seam_id)
+}
+
+/// The gate applied to one classified seam: [`repair_refusal_reason`], the
+/// edit-target predicate and the held inline target, plus the related test
+/// the by-hand work targets.
+fn repair_start_refusal_for_entry(
+    root: &Path,
+    entry: &crate::analysis::ClassifiedSeam,
+    policy: AgentBriefPolicy<'_>,
+) -> Option<RepairStartRefusal> {
+    let (kind, reason) = repair_refusal(entry, policy)
+        .or_else(|| {
+            (!crate::output::agent_seam_packets::recommended_test_is_repair_edit_target(entry))
+                .then(|| {
+                    (
+                        RefusalKind::Other,
+                        "no test file ripr may edit: the recommended test target is neither a test surface nor the seam's governed inline test module".to_string(),
+                    )
+                })
+        })
+        .or_else(|| {
+            held_inline_target(root, &repair_packet_eligibility(entry).readiness).map(|file| {
+                (
+                    RefusalKind::Other,
+                    format!(
+                        "the inline test target `{file}` has uncommitted changes; commit or stash them first"
+                    ),
+                )
+            })
+        })?;
+    let related = entry
+        .evidence
+        .related_tests
+        .iter()
+        .find(|test| test.relation_reason == crate::domain::RelationReason::DirectOwnerCall)
+        .or_else(|| entry.evidence.related_tests.first());
+    let related_test = related.map(|test| {
+        let file = test.file.strip_prefix(root).unwrap_or(&test.file);
+        format!(
+            "`{}` ({}:{})",
+            test.test_name,
+            file.to_string_lossy().replace('\\', "/"),
+            test.line
+        )
+    });
+    Some(RepairStartRefusal {
+        reason,
+        related_test,
+        kind,
+    })
+}
+
+/// The prose that replaces a refused repair-start command: it states the
+/// refusal and that the remaining work is strengthening the named test's
+/// oracle by hand (#8766; automated strengthening of existing tests is #7217).
+pub(crate) fn repair_start_withheld_note(
+    root_display: &str,
+    seam_id: &str,
+    refusal: &RepairStartRefusal,
+) -> String {
+    let recheck = format!("rerun `ripr check --root {}`", shell_arg(root_display));
+    // A recorded start that names no seam is withheld without naming one.
+    let subject = if seam_id.is_empty() {
+        "the recorded start".to_string()
+    } else {
+        format!("seam `{seam_id}`")
+    };
+    match refusal.kind {
+        RefusalKind::Unverified => format!(
+            "no new repair attempt is offered for {subject}: could not verify that the repair gate admits it ({}); {recheck} to re-read the current seams",
+            refusal.reason
+        ),
+        // A static reading of current evidence, not a runtime result, and
+        // not a receipt: no completion is claimed for any attempt.
+        RefusalKind::AlreadyGripped => format!(
+            "no new repair attempt is offered for {subject}: {}. This is a static reading of the current evidence, not a runtime-verified result, and no completion is claimed for any attempt; {recheck} to re-read the seam",
+            refusal.reason
+        ),
+        RefusalKind::RouteNotReady => {
+            let work = match &refusal.related_test {
+                Some(test) => {
+                    format!("strengthening the oracle of the related test {test} by hand")
+                }
+                None => "adding or strengthening a test for that seam by hand".to_string(),
+            };
+            format!(
+                "no new repair attempt is offered for {subject}: {} (the repair eligibility gate behind `ripr repair` and the before phase refuses it). The remaining work is {work}; then {recheck} to re-read the seam",
+                refusal.reason
+            )
+        }
+        RefusalKind::Other => format!(
+            "no new repair attempt is offered for {subject}: {} (the repair eligibility gate behind `ripr repair` and the before phase refuses it); {recheck} to re-read the seam",
+            refusal.reason
+        ),
+    }
+}
+
 /// The repair route for the one finding the default human `ripr check`
-/// selects (#8166 Slice C), or `None` when that finding may not be offered
-/// a repair start. The seam↔finding binding is the shared
+/// selects (#8166 Slice C), or the named refusal when that finding may not
+/// be offered a repair start (#8729). The seam↔finding binding is the
+/// shared
 /// [`finding_for_seam`](super::repair_card_handoff::finding_for_seam)
 /// authority, and admission is the same [`repair_refusal_reason`] gate
 /// the explicit resolver applies, so the printed seam ID round-trips
@@ -367,35 +750,50 @@ pub(crate) fn resolve_repair_subject_outcome(
 /// finding's gap file, so no seam outside that file could claim this
 /// finding. Fail-closed throughout: a seam-limit-truncated candidate
 /// set, zero or several binding seams, an ineligible or policy-omitted
-/// seam, and any unreadable authority yield no route rather than a
-/// guessed one. When bounded evidence cannot decide eligibility the
-/// seam simply gets no route; `ripr repair` itself re-checks admission
-/// against the full inventory before starting any attempt.
+/// seam, and any unreadable authority refuse with a named reason rather
+/// than a guessed or silent route. `Silent` is deliberate only: the
+/// renderer never prints a runnable line for a static-limited finding
+/// (F3 — its limitation guidance on the same screen is authoritative), so
+/// an eligible seam under a static-limited finding still yields no route,
+/// and a run with no selected finding has nothing to name. A refusal the
+/// pipeline did compute is named even for a static-limited finding (#8729):
+/// "the gate refused this seam" must not read as "analysis could not
+/// decide". When bounded evidence cannot decide eligibility the refusal
+/// names the state; `ripr repair` itself re-checks admission against the
+/// full inventory before starting any attempt.
 pub(crate) fn check_repair_route(
     root: &Path,
     check_config: &crate::config::RiprConfig,
     output: &super::CheckOutput,
-) -> Option<crate::app::RepairRoute> {
-    let finding = crate::output::human::selected_triage_finding(output, check_config)?;
-    // #8166 residual (F3): a static-limited finding keeps its limitation
-    // guidance and gets no runnable repair line — the same static-limited
-    // definition the human triage state uses (a named static limitation, or
-    // a class static analysis could not establish a path for). Offering a
-    // repair start beside "inspect the static limitation before treating
-    // this as repair-ready" contradicts that guidance on one screen.
-    if finding.static_limit_kind.is_some()
+) -> crate::app::CheckRepairRoute {
+    use super::navigation::{CheckRepairRoute, RepairRouteRefusal};
+    let Some(finding) = crate::output::human::selected_triage_finding(output, check_config) else {
+        return CheckRepairRoute::Silent;
+    };
+    // #8166 residual (F3): a static-limited finding never gets a runnable
+    // repair line — the same static-limited definition the human triage
+    // state uses (a named static limitation, or a class static analysis
+    // could not establish a path for). Offering a repair start beside
+    // "inspect the static limitation before treating this as repair-ready"
+    // contradicts that guidance on one screen. The renderer enforces F3 on
+    // the `Route` arm; here the eligibility pipeline still runs so that a
+    // computed refusal is named instead of silent (#8729): a static-limited
+    // finding whose seam the gate refused must not read as "analysis could
+    // not decide" either.
+    let static_limited = finding.static_limit_kind.is_some()
         || matches!(
             finding.class,
             crate::domain::ExposureClass::NoStaticPath
                 | crate::domain::ExposureClass::InfectionUnknown
                 | crate::domain::ExposureClass::PropagationUnknown
                 | crate::domain::ExposureClass::StaticUnknown
-        )
-    {
-        return None;
-    }
-    let gap = finding.canonical_gap.as_ref()?;
-    let config = load_for_root(root).ok()?;
+        );
+    let Some(gap) = finding.canonical_gap.as_ref() else {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::NoCanonicalGap);
+    };
+    let Ok(config) = load_for_root(root) else {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::ConfigUnreadable);
+    };
     let evidence_files: Vec<std::path::PathBuf> = finding
         .related_tests
         .iter()
@@ -409,17 +807,20 @@ pub(crate) fn check_repair_route(
                 .then_some(relative)
         })
         .collect();
-    let classified = crate::analysis::classify_seams_in_file_with_related_at_with_config(
+    let Ok(classified) = crate::analysis::classify_seams_in_file_with_related_at_with_config(
         root,
         &config,
         Path::new(&gap.file),
         &evidence_files,
-    )
-    .ok()?;
+    ) else {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::ClassificationFailed);
+    };
     match crate::analysis::repo_exposure_seam_limit() {
-        Ok(Some((limit, _))) if classified.len() > limit => return None,
+        Ok(Some((limit, _))) if classified.len() > limit => {
+            return CheckRepairRoute::Refused(RepairRouteRefusal::SeamLimit);
+        }
         Ok(_) => {}
-        Err(_) => return None,
+        Err(_) => return CheckRepairRoute::Refused(RepairRouteRefusal::SeamLimit),
     }
     let policy = AgentBriefPolicy::from_config(&config);
     let mut bound = classified.iter().filter(|entry| {
@@ -432,16 +833,30 @@ pub(crate) fn check_repair_route(
         )
         .is_some_and(|bound_finding| bound_finding.id == finding.id)
     });
-    let entry = bound.next()?;
+    let Some(entry) = bound.next() else {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::NoBindingSeam);
+    };
     if bound.next().is_some() {
-        return None;
+        return CheckRepairRoute::Refused(RepairRouteRefusal::SeveralBindingSeams);
     }
-    if repair_refusal_reason(entry, policy).is_some() {
-        return None;
+    if let Some(reason) = repair_refusal_reason(entry, policy) {
+        return CheckRepairRoute::Refused(RepairRouteRefusal::Ineligible { reason });
     }
-    Some(crate::app::RepairRoute {
+    if static_limited {
+        // F3: no runnable line for a static-limited finding. The refusal
+        // arms above still named any concrete ineligibility; reaching here
+        // means the seam was eligible, so the limitation guidance on the
+        // same screen is the whole story and no advisory is added.
+        return CheckRepairRoute::Silent;
+    }
+    // `ripr repair` confines a production-file target to its inline test
+    // module and starts only from the committed file. Ask the edit cage's own
+    // predicate so the check screen never offers a start the attempt refuses.
+    let uncommitted_target = held_inline_target(root, &repair_packet_eligibility(entry).readiness);
+    CheckRepairRoute::Route(crate::app::RepairRoute {
         finding_id: finding.id.clone(),
         seam_id: entry.seam.id().as_str().to_string(),
+        uncommitted_target,
     })
 }
 
@@ -613,6 +1028,11 @@ pub(crate) fn select_continue_attempt(
                     .is_some()
                     {
                         trust_bound += 1;
+                    } else if crate::app::repair_attempt::after_refusal_budget_exhausted(&manifest)
+                    {
+                        // #8726: a spent retry budget refuses the after phase,
+                        // so the attempt is ended, not a continue candidate.
+                        terminal += 1;
                     } else {
                         eligible.push(manifest.repair_attempt_id.as_str().to_string());
                     }
@@ -648,9 +1068,487 @@ pub(crate) fn select_continue_attempt(
     }
 }
 
+/// An attempt a repeated `ripr repair` resumes instead of duplicating
+/// (#8742).
+pub(crate) struct ReusableAttempt {
+    pub(crate) attempt_id: String,
+    /// The persisted after-phase command; render it with
+    /// [`crate::agent::human_after_phase_follow_up`].
+    pub(crate) next_command: String,
+}
+
+/// The attempt a second `ripr repair` for `seam_id` resumes: an ordinary
+/// attempt (no Python trust binding) for the same seam that is still
+/// awaiting its edit and was prepared at exactly the current HEAD. Its
+/// before evidence is the evidence a fresh start would record, so a second
+/// attempt adds nothing and would make `ripr continue` ambiguous. Any
+/// other state, another seam, or a moved HEAD starts a new attempt. An
+/// unreadable store or HEAD also starts a new attempt: the attempt
+/// authority then makes its own decision.
+pub(crate) fn reusable_awaiting_attempt(root: &Path, seam_id: &str) -> Option<ReusableAttempt> {
+    let head = current_git_head(root).ok()?;
+    let entries = inventory_repair_attempts_from(root, None).ok()?;
+    let manifests = entries.iter().filter_map(|entry| match entry {
+        RepairAttemptInventoryEntry::Valid(manifest) => Some(manifest.as_ref()),
+        RepairAttemptInventoryEntry::Invalid { .. } => None,
+    });
+    pick_reusable_attempt(manifests, seam_id, &head)
+}
+
+/// Decision law of [`reusable_awaiting_attempt`], free of the filesystem.
+/// The newest matching attempt wins when earlier duplicates already exist.
+fn pick_reusable_attempt<'a>(
+    manifests: impl Iterator<Item = &'a RepairAttemptManifest>,
+    seam_id: &str,
+    head: &str,
+) -> Option<ReusableAttempt> {
+    manifests
+        .filter(|manifest| {
+            manifest.state == RepairAttemptState::AwaitingEdit
+                && manifest.seam_id == seam_id
+                && manifest.repository_head == head
+                // #8726: an attempt whose after-phase retry budget is spent
+                // refuses its after phase, so reusing it would strand `ripr
+                // repair` on a dead attempt instead of starting a fresh one.
+                && !crate::app::repair_attempt::after_refusal_budget_exhausted(manifest)
+                && find_manifest_artifact_by_role(
+                    manifest,
+                    crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE,
+                )
+                .is_none()
+        })
+        .max_by_key(|manifest| manifest.created_unix_ms)
+        .map(|manifest| ReusableAttempt {
+            attempt_id: manifest.repair_attempt_id.as_str().to_string(),
+            next_command: manifest.next_command.clone(),
+        })
+}
+
+/// The production file whose uncommitted changes would make `ripr repair`
+/// refuse this seam: the selected edit target (an existing test target or a
+/// producer-owned proposal, the same selection the repair packet's
+/// recommended test file uses), when it is a non-test-surface Rust file that
+/// differs from HEAD.
+fn held_inline_target(
+    root: &Path,
+    readiness: &crate::analysis::repair_route::RepairRouteReadiness,
+) -> Option<String> {
+    use crate::analysis::repair_route::RepairTargetSelection;
+    let file = match &readiness.target_selection {
+        RepairTargetSelection::Existing(target) => target.file(),
+        RepairTargetSelection::Proposed(proposal) => proposal.file.as_path(),
+        RepairTargetSelection::Missing => return None,
+    };
+    let relative = file.strip_prefix(root).unwrap_or(file);
+    let relative = relative.to_string_lossy().replace('\\', "/");
+    (!Path::new(&relative).is_absolute()
+        && !crate::analysis::is_test_surface_path(&relative)
+        && Path::new(&relative)
+            .extension()
+            .is_some_and(|ext| ext == "rs")
+        && crate::edit_cage::inline_target_is_uncommitted(root, &relative))
+    .then_some(relative)
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    fn proposed_readiness(
+        kind: crate::analysis::new_test_target::NewTestKind,
+        file: &str,
+    ) -> crate::analysis::repair_route::RepairRouteReadiness {
+        use crate::analysis::new_test_target::{NewTestProposalProvenance, NewTestTargetProposal};
+        use crate::analysis::repair_route::{
+            RepairRouteReadiness, RepairRouteState, RepairTargetSelection,
+        };
+        RepairRouteReadiness {
+            state: RepairRouteState::Ready,
+            seam_id: String::new(),
+            canonical_gap_id: None,
+            required_evidence: Vec::new(),
+            present_evidence: Vec::new(),
+            missing_evidence: Vec::new(),
+            target_selection: RepairTargetSelection::Proposed(NewTestTargetProposal {
+                kind,
+                file: std::path::PathBuf::from(file),
+                owner: "price".to_string(),
+                provenance: NewTestProposalProvenance::ProducerOwned,
+            }),
+            test_target: None,
+            proposed_oracle: None,
+            current_oracle: None,
+            authority_boundary: "",
+        }
+    }
+
+    /// A producer-proposed inline-unit target (no existing test target) names
+    /// its production file as the edit target, so a dirty one is held while a
+    /// clean one, an integration proposal and a missing target are not.
+    #[test]
+    fn held_inline_target_follows_the_selected_proposal_file() -> Result<(), String> {
+        use crate::analysis::new_test_target::NewTestKind;
+        use crate::analysis::repair_route::RepairTargetSelection;
+        use crate::testing::fixture_git::fixture_git_ok as git_ok;
+        let root = std::env::temp_dir().join(format!(
+            "ripr-held-inline-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|err| err.to_string())?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn price() {}\n")
+            .map_err(|err| err.to_string())?;
+        git_ok(&root, &["-c", "init.templateDir=", "init", "-q"])?;
+        git_ok(&root, &["config", "user.email", "ripr@example.invalid"])?;
+        git_ok(&root, &["config", "user.name", "RIPR Test"])?;
+        git_ok(&root, &["config", "commit.gpgSign", "false"])?;
+        git_ok(&root, &["add", "."])?;
+        git_ok(&root, &["commit", "-qm", "base"])?;
+        let inline = proposed_readiness(NewTestKind::InlineUnit, "src/lib.rs");
+
+        // Clean control: the committed proposed target is not held.
+        assert_eq!(held_inline_target(&root, &inline), None);
+
+        std::fs::write(root.join("src/lib.rs"), "pub fn price() { }\n")
+            .map_err(|err| err.to_string())?;
+        assert_eq!(
+            held_inline_target(&root, &inline).as_deref(),
+            Some("src/lib.rs")
+        );
+        // Not an inline production target: integration proposals live in tests/.
+        let integration = proposed_readiness(NewTestKind::Integration, "tests/price.rs");
+        assert_eq!(held_inline_target(&root, &integration), None);
+        let mut missing = proposed_readiness(NewTestKind::InlineUnit, "src/lib.rs");
+        missing.target_selection = RepairTargetSelection::Missing;
+        assert_eq!(held_inline_target(&root, &missing), None);
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    pub(crate) fn gate_entry(
+        class: crate::analysis::seams::SeamGripClass,
+        related: Vec<crate::analysis::test_grip_evidence::RelatedTestGrip>,
+    ) -> crate::analysis::ClassifiedSeam {
+        use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
+        use crate::domain::{Confidence, StageEvidence, StageState};
+        let stage = || StageEvidence::new(StageState::Yes, Confidence::Medium, "test stage");
+        let seam = RepoSeam::new(
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            SeamKind::PredicateBoundary,
+            42,
+            88,
+            "amount >= discount_threshold",
+            RequiredDiscriminator::BoundaryValue {
+                description: "amount >= discount_threshold".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        let seam_id = seam.id().clone();
+        crate::analysis::ClassifiedSeam {
+            seam,
+            evidence: crate::analysis::test_grip_evidence::TestGripEvidence {
+                seam_id,
+                related_tests: related.into_iter().map(std::sync::Arc::new).collect(),
+                reach: stage(),
+                activate: stage(),
+                propagate: stage(),
+                observe: stage(),
+                discriminate: stage(),
+                observed_values: Vec::new(),
+                missing_discriminators: Vec::new(),
+                new_test_target: None,
+                statically_contradicted_related_tests: 0,
+            },
+            class,
+        }
+    }
+
+    pub(crate) fn weak_related_test() -> crate::analysis::test_grip_evidence::RelatedTestGrip {
+        crate::analysis::test_grip_evidence::RelatedTestGrip {
+            test_name: "at_threshold_runs".to_string(),
+            file: std::path::PathBuf::from("tests/pricing.rs"),
+            line: 12,
+            test_target: None,
+            oracle_kind: crate::domain::OracleKind::RelationalCheck,
+            oracle_strength: crate::domain::OracleStrength::Weak,
+            evidence_summary: "relational assertion".to_string(),
+            relation_reason: crate::domain::RelationReason::DirectOwnerCall,
+            relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
+        }
+    }
+
+    /// #8766: a weakly gripped seam whose route is not ready is refused by
+    /// the shared gate, the related test is named for the by-hand work, and
+    /// the withheld note replaces a start command. The admitted-seam control
+    /// (a restart still printed) lives in the facade integration test.
+    #[test]
+    fn route_not_ready_seam_is_refused_with_the_related_test_named() -> Result<(), String> {
+        use crate::analysis::seams::SeamGripClass;
+        let config = crate::config::RiprConfig::default();
+        let policy = AgentBriefPolicy::from_config(&config);
+        let root = Path::new("/repo");
+
+        let not_ready = gate_entry(SeamGripClass::WeaklyGripped, vec![weak_related_test()]);
+        assert!(
+            !repair_packet_eligibility(&not_ready).eligible(),
+            "precondition: the producer flip must refuse this seam"
+        );
+        let refusal = repair_start_refusal_for_entry(root, &not_ready, policy)
+            .ok_or("the shared gate must refuse a route that is not ready")?;
+        assert_eq!(refusal.reason, "repair route not ready");
+        assert_eq!(
+            refusal.related_test.as_deref(),
+            Some("`at_threshold_runs` (tests/pricing.rs:12)")
+        );
+        let note = repair_start_withheld_note("/repo", "seam-1", &refusal);
+        assert!(
+            note.contains("strengthening the oracle of the related test `at_threshold_runs`")
+                && note.contains("by hand")
+                && !note.contains("--phase before"),
+            "{note}"
+        );
+
+        // An already-gripped seam is refused with the exposed wording and,
+        // having no related test, points at adding one by hand.
+        let gripped = gate_entry(SeamGripClass::StronglyGripped, Vec::new());
+        let gripped_refusal = repair_start_refusal_for_entry(root, &gripped, policy)
+            .ok_or("an already gripped seam has no gap to repair")?;
+        assert!(
+            gripped_refusal.reason.contains("already grip it (exposed)"),
+            "{}",
+            gripped_refusal.reason
+        );
+        assert_eq!(gripped_refusal.related_test, None);
+        assert_eq!(gripped_refusal.kind, RefusalKind::AlreadyGripped);
+        // An already-gripped seam has no gap: the note must not send the
+        // reader to strengthen anything by hand, and says it is a static
+        // reading rather than a runtime result.
+        let no_test_note = repair_start_withheld_note("/repo", "seam-2", &gripped_refusal);
+        assert!(
+            no_test_note.contains("already grip it (exposed)")
+                && no_test_note.contains("static reading")
+                && no_test_note.contains("not a runtime-verified result")
+                && !no_test_note.contains("by hand")
+                && !no_test_note.contains("--phase before"),
+            "{no_test_note}"
+        );
+        // A refusal that is neither already-gripped nor route-not-ready
+        // (here a policy-style reason) is stated as is, with no by-hand claim.
+        let other = RepairStartRefusal {
+            reason: "not a headline repair target".to_string(),
+            related_test: None,
+            kind: RefusalKind::Other,
+        };
+        let other_note = repair_start_withheld_note("/repo", "seam-3", &other);
+        assert!(
+            other_note.contains("not a headline repair target") && !other_note.contains("by hand"),
+            "{other_note}"
+        );
+        Ok(())
+    }
+
+    /// #8766: where the gate cannot decide it does not admit by default: an
+    /// unreadable inventory, a seam the inventory no longer names (stale seam
+    /// ids) and a seam beyond a truncated inventory are all *unverified*
+    /// refusals whose note prints no start command.
+    #[test]
+    fn undecidable_seams_are_unverified_not_admitted() -> Result<(), String> {
+        use crate::analysis::seams::SeamGripClass;
+        let root = Path::new("/repo");
+        let unverified = |state: &GateState, seam: &str| {
+            check_state(root, state, seam)
+                .filter(|refusal| refusal.kind == RefusalKind::Unverified)
+                .ok_or_else(|| format!("seam `{seam}` must be unverified, not admitted"))
+        };
+
+        let unavailable =
+            GateState::Unavailable("the seam inventory could not be built (boom)".into());
+        let refusal = unverified(&unavailable, "seam-1")?;
+        let note = repair_start_withheld_note("/repo", "seam-1", &refusal);
+        assert!(
+            note.contains("could not verify")
+                && note.contains("boom")
+                && !note.contains("--phase before"),
+            "{note}"
+        );
+
+        let truncated = GateState::Loaded {
+            config: Box::default(),
+            classified: Vec::new(),
+            truncated: true,
+        };
+        assert!(
+            unverified(&truncated, "seam-1")?
+                .reason
+                .contains("truncated")
+        );
+        // A seam the truncated inventory does name is still unverified: the
+        // explicit-subject resolver refuses every start from such an inventory.
+        let in_truncated = gate_entry(SeamGripClass::WeaklyGripped, vec![weak_related_test()]);
+        let in_truncated_id = in_truncated.seam.id().as_str().to_string();
+        let truncated_known = GateState::Loaded {
+            config: Box::default(),
+            classified: vec![in_truncated],
+            truncated: true,
+        };
+        assert!(
+            unverified(&truncated_known, &in_truncated_id)?
+                .reason
+                .contains("truncated")
+        );
+
+        let not_ready = gate_entry(SeamGripClass::WeaklyGripped, vec![weak_related_test()]);
+        let known = not_ready.seam.id().as_str().to_string();
+        let loaded = GateState::Loaded {
+            config: Box::default(),
+            classified: vec![not_ready],
+            truncated: false,
+        };
+        assert!(
+            unverified(&loaded, "stale-seam-id")?
+                .reason
+                .contains("no longer names this seam")
+        );
+        // A seam the inventory does name gets the gate's own verdict, not
+        // the unverified one.
+        let refused = check_state(root, &loaded, &known).ok_or("known seam must be refused")?;
+        assert_eq!(refused.kind, RefusalKind::RouteNotReady);
+        assert_eq!(refused.reason, "repair route not ready");
+        Ok(())
+    }
+
+    /// A real (non-test-open) gate over a root with no usable workspace never
+    /// admits a seam it cannot find.
+    #[test]
+    fn the_real_gate_does_not_admit_a_seam_it_cannot_find() -> Result<(), String> {
+        let gate = RepairStartGate::real(Path::new("/nonexistent-ripr-gate-root"));
+        let refusal = gate
+            .check("seam-1")
+            .ok_or("an unfindable seam must not be admitted")?;
+        assert_eq!(refusal.kind, RefusalKind::Unverified);
+        let unnamed = gate
+            .check_optional(None)
+            .ok_or("a start naming no seam must not be admitted")?;
+        let note = repair_start_withheld_note("/repo", "", &unnamed);
+        assert!(
+            note.contains("the recorded start") && !note.contains("seam ``"),
+            "{note}"
+        );
+        Ok(())
+    }
+
+    /// #8728 follow-up: the displayed reason list bounds at three, but the
+    /// disclosed total counts distinct reasons across the whole inventory.
+    /// A fourth reason repeated by later seams must not inflate the total:
+    /// A, B, C, D, D has exactly one omitted distinct reason.
+    #[test]
+    fn no_eligible_reasons_total_dedups_repeated_omitted_reasons() {
+        let (reasons, total) =
+            collect_no_eligible_reasons(["a", "b", "c", "d", "d", "a", "e", "e", "e"].into_iter());
+        assert_eq!(
+            reasons,
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
+        assert_eq!(total, 5, "five distinct reasons, not one per seam");
+    }
+
+    fn awaiting(
+        id_tail: char,
+        seam: &str,
+        head: &str,
+        created: u64,
+    ) -> Result<RepairAttemptManifest, String> {
+        Ok(RepairAttemptManifest {
+            schema_version: crate::app::repair_attempt::REPAIR_ATTEMPT_SCHEMA_VERSION.to_string(),
+            kind: "repair_attempt".to_string(),
+            repair_attempt_id: RepairAttemptId::parse(format!(
+                "repair-attempt-{}",
+                id_tail.to_string().repeat(24)
+            ))?,
+            state: RepairAttemptState::AwaitingEdit,
+            root: ".".to_string(),
+            store: None,
+            repository_head: head.to_string(),
+            producer_version: "test".to_string(),
+            seam_id: seam.to_string(),
+            created_unix_ms: created,
+            artifacts: Vec::new(),
+            next_command: format!("ripr agent repair --root . --attempt {id_tail} --phase after"),
+            limitations: Vec::new(),
+            non_claims: Vec::new(),
+            after: None,
+            last_after_refusal: None,
+            after_refusal_count: 0,
+            after_refusal_history: Vec::new(),
+            terminal_artifacts: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn reuse_picks_the_newest_awaiting_attempt_for_the_same_seam_and_head() -> Result<(), String> {
+        let older = awaiting('a', "seam1", "head1", 10)?;
+        let newer = awaiting('b', "seam1", "head1", 20)?;
+        let picked = pick_reusable_attempt([&older, &newer].into_iter(), "seam1", "head1");
+        assert_eq!(
+            picked.map(|attempt| attempt.attempt_id),
+            Some(newer.repair_attempt_id.as_str().to_string())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn reuse_ignores_other_seams_other_heads_and_non_awaiting_states() -> Result<(), String> {
+        let other_seam = awaiting('a', "seam2", "head1", 10)?;
+        let other_head = awaiting('b', "seam1", "head0", 10)?;
+        let mut finished = awaiting('c', "seam1", "head1", 10)?;
+        finished.state = RepairAttemptState::ReadyToFinish;
+        let mut failed = awaiting('d', "seam1", "head1", 10)?;
+        failed.state = RepairAttemptState::Failed;
+        assert!(
+            pick_reusable_attempt(
+                [&other_seam, &other_head, &finished, &failed].into_iter(),
+                "seam1",
+                "head1"
+            )
+            .is_none()
+        );
+        Ok(())
+    }
+
+    /// #8726: an attempt that spent its after-phase retry budget refuses its
+    /// after phase, so a repeated repair must start a fresh attempt instead of
+    /// resuming it. An older attempt still within budget remains reusable.
+    #[test]
+    fn reuse_skips_an_attempt_that_spent_its_retry_budget() -> Result<(), String> {
+        let mut spent = awaiting('a', "seam1", "head1", 20)?;
+        spent.after_refusal_count = crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET;
+        assert!(pick_reusable_attempt([&spent].into_iter(), "seam1", "head1").is_none());
+        let within = awaiting('b', "seam1", "head1", 10)?;
+        let picked = pick_reusable_attempt([&spent, &within].into_iter(), "seam1", "head1");
+        assert_eq!(
+            picked.map(|attempt| attempt.attempt_id),
+            Some(within.repair_attempt_id.as_str().to_string())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn reuse_refuses_a_python_trust_bound_attempt() -> Result<(), String> {
+        let mut bound = awaiting('a', "seam1", "head1", 10)?;
+        bound
+            .artifacts
+            .push(crate::app::repair_attempt::RepairAttemptArtifact {
+                role: crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE.to_string(),
+                path: "binding.json".to_string(),
+                sha256: "0".repeat(64),
+                bytes: 1,
+            });
+        assert!(pick_reusable_attempt([&bound].into_iter(), "seam1", "head1").is_none());
+        Ok(())
+    }
 
     /// Owns a temp test root so a mid-test failure cleans up instead of
     /// leaking the directory; mirrors the facade `Fixture` guard.
@@ -668,6 +1566,7 @@ mod tests {
         eligible_ids: &'a [String],
         total_seams: usize,
         reasons: &'a [String],
+        reasons_total: usize,
         start_spec: Option<&'a CommandSpec>,
     ) -> RepairStartFacts<'a> {
         RepairStartFacts {
@@ -675,6 +1574,7 @@ mod tests {
             eligible_ids,
             total_seams,
             ineligible_reasons: reasons,
+            ineligible_reasons_total: reasons_total,
             head: Some("head1"),
             start_spec,
         }
@@ -682,12 +1582,13 @@ mod tests {
 
     #[test]
     fn decide_zero_visible_seams_yields_setup_outcome() -> Result<(), String> {
-        match decide_repair_start(&facts(&[], 0, &[], None))? {
+        match decide_repair_start(&facts(&[], 0, &[], 0, None))? {
             RepairStartDecision::NoEligible {
                 total_seams,
                 reasons,
+                reasons_total,
             } => {
-                if total_seams != 0 || !reasons.is_empty() {
+                if total_seams != 0 || !reasons.is_empty() || reasons_total != 0 {
                     return Err("setup outcome must carry zero seams".to_string());
                 }
                 Ok(())
@@ -701,13 +1602,46 @@ mod tests {
     #[test]
     fn decide_zero_eligible_seams_yields_limitation_outcome() -> Result<(), String> {
         let reasons = vec!["repair route not ready".to_string()];
-        match decide_repair_start(&facts(&[], 2, &reasons, None))? {
+        match decide_repair_start(&facts(&[], 2, &reasons, 1, None))? {
             RepairStartDecision::NoEligible {
                 total_seams,
                 reasons,
+                reasons_total,
             } => {
-                if total_seams != 2 || reasons != ["repair route not ready".to_string()] {
+                if total_seams != 2
+                    || reasons != ["repair route not ready".to_string()]
+                    || reasons_total != 1
+                {
                     return Err("limitation outcome must carry the evidence".to_string());
+                }
+                Ok(())
+            }
+            RepairStartDecision::Start { .. } | RepairStartDecision::Action(_) => {
+                Err("zero eligible seams must not start or select".to_string())
+            }
+        }
+    }
+
+    /// #8728: the bounded reason list and its total travel together, so a
+    /// truncated list can disclose its remainder instead of reading as
+    /// complete.
+    #[test]
+    fn decide_zero_eligible_carries_reason_total_for_disclosure() -> Result<(), String> {
+        let reasons = vec![
+            "repair route not ready".to_string(),
+            "cross-language oracle visibility unresolved".to_string(),
+            "repair target unresolved".to_string(),
+        ];
+        match decide_repair_start(&facts(&[], 5, &reasons, 5, None))? {
+            RepairStartDecision::NoEligible {
+                reasons,
+                reasons_total,
+                ..
+            } => {
+                if reasons.len() != 3 || reasons_total != 5 {
+                    return Err(format!(
+                        "bounded list must stay at three with the total beside it: {reasons:?} of {reasons_total}"
+                    ));
                 }
                 Ok(())
             }
@@ -722,7 +1656,7 @@ mod tests {
     #[test]
     fn decide_single_candidate_without_spec_does_not_start() -> Result<(), String> {
         let eligible = vec!["seam:demo".to_string()];
-        match decide_repair_start(&facts(&eligible, 1, &[], None))? {
+        match decide_repair_start(&facts(&eligible, 1, &[], 0, None))? {
             RepairStartDecision::Action(action) => {
                 if action.is_executable() {
                     return Err("an unoffered candidate must not execute".to_string());
