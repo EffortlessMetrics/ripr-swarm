@@ -9,6 +9,11 @@ on:
         description: "Archive version matching the selected commit, for example 0.11.0"
         required: true
         type: string
+      candidate_ref:
+        description: "Optional refs/tags/ripr-release-<version>-<commit sha> that resolves to the selected commit; empty while no candidate tag exists"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -21,5 +26,5 @@ jobs:
     uses: ./.github/workflows/server-archive-qualification.yml
     with:
       candidate_sha: ${{ github.sha }}
-      candidate_tag: ""
+      candidate_ref: ${{ inputs.candidate_ref }}
       version: ${{ inputs.version }}

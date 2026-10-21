@@ -7,8 +7,8 @@ on:
         description: "Exact 40-character candidate commit to qualify"
         required: true
         type: string
-      candidate_tag:
-        description: "Optional immutable tag that must resolve to candidate_sha"
+      candidate_ref:
+        description: "Optional immutable ref, refs/tags/ripr-release-<version>-<candidate_sha>, that must resolve to candidate_sha"
         required: false
         default: ""
         type: string
@@ -21,7 +21,7 @@ on:
       candidate_sha:
         required: true
         type: string
-      candidate_tag:
+      candidate_ref:
         required: false
         default: ""
         type: string
@@ -36,7 +36,7 @@ permissions:
 
 env:
   CANDIDATE_SHA: ${{ inputs.candidate_sha }}
-  CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+  CANDIDATE_REF: ${{ inputs.candidate_ref }}
   QUALIFICATION_VERSION: ${{ inputs.version }}
   REPOSITORY: ${{ github.repository }}
 
@@ -61,7 +61,7 @@ jobs:
           git -C "${GITHUB_WORKSPACE}" -c credential.helper= -c http.extraheader= fetch --no-tags --depth=1 origin "${CANDIDATE_SHA}"
           git -C "${GITHUB_WORKSPACE}" checkout --detach FETCH_HEAD
 
-      - name: Verify candidate SHA and optional tag
+      - name: Verify candidate SHA and optional ref
         id: candidate-proof
         shell: bash
         run: |
@@ -73,10 +73,10 @@ jobs:
           ruleset_source_url="none"
           ruleset_response_sha256="none"
           ruleset_id="none"
-          if [[ -n "${CANDIDATE_TAG}" ]]; then
-            tag="${CANDIDATE_TAG#refs/tags/}"
-            test "${CANDIDATE_TAG}" = "${tag}"
-            [[ "${tag}" =~ ^ripr-release-[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          if [[ -n "${CANDIDATE_REF}" ]]; then
+            [[ "${QUALIFICATION_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            test "${CANDIDATE_REF}" = "refs/tags/ripr-release-${QUALIFICATION_VERSION}-${candidate_sha}"
+            tag="${CANDIDATE_REF#refs/tags/}"
             remote_tag="$(git -c credential.helper= -c http.extraheader= ls-remote "https://github.com/EffortlessMetrics/ripr-swarm.git" "refs/tags/${tag}" "refs/tags/${tag}^{}")"
             remote_count="$(printf '%s\n' "${remote_tag}" | awk 'NF {count++} END {print count + 0}')"
             test "${remote_count}" = "1" -o "${remote_count}" = "2"
@@ -554,7 +554,7 @@ jobs:
           checksums_sha256="$(sha256sum dist/SHA256SUMS | cut -d ' ' -f 1)"
           jq -n \
             --arg candidate_sha "${candidate_sha}" \
-            --arg candidate_tag "${CANDIDATE_TAG}" \
+            --arg candidate_ref "${CANDIDATE_REF}" \
             --arg version "${version}" \
             --arg repository "${REPOSITORY}" \
             --arg ruleset_mode "${RULESET_MODE}" \
@@ -567,7 +567,7 @@ jobs:
             --slurpfile payload_identities payload-identities.json \
             --slurpfile producer_builds producer-builds.json \
             --argjson targets '["x86_64-pc-windows-msvc","x86_64-unknown-linux-gnu","aarch64-unknown-linux-gnu","x86_64-apple-darwin","aarch64-apple-darwin"]' \
-            '{schema_version: 3, status: "qualified_payload_and_archive_shape", candidate_sha: $candidate_sha, candidate_tag: $candidate_tag, version: $version, targets: $targets, execution: {selected: 5, executed: 5, failed: 0, not_run: 0}, archive_readback_verified: true, build_identities: $build_identities[0], payload_identities: $payload_identities[0], producer_builds: $producer_builds[0], manifest_sha256: $manifest_sha256, sha256sums_sha256: $checksums_sha256, ruleset: {mode: $ruleset_mode, source_url: $ruleset_source_url, response_sha256: $ruleset_response_sha256, repository: $repository, id: $ruleset_id}, actions_artifacts_only: true, release_assets_created: false, repository_contents_written: false, secrets_required: false, limitations: ["Actions artifact retention is not a public release", "Manifest URLs are prospective and were not fetched", "Native runtime compatibility remains unqualified under EffortlessMetrics/ripr-swarm#4489"]}' \
+            '{schema_version: 3, status: "qualified_payload_and_archive_shape", candidate_sha: $candidate_sha, candidate_ref: $candidate_ref, version: $version, targets: $targets, execution: {selected: 5, executed: 5, failed: 0, not_run: 0}, archive_readback_verified: true, build_identities: $build_identities[0], payload_identities: $payload_identities[0], producer_builds: $producer_builds[0], manifest_sha256: $manifest_sha256, sha256sums_sha256: $checksums_sha256, ruleset: {mode: $ruleset_mode, source_url: $ruleset_source_url, response_sha256: $ruleset_response_sha256, repository: $repository, id: $ruleset_id}, actions_artifacts_only: true, release_assets_created: false, repository_contents_written: false, secrets_required: false, limitations: ["Actions artifact retention is not a public release", "Manifest URLs are prospective and were not fetched", "Native runtime compatibility remains unqualified under EffortlessMetrics/ripr-swarm#4489"]}' \
             > dist/server-archive-qualification-receipt.json
           cp payload-identities.json dist/final-native-payload-identities.json
           cp producer-builds.json dist/final-native-producer-builds.json
@@ -576,7 +576,7 @@ jobs:
             echo
             echo "- candidate SHA: ${candidate_sha}"
             echo "- candidate tree: ${candidate_tree}"
-            echo "- candidate tag: ${CANDIDATE_TAG:-none supplied}"
+            echo "- candidate ref: ${CANDIDATE_REF:-none supplied}"
             echo "- version: ${version}"
             echo "- targets selected/executed/failed/not run: 5/5/0/0"
             echo "- per-target build inputs, producer receipts, payload identities and archive digests: recorded in JSON receipt"
