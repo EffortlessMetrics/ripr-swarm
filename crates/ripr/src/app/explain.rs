@@ -49,6 +49,7 @@ pub(crate) fn explain_finding_with_config_and_navigation_mode(
         config,
         mode_explicit,
         worktree,
+        false,
         None,
     )
 }
@@ -67,9 +68,12 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
     config: &RiprConfig,
     mode_explicit: bool,
     worktree: bool,
+    worktree_from_default: bool,
     sink: Option<&dyn AnalysisProgressSink>,
 ) -> Result<String, String> {
     let navigation = super::finding_navigation_with_worktree(&input, None, mode_explicit, worktree);
+    let committed_list_command =
+        super::finding_navigation_with_worktree(&input, None, mode_explicit, false).list_command();
     let root = input.root.clone();
     // The worktree retry names the same repository and base the failed run
     // analyzed; a bare `ripr explain --worktree` prefix would analyze the
@@ -119,6 +123,8 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
             committed_history,
             &retry_command,
             &worktree_list_command,
+            &committed_list_command,
+            worktree_from_default,
         )),
     }
 }
@@ -209,6 +215,10 @@ pub(crate) fn selector_limitation_fresh_run(
 /// name the listing that can actually contain the id, not a bare
 /// `ripr check --worktree --json` that analyzes the caller's directory at its
 /// default base.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the miss message carries the selector, both scope listings, and the retry together; splitting the packet would misalign the recovery contract"
+)]
 pub(crate) fn no_finding_matched_fresh_run(
     selector: &str,
     list_command: &str,
@@ -217,7 +227,20 @@ pub(crate) fn no_finding_matched_fresh_run(
     committed_history: bool,
     retry_command: &str,
     worktree_list_command: &str,
+    committed_list_command: &str,
+    worktree_from_default: bool,
 ) -> String {
+    // #9015: a selector copied from a committed listing carries no scope
+    // pin, so a dirty-default worktree run can miss it. The recovery's
+    // first listing must then replay the committed scope, not the
+    // defaulted working-tree scope that just missed.
+    if worktree && worktree_from_default && committed_history {
+        let mut message = no_finding_matched(selector, committed_list_command);
+        message.push_str(&format!(
+            ". The working-tree scope was analyzed and also missed; list its finding ids with `{worktree_list_command}`"
+        ));
+        return message;
+    }
     let mut message = no_finding_matched(selector, list_command);
     if worktree || !committed_history || !selector.contains(':') {
         return message;
