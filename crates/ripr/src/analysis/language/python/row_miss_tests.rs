@@ -177,6 +177,29 @@ fn strong_assertion_that_this_row_does_not_credit_is_observation_unconfirmed() -
 }
 
 #[test]
+fn owner_used_as_callback_or_alias_is_not_a_no_call_path() -> Result<(), String> {
+    for body in [
+        "def test_score_map():\n    assert list(map(score, [0, 1])) == [8, 8]\n",
+        "def test_score_alias():\n    f = score\n    assert [f(0)] == [8]\n",
+    ] {
+        let finding = score_case(body)?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+        assert_ne!(
+            finding.related_tests[0].miss,
+            Some(RelatedTestMiss::NoCallPath),
+            "{body}"
+        );
+    }
+    // Positive control: an alias that is never used again is still no call.
+    let finding = score_case("def test_score_alias_unused():\n    f = score\n    assert 8 == 8\n")?;
+    assert_eq!(
+        finding.related_tests[0].miss,
+        Some(RelatedTestMiss::NoCallPath)
+    );
+    Ok(())
+}
+
+#[test]
 fn off_boundary_strong_predicate_row_is_never_missing_input_here() -> Result<(), String> {
     // `missing_input` is pending follow-up (#5491): the row keeps only the
     // weaker `observation_unconfirmed`, or no reason, never a boundary claim.
@@ -193,6 +216,34 @@ fn off_boundary_strong_predicate_row_is_never_missing_input_here() -> Result<(),
         finding.related_tests[0].miss,
         Some(RelatedTestMiss::MissingInput)
     );
+    Ok(())
+}
+
+#[test]
+fn medium_strength_mock_row_keeps_no_miss_in_a_weak_finding() -> Result<(), String> {
+    let finding = score_case(
+        "def test_mock():\n    cb = Mock()\n    score(cb)\n    cb.assert_called_once_with(1)\n\ndef test_weak():\n    assert score(1)\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(miss_of(&finding, "test_mock"), None);
+    // Discriminating control: the weak sibling still carries its own reason.
+    assert_eq!(
+        miss_of(&finding, "test_weak"),
+        Some(RelatedTestMiss::WeakAssertion)
+    );
+    Ok(())
+}
+
+#[test]
+fn credited_strong_row_keeps_no_miss_beside_a_weak_row() -> Result<(), String> {
+    let finding = score_case(
+        "def test_exact():\n    assert score(0) == 8\n\ndef test_weak():\n    assert score(1)\n",
+    )?;
+    // A credited strong row exposes the finding; no row then carries a miss,
+    // including the weak sibling (the class gate, not the row, decides).
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert_eq!(miss_of(&finding, "test_exact"), None);
+    assert_eq!(miss_of(&finding, "test_weak"), None);
     Ok(())
 }
 

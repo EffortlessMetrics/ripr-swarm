@@ -13,6 +13,11 @@
 //!   `test_name_similarity`, `fixture_name`). `dunder_protocol` is excluded:
 //!   the test builds the owner's class and reaches the method through an
 //!   implicit protocol call, so "no call to the changed code" would be false.
+//!   A body that uses the owner name in any way other than a recognized
+//!   non-invoking reference (`callable(owner)`, an alias never used again,
+//!   `owner is ...`, `owner.__name__`) may still invoke it through a shape the
+//!   call extractor does not model (`map(owner, ...)`, `f = owner; f(0)`), so
+//!   it keeps no miss.
 //! - `weak_assertion`: the family-selected assertion (#5572) is weak or smoke.
 //! - `observation_unconfirmed`: a strong family-selected assertion that this
 //!   row alone does not credit as observing the changed sink. Python's
@@ -93,9 +98,9 @@ fn row_miss(
         return match candidate.relation {
             PythonRelationKind::SameStem
             | PythonRelationKind::TestNameSimilarity
-            | PythonRelationKind::FixtureName => {
-                callable_owner(change.owner).then_some(RelatedTestMiss::NoCallPath)
-            }
+            | PythonRelationKind::FixtureName => (callable_owner(change.owner)
+                && !body_may_invoke_owner(&candidate.test.body_text, &change.owner.name))
+            .then_some(RelatedTestMiss::NoCallPath),
             // A fixture or same-module caller does call the owner, a dunder
             // protocol row reaches it implicitly, and a skip / xfail row is
             // `activation_limited`: no path claim.
@@ -135,4 +140,83 @@ fn callable_owner(owner: &PythonOwner) -> bool {
         owner.owner_kind,
         Some(OwnerKind::Function | OwnerKind::Method | OwnerKind::ClassMethod)
     )
+}
+
+/// Fail-closed: true unless every occurrence of `name` in `body` is a
+/// recognized non-invoking reference. A body with no occurrence at all (a
+/// fixture-name or stem relation) has nothing that could invoke the owner.
+fn body_may_invoke_owner(body: &str, name: &str) -> bool {
+    let bytes = body.as_bytes();
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut from = 0;
+    while let Some(rel) = body[from..].find(name) {
+        let start = from + rel;
+        let end = start + name.len();
+        from = end;
+        if (start > 0 && is_ident(bytes[start - 1])) || (end < bytes.len() && is_ident(bytes[end]))
+        {
+            continue;
+        }
+        let before = body[..start].trim_end();
+        let after = body[end..].trim_start_matches([' ', '\t']);
+        if after.starts_with("is ") || after.starts_with(".__") {
+            continue;
+        }
+        if before.ends_with('(') && enclosing_callee(&body[..start]) == "callable" {
+            continue;
+        }
+        if let Some(lhs) = before
+            .strip_suffix('=')
+            .filter(|l| !l.ends_with(['=', '!', '<', '>']))
+        {
+            let alias: String = lhs
+                .trim_end()
+                .chars()
+                .rev()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            if !alias.is_empty()
+                && word_count(body, &alias) == 1
+                && (after.is_empty() || after.starts_with(['\n', '#', ';']))
+            {
+                continue;
+            }
+        }
+        return true;
+    }
+    false
+}
+
+fn word_count(body: &str, word: &str) -> usize {
+    let bytes = body.as_bytes();
+    let is_ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    body.match_indices(word)
+        .filter(|(i, _)| {
+            let end = i + word.len();
+            (*i == 0 || !is_ident(bytes[i - 1])) && (end >= bytes.len() || !is_ident(bytes[end]))
+        })
+        .count()
+}
+
+/// The identifier before the innermost unclosed `(` ending `prefix`.
+fn enclosing_callee(prefix: &str) -> &str {
+    let mut depth = 0usize;
+    for (i, c) in prefix.char_indices().rev() {
+        match c {
+            ')' => depth += 1,
+            '(' if depth == 0 => {
+                let head = &prefix[..i];
+                let start = head
+                    .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .map_or(0, |p| p + 1);
+                return &head[start..];
+            }
+            '(' => depth -= 1,
+            _ => {}
+        }
+    }
+    ""
 }
