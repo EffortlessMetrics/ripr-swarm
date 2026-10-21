@@ -708,7 +708,7 @@ fn render_doctor_human_screen(screen: DoctorHumanScreen<'_>) -> Vec<String> {
         cache_unwritable_reason(&analysis::seam_cache::cache_base_dir(root))
     {
         lines.push(format!(
-            "! Cache not writable: {}; results stay correct but every run recomputes. \
+            "~ Cache not writable: {}; results stay correct but every run recomputes. \
 Point RIPR_CACHE_DIR at a writable directory.",
             display_text(&reason)
         ));
@@ -2610,7 +2610,7 @@ fn ripr_artifact_ignore(
     }
     DoctorArtifactIgnore::Unignored {
         warning: format!(
-            "! ripr artifacts under {} are not covered by git ignore rules; \
+            "~ ripr artifacts under {} are not covered by git ignore rules; \
              `git add -A` would commit ripr's own reports into your history. \
              Add this line to .gitignore: {}",
             artifact_roots_display(&uncovered),
@@ -2699,7 +2699,7 @@ fn ripr_artifact_tracking(
     let untrack = untrack_artifacts_command(root, &tracked_roots);
     DoctorArtifactTracking::Tracked {
         warning: format!(
-            "! ripr artifacts under {} are tracked by git; `git add -A` keeps \
+            "~ ripr artifacts under {} are tracked by git; `git add -A` keeps \
              refreshing them and `ripr check` diffs them. Untrack them with: {untrack}",
             artifact_roots_display(
                 &tracked_roots
@@ -4203,6 +4203,8 @@ mod tests {
         match ripr_artifact_ignore(&root, &default_artifact_roots(&root)) {
             DoctorArtifactIgnore::Unignored { warning } => {
                 assert!(warning.contains("/target/ripr/"), "{warning}");
+                // #9033: an advisory never wears the blocking `!` mark.
+                assert!(warning.starts_with("~ "), "{warning}");
             }
             other => return Err(format!("expected Unignored, got {other:?}")),
         }

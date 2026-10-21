@@ -560,6 +560,11 @@ The JSON report is machine-readable advisory setup evidence. A `fail` status or
 non-zero exit means at least one core check failed; it is not a release or gate
 decision.
 
+Marks: `!` is a blocking failure that fails the run (exit 2); `~` is an
+advisory (for example artifacts under target/ripr not covered by git ignore
+rules, tracked artifacts, an unwritable cache, unanalyzed languages) and never
+changes the exit status.
+
 Checks:
   - root directory exists
   - Cargo.toml is present at the selected root, an ancestor Cargo project
