@@ -36,6 +36,59 @@ pub(crate) const SEAM_AMBIGUOUS: &str = "seam_ambiguous";
 /// Typed reason: no classified seam names the finding.
 pub(crate) const SEAM_NOT_FOUND: &str = "seam_not_found";
 
+/// Typed reason: the repo-wide seam inventory the CLI consults
+/// (`ripr repair <item>`) is truncated by the seam limit, or its completeness
+/// could not be established. The CLI errors before resolving any item in
+/// that state, so no item may be repair-ready (#9108).
+pub(crate) const SEAM_INVENTORY_TRUNCATED: &str = "seam_inventory_truncated";
+
+/// Whether the repo-wide seam inventory that `ripr repair` resolves against
+/// is complete. The MCP admission resolves over a diff-scoped inventory that
+/// carries no seam-limit fact, so the refresh gathers this separately from the
+/// same repo-wide inventory authority the CLI uses.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) enum InventoryCompleteness {
+    /// Not truncated: the CLI would proceed to resolve the item.
+    #[default]
+    Complete,
+    /// The seam limit truncated the inventory (`analyzed < total`).
+    Truncated { analyzed: usize, total: usize },
+    /// The repo-wide inventory could not be consulted; the CLI would error,
+    /// so completeness is not established and admission fails closed.
+    Unverified(String),
+}
+
+impl InventoryCompleteness {
+    /// Interpret the repo-wide inventory authority's result exactly as
+    /// `resolve_repair_subject_outcome` does: an error or a `limit_info`
+    /// with `analyzed < total` is a refusal condition.
+    pub(crate) fn from_inventory_limit(
+        result: Result<Option<crate::analysis::SeamLimitInfo>, String>,
+    ) -> Self {
+        match result {
+            Err(error) => Self::Unverified(error),
+            Ok(Some(info)) if info.is_truncated() => Self::Truncated {
+                analyzed: info.analyzed,
+                total: info.total,
+            },
+            Ok(_) => Self::Complete,
+        }
+    }
+
+    fn refusal_detail(&self) -> Option<String> {
+        match self {
+            Self::Complete => None,
+            Self::Truncated { analyzed, total } => Some(format!(
+                "the shared repair gate (`ripr repair`) refuses every item while the seam inventory is truncated ({analyzed} of {total} seams); {}",
+                crate::app::task_first::WIDEN_SEAM_BUDGET
+            )),
+            Self::Unverified(error) => Some(format!(
+                "the shared repair gate (`ripr repair`) needs the complete repo-wide seam inventory and it could not be established: {error}"
+            )),
+        }
+    }
+}
+
 /// The shared validator's verdict for one committed finding.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum SeamVerdict {
@@ -70,18 +123,26 @@ impl SeamAdmission {
         findings: &[Finding],
         candidate_seams: &[ClassifiedSeam],
         policy: AgentBriefPolicy<'_>,
+        completeness: &InventoryCompleteness,
     ) -> Self {
+        // The CLI checks inventory truncation before it resolves any item, so
+        // a truncated or unverifiable inventory refuses every finding first.
+        let truncation = completeness.refusal_detail();
         let by_finding = findings
             .iter()
             .map(|finding| {
-                (
-                    finding.id.clone(),
-                    verdict_for(resolve_repair_subject_in(
+                let verdict = match &truncation {
+                    Some(detail) => SeamVerdict::Refused {
+                        code: SEAM_INVENTORY_TRUNCATED,
+                        detail: detail.clone(),
+                    },
+                    None => verdict_for(resolve_repair_subject_in(
                         candidate_seams,
                         policy,
                         &finding.id,
                     )),
-                )
+                };
+                (finding.id.clone(), verdict)
             })
             .collect();
         Self {

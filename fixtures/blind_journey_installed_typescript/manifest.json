@@ -13,7 +13,7 @@
   "node_identity": "node v22.14.0",
   "npm_identity": "npm 10.9.2",
   "runner_identity": "vitest 3.2.4 via the package-lock.json-selected npm runner",
-  "lockfile_note": "the base snapshot's package-lock.json is the full npm lockfile for vitest 3.2.4 (generated with `npm install --package-lock-only --ignore-scripts`, `npm ci` succeeds); the head and variant snapshots still retain the root-entry skeleton until their own lockfiles land (#9104); the journey environment records the installed node/npm/vitest identities above"
+  "lockfile_note": "the base and head snapshots' package-lock.json are the full npm lockfile for vitest 3.2.4 (generated with `npm install --package-lock-only --ignore-scripts`, `npm ci` succeeds); the variant snapshots still retain the root-entry skeleton until their own lockfiles land (#9104); the journey environment records the installed node/npm/vitest identities above"
  },
  "repository": {
   "identity": "fixtures/blind_journey_installed_typescript/repository",
@@ -30,10 +30,10 @@
     }
    },
    "head": {
-    "commit": "d7858e239839e626548a02170ca82f267c9a9edb",
-    "tree": "8da68b121a26fbbb50a96d2c11c54a3628db4dc9",
+    "commit": "437162917bfbcba77c0ed8b36f34da9e2dd98eca",
+    "tree": "69ad833aac73ac2350850282cbf3ddab714185ea",
     "files": {
-     "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
+     "package-lock.json": "a93951553edc81a4be8db16f3e7012d3bb06a84cddf746bcf7c4af88192f3b51",
      "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
      "src/pricing.ts": "d5305cef7b658d2b658de2ade29832b7991205373a167b52450fb8b91dbe1500",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
@@ -155,7 +155,7 @@
    "agent_receipt": "ripr agent receipt --root <selected-root> --attempt <repair-attempt-id> --verify-json target/ripr/workflow/agent-verify.json --seam-id seam-pricing-threshold-equality --json --out target/ripr/reports/agent-receipt.json",
    "verification": "vitest run test/pricing.test.ts"
   },
-  "substitution_contract": "<selected-root> and <repair-attempt-id> are the only placeholders; the product prints concrete values and the scripted transcript records the printed bytes literally, executed from a foreign launch directory against the selected root; the printed vitest command runs in the documented npm environment selected by the retained package.json and package-lock.json (a root-entry skeleton until the snapshot's full lockfile lands, #9104)."
+  "substitution_contract": "<selected-root> and <repair-attempt-id> are the only placeholders; the product prints concrete values and the scripted transcript records the printed bytes literally, executed from a foreign launch directory against the selected root; the printed vitest command runs in the documented npm environment selected by the retained package.json and package-lock.json of the base and head snapshots."
  },
  "journey_scenario_ids": [
   "installed_typescript_positive_journey_emits_receipt",
@@ -218,7 +218,7 @@
   "limitations": [
    "the scripted rows bind the retained fixture snapshots by content digest and recorded git identity; the frozen-candidate run through the #4510 harness rebinds live process and package identities",
    "recorded command output bytes are the retained literal observations of the printed route; the real installed run may print equivalent concrete roots and attempt ids",
-   "only the base snapshot retains a full npm lockfile so far; the head and variant snapshots retain the root-entry skeleton that backs the npm-runner selection until their lockfiles land (#9104), and the installed node/npm/vitest identities belong to the journey environment recorded in the transcript"
+   "only the base and head snapshots retain a full npm lockfile so far; the variant snapshots retain the root-entry skeleton that backs the npm-runner selection until their lockfiles land (#9104), and the installed node/npm/vitest identities belong to the journey environment recorded in the transcript"
   ],
   "non_claims": [
    "no installed usefulness, candidate qualification or blind acceptance is claimed",

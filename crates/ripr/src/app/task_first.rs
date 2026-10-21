@@ -266,7 +266,7 @@ pub(crate) fn resolve_repair_start(root: &Path) -> Result<RepairStartDecision, S
     let (classified, limit_info) =
         crate::analysis::inventory_classified_seams_at_with_config(root, &config)?;
     if let Some(info) = &limit_info
-        && info.analyzed < info.total
+        && info.is_truncated()
     {
         return Err(format!(
             "repair start refused: the seam inventory is truncated ({} of {} seams); {WIDEN_SEAM_BUDGET}",
@@ -380,7 +380,7 @@ pub(crate) fn resolve_repair_subject_outcome(
     let (classified, limit_info) =
         crate::analysis::inventory_classified_seams_at_with_config(root, &config)?;
     if let Some(info) = &limit_info
-        && info.analyzed < info.total
+        && info.is_truncated()
     {
         return Err(format!(
             "repair item refused: the seam inventory is truncated ({} of {} seams); {WIDEN_SEAM_BUDGET}",
@@ -603,9 +603,7 @@ fn load_gate_state(root: &Path) -> GateState {
     };
     match crate::analysis::inventory_classified_seams_at_with_config(root, &config) {
         Ok((classified, limit_info)) => GateState::Loaded {
-            truncated: limit_info
-                .as_ref()
-                .is_some_and(|info| info.analyzed < info.total),
+            truncated: limit_info.as_ref().is_some_and(|info| info.is_truncated()),
             config: Box::new(config),
             classified,
         },

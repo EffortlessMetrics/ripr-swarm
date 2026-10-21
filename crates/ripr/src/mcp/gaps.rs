@@ -68,11 +68,16 @@ pub(crate) struct RepairReadiness {
 
 impl RepairReadiness {
     /// Conjoin the shared seam-level repair validator's verdict (#8717).
-    /// A finding-level refusal stays the first failing gate; a finding-ready
-    /// item becomes not ready, keeping no fix site, when the validator that
-    /// backs `ripr repair` does not admit its seam.
+    /// A finding-level refusal stays the first failing gate, except that a
+    /// truncated inventory refuses first; a finding-ready item becomes not
+    /// ready, keeping no fix site, when the validator that backs `ripr repair`
+    /// does not admit its seam.
     pub(crate) fn with_seam_verdict(mut self, verdict: Option<&SeamVerdict>) -> Self {
-        if let (true, Some(SeamVerdict::Refused { code, detail })) = (self.ready, verdict) {
+        // The CLI errors on a truncated inventory before it resolves any item
+        // (#9108), so that refusal outranks every finding-level gate.
+        if let Some(SeamVerdict::Refused { code, detail }) = verdict
+            && (self.ready || *code == crate::mcp::repair_admission::SEAM_INVENTORY_TRUNCATED)
+        {
             self.ready = false;
             self.fix_site = None;
             self.ineligibility = Some(*code);
@@ -214,7 +219,8 @@ impl RepairReadiness {
                 crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED
                 | crate::mcp::repair_admission::SEAM_GATE_REFUSED
                 | crate::mcp::repair_admission::SEAM_AMBIGUOUS
-                | crate::mcp::repair_admission::SEAM_NOT_FOUND,
+                | crate::mcp::repair_admission::SEAM_NOT_FOUND
+                | crate::mcp::repair_admission::SEAM_INVENTORY_TRUNCATED,
             ) => {
                 "the shared seam-level repair validator behind `ripr repair` does not admit this item"
             }
@@ -1266,6 +1272,7 @@ mod tests {
             crate::app::agent_brief::AgentBriefPolicy::from_config(
                 &crate::config::RiprConfig::default(),
             ),
+            &crate::mcp::repair_admission::InventoryCompleteness::Complete,
         );
         match evaluated.verdict("probe:uncovered") {
             Some(SeamVerdict::Refused { code, .. })
@@ -1275,6 +1282,130 @@ mod tests {
             }
             other => Err(format!("uncovered finding must be refused: {other:?}")),
         }
+    }
+
+    /// #9108: the CLI errors before resolving any item when the repo-wide
+    /// inventory is truncated, so MCP must refuse every finding with the
+    /// typed truncation reason. Without the fix the empty inventory below
+    /// yields `seam_not_found` for the truncated case too.
+    #[test]
+    fn truncated_inventory_refuses_before_any_resolution() -> Result<(), String> {
+        use crate::mcp::repair_admission::{InventoryCompleteness, SEAM_INVENTORY_TRUNCATED};
+        let config = crate::config::RiprConfig::default();
+        let policy = crate::app::agent_brief::AgentBriefPolicy::from_config(&config);
+        let findings = [finding()?];
+        let id = findings[0].id.as_str();
+        let complete =
+            SeamAdmission::evaluate(&findings, &[], policy, &InventoryCompleteness::Complete);
+        match complete.verdict(id) {
+            Some(SeamVerdict::Refused { code, .. }) if code != SEAM_INVENTORY_TRUNCATED => {}
+            other => return Err(format!("complete inventory must not truncate: {other:?}")),
+        }
+        for completeness in [
+            InventoryCompleteness::Truncated {
+                analyzed: 3,
+                total: 7,
+            },
+            InventoryCompleteness::Unverified("inventory failed".to_string()),
+        ] {
+            let evaluated = SeamAdmission::evaluate(&findings, &[], policy, &completeness);
+            match evaluated.verdict(id) {
+                Some(SeamVerdict::Refused { code, detail }) if code == SEAM_INVENTORY_TRUNCATED => {
+                    if matches!(completeness, InventoryCompleteness::Truncated { .. })
+                        && !(detail.contains("3 of 7")
+                            && detail.contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT"))
+                    {
+                        return Err(format!("detail must name the counts and remedy: {detail}"));
+                    }
+                }
+                other => return Err(format!("{completeness:?} must refuse: {other:?}")),
+            }
+        }
+        // The refusal blocks readiness with its typed reason and a specific
+        // explanation, never the generic fallback.
+        let refused = SeamVerdict::Refused {
+            code: SEAM_INVENTORY_TRUNCATED,
+            detail: "truncated".to_string(),
+        };
+        let blocked = ready_readiness().with_seam_verdict(Some(&refused));
+        if blocked.ready
+            || blocked.ineligibility != Some(SEAM_INVENTORY_TRUNCATED)
+            || blocked.reason().contains("did not establish every")
+        {
+            return Err(format!("truncation must block readiness: {blocked:?}"));
+        }
+        // Precedence: a finding failing a finding-level gate still gets the
+        // inventory-level refusal, but keeps its own gate when the verdict is
+        // an ordinary seam refusal.
+        let unready = RepairReadiness {
+            ready: false,
+            fix_site: None,
+            ineligibility: Some("discriminator_not_populated_for_language"),
+            seam_detail: None,
+        };
+        let truncated = unready.clone().with_seam_verdict(Some(&refused));
+        if truncated.ineligibility != Some(SEAM_INVENTORY_TRUNCATED)
+            || truncated.seam_detail.is_none()
+        {
+            return Err(format!("truncation must outrank the gate: {truncated:?}"));
+        }
+        let ordinary = SeamVerdict::Refused {
+            code: "seam_gate_refused",
+            detail: "gate".to_string(),
+        };
+        if unready.clone().with_seam_verdict(Some(&ordinary)) != unready {
+            return Err("an ordinary seam refusal must not outrank a finding gate".to_string());
+        }
+        Ok(())
+    }
+
+    /// #9108: the completeness fact is read exactly like the CLI reads it:
+    /// an error or `analyzed < total` refuses; an exact fit or no limit
+    /// does not.
+    #[test]
+    fn completeness_mirrors_the_cli_truncation_check() {
+        use crate::analysis::{SeamLimitInfo, SeamLimitSource};
+        use crate::mcp::repair_admission::InventoryCompleteness as C;
+        let info = |analyzed, total| {
+            Ok(Some(SeamLimitInfo {
+                analyzed,
+                total,
+                source: SeamLimitSource::Default,
+            }))
+        };
+        assert_eq!(
+            C::from_inventory_limit(info(3, 7)),
+            C::Truncated {
+                analyzed: 3,
+                total: 7
+            }
+        );
+        assert_eq!(C::from_inventory_limit(info(7, 7)), C::Complete);
+        assert_eq!(C::from_inventory_limit(Ok(None)), C::Complete);
+        // Parity with the shared predicate the CLI gates read: for every
+        // analyzed/total pair the MCP verdict is truncated iff the CLI's is.
+        for analyzed in 0..4usize {
+            for total in 0..4usize {
+                let limit = SeamLimitInfo {
+                    analyzed,
+                    total,
+                    source: SeamLimitSource::Default,
+                };
+                assert_eq!(
+                    matches!(
+                        C::from_inventory_limit(Ok(Some(limit.clone()))),
+                        C::Truncated { .. }
+                    ),
+                    analyzed < total,
+                    "analyzed {analyzed} total {total}"
+                );
+                assert_eq!(limit.is_truncated(), analyzed < total);
+            }
+        }
+        assert_eq!(
+            C::from_inventory_limit(Err("boom".to_string())),
+            C::Unverified("boom".to_string())
+        );
     }
 
     /// #5210: the non-surface refusal names the inline-test boundary, so
