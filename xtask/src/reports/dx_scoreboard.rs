@@ -809,8 +809,9 @@ fn is_source_install_step(name: &str) -> bool {
 ///
 /// - failed steps: `exit` rows that are not 0, and steps with rows but no
 ///   `exit` row (a walk cut off mid-step);
-/// - over-budget steps: `secs` and `stdout_lines` rows over the row's
-///   `budget`;
+/// - over-budget steps: step occurrences with a `secs` or `stdout_lines`
+///   row over the row's `budget` (one occurrence breaching both budgets
+///   counts once, with both rows kept as evidence);
 /// - over-budget workflows: `workflow_lines` rows over the row's `budget`,
 ///   counted apart because file size says nothing about step speed;
 /// - walk seconds per case (setup excluded), compared per case at 50% plus
@@ -849,6 +850,19 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
     }
     let mut steps: Vec<Step> = Vec::new();
     let mut over = Vec::new();
+    // Budgeted rows grouped by step occurrence: the earliest occurrence of
+    // the same case and step that has not yet seen this metric, mirroring
+    // the `secs`/`exit` pairing above. Every budgeted row marks its metric
+    // as seen (breaching or not), so a later occurrence's breach cannot
+    // merge into an earlier occurrence that only breached the other budget.
+    struct BudgetOccurrence {
+        case: String,
+        step: String,
+        secs_seen: bool,
+        stdout_seen: bool,
+        breached: bool,
+    }
+    let mut over_occurrences: Vec<BudgetOccurrence> = Vec::new();
     let mut over_workflow = Vec::new();
     let mut friction = 0.0;
     let mut verdicts = Vec::new();
@@ -924,11 +938,38 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
             }
             _ => {}
         }
-        if FIRST_RUN_BUDGETED.contains(&metric)
-            && let Some(budget) = row["budget"].as_f64()
-            && value > budget
-        {
-            over.push(format!("{case}/{step} {metric} {value} > {budget}"));
+        if FIRST_RUN_BUDGETED.contains(&metric) {
+            let breached = row["budget"].as_f64().is_some_and(|budget| value > budget);
+            let open = over_occurrences.iter().position(|occurrence| {
+                occurrence.case == case
+                    && occurrence.step == step
+                    && if metric == "secs" {
+                        !occurrence.secs_seen
+                    } else {
+                        !occurrence.stdout_seen
+                    }
+            });
+            let index = open.unwrap_or_else(|| {
+                over_occurrences.push(BudgetOccurrence {
+                    case: case.to_string(),
+                    step: step.to_string(),
+                    secs_seen: false,
+                    stdout_seen: false,
+                    breached: false,
+                });
+                over_occurrences.len() - 1
+            });
+            if let Some(occurrence) = over_occurrences.get_mut(index) {
+                if metric == "secs" {
+                    occurrence.secs_seen = true;
+                } else {
+                    occurrence.stdout_seen = true;
+                }
+                occurrence.breached |= breached;
+            }
+            if breached && let Some(budget) = row["budget"].as_f64() {
+                over.push(format!("{case}/{step} {metric} {value} > {budget}"));
+            }
         }
         if metric == FIRST_RUN_WORKFLOW_LINES
             && let Some(budget) = row["budget"].as_f64()
@@ -982,7 +1023,7 @@ pub(crate) fn first_run_rows_to_input(value: &Value) -> Result<Value, String> {
     let unknown = verdicts.iter().filter(|v| v.ends_with("_unknown")).count();
     let mut out = vec![
         json!({"id": "first_run.failed_steps", "value": failed.len(), "evidence": list(&failed)}),
-        json!({"id": "first_run.over_budget_steps", "value": over.len(), "evidence": list(&over)}),
+        json!({"id": "first_run.over_budget_steps", "value": over_occurrences.iter().filter(|occurrence| occurrence.breached).count(), "evidence": list(&over)}),
         json!({"id": "first_run.over_budget_workflows", "value": over_workflow.len(), "evidence": list(&over_workflow)}),
     ];
     // An install-only walk ran no cases, so a zero here would read as "no

@@ -1338,6 +1338,127 @@ fn first_run_rows_map_to_gates_and_list_verdicts() {
 }
 
 #[test]
+fn first_run_rows_count_a_dual_budget_breach_once_per_step_occurrence() {
+    // Rows exactly as `scoreboard_rows` exports them for one `check` step
+    // whose receipt `budget_breaches` carries both a secs and a
+    // stdout_lines breach: ingestion must agree with the public-proof
+    // renderer (one step occurrence), not count breached metric rows.
+    let text = [
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"secs","value":12.0,"budget":10,"better":"lower"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"exit","value":0,"budget":0,"better":"equal"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"stdout_lines","value":61,"budget":60,"better":"lower"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"friction_count","value":2,"budget":0,"better":"lower"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"init_ci","metric":"secs","value":0.1,"budget":30,"better":"lower"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"init_ci","metric":"exit","value":0,"budget":0,"better":"equal"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"init_ci","metric":"workflow_lines","value":2374,"budget":1500,"better":"lower"}"#,
+    ]
+    .join("\n");
+    let value = parse_ingest_text(&text).unwrap_or_default();
+    let converted = first_run_rows_to_input(&value).unwrap_or_default();
+    let get = |id: &str| -> Vec<Value> {
+        converted["metrics"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|row| row["id"].as_str() == Some(id))
+            .cloned()
+            .collect()
+    };
+    assert_eq!(get("first_run.over_budget_steps")[0]["value"], json!(1));
+    // Both evidence entries stay attached to the single counted occurrence.
+    assert_eq!(
+        get("first_run.over_budget_steps")[0]["evidence"],
+        json!("a/check secs 12 > 10, a/check stdout_lines 61 > 60")
+    );
+    // Workflow size stays on its own metric.
+    assert_eq!(get("first_run.over_budget_workflows")[0]["value"], json!(1));
+}
+
+#[test]
+fn first_run_rows_count_repeated_step_occurrences_separately() {
+    let row = |metric: &str, value: &str, budget: &str| {
+        format!(
+            r#"{{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"{metric}","value":{value},"budget":{budget},"better":"lower"}}"#
+        )
+    };
+    // Two occurrences of `check`, each breaching both budgets: 2, not 4.
+    let dual_twice = [
+        row("secs", "12.0", "10"),
+        row("exit", "0", "0"),
+        row("stdout_lines", "61", "60"),
+        row("secs", "13.0", "10"),
+        row("exit", "0", "0"),
+        row("stdout_lines", "62", "60"),
+    ]
+    .join("\n");
+    let converted = first_run_rows_to_input(&parse_ingest_text(&dual_twice).unwrap_or_default())
+        .unwrap_or_default();
+    let steps_row = converted["metrics"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|row| row["id"].as_str() == Some("first_run.over_budget_steps"))
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(steps_row["value"], json!(2));
+    assert_eq!(
+        steps_row["evidence"],
+        json!(
+            "a/check secs 12 > 10, a/check stdout_lines 61 > 60, a/check secs 13 > 10, a/check stdout_lines 62 > 60"
+        )
+    );
+    // First occurrence breaches only stdout, second only secs: the
+    // non-breaching rows still separate the occurrences, so this is 2.
+    let split = [
+        row("secs", "5.0", "10"),
+        row("exit", "0", "0"),
+        row("stdout_lines", "61", "60"),
+        row("secs", "12.0", "10"),
+        row("exit", "0", "0"),
+        row("stdout_lines", "10", "60"),
+    ]
+    .join("\n");
+    let converted =
+        first_run_rows_to_input(&parse_ingest_text(&split).unwrap_or_default()).unwrap_or_default();
+    let steps_row = converted["metrics"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|row| row["id"].as_str() == Some("first_run.over_budget_steps"))
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(steps_row["value"], json!(2));
+}
+
+#[test]
+fn first_run_rows_single_budget_and_missing_rows_have_no_phantom_count() {
+    let text = [
+        // Null budgets: measured, but nothing can breach.
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"doctor","metric":"secs","value":99.0,"budget":null,"better":"lower"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"doctor","metric":"exit","value":0,"budget":0,"better":"equal"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"doctor","metric":"stdout_lines","value":999,"budget":null,"better":"lower"}"#,
+        // One budget breached, the other row missing entirely: counts 1.
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"secs","value":12.0,"budget":10,"better":"lower"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"check","metric":"exit","value":0,"budget":0,"better":"equal"}"#,
+        // Under budget with no stdout row: no phantom occurrence.
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"pilot","metric":"secs","value":1.0,"budget":30,"better":"lower"}"#,
+        r#"{"schema":"first_run_row.v1","ripr":"ripr 0.11.0","case":"a","step":"pilot","metric":"exit","value":0,"budget":0,"better":"equal"}"#,
+    ]
+    .join("\n");
+    let value = parse_ingest_text(&text).unwrap_or_default();
+    let converted = first_run_rows_to_input(&value).unwrap_or_default();
+    let steps_row = converted["metrics"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|row| row["id"].as_str() == Some("first_run.over_budget_steps"))
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(steps_row["value"], json!(1));
+    assert_eq!(steps_row["evidence"], json!("a/check secs 12 > 10"));
+}
+
+#[test]
 fn losing_completion_regresses_on_any_runner_class() -> Result<(), String> {
     let config = parse_config(MINIMAL)?;
     let base = vec![sample(
