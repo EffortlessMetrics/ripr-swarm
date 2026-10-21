@@ -192,7 +192,7 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
             ),
             step(
                 "cmd:pilot",
-                "select the seam ID for the repair handoff from the pilot packet's top actionable seams; a probe: finding ID is not a seam ID",
+                "select the seam ID for the repair handoff from the pilot packet's top actionable seams (`ripr repair` also accepts a probe: finding ID, a canonical gap ID or a file:line naming one repair-eligible seam)",
                 CommandCost::Workspace,
                 CommandOperation::WritesArtifacts,
                 true,
@@ -248,7 +248,7 @@ const WORKFLOWS: &[WorkflowCatalogEntry] = &[
         stop_conditions: &[
             "explicit refusal when no diff can be resolved",
             "context collection reaches its --max-related-tests bound",
-            "repair refuses a probe: finding ID; re-select a seam ID from the pilot packet",
+            "repair refuses an item that names no single repair-eligible seam; re-select a seam ID from the pilot packet",
         ],
         advanced_alternatives: &[],
         limitations: "guidance only: these commands analyze static evidence; ripr never compiles, runs tests, or edits source from this workflow.",
