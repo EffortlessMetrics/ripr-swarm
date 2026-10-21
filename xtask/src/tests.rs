@@ -8377,6 +8377,35 @@ fn release_server_manifest_embeds_the_editor_distribution_descriptor() -> Result
 }
 
 #[test]
+fn bound_descriptor_requires_the_receipted_manifest_digest() -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    let manifest = br#"{"version":"1.2.3","assets":{"x86_64-unknown-linux-gnu":{"url":"https://github.com/o/r/releases/download/v1.2.3/a.tar.gz","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#;
+    let digest = format!("{:x}", Sha256::digest(manifest));
+    let source = super::bound_descriptor_source("1.2.3", manifest, &digest)?;
+    assert!(source.contains(&format!(
+        "{{ generation: \"1.2.3\", manifestSha256: \"{digest}\" }}"
+    )));
+
+    let wrong = "0".repeat(64);
+    let Err(err) = super::bound_descriptor_source("1.2.3", manifest, &wrong) else {
+        return Err("a tampered manifest must be refused".to_string());
+    };
+    assert!(err.contains("does not match the receipted digest"), "{err}");
+    let Err(err) = super::bound_descriptor_source("1.2.4", manifest, &digest) else {
+        return Err("a generation mismatch must be refused".to_string());
+    };
+    assert!(err.contains("does not match generation"), "{err}");
+    let Err(err) = super::bound_descriptor_source("1.2.3", manifest, "ABC") else {
+        return Err("a malformed digest must be refused".to_string());
+    };
+    assert!(err.contains("64 lowercase hex"), "{err}");
+    let http = br#"{"version":"1.2.3","assets":{"t":{"url":"http://x/a","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#;
+    let http_digest = format!("{:x}", Sha256::digest(http));
+    assert!(super::bound_descriptor_source("1.2.3", http, &http_digest).is_err());
+    Ok(())
+}
+
+#[test]
 fn release_server_manifest_rejects_prerelease_version_before_descriptor() -> Result<(), String> {
     // The editor descriptor admits a distribution generation
     // (MAJOR.MINOR.PATCH) and the downloader only ever looks the generation
@@ -9921,7 +9950,7 @@ fn release_workflows_publish_only_by_explicit_dispatch() -> Result<(), String> {
     if !extension.contains("true/false | false/true) ;;") {
         return Err("publish-extension.yml must admit exactly one marketplace channel".to_string());
     }
-    for job in ["package", "server-assets-ready", "attach-release-asset"] {
+    for job in ["package", "verify-server-assets", "attach-release-asset"] {
         let needs = extension
             .split_once(&format!("\n  {job}:\n"))
             .map(|(_, rest)| {
@@ -9936,8 +9965,14 @@ fn release_workflows_publish_only_by_explicit_dispatch() -> Result<(), String> {
                     .to_string()
             })
             .ok_or_else(|| format!("publish-extension.yml has no {job} job"))?;
-        if !needs.contains("admit-dispatch") {
-            return Err(format!("{job} must need admit-dispatch, found `{needs}`"));
+        // `package` is admitted transitively through `verify-server-assets`.
+        let admitted_by = if job == "package" {
+            "verify-server-assets"
+        } else {
+            "admit-dispatch"
+        };
+        if !needs.contains(admitted_by) {
+            return Err(format!("{job} must need {admitted_by}, found `{needs}`"));
         }
     }
     if extension

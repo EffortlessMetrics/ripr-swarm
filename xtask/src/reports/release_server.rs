@@ -266,6 +266,85 @@ export const SERVER_DISTRIBUTION_DESCRIPTORS: readonly ServerDistributionDescrip
     )
 }
 
+/// Binds the published server manifest's raw-byte digest into the editor
+/// descriptor at package time (#3798). The expected digest comes from the
+/// release transaction receipt, never from the manifest being checked, so the
+/// descriptor is no longer self-referential: the manifest bytes must match the
+/// receipted digest before they are admitted, and the generation, asset URLs
+/// and archive digests must be well formed.
+pub(crate) fn release_bind_server_descriptor(args: &[String]) -> Result<(), String> {
+    let version = normalize_release_version(&required_release_arg(args, "version", "RAW_VERSION")?);
+    let manifest_path = PathBuf::from(required_release_arg(args, "manifest", "MANIFEST_PATH")?);
+    let expected = required_release_arg(args, "manifest-sha256", "MANIFEST_SHA256")?;
+    let bytes = fs::read(&manifest_path)
+        .map_err(|err| format!("failed to read {}: {err}", manifest_path.display()))?;
+    let source = bound_descriptor_source(&version, &bytes, &expected)?;
+    let descriptor_path = editor_distribution_descriptor_path();
+    fs::write(&descriptor_path, source)
+        .map_err(|err| format!("failed to write {}: {err}", descriptor_path.display()))?;
+    eprintln!("bound {} to manifest {expected}", descriptor_path.display());
+    Ok(())
+}
+
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+pub(crate) fn bound_descriptor_source(
+    generation: &str,
+    manifest_bytes: &[u8],
+    expected_sha256: &str,
+) -> Result<String, String> {
+    if !is_sha256_hex(expected_sha256) {
+        return Err(format!(
+            "--manifest-sha256 must be 64 lowercase hex characters; got `{expected_sha256}`"
+        ));
+    }
+    let actual = format!("{:x}", Sha256::digest(manifest_bytes));
+    if actual != expected_sha256 {
+        return Err(format!(
+            "manifest SHA-256 {actual} does not match the receipted digest {expected_sha256}"
+        ));
+    }
+    if generation.split('.').count() != 3
+        || generation
+            .split('.')
+            .any(|part| part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return Err(format!(
+            "descriptor generation must be MAJOR.MINOR.PATCH; got `{generation}`"
+        ));
+    }
+    let manifest: serde_json::Value = serde_json::from_slice(manifest_bytes)
+        .map_err(|err| format!("manifest is not valid JSON: {err}"))?;
+    if manifest["version"].as_str() != Some(generation) {
+        return Err(format!(
+            "manifest version {} does not match generation {generation}",
+            manifest["version"]
+        ));
+    }
+    let assets = manifest["assets"]
+        .as_object()
+        .filter(|assets| !assets.is_empty())
+        .ok_or_else(|| "manifest has no assets".to_string())?;
+    for (target, asset) in assets {
+        let url = asset["url"].as_str().unwrap_or_default();
+        if !url.starts_with("https://") {
+            return Err(format!("manifest asset {target} has a non-https url"));
+        }
+        if !is_sha256_hex(asset["sha256"].as_str().unwrap_or_default()) {
+            return Err(format!("manifest asset {target} has no valid sha256"));
+        }
+    }
+    Ok(editor_distribution_descriptor_source(
+        generation,
+        expected_sha256,
+    ))
+}
+
 pub(crate) fn release_upload_assets(args: &[String]) -> Result<(), String> {
     let version = normalize_release_version(&required_release_arg(args, "version", "RAW_VERSION")?);
     let tag = format!("v{version}");

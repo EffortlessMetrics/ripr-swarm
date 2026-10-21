@@ -139,10 +139,17 @@ upload those bytes to the RC tag, and upload the identical bytes to the stable
 tag when it is cut.
 
 `cargo xtask release-server-manifest` also regenerates
-`editors/vscode/src/serverDescriptor.ts` with that digest. The release cut
-must run the manifest command and commit the refreshed descriptor **before**
-packaging the extension VSIX, so the packaged extension embeds the real
-digest. A generation without an embedded descriptor has no fallback row: a
+`editors/vscode/src/serverDescriptor.ts` with that digest, which is useful for
+local rehearsals. The descriptor's authoritative source at release is the
+publish workflow: `publish-extension.yml` runs
+`cargo xtask release-bind-server-descriptor --version <V> --manifest <file>
+--manifest-sha256 <receipted digest>` before compiling, so the packaged
+extension embeds the digest of the manifest actually published (the command
+refuses bytes that do not match the digest, a wrong generation, non-https
+asset URLs and malformed archive digests). The committed descriptor stays
+empty on `main`; the digest is not derivable before the server run because
+archive digests depend on the commit that would contain the descriptor.
+A generation without an embedded descriptor has no fallback row: a
 prerelease request's stable absence stays terminal.
 
 With the descriptor embedded, a clean RC extension requests its own version

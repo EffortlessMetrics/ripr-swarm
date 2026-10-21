@@ -328,6 +328,26 @@ jobs:
 }
 
 #[test]
+fn workflow_review_thread_mutation_policy_rejects_token_split_across_lines() {
+    let workflow = r#"
+jobs:
+  review:
+    steps:
+      - run: |
+          R='__head__'
+          T='__tail__'
+          gh api graphql -f query="mutation { $R$T }"
+"#
+    .replace("__head__", "resolve")
+    .replace("__tail__", "ReviewThread");
+
+    let violations =
+        workflow_review_thread_mutation_violations(".github/workflows/review.yml", &workflow);
+
+    assert_eq!(violations.len(), 1);
+}
+
+#[test]
 fn workflow_review_thread_mutation_policy_accepts_adjudication_guidance() {
     let workflow = r#"
 name: Review guidance

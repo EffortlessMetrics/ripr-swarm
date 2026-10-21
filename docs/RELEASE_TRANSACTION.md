@@ -686,10 +686,29 @@ jq -e --arg sha "$SOURCE_RELEASE_HEAD" '.headSha == $sha and .status == "complet
 
 ```bash
 set -euo pipefail
+# [LOCAL-MUTATING] repo=packet; record the published server manifest's raw-byte digest before any extension dispatch
+curl -fsSL "https://github.com/EffortlessMetrics/ripr/releases/download/v${VERSION}/ripr-server-manifest-v${VERSION}.json" -o "$PACKET_ROOT/ripr-server-manifest-v${VERSION}.json"
+SERVER_MANIFEST_SHA256="$(sha256sum "$PACKET_ROOT/ripr-server-manifest-v${VERSION}.json" | cut -d' ' -f1)"
+printf '%s\n' "$SERVER_MANIFEST_SHA256" > "$PACKET_ROOT/server-manifest.sha256"
+```
+
+`publish-extension.yml` refuses a dispatch whose run commit is not `source_sha`
+or whose `v$VERSION` tag does not peel to it, re-downloads the manifest and
+every archive it names and compares them with `manifest_sha256`, requires
+`package.json` to equal the version, binds that digest into the VSIX through
+`cargo xtask release-bind-server-descriptor`, runs `npm run package` plus
+`cargo xtask vscode-verify-vsix`, and attaches one VSIX to the Release before
+either marketplace publish. The second channel's dispatch reuses the attached
+bytes and each publish job re-checks their SHA-256. The workflow cannot prove
+equivalence with the swarm qualification archives, whose commit and URLs
+differ; that remains outside this control (#3807 R8-F2).
+
+```bash
+set -euo pipefail
 # [EXTERNAL-PUBLISHING] repo=source; explicit #1470 VS Marketplace authorization only
 DISPATCHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 gh api --paginate --slurp "repos/EffortlessMetrics/ripr/actions/workflows/publish-extension.yml/runs?per_page=100&event=workflow_dispatch" | jq '[.[] | .workflow_runs[]]' > "$PACKET_ROOT/extension-runs-before.json"
-gh workflow run publish-extension.yml --repo EffortlessMetrics/ripr --ref "$RELEASE_REF" -f version="$VERSION" -f publish_vs_marketplace=true -f publish_open_vsx=false
+gh workflow run publish-extension.yml --repo EffortlessMetrics/ripr --ref "$RELEASE_REF" -f version="$VERSION" -f source_sha="$SOURCE_RELEASE_HEAD" -f manifest_sha256="$SERVER_MANIFEST_SHA256" -f publish_vs_marketplace=true -f publish_open_vsx=false
 ```
 
 ```bash
@@ -707,7 +726,7 @@ set -euo pipefail
 # [EXTERNAL-PUBLISHING] repo=source; explicit #1470 Open VSX authorization only
 DISPATCHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 gh api --paginate --slurp "repos/EffortlessMetrics/ripr/actions/workflows/publish-extension.yml/runs?per_page=100&event=workflow_dispatch" | jq '[.[] | .workflow_runs[]]' > "$PACKET_ROOT/extension-runs-open-vsx-before.json"
-gh workflow run publish-extension.yml --repo EffortlessMetrics/ripr --ref "$RELEASE_REF" -f version="$VERSION" -f publish_vs_marketplace=false -f publish_open_vsx=true
+gh workflow run publish-extension.yml --repo EffortlessMetrics/ripr --ref "$RELEASE_REF" -f version="$VERSION" -f source_sha="$SOURCE_RELEASE_HEAD" -f manifest_sha256="$SERVER_MANIFEST_SHA256" -f publish_vs_marketplace=false -f publish_open_vsx=true
 ```
 
 ```bash

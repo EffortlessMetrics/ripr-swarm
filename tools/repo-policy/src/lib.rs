@@ -602,12 +602,44 @@ pub fn scratch_gc_concurrency_violations(path: &str, text: &str) -> Vec<String> 
 /// re-enter unnoticed. Repository-owned delegated automation is scanned too,
 /// so a local composite action or xtask helper cannot hide the mutation.
 pub fn workflow_review_thread_mutation_violations(path: &str, text: &str) -> Vec<String> {
-    if text.lines().any(review_thread_mutation_line) {
+    if text_has_review_thread_mutation(text) {
         return vec![format!(
             "{path}: workflow contains a review-thread resolution mutation; review-thread resolution requires explicit adjudication outside automated workflow mutation"
         )];
     }
     Vec::new()
+}
+
+/// Scans each line and every window of up to four consecutive lines, so a
+/// token split across lines (a folded YAML query, a multi-line concatenation)
+/// is still found.
+pub fn text_has_review_thread_mutation(text: &str) -> bool {
+    let lines: Vec<&str> = text.lines().collect();
+    (0..lines.len()).any(|start| {
+        let end = (start + 4).min(lines.len());
+        (start + 1..=end).any(|stop| {
+            let window = lines[start..stop].join("\n");
+            review_thread_mutation_line(&window)
+                || review_thread_mutation_line(&quoted_literals(&window))
+        })
+    })
+}
+
+/// Concatenates only the quoted string literals of `text`, so a token assigned
+/// to separate variables (`R='resolve'` then `T='ReviewThread'`) is joined
+/// without the variable names between its halves.
+fn quoted_literals(text: &str) -> String {
+    let mut out = String::new();
+    let mut quote: Option<char> = None;
+    for character in text.chars() {
+        match quote {
+            Some(open) if character == open => quote = None,
+            Some(_) => out.push(character),
+            None if character == '\'' || character == '"' => quote = Some(character),
+            None => {}
+        }
+    }
+    out
 }
 
 pub fn review_thread_mutation_line(line: &str) -> bool {
@@ -647,7 +679,7 @@ pub fn repository_owned_review_thread_mutation_violations() -> Result<Vec<String
                 continue;
             }
             let text = read_text_lossy(&path)?;
-            if text.lines().any(review_thread_mutation_line) {
+            if text_has_review_thread_mutation(&text) {
                 violations.push(format!(
                     "{normalized}: repository-owned automation contains a review-thread resolution mutation; review-thread resolution requires explicit adjudication outside automated workflow mutation"
                 ));

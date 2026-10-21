@@ -2721,7 +2721,10 @@ fn vsix_packaging_check() -> ReleaseReadinessCheck {
     let package_json = Path::new("editors/vscode/package.json");
     let release_doc = Path::new("docs/RELEASE_MARKETPLACE.md");
     let icon = Path::new("editors/vscode/icon.png");
-    let command = "npm --prefix editors/vscode run package";
+    // Static presence check only: it does not run packaging. The inventory and
+    // license-notice proof is `npm run package` / `vscode-verify-vsix`, run by
+    // ci.yml and publish-extension.yml.
+    let command = "static presence check (no VSIX is built)";
     let mut missing = Vec::new();
     for path in [package_json, release_doc, icon] {
         if !path.exists() {

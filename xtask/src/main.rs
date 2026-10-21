@@ -298,8 +298,8 @@ use repo_readiness::{
 };
 #[cfg(test)]
 pub(crate) use reports::release_server::{
-    ReleaseServerAsset, normalize_release_version, release_server_archive, release_server_assets,
-    release_server_manifest, release_server_readme, required_release_arg,
+    ReleaseServerAsset, bound_descriptor_source, normalize_release_version, release_server_archive,
+    release_server_assets, release_server_manifest, release_server_readme, required_release_arg,
 };
 use reports::release_server::{create_zip_archive, sha256_file};
 #[cfg(test)]

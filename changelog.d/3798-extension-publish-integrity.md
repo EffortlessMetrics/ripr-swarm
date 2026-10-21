@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- The VS Code extension publish workflow now binds the release candidate: it requires the dispatched commit to equal the receipted source SHA and the release tag, verifies the published server manifest and every archive against the receipted digest, embeds that digest in the packaged extension, runs the same VSIX inventory and license checks as CI, builds one VSIX per release and reuses its bytes for both marketplaces, and runs only lockfile- or exact-version-pinned `vsce` and `ovsx` (#3798, #2769).
