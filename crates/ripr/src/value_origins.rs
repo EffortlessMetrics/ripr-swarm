@@ -250,8 +250,8 @@ mod tests {
         let mut p = probe();
         p.location.file = PathBuf::from("repo/src/lib.rs");
         assert_eq!(
-            lookup(&ctx, &p, &values()).unwrap()[0],
-            Some(PathBuf::from("repo/tests/a.py"))
+            lookup(&ctx, &p, &values()).map(|files| files[0].as_deref()),
+            Some(Some(Path::new("repo/tests/a.py")))
         );
         assert!(lookup(&ctx, &probe(), &values()).is_none());
     }
