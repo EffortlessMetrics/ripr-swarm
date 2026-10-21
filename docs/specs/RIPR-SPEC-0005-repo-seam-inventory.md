@@ -104,6 +104,42 @@ invalidates full, compact and count facts. Content-read, fingerprint-rebuilt and
 current-input export keys agree on that identity. Raw configuration text remains
 an additional conservative invalidator; parser file facts remain oracle-policy-independent.
 
+### Bounded Rust module motion
+
+Moving a free function from its parent module to an ordinary inline child or
+file-backed child must preserve the semantic evidence of an accessible direct
+observer (#4680). A same-named sibling must not become that owner. An explicit
+import with an incompatible asserted return value must retain the existing
+semantic contradiction. This contract does not make location-bearing seam or
+symbol IDs invariant: their file, owner path and coordinates deliberately change.
+A source snapshot identity changes with source motion, but identical source trees
+under different absolute roots must produce the same portable identity.
+
+A current indexed observer in a manifest-certified default `src/lib.rs` or
+`src/main.rs` remains `InlineUnit` when its owner moves to another file. Discovery
+uses the observer's target kind: `autobins = false` does not disable a default
+library, and `autolib = false` does not disable a default binary. A disabled
+corresponding target, malformed discovery flag, moved/custom target or arbitrary
+`src/*.rs` file does not gain this default-root authority. Existing cross-file
+fallback classification remains unchanged outside the certified roots. Repair
+target selection and rendered repair cards consume that indexed target identity.
+
+Ordinary private-child visibility can disprove a direct observer relation: a
+parent observer cannot call its child's private function. Descendant observers
+and accessible `pub(super)`/`pub(crate)` functions retain their existing evidence.
+The cross-file veto requires a certified default root, one ordinary module edge
+and an exact declaration. Unknown attributes, `#[path]`, includes and unresolved
+placement do not gain a new visibility verdict. An independent, already-admitted
+helper witness survives the direct-relation veto; fallback affinity alone must
+not restore the disproven relation.
+
+Full evidence carries the indexed test target. Compact evidence intentionally
+omits target details and preserves the five stage states and contradiction count.
+Classified full and compact cache generations change with these semantics.
+Local binding/shadowing and duplicate-import residuals remain separate open work
+on #4680; these controls do not establish general extraction invariance or the
+closure of follow-on #4681 through #4683.
+
 ### Stable Seam ID Rules
 
 Seam IDs must be stable across runs and across input file walk reorderings.

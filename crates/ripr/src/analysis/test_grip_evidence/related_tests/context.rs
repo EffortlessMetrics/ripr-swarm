@@ -738,18 +738,9 @@ impl<'a> CompactGripContext<'a> {
             return false;
         };
         let mut cache = memo(&self.default_unit_test_files);
-        *cache.entry(path.as_path()).or_insert_with(|| {
-            // is_default_target_root requires this shape from its caller;
-            // by itself it does not reject arbitrary src/<module>.rs.
-            matches!(
-                path.file_name().and_then(|name| name.to_str()),
-                Some("lib.rs" | "main.rs")
-            ) && path
-                .parent()
-                .and_then(Path::file_name)
-                .is_some_and(|name| name == "src")
-                && self.index.member_crates.is_default_target_root(path)
-        })
+        *cache
+            .entry(path.as_path())
+            .or_insert_with(|| self.index.member_crates.is_default_unit_target_root(path))
     }
 
     /// SHA-256 of an indexed file's source, computed once per context.

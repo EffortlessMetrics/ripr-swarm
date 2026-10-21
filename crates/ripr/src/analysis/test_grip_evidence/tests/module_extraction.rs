@@ -349,6 +349,27 @@ fn module_extraction_unit_kind_requires_default_target_authority() -> Result<(),
         ("", "src/lib.rs", "", TestKind::InlineUnit),
         ("", "src/main.rs", "", TestKind::InlineUnit),
         ("member", "src/lib.rs", "", TestKind::InlineUnit),
+        ("", "src/lib.rs", "autobins = false\n", TestKind::InlineUnit),
+        ("", "src/main.rs", "autolib = false\n", TestKind::InlineUnit),
+        ("", "src/lib.rs", "autolib = false\n", TestKind::Integration),
+        (
+            "",
+            "src/main.rs",
+            "autobins = false\n",
+            TestKind::Integration,
+        ),
+        (
+            "",
+            "src/lib.rs",
+            "autobins = \"bad\"\n",
+            TestKind::Integration,
+        ),
+        (
+            "",
+            "src/main.rs",
+            "autolib = \"bad\"\n",
+            TestKind::Integration,
+        ),
         (
             "",
             "src/lib.rs",
@@ -416,7 +437,7 @@ fn module_extraction_unit_kind_requires_default_target_authority() -> Result<(),
         .map_err(|error| error.to_string())?;
         let index = build_index(&root, &files)?;
         assert_eq!(index.tests().len(), 1, "{package}/{observer}");
-        let seam = inventory_seams_from_index(&[owner_file], &index)
+        let seam = inventory_seams_from_index(std::slice::from_ref(&owner_file), &index)
             .into_iter()
             .find(|seam| seam.kind() == SeamKind::ReturnValue)
             .ok_or("owner return seam")?;
@@ -431,7 +452,29 @@ fn module_extraction_unit_kind_requires_default_target_authority() -> Result<(),
         )
         .ok_or("current indexed target")?;
         assert_eq!(target.file(), observer_file);
-        assert_eq!(target.test_kind(), expected, "{package}/{observer}");
+        assert_eq!(
+            target.test_kind(),
+            expected,
+            "{package}/{observer}: {manifest_tail}"
+        );
+        if expected == TestKind::InlineUnit && !manifest_tail.is_empty() {
+            // The same certified root also bounds the cross-file privacy veto.
+            // An unrelated disabled target must not resurrect an inaccessible
+            // direct observer through that shared classification decision.
+            fs::write(root.join(&owner_file), "fn compute() -> i32 { 9 }\n")
+                .map_err(|error| error.to_string())?;
+            let private_index = build_index(&root, &files)?;
+            let private_seam = inventory_seams_from_index(&[owner_file], &private_index)
+                .into_iter()
+                .find(|seam| seam.kind() == SeamKind::ReturnValue)
+                .ok_or("private owner return seam")?;
+            let evidence = evidence_for_seam(&private_seam, &private_index);
+            assert!(
+                evidence.related_tests.is_empty(),
+                "{observer}: {manifest_tail}: {evidence:?}"
+            );
+            assert_ne!(evidence.reach.state, StageState::Yes);
+        }
     }
     Ok(())
 }
@@ -510,12 +553,33 @@ fn module_extraction_visibility_keeps_existing_helper_witness() -> Result<(), St
     // The sibling call enters the coarse direct-name candidate set. Privacy
     // removes that candidate for child::compute_value, then the independent wrapper
     // must survive the final veto. A wrapper-only test would miss that path.
-    // The existing helper authority requires a specific owner token: `compute`
-    // alone is deliberately too short; `compute_value` is admitted.
-    fs::write(root.join("src/lib.rs"), "mod child {\nfn compute_value() -> i32 { 9 }\npub(super) fn exercise() -> i32 { compute_value() }\n}\nmod other { pub(super) fn compute_value() -> i32 { 99 } }\n#[cfg(test)] mod tests {\n#[test]\nfn through_wrapper() { assert_eq!(super::other::compute_value(), 99); assert_eq!(super::child::exercise(), 9); }\n}\n")
-        .map_err(|error| error.to_string())?;
+    // Use the existing specific-owner helper convention and a standalone body
+    // call, then require actual helper admission before testing its preservation.
+    let source = r#"mod child {
+    fn compute_value() -> i32 { 9 }
+    pub(super) fn exercise_compute_value() -> i32 {
+        compute_value()
+    }
+}
+mod other { pub(super) fn compute_value() -> i32 { 99 } }
+#[cfg(test)] mod tests {
+    #[test]
+    fn through_wrapper() {
+        assert_eq!(super::other::compute_value(), 99);
+        assert_eq!(super::child::exercise_compute_value(), 9);
+    }
+}
+"#;
+    fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
     let index = build_index(&root, &[PathBuf::from("src/lib.rs")])?;
     assert_eq!(index.tests().len(), 1);
+    let context = CompactGripContext::new(&index);
+    assert!(
+        context.tests[0]
+            .free_spelling_helper_owner_call_names
+            .contains("compute_value"),
+        "fixture must establish an existing helper witness before the visibility veto"
+    );
     assert_eq!(
         index
             .functions()
@@ -542,6 +606,119 @@ fn module_extraction_visibility_keeps_existing_helper_witness() -> Result<(), St
         "{evidence:?}"
     );
     assert_eq!(evidence.reach.state, StageState::Yes, "{evidence:?}");
+    let without_wrapper = source.replace(
+        "        assert_eq!(super::child::exercise_compute_value(), 9);\n",
+        "",
+    );
+    assert_ne!(without_wrapper, source);
+    fs::write(root.join("src/lib.rs"), without_wrapper).map_err(|error| error.to_string())?;
+    let direct_only_index = build_index(&root, &[PathBuf::from("src/lib.rs")])?;
+    let direct_only_context = CompactGripContext::new(&direct_only_index);
+    assert!(
+        !direct_only_context.tests[0]
+            .free_spelling_helper_owner_call_names
+            .contains("compute_value")
+    );
+    let direct_only_seam =
+        inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &direct_only_index)
+            .into_iter()
+            .find(|seam| {
+                seam.owner() == "src/lib.rs::child::compute_value"
+                    && seam.kind() == SeamKind::ReturnValue
+            })
+            .ok_or("direct-only owner return seam")?;
+    let direct_only = evidence_for_seam(&direct_only_seam, &direct_only_index);
+    assert!(direct_only.related_tests.is_empty(), "{direct_only:?}");
+    assert_ne!(direct_only.reach.state, StageState::Yes, "{direct_only:?}");
+    Ok(())
+}
+
+#[test]
+fn module_extraction_repair_card_keeps_indexed_unit_target() -> Result<(), String> {
+    use crate::analysis::seam_classification::classify_seam;
+    use crate::app::repair_card::{RepairCardInput, build_repair_card};
+    use crate::domain::{
+        CardCurrentnessGoal, EditCageGoal, FixInstructionState, FixInstructionSummary,
+        FocusedExecutionGoal, MutationConfirmationGoal, RepairCardBudget, RepairCardDoneWhen,
+        RepairCardSnapshot, RepairCardSnapshotCurrentness, RepairCardSubject, StaticMovementGoal,
+    };
+
+    for placement in PLACEMENTS {
+        let (_root, index, seam) = motion_case(placement, 9, false, false)?;
+        let evidence = evidence_for_seam(&seam, &index);
+        let entry = ClassifiedSeam {
+            class: classify_seam(&seam, &evidence),
+            seam,
+            evidence,
+        };
+        let eligibility = repair_packet_eligibility(&entry);
+        let readiness = &eligibility.readiness;
+        let RepairTargetSelection::Existing(target) = &readiness.target_selection else {
+            return Err(format!(
+                "{placement:?}: expected indexed existing target: {readiness:?}"
+            ));
+        };
+        let identity = target.workspace_identity().to_string();
+        let instruction = FixInstructionSummary {
+            state: FixInstructionState::Unavailable,
+            has_fix_site: false,
+            has_suggested_assertion: false,
+            limitation_kinds: Vec::new(),
+        };
+        let input = RepairCardInput {
+            snapshot: RepairCardSnapshot {
+                workspace_identity: identity.clone(),
+                repository_head: "fixture-source-snapshot".to_string(),
+                currentness: RepairCardSnapshotCurrentness::Current,
+            },
+            subject: RepairCardSubject {
+                seam_id: entry.seam.id().as_str().to_string(),
+                canonical_gap_id: readiness.canonical_gap_id.clone(),
+                finding_id: None,
+            },
+            instruction: &instruction,
+            readiness,
+            changed_behavior: entry.seam.expression().to_string(),
+            exact_blocker: None,
+            has_observer_setup: false,
+            assertion_goal_detail: None,
+            candidate_value: None,
+            packet_eligible: eligibility.eligible(),
+            edit_cage_refusal: None,
+            next_command: None,
+            packet_route: format!(
+                "ripr agent packet --seam-id {} --json",
+                entry.seam.id().as_str()
+            ),
+            allowed_files: vec!["src/lib.rs".to_string()],
+            forbidden_files: Vec::new(),
+            done_when: RepairCardDoneWhen {
+                static_movement: StaticMovementGoal::ClosedBySelectedRoute,
+                focused_test_execution: FocusedExecutionGoal::ExplicitlyNotRun,
+                edit_cage: EditCageGoal::Compliant,
+                mutation_confirmation: MutationConfirmationGoal::NotRequested,
+                currentness: CardCurrentnessGoal::Current,
+            },
+            stop_conditions: vec!["snapshot_stale".to_string()],
+            selected_basis: None,
+            rejected_alternatives: Vec::new(),
+            attempt: None,
+            limitations: Vec::new(),
+            detail_sources: Vec::new(),
+            budget: RepairCardBudget::default(),
+        };
+        let card = build_repair_card(&input)?;
+        let rendered = serde_json::to_value(&card).map_err(|error| error.to_string())?;
+        let selected = &rendered["selected_target"];
+        assert_eq!(selected["kind"], "existing", "{placement:?}: {rendered}");
+        assert_eq!(
+            selected["test_kind"], "inline_unit",
+            "{placement:?}: {rendered}"
+        );
+        assert_eq!(selected["file"], "src/lib.rs");
+        assert_eq!(selected["symbol_id"], "src/lib.rs::tests::exact_value");
+        assert_eq!(selected["workspace_identity"], identity);
+    }
     Ok(())
 }
 
