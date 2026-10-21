@@ -248,3 +248,255 @@ fn serialization_failure(error: impl std::fmt::Display) -> AttemptFailure {
         "retry ripr_list_repair_attempts",
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    /// Owns one exclusively created workspace root, removed even on unwind.
+    struct Root(PathBuf);
+
+    impl Root {
+        fn new(label: &str) -> Result<Self, String> {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| format!("fixture clock: {error}"))?
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "ripr-mcp-inventory-{label}-{}-{stamp}",
+                std::process::id()
+            ));
+            std::fs::create_dir(&path)
+                .map_err(|error| format!("create {}: {error}", path.display()))?;
+            Ok(Self(path))
+        }
+
+        /// A manifest-bearing directory whose manifest the shared authority refuses.
+        fn invalid_attempt(&self, directory: &str) -> Result<(), String> {
+            let path = self.0.join("target/ripr/repair-attempts").join(directory);
+            std::fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+            std::fs::write(path.join("attempt.json"), "{not-json")
+                .map_err(|error| error.to_string())
+        }
+
+        fn with_invalid(label: &str, directories: &[&str]) -> Result<Self, String> {
+            let root = Self::new(label)?;
+            for directory in directories {
+                root.invalid_attempt(directory)?;
+            }
+            Ok(root)
+        }
+    }
+
+    impl Drop for Root {
+        fn drop(&mut self) {
+            if let Err(error) = std::fs::remove_dir_all(&self.0) {
+                eprintln!("remove inventory fixture {}: {error}", self.0.display());
+            }
+        }
+    }
+
+    const ROOT_IDENTITY: Option<&str> = Some("root:test");
+    const ROOMY: usize = usize::MAX / 4;
+
+    fn list(
+        root: &Root,
+        requested: Option<&str>,
+        offset: usize,
+        limit: Option<usize>,
+        budget: usize,
+    ) -> Result<Value, AttemptFailure> {
+        list_document(
+            Some(&root.0),
+            ROOT_IDENTITY,
+            requested,
+            offset,
+            limit,
+            budget,
+        )
+    }
+
+    fn page(
+        root: &Root,
+        requested: Option<&str>,
+        offset: usize,
+        limit: Option<usize>,
+    ) -> Result<Value, String> {
+        list(root, requested, offset, limit, ROOMY).map_err(|failure| failure.detail)
+    }
+
+    fn directories(document: &Value) -> Vec<&str> {
+        document["items"]
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item["directory"].as_str())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn refusal(result: Result<Value, AttemptFailure>) -> Result<AttemptFailure, String> {
+        match result {
+            Err(failure) => Ok(failure),
+            Ok(document) => Err(format!("expected a typed refusal, got {document}")),
+        }
+    }
+
+    #[test]
+    fn missing_workspace_root_is_a_typed_workspace_unavailable_failure() -> Result<(), String> {
+        let failure = refusal(list_document(None, None, None, 0, None, ROOMY))?;
+        assert_eq!(failure.code, "workspace_unavailable");
+        assert!(failure.recovery.contains("--root"), "{}", failure.recovery);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_store_is_an_honest_empty_inventory_without_creating_it() -> Result<(), String> {
+        let root = Root::new("empty")?;
+        let document = page(&root, None, 0, None)?;
+        assert_eq!(document["total"], json!(0));
+        assert_eq!(document["omitted"], json!(0));
+        assert_eq!(document["page"]["has_more"], json!(false));
+        assert_eq!(document["page"]["next_offset"], Value::Null);
+        assert!(document["continuation"].get("next_page").is_none());
+        assert!(
+            !root.0.join("target").exists(),
+            "a read must not create the store"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_rows_are_listed_by_directory_without_trusting_manifest_fields() -> Result<(), String>
+    {
+        let root = Root::with_invalid("invalid", &["zeta", "alpha"])?;
+        let document = page(&root, None, 0, None)?;
+        assert_eq!(document["total"], json!(2));
+        assert_eq!(document["valid"], json!(0));
+        assert_eq!(document["invalid"], json!(2));
+        // Ordered by directory name, never by creation time.
+        assert_eq!(directories(&document), ["alpha", "zeta"]);
+        let first = &document["items"][0];
+        assert_eq!(first["validation"], json!("invalid"));
+        assert_eq!(first["failure"]["code"], json!(CODE_ATTEMPT_INVALID));
+        assert!(first.get("attempt_id").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn pagination_binds_next_page_to_the_inventory_and_ends_without_one() -> Result<(), String> {
+        let root = Root::with_invalid("paging", &["a0", "a1", "a2", "a3", "a4"])?;
+        let first = page(&root, None, 0, Some(2))?;
+        assert_eq!(directories(&first), ["a0", "a1"]);
+        assert_eq!(first["omitted"], json!(3));
+        assert_eq!(first["page"]["has_more"], json!(true));
+        assert_eq!(first["page"]["next_offset"], json!(2));
+        let next = &first["continuation"]["next_page"];
+        assert_eq!(next["tool"], json!(TOOL_NAME));
+        assert_eq!(next["arguments"]["offset"], json!(2));
+        assert_eq!(next["arguments"]["limit"], json!(2));
+        assert_eq!(next["arguments"]["inventory_id"], first["inventory_id"]);
+
+        let id = first["inventory_id"].as_str();
+        let last = page(&root, id, 4, Some(2))?;
+        assert_eq!(directories(&last), ["a4"]);
+        assert_eq!(last["page"]["returned"], json!(1));
+        assert_eq!(last["page"]["has_more"], json!(false));
+        assert_eq!(last["page"]["next_offset"], Value::Null);
+        assert!(last["continuation"].get("next_page").is_none());
+
+        // An offset past the end returns no rows and never wraps around.
+        let beyond = page(&root, id, 99, None)?;
+        assert_eq!(beyond["page"]["returned"], json!(0));
+        assert_eq!(beyond["page"]["has_more"], json!(false));
+        assert_eq!(beyond["omitted"], json!(5));
+        Ok(())
+    }
+
+    #[test]
+    fn unlimited_request_omits_limit_from_the_continuation_and_caps_at_256() -> Result<(), String> {
+        let names: Vec<String> = (0..MAX_PAGE_ITEMS + 2)
+            .map(|n| format!("a{n:04}"))
+            .collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let root = Root::with_invalid("cap", &refs)?;
+        let capped = page(&root, None, 0, None)?;
+        assert_eq!(capped["page"]["returned"], json!(MAX_PAGE_ITEMS));
+        assert_eq!(capped["page"]["next_offset"], json!(MAX_PAGE_ITEMS));
+        let arguments = &capped["continuation"]["next_page"]["arguments"];
+        assert!(arguments.get("limit").is_none(), "{arguments}");
+        // A larger requested limit is still bounded by the page cap.
+        let big = page(&root, None, 0, Some(10_000))?;
+        assert_eq!(big["page"]["returned"], json!(MAX_PAGE_ITEMS));
+        assert_eq!(big["omitted"], json!(2));
+        Ok(())
+    }
+
+    #[test]
+    fn changed_observation_fails_closed_with_the_current_inventory_identity() -> Result<(), String>
+    {
+        let root = Root::with_invalid("stale", &["a0", "a1"])?;
+        let bound = page(&root, None, 0, Some(1))?;
+        let id = bound["inventory_id"].as_str().ok_or("inventory_id")?;
+        assert!(id.starts_with("repair-inventory:sha256:"), "{id}");
+        page(&root, Some(id), 1, Some(1))?;
+
+        root.invalid_attempt("a2")?;
+        let failure = refusal(list(&root, Some(id), 1, Some(1), ROOMY))?;
+        assert_eq!(failure.code, CODE_STALE_INVENTORY);
+        let current = page(&root, None, 0, Some(1))?;
+        assert_eq!(
+            failure.data["current_inventory_id"],
+            current["inventory_id"]
+        );
+        assert_ne!(failure.data["current_inventory_id"], json!(id));
+        // A bogus identity is refused even when the store is unchanged.
+        let bogus = refusal(list(
+            &root,
+            Some("repair-inventory:sha256:0"),
+            0,
+            None,
+            ROOMY,
+        ))?;
+        assert_eq!(bogus.code, CODE_STALE_INVENTORY);
+        Ok(())
+    }
+
+    #[test]
+    fn envelope_budget_shrinks_the_page_and_keeps_the_continuation_honest() -> Result<(), String> {
+        let root = Root::with_invalid("budget", &["a0", "a1", "a2", "a3", "a4", "a5"])?;
+        let all = page(&root, None, 0, Some(6))?;
+        let three = page(&root, None, 0, Some(3))?;
+        let budget = protocol::structured_envelope_bytes(&three)?;
+        assert!(budget < protocol::structured_envelope_bytes(&all)?);
+
+        let shrunk = list(&root, None, 0, Some(6), budget).map_err(|failure| failure.detail)?;
+        let returned = shrunk["page"]["returned"].as_u64().ok_or("returned")?;
+        assert!((1..6).contains(&returned), "{returned}");
+        assert!(protocol::structured_envelope_bytes(&shrunk)? <= budget);
+        assert_eq!(shrunk["page"]["has_more"], json!(true));
+        assert_eq!(shrunk["page"]["next_offset"], json!(returned));
+        assert_eq!(shrunk["omitted"], json!(6 - returned));
+        assert_eq!(
+            shrunk["items"].as_array().map(Vec::len),
+            Some(returned as usize)
+        );
+        assert_eq!(
+            shrunk["continuation"]["next_page"]["arguments"]["offset"],
+            json!(returned)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_budget_that_fits_no_row_is_a_typed_result_too_large_failure() -> Result<(), String> {
+        let root = Root::with_invalid("toolarge", &["a0", "a1"])?;
+        let failure = refusal(list(&root, None, 0, None, 1))?;
+        assert_eq!(failure.code, "result_too_large");
+        assert_eq!(failure.recovery, RECOVERY_TOO_LARGE);
+        Ok(())
+    }
+}

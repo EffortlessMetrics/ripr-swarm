@@ -1217,3 +1217,158 @@ async fn repair_tools_reject_bad_arguments_at_the_dispatch_edge() -> Result<(), 
     }
     Ok(())
 }
+
+fn argument_map(value: Value) -> Option<serde_json::Map<String, Value>> {
+    value.as_object().cloned()
+}
+
+#[test]
+fn paging_argument_parsers_pin_type_range_and_absence() -> Result<(), String> {
+    let none: Option<serde_json::Map<String, Value>> = None;
+    assert_eq!(optional_nonnegative_argument(&none, "offset"), Ok(None));
+    assert_eq!(optional_positive_argument(&none, "limit"), Ok(None));
+    let empty = argument_map(serde_json::json!({}));
+    assert_eq!(optional_nonnegative_argument(&empty, "offset"), Ok(None));
+
+    // Zero is a valid offset but never a valid limit.
+    let zero = argument_map(serde_json::json!({"offset": 0, "limit": 0}));
+    assert_eq!(optional_nonnegative_argument(&zero, "offset"), Ok(Some(0)));
+    let refused = optional_positive_argument(&zero, "limit")
+        .err()
+        .ok_or("limit 0 must be refused")?;
+    assert_eq!(refused.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    assert_eq!(refused.message, "limit must be at least 1");
+    let one = argument_map(serde_json::json!({"limit": 1}));
+    assert_eq!(optional_positive_argument(&one, "limit"), Ok(Some(1)));
+
+    // Negatives, floats, strings, booleans and null never coerce.
+    for bad in [
+        serde_json::json!(-1),
+        serde_json::json!(1.5),
+        serde_json::json!("2"),
+        serde_json::json!(true),
+        Value::Null,
+    ] {
+        let arguments = argument_map(serde_json::json!({"offset": bad}));
+        let error = optional_nonnegative_argument(&arguments, "offset")
+            .err()
+            .ok_or_else(|| format!("offset {bad} must be refused"))?;
+        assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert_eq!(error.message, "offset must be a non-negative integer");
+    }
+    Ok(())
+}
+
+#[test]
+fn unknown_arguments_are_refused_by_name_and_allowed_ones_pass() -> Result<(), String> {
+    let allowed = ["inventory_id", "offset", "limit"];
+    assert_eq!(reject_unknown_arguments(&None, &allowed), Ok(()));
+    let known = argument_map(serde_json::json!({"offset": 1, "limit": 2}));
+    assert_eq!(reject_unknown_arguments(&known, &allowed), Ok(()));
+    let unknown = argument_map(serde_json::json!({"offset": 1, "verbose": true}));
+    let error = reject_unknown_arguments(&unknown, &allowed)
+        .err()
+        .ok_or("unknown argument must be refused")?;
+    assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    assert!(error.message.contains("\"verbose\""), "{}", error.message);
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_repair_attempts_rejects_bad_arguments_at_the_dispatch_edge() -> Result<(), String> {
+    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
+        .map_err(|error| error.to_string())?;
+    for arguments in [
+        serde_json::json!({"offset": -1}),
+        serde_json::json!({"offset": "1"}),
+        serde_json::json!({"limit": 0}),
+        serde_json::json!({"limit": 1.5}),
+        serde_json::json!({"inventory_id": 7}),
+        serde_json::json!({"inventory_id": null}),
+        serde_json::json!({"cursor": "x"}),
+    ] {
+        match server
+            .list_repair_attempts_tool(
+                argument_map(arguments.clone()),
+                super::super::MAX_RESPONSE_BYTES,
+            )
+            .await
+        {
+            Err(error) if error.code == rmcp::model::ErrorCode::INVALID_PARAMS => {}
+            other => {
+                return Err(format!(
+                    "list_repair_attempts must refuse {arguments} as invalid params: {other:?}"
+                ));
+            }
+        }
+    }
+    // Valid arguments with an unavailable root are a typed failure, not a protocol error.
+    let response = server
+        .list_repair_attempts_tool(
+            argument_map(serde_json::json!({"offset": 0, "limit": 1})),
+            super::super::MAX_RESPONSE_BYTES,
+        )
+        .await
+        .map_err(|error| format!("unavailable root must be a typed result: {error:?}"))?;
+    let result = match response {
+        rmcp::model::CallToolResponse::Complete(result) => result,
+        other => return Err(format!("expected a complete typed failure, got {other:?}")),
+    };
+    let value = serde_json::to_value(result).map_err(|error| error.to_string())?;
+    assert_eq!(value["isError"], serde_json::json!(true));
+    assert_eq!(
+        value["structuredContent"]["failure"]["code"],
+        serde_json::json!("workspace_unavailable")
+    );
+    Ok(())
+}
+
+#[test]
+fn resource_failures_carry_the_typed_code_as_data_and_the_current_snapshot() -> Result<(), String> {
+    let failure = workspace::AttemptFailure::new("item_not_found", "no such gap", "refresh");
+    let error = resource_failure("gap", &failure, Some("snapshot:abc"));
+    assert_eq!(error.code, rmcp::model::ErrorCode::RESOURCE_NOT_FOUND);
+    assert_eq!(error.message, "unavailable gap resource: item_not_found");
+    let data = error.data.ok_or("typed failure data")?;
+    assert_eq!(data["code"], serde_json::json!("item_not_found"));
+    assert_eq!(data["recovery"], serde_json::json!("refresh"));
+    assert_eq!(
+        data["current_snapshot_id"],
+        serde_json::json!("snapshot:abc")
+    );
+    assert_eq!(data["failure"]["detail"], serde_json::json!("no such gap"));
+
+    // Without a current snapshot the key is absent rather than null.
+    let bare = resource_failure("gap", &failure, None)
+        .data
+        .ok_or("typed failure data")?;
+    assert!(bare.get("current_snapshot_id").is_none(), "{bare}");
+    Ok(())
+}
+
+#[test]
+fn resource_budget_failure_reports_bytes_budget_and_recovery() -> Result<(), String> {
+    let error = resource_budget_failure(9_001, 4_000, "narrow the read");
+    assert_eq!(
+        error.message,
+        format!(
+            "unavailable bounded resource: {}",
+            workspace::CODE_RESULT_TOO_LARGE
+        )
+    );
+    let data = error.data.ok_or("typed failure data")?;
+    assert_eq!(data["recovery"], serde_json::json!("narrow the read"));
+    let detail = data["detail"].as_str().ok_or("detail")?;
+    assert!(detail.contains("9001 bytes"), "{detail}");
+    assert!(detail.contains("budget is 4000"), "{detail}");
+    let envelope = json_envelope("ripr://x", "{}".to_string());
+    assert_eq!(
+        envelope["contents"][0]["uri"],
+        serde_json::json!("ripr://x")
+    );
+    assert_eq!(
+        envelope["contents"][0]["mimeType"],
+        serde_json::json!("application/json")
+    );
+    Ok(())
+}
