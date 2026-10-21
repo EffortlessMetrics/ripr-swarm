@@ -1,6 +1,6 @@
 use crate::analysis::facts::{FileFacts, FunctionFact, FunctionSourceRole, SourceText, TestFact};
 use crate::analysis::rust_index::{
-    extract_assertions, extract_call_facts, extract_literal_facts, extract_return_facts,
+    extract_assertions_in, extract_call_facts, extract_literal_facts, extract_return_facts,
 };
 use crate::domain::SymbolId;
 use std::path::{Path, PathBuf};
@@ -159,7 +159,7 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
                     end_line,
                     body: linked_body.clone(),
                     calls,
-                    assertions: property_safe_lexical_assertions(&body, start_line),
+                    assertions: property_safe_lexical_assertions(&body, start_line, &text),
                     literals,
                     attrs: Vec::new(),
                     // Parser-only shadow facts (#3727 Slice A): empty under
@@ -215,10 +215,11 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
 fn property_safe_lexical_assertions(
     body: &str,
     start_line: usize,
+    decl_source: &str,
 ) -> Vec<crate::analysis::facts::OracleFact> {
     let macros = crate::analysis::extract::property_macros::opaque_property_macros(body);
     if macros.is_empty() {
-        return extract_assertions(body, start_line);
+        return extract_assertions_in(body, start_line, decl_source);
     }
     let mut previous_offset = 0;
     let mut line = start_line;
@@ -231,7 +232,7 @@ fn property_safe_lexical_assertions(
             .filter(|byte| *byte == b'\n')
             .count();
         previous_offset = offset;
-        assertions.extend(extract_assertions(part, line));
+        assertions.extend(extract_assertions_in(part, line, decl_source));
     }
     assertions
 }

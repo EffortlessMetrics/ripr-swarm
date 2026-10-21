@@ -51,7 +51,10 @@
   },
   "perl_facts": {
     "packet": "packets/perl-test2-summary-deep-is-count.json",
-    "sha256": "4a3e5482ee9b03e15d0b243bb028429deb28c846c5e1055bca9f43d4c4dc005f",
+    "sha256": "ba63d43227972e0630d79439527ee7701a1c5616ad2624ac2439510363dad216",
     "provenance": "producer"
-  }
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0235#22"
+  ]
 }

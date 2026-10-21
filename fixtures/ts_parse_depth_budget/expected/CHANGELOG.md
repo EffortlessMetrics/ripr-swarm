@@ -239,3 +239,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_parse_depth_budget (21)
+
+Reason:
+RIPR-SPEC-0122: #8389 Summary names base-side findings, Hidden total equals listed bullets, all-unknown footer no longer claims a found absence
+
+Command:
+`cargo xtask goldens bless ts_parse_depth_budget --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_parse_depth_budget (22)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless ts_parse_depth_budget --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

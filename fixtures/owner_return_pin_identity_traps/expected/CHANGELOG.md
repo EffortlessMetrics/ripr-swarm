@@ -239,3 +239,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_identity_traps (21)
+
+Reason:
+RIPR-SPEC-0122: #8389 Summary names base-side findings, Hidden total equals listed bullets, all-unknown footer no longer claims a found absence
+
+Command:
+`cargo xtask goldens bless owner_return_pin_identity_traps --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — owner_return_pin_identity_traps (22)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless owner_return_pin_identity_traps --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — owner_return_pin_identity_traps (23)
+
+Reason:
+RIPR-SPEC-0224: ungraded oracle reads '<kind> oracle, not graded against this probe' (#8388)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_identity_traps --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

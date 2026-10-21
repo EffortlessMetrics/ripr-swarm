@@ -584,7 +584,7 @@ mod tests {
         assert!(
             cmd.starts_with(&format!(
                 "ripr receipt write --gap gap:perl:lib/My/App.pm:discount --verify-command {} --status not_run --out ",
-                crate::agent::loop_commands::shell_arg("prove t/app.t")
+                "'prove t/app.t'"
             )),
             "receipt must be the canonical receipt write command: {cmd}"
         );

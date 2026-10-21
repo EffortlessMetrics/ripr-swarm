@@ -137,6 +137,9 @@ pub(in crate::analysis) fn unresolved_parameter_field_selector(
     None
 }
 
+mod field_selector;
+use field_selector::FieldSelector;
+
 mod guard_entry;
 pub(in crate::analysis) use guard_entry::{GuardEntry, named_integer_bound};
 
@@ -194,6 +197,8 @@ pub(in crate::analysis) struct ArmSelector {
     /// may compare `Self::GET`, a `Router` constant, by value.
     self_is_scrutinee_type: bool,
     binding: ScrutineeBinding,
+    /// A direct record literal supplies this field; no alias resolution.
+    field_selector: Option<FieldSelector>,
     /// The arithmetic a computed integer scrutinee applies to the bound
     /// parameter (decision 6), or `None` for the parameter itself.
     arithmetic: Option<ScrutineeArithmetic>,
@@ -476,6 +481,15 @@ impl ArmSelector {
             .iter()
             .map(|pattern| earlier_arm(pattern))
             .collect::<Vec<_>>();
+        let field = scrutinee
+            .split_once('.')
+            .map(|(parameter, field)| (parameter.to_string(), field.to_string()));
+        if field.is_some()
+            && unresolved_parameter_field_selector(probe, owner).as_deref() != Some(&scrutinee)
+        {
+            return None;
+        }
+        let mut field_selector = None;
         let (binding, scrutinee_type, bare_scrutinee_type) =
             if method && matches!(scrutinee.as_str(), "self" | "*self") {
                 if receiver_may_change(owner) {
@@ -494,12 +508,15 @@ impl ArmSelector {
                     .map(str::to_string);
                 (ScrutineeBinding::Receiver, self_type, bare)
             } else {
+                let parameter = field
+                    .as_ref()
+                    .map_or(scrutinee.as_str(), |(parameter, _)| parameter.as_str());
                 let parameters = function_parameters(owner);
                 let index = parameters
                     .iter()
-                    .position(|parameter| parameter_name(parameter) == scrutinee)?;
-                let declared = parameter_declaration(owner, &scrutinee)?;
-                if parameter_may_change(owner, &scrutinee, declared.mutable) {
+                    .position(|candidate| parameter_name(candidate) == parameter)?;
+                let declared = parameter_declaration(owner, parameter)?;
+                if parameter_may_change(owner, parameter, declared.mutable) {
                     return None;
                 }
                 // Arithmetic is evaluated only on a primitive integer
@@ -513,8 +530,25 @@ impl ArmSelector {
                 {
                     return None;
                 }
-                let bare = declared.type_name.clone().filter(|_| !declared.qualified);
-                (ScrutineeBinding::Parameter(index), declared.type_name, bare)
+                if let Some((_, field)) = &field {
+                    if declared.mutable || declared.qualified || arithmetic.is_some() {
+                        return None;
+                    }
+                    let mut selector =
+                        FieldSelector::new(field, declared.type_name.as_deref()?, &owner.body)?;
+                    if let Some(original) = probe.before.as_deref().and_then(arm_pattern_text) {
+                        selector.require_original_pattern(&original);
+                    }
+                    field_selector = Some(selector);
+                    (
+                        ScrutineeBinding::Parameter(index),
+                        Some("Option".to_string()),
+                        None,
+                    )
+                } else {
+                    let bare = declared.type_name.clone().filter(|_| !declared.qualified);
+                    (ScrutineeBinding::Parameter(index), declared.type_name, bare)
+                }
             };
         let self_is_scrutinee_type = match &owner.impl_context {
             crate::analysis::facts::FunctionImplContext::Impl { self_type } => {
@@ -544,6 +578,7 @@ impl ArmSelector {
             declared_variants: None,
             uncased_inputs_trusted: true,
             binding,
+            field_selector,
             arithmetic,
             owner: owner.name.clone(),
             method,
@@ -579,6 +614,16 @@ impl ArmSelector {
             .files()
             .get(&self.owner_file)
             .map(|facts| facts.source.clone());
+        if let Some(field) = &mut self.field_selector {
+            let source = owner_source.as_deref().filter(|_| {
+                index
+                    .files()
+                    .get(&self.owner_file)
+                    .is_some_and(|facts| !facts.used_lexical_fallback)
+            });
+            // Rebinding into absent or fallback facts must clear prior admission.
+            field.admit_source(source.unwrap_or_default());
+        }
         self.demote_constant_bindings(owner_source.as_deref());
         let declared = self.bare_scrutinee_type.as_deref().and_then(|type_name| {
             owner_source
@@ -589,6 +634,12 @@ impl ArmSelector {
         self.resolve_uncased_variants(declared);
         let mut imports = std::collections::BTreeMap::new();
         for file in test_files {
+            if file != self.owner_file
+                && let Some(field) = &mut self.field_selector
+            {
+                // Imported record/type identity is outside this bounded slice.
+                field.admit_source("");
+            }
             if let Some(facts) = index.files().get(file) {
                 if file != self.owner_file
                     && let Some(type_name) = &self.bare_scrutinee_type
@@ -617,8 +668,14 @@ impl ArmSelector {
     }
 
     fn demote_constant_bindings(&mut self, owner_source: Option<&str>) {
-        let resolves =
-            |name: &str| owner_source.is_none_or(|source| may_name_constant(source, name));
+        // An item macro (`def_const!(p);`) may declare a constant the
+        // pattern name then resolves to (#7863), so a file with one reads
+        // every bare binding as unreadable.
+        let macro_may_declare = owner_source
+            .is_some_and(|source| may_declare_items_in_owner_scope(source, &self.owner));
+        let resolves = |name: &str| {
+            macro_may_declare || owner_source.is_none_or(|source| may_name_constant(source, name))
+        };
         let demote = |heads: &mut Vec<PatternHead>| {
             for head in heads.iter_mut() {
                 if let PatternHead::Binding(name) = head
@@ -769,6 +826,15 @@ impl ArmSelector {
     /// The scrutinee as the owner's `match` names it (`x`, `self`).
     pub(in crate::analysis) fn scrutinee(&self) -> &str {
         &self.scrutinee
+    }
+
+    /// The direct-record extension must use shared execution admission before
+    /// pairing an assertion with a selected field input. Unsupported legacy
+    /// field inputs retain their existing limitation evidence.
+    pub(in crate::analysis) fn field_oracle_needs_admission(&self) -> bool {
+        self.field_selector
+            .as_ref()
+            .is_some_and(FieldSelector::source_is_admitted)
     }
 
     /// The arm pattern as written, without the `=>`.
@@ -1002,6 +1068,9 @@ impl ArmSelector {
             return false;
         };
         loan.call_lines.iter().any(|line| {
+            if crate::analysis::extract::line_at_call_budget(test.calls.iter(), *line) {
+                return false;
+            }
             let mut on_line = test.calls.iter().filter(|call| call.line == *line);
             let Some(helper_call) = on_line.next() else {
                 return false;
@@ -1081,9 +1150,13 @@ impl ArmSelector {
     }
 
     fn call_input<'a>(&self, call: &OwnerCall<'a>) -> Option<&'a str> {
-        match self.binding {
+        let input = match self.binding {
             ScrutineeBinding::Receiver => call.receiver,
             ScrutineeBinding::Parameter(index) => call.arguments.get(index).copied(),
+        }?;
+        match &self.field_selector {
+            Some(field) => field.project(input),
+            None => Some(input),
         }
     }
 
@@ -2452,7 +2525,10 @@ fn enclosing_match(
     }
     if !(scrutinee == "*self"
         || is_identifier(scrutinee) && !is_variant_name(scrutinee)
-        || integer_scrutinee(scrutinee).is_some())
+        || integer_scrutinee(scrutinee).is_some()
+        || scrutinee.split_once('.').is_some_and(|(base, field)| {
+            is_identifier(base) && !is_variant_name(base) && is_identifier(field)
+        }))
     {
         return None;
     }
@@ -3066,8 +3142,14 @@ mod tests {
                 unresolved_parameter_field_selector(&arm_probe("", line), &owner).as_deref(),
                 Some("lease.elapsed")
             );
-            // Metadata must never turn this field into a credited selector.
-            assert!(ArmSelector::establish(&arm_probe("None => 600,", line), &owner).is_none());
+            // Establishing syntax alone never supplies field value evidence.
+            if let Some(selector) = ArmSelector::establish(&arm_probe("None => 600,", line), &owner)
+            {
+                assert!(
+                    !selector
+                        .assertion_selects("assert_eq!(reason(&Lease { elapsed: None }), 600)")
+                );
+            }
         }
         assert!(unresolved_parameter_field_selector(&arm_probe("", 5), &owner).is_none());
         let mut wrong_owner = arm_probe("", 3);
@@ -3094,6 +3176,48 @@ mod tests {
         }
     }
 
+    #[test]
+    #[cfg(feature = "lang-rust")]
+    fn a_field_selector_cannot_retain_admission_from_an_older_workspace() -> Result<(), String> {
+        use crate::analysis::rust_index::{FileFacts, RustIndex};
+        let body = "fn reason(lease: &Lease) -> u64 {\n    match lease.elapsed {\n        Some(ms) => ms,\n        None => 600,\n    }\n}";
+        let mut owner = self::owner(body, "reason");
+        owner.start_line = 2;
+        owner.end_line += 1;
+        let selector = ArmSelector::establish(&arm_probe("None => 600,", 5), &owner)
+            .ok_or("the direct field selector must establish")?;
+        let index = |fallback| {
+            let mut index = RustIndex::default();
+            index.insert_file(
+                "src/lib.rs".into(),
+                FileFacts {
+                    path: "src/lib.rs".into(),
+                    source: format!("struct Lease {{ elapsed: Option<u64> }}\n{body}").into(),
+                    used_lexical_fallback: fallback,
+                    ..FileFacts::default()
+                },
+                true,
+            );
+            index
+        };
+        let assertion = "assert_eq!(reason(&Lease { elapsed: None }), 600)";
+        let valid = selector.in_workspace(&index(false), std::iter::empty());
+        assert!(valid.assertion_selects(assertion));
+        for stale in [&RustIndex::default(), &index(true)] {
+            let rebound = valid.clone().in_workspace(stale, std::iter::empty());
+            assert!(!rebound.assertion_selects(assertion));
+        }
+        let imported = std::path::Path::new("tests/external.rs");
+        let rebound = valid.in_workspace(&index(false), [imported]);
+        assert!(!rebound.assertion_selects(assertion));
+        assert!(
+            rebound
+                .in_workspace(&index(false), std::iter::empty())
+                .assertion_selects(assertion)
+        );
+        Ok(())
+    }
+
     const REASON: &str = "pub fn reason(x: Option<i32>) -> i32 {\n    match x {\n        Some(v) => v + 1,\n        None => 0,\n    }\n}\n";
 
     fn reason_selector() -> Result<ArmSelector, String> {
@@ -3110,6 +3234,51 @@ mod tests {
             observed_tokens: Vec::new(),
             ok_value_observed: None,
         }
+    }
+
+    /// `fn check(input, want) { assert_eq!(reason(input), want); }` called
+    /// as `check(None, 0);` selects the `None` arm, unless the call line is
+    /// at the call-fact budget: then a dropped call may share the line.
+    #[test]
+    fn a_loan_call_line_at_the_call_fact_budget_selects_nothing() -> Result<(), String> {
+        use crate::analysis::extract::MAX_CALL_FACTS_PER_LINE;
+        let tier = "pub fn tier(n: u32) -> u32 {\n    match n {\n        0 => 1,\n        _ => 2,\n    }\n}\n";
+        let selector = ArmSelector::establish(&arm_probe("0 => 1,", 3), &owner(tier, "tier"))
+            .ok_or_else(|| "premise: the 0 arm reads its scrutinee from n".to_string())?;
+        let text = "check(0, 1);";
+        let assertion_text = "assert_eq!(tier(input), want);";
+        let loan = HelperLoan {
+            name: "check".to_string(),
+            helper: "fn check(input: u32, want: u32) { assert_eq!(tier(input), want); }"
+                .to_string(),
+            parameters: vec!["input".to_string(), "want".to_string()],
+            call_lines: vec![2],
+        };
+        let call_fact = || crate::analysis::facts::CallFact {
+            line: 2,
+            name: "check".to_string(),
+            text: text.into(),
+        };
+        let mut test = test_with("fn t() {\n    check(0, 1);\n}\n");
+        test.calls = vec![call_fact()];
+        let selects = |test: &TestSummary| selector.loan_selects(test, assertion_text, &loan);
+        assert!(
+            selects(&test),
+            "control: one helper call on the line selects"
+        );
+        // Same-name, same-text facts pass the "every fact is the helper
+        // call" check, so only the budget guard can refuse the full line.
+        test.calls = (0..MAX_CALL_FACTS_PER_LINE).map(|_| call_fact()).collect();
+        assert!(
+            !selects(&test),
+            "a line at the budget may hide a foreign call"
+        );
+        test.calls.truncate(MAX_CALL_FACTS_PER_LINE - 1);
+        assert!(
+            selects(&test),
+            "control: one fact under the budget still selects"
+        );
+        Ok(())
     }
 
     /// #6616: an admitted exact pattern pin selects the trailing `_` arm
@@ -3391,6 +3560,18 @@ mod tests {
             judged(Some(&format!("use Rule::*;\n{body}"))),
             Some(ArmSelection::Selects)
         );
+        // An item macro may declare the constant (#7863).
+        for macro_item in [
+            "macro_rules! def_const { ($n:ident) => { const $n: u8 = 0; }; }\ndef_const!(target);\n",
+            "def_const!(target);\n",
+        ] {
+            let source = format!("{macro_item}{body}");
+            assert_eq!(
+                judged(Some(&source)),
+                Some(ArmSelection::Unknown),
+                "{macro_item}"
+            );
+        }
         // An owner file that was not read may declare anything.
         assert_eq!(judged(None), Some(ArmSelection::Unknown));
         Ok(())

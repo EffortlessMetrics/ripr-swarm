@@ -400,6 +400,98 @@ mod tests {
     }
 
     #[test]
+    fn agent_review_summary_refuses_bounded_check_document_with_reason_and_recovery()
+    -> Result<(), String> {
+        // #9010: the loop's command builder redirects `ripr check --format
+        // json` into the analysis-outcome artifact, so a findings-bounded check
+        // document reaches this reader in both disclosure shapes.
+        let base = |document_complete: Option<Value>, legacy: bool| -> Result<String, String> {
+            let mut document: Value = serde_json::from_str(
+                r#"{"schema_version":"0.2","tool":"ripr","mode":"draft","root":".",
+                "base":"origin/main","summary":{},"findings":[],
+                "analysis_outcome":{"analysis_complete":true,"outcome":{
+                "schema_version":"0.1","kind":"no_scope",
+                "identity":{"base_revision":"origin/main","git_candidate_subject":null},
+                "counts":{"changed_file_count":0,"changed_line_count":0,
+                "candidate_line_count":0,"probe_count":0,"finding_count":0},
+                "limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}}}"#,
+            )
+            .map_err(|err| format!("parse fixture: {err}"))?;
+            if let Some(member) = document_complete {
+                document["analysis_outcome"]["document_complete"] = member;
+            }
+            if legacy {
+                document["run_limitations"] = serde_json::json!([
+                    {"category": "limited_findings_bound",
+                     "run_status": "limited_findings_bound"}
+                ]);
+            }
+            Ok(document.to_string())
+        };
+        let render = |text: String, name: &str| -> Result<(Value, String), String> {
+            let root = unique_agent_review_summary_test_dir(name);
+            write_complete_artifacts(&root)?;
+            write_file(&root.join(WORKFLOW_ANALYSIS_OUTCOME_ARTIFACT), &text)?;
+            let report = build_agent_review_summary_report(&root, Path::new("."));
+            let json: Value = serde_json::from_str(&render_agent_review_summary_json(&report)?)
+                .map_err(|err| format!("parse review summary JSON: {err}"))?;
+            let markdown = render_agent_review_summary_markdown(&report);
+            std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+            Ok((json, markdown))
+        };
+        let surface_of = |value: &Value| -> Value {
+            value["surfaces"]
+                .as_array()
+                .and_then(|surfaces| {
+                    surfaces
+                        .iter()
+                        .find(|surface| surface["name"] == "analysis_outcome")
+                })
+                .cloned()
+                .unwrap_or(Value::Null)
+        };
+
+        // Unbounded control: admitted as complete.
+        let (control, control_md) = render(base(None, false)?, "bounded-control")?;
+        assert_eq!(control["analysis_outcome"]["analysis_complete"], true);
+        assert_eq!(surface_of(&control)["status"], "complete");
+        assert!(
+            !control_md.contains("Analysis outcome reason"),
+            "{control_md}"
+        );
+
+        let peers: [(&str, Option<Value>, bool); 4] = [
+            ("flag-false", Some(serde_json::json!(false)), false),
+            ("flag-string", Some(serde_json::json!("false")), false),
+            ("flag-null", Some(Value::Null), false),
+            ("legacy", None, true),
+        ];
+        for (name, member, legacy) in peers {
+            let (json, markdown) = render(base(member, legacy)?, name)?;
+            assert_eq!(json["analysis_outcome"], Value::Null, "{name}");
+            assert_eq!(json["status"], "incomplete", "{name}");
+            let surface = surface_of(&json);
+            assert_eq!(surface["status"], "invalid", "{name}");
+            let summary = surface["summary"].as_str().unwrap_or_default();
+            assert!(
+                summary.contains("RIPR_CHECK_FINDINGS_BYTES"),
+                "{name}: {summary}"
+            );
+            assert!(
+                markdown.contains("Analysis outcome: unavailable (incomplete)"),
+                "{name}: {markdown}"
+            );
+            assert!(
+                markdown.contains("Analysis outcome reason:")
+                    && markdown.contains("findings-bounded")
+                    && markdown.contains("RIPR_CHECK_FINDINGS_BYTES"),
+                "{name}: {markdown}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn agent_review_summary_rejects_malformed_analysis_outcome() -> Result<(), String> {
         let root = unique_agent_review_summary_test_dir("malformed-outcome");
         write_complete_artifacts(&root)?;
@@ -990,6 +1082,7 @@ mod tests {
             disposition: "resumable",
             manifest: String::new(),
             command: None,
+            start_withheld: false,
             evidence_head: String::new(),
             receipt: crate::app::agent_status::AgentStatusAttemptReceipt::NotApplicable,
             last_after_refusal: None,

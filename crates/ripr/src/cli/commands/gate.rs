@@ -8,7 +8,7 @@ use crate::cli::CommandError;
 use crate::cli::commands_options::GateOptions;
 use crate::cli::help;
 use crate::cli::parse::expect_value;
-use crate::cli::suggest::unknown_argument;
+use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -45,8 +45,10 @@ pub(in crate::cli) fn gate(args: &[String]) -> Result<(), CommandError> {
         }
     };
     if subcommand != "evaluate" {
-        return Err(CommandError::from(format!(
-            "unknown gate subcommand {subcommand:?}; expected `evaluate`"
+        return Err(CommandError::from(unknown_value(
+            "gate subcommand",
+            subcommand,
+            &["evaluate"],
         )));
     }
 
@@ -476,13 +478,13 @@ mod tests {
         assert_eq!(
             gate(&args(&["inspect"])),
             Err(CommandError::Failure(
-                "unknown gate subcommand \"inspect\"; expected `evaluate`".to_string()
+                "unknown gate subcommand \"inspect\". Accepted: evaluate.".to_string()
             ))
         );
         assert_eq!(
             gate(&args(&["foo"])),
             Err(CommandError::Failure(
-                "unknown gate subcommand \"foo\"; expected `evaluate`".to_string()
+                "unknown gate subcommand \"foo\". Accepted: evaluate.".to_string()
             ))
         );
         assert_eq!(
@@ -525,6 +527,17 @@ mod tests {
     }
 
     #[test]
+    fn unknown_gate_subcommand_suggests_evaluate_for_evalute() {
+        assert_eq!(
+            gate(&args(&["evalute"])),
+            Err(CommandError::Failure(
+                "unknown gate subcommand \"evalute\". Did you mean `evaluate`? Accepted: evaluate."
+                    .to_string()
+            ))
+        );
+    }
+
+    #[test]
     fn gate_leading_flags_dispatch_to_evaluate() -> Result<(), CommandError> {
         // `ripr gate --pr-guidance <path> --mode visible-only` must imply
         // evaluate (#7740), not treat `--pr-guidance` as a subcommand. The
@@ -554,7 +567,7 @@ mod tests {
         assert_ne!(
             flag_result,
             Err(CommandError::Failure(
-                "unknown gate subcommand \"--pr-guidance\"; expected `evaluate`".to_string()
+                "unknown gate subcommand \"--pr-guidance\". Accepted: evaluate.".to_string()
             )),
             "leading --pr-guidance must not be a subcommand"
         );

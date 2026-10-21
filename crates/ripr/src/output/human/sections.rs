@@ -1,7 +1,7 @@
 use crate::config::RiprConfig;
 use crate::domain::{
     CALLEE_ONLY_REACH_PREFIX, ExposureClass, Finding, LanguageId, LanguageStatus,
-    MISSING_DISCRIMINATOR_VALUE_PREFIX, RiprEvidence, StageState,
+    MISSING_DISCRIMINATOR_VALUE_PREFIX, ProbeFamily, RiprEvidence, StageState,
 };
 use crate::output::agent_seam_packets::{
     allowed_edit_surface_for_gap_route, gap_record_packet_do_not_do,
@@ -23,8 +23,12 @@ use std::path::Path;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use super::evidence_lines::{JsonPointerWording, evidence_path_lines, weakness_lines};
+use super::evidence_lines::{
+    JsonPointerWording, evidence_path_lines, restates_no_static_path_evidence, weakness_lines,
+};
 use super::{is_wrappable_advisory_prose, wrap_human_prose};
+
+const TYPED_STATIC_LIMITATION_PREFIX: &str = "Typed static limitation (";
 
 /// #7756: trailing-period rule for the human render — a labelled field line
 /// (`  Label: value`) or a list-item value carries no trailing period;
@@ -60,13 +64,28 @@ fn next_step_prefix(step: &str) -> &'static str {
     }
 }
 
+/// #9004: base-side evidence (`base_deleted`, `moved_or_renamed`) is never a
+/// candidate edit target, so it must not read as an actionable warning. A
+/// configured `warning` is shown as `note`; `off`, `info` and `note` are kept.
+/// Display only: counts, JSON and classification are unchanged.
+fn display_severity(finding: &Finding, config: &RiprConfig) -> &'static str {
+    let configured = config.severity().for_exposure(&finding.class);
+    if finding.source_currentness.is_base_side()
+        && configured == crate::config::ConfigSeverity::Warning
+    {
+        crate::config::ConfigSeverity::Note.as_str()
+    } else {
+        configured.as_str()
+    }
+}
+
 pub(crate) fn render_finding_digest_with_config(
     finding: &Finding,
     config: &RiprConfig,
     root: &Path,
 ) -> String {
     let mut out = String::new();
-    let severity = config.severity().for_exposure(&finding.class).as_str();
+    let severity = display_severity(finding, config);
     out.push_str(&format!(
         "  File: {}:{}\n",
         crate::analysis::finding_location_text(root, &finding.probe.location.file),
@@ -88,7 +107,7 @@ pub(crate) fn render_finding_digest_with_config(
     ));
     // #2614: add a brief classification hint so the digest reader understands
     // WHY the finding is at this class without reading the full form.
-    if let Some(hint) = classification_hint(&finding.class, &finding.ripr) {
+    if let Some(hint) = classification_hint(&finding.class, &finding.ripr, &finding.probe.family) {
         out.push_str(&format!("  Why {}: {hint}\n", finding.class.plain_label()));
     }
     // The refusal names a file and a blocker; a cut would drop the blocker,
@@ -113,7 +132,14 @@ pub(crate) fn render_finding_digest_with_config(
         .or(finding.probe.before.as_deref())
         .unwrap_or(&finding.probe.expression);
     out.push_str(&format!("  Changed behavior: {}\n", one_line(changed)));
-    if let Some(missing) = finding.missing.first() {
+    // #9033: the digest names the first entry the full form's Weakness list
+    // would also show, so a one-line pointer never names an entry that
+    // `--format human-full` dropped as a restatement of its Evidence block.
+    let first_missing = finding
+        .missing
+        .iter()
+        .find(|missing| !restates_no_static_path_evidence(finding, missing));
+    if let Some(missing) = first_missing {
         // #2273: preview-language classifiers record an observation rationale
         // (not a missing discriminator) in this field for `exposed` findings;
         // label it as observed advisory evidence so the header does not
@@ -126,13 +152,16 @@ pub(crate) fn render_finding_digest_with_config(
         // discriminator label whenever one exists.
         // #7071: a weak finding whose reach witness ripr could not trace
         // carries the limit's prose here, not a discriminator.
+        // A typed static limitation is the analyzer naming what it could not
+        // bind, never an assertion a test could add.
         let label = if finding.class == ExposureClass::Exposed {
             "Discriminator (observed, advisory)"
-        } else if (matches!(
-            finding.class,
-            ExposureClass::PropagationUnknown | ExposureClass::StaticUnknown
-        ) || untraced_reach_weak_finding(finding))
-            && finding.activation.missing_discriminators.is_empty()
+        } else if missing.starts_with(TYPED_STATIC_LIMITATION_PREFIX)
+            || ((matches!(
+                finding.class,
+                ExposureClass::PropagationUnknown | ExposureClass::StaticUnknown
+            ) || untraced_reach_weak_finding(finding))
+                && finding.activation.missing_discriminators.is_empty())
         {
             "Analyzer limit"
         } else {
@@ -404,7 +433,7 @@ pub(super) fn render_finding_with_shared_sections(
     shared: Option<&super::shared::SharedSections>,
 ) -> String {
     let mut out = String::new();
-    let severity = config.severity().for_exposure(&finding.class).as_str();
+    let severity = display_severity(finding, config);
     out.push_str(&format!(
         "{} {}:{}\n",
         severity.to_ascii_uppercase(),
@@ -521,7 +550,7 @@ pub(super) fn render_finding_with_shared_sections(
         out.push_str(&format!(
             "  {} \u{2014} {}\n",
             static_limit_kind.as_str(),
-            static_limit_kind.describe()
+            static_limit_kind.describe_for_family(&finding.probe.family)
         ));
     }
 
@@ -1206,7 +1235,11 @@ fn is_callee_only_reach(reach: &crate::domain::StageEvidence) -> bool {
     reach.summary.starts_with(CALLEE_ONLY_REACH_PREFIX)
 }
 
-fn classification_hint(class: &ExposureClass, ripr: &RiprEvidence) -> Option<String> {
+fn classification_hint(
+    class: &ExposureClass,
+    ripr: &RiprEvidence,
+    family: &ProbeFamily,
+) -> Option<String> {
     let reveal = &ripr.reveal;
     // #7003: "reaches this change" is a reach claim — a callee-only finding
     // has no test seen calling the owner, so every claim site below falls
@@ -1225,10 +1258,14 @@ fn classification_hint(class: &ExposureClass, ripr: &RiprEvidence) -> Option<Str
         }
         ExposureClass::ReachableUnrevealed => {
             if reveal.observe.summary == crate::domain::ASSERTION_CONTEXT_UNESTABLISHED {
-                Some(
-                    "a related test asserts here, but ripr could not establish that the assertion runs and is the standard `assert_eq!`"
-                        .to_string(),
-                )
+                let macro_name = if *family == ProbeFamily::MatchArm {
+                    "assert"
+                } else {
+                    "assert_eq"
+                };
+                Some(format!(
+                    "a related test asserts here, but ripr could not establish that the assertion runs and is the standard `{macro_name}!`"
+                ))
             } else if reveal.observe.state == StageState::No && !callee_only {
                 Some(
                     "a related test reaches this change, but no assertion observes the changed behavior"
@@ -1297,7 +1334,9 @@ fn should_render_language_metadata(finding: &Finding) -> bool {
 
 #[cfg(test)]
 mod classification_hint_tests {
-    use super::classification_hint;
+    fn classification_hint(class: &ExposureClass, ripr: &RiprEvidence) -> Option<String> {
+        super::classification_hint(class, ripr, &crate::domain::ProbeFamily::ReturnValue)
+    }
     use crate::domain::{
         CALLEE_ONLY_REACH_PREFIX, Confidence, ExposureClass, RevealEvidence, RiprEvidence,
         StageEvidence, StageState,

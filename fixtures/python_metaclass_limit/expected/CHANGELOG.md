@@ -503,3 +503,51 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_metaclass_limit (17)
+
+Reason:
+RIPR-SPEC-0122: #8389 Summary names base-side findings, Hidden total equals listed bullets, all-unknown footer no longer claims a found absence
+
+Command:
+`cargo xtask goldens bless python_metaclass_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_metaclass_limit (18)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless python_metaclass_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_metaclass_limit (19)
+
+Reason:
+RIPR-SPEC-0224: unclassified-kind oracle not graded against this probe (#8388)
+
+Command:
+`cargo xtask goldens bless python_metaclass_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_metaclass_limit (20)
+
+Reason:
+RIPR-SPEC-0224: a row with no selected assertion reads 'uses no oracle' (#8388)
+
+Command:
+`cargo xtask goldens bless python_metaclass_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

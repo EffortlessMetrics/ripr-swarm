@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -10,7 +10,7 @@
+ }
+ 
+ pub fn make(x: u32) -> Result<Cfg, ()> {
+-    Ok(Cfg { n: x * 2 })
++    Ok(Cfg { n: x * 3 })
+ }
+ 
+ #[cfg(test)]

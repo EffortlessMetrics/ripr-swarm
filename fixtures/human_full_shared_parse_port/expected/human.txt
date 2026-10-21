@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/human_full_shared_parse_port/input
 
-Summary: 7 probes (0 exposed, 7 weak, 0 unrevealed, 0 no path); 7 of 7 findings unsuppressed
+Summary: 7 probes (0 exposed, 7 weak, 0 unrevealed, 0 no path); 7 of 7 findings unsuppressed (2 base-side evidence, not candidate edit targets)
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 3 changed line(s), 2 candidate line(s), 7 probe(s), 7 finding(s)
@@ -26,11 +26,12 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast probe:src_lib.rs:match_arm:6b71a4f5
   ripr context --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast --at probe:src_lib.rs:match_arm:6b71a4f5
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:match_arm:6b71a4f5 --root <cwd>/fixtures/human_full_shared_parse_port/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/human_full_shared_parse_port/input --at src/lib.rs:3 --kind match_arm
 
 Hidden:
-  4 lower-priority finding(s) omitted; 2 base-side evidence, not candidate edit targets.
+  6 finding(s) omitted: 4 lower-priority, 2 base-side evidence (not candidate edit targets).
     - ./src/lib.rs:3 (weak, base-side)
     - ./src/lib.rs:3 (weak, lower-priority candidate)
     - ./src/lib.rs:3 (weak, lower-priority candidate)

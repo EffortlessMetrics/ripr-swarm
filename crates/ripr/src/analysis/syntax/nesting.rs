@@ -50,6 +50,42 @@ pub(crate) fn parse_clean_source_file(text: &str) -> Option<Parse<SourceFile>> {
 /// current edition alone and its whole file fell to lexical fallback. The
 /// 2021 parse is used only when it is error-free.
 pub(crate) fn parse_source_file(text: &str) -> Parse<SourceFile> {
+    if text.len() > PARSE_CACHE_MAX_BYTES {
+        return parse_source_file_uncached(text);
+    }
+    PARSE_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(position) = cache.iter().position(|(source, _)| source == text) {
+            // Move-to-front keeps the hot file resident.
+            let entry = cache.remove(position);
+            let parse = entry.1.clone();
+            cache.insert(0, entry);
+            return parse;
+        }
+        let parse = parse_source_file_uncached(text);
+        cache.insert(0, (text.to_string(), parse.clone()));
+        cache.truncate(PARSE_CACHE_ENTRIES);
+        parse
+    })
+}
+
+/// Per-thread memo of recent parses, keyed by the full source text (equality,
+/// never a hash), so a hit is exactly the parse a fresh call would return.
+/// Classification asks the same file the same question once per
+/// (probe, related test) pair; without the memo each ask re-parsed the whole
+/// file (regex `64ad0b6`: 148 s, nearly all in this reparse). Parses are
+/// immutable green trees, so sharing a clone is observationally identical.
+const PARSE_CACHE_ENTRIES: usize = 4;
+const PARSE_CACHE_MAX_BYTES: usize = 512 * 1024;
+
+type ParseCacheEntries = Vec<(String, Parse<SourceFile>)>;
+
+thread_local! {
+    static PARSE_CACHE: std::cell::RefCell<ParseCacheEntries> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn parse_source_file_uncached(text: &str) -> Parse<SourceFile> {
     let parse = SourceFile::parse(text, Edition::CURRENT);
     if parse.errors().is_empty() {
         return parse;
@@ -416,6 +452,38 @@ fn skip_char_or_lifetime(text: &str, index: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    /// #8389: the memo returns exactly the parse a fresh call would, for
+    /// repeated and interleaved sources, so classification results cannot
+    /// depend on call order.
+    #[test]
+    fn parse_source_file_memo_matches_a_fresh_parse_for_interleaved_sources() {
+        let sources = [
+            "fn a() { let x = 1; }\n",
+            "struct W; impl W { fn f(&self) {} }\n",
+            "fn broken( {\n",
+        ];
+        for round in 0..3 {
+            for text in sources.iter().chain(sources.iter().rev()) {
+                let cached = parse_source_file(text);
+                let fresh = parse_source_file_uncached(text);
+                assert_eq!(
+                    format!("{:#?}", cached.syntax_node()),
+                    format!("{:#?}", fresh.syntax_node()),
+                    "round {round}: {text}"
+                );
+                assert_eq!(cached.errors().len(), fresh.errors().len(), "{text}");
+            }
+        }
+        // More distinct sources than cache slots still return correct parses.
+        for n in 0..(PARSE_CACHE_ENTRIES * 2) {
+            let text = format!("fn f{n}() {{}}\n");
+            let parse = parse_source_file(&text);
+            assert!(parse.errors().is_empty(), "{text}");
+            assert!(format!("{:?}", parse.syntax_node()).contains("SOURCE_FILE"));
+            assert!(parse.syntax_node().text().to_string() == text, "{text}");
+        }
+    }
+
     use super::*;
 
     #[test]

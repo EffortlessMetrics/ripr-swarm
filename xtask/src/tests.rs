@@ -9,6 +9,7 @@
 //! names gain the module segment (`tests::<module>::<name>`); tests that sat in
 //! the flat file are found by name with `rg 'fn <name>' xtask/src/tests/`.
 
+mod build_feature_reuse;
 mod discarded_matcher_honesty;
 
 mod fixture_cache;
@@ -218,18 +219,19 @@ use super::{
     parse_required_status_contexts, parse_ripr_swarm_args, parse_ripr_swarm_plan_args,
     parse_sarif_policy_args, parse_sarif_policy_results, parse_static_language_allowlist,
     parse_targeted_test_outcome_args, pin_report_packet_index_generated_at,
-    pr_actionable_delta_front_panel_from_inputs, pr_body_validation_warning, pr_checks_summary,
-    pr_ready_json, pr_ready_markdown, pr_ready_next_action, pr_ready_status,
-    pr_ready_status_from_report_status, pr_sensitive_file_reason, pr_shape_warnings,
-    pr_summary_body, pr_title_family, pr_triage_findings, pr_triage_json, pr_triage_markdown,
-    pr_triage_queue_dispositions, precommit_report_body, public_badge_basis_violations,
-    public_contract_rows, read_badge_artifact_diff_governed, read_json_value,
-    read_lsp_cockpit_json_value, read_mutation_input_json, read_repo_exposure_summary_artifact,
-    receipt_json, receipt_specs, receipt_status_from_reports, repo_badge_artifact_command_args,
-    repo_badge_artifact_jobs, repo_badge_artifact_stdout_from_output,
-    repo_badge_artifact_timeout_ms_from_env, repo_badge_artifacts_summary_markdown,
-    repo_exposure_file_fact_cache_from_stderr, repo_exposure_latency_json,
-    repo_exposure_latency_markdown, repo_exposure_latency_run,
+    pr_actionable_delta_front_panel_from_inputs, pr_body_from_input_text,
+    pr_body_template_missing_error, pr_body_template_missing_lines, pr_body_validation_warning,
+    pr_checks_summary, pr_ready_json, pr_ready_markdown, pr_ready_next_action, pr_ready_status,
+    pr_ready_status_from_report_status, pr_sensitive_file_reason, pr_shape_report_body,
+    pr_shape_warnings, pr_summary_body, pr_title_family, pr_triage_findings, pr_triage_json,
+    pr_triage_markdown, pr_triage_queue_dispositions, precommit_report_body,
+    public_badge_basis_violations, public_contract_rows, read_badge_artifact_diff_governed,
+    read_json_value, read_lsp_cockpit_json_value, read_mutation_input_json,
+    read_repo_exposure_summary_artifact, receipt_json, receipt_specs, receipt_status_from_reports,
+    repo_badge_artifact_command_args, repo_badge_artifact_jobs,
+    repo_badge_artifact_stdout_from_output, repo_badge_artifact_timeout_ms_from_env,
+    repo_badge_artifacts_summary_markdown, repo_exposure_file_fact_cache_from_stderr,
+    repo_exposure_latency_json, repo_exposure_latency_markdown, repo_exposure_latency_run,
     repo_exposure_latency_run_from_output, repo_exposure_latency_status,
     repo_exposure_latency_trace, repo_exposure_resource_cost_from_stderr,
     repo_exposure_summary_report_timeout_ms_from_env, repo_root,

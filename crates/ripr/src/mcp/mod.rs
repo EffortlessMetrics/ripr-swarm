@@ -3,6 +3,7 @@ mod framing;
 mod gaps;
 mod protocol;
 mod repair;
+mod repair_admission;
 mod repair_card;
 mod server;
 mod transport;
@@ -13,6 +14,16 @@ use std::path::PathBuf;
 
 pub(super) const MAX_MESSAGE_BYTES: usize = 256 * 1024;
 pub(super) const MAX_RESPONSE_BYTES: usize = 128 * 1024;
+
+/// Largest JSON-serialized request id (quotes and escapes included) the
+/// transport admits. JSON-RPC ids are correlation tokens, not payloads; an
+/// id near the response cap leaves no room for any correlated reply and
+/// would otherwise make the writer's `MCP output limit` fatal to the whole
+/// session. Larger ids are answered at receive with a bounded `-32600`
+/// frame carrying `"id": null` (the id is never echoed) and the session
+/// stays alive. Far below [`MAX_RESPONSE_BYTES`], so
+/// [`outer_envelope_budget`] always leaves a usable budget.
+pub(super) const MAX_REQUEST_ID_BYTES: usize = 16 * 1024;
 
 /// Fixed wire overhead the pinned SDK (rmcp 3.5.1) can add around a
 /// measured tool or resource envelope when it serializes the complete
@@ -72,7 +83,9 @@ The MCP surface is read-only. It exposes tools `ripr_workspace_status`,
 `ripr://repair-attempt/{attempt_id}`, `ripr://receipt/{receipt_id}`, and
 `ripr://repair-card/{canonical_id}`.
 `ripr_refresh` analyzes the committed default-branch diff through the shared
-check authority. In this snapshot, staged and unstaged tracked edits and
+check authority; its optional `base` argument selects another revision when
+the default branch cannot be resolved. Its warm cache lives under the root's
+`target/ripr/`. In this snapshot, staged and unstaged tracked edits and
 untracked files are outside the analyzed scope. `ripr check` defaults to the
 working tree when staged or unstaged tracked edits exist; shared check
 authority does not mean identical input. Use `ripr check --committed` for
@@ -94,6 +107,18 @@ embed a model provider, and no evidence document is ever a repair
 authorization. Protocol messages are the only stdout output. Operational
 failures use stderr.
 "#;
+
+/// A person who typed `ripr mcp` at a prompt would otherwise see a silent
+/// hang; an MCP client pipes stdin, so the hint never reaches one. The write is
+/// best effort so an unwritable stderr cannot keep the server from starting.
+fn write_terminal_hint(stdin_is_terminal: bool, stderr: &mut impl std::io::Write) {
+    if stdin_is_terminal {
+        let _ = writeln!(
+            stderr,
+            "ripr mcp serves MCP JSON-RPC over stdio for an MCP client; it is waiting for a client on stdin. Run `ripr init --mcp` to register it with your client, or `ripr mcp --help` for details."
+        );
+    }
+}
 
 pub fn run(args: &[String]) -> Result<(), String> {
     let mut explicit_root = None;
@@ -140,6 +165,11 @@ pub fn run(args: &[String]) -> Result<(), String> {
         index += 1;
     }
 
+    write_terminal_hint(
+        std::io::IsTerminal::is_terminal(&std::io::stdin()),
+        &mut std::io::stderr().lock(),
+    );
+
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -157,6 +187,32 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn terminal_hint_is_written_only_for_terminal_stdin() {
+        let mut shown = Vec::new();
+        write_terminal_hint(true, &mut shown);
+        let text = String::from_utf8_lossy(&shown);
+        assert!(text.contains("ripr init --mcp"), "{text}");
+
+        let mut piped = Vec::new();
+        write_terminal_hint(false, &mut piped);
+        assert!(piped.is_empty());
+    }
+
+    #[test]
+    fn terminal_hint_survives_an_unwritable_stderr() {
+        struct Closed;
+        impl std::io::Write for Closed {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::ErrorKind::BrokenPipe.into())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Err(std::io::ErrorKind::BrokenPipe.into())
+            }
+        }
+        write_terminal_hint(true, &mut Closed);
     }
 
     #[test]

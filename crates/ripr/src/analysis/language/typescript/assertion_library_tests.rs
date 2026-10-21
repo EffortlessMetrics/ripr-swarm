@@ -8,6 +8,35 @@ fn only_assertions(file: &str, source: &str) -> Vec<TypeScriptAssertion> {
     tests.into_iter().flat_map(|test| test.assertions).collect()
 }
 
+#[test]
+fn generator_then_callbacks_supply_no_assertions_but_ordinary_ones_do() {
+    // (label, callback head, expected assertion count)
+    for (label, head, expected) in [
+        ("generator, zero params", "function* ()", 0usize),
+        ("generator, one param", "function* (result)", 0),
+        ("async generator, zero params", "async function* ()", 0),
+        ("async generator, one param", "async function* (result)", 0),
+        ("ordinary function, zero params", "function ()", 1),
+        ("ordinary function, one param", "function (result)", 1),
+        ("async function, one param", "async function (result)", 1),
+    ] {
+        for lead in ["return", "await"] {
+            let source = format!(
+                "import assert from \"node:assert\";\nimport {{ tier }} from \"../src/tier\";\n\nit(\"tier\", async () => {{\n  {lead} load().then({head} {{\n    assert.strictEqual(tier(10), 30);\n  }});\n}});\n"
+            );
+            let assertions = only_assertions("test/tier.test.ts", &source);
+            assert_eq!(assertions.len(), expected, "{label} {lead}: {assertions:?}");
+            if expected == 1 {
+                assert_eq!(
+                    assertions[0].oracle_kind,
+                    OracleKind::ExactValue,
+                    "{label} {lead}"
+                );
+            }
+        }
+    }
+}
+
 fn assert_oracle(
     assertion: &TypeScriptAssertion,
     kind: OracleKind,
@@ -993,7 +1022,7 @@ fn node_test_context_assert_follows_the_registration_binding() {
                 "t.assert.equal(...)",
             );
         } else {
-            assert_eq!(tests.len(), 1, "{label}: {tests:?}");
+            assert!(tests.is_empty(), "{label}: {tests:?}");
             assert!(read.is_empty(), "{label}: {read:?}");
         }
     }
@@ -1066,6 +1095,10 @@ fn node_test_context_assert_needs_the_runner_receiver_and_a_known_method() {
             "{imports}\nimport {{ lateFee }} from \"../src/latefee\";\n\ntest(\"late fee\", (t) => {{\n  {body}\n}});\n"
         );
         let tests = extract_tests(Path::new("test/latefee.test.ts"), &source);
+        if label == "registered through another runner" {
+            assert!(tests.is_empty(), "{label}: {tests:?}");
+            continue;
+        }
         assert_eq!(tests.len(), 1, "{label}: {tests:?}");
         assert!(
             tests[0].assertions.is_empty(),

@@ -417,3 +417,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — observation_unverified_field_construction (36)
+
+Reason:
+RIPR-SPEC-0122: #8389 Summary names base-side findings, Hidden total equals listed bullets, all-unknown footer no longer claims a found absence
+
+Command:
+`cargo xtask goldens bless observation_unverified_field_construction --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — observation_unverified_field_construction (37)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down; printed agent stub --at line is now the seam line the stub targets (#8444); the old line triggered nearest-gap substitution
+
+Command:
+`cargo xtask goldens bless observation_unverified_field_construction --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

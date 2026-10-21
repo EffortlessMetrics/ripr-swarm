@@ -23,6 +23,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/wildcard_oracle_guarded_original/input --diff <cwd>/fixtures/wildcard_oracle_guarded_original/diff.patch --mode fast probe:src_lib.rs:return_value:519eff0d
   ripr context --root <cwd>/fixtures/wildcard_oracle_guarded_original/input --diff <cwd>/fixtures/wildcard_oracle_guarded_original/diff.patch --mode fast --at probe:src_lib.rs:return_value:519eff0d
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:return_value:519eff0d --root <cwd>/fixtures/wildcard_oracle_guarded_original/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

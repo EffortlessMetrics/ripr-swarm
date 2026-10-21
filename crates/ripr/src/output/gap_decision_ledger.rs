@@ -5,7 +5,7 @@ pub(crate) const PYTHON_REPAIR_CARD_UNAVAILABLE_STATIC_LIMIT_KIND: &str =
     "python_repair_card_unavailable";
 
 use crate::agent::command_specs::{command_display_is_nonblank, command_displays_are_complete};
-use crate::agent::loop_commands::shell_arg;
+use crate::agent::loop_commands::shell_arg_for;
 use crate::domain::{CommandRole, CommandSpec};
 use crate::output::gap_source_subject::{self, GapSourceSubject};
 use crate::output::receipt_write::receipt_write_command;
@@ -520,8 +520,9 @@ pub(crate) fn build_gap_decision_ledger_report(
             warnings.push(format!(
                 // #7753: count-aware noun — "1 finding", never "1 findings".
                 "check output contained {findings}, but the --check-output route \
-                 projects Python/TypeScript/Perl findings only; no gap records were derived \
-                 from them",
+                 projects presentation/output-text and Python/TypeScript/Perl findings only; \
+                 no gap records were derived from them. For Rust findings, use `ripr check` \
+                 to read them and `ripr repair` to start a repair",
                 findings =
                     crate::output::count_noun::count_noun(input_items, "finding", "findings"),
             ));
@@ -761,6 +762,12 @@ pub(crate) fn render_gap_decision_ledger_markdown(report: &GapDecisionLedgerRepo
             md_inline(&complete),
             md_inline(kind)
         ));
+        // #9010: a budget-bounded check document says so beside the verdict.
+        if outcome.get("document_complete").and_then(Value::as_bool) == Some(false) {
+            out.push_str(
+                "Document complete: `false` (findings array bounded by the byte budget)\n\n",
+            );
+        }
     }
     // #5203: a ledger derived from a bounded run says so in the human
     // surface too, naming each propagated run state.
@@ -2414,10 +2421,12 @@ fn perl_route_kind(value: &str) -> &'static str {
 }
 
 fn attach_check_output_preview_receipt_routes(records: &mut [GapRecord], root: &str) {
+    // Stored in versioned records: canonical POSIX quoting on every
+    // host (#8437), like the receipt command.
     let after_check_command = format!(
         "ripr check --root {} --json > {}",
-        shell_arg(root),
-        shell_arg(DEFAULT_CHECK_AFTER_OUTPUT)
+        shell_arg_for(root, false),
+        shell_arg_for(DEFAULT_CHECK_AFTER_OUTPUT, false)
     );
 
     for record in records {
@@ -3639,6 +3648,30 @@ mod tests {
     }
 
     #[test]
+    fn records_source_renders_document_complete_line_only_when_bounded() {
+        // #9010: the bounded check document says so beside the verdict; the
+        // unbounded control carries no such line.
+        let render = |outcome: serde_json::Value| {
+            render_gap_decision_ledger_markdown(&report_from_json(serde_json::json!({
+                "analysis_outcome": outcome,
+                "records": []
+            })))
+        };
+        let bounded = render(serde_json::json!({
+            "analysis_complete": true,
+            "document_complete": false,
+            "outcome": {"kind": "complete_with_findings"}
+        }));
+        assert!(bounded.contains("Analysis complete: `true`"), "{bounded}");
+        assert!(bounded.contains("Document complete: `false`"), "{bounded}");
+        let control = render(serde_json::json!({
+            "analysis_complete": true,
+            "outcome": {"kind": "complete_with_findings"}
+        }));
+        assert!(!control.contains("Document complete"), "{control}");
+    }
+
+    #[test]
     fn records_source_preserves_incomplete_outcome_in_json_and_markdown() -> Result<(), String> {
         let report = report_from_json(serde_json::json!({
             "analysis_outcome": {
@@ -3770,6 +3803,8 @@ mod tests {
                 warning.contains("3 findings")
                     && warning.contains("Python/TypeScript/Perl")
                     && warning.contains("--check-output")
+                    && warning.contains("ripr check")
+                    && warning.contains("ripr repair")
             }),
             "zero derived records from a valid Rust check output must carry the \
              route-coverage warning, got {:?}",
@@ -4819,7 +4854,20 @@ mod tests {
         // #8247: `python_cross_test_import_alias` withholds the owner credit an
         // alias borrowed from another test's import, so its asserting test
         // observes a different function and adds one orthogonal card.
-        if (direct, no_strong, orthogonal, family_selection) != (5, 27, 14, 1) {
+        // #8247: `python_local_owner_stand_ins` and
+        // `python_wrong_receiver_assertion` each withhold owner credit from an
+        // assertion on a different object and add one orthogonal card; the
+        // two controls stay exposed and carry no card.
+        // #9002: `python_fallthrough_return_early_exit` downgrades a changed
+        // fallthrough return to `weakly_exposed` because every strong call
+        // takes the preceding early exit (RIPR-SPEC-0260); the card names the
+        // missing `not (total > 1000)` discriminator and stays direct-aligned
+        // and packet-eligible.
+        // #8759: a test importing the name from another defining module is no
+        // longer related, so `python_adversarial_free_function_module_collision`
+        // and the `legacy.py` finding of `python_src_layout_package_import`
+        // read `no_static_path` and drop their two orthogonal cards.
+        if (direct, no_strong, orthogonal, family_selection) != (6, 27, 14, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

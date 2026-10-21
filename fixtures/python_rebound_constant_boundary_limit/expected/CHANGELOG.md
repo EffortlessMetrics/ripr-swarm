@@ -190,3 +190,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_rebound_constant_boundary_limit (17)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless python_rebound_constant_boundary_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

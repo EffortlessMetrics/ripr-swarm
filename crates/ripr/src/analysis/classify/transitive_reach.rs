@@ -313,13 +313,59 @@ struct MacroInvocations<'a> {
 
 #[cfg(test)]
 thread_local! {
-    static GRAPH_BUILD_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static GRAPH_BUILD_COUNT: std::cell::RefCell<std::sync::Arc<std::sync::atomic::AtomicUsize>> =
+        std::cell::RefCell::new(std::sync::Arc::default());
+}
+
+/// Lets the pool workers that classify a run's probes (#8756) add to the
+/// calling thread's graph-build count, so a test still counts one run's
+/// builds on its own thread. Compiles to nothing outside tests.
+pub(in crate::analysis) struct InheritedGraphCounter {
+    #[cfg(test)]
+    counter: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl InheritedGraphCounter {
+    pub(in crate::analysis) fn capture() -> Self {
+        Self {
+            #[cfg(test)]
+            counter: GRAPH_BUILD_COUNT.with(|count| count.borrow().clone()),
+        }
+    }
+
+    pub(in crate::analysis) fn run<T>(&self, work: impl FnOnce() -> T) -> T {
+        #[cfg(test)]
+        {
+            /// Restores the worker's own counter even if `work` unwinds, so a
+            /// panicking probe cannot leave a pool thread counting into a
+            /// finished run's cell.
+            struct Restore(Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>);
+            impl Drop for Restore {
+                fn drop(&mut self) {
+                    if let Some(previous) = self.0.take() {
+                        GRAPH_BUILD_COUNT.with(|count| count.replace(previous));
+                    }
+                }
+            }
+            let _restore =
+                Restore(Some(GRAPH_BUILD_COUNT.with(|count| {
+                    count.replace(std::sync::Arc::clone(&self.counter))
+                })));
+            work()
+        }
+        #[cfg(not(test))]
+        work()
+    }
 }
 
 impl<'a> ReachGraph<'a> {
     fn build(index: &'a RustIndex) -> Self {
         #[cfg(test)]
-        GRAPH_BUILD_COUNT.with(|count| count.set(count.get() + 1));
+        GRAPH_BUILD_COUNT.with(|count| {
+            count
+                .borrow()
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        });
         let all_tests = collect_all_tests(index);
         let mut by_name: HashMap<&'a str, Vec<&'a FunctionSummary>> = HashMap::new();
         let mut callers: HashMap<&'a str, Vec<&'a str>> = HashMap::new();
@@ -923,7 +969,7 @@ impl OwnerReach<'_, '_> {
 impl<'a> TransitiveReachIndex<'a> {
     #[cfg(test)]
     pub(in crate::analysis) fn graph_build_count() -> usize {
-        GRAPH_BUILD_COUNT.with(std::cell::Cell::get)
+        GRAPH_BUILD_COUNT.with(|count| count.borrow().load(std::sync::atomic::Ordering::Relaxed))
     }
 
     pub(in crate::analysis) fn new(index: &'a RustIndex) -> Self {
@@ -2783,7 +2829,7 @@ mod declaration_tests {
         CallFact {
             line,
             name: name.to_string(),
-            text: text.to_string(),
+            text: text.to_string().into(),
         }
     }
 
@@ -2844,7 +2890,7 @@ mod tests {
                 .map(|c| CallFact {
                     line: 2,
                     name: c.to_string(),
-                    text: format!("{c}()"),
+                    text: format!("{c}()").into(),
                 })
                 .collect(),
             returns: Vec::new(),
@@ -2875,7 +2921,7 @@ mod tests {
                 .map(|c| CallFact {
                     line: 2,
                     name: c.to_string(),
-                    text: format!("{c}()"),
+                    text: format!("{c}()").into(),
                 })
                 .collect(),
             assertions: Vec::new(),
@@ -3035,7 +3081,7 @@ mod tests {
             CallFact {
                 line: 1,
                 name: function.name.clone(),
-                text: format!("fn {}(&mut self) {{", function.name),
+                text: format!("fn {}(&mut self) {{", function.name).into(),
             },
         );
         function
@@ -3044,7 +3090,7 @@ mod tests {
     fn with_call_text(mut function: FunctionSummary, name: &str, text: &str) -> FunctionSummary {
         for call in &mut function.calls {
             if call.name == name {
-                call.text = text.to_string();
+                call.text = text.to_string().into();
             }
         }
         function
@@ -3432,7 +3478,7 @@ mod tests {
         cyclic[2].calls.push(CallFact {
             line: 2,
             name: "g9".to_string(),
-            text: "g9()".to_string(),
+            text: "g9()".to_string().into(),
         });
         let looped = index_with(cyclic, vec![make_test("test_none", vec!["unrelated"])]);
         assert!(find_transitive_witness("inner", &looped).is_none());
@@ -3443,7 +3489,7 @@ mod tests {
         // A test named `g6` records its own `fn g6()` line as a call fact.
         // That level is not entered, so the walk goes on to `real`.
         let mut declared = make_test_at("g6", "tests/it.rs", 1, vec!["g6"]);
-        declared.calls[0].text = "fn g6() {".to_string();
+        declared.calls[0].text = "fn g6() {".to_string().into();
         let real = make_test_at("real", "tests/it.rs", 10, vec!["g7"]);
         let index = index_with(hop_chain(7), vec![declared, real]);
         assert_eq!(
@@ -3535,7 +3581,7 @@ mod tests {
                 test.calls = vec![CallFact {
                     line: index * 10 + 2,
                     name: "render".to_string(),
-                    text,
+                    text: text.into(),
                 }];
                 test
             })
@@ -3700,7 +3746,7 @@ mod tests {
             let calls = vec![CallFact {
                 line: 1,
                 name: start.to_string(),
-                text: format!("{start}()"),
+                text: format!("{start}()").into(),
             }];
             for depth in 0..=7 {
                 assert_eq!(
@@ -3714,7 +3760,7 @@ mod tests {
         let call = |name: &str| CallFact {
             line: 1,
             name: name.to_string(),
-            text: format!("{name}()"),
+            text: format!("{name}()").into(),
         };
         let repeated = vec![call("a1"), call("a1"), call("decode")];
         assert_eq!(
@@ -3726,7 +3772,7 @@ mod tests {
         let a1 = vec![CallFact {
             line: 1,
             name: "a1".to_string(),
-            text: "a1()".to_string(),
+            text: "a1()".to_string().into(),
         }];
         assert_eq!(
             ids(reach.functions_reached_from(&a1, 5)),
@@ -4221,7 +4267,7 @@ mod tests {
         own.calls.push(CallFact {
             line: 1,
             name: "from_str_fortnight".to_string(),
-            text: "fn from_str_fortnight() {".to_string(),
+            text: "fn from_str_fortnight() {".to_string().into(),
         });
         assert!(!reach.test_may_reach(&own));
 
@@ -4391,7 +4437,9 @@ mod tests {
             CallFact {
                 line: 2,
                 name: "derive_error".to_string(),
-                text: "pub fn derive_error(input: TokenStream) -> TokenStream {".to_string(),
+                text: "pub fn derive_error(input: TokenStream) -> TokenStream {"
+                    .to_string()
+                    .into(),
             },
         );
         let mut expand = make_fn("expand", vec!["fmt_impl"]);

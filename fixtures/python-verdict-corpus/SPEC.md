@@ -39,6 +39,14 @@ this repository's license, one per test library or library feature:
 - `authored-py-pytest-blocks`: multi-line replacement blocks, where the
   behavior change is the second line of a block that also rewrites the
   comment above it (#7556).
+- `authored-py-pytest-guard-arms`: RIPR-SPEC-0260 examples 1 to 5, one module
+  per example so the guard, the observed input and the edited arm are the only
+  variables (an `or` guard, a rebound parameter, `True == 1`).
+- `authored-py-pytest-self-reach`: RIPR-SPEC-0201 examples 1 to 6, the
+  same-class transitive-reach limitation, including the six-hop chain, a class
+  of the same name in another module and a test that calls the helper
+  directly. Every module and class name is unique across the subject, because
+  a shared name makes the analyzer relate the wrong module's tests.
 
 Each case is a one-line edit under `cases/` (the two `py-blocks-*-second-line`
 cases replace a comment and the line under it), labeled with what the project's

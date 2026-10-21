@@ -30,10 +30,20 @@ Policy impact:
   implementation plan, and the closeout. This closeout does not change CI lane,
   lint, file, package, no-panic, release, or branch-protection policy.
 
+Amendment (2026-10, #1706 PR D): the active-goal provisions of this spec are
+retired. The `.ripr/goals/` scheduler and `cargo xtask check-goals` were
+deleted in #1701 PR 3, so the active-goal manifest rows, the active-goal
+shape/parsing validation requirements, and the `check-goals` evidence line
+below are a historical record of the accepted 2026 contract, not current
+behavior. Live work selection now comes from GitHub issues, PRs, checks, and
+the local worktree, and the selected-work/portfolio-basis contract lives in
+RIPR-SPEC-0244. The document-artifact and support-tier provisions remain live.
+
 Required evidence:
 
 - `cargo xtask check-doc-artifacts`
-- `cargo xtask check-goals`
+- `cargo xtask check-goals` (retired with the `.ripr/goals/` scheduler in
+  #1701; retained here as the historical evidence list only)
 - `cargo xtask check-support-tiers`
 - `cargo xtask repo-contract-report`
 - `cargo xtask check-doc-index`
@@ -146,6 +156,26 @@ evidence for the graph:
 
 Validators should report actionable file paths and fields. Advisory rollout
 should precede blocking CI promotion.
+
+### Local Rust gate selection roots
+
+`cargo xtask check-fast` selects its Rust gates (workspace Clippy and
+test-source policy) from the same committed `origin/main...HEAD` selector. A
+changed path selects them when it is `Cargo.lock`, `Cargo.toml`, any
+`*/Cargo.toml`, or a `.rs` file under the anchored package roots `crates/ripr/`,
+`xtask/` or `tools/repo-policy/`. This includes integration tests, examples and
+build scripts under those roots. Roots are anchored prefixes: fixture
+lookalikes such as `fixtures/**/crates/ripr/*.rs` and near-prefixes such as
+`xtask-extra/` keep their existing categories and do not select Rust gates.
+Strict receipt validation requires the complete Rust receipts when these paths
+are selected.
+
+Controls in `xtask/src/main.rs` and `xtask/src/check_fast_strict.rs`:
+
+- `workspace_rust_targets_select_existing_rust_gates`;
+- `non_workspace_rust_and_near_prefixes_keep_existing_categories`;
+- `committed_workspace_test_changes_select_rust_gates`;
+- `workspace_rust_targets_require_complete_rust_receipts`.
 
 ### Early local support-tier validation
 

@@ -7,6 +7,7 @@ use crate::analysis::facts::FunctionImplContext;
 use std::sync::Arc;
 
 pub(super) mod context;
+mod visibility;
 
 pub(crate) use context::CompactGripContext;
 pub(super) use context::{CompactTest, call_text_contains_named_call};
@@ -29,6 +30,25 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
 
     let mut candidates: BTreeMap<usize, RelationReason> = BTreeMap::new();
     match_direct_owner_call(&mut candidates, context, prefix, &owner);
+    let inaccessible_direct: BTreeSet<usize> = context
+        .owner_function(seam.file(), seam.display_line())
+        .map(|function| {
+            candidates
+                .keys()
+                .copied()
+                .filter(|test_index| {
+                    context.tests.get(*test_index).is_some_and(|indexed| {
+                        context.private_visibility.proven_inaccessible(
+                            context,
+                            function,
+                            indexed.test,
+                        )
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    candidates.retain(|test_index, _| !inaccessible_direct.contains(test_index));
     match_helper_owner_call(&mut candidates, context, prefix, &owner);
     match_target_affinity_owner_call(
         &mut candidates,
@@ -44,6 +64,13 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
     match_owner_named_test(&mut candidates, context, prefix, &owner);
     match_import_path_affinity(&mut candidates, context, prefix, &owner);
     match_fixture_owner_affinity(&mut candidates, context, prefix, &owner);
+
+    // An inaccessible direct call cannot regain oracle credit through a
+    // proximity or import fallback. An independently matched helper can
+    // still reach a private owner from inside its own module.
+    candidates.retain(|test_index, reason| {
+        !inaccessible_direct.contains(test_index) || *reason == RelationReason::HelperOwnerCall
+    });
 
     // #6292: a test whose every call of the owner's name settles on a
     // same-named module-level rival relates through no signal of its own:
@@ -630,7 +657,7 @@ pub(super) fn find_related_tests_ranked<'a>(
 ) -> Vec<(&'a CompactTest<'a>, RelationReason)> {
     let mut related = find_related_tests_with_context(seam, context);
     let owner_fn = context.owner_function(seam.file(), seam.display_line());
-    sort_related_tests_for_seam(seam, context, owner_fn, &mut related);
+    let _best_oracles = sort_related_tests_for_seam(seam, context, owner_fn, &mut related);
     related
 }
 
@@ -645,17 +672,46 @@ pub(super) struct RelatedTestRankKey {
     line: usize,
 }
 
-pub(super) fn sort_related_tests_for_seam(
+/// The strongest-oracle answer for one related test of one seam.
+pub(super) type BestOracle = (OracleKind, OracleStrength, Option<String>);
+
+/// Sort `related` into rank order and return each test's best oracle, in
+/// the sorted order. The rank key already needs the best oracle of every
+/// related test, so the caller reuses it instead of asking again (#5361).
+pub(super) fn sort_related_tests_for_seam<'a>(
     seam: &RepoSeam,
     context: &CompactGripContext<'_>,
     owner_fn: Option<&FunctionSummary>,
-    related: &mut [(&CompactTest<'_>, RelationReason)],
-) {
+    related: &mut [(&'a CompactTest<'a>, RelationReason)],
+) -> Vec<BestOracle> {
     let owner = seam_owner_activation(seam, context);
-    related.sort_by_cached_key(|entry| {
-        let (indexed, reason) = *entry;
-        related_test_rank_key(seam, context, indexed, reason, owner.as_ref(), owner_fn)
-    });
+    let mut ranked: Vec<_> = related
+        .iter()
+        .map(|&entry| {
+            let (indexed, reason) = entry;
+            let oracle = best_oracle(
+                indexed.test,
+                seam,
+                owner_fn,
+                context.index,
+                // #8282: the run's shared instance, like every other walk
+                // stage; a per-key fresh instance re-paid the whole-index
+                // lazily computed facts once per (seam, related test) rank.
+                context.pin_syntax_mutex(),
+            );
+            let key =
+                related_test_rank_key(seam, context, indexed, reason, owner.as_ref(), &oracle);
+            (key, entry, oracle)
+        })
+        .collect();
+    // Stable, like the `sort_by_cached_key` this replaces.
+    ranked.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut oracles = Vec::with_capacity(ranked.len());
+    for (slot, (_key, entry, oracle)) in related.iter_mut().zip(ranked) {
+        *slot = entry;
+        oracles.push(oracle);
+    }
+    oracles
 }
 
 pub(super) fn related_test_rank_key(
@@ -664,18 +720,9 @@ pub(super) fn related_test_rank_key(
     indexed: &CompactTest<'_>,
     reason: RelationReason,
     owner: Option<&SeamOwnerActivation<'_>>,
-    owner_fn: Option<&FunctionSummary>,
+    best_oracle: &BestOracle,
 ) -> RelatedTestRankKey {
-    let (_oracle_kind, oracle_strength, _contradiction) = best_oracle(
-        indexed.test,
-        seam,
-        owner_fn,
-        context.index,
-        // #8282: the run's shared instance, like every other walk stage; a
-        // per-key fresh instance re-paid the whole-index lazily computed
-        // facts once per (seam, related test) rank.
-        context.pin_syntax_mutex(),
-    );
+    let oracle_strength = &best_oracle.1;
     RelatedTestRankKey {
         relation_confidence: reason.confidence().rank(),
         relation_reason: reason.priority(),

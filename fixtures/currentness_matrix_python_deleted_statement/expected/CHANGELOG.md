@@ -59,3 +59,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — currentness_matrix_python_deleted_statement (6)
+
+Reason:
+RIPR-SPEC-0122: #8389 Summary names base-side findings, Hidden total equals listed bullets, all-unknown footer no longer claims a found absence
+
+Command:
+`cargo xtask goldens bless currentness_matrix_python_deleted_statement --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — currentness_matrix_python_deleted_statement (7)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless currentness_matrix_python_deleted_statement --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

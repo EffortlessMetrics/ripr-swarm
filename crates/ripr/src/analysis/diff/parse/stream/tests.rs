@@ -511,3 +511,40 @@ fn complete_declared_hunks_preserve_ordinary_and_quarantined_controls() -> Resul
     }
     Ok(())
 }
+
+fn deep_path_diff(depth: usize) -> String {
+    let path = format!("{}x.rs", "a/".repeat(depth));
+    format!("--- a/{path}\n+++ b/{path}\n@@ -1 +1 @@\n-a\n+b\n")
+}
+
+#[test]
+fn over_deep_path_header_is_refused_explicitly_before_resolution() -> Result<(), String> {
+    // Far above the bound: refused by the cheap header scan, so the cost is
+    // linear in the line and no ancestor walk can start.
+    let input = deep_path_diff(super::MAX_DIFF_PATH_COMPONENTS * 100);
+    let Err(error) = parse_bounded_lines(input.lines(), 10) else {
+        return Err("over-deep path header must not parse successfully".to_string());
+    };
+    assert!(error.starts_with("diff_path_too_deep: "), "{error}");
+    Ok(())
+}
+
+#[test]
+fn unbounded_parse_never_registers_an_over_deep_path() {
+    let parsed = parse_unbounded(&deep_path_diff(super::MAX_DIFF_PATH_COMPONENTS + 1));
+    assert!(parsed.changed_files.is_empty());
+}
+
+#[test]
+fn path_at_the_depth_bound_still_parses() -> Result<(), String> {
+    // Components: (bound - 1) directories plus the file name.
+    let depth = super::MAX_DIFF_PATH_COMPONENTS - 1;
+    let input = deep_path_diff(depth);
+    let parsed = parse_bounded_lines(input.lines(), 10)?;
+    assert_eq!(parsed.changed_files.len(), 1);
+    let path = format!("{}x.rs", "a/".repeat(depth));
+    let header = format!("diff --git a/{path} b/{path}\n{input}");
+    let parsed = parse_bounded_lines(header.lines(), 10)?;
+    assert_eq!(parsed.changed_files.len(), 1);
+    Ok(())
+}

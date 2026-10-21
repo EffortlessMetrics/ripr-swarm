@@ -915,6 +915,17 @@ are scoped or reviewed.
 
 ### Fixed
 
+- Security: a repository can no longer seed `ripr check` with its own cache.
+  The seam-fact, classified-seam and file-fact caches protect entries with an
+  unkeyed digest that anyone can recompute, so a committed
+  `target/ripr/cache/**` tree was admitted on a victim's first run and could
+  suppress or fabricate findings. When Git tracks any file under the cache
+  root, or cannot confirm it does not, every lookup is now refused with a
+  named cache-ignored reason and the run recomputes (#7780). Caches outside a
+  Git work tree are unchanged, and a cache export refuses a tracked source;
+  extracted archives carry no Git evidence and
+  are not covered.
+
 - Windows: `ripr agent card --json` now reports `selected_target.file`
   with portable `/` separators for both existing and proposed targets,
   instead of leaking native backslashes. `allowed_files` and

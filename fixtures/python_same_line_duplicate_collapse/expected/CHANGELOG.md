@@ -454,3 +454,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_same_line_duplicate_collapse (18)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless python_same_line_duplicate_collapse --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

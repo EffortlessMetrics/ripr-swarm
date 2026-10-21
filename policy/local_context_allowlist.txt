@@ -6,3 +6,4 @@
 # This policy is for narrow generic examples only. Real machine paths, Codex
 # memory paths, sandbox paths, uploaded-file references, and session transcripts
 # should be removed instead of allowlisted.
+crates/ripr/src/config/perl_executable_tests.rs|C:\path\to\Perl|1|Generic Windows absolute exporter path with spaces exercises exact config preservation (#8841).

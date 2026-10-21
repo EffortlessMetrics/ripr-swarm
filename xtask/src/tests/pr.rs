@@ -1113,6 +1113,195 @@ fn pr_change_backslash_name_stays_distinct_from_nested_path() -> Result<(), Stri
     Ok(())
 }
 
+const COMPLETE_PR_BODY: &str = "\
+Proposal: none, issue-driven
+Spec: none, no spec governs this surface
+ADR: none
+Plan item: none
+Governing issue or accepted claim: #8601
+Acceptance delta (one sentence): A PR body missing the template lines fails a cheap local check naming the missing line.
+Candidate branch (GitHub PR head is authoritative after publication): fix/8601-local-body-check
+Stack parent or prerequisite PR (if any): none
+Proposed replacement of PR (if any; not yet accepted): none
+Acceptance retained from a replaced candidate (if any): none
+Accepted winner and losing candidate disposition (when decided): not decided
+";
+
+#[test]
+fn pr_body_template_complete_body_passes() -> Result<(), String> {
+    assert!(pr_body_template_missing_lines(COMPLETE_PR_BODY).is_empty());
+    // The `gh pr view --json body` shape unwraps to the same body.
+    let json = serde_json::json!({ "body": COMPLETE_PR_BODY }).to_string();
+    let body = pr_body_from_input_text(&json)?;
+    assert!(pr_body_template_missing_lines(&body).is_empty());
+    Ok(())
+}
+
+#[test]
+fn pr_body_template_missing_governing_issue_line_fails_naming_it() {
+    let body = COMPLETE_PR_BODY.replace("Governing issue or accepted claim: #8601\n", "");
+    let missing = pr_body_template_missing_lines(&body);
+    assert_eq!(missing, vec!["Governing issue or accepted claim:"]);
+    assert!(
+        pr_body_template_missing_error(&missing).contains("Governing issue or accepted claim:")
+    );
+}
+
+#[test]
+fn pr_body_template_missing_acceptance_delta_fails_naming_it() {
+    let body = COMPLETE_PR_BODY.replace(
+        "Acceptance delta (one sentence): A PR body missing the template lines fails a cheap local check naming the missing line.\n",
+        "",
+    );
+    let missing = pr_body_template_missing_lines(&body);
+    assert_eq!(missing, vec!["Acceptance delta (one sentence):"]);
+    assert!(pr_body_template_missing_error(&missing).contains("Acceptance delta (one sentence):"));
+}
+
+#[test]
+fn pr_body_template_placeholder_values_fail() {
+    for placeholder in ["", "TBD", "n/a", "<issue or claim>"] {
+        let body = COMPLETE_PR_BODY.replace(
+            "Governing issue or accepted claim: #8601",
+            &format!("Governing issue or accepted claim: {placeholder}"),
+        );
+        let missing = pr_body_template_missing_lines(&body);
+        assert!(
+            missing.contains(&"Governing issue or accepted claim:"),
+            "placeholder {placeholder:?} must fail, got {missing:?}"
+        );
+        assert!(pr_body_template_missing_error(&missing).starts_with("claim_identity_missing:"));
+    }
+}
+
+#[test]
+fn pr_body_template_non_gated_placeholder_values_fail_naming_line() {
+    // Findings 1/6: every template line rejects unfilled placeholders,
+    // not only the two admission-gated lines.
+    for (filled, placeholder_line, expected) in [
+        (
+            "Spec: none, no spec governs this surface",
+            "Spec: TBD",
+            "Spec:",
+        ),
+        ("Plan item: none", "Plan item: TBD", "Plan item:"),
+        (
+            "Spec: none, no spec governs this surface",
+            "Spec: <link>",
+            "Spec:",
+        ),
+        (
+            "Candidate branch (GitHub PR head is authoritative after publication): fix/8601-local-body-check",
+            "Candidate branch (GitHub PR head is authoritative after publication): <branch>",
+            "Candidate branch (GitHub PR head is authoritative after publication):",
+        ),
+        (
+            "Proposed replacement of PR (if any; not yet accepted): none",
+            "Proposed replacement of PR (if any; not yet accepted): pending",
+            "Proposed replacement of PR (if any; not yet accepted):",
+        ),
+        (
+            "Accepted winner and losing candidate disposition (when decided): not decided",
+            "Accepted winner and losing candidate disposition (when decided): <winner>",
+            "Accepted winner and losing candidate disposition (when decided):",
+        ),
+    ] {
+        let body = COMPLETE_PR_BODY.replace(filled, placeholder_line);
+        let missing = pr_body_template_missing_lines(&body);
+        assert!(
+            missing.contains(&expected),
+            "placeholder {placeholder_line:?} must fail, got {missing:?}"
+        );
+        assert!(pr_body_template_missing_error(&missing).contains(expected));
+    }
+    // Explicit non-applicable values remain legitimate on non-gated lines.
+    let body = COMPLETE_PR_BODY.replace("Spec: none, no spec governs this surface", "Spec: none");
+    assert!(pr_body_template_missing_lines(&body).is_empty());
+}
+
+#[test]
+fn pr_body_template_bulleted_gated_lines_fail_like_admission() {
+    // Finding 2: admission (`extract_fields`) only matches `label:` at
+    // the start of a whitespace-stripped line, so bulleted or spaced
+    // gated lines are refused there and must fail locally too.
+    let bulleted = COMPLETE_PR_BODY
+        .replace(
+            "Governing issue or accepted claim: #8601",
+            "- Governing issue or accepted claim: #8601",
+        )
+        .replace(
+            "Acceptance delta (one sentence): A PR body missing",
+            "- Acceptance delta (one sentence): A PR body missing",
+        );
+    let missing = pr_body_template_missing_lines(&bulleted);
+    assert!(missing.contains(&"Governing issue or accepted claim:"));
+    assert!(missing.contains(&"Acceptance delta (one sentence):"));
+
+    let spaced = COMPLETE_PR_BODY.replace(
+        "Governing issue or accepted claim: #8601",
+        "Governing issue or accepted claim : #8601",
+    );
+    assert!(
+        pr_body_template_missing_lines(&spaced).contains(&"Governing issue or accepted claim:")
+    );
+
+    // The non-bulleted, admission-accepted forms pass, including the
+    // alternate labels admission accepts (`LABELS` in admission).
+    assert!(pr_body_template_missing_lines(COMPLETE_PR_BODY).is_empty());
+    let alternate = COMPLETE_PR_BODY
+        .replace(
+            "Governing issue or accepted claim: #8601",
+            "Owner / governing claim: #8601",
+        )
+        .replace(
+            "Acceptance delta (one sentence): A PR body missing the template lines fails a cheap local check naming the missing line.",
+            "Acceptance delta: A PR body missing the template lines fails a cheap local check naming the missing line.",
+        );
+    assert!(pr_body_template_missing_lines(&alternate).is_empty());
+}
+
+#[test]
+fn pr_body_template_traceability_spec_does_not_hide_missing_source_spec() {
+    // Finding 3: the bulleted traceability `- Spec:` line must not
+    // satisfy the unbulleted Source-of-truth `Spec:` line.
+    let body = COMPLETE_PR_BODY.replace("Spec: none, no spec governs this surface\n", "")
+        + "\n## Spec-Test-Code Traceability\n\n- Spec: RIPR-SPEC-0001\n";
+    let missing = pr_body_template_missing_lines(&body);
+    assert_eq!(missing, vec!["Spec:"]);
+    assert!(pr_body_template_missing_error(&missing).contains("Spec:"));
+}
+
+#[test]
+fn pr_body_template_blank_label_before_filled_value_passes_like_admission() {
+    // Finding 4: admission skips blank occurrences (`if found[key]:
+    // continue` only after a non-empty value), so a blank label before
+    // a completed claim/delta does not mask the later value.
+    let body = "Governing issue or accepted claim:\nAcceptance delta (one sentence):\n".to_string()
+        + COMPLETE_PR_BODY;
+    assert!(pr_body_template_missing_lines(&body).is_empty());
+    // A filled first occurrence likewise wins over a later blank one.
+    let body = COMPLETE_PR_BODY.to_string()
+        + "\nGoverning issue or accepted claim:\nAcceptance delta (one sentence):\n";
+    assert!(pr_body_template_missing_lines(&body).is_empty());
+}
+
+#[test]
+fn pr_shape_report_body_status_agrees_with_body_check_failure() {
+    // Finding 5: a missing body line fails the check, so the report
+    // must record `fail`, not an advisory `warn`/`pass`.
+    let failed = pr_shape_report_body(&[String::from(
+        "PR body is missing or has a placeholder value for `Spec:`; add the line from .github/pull_request_template.md with a real value.",
+    )]);
+    assert!(failed.contains("Status: fail"));
+    assert!(!failed.contains("Status: pass"));
+    assert!(!failed.contains("Status: warn"));
+    assert!(pr_shape_report_body(&[]).contains("Status: pass"));
+    assert!(
+        pr_shape_report_body(&[String::from("Production code changed without evidence.")])
+            .contains("Status: warn")
+    );
+}
+
 #[test]
 fn pr_change_inventory_bytes_accept_empty() -> Result<(), String> {
     // A real zero-change run decodes to an empty inventory on both routes.

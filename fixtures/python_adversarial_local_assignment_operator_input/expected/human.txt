@@ -34,6 +34,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_adversarial_local_assignment_operator_input/input --diff <cwd>/fixtures/python_adversarial_local_assignment_operator_input/diff.patch --mode fast probe:src_calc.py:python_preview:3ddbe784
   ripr context --root <cwd>/fixtures/python_adversarial_local_assignment_operator_input/input --diff <cwd>/fixtures/python_adversarial_local_assignment_operator_input/diff.patch --mode fast --at probe:src_calc.py:python_preview:3ddbe784
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_calc.py:python_preview:3ddbe784 --root <cwd>/fixtures/python_adversarial_local_assignment_operator_input/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

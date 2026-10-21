@@ -19,7 +19,7 @@ use crate::analysis::{RepoSeam, RequiredDiscriminator};
 use crate::output::json::escape as json_escape;
 use crate::output::markdown::table_code_span;
 
-pub(crate) const REPO_SEAMS_SCHEMA_VERSION: &str = "0.2";
+pub(crate) const REPO_SEAMS_SCHEMA_VERSION: &str = "0.3";
 
 /// Render a producer-owned repo seam inventory bound to its subject (#6609).
 ///
@@ -91,7 +91,11 @@ fn push_seam_json(out: &mut String, seam: &RepoSeam) {
         "      \"file\": \"{}\",\n",
         json_escape(&seam.file().to_string_lossy())
     ));
-    out.push_str(&format!("      \"line\": {},\n", seam.display_line()));
+    out.push_str(&format!(
+        "      \"line\": {},\n",
+        seam.span()
+            .map_or(seam.display_line(), |span| span.start_line)
+    ));
     if let Some(span) = seam.span() {
         out.push_str(&format!("      \"column\": {},\n", span.start_column));
         out.push_str(&format!("      \"end_line\": {},\n", span.end_line));
@@ -234,7 +238,7 @@ mod tests {
         let root = temp_root()?;
         let json = rendered_with_context(&root)?;
         assert!(
-            json.contains("\"schema_version\": \"0.2\""),
+            json.contains("\"schema_version\": \"0.3\""),
             "missing schema_version: {json}"
         );
         assert!(
