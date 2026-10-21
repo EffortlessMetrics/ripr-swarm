@@ -28,7 +28,7 @@ pub(super) fn static_limit_for_change(
         line_text,
         None,
     );
-    static_limit_for_focused_change(line_text, &focus, owner, related_candidates)
+    static_limit_for_focused_change(line_text, &focus, None, owner, related_candidates)
 }
 
 /// `focus` is the one the finding's rows are selected with (#5572): only the
@@ -37,6 +37,7 @@ pub(super) fn static_limit_for_change(
 pub(super) fn static_limit_for_focused_change(
     line_text: &str,
     focus: &PythonAssertionFocus,
+    old_line_text: Option<&str>,
     owner: &PythonOwner,
     related_candidates: &[PythonRelatedCandidate<'_>],
 ) -> Option<PythonStaticLimit> {
@@ -151,7 +152,11 @@ pub(super) fn static_limit_for_focused_change(
             missing: "Static limit `opaque_custom_assertion_helper`: a related Python test uses a custom assertion helper such as `assert_*(...)`; the preview adapter cannot inspect the helper body or determine whether it already observes the changed discriminator.".to_string(),
         });
     }
-    if line_uses_imported_symbol(trimmed, &owner.imports) {
+    if line_uses_imported_symbol(trimmed, &owner.imports)
+        && !old_line_text.is_some_and(|old| {
+            edit_leaves_imported_symbols_untouched(old.trim(), trimmed, &owner.imports)
+        })
+    {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::MissingImportGraph,
             evidence: "static_limit missing_import_graph: changed line calls an imported symbol"
@@ -729,6 +734,147 @@ pub(super) fn line_uses_imported_symbol(text: &str, imports: &[PythonImport]) ->
     })
 }
 
+/// An edit whose changed tokens are literals, operators, or plain local names
+/// does not change which imported callable runs or how it is addressed, so the
+/// missing import graph is irrelevant to whether a test observes the new value
+/// (#9226). The limit stays when the changed span names an import alias, an
+/// attribute (`mod.callee`), a keyword argument, or an f-string, and when the
+/// two lines tokenize identically (no edit to reason about).
+fn edit_leaves_imported_symbols_untouched(old: &str, new: &str, imports: &[PythonImport]) -> bool {
+    let old_tokens = edit_tokens(old);
+    let new_tokens = edit_tokens(new);
+    let prefix = old_tokens
+        .iter()
+        .zip(&new_tokens)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let max_suffix = old_tokens.len().min(new_tokens.len()) - prefix;
+    let suffix = old_tokens
+        .iter()
+        .rev()
+        .zip(new_tokens.iter().rev())
+        .take(max_suffix)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let old_span = &old_tokens[prefix..old_tokens.len() - suffix];
+    let new_span = &new_tokens[prefix..new_tokens.len() - suffix];
+    if old_span.is_empty() && new_span.is_empty() {
+        return false;
+    }
+    let span_touches_import = |tokens: &[String], before: &[String], after: &[String]| {
+        tokens.iter().enumerate().any(|(index, token)| {
+            let previous = if index == 0 {
+                before.last()
+            } else {
+                tokens.get(index - 1)
+            };
+            let next = tokens.get(index + 1).or_else(|| after.first());
+            if is_fstring_token(token) {
+                return true;
+            }
+            if !token.starts_with(|c: char| c.is_alphabetic() || c == '_') {
+                return false;
+            }
+            imports.iter().any(|import| import.alias == *token)
+                || previous.is_some_and(|p| p == ".")
+                || next.is_some_and(|n| n == "=")
+        })
+    };
+    let old_before = &old_tokens[..prefix];
+    let new_before = &new_tokens[..prefix];
+    let old_after = &old_tokens[old_tokens.len() - suffix..];
+    let new_after = &new_tokens[new_tokens.len() - suffix..];
+    !span_touches_import(old_span, old_before, old_after)
+        && !span_touches_import(new_span, new_before, new_after)
+}
+
+fn is_fstring_token(token: &str) -> bool {
+    let quote = token.find(['"', '\'']);
+    quote.is_some_and(|index| {
+        index > 0 && token[..index].chars().any(|c| c.eq_ignore_ascii_case(&'f'))
+    })
+}
+
+/// Splits one logical line into identifier, number, string, operator and
+/// punctuation tokens. Whitespace is dropped. Prefixed strings (`f"..."`) are
+/// one token that keeps its prefix.
+fn edit_tokens(text: &str) -> Vec<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut tokens = Vec::new();
+    let mut index = 0;
+    while index < chars.len() {
+        let c = chars[index];
+        if c.is_whitespace() {
+            index += 1;
+        } else if c.is_alphabetic() || c == '_' {
+            let start = index;
+            while index < chars.len() && (chars[index].is_alphanumeric() || chars[index] == '_') {
+                index += 1;
+            }
+            if index < chars.len()
+                && matches!(chars[index], '"' | '\'')
+                && index - start <= 2
+                && chars[start..index]
+                    .iter()
+                    .all(|p| matches!(p.to_ascii_lowercase(), 'r' | 'b' | 'f' | 'u'))
+            {
+                index = string_end(&chars, index);
+            }
+            tokens.push(chars[start..index].iter().collect());
+        } else if c.is_ascii_digit() {
+            let start = index;
+            while index < chars.len()
+                && (chars[index].is_alphanumeric() || matches!(chars[index], '.' | '_'))
+            {
+                index += 1;
+            }
+            tokens.push(chars[start..index].iter().collect());
+        } else if matches!(c, '"' | '\'') {
+            let start = index;
+            index = string_end(&chars, index);
+            tokens.push(chars[start..index].iter().collect());
+        } else {
+            let start = index;
+            index += 1;
+            if index < chars.len()
+                && matches!(
+                    (c, chars[index]),
+                    ('=', '=')
+                        | ('!', '=')
+                        | ('<', '=')
+                        | ('>', '=')
+                        | ('-', '>')
+                        | (':', '=')
+                        | ('*', '*')
+                        | ('/', '/')
+                        | ('<', '<')
+                        | ('>', '>')
+                )
+            {
+                index += 1;
+            }
+            tokens.push(chars[start..index].iter().collect());
+        }
+    }
+    tokens
+}
+
+/// Index one past the closing quote of the string starting at `start`.
+fn string_end(chars: &[char], start: usize) -> usize {
+    let quote = chars[start];
+    let mut index = start + 1;
+    while index < chars.len() {
+        if chars[index] == '\\' {
+            index += 2;
+        } else if chars[index] == quote {
+            return index + 1;
+        } else {
+            index += 1;
+        }
+    }
+    chars.len()
+}
+
 pub(super) fn is_known_mock_constructor_import(import: &PythonImport) -> bool {
     matches!(import.imported.as_str(), "Mock" | "MagicMock")
         || matches!(import.alias.as_str(), "Mock" | "MagicMock")
@@ -1155,6 +1301,116 @@ mod tests {
         assert_eq!(
             decorator_limit(&owner),
             Some(StaticLimitKind::DecoratorIndirection)
+        );
+    }
+
+    fn import_limit(old: Option<&str>, new: &str) -> Option<StaticLimitKind> {
+        let owner = owner_with(&[], vec![import_itertools()]);
+        let focus = PythonAssertionFocus::for_change(
+            super::super::probe_shape::classify_probe_shape(new).0,
+            new,
+            old,
+        );
+        static_limit_for_focused_change(new, &focus, old, &owner, &[]).map(|limit| limit.kind)
+    }
+
+    fn import_itertools() -> PythonImport {
+        PythonImport {
+            imported: "itertools".to_string(),
+            alias: "itertools".to_string(),
+            source_module: String::new(),
+        }
+    }
+
+    #[test]
+    fn literal_argument_edit_on_imported_call_is_not_import_limited() {
+        let old = "    return itertools.islice(seq, 0, None, n)";
+        let new = "    return itertools.islice(seq, 1, None, n)";
+        assert_eq!(
+            import_limit(None, new),
+            Some(StaticLimitKind::MissingImportGraph)
+        );
+        assert_eq!(import_limit(Some(old), new), None);
+    }
+
+    #[test]
+    fn operand_edit_around_imported_call_is_not_import_limited() {
+        let old = "    return itertools.islice(seq, max(0, size - n), None)";
+        let new = "    return itertools.islice(seq, size - n, None)";
+        assert_eq!(import_limit(Some(old), new), None);
+        let old = "    return itertools.islice(seq, n + 1)";
+        let new = "    return itertools.islice(seq, n)";
+        assert_eq!(import_limit(Some(old), new), None);
+    }
+
+    #[test]
+    fn callee_edit_on_imported_call_stays_import_limited() {
+        let limited = Some(StaticLimitKind::MissingImportGraph);
+        // The attribute name after the module is the callee.
+        assert_eq!(
+            import_limit(
+                Some("    return itertools.islice(seq, 0, None, n)"),
+                "    return itertools.chain(seq, 0, None, n)"
+            ),
+            limited
+        );
+        // Swapping a nested imported callee.
+        assert_eq!(
+            import_limit(
+                Some("    return itertools.islice(itertools.count(), 0)"),
+                "    return itertools.islice(itertools.repeat(1), 0)"
+            ),
+            limited
+        );
+        // Changing a keyword's value is a literal edit; changing the keyword
+        // name itself is not.
+        assert_eq!(
+            import_limit(
+                Some("    return itertools.zip_longest(a, b, fillvalue=0)"),
+                "    return itertools.zip_longest(a, b, fillvalue=1)"
+            ),
+            None
+        );
+        assert_eq!(
+            import_limit(
+                Some("    return itertools.zip_longest(a, b, fillvalue=0)"),
+                "    return itertools.zip_longest(a, b, strict=0)"
+            ),
+            limited
+        );
+        // An identical token stream is not an edit to reason about.
+        assert_eq!(
+            import_limit(
+                Some("    return itertools.islice(seq, 0)"),
+                "    return itertools.islice(seq,  0)"
+            ),
+            limited
+        );
+        // A trailing-comment edit leaves the imported call untouched.
+        assert_eq!(
+            import_limit(
+                Some("    return itertools.islice(seq, 0)  # a"),
+                "    return itertools.islice(seq, 0)  # b"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn edit_tokens_keep_strings_and_two_char_operators_whole() {
+        assert_eq!(
+            edit_tokens("x = f\"a {b}\" if y <= 1.5 else 'it\\'s'"),
+            vec![
+                "x",
+                "=",
+                "f\"a {b}\"",
+                "if",
+                "y",
+                "<=",
+                "1.5",
+                "else",
+                "'it\\'s'"
+            ]
         );
     }
 }

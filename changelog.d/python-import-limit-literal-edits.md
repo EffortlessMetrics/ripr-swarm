@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Python edit to a literal argument or operand on a line that calls an imported symbol (`itertools.islice(seq, 0, None, n)` to `1`) no longer reads `static_unknown` with `missing_import_graph`; the normal oracle verdict applies. The limit stays when the changed tokens name an import alias, an attribute callee, a keyword argument name or an f-string (RIPR-SPEC-0028, #9226).

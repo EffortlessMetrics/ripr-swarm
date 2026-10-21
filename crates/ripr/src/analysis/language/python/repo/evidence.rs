@@ -724,7 +724,7 @@ fn build_behavior_item(
     let focus = PythonAssertionFocus::for_change(family.clone(), text, None);
     let related = related_tests_for_candidates(candidates, Some(&focus));
     let related = related.as_slice();
-    let static_limit = static_limit_for_focused_change(text, &focus, owner, candidates)
+    let static_limit = static_limit_for_focused_change(text, &focus, None, owner, candidates)
         .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, candidates))
         .map(|limit| limit.kind);
     let canonical_gap = static_limit
