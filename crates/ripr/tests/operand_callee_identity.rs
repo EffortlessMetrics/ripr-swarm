@@ -120,6 +120,19 @@ fn replace_once(source: &str, from: &str, to: &str) -> String {
 #[test]
 fn a_shadowed_callee_cannot_erase_an_observed_operator_effect() -> Result<(), String> {
     assert_operator_credit(SHADOW)?;
+    for binding in [
+        "use crate::flat_rate as shipping_cents;",
+        "use crate::local_rates::shipping_cents;",
+        "use crate::local_rates::*;",
+        "declare!(fn shipping_cents(_: u64) -> Shipping { Shipping });",
+    ] {
+        let source = format!(
+            "mod local_rates {{ pub use crate::flat_rate as shipping_cents; }}\n\
+             macro_rules! declare {{ ($item:item) => {{ $item }}; }}\n{}",
+            replace_once(SHADOW, "let shipping_cents = flat_rate;", binding)
+        );
+        assert_operator_credit(&source)?;
+    }
     // An irrelevant same-name definition must not change the verdict.
     assert_operator_credit(&replace_once(
         SHADOW,
@@ -142,7 +155,23 @@ fn an_import_alias_cannot_borrow_a_method_return_type() -> Result<(), String> {
 
 #[test]
 fn a_genuine_primitive_call_retains_the_operand_pin_downgrade() -> Result<(), String> {
-    let (repo, line) = TempRepo::create(PRIMITIVE)?;
+    assert_primitive_pin(PRIMITIVE)?;
+    for replacement in [
+        "let shipping = shipping_cents(subtotal);\n    let shipping_cents = 7u64;",
+        "let shipping = shipping_cents(subtotal)   ;",
+        "let shipping_cents = shipping_cents(subtotal);\n    let shipping = shipping_cents;",
+    ] {
+        assert_primitive_pin(&replace_once(
+            PRIMITIVE,
+            "let shipping = shipping_cents(subtotal);",
+            replacement,
+        ))?;
+    }
+    Ok(())
+}
+
+fn assert_primitive_pin(source: &str) -> Result<(), String> {
+    let (repo, line) = TempRepo::create(source)?;
     let finding = repo.field_finding(line)?;
     assert_eq!(
         finding.ripr.reveal.discriminate.state,
@@ -158,6 +187,27 @@ fn a_genuine_primitive_call_retains_the_operand_pin_downgrade() -> Result<(), St
             .summary
             .contains(OPERAND_PIN),
         "{finding:?}"
+    );
+    // This intentionally small projection is fed by the real public producer.
+    // The separate honesty manifest forbids blessing it as exposed; it is
+    // an expected contract, not a captured execution or complete check report.
+    let projected = serde_json::json!({
+        "kind": "operand_callee_expected_test_projection",
+        "summary": { "findings": 1 },
+        "findings": [{
+            "classification": finding.class.as_str(),
+            "probe": { "family": finding.probe.family.as_str() },
+            "discriminate": finding.ripr.reveal.discriminate.state.as_str(),
+            "operand_pin": finding.ripr.reveal.discriminate.summary.contains(OPERAND_PIN),
+        }],
+    });
+    let expected: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../fixtures/evidence-promotion-honesty-corpus/reports/operand-callee-later-binding.json"
+    ))
+    .map_err(|error| error.to_string())?;
+    assert_eq!(
+        projected, expected,
+        "current API must satisfy the registered contract"
     );
     Ok(())
 }

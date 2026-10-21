@@ -120,7 +120,11 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
    - `source_fixture` -> the fixture's `expected/check.json` (covered by
      `goldens check`);
    - `source_report` -> a checked-in JSON report artifact for product states
-     outside the standard `goldens check` runner.
+     outside the standard `goldens check` runner, or a narrowly labeled expected
+     test projection compared exactly with a real public producer in the required
+     suite. A projection carries only the fields judged by its contract and makes
+     no captured-output or execution claim. Independent invariant controls must
+     reject false-credit and empty-report re-blessing.
 2a. Validates the case tier before trusting the expectation:
    - `pure` cases are checked-in tiny examples and must not carry
      pinned-external metadata.
@@ -434,7 +438,11 @@ repair-packet delegation.
 
 Pure cases are tiny checked-in fixtures with byte-pinned `expected/check.json`
 reports or byte-pinned `source_report` JSON artifacts for states not expressible
-by the standard fixture runner. Pinned external cases are exact real-repo launch
+by the standard fixture runner, plus the producer-checked expected projections
+described above. The operand-callee later-binding projection is tied to
+`operand_callee_identity`'s actual, uniquely selected field finding; the xtask
+`later_binding_contract_rejects_false_credit_and_vacuity` control independently
+rejects exposed and empty replacements. Pinned external cases are exact real-repo launch
 points and must name the upstream repository, command template, exact 40-hex
 commit, checked-in patch, runtime budget, and artifact-size budget before the
 gate will accept them.

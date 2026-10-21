@@ -10,11 +10,39 @@ const INITIALIZER: &str = "total_cents: subtotal + shipping";
 
 #[test]
 fn compiled_operator_removal_controls_match_observed_effects() -> Result<(), String> {
-    for (name, original, observes_effect) in [
-        ("local shadow", SHADOW, true),
-        ("method confusion", METHOD, true),
-        ("primitive control", PRIMITIVE, false),
+    let mut cases = vec![
+        ("local shadow", SHADOW.to_string(), true),
+        ("method confusion", METHOD.to_string(), true),
+        ("primitive control", PRIMITIVE.to_string(), false),
+    ];
+    for binding in [
+        "use crate::flat_rate as shipping_cents;",
+        "use crate::local_rates::shipping_cents;",
+        "use crate::local_rates::*;",
+        "declare!(fn shipping_cents(_: u64) -> Shipping { Shipping });",
     ] {
+        cases.push((
+            binding,
+            format!(
+                "mod local_rates {{ pub use crate::flat_rate as shipping_cents; }}\n\
+             macro_rules! declare {{ ($item:item) => {{ $item }}; }}\n{}",
+                SHADOW.replace("let shipping_cents = flat_rate;", binding)
+            ),
+            true,
+        ));
+    }
+    for replacement in [
+        "let shipping = shipping_cents(subtotal);\n    let shipping_cents = 7u64;",
+        "let shipping = shipping_cents(subtotal)   ;",
+        "let shipping_cents = shipping_cents(subtotal);\n    let shipping = shipping_cents;",
+    ] {
+        cases.push((
+            replacement,
+            PRIMITIVE.replace("let shipping = shipping_cents(subtotal);", replacement),
+            false,
+        ));
+    }
+    for (name, original, observes_effect) in cases {
         assert_eq!(original.matches(INITIALIZER).count(), 1);
         for remove_operator in [false, true] {
             let source = if remove_operator {
