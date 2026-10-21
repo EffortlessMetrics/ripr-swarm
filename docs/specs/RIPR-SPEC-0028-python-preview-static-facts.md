@@ -840,6 +840,15 @@ The single-literal expected-value rule (including one triple-quoted string,
 and excluding compounds and adjacent-string concatenation) is covered by
 `crates/ripr/src/analysis/language/python/tests.rs::classify_change_never_restates_changed_expression_as_discriminator`.
 
+The pre-parse nesting budget (`parse_budget.rs`, #4109) counts brackets inside
+an open string literal so a deeply bracketed literal still declines, but a
+closed literal cannot leave a bracket open for the code after it. Unbalanced
+brackets in separate literals such as `"\x1b[31m"` therefore do not accumulate
+into file nesting (#8561): covered by
+`crates/ripr/src/analysis/language/python/parse_budget.rs::tests::unbalanced_brackets_in_separate_strings_do_not_accumulate`
+(including real nesting after the table still declining) and the CLI test
+`crates/ripr/tests/python_parse_nesting.rs::unbalanced_bracket_string_literals_do_not_trip_the_nesting_budget`.
+
 Package re-export reach is covered end to end, in diff and repo mode, by
 `crates/ripr/src/analysis/language/python/reexport_tests.rs`: attribute calls
 through an explicit `__init__.py` re-export, `from package import name`

@@ -2772,6 +2772,7 @@ fn seams_from_index_files(production_files: &[PathBuf], index: &RustIndex) -> Ve
         // instead of rescanning the source per seam.
         let line_starts = build_line_starts(&facts.source);
         let crlf_pairs = CrlfPairPositions::build(&facts.source);
+        let arm_ranges = match_arm_source_ranges(&facts.source, &facts.probe_shapes);
         let twins = rust_index::error_path_twins(&facts.probe_shapes, &facts.source);
         for (shape, twin) in facts.probe_shapes.iter().zip(twins) {
             if twin {
@@ -2784,6 +2785,7 @@ fn seams_from_index_files(production_files: &[PathBuf], index: &RustIndex) -> Ve
                 &facts.source,
                 &line_starts,
                 &crlf_pairs,
+                &arm_ranges,
             ) else {
                 continue;
             };
@@ -2950,6 +2952,7 @@ pub(crate) fn inventory_seams_from_index_bounded(
         // instead of rescanning the source per seam.
         let line_starts = build_line_starts(&facts.source);
         let crlf_pairs = CrlfPairPositions::build(&facts.source);
+        let arm_ranges = match_arm_source_ranges(&facts.source, &facts.probe_shapes);
         let twins = rust_index::error_path_twins(&facts.probe_shapes, &facts.source);
         for (shape, twin) in facts.probe_shapes.iter().zip(twins) {
             if twin {
@@ -2962,6 +2965,7 @@ pub(crate) fn inventory_seams_from_index_bounded(
                 &facts.source,
                 &line_starts,
                 &crlf_pairs,
+                &arm_ranges,
             ) {
                 collector.push(seam);
             }
@@ -2984,6 +2988,20 @@ fn bounded_seams_from_shapes_for_test(
     Ok(collector.finish())
 }
 
+fn match_arm_source_ranges(
+    source: &str,
+    shapes: &[ProbeShapeFact],
+) -> BTreeMap<usize, (usize, usize)> {
+    if shapes
+        .iter()
+        .any(|shape| shape.kind == ProbeShapeKind::MatchArm)
+    {
+        super::syntax::ra::match_arm_source_ranges(source)
+    } else {
+        BTreeMap::new()
+    }
+}
+
 fn build_seam_from_shape(
     path: &Path,
     shape: &ProbeShapeFact,
@@ -2991,6 +3009,7 @@ fn build_seam_from_shape(
     source: &str,
     line_starts: &[usize],
     crlf_pairs: &CrlfPairPositions,
+    arm_ranges: &BTreeMap<usize, (usize, usize)>,
 ) -> Option<RepoSeam> {
     let kind = seam_kind_from_probe_shape(shape.kind)?;
     // RIPR-SPEC-0228 field assignments are diff-scope probes only: repo-scope
@@ -3042,20 +3061,22 @@ fn build_seam_from_shape(
     .with_source_lines(shape.source_lines);
     // Span geometry is additional precision: when derivation fails (stale or
     // mismatched source), the seam keeps line-only behavior rather than
-    // carrying wrong coordinates. Match-arm shapes are line-only by policy:
-    // the parser records the `match`/`=>` token range while the seam
-    // describes the scrutinee/arm construct, so a token span would bound the
-    // wrong source (#5451 review).
-    if shape.kind == ProbeShapeKind::MatchArm {
-        return Some(seam);
-    }
-    match byte_span_to_lines_with_starts(
-        source,
-        line_starts,
-        shape.start_line,
-        shape.start_byte,
-        shape.end_byte,
-    ) {
+    // carrying wrong coordinates. An arm's token range is its identity,
+    // not its coverage: use the separately parsed pattern-through-body range.
+    // The `match` keyword shape has no arm range and remains line-only.
+    let (start_line, start_byte, end_byte) = if shape.kind == ProbeShapeKind::MatchArm {
+        let Some(&(start, end)) = arm_ranges.get(&shape.start_byte) else {
+            return Some(seam);
+        };
+        (
+            line_starts.partition_point(|offset| *offset <= start),
+            start,
+            end,
+        )
+    } else {
+        (shape.start_line, shape.start_byte, shape.end_byte)
+    };
+    match byte_span_to_lines_with_starts(source, line_starts, start_line, start_byte, end_byte) {
         Some(span) => Some(seam.with_span(span)),
         None => Some(seam),
     }
@@ -3858,11 +3879,10 @@ pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
     }
 
     #[test]
-    fn given_match_and_predicate_shapes_when_repo_inventory_runs_then_only_predicate_has_span()
+    fn given_match_and_predicate_shapes_when_repo_inventory_runs_then_arms_have_full_spans()
     -> Result<(), String> {
-        // Match-arm shapes record the `match`/`=>` token range while the seam
-        // describes the scrutinee/arm construct, so match seams stay
-        // line-only; predicate shapes cover their condition and carry spans.
+        // `match` remains a token-only shape; actual arms get full geometry
+        // without moving their token anchors or changing their identity.
         let path = PathBuf::from("src/classify.rs");
         let source = r#"pub fn classify(n: i32) -> &'static str {
     if n >= 0 { "nonneg" } else { "neg" }
@@ -3886,12 +3906,10 @@ pub fn name(n: i32) -> &'static str {
         assert_eq!((span.start_line, span.start_column), (2, 8));
         assert_eq!((span.end_line, span.end_column), (2, 14));
         for seam in seams.iter().filter(|s| s.kind() == SeamKind::MatchArm) {
-            if seam.span().is_some() {
-                return Err(format!(
-                    "match-arm seam must stay line-only, got {:?}",
-                    seam.span()
-                ));
-            }
+            assert_eq!(
+                seam.span().is_some(),
+                !seam.expression().starts_with("match ")
+            );
         }
         if !seams.iter().any(|s| s.kind() == SeamKind::MatchArm) {
             return Err("expected at least one match-arm seam".to_string());

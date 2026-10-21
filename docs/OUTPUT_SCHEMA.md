@@ -106,7 +106,7 @@ map is:
 | `ripr gate evaluate` | `schema_version` | `0.1` |
 | `ripr doctor --json` | `schema_version` | `0.4` |
 | `ripr diff --json` (`kind: "ripr_diff"`) | `schema_version` | `0.1` |
-| `ripr check --format repo-exposure-json` | `schema_version` | `0.4` |
+| `ripr check --format repo-exposure-json` | `schema_version` | `0.5` |
 | `ripr rerun --json` | `schema_version` | `ripr-targeted-rerun-v1` |
 | `ripr agent packet` and `ripr check --format agent-seam-packets-json` | `schema_version` | `0.5` |
 | `ripr agent brief` | `schema_version` | `0.1` |
@@ -1249,7 +1249,7 @@ Envelope (`schema_version = "ripr-check-artifact-v1"`):
 
 ## Finding
 
-The `id` field is content-addressed: `probe:<sanitized_path>:<family>:<fp8>[.<n>]` where `<fp8>` is the first 8 hex chars of SHA-256 over `path\0family\0owner\0expression\0`. This means a suppression tracks the code, not the line — the same expression moved to a new line keeps its id (suppression follows it), while changed code at a spot gets a new id (stale suppression invalidates). The `line` field in the `probe` object still gives locality for display.
+The `id` field is content-addressed: `probe:<sanitized_path>:<family>:<fp8>[.<n>]` where `<fp8>` is the first 8 hex chars of SHA-256 over `path\0family\0owner\0expression\0`. This means a suppression tracks the code, not the line — the same expression moved to a new line keeps its id (suppression follows it), while changed code at a spot gets a new id (stale suppression invalidates). The `line` field in the `probe` object still gives locality for display. For Rust expressions, formatting whitespace is collapsed outside literal contents, except that an actual line-comment terminator remains one LF; literal whitespace is part of the value. CRLF, trailing comment whitespace and following indentation normalize to that same boundary. Comment text otherwise remains part of the source identity. Older IDs that collapsed literal whitespace or a significant line-comment boundary become stale and must be reviewed rather than automatically retargeted (#8832). The existing fail-closed compatibility procedure applies: an unmatched selector remains unapplied with a visible warning; review the current finding before recording its current ID. An ambiguous old ID is never an alias for either new value. The fingerprint format and output schema are unchanged. The actual distinct-payload fp8 collision in #8838 remains a known violation of the material-input/order identity requirements, not a waiver of them.
 
 A finding contains:
 
@@ -3480,7 +3480,7 @@ introduced by RIPR-SPEC-0005. The artifact lands at
 
 ```json
 {
-  "schema_version": "0.2",
+  "schema_version": "0.3",
   "artifact": { "...": "see Repo Exposure Report — producer identity envelope" },
   "scope": "repo",
   "seams": [
@@ -3508,10 +3508,12 @@ introduced by RIPR-SPEC-0005. The artifact lands at
 
 Field contract:
 
-- `schema_version` — currently `"0.2"`. Bumping requires updating this section,
+- `schema_version` — currently `"0.3"`. Bumping requires updating this section,
   the renderer (`crates/ripr/src/output/repo_seams.rs`), and any downstream
   consumers in lockstep. `0.1` → `0.2`: seams gained the additive `column` /
-  `end_line` / `end_column` span coordinates (#5336). The top-level
+  `end_line` / `end_column` span coordinates (#5336). `0.2` → `0.3`:
+  actual Rust arms gain complete parser geometry and coherent span start
+  lines (#5905). The top-level
   `artifact` envelope below is additive within `0.2` and does not bump the
   version, per the repo-exposure envelope (#2203) and gate-subject (#5474)
   precedents.
@@ -3537,16 +3539,18 @@ Field contract:
   `field_construction`, `side_effect`, `match_arm`, `call_presence`. The spec
   also reserves `validation_branch` for a future detection PR.
 - `file` — repo-root-relative Unix-separator path (no leading `./`).
-- `line` — 1-based start line for human display only. Not part of the seam ID
-  hash; `byte_offset` is the canonical position field internally.
+- `line` — 1-based span start line when geometry is present, otherwise the
+  display line. Not part of the seam ID hash; `byte_offset` remains the
+  token identity internally. Version 0.3 adds complete match-arm geometry
+  and makes multiline pattern starts coherent with `column` (#5905).
 - `column`, `end_line`, `end_column` — 1-based parser-owned span geometry
   (columns count Unicode scalar values from the line start plus one; the
   end is exclusive),
   matching cargo-mutants span columns for calibration joins. Present only when
   span geometry was available; absent on legacy or span-less entries, which
-  consumers must treat as line-only. Match-arm seams are span-less by policy:
-  the parser records the `match`/`=>` token range while the seam describes a
-  wider construct, so no span is emitted rather than a misleading one. Not
+  consumers must treat as line-only. Actual match-arm spans start at the
+  pattern and end after the body and optional trailing comma. The `=>`
+  token remains the internal identity; `match` keyword shapes stay span-less. Not
   part of the seam ID hash.
 - `owner` — fully-qualified module/symbol path of the enclosing function.
   Backslashes from native paths are normalized to forward slashes before
@@ -3824,7 +3828,7 @@ Consumers must not treat limited artifacts as canonical actionable counts.
 
 ```json
 {
-  "schema_version": "0.4",
+  "schema_version": "0.5",
   "scope": "repo",
   "metrics": {
     "seams_total": 9355,
@@ -4078,7 +4082,7 @@ Consumers must not treat limited artifacts as canonical actionable counts.
 
 Field contract:
 
-- `schema_version` — currently `"0.4"`. Bumping requires updating this
+- `schema_version` — currently `"0.5"`. Bumping requires updating this
   section, the renderer (`crates/ripr/src/output/repo_exposure.rs`), and
   any downstream consumers in lockstep. `0.1` → `0.2`: per-related-test
   entries gained `relation_reason` and `relation_confidence` fields
@@ -4086,7 +4090,10 @@ Field contract:
   the additive `evidence_record` projection (`RIPR-SPEC-0021`) while
   preserving existing top-level seam fields. `0.3` → `0.4`: seams gained
   the additive `column` / `end_line` / `end_column` span coordinates
-  (#5336). `relation_reason` is an additive string enum within `0.3`;
+  (#5336). `0.4` → `0.5`: actual match arms gain complete pattern-through-body
+  geometry; `line` uses the span start when present, including multiline
+  patterns (#5905). Token identities and span-less fallback remain unchanged.
+  `relation_reason` is an additive string enum within `0.3`;
   `helper_owner_call` extends the existing relation taxonomy without
   changing the field shape.
 - `scope` — always `"repo"`.
@@ -4762,7 +4769,7 @@ runtime execution.
     "root": ".",
     "source": "repo-exposure-json",
     "repo_exposure_mode": "instant",
-    "repo_exposure_schema_version": "0.4",
+    "repo_exposure_schema_version": "0.5",
     "repo_exposure_generation": {
       "command": "target/debug/ripr check --root . --mode instant --format repo-exposure-json",
       "timeout_ms": 120000,
