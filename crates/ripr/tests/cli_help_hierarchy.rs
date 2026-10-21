@@ -1123,12 +1123,12 @@ fn agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve() -> Resul
     assert_contains(
         "agent help",
         &stdout,
-        "`ripr repair` then `ripr continue` is the shorter spelling of the same transaction",
+        "Repair path (start here): ripr repair [<item>] # edit one focused test ripr continue The same transaction with explicit phases:",
     )?;
     assert_contains(
         "agent help",
         &stdout,
-        "`--phase before` also accepts a `ripr check` finding ID (`probe:...`)",
+        "`--phase before` also accepts a `ripr check` finding ID (`probe:...` or `repo-probe:...`)",
     )?;
     if stdout.contains("are not seam IDs") {
         return Err("agent help still says finding IDs are not seam IDs".to_string());
