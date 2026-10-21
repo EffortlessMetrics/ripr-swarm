@@ -533,6 +533,17 @@ fn resolve_boundary_operand(
         if let Some(call) = resolve_direct_call(&initializer, index, workspace_complete) {
             return Some(call);
         }
+        // A flag-selected initializer reads its flag from the caller's row
+        // and its arms from the file's constants, so neither may be rebound
+        // in the owner (`let si = !si;`, a local `KB`).
+        if initializer.trim_start().starts_with("if ")
+            && free_identifiers(&initializer)
+                .iter()
+                .filter(|name| !matches!(name.as_str(), "if" | "else" | "true" | "false"))
+                .any(|name| name_rebound_in_owner(owner, name))
+        {
+            return None;
+        }
         let constants = initializer_constants(owner, &initializer, parameters, index);
         return Some(ResolvedOperand::Local(
             operand.to_string(),
@@ -1051,14 +1062,39 @@ fn parameter_may_be_rebound(owner: &FunctionSummary, name: &str, predicate_line:
     {
         return true;
     }
-    tokens(&masked).into_iter().any(|start| {
-        let after = masked[start + name.len()..].trim_start();
-        let assigned =
-            after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>")
-                || ["+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="]
-                    .iter()
-                    .any(|operator| after.starts_with(operator));
-        assigned || masked[..start].trim_end().ends_with("mut")
+    tokens(&masked)
+        .into_iter()
+        .any(|start| name_assigned_or_mut(&masked, name, start))
+}
+
+/// Whether the `name` token at `start` in the masked body is assigned or
+/// bound `mut`.
+fn name_assigned_or_mut(masked: &str, name: &str, start: usize) -> bool {
+    let after = masked[start + name.len()..].trim_start();
+    let assigned = after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>")
+        || ["+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="]
+            .iter()
+            .any(|operator| after.starts_with(operator));
+    assigned || masked[..start].trim_end().ends_with("mut")
+}
+
+/// Whether the owner rebinds `name` anywhere in its body: a `let`, or an
+/// assignment or `mut` binding of it. A flag or constant a local's
+/// initializer names must be the caller's value or the file's constant, so
+/// any rebinding declines the read (the verdict stays unresolved).
+fn name_rebound_in_owner(owner: &FunctionSummary, name: &str) -> bool {
+    if owner_declares_local(owner, name, usize::MAX) {
+        return true;
+    }
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(&owner.body);
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    masked.match_indices(name).any(|(start, _)| {
+        !masked[..start].chars().next_back().is_some_and(is_word)
+            && !masked[start + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+            && name_assigned_or_mut(&masked, name, start)
     })
 }
 

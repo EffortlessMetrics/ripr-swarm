@@ -18,6 +18,12 @@ pub fn tier_negated(bytes: u64, binary: bool) -> &'static str {
     if bytes >= unit { "unit" } else { "byte" }
 }
 
+pub fn tier_shadowed(bytes: u64, si: bool) -> &'static str {
+    let si = !si;
+    let unit = if si { KIB } else { KB };
+    if bytes >= unit { "unit" } else { "byte" }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -38,5 +44,12 @@ mod tests {
     fn the_decimal_unit_starts_at_1000() {
         assert_eq!(tier_negated(1_000, false), "unit");
         assert_eq!(tier_negated(999, false), "byte");
+    }
+
+    #[test]
+    fn the_flag_is_flipped_before_the_unit_is_chosen() {
+        assert_eq!(tier_shadowed(1_024, true), "unit");
+        assert_eq!(tier_shadowed(1_023, true), "unit");
+        assert_eq!(tier_shadowed(999, true), "byte");
     }
 }

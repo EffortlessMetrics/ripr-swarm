@@ -55,7 +55,10 @@ exercised boundary from a missing one.
   each joins the row's exact inputs only when its file declares it once
   with a plain decimal value, so an imported, duplicated or opaque
   constant leaves the name unresolved. Two plain decimal integers
-  compare by digits, so a test's `1_024` meets the evaluated `1024`.
+  compare by digits, so a test's `1_024` meets the evaluated `1024`. The
+  flag and every constant the initializer names must not be rebound in
+  the owner (`let si = !si;`, a local `KB`, an assignment or `mut`
+  binding); a rebound name leaves the local unresolved.
 
 ## Required Evidence
 
@@ -114,6 +117,10 @@ exercised boundary from a missing one.
 - Reject: the same local with tests at `(1_000, true)` and `(1_024,
   false)`: each input is the other flag's boundary, no row sits on
   `unit`, and the verdict stays a gap (`local-boundary-flag-trap`).
+- Reject: `let si = !si;` before the same local, with tests at
+  `(1_024, true)`: the flag the local reads is the opposite of the
+  caller's literal, so the pinned 1_024 is not the boundary and the
+  verdict stays unresolved (`local-boundary-flag-shadowed`).
 - Reject: the real `bytesize` edit `bytes < unit` to `bytes <= unit`,
   whose only direct row binds `bytes` to a string literal: the verdict
   stays `infection_unknown` (`bytesize-format-unit-first-run`).
@@ -126,7 +133,8 @@ exercised boundary from a missing one.
 `exact_values_compare_plain_decimals_by_digits_only` and
 `an_integer_local_meets_only_an_integer_counterpart_cell`;
 `rust-verdict-corpus` cases `local-boundary-flag-hit`,
-`local-boundary-flag-trap` and `local-boundary-flag-negated`;
+`local-boundary-flag-trap`, `local-boundary-flag-negated` and
+`local-boundary-flag-shadowed`;
 `analysis/language/rust/mod.rs` end-to-end retarget+evaluation tests;
 fixtures `binding_predicate_equality_boundary` (re-blessed flip) and
 the #3295 family fixtures.
