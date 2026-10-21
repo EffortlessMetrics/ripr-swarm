@@ -1756,6 +1756,16 @@ impl PerlFactPacket {
         })
     }
 
+    fn observable_declared_absent(&self, change_id: &str) -> bool {
+        self.change(change_id).is_some_and(|change| {
+            change.changed_observable.declared_absent()
+                || change
+                    .changed_observable
+                    .as_deref()
+                    .is_some_and(|text| text.trim().is_empty())
+        })
+    }
+
     fn classify_related_relation(
         &self,
         relation: &RelationFact,
@@ -1773,7 +1783,16 @@ impl PerlFactPacket {
         let bound = oracle.test_id == relation.test_id
             && oracle.target_owner_id.as_deref() == Some(relation.owner_id.as_str());
         if bound && oracle.is_strong_exact() {
-            ExposureClass::WeaklyExposed
+            if self.observable_declared_absent(&relation.change_id) {
+                // RIPR-SPEC-0235 rule 18: the producer found no changed
+                // observable, so there is nothing for the oracle's sink to
+                // align to and ripr cannot tell whether the strong oracle
+                // pins the change. Unknown, not a repairable gap (#8730). A
+                // packet that never carried the field keeps `weakly_exposed`.
+                ExposureClass::StaticUnknown
+            } else {
+                ExposureClass::WeaklyExposed
+            }
         } else if bound
             && oracle.is_broad_unresolved()
             && relation.relation_kind.supports_weak_oracle_credit()
@@ -2751,6 +2770,28 @@ impl OwnerKind {
     }
 }
 
+/// The `changed_observable` of a change, keeping "the packet never carried
+/// the field" (an older packet) apart from "the producer wrote `null`".
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct ObservableField(Option<Option<String>>);
+
+impl<'de> Deserialize<'de> for ObservableField {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Option::<String>::deserialize(deserializer).map(|text| Self(Some(text)))
+    }
+}
+
+impl ObservableField {
+    fn as_deref(&self) -> Option<&str> {
+        self.0.as_ref()?.as_deref()
+    }
+
+    /// The producer wrote the field and found no observable.
+    fn declared_absent(&self) -> bool {
+        matches!(&self.0, Some(None))
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 struct ChangeFact {
     change_id: String,
@@ -2762,9 +2803,10 @@ struct ChangeFact {
     /// Campaign 31 step 2 contract freeze (ripr-swarm#1379): the observable
     /// the change produces (e.g. `"$amount / 2"` for a return change).
     /// Producer-emitted; consumed by H2 classification for sink alignment.
-    /// `#[serde(default)]` so older packets without the field still parse.
+    /// `#[serde(default)]` so older packets without the field still parse;
+    /// an explicit `null` is the producer saying it found no observable.
     #[serde(default)]
-    changed_observable: Option<String>,
+    changed_observable: ObservableField,
     /// The concrete discriminator derived from the change (e.g.
     /// `"$amount == $threshold"`). The documented (SPEC-0064, #6829)
     /// canonical-gap discriminator channel: when present, it forms the
@@ -3257,7 +3299,9 @@ fn sink_aligned_observation(
         // changed observable. Exact equality is the safe bar; the normalized
         // observable covers the common `return <expr>` form. Anything else
         // fails closed (returns None at the end of the loop).
-        if observed_sink == changed_observable || observed_sink == normalized_observable {
+        if sink_text_eq(observed_sink, changed_observable)
+            || sink_text_eq(observed_sink, normalized_observable)
+        {
             return Some(SinkAlignedObservation {
                 test_name: ev.test_name.clone(),
                 observed_sink: observed_sink.to_string(),
@@ -3269,6 +3313,55 @@ fn sink_aligned_observation(
         }
     }
     None
+}
+
+/// RIPR-SPEC-0235 rule 9: sink text equality that ignores whitespace which
+/// cannot change what the expression means. Whitespace inside a quoted
+/// literal is kept exactly. Outside one it is dropped unless both neighbors
+/// are identifier characters (`$a lt $b` is not `$altb`; a sigil ends a word, so
+/// `scalar @a` is `scalar@a`) or the same operator character
+/// (`- -1` is not `--1`), so `$a*0.9` equals `$a * 0.9` and nothing else
+/// merges. Any difference this does not explain compares unequal.
+fn sink_text_eq(left: &str, right: &str) -> bool {
+    left == right || canonical_sink_text(left) == canonical_sink_text(right)
+}
+
+fn canonical_sink_text(text: &str) -> String {
+    let is_word = |c: char| c == '_' || c.is_alphanumeric();
+    let mut out = String::with_capacity(text.len());
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut pending_space = false;
+    for c in text.trim().chars() {
+        if let Some(open) = quote {
+            out.push(c);
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == open {
+                quote = None;
+            }
+            continue;
+        }
+        if c.is_whitespace() {
+            pending_space = true;
+            continue;
+        }
+        if pending_space {
+            if let Some(prev) = out.chars().next_back()
+                && ((is_word(prev) && is_word(c)) || (prev == c && !is_word(c)))
+            {
+                out.push(' ');
+            }
+            pending_space = false;
+        }
+        if c == '\'' || c == '"' {
+            quote = Some(c);
+        }
+        out.push(c);
+    }
+    out
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
