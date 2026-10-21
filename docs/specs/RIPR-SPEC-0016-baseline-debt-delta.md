@@ -152,7 +152,11 @@ itself.
 
 An overwrite refusal prints a complete retry retaining the supplied `--from`
 and effective `--out` as shell-quoted path arguments, with explicit `--force`.
-It does not write anything before the operator chooses that retry.
+It does not write anything before the operator chooses that retry. On Windows,
+the error also directs paths containing `$`, backticks, or `%`, and commands
+using `printf` escape fragments, to Git Bash rather than WSL or Command Prompt.
+This disclosure retains the shared formatter's expansion-safety restrictions;
+it does not add shell compatibility.
 
 The review metadata object is additive. Campaign 17 baseline files that only
 contain `reviewed` and `reason`, or omit `review` entirely, remain valid. The

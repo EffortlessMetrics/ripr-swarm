@@ -88,8 +88,13 @@ fn baseline_create(args: &[String]) -> Result<(), String> {
 fn baseline_create_overwrite_error(from: &Path, out: &Path, windows: bool) -> String {
     let quoted_from = crate::agent::loop_commands::shell_arg_for(&from.to_string_lossy(), windows);
     let quoted_out = crate::agent::loop_commands::shell_arg_for(&out.to_string_lossy(), windows);
+    let shell_hint = if windows {
+        ". On Windows, use Git Bash (not WSL) if a path contains $, backticks or %, or this command uses printf escape fragments. Command Prompt does not support those forms."
+    } else {
+        ""
+    };
     format!(
-        "{} already exists; rerun `ripr baseline create --from {quoted_from} --out {quoted_out} --force` to overwrite it",
+        "{} already exists; rerun `ripr baseline create --from {quoted_from} --out {quoted_out} --force` to overwrite it{shell_hint}",
         out.display()
     )
 }
@@ -362,6 +367,11 @@ mod tests {
             (r"C:\work\gate$it's.json", r"'C:\work\gate$it'\''s.json'"),
             (r"C:\work\gate`it's.json", r"'C:\work\gate`it'\''s.json'"),
             (r"C:\work\gate%it's.json", r#""C:\work\gate%it's.json""#),
+            (r"C:\work\gate.json", r#""C:\work\gate.json""#),
+            (
+                "C:\\work\\gate\u{202e}.json",
+                r#"'C:\work\gate'"$(printf '\342\200\256')"'.json'"#,
+            ),
         ] {
             assert_eq!(
                 baseline_create_overwrite_error(

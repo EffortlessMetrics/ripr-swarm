@@ -15257,6 +15257,11 @@ fn baseline_create_writes_reviewed_ledger_and_refuses_overwrite() -> Result<(), 
         baseline,
         "refusing overwrite must preserve the baseline"
     );
+    assert_eq!(
+        stderr.contains("On Windows, use Git Bash (not WSL)"),
+        cfg!(windows),
+        "overwrite shell guidance must match the running host: {stderr}"
+    );
     let retry = stderr
         .split_once("rerun `")
         .and_then(|(_, rest)| rest.split_once("` to overwrite it"))
