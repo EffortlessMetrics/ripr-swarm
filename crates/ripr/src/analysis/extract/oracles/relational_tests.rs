@@ -1322,6 +1322,11 @@ fn bool_valued_operands_read_as_what_they_assert() -> Result<(), String> {
         ("assert_eq!([x == 1, y][0], true);", &weak),
         ("assert_eq!(table[i], expected);", &exact),
         ("assert_eq!(&x, &y);", &exact),
+        ("assert_eq!((Wrapper(x == 1).0).clone(), flag);", &weak),
+        ("assert_eq!((x == 1,).0, true);", &exact),
+        ("assert_eq!((x == 1, y).0, true);", &weak),
+        ("assert_eq!((Wrapper(x == 1)).0, true);", &exact),
+        ("assert_eq!(&mut x, &mut y);", &exact),
         // Negative controls for the helper branches.
         ("assert_eq!(Foo::Some(x == 3).unwrap(), true);", &weak),
         ("assert_eq!(m::Foo { ok: x == 1 }, f);", &weak),

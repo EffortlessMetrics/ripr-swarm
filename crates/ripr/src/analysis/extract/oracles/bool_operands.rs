@@ -704,7 +704,7 @@ fn holds_member_test(side: &str, other_is_true: bool) -> bool {
     let mut accessed = false;
     loop {
         if let Some(receiver) = passthrough_receiver(text) {
-            text = receiver.trim();
+            text = peel_references_and_groups(receiver);
         } else if let Some((receiver, call)) = member_receiver(text) {
             (text, called, accessed) = (peel_references_and_groups(receiver), called || call, true);
         } else {
