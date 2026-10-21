@@ -294,14 +294,27 @@ fn config_load_error_path_for_host(path: &Path, windows: bool) -> String {
 }
 
 /// What a reader can do about a `ripr.toml` that failed to load (#9033). The
-/// parse error alone names the line but not the way out; this trailing line
-/// stays after the first line, which JSON refusals and `doctor` evidence keep.
-const CONFIG_LOAD_REPAIR_HINT: &str =
-    "Fix the error above in ripr.toml and rerun, or remove ripr.toml to use the built-in defaults.";
+/// error alone names the problem but not the way out; these trailing lines stay
+/// after the first line, which JSON refusals and `doctor` evidence keep. Removal
+/// is worded for discovery: another `ripr.toml` in a parent directory takes over
+/// before the built-in defaults do.
+macro_rules! config_removal_advice {
+    () => {
+        "removing it makes ripr use the next ripr.toml it finds in a parent directory, or the built-in defaults if there is none."
+    };
+}
+const CONFIG_LOAD_PARSE_HINT: &str = concat!(
+    "Fix the error above in ripr.toml and rerun; ",
+    config_removal_advice!()
+);
+const CONFIG_LOAD_READ_HINT: &str = concat!(
+    "Make that ripr.toml readable and rerun; ",
+    config_removal_advice!()
+);
 
 fn config_load_parse_error_for_host(path: &Path, err: &str, windows: bool) -> String {
     format!(
-        "{}: {}\n{CONFIG_LOAD_REPAIR_HINT}",
+        "{}: {}\n{CONFIG_LOAD_PARSE_HINT}",
         config_load_error_path_for_host(path, windows),
         err.trim_end()
     )
@@ -313,7 +326,7 @@ fn config_load_read_error_for_host(
     windows: bool,
 ) -> String {
     format!(
-        "read {} failed: {err}",
+        "read {} failed: {err}\n{CONFIG_LOAD_READ_HINT}",
         config_load_error_path_for_host(path, windows)
     )
 }
@@ -668,7 +681,10 @@ pub(crate) fn config_error_display_lines(error: &str, verbose: bool) -> Vec<Stri
     for line in error.lines().map(str::trim).filter(|line| !line.is_empty()) {
         // doctor prints its own `Fix:` line, so the loader's recovery line
         // would only repeat it (#9033).
-        if is_toml_source_excerpt_line(line) || line == CONFIG_LOAD_REPAIR_HINT {
+        if is_toml_source_excerpt_line(line)
+            || line == CONFIG_LOAD_PARSE_HINT
+            || line == CONFIG_LOAD_READ_HINT
+        {
             continue;
         }
         if summary.contains(line) || lines.iter().any(|existing| existing.contains(line)) {

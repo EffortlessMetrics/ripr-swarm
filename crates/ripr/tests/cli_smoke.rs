@@ -3603,7 +3603,7 @@ fn check_json_malformed_config_emits_redacted_refusal() -> Result<(), String> {
     }
     // #9033: stderr also names the way out; the machine message stays the
     // one-line summary.
-    if !stderr.contains("remove ripr.toml to use the built-in defaults") {
+    if !stderr.contains("removing it makes ripr use the next ripr.toml it finds") {
         return Err(format!("stderr must name how to recover: {stderr}"));
     }
     if message.contains("built-in defaults") {
