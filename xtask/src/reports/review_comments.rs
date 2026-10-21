@@ -1185,6 +1185,15 @@ fn packet_discloses_bounded_document(packet: &Value) -> bool {
 /// or the producer's own refusal/limitation line. A flag that is present but
 /// not a boolean is an unknown, never an established cut.
 fn bounded_document_established(packet: &Value) -> bool {
+    // A fail-closed refusal also uses findings-bounded wording for invalid
+    // flags. That wording does not establish that a cut actually occurred.
+    if packet
+        .get("analysis_outcome")
+        .and_then(|outcome| outcome.get("document_complete"))
+        .is_some_and(|complete| !complete.is_boolean())
+    {
+        return false;
+    }
     let flag_false = packet
         .get("analysis_outcome")
         .and_then(|outcome| outcome.get("document_complete"))
@@ -2437,6 +2446,9 @@ mod tests {
         }
         let mut unknown = packet_with(outcome(json!({})))?;
         unknown["analysis_outcome"]["document_complete"] = json!("false");
+        // The real fail-closed refusal also names a findings-bounded document
+        // for malformed flags; that wording alone is not an established cut.
+        unknown["warnings"][0]["message"] = json!(message);
         let unknown_markdown = render_error_review_comments_markdown(&unknown);
         if !unknown_markdown.contains("Document Complete: unknown (finding counts unavailable)") {
             return Err(format!(
