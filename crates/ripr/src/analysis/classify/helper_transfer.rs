@@ -264,19 +264,31 @@ fn tests_call_matching(
     name: &str,
     kind_matches: impl Fn(&NamedEntryKind) -> bool,
 ) -> bool {
+    // #9086: the import answer is a pure function of (file source, name), but
+    // it re-parses the whole file. It was computed eagerly once per test, so a
+    // file with N tests was parsed N times per query (quadratic on a
+    // generic-heavy quickcheck file). Compute it lazily, once per indexed file.
+    let file_imports: std::cell::RefCell<std::collections::BTreeMap<&std::path::Path, bool>> =
+        std::cell::RefCell::new(std::collections::BTreeMap::new());
     !name.is_empty()
         && index.tests().iter().any(|test| {
             let file_facts = index.files().get(&test.file);
-            let source = match &file_facts {
-                Some(facts) => facts.source.as_ref(),
-                None => test.body.as_str(),
+            let imports_of = || match &file_facts {
+                Some(facts) => {
+                    if let Some(known) = file_imports.borrow().get(test.file.as_path()) {
+                        return *known;
+                    }
+                    let known = source_imports_foreign_entry(index, facts.source.as_ref(), name);
+                    file_imports.borrow_mut().insert(test.file.as_path(), known);
+                    known
+                }
+                None => source_imports_foreign_entry(index, test.body.as_str(), name),
             };
-            let imports = source_imports_foreign_entry(index, source, name);
             test.calls.iter().any(|call| {
                 call.name == name
                     && named_entry_kinds(&call.text, name).iter().any(|kind| {
                         let free_shadowed = matches!(kind, NamedEntryKind::Free)
-                            && (imports
+                            && (imports_of()
                                 || local_binding_shadows(
                                     index,
                                     LocalBindingSubject {
@@ -3046,6 +3058,45 @@ mod tests {
             Some(arguments) if arguments == vec!["1".to_string()] => Ok(()),
             other => Err(format!("expected [\"1\"], got {other:?}")),
         }
+    }
+
+    /// #9086: a file with many tests that call the queried name was
+    /// re-parsed once per test (quadratic on a generic-heavy file). The
+    /// import answer is per file, so the scan count tracks files, not tests.
+    #[test]
+    fn tests_call_name_scans_each_file_once_not_once_per_test() -> Result<(), String> {
+        use crate::analysis::facts::OwnedRustIndex;
+        let mut source = String::from("fn parse(x: u8) -> u8 { x }\n");
+        for n in 0..60 {
+            source.push_str(&format!(
+                "#[test]\nfn t{n}() {{ assert_eq!(parse({n}), {n}); }}\n"
+            ));
+        }
+        let facts = crate::analysis::syntax::ra::summarize_file_with_parser(
+            std::path::Path::new("tests/many.rs"),
+            &source,
+        )?;
+        let index = RustIndex::from_owned(OwnedRustIndex {
+            functions: facts.functions.clone(),
+            tests: facts.tests.clone(),
+            files: [(PathBuf::from("tests/many.rs"), facts)]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        });
+        if index.tests().len() < 60 {
+            return Err(format!("fixture built {} tests", index.tests().len()));
+        }
+        super::super::macro_item_names::SCAN_COUNT.with(|count| count.set(0));
+        let found = tests_call_name(&index, "parse");
+        let scans = super::super::macro_item_names::SCAN_COUNT.with(|count| count.get());
+        if !found {
+            return Err("expected a test to call `parse`".to_string());
+        }
+        if scans != 1 {
+            return Err(format!("expected one scan for one file, saw {scans}"));
+        }
+        Ok(())
     }
 
     #[test]
