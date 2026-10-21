@@ -9635,15 +9635,32 @@ mod generation_transition_tests {
         let root = Path::new("/ws");
         let full = RepoSeamFactCache::at(root);
         let compact = RepoSeamFactCache::at_compact_classified(root);
-        // The subdirectory flags derive from each constructor's own
-        // `entry_dirs`/`entry_dir` (#6707): hand-writing them here would
-        // not notice a store that starts creating subdirectories.
+        // Independent expectation, hand-written here: only the two
+        // sharded caches create subdirectories (a per-key directory and
+        // a generation directory under `sharded_dir`); the single-entry,
+        // corpus-fingerprint and file-fact caches write files directly
+        // in their entry directory. Production derives its flags from
+        // each constructor's `entry_dirs`/`entry_dir` (#6707), so this
+        // table must not: flipping a constructor flag changes the
+        // production side only and fails this test.
+        let expected = vec![
+            (full.dir.clone(), false),
+            (full.sharded_dir.clone(), true),
+            (compact.dir.clone(), false),
+            (compact.sharded_dir.clone(), true),
+            (RepoCorpusFingerprintCache::at(root).dir, false),
+            (RepoFileFactCache::at(root).dir, false),
+        ];
+        assert_eq!(production_entry_dirs(&cache_base_dir(root)), expected);
+        // The constructors doctor's list is derived from must carry the
+        // same flags, so a flag flipped in `entry_dirs`/`entry_dir`
+        // alone (without touching `production_entry_dirs`) also fails.
         let mut constructed = Vec::new();
         constructed.extend(full.entry_dirs());
         constructed.extend(compact.entry_dirs());
         constructed.push(RepoCorpusFingerprintCache::at(root).entry_dir());
         constructed.push(RepoFileFactCache::at(root).entry_dir());
-        assert_eq!(production_entry_dirs(&cache_base_dir(root)), constructed);
+        assert_eq!(constructed, expected);
     }
 
     /// Analyzer identities another build of this same package version could

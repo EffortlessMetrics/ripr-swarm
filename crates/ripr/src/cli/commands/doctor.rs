@@ -2962,17 +2962,26 @@ fn cache_unwritable_reason(cache_dir: &Path) -> Option<String> {
     None
 }
 
-/// Probes subdirectory creation inside each existing immediate
-/// subdirectory (per-key directory) of a sharded entry directory. The
-/// first failure is the reason; unreadable listings stay silent because
-/// the entry-directory probes above already passed.
+/// Probes the operations sharded publication performs inside each
+/// existing immediate subdirectory (per-key directory) of a sharded
+/// entry directory: writing a file directly there (the manifest, via
+/// its same-directory temporary) and creating a generation
+/// subdirectory (whose shard files it then writes). A key directory
+/// can permit one and deny the other (a Windows ACL separates adding
+/// files from adding subdirectories), so both are probed. The first
+/// failure is the reason; unreadable listings stay silent because the
+/// entry-directory probes above already passed.
 fn probe_existing_key_dirs(sharded_dir: &Path) -> Option<String> {
     let entries = std::fs::read_dir(sharded_dir).ok()?;
     for entry in entries.flatten() {
         let key_dir = entry.path();
-        if key_dir.is_dir()
-            && let Some(reason) = probe_creatable_dir(&key_dir)
-        {
+        if !key_dir.is_dir() {
+            continue;
+        }
+        if let Some(reason) = probe_writable(&key_dir) {
+            return Some(reason);
+        }
+        if let Some(reason) = probe_creatable_dir(&key_dir) {
             return Some(reason);
         }
     }
@@ -3013,6 +3022,18 @@ fn remove_probe_file(probe: &Path) -> Option<String> {
             "cannot remove probe file {}: {error}",
             probe.display()
         )),
+    }
+}
+
+/// The reason for a probe file whose payload write or sync failed. The
+/// probe file is removed; when that removal also fails, the residue is
+/// reported alongside the write failure (#6707) instead of being left
+/// silently as a stranded `.ripr-doctor-probe-*` file.
+fn failed_probe_write_reason(probe: &Path, probe_dir: &Path, error: &std::io::Error) -> String {
+    let write_reason = format!("cannot write in {}: {error}", probe_dir.display());
+    match remove_probe_file(probe) {
+        None => write_reason,
+        Some(removal_reason) => format!("{write_reason}; {removal_reason}"),
     }
 }
 
@@ -3082,8 +3103,7 @@ fn probe_writable(probe_dir: &Path) -> Option<String> {
                 .and_then(|()| file.sync_all());
             drop(file);
             if let Err(error) = written {
-                let _ = std::fs::remove_file(&probe);
-                return Some(format!("cannot write in {}: {error}", probe_dir.display()));
+                return Some(failed_probe_write_reason(&probe, probe_dir, &error));
             }
             remove_probe_file(&probe)
         }
@@ -4392,13 +4412,24 @@ mod tests {
     /// Returns `false` when the host cannot deny creation for this
     /// process (for example a Unix root run, which bypasses mode bits).
     fn deny_subdirectory_creation(dir: &Path) -> Result<bool, String> {
+        deny_creation(dir, "(AD)")
+    }
+
+    /// Denies file creation in `dir` while (on Windows) leaving
+    /// subdirectory creation allowed: Windows ACL `(WD)` deny, Unix
+    /// mode `0o555` (which denies both there).
+    fn deny_file_creation(dir: &Path) -> Result<bool, String> {
+        deny_creation(dir, "(WD)")
+    }
+
+    fn deny_creation(dir: &Path, windows_deny: &str) -> Result<bool, String> {
         #[cfg(windows)]
         {
             let user = icacls_user()?;
             let status = std::process::Command::new("icacls")
                 .arg(dir)
                 .arg("/deny")
-                .arg(format!("{user}:(AD)"))
+                .arg(format!("{user}:{windows_deny}"))
                 .status()
                 .map_err(|error| format!("run icacls deny: {error}"))?;
             if !status.success() {
@@ -4408,6 +4439,7 @@ mod tests {
         }
         #[cfg(unix)]
         {
+            let _ = windows_deny;
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o555))
                 .map_err(|error| format!("chmod deny dir: {error}"))?;
@@ -4423,7 +4455,7 @@ mod tests {
         }
         #[cfg(not(any(windows, unix)))]
         {
-            let _ = dir;
+            let _ = (dir, windows_deny);
             Ok(false)
         }
     }
@@ -4458,7 +4490,7 @@ mod tests {
 
     #[cfg(windows)]
     fn icacls_user() -> Result<String, String> {
-        let user = std::env::var("USERNAME").map_err(|_| "USERNAME unset".to_string())?;
+        let user = std::env::var("USERNAME").map_err(|_err| "USERNAME unset".to_string())?;
         match std::env::var("USERDOMAIN") {
             Ok(domain) if !domain.is_empty() => Ok(format!("{domain}\\{user}")),
             _ => Ok(user),
@@ -4533,11 +4565,87 @@ mod tests {
         let reason = cache_unwritable_reason(&base);
         restore_subdirectory_creation(&key_dir)?;
         let _ = std::fs::remove_dir_all(&root);
+        // Windows separates subdirectory creation (denied) from file
+        // creation (allowed), so the directory probe names the failure.
+        // Unix mode bits deny both and the file probe answers first.
+        #[cfg(windows)]
         assert!(
             reason.as_deref().is_some_and(|text| {
                 text.contains("cannot create a directory") && text.contains("some-cache-key")
             }),
             "{reason:?}"
+        );
+        #[cfg(not(windows))]
+        assert!(
+            reason
+                .as_deref()
+                .is_some_and(|text| text.contains("some-cache-key")),
+            "{reason:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cache_unwritable_reason_reports_key_dir_denying_file_writes() -> Result<(), String> {
+        let root = unique_command_test_dir("cache-probe-key-deny-file");
+        let base = root.join("cache");
+        let sharded = first_sharded_entry_dir(&base)?;
+        let key_dir = sharded.join("some-cache-key");
+        std::fs::create_dir_all(&key_dir).map_err(|error| error.to_string())?;
+        assert_eq!(cache_unwritable_reason(&base), None);
+        if !deny_file_creation(&key_dir)? {
+            let _ = std::fs::remove_dir_all(&root);
+            return Ok(());
+        }
+        // On Windows the ACL denies only file creation, so the
+        // subdirectory probe must still pass: the two probes are
+        // separable there, and production writes its manifest file
+        // directly in the key directory.
+        #[cfg(windows)]
+        assert_eq!(probe_creatable_dir(&key_dir), None);
+        let reason = cache_unwritable_reason(&base);
+        restore_subdirectory_creation(&key_dir)?;
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            reason.as_deref().is_some_and(|text| {
+                text.contains("cannot write in") && text.contains("some-cache-key")
+            }),
+            "{reason:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn failed_probe_write_reports_residue_when_removal_also_fails() -> Result<(), String> {
+        let root = unique_command_test_dir("cache-probe-write-residue");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        // A directory at the probe path makes `remove_file` fail on
+        // every supported platform, standing in for an undeletable file.
+        let probe = root.join(".ripr-doctor-probe-file-0-0");
+        std::fs::create_dir_all(&probe).map_err(|error| error.to_string())?;
+        let error = std::io::Error::other("injected write failure");
+        let reason = failed_probe_write_reason(&probe, &root, &error);
+        assert!(probe.exists(), "residue must remain for this control");
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            reason.contains("cannot write in")
+                && reason.contains("cannot remove probe file")
+                && reason.contains(".ripr-doctor-probe-file-0-0"),
+            "{reason}"
+        );
+        // When removal succeeds, only the write failure is reported and
+        // no probe file is left behind.
+        let root = unique_command_test_dir("cache-probe-write-cleanup");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let probe = root.join(".ripr-doctor-probe-file-0-1");
+        std::fs::write(&probe, b"x").map_err(|error| error.to_string())?;
+        let reason = failed_probe_write_reason(&probe, &root, &error);
+        let probe_left = probe.exists();
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(!probe_left, "probe file must be removed");
+        assert!(
+            reason.contains("cannot write in") && !reason.contains("cannot remove"),
+            "{reason}"
         );
         Ok(())
     }
