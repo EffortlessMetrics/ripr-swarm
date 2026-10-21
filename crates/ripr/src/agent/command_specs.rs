@@ -1215,8 +1215,8 @@ mod tests {
             "../victim",
             "sub/../../victim",
             "..",
-            "..\\victim",
-            "a\\..\\b",
+            "'..\\victim'",
+            "'a\\..\\b'",
         ] {
             let display =
                 format!("ripr agent verify --root {root} --before a.json --after b.json --json");
