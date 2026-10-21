@@ -592,10 +592,50 @@ impl RustIndex {
         self.test_positions[id.offset] = self.test_order.len();
         self.test_order.push(id);
     }
-    #[cfg(test)]
-    pub fn remove_file(&mut self, path: &Path) -> bool {
+    pub(crate) fn remove_file(&mut self, path: &Path) -> bool {
         self.bump_membership_revision();
-        self.files.remove(path).is_some()
+        let Some(removed) = self.files.remove(path) else {
+            return false;
+        };
+        self.call_identity_memos.clear();
+        // Purge the flat memberships too: `finalize` keeps every record a
+        // flat order names, so a removed file's tests and functions would
+        // otherwise survive as evidence (and a changed file would appear
+        // twice after its replacement is inserted). Filter by the removed
+        // file's own memberships and by each fact's owning file, which also
+        // covers flat-only records (role splits, `push_test`/`push_function`)
+        // whose facts name the same file.
+        let removed_functions: std::collections::BTreeSet<usize> =
+            removed.functions.iter().map(|id| id.offset).collect();
+        let removed_tests: std::collections::BTreeSet<usize> =
+            removed.tests.iter().map(|id| id.offset).collect();
+        self.function_order.retain(|id| {
+            !removed_functions.contains(&id.offset)
+                && self.function_facts[*id].file.as_path() != path
+        });
+        self.test_order.retain(|id| {
+            !removed_tests.contains(&id.offset) && self.test_facts[*id].file.as_path() != path
+        });
+        self.non_utf8_sources.remove(path);
+        // The file's doctest sources die with it: a re-inserted file must
+        // register its examples from its new bytes, never the old text.
+        self.doctest_sources
+            .retain(|(file, _), _| file.as_path() != path);
+        // Positions follow the retained orders; rebuild them now so slot
+        // lookups never answer from the pre-removal layout.
+        self.function_positions.clear();
+        self.function_positions
+            .resize(self.function_facts.len(), usize::MAX);
+        for (position, id) in self.function_order.iter().enumerate() {
+            self.function_positions[id.offset] = position;
+        }
+        self.test_positions.clear();
+        self.test_positions
+            .resize(self.test_facts.len(), usize::MAX);
+        for (position, id) in self.test_order.iter().enumerate() {
+            self.test_positions[id.offset] = position;
+        }
+        true
     }
     /// Drop records unreachable from either view, preserving every surviving
     /// occurrence and each view's order. No source or earlier generation is pinned.
@@ -740,7 +780,6 @@ impl RustIndex {
         }
         index
     }
-    #[cfg(test)]
     pub(crate) fn owned_file(&self, path: &Path) -> Option<FileFacts> {
         let file = self.files().get(path)?;
         let FileData {
