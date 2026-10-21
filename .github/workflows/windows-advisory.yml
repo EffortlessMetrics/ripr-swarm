@@ -1080,11 +1080,8 @@ jobs:
               paths = [str(fixture), str(diff)]
               if windows:
                   paths = [p.removeprefix("\\\\?\\").replace("\\", "/") for p in paths]
-              def arg(path):
-                  # Mirror shell_arg_for: Windows console double quotes, except a path with $ or a backtick keeps single quotes.
-                  quote = '"' if windows and not any(c in path for c in '$' + chr(96)) else "'"
-                  return quote + path + quote
-              return f"ripr check --root {arg(paths[0])} --diff {arg(paths[1])} --json"
+              quote = lambda p: '"' if windows and not any(c in p for c in '$' + chr(96)) else "'"
+              return f"ripr check --root {quote(paths[0])}{paths[0]}{quote(paths[0])} --diff {quote(paths[1])}{paths[1]}{quote(paths[1])} --json"
 
           def printed_recovery(stderr, fixture, diff, windows=None):
               matches = re.findall(chr(96) + r"(ripr check [^\x60]+)" + chr(96), stderr.decode())
