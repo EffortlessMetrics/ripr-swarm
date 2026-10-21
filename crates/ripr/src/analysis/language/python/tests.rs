@@ -7447,6 +7447,20 @@ fn protocol_entry_inside_an_opaque_wrapper_relates_but_is_not_credited() -> Resu
     );
     assert_ne!(finding.class, ExposureClass::Exposed);
     assert_eq!(finding.oracle_alignment.as_deref(), Some("orthogonal"));
+    assert_ne!(
+        finding.alignment_reason.as_deref(),
+        Some("strong_oracle_observes_owner_protocol_entry"),
+        "the wrapper loses the entry, so no protocol-entry credit reason"
+    );
+    Ok(())
+}
+
+#[test]
+fn protocol_entry_nested_in_a_multi_argument_call_is_not_credited() -> Result<(), String> {
+    let (finding, _) = classify_reversed_guard(
+        "from src.nr import numeric_range\n\n\ndef test_nested():\n    assert list(reversed(max(numeric_range(0), numeric_range(0)))) == []\n",
+    )?;
+    assert_ne!(finding.class, ExposureClass::Exposed);
     Ok(())
 }
 
