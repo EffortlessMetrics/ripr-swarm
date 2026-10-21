@@ -4022,7 +4022,7 @@ are scoped or reviewed.
   PowerShell form, plain-text lines print the shared PowerShell-unavailable
   note when no honest translation exists, GitHub annotations for such file
   names no longer name a nonexistent file, and `ripr first-pr` quotes the
-  suggested base and head in its empty-diff command. (#5422, #6309, #6620)
+  suggested base and head in its empty-diff command. (#5422, #6309, #6620, #6625)
 - **CLI and output:** `ripr pilot` ranks seams on lines changed by the current
   change ahead of the repo-wide order, says whether its top recommendation is
   part of that change, follows edits to later lines of multiline match
@@ -4286,7 +4286,7 @@ are scoped or reviewed.
   a read with a preceding `Content-Length: 0` frame, and `ripr/analysisStatus`
   failure messages redact absolute paths wrapped in quotes, backticks or
   brackets within the 240-character bound. A generic client sees one analysis
-  failure warning, not two. (#8666, #8724, #8583)
+  failure warning, not two. (#8666, #8724, #8583, #8636, #8642)
 - **LSP and editors:** Silence is no longer identical to a clean run. When
   `ripr.toml` breaks mid-session, both pull diagnostic paths withdraw the
   retained findings and serve the typed analysis-pending marker on the
@@ -4467,7 +4467,7 @@ are scoped or reviewed.
   dispatch are traced, and a no-static-path finding names the right witness
   and a `no_call_path` reason. Static limitations are reported instead of
   guessing. (#5334, #5335, #5395, #5481, #5577, #6293, #6303, #6580, #6672,
-  #6694, #6717, #6780, #6965, #7549, #8016, #8047, #8462, #8479)
+  #6694, #6717, #6780, #6965, #7549, #8016, #8047, #8462, #8479, #5424)
 - **Rust analysis and verdicts:** Seam, probe and input reading: computed
   boundary operands and test arguments are no longer read as one of their
   literals, duplicate error-constructor seams, spurious call-presence seams
@@ -4917,7 +4917,7 @@ are scoped or reviewed.
   (#7380, #7381, #7382, #7383)
 - **Reports, receipts and packets:** `ripr baseline create` and `diff` record
   the analyzer version and report an identity discontinuity across analyzer
-  builds as stale instead of counting it as resolved. (#7421)
+  builds as stale instead of counting it as resolved. (#7421, #7250)
 - **Reports, receipts and packets:** `ripr calibrate` reports are clearer:
   counting units and reconciliation are stated, the mutation operator comes
   from cargo-mutants `genre`, and capped agreement tables are labelled as
@@ -4941,7 +4941,7 @@ are scoped or reviewed.
   usable identities, `ripr impacted-evidence` cleanup no longer deletes
   outputs a concurrent run wrote, and the public proof page names repositories
   whose instruments failed and follows the split first-run budget metrics.
-  (#5307, #6730, #8063, #8492)
+  (#5307, #6730, #8063, #8492, #8491)
 - **Reports, receipts and packets:** `cargo xtask ripr-pr` forwards its producer
   budget to `ripr check --timeout`, and `mutation-calibration` joins
   cargo-mutants spans by containment with the shared importer's conflict flags.
@@ -5377,7 +5377,7 @@ are scoped or reviewed.
 - **Internal / CI:** Hard-cut and dispatch hygiene: an inactive-by-default 0.11
   hard-cut packet extends the pre-qualification candidate check, and branch or
   tag dispatches of Routed Rust stay diagnostic-only and fail the required
-  Result. (#5391, #5394)
+  Result. (#5391, #5394, #1609)
 - **Internal / CI:** Two gate tests: `verdict-corpus relabel` has an opt-in
   ignored end-to-end drift test, and the nightly first-run row receipt fails a
   slower `install_seconds` against a same-runner baseline. (#6706, #6871)
