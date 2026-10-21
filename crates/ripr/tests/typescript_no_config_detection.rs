@@ -43,7 +43,10 @@ impl Subject {
         Ok(Self(root))
     }
 
-    fn ran_typescript_adapter(&self) -> Result<bool, String> {
+    /// Runs `ripr check` and returns the TypeScript preview advisory's
+    /// `(enabled, analyzed)` flags. The advisory is required to exist for the
+    /// changed file, so a failed run or an unparsed report cannot pass.
+    fn typescript_advisory(&self) -> Result<(bool, bool), String> {
         let output = std::process::Command::new(env!("CARGO_BIN_EXE_ripr"))
             .args(["check", "--quiet", "--format", "json", "--root"])
             .arg(&self.0)
@@ -51,9 +54,22 @@ impl Subject {
             .arg(self.0.join("change.diff"))
             .output()
             .map_err(|e| e.to_string())?;
-        let json = String::from_utf8(output.stdout).map_err(|e| e.to_string())?;
-        // The unavailable-adapter advisory also names typescript, so key on `enabled`.
-        Ok(json.contains("\"language\": \"typescript\"") && json.contains("\"enabled\": true"))
+        if !output.status.success() {
+            return Err(format!(
+                "ripr check failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let report: serde_json::Value =
+            serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+        let advisory = report["preview_languages"]
+            .as_array()
+            .and_then(|all| all.iter().find(|entry| entry["language"] == "typescript"))
+            .ok_or_else(|| format!("typescript advisory missing: {report}"))?;
+        if advisory["file_count"].as_u64().unwrap_or(0) == 0 {
+            return Err(format!("advisory must cover the changed file: {advisory}"));
+        }
+        Ok((advisory["enabled"] == true, advisory["analyzed"] == true))
     }
 }
 
@@ -78,8 +94,8 @@ fn root_tsconfig_enables_typescript_without_ripr_toml() -> Result<(), String> {
         ],
         "src/pricing.js",
     )?;
-    if !subject.ran_typescript_adapter()? {
-        return Err("root tsconfig.json must enable the typescript adapter".to_string());
+    if subject.typescript_advisory()? != (true, true) {
+        return Err("root tsconfig.json must enable and run the typescript adapter".to_string());
     }
     Ok(())
 }
@@ -90,8 +106,10 @@ fn typescript_source_enables_typescript_without_ripr_toml() -> Result<(), String
         &[("package.json", PACKAGE), ("src/pricing.ts", PRICING_TS)],
         "src/pricing.ts",
     )?;
-    if !subject.ran_typescript_adapter()? {
-        return Err("detectable TypeScript source must enable the typescript adapter".to_string());
+    if subject.typescript_advisory()? != (true, true) {
+        return Err(
+            "detectable TypeScript source must enable and run the typescript adapter".to_string(),
+        );
     }
     Ok(())
 }
@@ -102,7 +120,7 @@ fn package_json_with_plain_javascript_does_not_enable_typescript() -> Result<(),
         &[("package.json", PACKAGE), ("src/pricing.js", PRICING_JS)],
         "src/pricing.js",
     )?;
-    if subject.ran_typescript_adapter()? {
+    if subject.typescript_advisory()? != (false, false) {
         return Err("package.json plus plain JavaScript must not enable typescript".to_string());
     }
     Ok(())
