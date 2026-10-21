@@ -3,6 +3,7 @@ mod bool_operands;
 mod classify;
 mod pattern_admission;
 mod patterns;
+mod reach;
 mod scan;
 
 pub(crate) use arguments::{
@@ -14,6 +15,7 @@ pub(crate) use patterns::contains_macro_invocation;
 pub(crate) use patterns::{
     OracleTextShape, has_oracle_text_shape, is_unwrap_err_bound_error_assertion,
 };
+pub(crate) use reach::retain_reached_oracles;
 pub(crate) use scan::{
     err_return_guard_oracles, err_return_guard_twin, extract_assertions, extract_assertions_in,
     extract_line_scanned_oracles, guarded_result_match_scan_with_shadow_authority,
@@ -135,6 +137,69 @@ fn pins_error_payload() {
         );
         assert_classification(
             "checker.assert_matches(expected_pattern);",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        );
+    }
+
+    // #9122: a macro among a helper call's arguments hides what it compares.
+    #[test]
+    fn helper_call_with_a_macro_argument_is_seen_but_never_graded_exact() {
+        for line in [
+            "common::assert_matches(snapbox::file![\"../snapshots/a.roff\"], cmd);",
+            "assert_payload_eq(vec![1, 2], actual);",
+            "checker.assert_matches(format!(\"{expected}\"));",
+        ] {
+            assert_classification(line, OracleKind::Unknown, OracleStrength::Unknown);
+            let facts = extract_assertions(line, 3);
+            assert_eq!(facts.len(), 1, "{line} is an assertion line: {facts:?}");
+            assert_eq!(facts[0].strength, OracleStrength::Unknown);
+        }
+    }
+
+    #[test]
+    fn helper_call_with_negation_or_inequality_arguments_is_never_graded_exact() {
+        for line in [
+            "common::assert_matches(a != b, cmd);",
+            "common::assert_matches(!x, cmd);",
+            "common::assert_matches(!x, snapbox::file![\"a\"]);",
+        ] {
+            let facts = extract_assertions(line, 3);
+            assert_eq!(facts.len(), 1, "{line}: {facts:?}");
+            assert_ne!(facts[0].strength, OracleStrength::Strong, "{line}");
+            assert!(
+                matches!(
+                    facts[0].strength,
+                    OracleStrength::Unknown | OracleStrength::Weak | OracleStrength::Smoke
+                ),
+                "{line}: {:?}",
+                facts[0].strength
+            );
+        }
+        // A macro among the arguments stays unknown, never exact.
+        assert_classification(
+            "common::assert_matches(!x, snapbox::file![\"a\"]);",
+            OracleKind::Unknown,
+            OracleStrength::Unknown,
+        );
+    }
+
+    #[test]
+    fn macro_invocations_and_non_helper_lines_are_not_helper_calls() {
+        for line in [
+            "println!(\"{}\", checker.assert_ok(1));",
+            "let rows = vec![1]; rows.assert_len(1);",
+            "foo(assert_eq!(1, 1));",
+            "log!(common::assert_matches(file, cmd));",
+        ] {
+            assert!(
+                !patterns::is_custom_assertion_helper(line),
+                "{line} must not read as a helper call"
+            );
+        }
+        // The unchanged macro-free grade: an equality-named helper is exact.
+        assert_classification(
+            "common::assert_matches(expected, cmd);",
             OracleKind::ExactValue,
             OracleStrength::Strong,
         );
@@ -293,3 +358,6 @@ mod wildcard_tests;
 
 #[cfg(test)]
 mod discarded_matches_tests;
+
+#[cfg(test)]
+mod reach_tests;

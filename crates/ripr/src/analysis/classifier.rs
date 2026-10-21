@@ -9,7 +9,8 @@ use self::evidence::ClassifiedProbeEvidence;
 use self::finding::build_finding;
 use self::owner::resolve_owner_function;
 use super::classify::{
-    DependencyEdgeContext, HelperChain, ProbeContext, RelatedTestCandidateIndex,
+    DependencyEdgeContext, HelperChain, NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY,
+    NO_REACHABLE_TEST_OBSERVE_SUMMARY, ProbeContext, RelatedTestCandidateIndex,
     TransitiveReachIndex, ambiguous_helper_entry_called_by_tests, confidence_score,
     find_related_tests_with_candidate_index, is_assertion_shaped_owner,
 };
@@ -109,6 +110,154 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
         withhold_helper_uniqueness_as_unknown(&mut finding, chain, index, &reveal_misses);
     }
     finding
+}
+
+/// Proc-macro code is exercised through `#[derive]`/attribute expansion in
+/// another crate, so a name scan finding no test call proves nothing about
+/// reach. `no_static_path` there is an unsupported claim (serde_derive,
+/// #8999): the honest state is `static_unknown`. The language adapter calls
+/// this after the transitive and macro witness searches, so a concrete
+/// candidate-test pointer they found stays in the evidence. Fail closed: only
+/// `no_static_path` in the lib root or its modules (see
+/// `MemberCrates::is_proc_macro_library_file`) is rewritten, to the
+/// non-actionable unknown; no other class is touched or promoted.
+pub(in crate::analysis) fn withhold_proc_macro_no_path_as_unknown(
+    finding: &mut Finding,
+    index: &RustIndex,
+) {
+    if finding.class != ExposureClass::NoStaticPath
+        || !index
+            .member_crates
+            .is_proc_macro_library_file(&finding.probe.location.file)
+    {
+        return;
+    }
+    finding.class = ExposureClass::StaticUnknown;
+    let unknown = |summary: &str| StageEvidence::new(StageState::Unknown, Confidence::Low, summary);
+    // The `no_static_path` rewrite set the later stages to `no` ("no test
+    // can activate/observe/discriminate"). That follows from reach being
+    // ruled out, which is now unknown; replace those stages and their
+    // copied evidence lines. A negative the stage established on its own
+    // evidence keeps its state.
+    // The infection summary of a finding with no reached test says no tests
+    // were found; for proc-macro code that is the expansion boundary, not an
+    // absence of tests.
+    let mut stale: Vec<String> = Vec::new();
+    if finding
+        .ripr
+        .infect
+        .summary
+        .starts_with("No tests were found")
+        || finding
+            .ripr
+            .infect
+            .summary
+            .starts_with("No statically reachable test path was found")
+    {
+        stale.push(finding.ripr.infect.summary.clone());
+        finding.ripr.infect = unknown(
+            "Not established: tests may exercise this proc-macro code through derive or attribute expansion, which ripr does not follow",
+        );
+    }
+    let ruled_out = |stage: &StageEvidence| {
+        stage.state == StageState::No
+            && (stage
+                .summary
+                .starts_with("No test reaches the changed owner, so no test can ")
+                || stage.summary == NO_REACHABLE_TEST_OBSERVE_SUMMARY
+                || stage.summary == NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY)
+    };
+    stale.extend(
+        [
+            &finding.ripr.infect,
+            &finding.ripr.reveal.observe,
+            &finding.ripr.reveal.discriminate,
+        ]
+        .into_iter()
+        .filter(|stage| ruled_out(stage))
+        .map(|stage| stage.summary.clone()),
+    );
+    for (stage, summary) in [
+        (
+            &mut finding.ripr.infect,
+            "Not established: tests may exercise this proc-macro code through derive or attribute expansion, which ripr does not follow",
+        ),
+        (
+            &mut finding.ripr.reveal.observe,
+            "Not established: whether a derive-expanding test observes this change",
+        ),
+        (
+            &mut finding.ripr.reveal.discriminate,
+            "Not established: whether a derive-expanding test discriminates this change",
+        ),
+    ] {
+        if ruled_out(stage) {
+            *stage = unknown(summary);
+        }
+    }
+    finding
+        .evidence
+        .retain(|line| !stale.iter().any(|summary| line == summary));
+    finding.ripr.reach = unknown(
+        "ripr cannot see whether tests reach this proc-macro code because they exercise it through derive or attribute expansion",
+    );
+    let ripr = &finding.ripr;
+    finding.confidence = finding.confidence.min(confidence_score(
+        &ripr.reach,
+        &ripr.infect,
+        &ripr.propagate,
+        &ripr.reveal.observe,
+        &ripr.reveal.discriminate,
+        &finding.class,
+    ));
+    // Those two reasons say the class stays `no_static_path`; drop them so
+    // class and stop reason agree. The witness pointer they came with stays
+    // in the evidence and static limit. `static_probe_unknown` is the
+    // unknown class's own reason; the proc-macro cause is in the evidence.
+    finding.stop_reasons.retain(|reason| {
+        !matches!(
+            reason,
+            StopReason::TransitiveReachUnresolved | StopReason::MacroReachUnresolved
+        )
+    });
+    if !finding
+        .stop_reasons
+        .contains(&StopReason::StaticProbeUnknown)
+    {
+        finding.stop_reasons.push(StopReason::StaticProbeUnknown);
+    }
+    finding.missing = vec![
+        "proc-macro reach abstains: tests exercise this code through derive or attribute expansion, which ripr does not follow".to_string(),
+    ];
+    finding.activation.missing_discriminators.clear();
+    finding.recommended_next_step = Some(
+        "This is proc-macro code, which tests normally reach through `#[derive]` or an attribute in another crate; ripr does not expand macros, so it does not claim that no test reaches this change. Inspect the tests that apply the macro, and add one only if none already does.".to_string(),
+    );
+    finding
+        .evidence
+        .retain(|line| !line.contains("No static test path"));
+    finding.evidence.push(
+        "proc_macro_expansion: changed code is in a proc-macro crate; tests reach it through derive or attribute expansion".to_string(),
+    );
+    if finding.static_limit_kind.is_none() {
+        finding.evidence.extend([
+            format!("{LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX}changed proc-macro code"),
+            format!(
+                "{LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX}the derive or attribute expansion that tests exercise"
+            ),
+            format!("{LIMITATION_ANALYZER_ROUTE_PREFIX}analysis/classifier"),
+            format!(
+                "{LIMITATION_NON_CLAIM_PREFIX}no missing test is established; expansion-based reach is not modelled"
+            ),
+        ]);
+    }
+    // A suggested-location row never called the owner; in proc-macro code
+    // that is not a missing call.
+    for test in &mut finding.related_tests {
+        test.miss = test
+            .miss
+            .filter(|miss| *miss != RelatedTestMiss::NoCallPath);
+    }
 }
 
 /// #7080: a helper chain refused only because an entry name is not unique
@@ -2367,6 +2516,20 @@ fn far_above_threshold_discounts() {
         assert!(finding.activation.observed_values.iter().any(|fact| {
             fact.context == ValueContext::FunctionArgument && fact.value == "threshold = 100"
         }));
+        // #8389: every retained value names the test file it was read from.
+        let files = finding
+            .activation
+            .observed_values
+            .iter()
+            .map(|fact| fact.file.clone())
+            .collect::<Vec<_>>();
+        assert!(
+            !files.is_empty()
+                && files
+                    .iter()
+                    .all(|file| file.as_deref() == Some(std::path::Path::new("tests/score.rs"))),
+            "{files:?}"
+        );
         assert_eq!(finding.activation.missing_discriminators.len(), 1);
         assert_eq!(
             finding.activation.missing_discriminators[0].value,
@@ -2996,8 +3159,16 @@ fn far_above_threshold_discounts() {
     /// `tax_bps`. `extra_source` is appended to `src/lib.rs` so a case can
     /// add something that names the owner without an indexed call.
     fn uncalled_owner_index(extra_source: &str) -> RustIndex {
+        uncalled_owner_index_at("", extra_source)
+    }
+
+    /// The uncalled-owner fixture with every path under `prefix`
+    /// (`""` or `"crates/derive/"`), so the index, the owner and the probe
+    /// name the same file.
+    fn uncalled_owner_index_at(prefix: &str, extra_source: &str) -> RustIndex {
+        let lib = format!("{prefix}src/lib.rs");
         let mut eu_tax = test(
-            "src/lib.rs",
+            &lib,
             "eu_tax",
             "tax_bps(1)",
             "assert_eq!(tax_bps(1), 2000);",
@@ -3007,15 +3178,12 @@ fn far_above_threshold_discounts() {
             "pub fn fragile_fee(weight_grams: u32) -> u32 {{\n    if weight_grams > 2_000 {{ 1 }} else {{ 0 }}\n}}\npub fn tax_bps(region: u32) -> u32 {{ 2000 }}\n{extra_source}"
         );
         RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
-            functions: vec![
-                function("src/lib.rs", "fragile_fee"),
-                function("src/lib.rs", "tax_bps"),
-            ],
+            functions: vec![function(&lib, "fragile_fee"), function(&lib, "tax_bps")],
             tests: vec![eu_tax],
             files: BTreeMap::from([(
-                PathBuf::from("src/lib.rs"),
+                PathBuf::from(&lib),
                 FileFacts {
-                    path: PathBuf::from("src/lib.rs"),
+                    path: PathBuf::from(&lib),
                     source: source.into(),
                     ..FileFacts::default()
                 },
@@ -3061,6 +3229,185 @@ fn far_above_threshold_discounts() {
         assert_ne!(finding.ripr.infect.state, StageState::Yes);
         assert_eq!(finding.ripr.reveal.observe.state, StageState::No);
         assert_eq!(finding.ripr.reveal.discriminate.state, StageState::No);
+    }
+
+    const PROC_MACRO_MANIFEST: &str =
+        "[package]\nname = \"derive\"\nversion = \"0.1.0\"\n[lib]\nproc-macro = true\n";
+
+    /// `classify_probe` for the owner in `{prefix}{file}` of an on-disk
+    /// workspace holding `manifests`, then the proc-macro withhold the
+    /// language adapter applies after its witness searches.
+    fn withheld_in_workspace(
+        label: &str,
+        manifests: &[(&str, &str)],
+        prefix: &str,
+        file: &str,
+        extra_source: &str,
+    ) -> Result<Finding, String> {
+        let root = crate::analysis::facts::drop_in::temp_workspace(label, manifests)?;
+        let mut index = uncalled_owner_index_at(prefix, extra_source);
+        index.member_crates = crate::analysis::facts::member_crates::MemberCrates::new(&root);
+        let lib = format!("{prefix}src/lib.rs");
+        let mut probe = fragile_fee_probe(ProbeFamily::Predicate, "fragile_fee");
+        probe.id = ProbeId(format!("probe:{lib}:2:fragile_fee"));
+        probe.owner = Some(SymbolId(format!("{lib}::fragile_fee")));
+        probe.location = SourceLocation::new(format!("{prefix}{file}"), 2, 1);
+        let mut finding = classify_probe(&probe, &index, true, None);
+        let premise = finding.class.clone();
+        withhold_proc_macro_no_path_as_unknown(&mut finding, &index);
+        let _ = std::fs::remove_dir_all(&root);
+        if premise != ExposureClass::NoStaticPath {
+            return Err(format!("premise: classify_probe gave {premise:?}"));
+        }
+        Ok(finding)
+    }
+
+    fn assert_proc_macro_unknown(finding: &Finding) {
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert_eq!(finding.class.severity(), "note");
+        assert_eq!(finding.ripr.reach.state, StageState::Unknown);
+        // The later stages were `no` only because reach was ruled out.
+        // A stage keeps `no` only on evidence of its own that does not
+        // lean on reach (e.g. the related tests carry no assertion).
+        for stage in [
+            &finding.ripr.infect,
+            &finding.ripr.reveal.observe,
+            &finding.ripr.reveal.discriminate,
+        ] {
+            assert!(
+                stage.state != StageState::No
+                    || !(stage.summary.contains("reach") || stage.summary.contains("no test can")),
+                "{stage:?}"
+            );
+        }
+        assert!(
+            !finding
+                .evidence
+                .iter()
+                .any(|line| line.contains("no test can ")),
+            "{:?}",
+            finding.evidence
+        );
+        assert!(
+            finding
+                .stop_reasons
+                .contains(&StopReason::StaticProbeUnknown)
+        );
+        assert!(
+            !finding
+                .stop_reasons
+                .contains(&StopReason::TransitiveReachUnresolved)
+        );
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.starts_with("proc_macro_expansion:")),
+            "{:?}",
+            finding.evidence
+        );
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .all(|test| test.miss != Some(RelatedTestMiss::NoCallPath))
+        );
+    }
+
+    #[test]
+    fn given_uncalled_owner_in_manifest_proc_macro_crate_without_markers_when_classified_then_static_unknown()
+    -> Result<(), String> {
+        let finding = withheld_in_workspace(
+            "pm-classify",
+            &[("Cargo.toml", PROC_MACRO_MANIFEST)],
+            "",
+            "src/lib.rs",
+            "",
+        )?;
+        assert_proc_macro_unknown(&finding);
+        Ok(())
+    }
+
+    #[test]
+    fn given_proc_macro_underscore_spelling_when_classified_then_static_unknown()
+    -> Result<(), String> {
+        let manifest = PROC_MACRO_MANIFEST.replace("proc-macro", "proc_macro");
+        let finding = withheld_in_workspace(
+            "pm-underscore",
+            &[("Cargo.toml", &manifest)],
+            "",
+            "src/lib.rs",
+            "",
+        )?;
+        assert_proc_macro_unknown(&finding);
+        Ok(())
+    }
+
+    #[test]
+    fn given_nested_workspace_member_proc_macro_crate_when_classified_then_static_unknown()
+    -> Result<(), String> {
+        let finding = withheld_in_workspace(
+            "pm-nested",
+            &[
+                ("Cargo.toml", "[workspace]\nmembers = [\"crates/derive\"]\n"),
+                ("crates/derive/Cargo.toml", PROC_MACRO_MANIFEST),
+            ],
+            "crates/derive/",
+            "src/lib.rs",
+            "",
+        )?;
+        assert_proc_macro_unknown(&finding);
+        Ok(())
+    }
+
+    // A build script, a bin and an integration test of a proc-macro package
+    // are not the proc-macro library: their `no_static_path` stands.
+    #[test]
+    fn given_non_library_target_of_proc_macro_package_when_classified_then_still_no_static_path()
+    -> Result<(), String> {
+        for file in ["build.rs", "src/bin/tool.rs", "src/main.rs", "tests/it.rs"] {
+            let finding = withheld_in_workspace(
+                "pm-nonlib",
+                &[("Cargo.toml", PROC_MACRO_MANIFEST)],
+                "",
+                file,
+                "",
+            )?;
+            assert_eq!(finding.class, ExposureClass::NoStaticPath, "{file}");
+            assert!(
+                !finding
+                    .evidence
+                    .iter()
+                    .any(|line| line.starts_with("proc_macro_expansion:")),
+                "{file}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn given_proc_macro_marker_only_in_comment_or_string_of_ordinary_crate_when_classified_then_still_no_static_path()
+    -> Result<(), String> {
+        let plain = "[package]\nname = \"plain\"\nversion = \"0.1.0\"\n";
+        let finding = withheld_in_workspace(
+            "pm-negative",
+            &[("Cargo.toml", plain)],
+            "",
+            "src/lib.rs",
+            "// #[proc_macro_derive(Fee)]\npub const NOTE: &str = \"#[proc_macro_attribute]\";\n",
+        )?;
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+        Ok(())
+    }
+
+    #[test]
+    fn given_uncalled_owner_in_ordinary_lib_when_classified_then_still_no_static_path() {
+        let index = uncalled_owner_index("");
+        let probe = fragile_fee_probe(ProbeFamily::Predicate, "fragile_fee");
+
+        let finding = classify_probe(&probe, &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
     }
 
     // A changed line inside a `macro_rules!` template has no resolved owner,

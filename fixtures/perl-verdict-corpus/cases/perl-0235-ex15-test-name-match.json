@@ -1,0 +1,60 @@
+{
+  "case_id": "perl-0235-ex15-test-name-match",
+  "subject_id": "authored-perl-test2-ledger",
+  "diff": "cases/perl-0235-ex15-test-name-match.diff",
+  "anchor": {
+    "file": "lib/Ledger.pm",
+    "line": 39
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "test2_isnt_single_value",
+  "hard_case": "RIPR-SPEC-0235 example 15 (test_name_match): an advisory test-name relation.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "return 0.02 * $amount;",
+        "mutated_line": "return 0.02 * $amount;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the fee doubles"
+      },
+      {
+        "replacement": "return 0.001 * $amount;",
+        "mutated_line": "return 0.001 * $amount;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the fee drops tenfold"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0235 example 15 (test_name_match): an advisory test-name relation. The rewrite and run truth are those of perl-test2-fee-isnt-zero (not_discriminated); the packet edit changes which facts ripr reads, not what prove -l t does with the rewrite.",
+  "labeling_observation": {
+    "ripr_commit": "4f48195",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-0235-ex15-test-name-match.json",
+    "sha256": "a9d62f5d8382e12f1d172f6ade32ce0277afd3f6aa5f7f693982fc8e501fc234",
+    "provenance": "edited_producer",
+    "edits": "Started from the producer packet of perl-test2-fee-isnt-zero, then in relations where {\"change_id\": \"$CHANGE_ID\"} set {\"relation_kind\": \"test_name_match\"}; the packet fingerprint was recomputed. The retained oracle facts predate the producer pin: its `isnt` oracle stays `strong_exact` here, where the pinned producer now emits `weak_smoke` (RIPR-SPEC-0235 rule 17 demotes it either way)."
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0235#15"
+  ]
+}

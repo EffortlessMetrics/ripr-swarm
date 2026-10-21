@@ -1,0 +1,51 @@
+{
+  "case_id": "spec0228-7976-should-panic",
+  "subject_id": "authored-7976-should-panic",
+  "diff": "cases/spec0228-7976-should-panic.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 5
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect_push",
+  "test_shape": "unit_test_argument_free_getter_should_panic",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.log.push(qty + 1);",
+        "mutated_line": "self.log.push(qty + 1);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "Not equivalent: add records 4 instead of 3."
+      },
+      {
+        "replacement": "",
+        "mutated_line": "",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "Not equivalent: add records no value."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The test expects a panic and compares entries() with &[99]. Original [3], changed [4], and absent [] values all trigger the expected panic, so both mutants pass tests::observes_entries. This assertion cannot confirm the write. RIPR-SPEC-0228 argument-free collection read guard; exact expected classification is weakly_exposed.",
+  "labeling_observation": {
+    "ripr_commit": "ffe737fd4636c57b48b5049f98284d3c67019877",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

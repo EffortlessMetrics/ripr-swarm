@@ -16,9 +16,9 @@ use super::client_features::ClientFeatureProfile;
 use super::config::{LspAnalysisConfig, validated_pulled_options};
 use super::diagnostics::{
     AnalysisPendingRecovery, DiagnosticBatch, DiagnosticRefreshPlan, DiagnosticResultIdCache,
-    WorkspaceDiagnostics, analysis_pending_diagnostics, delivered_diagnostics_for_uri,
-    delivery_omission_diagnostic, diagnostic_refresh_plan, take_all_uris,
-    withdrawn_quarantine_diagnostics,
+    WorkspaceDiagnostics, analysis_pending_diagnostics, analysis_pending_withdrawal_diagnostics,
+    delivered_diagnostics_for_uri, delivery_omission_diagnostic, diagnostic_refresh_plan,
+    take_all_uris, withdrawn_quarantine_diagnostics,
 };
 use super::hover::{
     classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
@@ -57,8 +57,11 @@ use crate::analysis::ClassifiedSeam;
 use crate::analysis::cancellation::AnalysisAbortKind;
 use crate::config::{
     CONFIG_FILE_NAME, LspDiagnosticProfile, PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS,
-    is_detectable_python_source_name, is_python_excluded_dir_everywhere,
-    python_project_marker_name, python_source_dir_marker_name,
+    TYPESCRIPT_PROJECT_MARKERS, TYPESCRIPT_SOURCE_DIR_MARKERS, is_detectable_python_source_name,
+    is_detectable_typescript_source_name, is_python_excluded_dir_everywhere,
+    is_typescript_excluded_dir_everywhere, python_project_marker_name,
+    python_source_dir_marker_name, typescript_project_marker_name,
+    typescript_source_dir_marker_name,
 };
 use crate::domain::{StageEvidence, StageState};
 use crate::lsp::diagnostic_budget::DiagnosticDeliveryOutcome;
@@ -84,6 +87,33 @@ use std::time::{Duration, Instant};
 /// Explicit refresh and config reload bypass the debounce (#1908).
 const INTERACTIVE_REFRESH_DEBOUNCE: Duration = Duration::from_millis(200);
 
+/// Claims the one in-flight interactive debounce window (#8528).
+///
+/// `try_acquire` fails when a window is already open: that trigger has
+/// already advanced the workspace revision, so it returns without parking a
+/// notification slot. The owner drops the claim after the sleep, then reads
+/// `workspace_revision` so a folded trigger cannot be sampled into a request
+/// that has already chosen its revision.
+struct InteractiveDebounceClaim<'a> {
+    flag: &'a AtomicBool,
+}
+
+impl<'a> InteractiveDebounceClaim<'a> {
+    fn try_acquire(flag: &'a AtomicBool) -> Option<Self> {
+        if flag.swap(true, Ordering::AcqRel) {
+            None
+        } else {
+            Some(Self { flag })
+        }
+    }
+}
+
+impl Drop for InteractiveDebounceClaim<'_> {
+    fn drop(&mut self) {
+        self.flag.store(false, Ordering::Release);
+    }
+}
+
 /// Upper bound on the optional client disclosures that follow an
 /// initialize-time failure commit (#3802). The owning session failure is
 /// recorded synchronously first, so a wedged or undriven peer can delay only
@@ -96,7 +126,7 @@ const INITIALIZE_FAILURE_DISCLOSURE_BUDGET: Duration = Duration::from_secs(2);
 const SAVED_WORKTREE_LIMITS_NOTE: &str = "Static evidence only; staged and unstaged tracked files are analyzed; untracked files remain out of scope until staged or supplied through an explicit diff.";
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 use tower_lsp_server::jsonrpc::{Error as LspError, Result as LspResult};
-use tower_lsp_server::ls_types::notification::LogTrace;
+use tower_lsp_server::ls_types::notification::{LogTrace, ShowMessage};
 use tower_lsp_server::ls_types::{
     CodeAction, CodeActionParams, CodeActionResponse, CodeLens, CodeLensParams, ConfigurationItem,
     Diagnostic, DidChangeConfigurationParams, DidChangeTextDocumentParams,
@@ -105,10 +135,11 @@ use tower_lsp_server::ls_types::{
     DocumentDiagnosticReport, DocumentDiagnosticReportResult, ExecuteCommandParams, FileEvent,
     Hover, HoverParams, InitializeParams, InitializeResult, InitializedParams, LSPAny,
     LogTraceParams, MessageType, PositionEncodingKind, Registration,
-    RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport, TraceValue,
-    UnchangedDocumentDiagnosticReport, Unregistration, Uri, WorkspaceDiagnosticParams,
-    WorkspaceDiagnosticReport, WorkspaceDiagnosticReportResult, WorkspaceDocumentDiagnosticReport,
-    WorkspaceFullDocumentDiagnosticReport, WorkspaceUnchangedDocumentDiagnosticReport,
+    RelatedFullDocumentDiagnosticReport, RelatedUnchangedDocumentDiagnosticReport,
+    ShowMessageParams, TraceValue, UnchangedDocumentDiagnosticReport, Unregistration, Uri,
+    WorkspaceDiagnosticParams, WorkspaceDiagnosticReport, WorkspaceDiagnosticReportResult,
+    WorkspaceDocumentDiagnosticReport, WorkspaceFullDocumentDiagnosticReport,
+    WorkspaceUnchangedDocumentDiagnosticReport,
 };
 use tower_lsp_server::{Client, LanguageServer};
 
@@ -150,6 +181,11 @@ pub(super) struct Backend {
     /// later with `root_changed == false`) is still caught.
     config_pull_scope_root: Mutex<Option<PathBuf>>,
     last_diagnostic_uris: Mutex<BTreeSet<Uri>>,
+    /// URIs whose latest push publication is the analysis-pending marker
+    /// rather than committed diagnostics (#8732): the first snapshot commit
+    /// (or a root/shutdown clear) must retract the marker with the
+    /// established empty-clear so the pending state never outlives it.
+    pending_push_marker_uris: Mutex<BTreeMap<Uri, String>>,
     last_diagnostics: Mutex<BTreeMap<Uri, Vec<Diagnostic>>>,
     latest_analysis: Mutex<Option<Arc<AnalysisSnapshot>>>,
     diagnostic_result_ids: Mutex<Option<Arc<DiagnosticResultIdCache>>>,
@@ -179,20 +215,33 @@ pub(super) struct Backend {
     /// snapshot: a byte-identical repeated degradation warns once, a new
     /// signature warns again, and a cleared signature logs one recovery line.
     last_component_degradation: Mutex<Option<String>>,
+    /// The failure signature covered by the last generic-client
+    /// `window/showMessage` analysis-failure disclosure (#8583). Compared
+    /// per status publication: a byte-identical repeated failure shows
+    /// once, a changed signature shows again, and a succeeded publication
+    /// clears it so a later recurrence shows again. Mirrors
+    /// `last_component_degradation`.
+    last_analysis_failure_shown: Mutex<Option<String>>,
+    /// Languages whose "adapter not enabled" notice a generic client has
+    /// already been shown (#8585). A language is shown once while it stays
+    /// unavailable; leaving the set (adapter enabled, or its files no longer
+    /// changed) lets a later recurrence show again.
+    unavailable_language_notices_shown: Mutex<BTreeSet<String>>,
     /// Set when the bounded disclosure window after an initialize-time
     /// failure commit expired without completing client delivery (#3802).
     /// The owning session failure stays committed; this records the delivery
     /// omission locally instead of dropping it silently. Reflects the most
     /// recent disclosure attempt.
     initialize_failure_disclosure_omitted: AtomicBool,
-    /// Whether a generic client has already been shown one `window/showMessage`
-    /// for a refresh failure (#8583). Cleared when a refresh publishes so the
-    /// next transition into failure can warn again. The VS Code path never
-    /// consults this flag.
-    refresh_failure_shown: AtomicBool,
     refresh_scheduler: RefreshScheduler,
     workspace_revision: Mutex<u64>,
+    /// One in-flight interactive debounce window (#8528). A trigger that
+    /// finds this set returns immediately; the owner sleeps, then drops the
+    /// claim before reading the latest workspace revision.
+    interactive_debounce_window_open: AtomicBool,
     refresh_idle: Notify,
+    #[cfg(test)]
+    last_requested_workspace_revision: AtomicU64,
     /// Liveness bound for one server→client request round-trip (#5278,
     /// `transport_bounds::CLIENT_REQUEST_TIMEOUT`): after the transport read
     /// loop fuses, a client response can never arrive, so an unbounded await
@@ -305,6 +354,7 @@ impl Backend {
             config_pull_coordinator: Mutex::new(ConfigPullCoordinator::default()),
             config_pull_scope_root: Mutex::new(None),
             last_diagnostic_uris: Mutex::new(BTreeSet::new()),
+            pending_push_marker_uris: Mutex::new(BTreeMap::new()),
             last_diagnostics: Mutex::new(BTreeMap::new()),
             latest_analysis: Mutex::new(None),
             diagnostic_result_ids: Mutex::new(None),
@@ -318,11 +368,15 @@ impl Backend {
             watched_files_relative_pattern_support: AtomicBool::new(false),
             diagnostics_input_watch: AsyncMutex::new(DiagnosticsInputWatch::default()),
             last_component_degradation: Mutex::new(None),
+            last_analysis_failure_shown: Mutex::new(None),
+            unavailable_language_notices_shown: Mutex::new(BTreeSet::new()),
             initialize_failure_disclosure_omitted: AtomicBool::new(false),
-            refresh_failure_shown: AtomicBool::new(false),
             refresh_scheduler: RefreshScheduler::default(),
             workspace_revision: Mutex::new(0),
+            interactive_debounce_window_open: AtomicBool::new(false),
             refresh_idle: Notify::new(),
+            #[cfg(test)]
+            last_requested_workspace_revision: AtomicU64::new(0),
             client_request_timeout: crate::lsp::transport_bounds::CLIENT_REQUEST_TIMEOUT,
             #[cfg(test)]
             consumed_source_barrier: Mutex::new(None),
@@ -381,6 +435,15 @@ impl Backend {
     ///
     /// See RIPR-SPEC-0105 for the design rationale.
     pub(super) async fn refresh_diagnostics(&self, scope: RefreshScope, reason: RefreshReason) {
+        // #8732: a push client that has never received diagnostics cannot
+        // distinguish "not analyzed yet" or "analysis is paused" from a
+        // clean run, so publish the typed pending marker for tracked
+        // documents before any blocked/no-snapshot early return. Once a
+        // snapshot commits (and no failure is latched) real payloads own
+        // the client state and this is a no-op decision-wise.
+        if self.configuration_failure().is_some() || self.latest_pull_snapshot().is_none() {
+            self.publish_analysis_pending_push_markers().await;
+        }
         if self.configuration_failure().is_some() {
             return;
         }
@@ -403,16 +466,18 @@ impl Backend {
             return;
         };
         // Debounce interactive triggers (did_open/did_save/did_close) so
-        // rapid saves collapse into one analysis run. Explicit refresh and
-        // config reload bypass the debounce (#1908).
+        // rapid saves collapse into one analysis run. Explicit refresh,
+        // config reload, and watched-input bypass the debounce (#1908).
         //
-        // The collapse itself is handled by the refresh scheduler:
-        // `refresh_scheduler.request()` deduplicates matching active/pending
-        // work before incrementing `next_generation`, so rapid equivalent
-        // saves do not each obtain a new generation. The sleep here just
-        // delays the request so a second save arriving within the window
-        // can coalesce with the first rather than triggering a cancel +
-        // re-queue cycle on the scheduler.
+        // #8528: park at most one notification handler in this sleep.
+        // tower-lsp-server runs four handlers at a time; sleeping in each
+        // didOpen filled every slot, stopped stdin reads, and published one
+        // status burst per open. A trigger that finds a window already open
+        // has already advanced `workspace_revision` and returns immediately.
+        // The owner drops the claim after waking, then reads the latest
+        // revision so a folded trigger is not sampled into a request that
+        // already chose its revision. The scheduler still deduplicates
+        // matching active/pending work once a request is issued.
         //
         // The earlier version of this block used a `tokio::select!` arm on
         // `refresh_idle.notified()` to "cancel" when a superseding
@@ -426,18 +491,28 @@ impl Backend {
             RefreshReason::DidOpen | RefreshReason::DidSave | RefreshReason::DidClose
         );
         if is_interactive {
-            tokio::time::sleep(INTERACTIVE_REFRESH_DEBOUNCE).await;
-            // Re-check preconditions after the debounce window — config or
-            // authority may have changed during the wait.
-            if self.configuration_failure().is_some() {
-                return;
-            }
-            let post_authority = self.workspace_root_authority();
-            if !post_authority.allows_analysis() {
-                return;
+            {
+                let Some(_claim) =
+                    InteractiveDebounceClaim::try_acquire(&self.interactive_debounce_window_open)
+                else {
+                    return;
+                };
+                tokio::time::sleep(INTERACTIVE_REFRESH_DEBOUNCE).await;
+                // Re-check preconditions after the debounce window — config or
+                // authority may have changed during the wait.
+                if self.configuration_failure().is_some() {
+                    return;
+                }
+                let post_authority = self.workspace_root_authority();
+                if !post_authority.allows_analysis() {
+                    return;
+                }
             }
         }
         let workspace_revision = self.workspace_revision();
+        #[cfg(test)]
+        self.last_requested_workspace_revision
+            .store(workspace_revision, Ordering::Release);
         let authority_epoch = self.workspace_root_epoch.load(Ordering::SeqCst);
         let decision = self.refresh_scheduler.request(
             root,
@@ -461,18 +536,15 @@ impl Backend {
                     self.publish_analysis_status().await;
                 }
                 self.log_refresh_queued(generation).await;
-                loop {
-                    if self.refresh_scheduler.is_idle() {
-                        break;
-                    }
-                    let notified = self.refresh_idle.notified();
-                    tokio::pin!(notified);
-                    notified.as_mut().enable();
-                    if self.refresh_scheduler.is_idle() {
-                        break;
-                    }
-                    notified.await;
-                }
+                // #8733: answer once the scheduler has accepted (and
+                // deduplicated) the queued request. The old idle-wait held
+                // the `ripr.refresh` executeCommand response — and one of
+                // the four notification-handler slots for interactive
+                // triggers — parked for the entire in-flight analysis, up
+                // to the production refresh deadline, so the recovery
+                // gesture every failure surface names appeared dead. The
+                // queued request still starts when the active attempt
+                // finishes; nothing downstream depended on this wait.
                 return;
             }
             RefreshDecision::Deduplicated | RefreshDecision::Stopped => return,
@@ -925,6 +997,61 @@ impl Backend {
             .await;
             return RefreshAttemptOutcome::Failed;
         };
+        // #8732: retract every analysis-pending marker published to a push
+        // client while no snapshot existed (or a blocking failure was
+        // latched). A URI the commit just published real payloads for is
+        // already reconciled, and a URI the plan cleared is already emptied;
+        // every other tracked marker URI is re-served from the committed
+        // baseline — the established empty-clear retraction when the
+        // document has no findings, so the pending state never outlives the
+        // first real snapshot.
+        if !self.pull_diagnostics_enabled() {
+            let published: BTreeSet<&Uri> = plan
+                .publish_batches
+                .iter()
+                .map(|batch| &batch.uri)
+                .collect();
+            let cleared: BTreeSet<&Uri> = plan.clear_uris.iter().collect();
+            for uri in self.take_pending_push_marker_uris() {
+                if published.contains(&&uri) || cleared.contains(&&uri) {
+                    continue;
+                }
+                // Mirror the transaction publisher's quarantine projection
+                // (#1970, review of #8732): a quarantined document's buffer
+                // moved under the saved-state line identity, so it receives
+                // the quarantine marker, never the committed findings — the
+                // plan above compared raw batches against the committed
+                // baseline and cannot know the client's view was a pending
+                // marker all along.
+                let (quarantine, raw_version) = self
+                    .with_document_state(&uri, |state| {
+                        let quarantine = quarantine_from_state(state);
+                        let version = if state.buffer_authority_unknown {
+                            None
+                        } else {
+                            state.version
+                        };
+                        (quarantine, version)
+                    })
+                    .unwrap_or((None, None));
+                if let Some((_, reason)) = quarantine {
+                    let version = self.negotiated_version(raw_version);
+                    self.client
+                        .publish_diagnostics(uri, withdrawn_quarantine_diagnostics(reason), version)
+                        .await;
+                    continue;
+                }
+                let diagnostics = self.committed_served_diagnostics_for_uri(&uri);
+                let version = if diagnostics.is_empty() {
+                    Self::clear_version()
+                } else {
+                    self.negotiated_version(raw_version)
+                };
+                self.client
+                    .publish_diagnostics(uri, diagnostics, version)
+                    .await;
+            }
+        }
         // Release the transition guard now that the terminal check, publish,
         // and commit are done. Everything below is post-commit disclosure:
         // log notifications plus `workspace/diagnostic/refresh` and code-lens
@@ -959,6 +1086,8 @@ impl Backend {
         self.request_code_lens_refresh_if_view_changed(lens_view)
             .await;
         self.log_component_degradations(&component_outcomes).await;
+        self.disclose_unavailable_languages_to_generic_client()
+            .await;
         self.log_refresh_completed(
             summary,
             published_uri_count,
@@ -998,39 +1127,6 @@ impl Backend {
             .await;
         self.mark_attempt_failed(request, kind, &message);
         self.publish_analysis_status().await;
-        self.disclose_refresh_failure_to_generic_client(&message)
-            .await;
-    }
-
-    /// The warning always goes to the log and `ripr/analysisStatus`; clients
-    /// without the `riprEditor` integration also get one `window/showMessage`
-    /// per transition into failure (#8583). Generic editors do not render the
-    /// custom status notification, so without this a failed analysis looks
-    /// like silence. The VS Code extension renders the failure from
-    /// `ripr/analysisStatus`. Repeated failures do not flood the editor;
-    /// a successful publish clears the latch.
-    async fn disclose_refresh_failure_to_generic_client(&self, message: &str) {
-        let generic_client = self
-            .client_features
-            .lock()
-            .map(|features| features.ripr_editor.is_none())
-            .unwrap_or(true);
-        if !generic_client {
-            return;
-        }
-        if self.refresh_failure_shown.swap(true, Ordering::AcqRel) {
-            return;
-        }
-        // Detach from the refresh worker: `Client` uses a capacity-1 channel,
-        // and the preceding `window/logMessage` may still occupy it. A live
-        // transport loop drains that slot; awaiting here would stall any
-        // in-process caller that has not yet polled the socket. The spawned
-        // warning is still the retained `Client::show_message` path.
-        let client = self.client.clone();
-        let shown = refresh_failure_notice(message);
-        let _delivery = tokio::spawn(async move {
-            client.show_message(MessageType::WARNING, shown).await;
-        });
     }
 
     #[cfg(test)]
@@ -1332,7 +1428,102 @@ impl Backend {
         if let Ok(mut diagnostic_result_ids) = self.diagnostic_result_ids.lock() {
             *diagnostic_result_ids = None;
         }
-        take_all_uris(&mut last_diagnostic_uris)
+        let mut uris = take_all_uris(&mut last_diagnostic_uris);
+        // #8732: a root transition or shutdown must also retract any
+        // analysis-pending marker published to a push client while no
+        // snapshot existed (or a blocking failure was latched).
+        if let Ok(mut pending) = self.pending_push_marker_uris.lock() {
+            uris.extend(std::mem::take(&mut *pending).into_keys());
+        }
+        uris.sort();
+        uris.dedup();
+        uris
+    }
+
+    /// Publish the typed analysis-pending marker to every tracked document
+    /// for a push client (#8732): without pull diagnostics, the
+    /// pre-analysis and blocked states used to publish nothing, which a
+    /// generic editor cannot distinguish from "analysis ran and found
+    /// nothing" — the exact ambiguity the pull marker (#7774) already
+    /// refuses. The marker reuses the pull recovery routes, so both
+    /// transports promise identical recovery, and rides the withdrawal
+    /// payload when a committed snapshot is being withdrawn (#8731).
+    /// Retraction rides the first snapshot commit (or the root/shutdown
+    /// clear) via `pending_push_marker_uris`.
+    ///
+    /// The publication serializes on the same root-transition guard as
+    /// snapshot publication/commit and the terminal clears, and re-reads
+    /// the blocking state inside that guard: a commit that landed after
+    /// the caller sampled the state owns the client surface, and a late
+    /// marker must not overwrite completed diagnostics or resurrect
+    /// cleared ones (#8732 review).
+    async fn publish_analysis_pending_push_markers(&self) {
+        if self.pull_diagnostics_enabled() {
+            return;
+        }
+        let _transition = self.workspace_root_transition.lock().await;
+        let failure = self.configuration_failure();
+        let has_snapshot = self.latest_pull_snapshot().is_some();
+        if failure.is_none() && has_snapshot {
+            return;
+        }
+        let recovery = self.analysis_pending_recovery();
+        let withdrawn = has_snapshot;
+        let items = if withdrawn {
+            analysis_pending_withdrawal_diagnostics(recovery)
+        } else {
+            analysis_pending_diagnostics(recovery)
+        };
+        let signature = Self::pending_push_marker_signature(&recovery, withdrawn);
+        let uris = self
+            .documents
+            .lock()
+            .map(|documents| documents.documents.keys().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        for uri in uris {
+            let raw_version = self
+                .with_document_state(&uri, |state| {
+                    if state.buffer_authority_unknown {
+                        None
+                    } else {
+                        state.version
+                    }
+                })
+                .flatten();
+            let version = self.negotiated_version(raw_version);
+            if let Ok(mut pending) = self.pending_push_marker_uris.lock() {
+                // Skip the publish when the URI already carries this exact
+                // payload signature; update the tracked signature otherwise.
+                if pending.get(&uri) == Some(&signature) {
+                    continue;
+                }
+                pending.insert(uri.clone(), signature.clone());
+            }
+            self.client
+                .publish_diagnostics(uri, items.clone(), version)
+                .await;
+        }
+    }
+
+    fn take_pending_push_marker_uris(&self) -> Vec<Uri> {
+        self.pending_push_marker_uris
+            .lock()
+            .map(|mut pending| std::mem::take(&mut *pending).into_keys().collect())
+            .unwrap_or_default()
+    }
+
+    /// Signature of the marker payload a pending URI currently carries
+    /// (#8732 review): session restore and repeated blocked-state refreshes
+    /// can call the publisher back-to-back for the same URI, and republishing
+    /// an identical marker is N² traffic on a large session for zero client
+    /// effect. The signature folds in the recovery route and the withdrawn
+    /// flag so a genuinely changed marker (for example configuration breaking
+    /// after a snapshot committed) still republishes.
+    fn pending_push_marker_signature(
+        recovery: &AnalysisPendingRecovery,
+        withdrawn: bool,
+    ) -> String {
+        format!("{}:{withdrawn}", recovery.recovery_id())
     }
 
     #[cfg(test)]
@@ -1362,6 +1553,12 @@ impl Backend {
         &self,
     ) -> super::refresh_scheduler::RefreshTelemetrySnapshot {
         self.refresh_scheduler.telemetry()
+    }
+
+    #[cfg(test)]
+    pub(super) fn last_requested_workspace_revision_for_test(&self) -> u64 {
+        self.last_requested_workspace_revision
+            .load(Ordering::Acquire)
     }
 
     pub(super) fn workspace_revision(&self) -> u64 {
@@ -1890,7 +2087,6 @@ impl Backend {
         health.requested_scope = Some(request.scope.as_str().to_string());
         match outcome {
             RefreshAttemptOutcome::Published => {
-                self.refresh_failure_shown.store(false, Ordering::Release);
                 health.state = AnalysisAttemptState::Succeeded;
                 health.failure = None;
                 let snapshot_id = snapshot_id_for_generation(request.generation);
@@ -1965,9 +2161,160 @@ impl Backend {
     }
 
     async fn publish_analysis_status(&self) {
+        let payload = self.analysis_status_payload();
         self.client
-            .send_notification::<AnalysisStatusNotification>(self.analysis_status_payload())
+            .send_notification::<AnalysisStatusNotification>(payload.clone())
             .await;
+        self.disclose_analysis_failure_to_generic_client(&payload)
+            .await;
+    }
+
+    /// Show a failed analysis to clients without the `riprEditor`
+    /// integration (#8583). Generic editors do not render
+    /// `ripr/analysisStatus`, so without this a failed run is
+    /// indistinguishable from a run that found nothing — the same reason
+    /// `disclose_blocked_root` and the config-failure paths use
+    /// `window/showMessage` for these clients. The VS Code extension
+    /// renders the failure from the status payload itself. One bounded
+    /// `window/showMessage` WARNING per distinct failure signature: a
+    /// byte-identical repeated failure does not re-show on every refresh,
+    /// a changed failure shows once, and a succeeded publication clears
+    /// the signature so a later recurrence shows again (transient
+    /// queued/running publications between two attempts of the same
+    /// failure do not clear it). The text
+    /// passes through the same `bounded_failure_message` length and
+    /// redaction bound as every other client-visible failure message.
+    /// Dedicated disclosures that already showed a failure (initialize
+    /// and config reload) record their signature through
+    /// `note_analysis_failure_disclosed` so this path does not show it a
+    /// second time with different wording.
+    async fn disclose_analysis_failure_to_generic_client(&self, payload: &LSPAny) {
+        let Some(failure) = payload.get("failure").filter(|failure| !failure.is_null()) else {
+            if payload.get("state").and_then(serde_json::Value::as_str)
+                == Some(AnalysisAttemptState::Succeeded.as_str())
+                && let Ok(mut last) = self.last_analysis_failure_shown.lock()
+            {
+                *last = None;
+            }
+            return;
+        };
+        let (Some(kind), Some(message)) = (
+            failure.get("kind").and_then(serde_json::Value::as_str),
+            failure.get("message").and_then(serde_json::Value::as_str),
+        ) else {
+            return;
+        };
+        let generic_client = self
+            .client_features
+            .lock()
+            .map(|features| features.ripr_editor.is_none())
+            .unwrap_or(true);
+        if !generic_client {
+            return;
+        }
+        let signature = format!("{kind}:{message}");
+        let previous = {
+            let Ok(mut last) = self.last_analysis_failure_shown.lock() else {
+                return;
+            };
+            last.replace(signature.clone())
+        };
+        if previous.as_deref() == Some(signature.as_str()) {
+            return;
+        }
+        // Send through the checked notification path, like
+        // `ripr/analysisStatus` itself: `Client::show_message` is
+        // unchecked, so a status publication before initialization (or
+        // in an in-process context whose client socket is not driven)
+        // would block on the client channel instead of being suppressed
+        // with the status it discloses.
+        self.client
+            .send_notification::<ShowMessage>(ShowMessageParams {
+                typ: MessageType::WARNING,
+                message: bounded_failure_message(&format!("ripr analysis failed: {message}")),
+            })
+            .await;
+    }
+
+    /// The committed snapshot's typed unavailable-language rows (#8585):
+    /// `(wire language, skipped changed-file count)` in producer order.
+    fn unavailable_language_rows(&self) -> Vec<(String, usize)> {
+        self.latest_analysis
+            .lock()
+            .ok()
+            .and_then(|snapshot| {
+                snapshot.as_ref().map(|value| {
+                    value
+                        .unavailable_adapter
+                        .languages
+                        .iter()
+                        .map(|row| (row.language.clone(), row.file_count))
+                        .collect()
+                })
+            })
+            .unwrap_or_default()
+    }
+
+    /// Tell a client without the `riprEditor` integration, once per
+    /// language, that changed files of a language whose adapter is not
+    /// enabled were not analyzed (#8585). Generic editors do not render
+    /// `ripr/analysisStatus`, so without this the per-document
+    /// `language_adapter_unavailable` limitation never reaches the user and
+    /// the save looks like a clean run. The VS Code extension renders the
+    /// same typed `unavailable_languages` rows in its status bar instead.
+    /// A language stays quiet while it remains unavailable and shows again
+    /// after it has left the set.
+    async fn disclose_unavailable_languages_to_generic_client(&self) {
+        let generic_client = self
+            .client_features
+            .lock()
+            .map(|features| features.ripr_editor.is_none())
+            .unwrap_or(true);
+        if !generic_client {
+            return;
+        }
+        let rows = self.unavailable_language_rows();
+        let fresh = {
+            let Ok(mut shown) = self.unavailable_language_notices_shown.lock() else {
+                return;
+            };
+            let current = rows
+                .iter()
+                .map(|(language, _)| language.clone())
+                .collect::<BTreeSet<_>>();
+            let fresh = rows
+                .iter()
+                .filter(|(language, _)| !shown.contains(language))
+                .cloned()
+                .collect::<Vec<_>>();
+            *shown = current;
+            fresh
+        };
+        for (language, file_count) in fresh {
+            self.client
+                .send_notification::<ShowMessage>(ShowMessageParams {
+                    typ: MessageType::WARNING,
+                    message: bounded_failure_message(&unavailable_language_notice(
+                        &language, file_count,
+                    )),
+                })
+                .await;
+        }
+    }
+
+    /// Record the current health failure as already disclosed on screen,
+    /// so `disclose_analysis_failure_to_generic_client` does not repeat a
+    /// failure that a dedicated path (initialize, config reload) showed
+    /// with its own wording — or deliberately did not show because the
+    /// client renders it from `ripr/analysisStatus` (#8583).
+    fn note_analysis_failure_disclosed(&self) {
+        let signature = self
+            .analysis_health_snapshot()
+            .failure
+            .map(|failure| format!("{}:{}", failure.kind.as_str(), failure.message));
+        if let Ok(mut last) = self.last_analysis_failure_shown.lock() {
+            *last = signature;
+        }
     }
 
     /// The selected root to keep when a folder event leaves several folders
@@ -2092,6 +2439,11 @@ impl Backend {
     /// screen saying why. The client profile is not stored yet at
     /// initialize, so the caller decides from the negotiated profile.
     async fn deliver_initialize_failure_disclosures(&self, warning: String, shown: Option<String>) {
+        // The status publication inside this delivery must not re-show
+        // the failure through the generic analysis-failure disclosure
+        // (#8583): this path already decides the on-screen wording, and
+        // the client profile is not stored yet at initialize.
+        self.note_analysis_failure_disclosed();
         self.initialize_failure_disclosure_omitted
             .store(false, Ordering::Release);
         let delivery = tokio::time::timeout(INITIALIZE_FAILURE_DISCLOSURE_BUDGET, async {
@@ -2251,6 +2603,18 @@ impl Backend {
             "last_success_age_ms": last_success_age_ms,
             "run_status": health.run_status(),
             "analysis_outcome": analysis_outcome,
+            // Typed changed-file languages skipped because their adapter was
+            // not enabled or compiled in (#8585). Clients render this field,
+            // not the limitation's detail text.
+            "unavailable_languages": self
+                .unavailable_language_rows()
+                .into_iter()
+                .map(|(language, file_count)| serde_json::json!({
+                    "language": language,
+                    "file_count": file_count,
+                    "recovery": unavailable_language_recovery(&language),
+                }))
+                .collect::<Vec<_>>(),
             // Profile-withholding disclosure (#5276): when the actionable
             // profile withholds live `*_unknown` findings from every
             // diagnostic/listing surface, this names the count, the classes,
@@ -2572,6 +2936,9 @@ impl Backend {
         if let Ok(mut last) = self.last_component_degradation.lock() {
             *last = None;
         }
+        if let Ok(mut last) = self.last_analysis_failure_shown.lock() {
+            *last = None;
+        }
         if let Ok(mut health) = self.analysis_health.lock() {
             health.state = AnalysisAttemptState::Stopped;
             health.attempt_id = None;
@@ -2722,7 +3089,18 @@ impl Backend {
                 let warning = format!("ripr config load failed; analysis is paused: {error}");
                 let shown = config_failure_notice(&error);
                 self.set_configuration_failure(error);
+                // The disclosure below owns the on-screen wording (the
+                // source-free summary); keep the generic analysis-failure
+                // disclosure in the status publication from showing the
+                // same failure a second time (#8583).
+                self.note_analysis_failure_disclosed();
                 self.publish_analysis_status().await;
+                // #8732: withdraw the served push payloads for tracked
+                // documents the same moment the failure latches; a push
+                // client otherwise keeps the last published diagnostics
+                // indefinitely (the refresh guard below returns before any
+                // re-analysis can replace them).
+                self.publish_analysis_pending_push_markers().await;
                 if !repeated {
                     self.disclose_configuration_reload_failure(warning, shown)
                         .await;
@@ -3029,6 +3407,15 @@ impl Backend {
             };
             kinds.config_changed |= kind.reloads_repository_config();
             kinds.workspace_graph_changed |= kind.invalidates_workspace_graph();
+            // Source presence only matters when a file appears or disappears;
+            // an ordinary save of an existing TypeScript file is not an input.
+            kinds.typescript_input_changed |= match kind {
+                WorkspaceInputKind::TypescriptProjectMarker => true,
+                WorkspaceInputKind::TypescriptSourcePresence => {
+                    event.typ != tower_lsp_server::ls_types::FileChangeType::CHANGED
+                }
+                _ => false,
+            };
             kinds.diagnostics_input_changed |= kind == WorkspaceInputKind::DiagnosticsInput;
         }
         kinds
@@ -3374,6 +3761,41 @@ impl Backend {
         was_disclosed: bool,
         decision_version: Option<i32>,
     ) {
+        // #8731/#8732 review: a quarantine exit re-serves the retained
+        // snapshot, but a latched configuration failure has withdrawn it
+        // from service — publishing here would revive pre-failure findings
+        // the withdrawal marker replaced (a dirty-then-clean edit would
+        // otherwise bring the stale payload back mid-failure). Republish
+        // the withdrawal marker under the same guard that serializes
+        // commit retraction, and keep the URI tracked so the first
+        // post-repair commit retracts it. The committed baseline stays
+        // untouched: the client's view is the marker, not these findings.
+        if !self.pull_diagnostics_enabled() {
+            let transition = self.workspace_root_transition.lock().await;
+            if self.configuration_failure().is_some() {
+                let items = analysis_pending_withdrawal_diagnostics(
+                    AnalysisPendingRecovery::FixConfiguration,
+                );
+                let version = self.negotiated_version(decision_version);
+                let signature = Self::pending_push_marker_signature(
+                    &AnalysisPendingRecovery::FixConfiguration,
+                    true,
+                );
+                if let Ok(mut pending) = self.pending_push_marker_uris.lock() {
+                    if pending.get(uri) == Some(&signature) {
+                        drop(transition);
+                        return;
+                    }
+                    pending.insert(uri.clone(), signature);
+                }
+                self.client
+                    .publish_diagnostics(uri.clone(), items, version)
+                    .await;
+                drop(transition);
+                return;
+            }
+            drop(transition);
+        }
         let diagnostics = self.committed_served_diagnostics_for_uri(uri);
         if !self.pull_diagnostics_enabled() {
             let version = self.negotiated_version(decision_version);
@@ -3594,6 +4016,12 @@ impl Backend {
 pub(super) struct WatchedFileChanges {
     pub(super) config_changed: bool,
     pub(super) workspace_graph_changed: bool,
+    /// A TypeScript detection input (root `tsconfig.json`/`jsconfig.json` or
+    /// detectable TypeScript source) changed. The adapter reads `tsconfig`
+    /// path aliases and indexes sources even when it is already enabled, so
+    /// the analysis input is invalidated and refreshed even if the reloaded
+    /// configuration is unchanged.
+    pub(super) typescript_input_changed: bool,
     /// A non-buffer diagnostics input changed without changing configuration
     /// or the Cargo graph: only a diagnostics refresh is needed (#4896).
     pub(super) diagnostics_input_changed: bool,
@@ -3620,6 +4048,11 @@ enum WorkspaceInputKind {
     /// detectable-file events because watched-file globs cannot express
     /// directory presence.
     PythonSourcePresence,
+    /// Canonical root `tsconfig.json`/`jsconfig.json`: the TypeScript
+    /// no-config detection marker class.
+    TypescriptProjectMarker,
+    /// Detectable TypeScript source below a root `src`/`tests` directory.
+    TypescriptSourcePresence,
     /// Root gap decision ledger or root `.git/HEAD` (#4896): diagnostics
     /// read both on every refresh, but neither is a configuration or
     /// workspace-graph input.
@@ -3628,7 +4061,13 @@ enum WorkspaceInputKind {
 
 impl WorkspaceInputKind {
     fn reloads_repository_config(self) -> bool {
-        matches!(self, Self::PythonProjectMarker | Self::PythonSourcePresence)
+        matches!(
+            self,
+            Self::PythonProjectMarker
+                | Self::PythonSourcePresence
+                | Self::TypescriptProjectMarker
+                | Self::TypescriptSourcePresence
+        )
     }
 
     fn invalidates_workspace_graph(self) -> bool {
@@ -3673,8 +4112,38 @@ fn workspace_input_kind(root: &Path, path: &Path) -> Option<WorkspaceInputKind> 
     {
         return Some(WorkspaceInputKind::PythonProjectMarker);
     }
-    path_is_detectable_source_dir_python(root, path)
-        .then_some(WorkspaceInputKind::PythonSourcePresence)
+    if let Some(marker) = typescript_project_marker_name(name)
+        && path_matches_root_file(root, path, marker)
+    {
+        return Some(WorkspaceInputKind::TypescriptProjectMarker);
+    }
+    if path_is_detectable_source_dir_python(root, path) {
+        return Some(WorkspaceInputKind::PythonSourcePresence);
+    }
+    path_is_detectable_source_dir_typescript(root, path)
+        .then_some(WorkspaceInputKind::TypescriptSourcePresence)
+}
+
+/// TypeScript form of [`path_is_detectable_source_dir_python`]: a detectable
+/// TypeScript source file below a root `src`/`tests` directory, outside the
+/// excluded directories. Presence-only; the file is never read.
+fn path_is_detectable_source_dir_typescript(root: &Path, path: &Path) -> bool {
+    let Some(relative) = root_relative_components(root, path) else {
+        return false;
+    };
+    let Some((marker, below)) = relative.split_first() else {
+        return false;
+    };
+    if typescript_source_dir_marker_name(marker).is_none() {
+        return false;
+    }
+    let Some((file_name, directories)) = below.split_last() else {
+        return false;
+    };
+    directories
+        .iter()
+        .all(|dir| !is_typescript_excluded_dir_everywhere(dir))
+        && is_detectable_typescript_source_name(file_name)
 }
 
 /// Whether `path` resolves below the workspace root to a detectable Python
@@ -3787,6 +4256,7 @@ fn workspace_input_watchers() -> Vec<LSPAny> {
     std::iter::once(CONFIG_FILE_NAME)
         .chain(["Cargo.toml", "Cargo.lock"])
         .chain(PYTHON_PROJECT_MARKERS.iter().copied())
+        .chain(TYPESCRIPT_PROJECT_MARKERS.iter().copied())
         .map(|name| serde_json::json!({"globPattern": format!("**/{name}")}))
         .chain(PYTHON_SOURCE_DIR_MARKERS.iter().map(|dir| {
             // Root-scoped relative glob: relative patterns resolve against
@@ -3796,6 +4266,10 @@ fn workspace_input_watchers() -> Vec<LSPAny> {
             // detectable-file events are the transport hint, and the reload
             // path's config comparison stays the semantic authority.
             serde_json::json!({"globPattern": format!("{dir}/**/*.py")})
+        }))
+        .chain(TYPESCRIPT_SOURCE_DIR_MARKERS.iter().map(|dir| {
+            // Same root-scoped shape for the TypeScript detection extensions.
+            serde_json::json!({"globPattern": format!("{dir}/**/*.{{ts,tsx,mts,cts}}")})
         }))
         .collect()
 }
@@ -3908,6 +4382,55 @@ mod workspace_input_tests {
             ));
         }
         Ok(())
+    }
+
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn typescript_detection_inputs_classify_like_the_detector() {
+        let root = std::env::temp_dir().join("ripr-workspace-input-root");
+        let outside = std::env::temp_dir().join("ripr-workspace-input-outside");
+
+        for marker in ["tsconfig.json", "jsconfig.json"] {
+            assert_eq!(
+                workspace_input_kind(&root, &root.join(marker)),
+                Some(WorkspaceInputKind::TypescriptProjectMarker),
+                "root marker {marker}"
+            );
+            assert_eq!(
+                workspace_input_kind(&root, &root.join("pkg").join(marker)),
+                None
+            );
+            assert_eq!(workspace_input_kind(&root, &outside.join(marker)), None);
+        }
+        for source in [
+            "src/app.ts",
+            "src/deep/view.tsx",
+            "tests/a.mts",
+            "tests/a.cts",
+        ] {
+            assert_eq!(
+                workspace_input_kind(&root, &root.join(source)),
+                Some(WorkspaceInputKind::TypescriptSourcePresence),
+                "{source}"
+            );
+        }
+        for non_input in [
+            "src/app.js",
+            "src/api.generated.ts",
+            "src/types.d.ts",
+            "src/node_modules/p/i.ts",
+            "src/vendor/lib.ts",
+            "lib/app.ts",
+        ] {
+            assert_eq!(
+                workspace_input_kind(&root, &root.join(non_input)),
+                None,
+                "{non_input}"
+            );
+        }
+        assert!(WorkspaceInputKind::TypescriptProjectMarker.reloads_repository_config());
+        assert!(WorkspaceInputKind::TypescriptSourcePresence.reloads_repository_config());
+        assert!(!WorkspaceInputKind::TypescriptSourcePresence.invalidates_workspace_graph());
     }
 
     #[test]
@@ -4033,7 +4556,7 @@ mod workspace_input_tests {
     }
 
     #[test]
-    fn dynamic_watchers_cover_the_canonical_python_input_set() {
+    fn dynamic_watchers_cover_the_canonical_detection_input_set() {
         let actual = workspace_input_watchers()
             .into_iter()
             .filter_map(|watcher| {
@@ -4046,11 +4569,17 @@ mod workspace_input_tests {
         let expected = std::iter::once(CONFIG_FILE_NAME)
             .chain(["Cargo.toml", "Cargo.lock"])
             .chain(PYTHON_PROJECT_MARKERS.iter().copied())
+            .chain(TYPESCRIPT_PROJECT_MARKERS.iter().copied())
             .map(|name| format!("**/{name}"))
             .chain(
                 PYTHON_SOURCE_DIR_MARKERS
                     .iter()
                     .map(|dir| format!("{dir}/**/*.py")),
+            )
+            .chain(
+                TYPESCRIPT_SOURCE_DIR_MARKERS
+                    .iter()
+                    .map(|dir| format!("{dir}/**/*.{{ts,tsx,mts,cts}}")),
             )
             .collect::<BTreeSet<_>>();
 
@@ -4530,11 +5059,21 @@ fn config_failure_notice(error: &str) -> String {
     )
 }
 
-/// On-screen refresh-failure notice for clients without `riprEditor` (#8583).
-/// The body is path-redacted and length-bounded by the same owner as
-/// `ripr/analysisStatus` `failure.message` (#8584 / #8604).
-fn refresh_failure_notice(message: &str) -> String {
-    bounded_failure_message(&format!("ripr analysis failed: {message}"))
+/// On-screen notice for changed files of a language whose adapter is not
+/// enabled (#8585): the count, the fact that they were not analyzed, and the
+/// shared recovery route.
+fn unavailable_language_notice(language: &str, file_count: usize) -> String {
+    format!(
+        "ripr did not analyze {file_count} changed {language} file(s): the {language} adapter is not enabled; {}",
+        unavailable_language_recovery(language)
+    )
+}
+
+fn unavailable_language_recovery(language: &str) -> String {
+    match crate::domain::LanguageId::from_wire(language) {
+        Some(id) => language_adapter_not_enabled_recovery(id),
+        None => format!("enable the {language} adapter in [languages] enabled in ripr.toml"),
+    }
 }
 
 fn bounded_failure_message(message: &str) -> String {
@@ -4545,7 +5084,7 @@ fn bounded_failure_message(message: &str) -> String {
 }
 
 #[cfg(test)]
-mod refresh_failure_show_message_tests;
+mod interactive_debounce_fold_tests;
 
 #[cfg(test)]
 mod bounded_failure_message_tests {
@@ -5344,11 +5883,14 @@ impl LanguageServer for Backend {
         if changes.config_changed {
             self.reload_repository_config().await;
         }
-        if changes.workspace_graph_changed {
-            self.invalidate_analysis_input_and_end_queued_progress(
-                "workspace_manifest_or_lockfile_changed",
-            )
-            .await;
+        if changes.workspace_graph_changed || changes.typescript_input_changed {
+            let reason = if changes.workspace_graph_changed {
+                "workspace_manifest_or_lockfile_changed"
+            } else {
+                "typescript_project_input_changed"
+            };
+            self.invalidate_analysis_input_and_end_queued_progress(reason)
+                .await;
             self.publish_analysis_status().await;
             self.refresh_diagnostics(RefreshScope::Interactive, RefreshReason::ConfigReload)
                 .await;
@@ -5620,9 +6162,15 @@ impl LanguageServer for Backend {
         let session_has_analysis = self.refresh_scheduler_has_analysis_state();
         self.handle_document_quarantine_transition(&uri, transition, decision_version)
             .await;
+        // A latched configuration failure falls through to the refresh path
+        // even when the open matches the persisted state: the refresh guard
+        // returns before scheduling, but its entry publishes the typed
+        // pending marker (#8732) so a push client opening a document mid-
+        // failure does not see silence or a stale restore.
         if open_matches_saved
             && session_has_analysis
             && !self.opened_file_differs_from_committed_snapshot(&uri)
+            && self.configuration_failure().is_none()
         {
             return;
         }
@@ -5669,6 +6217,26 @@ impl LanguageServer for Backend {
         .await;
         if let Ok(mut digests) = self.saved_content_digests.lock() {
             digests.remove(&params.text_document.uri);
+        }
+        // #8732: the closing client clears its own view; drop the URI from
+        // the pending-marker set so a later commit or shutdown does not
+        // publish a retraction for a document nobody tracks. Push clients
+        // (publishDiagnostics transport) keep showing published diagnostics
+        // for closed files in the Problems view, so when a pending marker
+        // was actually in flight for this URI, retract it with an empty
+        // clear instead of only forgetting it.
+        let mut pending_marker_was_tracked = false;
+        if let Ok(mut pending) = self.pending_push_marker_uris.lock() {
+            pending_marker_was_tracked = pending.remove(&params.text_document.uri).is_some();
+        }
+        if pending_marker_was_tracked && !self.pull_diagnostics_enabled() {
+            self.client
+                .publish_diagnostics(
+                    params.text_document.uri.clone(),
+                    Vec::new(),
+                    Self::clear_version(),
+                )
+                .await;
         }
         self.close_document(params);
         self.advance_workspace_revision();
@@ -6025,6 +6593,23 @@ impl Backend {
                 analysis_pending_document_report(params.previous_result_id, recovery).into(),
             );
         };
+        // A configuration failure latched after this snapshot committed
+        // withdraws the retained evidence from service (#8731): the
+        // snapshot stays committed and reachable via the retrieval routes,
+        // but serving it as current would render pre-failure findings at
+        // full weight with no in-editor signal that analysis is paused.
+        // Serve the typed withdrawal marker under the FixConfiguration
+        // recovery route instead — the same stable pending identity the
+        // pre-analysis state uses, so the client re-renders instead of
+        // holding the stale payload.
+        if self.configuration_failure().is_some() {
+            let recovery = AnalysisPendingRecovery::FixConfiguration;
+            return Ok(analysis_pending_document_report_withdrawn(
+                params.previous_result_id,
+                recovery,
+            )
+            .into());
+        }
         let uri = params.text_document.uri;
         // A quarantined (dirty-buffer) document is served one Information
         // marker under a distinct result id (#1970/#7771): saved-state
@@ -6113,6 +6698,14 @@ impl Backend {
             let recovery = self.analysis_pending_recovery();
             return Ok(analysis_pending_workspace_report(&params, recovery).into());
         };
+        // A configuration failure latched after this snapshot committed
+        // withdraws the retained evidence from service (#8731), same as the
+        // document pull path: serve the typed withdrawal marker per tracked
+        // URI under the FixConfiguration recovery route.
+        if self.configuration_failure().is_some() {
+            let recovery = AnalysisPendingRecovery::FixConfiguration;
+            return Ok(analysis_pending_workspace_report_withdrawn(&params, recovery).into());
+        }
         let mut uris = snapshot
             .diagnostics_by_uri
             .keys()
@@ -6403,9 +6996,22 @@ impl Backend {
             crate::app::finding_navigation_with_worktree(&input, None, false, true)
                 .explain_command(&finding.id)
         });
+        // #8743: severity resolves through this session's repo config so the
+        // packet stays wire-identical to the CLI route; without a loaded
+        // config the class profile default applies, as in the DTO.
+        let session_config = self.analysis_config();
+        let default_config;
+        let config: &crate::config::RiprConfig = match session_config.as_ref() {
+            Some(config) => config.repo_config(),
+            None => {
+                default_config = crate::config::RiprConfig::default();
+                &default_config
+            }
+        };
         let rendered = crate::output::json::render_context_packet_with_explain_command(
             finding,
             max_related_tests,
+            config,
             explain_command,
             &snapshot.root,
         );
@@ -7201,6 +7807,16 @@ fn analysis_pending_result_id(recovery: &AnalysisPendingRecovery) -> String {
     format!("ripr:analysis-pending:{}", recovery.recovery_id())
 }
 
+/// The withdrawal variant identity (#8731 review): the pre-analysis marker
+/// and the withdrawal marker share the recovery route but differ in payload,
+/// so a client that already holds the pre-analysis payload must not answer
+/// `unchanged` for the withdrawal marker — a second failure arriving while
+/// the pre-analysis marker is still shown would otherwise leave the client
+/// holding stale route text behind the unchanged contract.
+fn analysis_pending_withdrawal_result_id(recovery: &AnalysisPendingRecovery) -> String {
+    format!("{}:withdrawn", analysis_pending_result_id(recovery))
+}
+
 /// The recovery route the pre-analysis marker may promise (#7774 review):
 /// `refresh_diagnostics` returns before analysis when configuration has
 /// failed or the workspace root authority does not admit analysis, so a
@@ -7225,18 +7841,46 @@ fn analysis_pending_document_report(
     previous_result_id: Option<String>,
     recovery: AnalysisPendingRecovery,
 ) -> DocumentDiagnosticReport {
-    let result_id = analysis_pending_result_id(&recovery);
+    analysis_pending_document_report_for(previous_result_id, recovery, false)
+}
+
+/// The withdrawal variant for a blocking failure latched after a snapshot
+/// committed (#8731): the same stable pending identity and `unchanged`
+/// contract as the pre-analysis report, but the marker names the
+/// withdrawal instead of the never-analyzed state.
+fn analysis_pending_document_report_withdrawn(
+    previous_result_id: Option<String>,
+    recovery: AnalysisPendingRecovery,
+) -> DocumentDiagnosticReport {
+    analysis_pending_document_report_for(previous_result_id, recovery, true)
+}
+
+fn analysis_pending_document_report_for(
+    previous_result_id: Option<String>,
+    recovery: AnalysisPendingRecovery,
+    withdrawn: bool,
+) -> DocumentDiagnosticReport {
+    let result_id = if withdrawn {
+        analysis_pending_withdrawal_result_id(&recovery)
+    } else {
+        analysis_pending_result_id(&recovery)
+    };
     if previous_result_id.as_deref() == Some(result_id.as_str()) {
         return DocumentDiagnosticReport::Unchanged(RelatedUnchangedDocumentDiagnosticReport {
             related_documents: None,
             unchanged_document_diagnostic_report: UnchangedDocumentDiagnosticReport { result_id },
         });
     }
+    let items = if withdrawn {
+        analysis_pending_withdrawal_diagnostics(recovery)
+    } else {
+        analysis_pending_diagnostics(recovery)
+    };
     DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
         related_documents: None,
         full_document_diagnostic_report: tower_lsp_server::ls_types::FullDocumentDiagnosticReport {
             result_id: Some(result_id),
-            items: analysis_pending_diagnostics(recovery),
+            items,
         },
     })
 }
@@ -7252,11 +7896,38 @@ fn analysis_pending_workspace_report(
     params: &WorkspaceDiagnosticParams,
     recovery: AnalysisPendingRecovery,
 ) -> WorkspaceDiagnosticReport {
-    let result_id = analysis_pending_result_id(&recovery);
-    let mut items = Vec::with_capacity(params.previous_result_ids.len());
+    analysis_pending_workspace_report_for(params, recovery, false)
+}
+
+/// The withdrawal variant of the workspace pending report (#8731): same
+/// per-tracked-URI identity contract as the pre-analysis report, with the
+/// withdrawal marker payload.
+fn analysis_pending_workspace_report_withdrawn(
+    params: &WorkspaceDiagnosticParams,
+    recovery: AnalysisPendingRecovery,
+) -> WorkspaceDiagnosticReport {
+    analysis_pending_workspace_report_for(params, recovery, true)
+}
+
+fn analysis_pending_workspace_report_for(
+    params: &WorkspaceDiagnosticParams,
+    recovery: AnalysisPendingRecovery,
+    withdrawn: bool,
+) -> WorkspaceDiagnosticReport {
+    let result_id = if withdrawn {
+        analysis_pending_withdrawal_result_id(&recovery)
+    } else {
+        analysis_pending_result_id(&recovery)
+    };
+    let items = if withdrawn {
+        analysis_pending_withdrawal_diagnostics(recovery)
+    } else {
+        analysis_pending_diagnostics(recovery)
+    };
+    let mut report_items = Vec::with_capacity(params.previous_result_ids.len());
     for entry in &params.previous_result_ids {
         if entry.value == result_id {
-            items.push(WorkspaceDocumentDiagnosticReport::Unchanged(
+            report_items.push(WorkspaceDocumentDiagnosticReport::Unchanged(
                 WorkspaceUnchangedDocumentDiagnosticReport {
                     uri: entry.uri.clone(),
                     version: None,
@@ -7267,19 +7938,21 @@ fn analysis_pending_workspace_report(
             ));
             continue;
         }
-        items.push(WorkspaceDocumentDiagnosticReport::Full(
+        report_items.push(WorkspaceDocumentDiagnosticReport::Full(
             WorkspaceFullDocumentDiagnosticReport {
                 uri: entry.uri.clone(),
                 version: None,
                 full_document_diagnostic_report:
                     tower_lsp_server::ls_types::FullDocumentDiagnosticReport {
                         result_id: Some(result_id.clone()),
-                        items: analysis_pending_diagnostics(recovery),
+                        items: items.clone(),
                     },
             },
         ));
     }
-    WorkspaceDiagnosticReport { items }
+    WorkspaceDiagnosticReport {
+        items: report_items,
+    }
 }
 
 /// Disclosure emitted once per quarantine episode when a dirty document's

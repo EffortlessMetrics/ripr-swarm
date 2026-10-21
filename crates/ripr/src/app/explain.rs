@@ -1,7 +1,7 @@
 use super::CheckInput;
 use super::check::check_with_progress;
 use super::progress::{AnalysisProgressScope, AnalysisProgressSink};
-use super::selector::{FindingSelection, select_finding};
+use super::selector::FindingSelection;
 use crate::config::RiprConfig;
 use crate::output;
 use std::path::Path;
@@ -49,6 +49,7 @@ pub(crate) fn explain_finding_with_config_and_navigation_mode(
         config,
         mode_explicit,
         worktree,
+        false,
         None,
     )
 }
@@ -67,9 +68,12 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
     config: &RiprConfig,
     mode_explicit: bool,
     worktree: bool,
+    worktree_from_default: bool,
     sink: Option<&dyn AnalysisProgressSink>,
 ) -> Result<String, String> {
     let navigation = super::finding_navigation_with_worktree(&input, None, mode_explicit, worktree);
+    let committed_list_command =
+        super::finding_navigation_with_worktree(&input, None, mode_explicit, false).list_command();
     let root = input.root.clone();
     // The worktree retry names the same repository and base the failed run
     // analyzed; a bare `ripr explain --worktree` prefix would analyze the
@@ -106,6 +110,11 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
             &candidates,
             &navigation.list_command(),
         )),
+        FindingSelection::Undecided(limitation) => Err(selector_limitation_fresh_run(
+            selector,
+            &navigation.list_command(),
+            &limitation,
+        )),
         FindingSelection::NoMatch => Err(no_finding_matched_fresh_run(
             selector,
             &navigation.list_command(),
@@ -114,6 +123,8 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
             committed_history,
             &retry_command,
             &worktree_list_command,
+            &committed_list_command,
+            worktree_from_default,
         )),
     }
 }
@@ -164,6 +175,27 @@ pub(crate) fn ambiguous_finding_match(
     message
 }
 
+/// The refusal for a selector the lookup could not decide (#8689): an
+/// unreadable or budget-truncated seam inventory means the reverse lookup
+/// checked nothing, so the message names the limitation and the recovery —
+/// a wider seam budget — mirroring the repair resolver's truncation
+/// wording, instead of claiming a clean miss.
+pub(crate) fn selector_limitation_fresh_run(
+    selector: &str,
+    list_command: &str,
+    limitation: &super::selector::SelectorLimitation,
+) -> String {
+    match limitation {
+        super::selector::SelectorLimitation::InventoryUnreadable => format!(
+            "could not resolve {selector:?}: the seam inventory is unreadable, so no match could be checked; run `{list_command}` to list available finding ids"
+        ),
+        super::selector::SelectorLimitation::InventoryTruncated { analyzed, total } => format!(
+            "could not resolve {selector:?}: the seam inventory is truncated ({analyzed} of {total} seams), so no match could be checked; {budget}, or run `{list_command}` to list available finding ids",
+            budget = super::task_first::WIDEN_SEAM_BUDGET
+        ),
+    }
+}
+
 /// The miss message for a fresh run, with the uncommitted-edits clause when
 /// the selector can only have come from a `--worktree` listing (#7328): a
 /// finding id copied from `ripr check --worktree` output dead-ends against
@@ -183,6 +215,10 @@ pub(crate) fn ambiguous_finding_match(
 /// name the listing that can actually contain the id, not a bare
 /// `ripr check --worktree --json` that analyzes the caller's directory at its
 /// default base.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the miss message carries the selector, both scope listings, and the retry together; splitting the packet would misalign the recovery contract"
+)]
 pub(crate) fn no_finding_matched_fresh_run(
     selector: &str,
     list_command: &str,
@@ -191,7 +227,20 @@ pub(crate) fn no_finding_matched_fresh_run(
     committed_history: bool,
     retry_command: &str,
     worktree_list_command: &str,
+    committed_list_command: &str,
+    worktree_from_default: bool,
 ) -> String {
+    // #9015: a selector copied from a committed listing carries no scope
+    // pin, so a dirty-default worktree run can miss it. The recovery's
+    // first listing must then replay the committed scope, not the
+    // defaulted working-tree scope that just missed.
+    if worktree && worktree_from_default && committed_history {
+        let mut message = no_finding_matched(selector, committed_list_command);
+        message.push_str(&format!(
+            ". The working-tree scope was analyzed and also missed; list its finding ids with `{worktree_list_command}`"
+        ));
+        return message;
+    }
     let mut message = no_finding_matched(selector, list_command);
     if worktree || !committed_history || !selector.contains(':') {
         return message;
@@ -245,7 +294,16 @@ pub(crate) fn explain_finding_from_artifact_with_navigation_mode(
         config,
         asserted_base,
     )?;
-    match select_finding(&findings, selector) {
+    // The artifact path reuses the same seam-side reverse lookups as the
+    // fresh path: seam IDs and hash-form canonical gap IDs bind through the
+    // current root's classified seams, so one ID spells the same finding on
+    // every explain surface (#8688).
+    match super::selector::select_finding_with_seam_reverse(
+        &findings,
+        &input.root,
+        config,
+        selector,
+    ) {
         FindingSelection::Unique(finding) => {
             Ok(output::human::render_finding_with_context_command(
                 finding,
@@ -260,6 +318,14 @@ pub(crate) fn explain_finding_from_artifact_with_navigation_mode(
             selector,
             &candidates,
             "ripr check --json",
+        )),
+        // `select_finding` never inventories seams, so it cannot produce a
+        // limitation; the arm keeps the match exhaustive and renders the
+        // honest state if a future producer starts carrying one.
+        FindingSelection::Undecided(limitation) => Err(selector_limitation_fresh_run(
+            selector,
+            "ripr check --json",
+            &limitation,
         )),
         FindingSelection::NoMatch => Err(no_finding_matched(selector, "ripr check --json")),
     }

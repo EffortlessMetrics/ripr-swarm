@@ -26,8 +26,9 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/error_path_sibling_oracle_fake_clean/input --diff <cwd>/fixtures/error_path_sibling_oracle_fake_clean/diff.patch --mode fast probe:src_lib.rs:error_path:162493bf
   ripr context --root <cwd>/fixtures/error_path_sibling_oracle_fake_clean/input --diff <cwd>/fixtures/error_path_sibling_oracle_fake_clean/diff.patch --mode fast --at probe:src_lib.rs:error_path:162493bf
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:error_path:162493bf --root <cwd>/fixtures/error_path_sibling_oracle_fake_clean/input` for the full gate's answer
 Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/error_path_sibling_oracle_fake_clean/input --at src/lib.rs:10 --kind error_path
+  ripr agent stub --root <cwd>/fixtures/error_path_sibling_oracle_fake_clean/input --at src/lib.rs:11 --kind error_path
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
