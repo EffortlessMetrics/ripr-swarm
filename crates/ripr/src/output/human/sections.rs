@@ -23,8 +23,12 @@ use std::path::Path;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use super::evidence_lines::{JsonPointerWording, evidence_path_lines, weakness_lines};
+use super::evidence_lines::{
+    JsonPointerWording, evidence_path_lines, restates_no_static_path_evidence, weakness_lines,
+};
 use super::{is_wrappable_advisory_prose, wrap_human_prose};
+
+const TYPED_STATIC_LIMITATION_PREFIX: &str = "Typed static limitation (";
 
 /// #7756: trailing-period rule for the human render — a labelled field line
 /// (`  Label: value`) or a list-item value carries no trailing period;
@@ -128,7 +132,14 @@ pub(crate) fn render_finding_digest_with_config(
         .or(finding.probe.before.as_deref())
         .unwrap_or(&finding.probe.expression);
     out.push_str(&format!("  Changed behavior: {}\n", one_line(changed)));
-    if let Some(missing) = finding.missing.first() {
+    // #9033: the digest names the first entry the full form's Weakness list
+    // would also show, so a one-line pointer never names an entry that
+    // `--format human-full` dropped as a restatement of its Evidence block.
+    let first_missing = finding
+        .missing
+        .iter()
+        .find(|missing| !restates_no_static_path_evidence(finding, missing));
+    if let Some(missing) = first_missing {
         // #2273: preview-language classifiers record an observation rationale
         // (not a missing discriminator) in this field for `exposed` findings;
         // label it as observed advisory evidence so the header does not
@@ -141,13 +152,16 @@ pub(crate) fn render_finding_digest_with_config(
         // discriminator label whenever one exists.
         // #7071: a weak finding whose reach witness ripr could not trace
         // carries the limit's prose here, not a discriminator.
+        // A typed static limitation is the analyzer naming what it could not
+        // bind, never an assertion a test could add.
         let label = if finding.class == ExposureClass::Exposed {
             "Discriminator (observed, advisory)"
-        } else if (matches!(
-            finding.class,
-            ExposureClass::PropagationUnknown | ExposureClass::StaticUnknown
-        ) || untraced_reach_weak_finding(finding))
-            && finding.activation.missing_discriminators.is_empty()
+        } else if missing.starts_with(TYPED_STATIC_LIMITATION_PREFIX)
+            || ((matches!(
+                finding.class,
+                ExposureClass::PropagationUnknown | ExposureClass::StaticUnknown
+            ) || untraced_reach_weak_finding(finding))
+                && finding.activation.missing_discriminators.is_empty())
         {
             "Analyzer limit"
         } else {
