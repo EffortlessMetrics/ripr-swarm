@@ -1276,7 +1276,9 @@ fn enforce_changed_rust_line_limit(
          limit ({line_limit}); analysis was not run to protect runner memory before \
          probe expansion. Repair route: reduce the diff scope, split the extraction \
          PR, run a narrower diff, or raise the limit via \
-         {DIFF_CHANGED_RUST_LINE_LIMIT_ENV}=<number>."
+         {DIFF_CHANGED_RUST_LINE_LIMIT_ENV}=<number>. To analyze a subset, pass \
+         `--path <glob>` and/or `--exclude <glob>` to `ripr check` (repeatable, \
+         repository-relative; files left out are reported as not analyzed)."
     ))
 }
 
@@ -1659,7 +1661,13 @@ pub(crate) fn is_generated_rust_file(path: &Path) -> bool {
             "gen" | "generated" | "out"
         )
     });
-    conventional_name || generated_directory
+    // A committed Cargo `target/` at the repository root is build output, not
+    // source (#9277). Only the first component counts: a nested `target`
+    // module or crate directory is ordinary hand-written layout.
+    let build_output_root = path.components().next().is_some_and(|component| {
+        matches!(component, std::path::Component::Normal(value) if value == "target")
+    });
+    conventional_name || generated_directory || build_output_root
 }
 
 pub(crate) fn is_generated_rust_file_with_patterns(
@@ -5491,6 +5499,8 @@ fn absent_delimiter_boundary_returns_head() {
             "3 changed Rust lines across 1 Rust files",
             "RIPR_MAX_DIFF_CHANGED_RUST_LINES",
             "split the extraction PR",
+            "--path <glob>",
+            "--exclude <glob>",
         ] {
             if !message.contains(needle) {
                 return Err(format!("missing `{needle}` in message: {message}"));
@@ -6693,6 +6703,16 @@ fn absent_delimiter_boundary_returns_head() {
         });
         let _ = fs::remove_dir_all(&root);
         Ok(())
+    }
+
+    #[test]
+    fn committed_root_target_is_build_output_but_a_nested_target_module_is_not() {
+        // #9277: only the repository-root `target/` is Cargo build output.
+        assert!(is_generated_rust_file(Path::new("target/debug/build/x/out.rs")));
+        assert!(is_generated_rust_file(Path::new("target/lib.rs")));
+        assert!(!is_generated_rust_file(Path::new("src/target/mod.rs")));
+        assert!(!is_generated_rust_file(Path::new("crates/target/src/lib.rs")));
+        assert!(!is_generated_rust_file(Path::new("targets/lib.rs")));
     }
 
     #[test]

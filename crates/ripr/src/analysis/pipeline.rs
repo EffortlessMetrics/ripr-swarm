@@ -14,6 +14,7 @@ use super::{
 };
 use crate::analysis::cancellation;
 use crate::analysis::committed_source;
+use crate::analysis::diff_scope_filter::DiffScopeFilter;
 use crate::analysis_outcome::{
     AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
     AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
@@ -63,6 +64,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy(
         &crate::config::RustLanguageConfig::default(),
         &crate::config::LanguagesConfig::default(),
         None,
+        &DiffScopeFilter::default(),
     )
 }
 
@@ -75,6 +77,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
     // Repository-relative configured `[perl].cache_dir`, when one is set;
     // the intake exclusion also covers that writer base (#8751).
     perl_cache_dir: Option<&std::path::Path>,
+    diff_scope: &DiffScopeFilter,
 ) -> Result<AnalysisResult, CoreError> {
     #[cfg(test)]
     {
@@ -129,6 +132,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
             rust_config,
             language_config,
             perl_cache_dir,
+            diff_scope,
             &resolved.diff,
         )?;
         // #3279 R4: finding locations name the user's repository, not
@@ -196,6 +200,7 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
                 rust_config,
                 language_config,
                 perl_cache_dir,
+                diff_scope,
                 &loaded.text,
             )
         });
@@ -276,6 +281,7 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
     // Repository-relative configured `[perl].cache_dir`, when one is set;
     // the intake exclusion also covers that writer base (#8751).
     perl_cache_dir: Option<&std::path::Path>,
+    diff_scope: &DiffScopeFilter,
     disclosure_probes: super::DisclosureProbes,
 ) -> Result<AnalysisResult, CoreError> {
     if options.diff_file.is_some() {
@@ -320,6 +326,7 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
             rust_config,
             language_config,
             perl_cache_dir,
+            diff_scope,
             &loaded.text,
         )?;
         bind_effective_base(&mut result, loaded.effective_base)?;
@@ -390,6 +397,7 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
             rust_config,
             language_config,
             perl_cache_dir,
+            diff_scope,
             &loaded.text,
         );
         let (excluded, analyzed) = match probes.join() {
@@ -886,6 +894,56 @@ fn diff_limitation_in_scope(limitation: &AnalysisLimitation, languages: &[Langua
     route(std::path::Path::new(path)).is_some_and(|language| languages.contains(&language))
 }
 
+/// #9277: a scope that leaves no changed file in play is a usage error, not
+/// a clean result. The refusal names the flags and the files they removed so
+/// the operator can see which pattern missed.
+fn scope_matched_nothing_error(scope: &DiffScopeFilter, files: &[diff::ChangedFile]) -> String {
+    let names = files
+        .iter()
+        .map(|file| file.path.to_string_lossy().replace('\\', "/"))
+        .collect::<Vec<_>>();
+    format!(
+        "scope_filter_matched_nothing: `{}` left none of the {} changed file(s) in scope ({}); \
+         analysis was not run and this is not a clean result. Repair route: patterns are \
+         repository-relative (`src/lib.rs`, `crates/api`, `src/**/*.rs`); fix the pattern \
+         or drop --path/--exclude to analyze the whole diff.",
+        scope.flags(),
+        files.len(),
+        bounded_path_listing(&names)
+    )
+}
+
+/// #9277: the typed disclosure for files the operator's scope removed.
+fn out_of_scope_limitation(
+    diff_scope: &DiffScopeFilter,
+    files: &[diff::ChangedFile],
+) -> Result<AnalysisLimitation, String> {
+    let names = files
+        .iter()
+        .map(|file| file.path.to_string_lossy().replace('\\', "/"))
+        .collect::<Vec<_>>();
+    let listed = bounded_path_listing(&names);
+    Ok(AnalysisLimitation::new(
+        AnalysisLimitationKind::LanguageScopeUnsupported,
+        AnalysisStage::DiffLoad,
+        AnalysisRecovery::new(
+            AnalysisRecoveryKind::Retry,
+            format!(
+                "Files left out by `{}` have no finding. Rerun with a wider --path or without \
+                 --exclude to analyze them: {listed}.",
+                diff_scope.flags()
+            ),
+        )?,
+    )
+    .with_affected_items(files.len() as u64)?
+    .with_detail(format!(
+        "{} changed file(s) were left out by the requested scope ({}) and were not analyzed: \
+         {listed}",
+        files.len(),
+        diff_scope.flags()
+    ))?)
+}
+
 /// Test-only convenience: the ~40 in-module behavioral call sites predate
 /// #7386 and run without a parsed `[languages]` config, so they keep this
 /// default-config wrapper instead of threading one at every site.
@@ -904,6 +962,7 @@ fn run_pipeline_for_diff_text(
         rust_config,
         &crate::config::LanguagesConfig::default(),
         None,
+        &DiffScopeFilter::default(),
         diff_text,
     )
 }
@@ -921,6 +980,7 @@ fn run_pipeline_for_diff_text_with_language_config(
     // Repository-relative configured `[perl].cache_dir`, when one is set;
     // the intake exclusion also covers that writer base (#8751).
     perl_cache_dir: Option<&std::path::Path>,
+    diff_scope: &DiffScopeFilter,
     diff_text: &str,
 ) -> Result<AnalysisResult, String> {
     let parsed_diff = diff::parse_unified_diff_bounded_with_metadata(diff_text)?;
@@ -943,11 +1003,24 @@ fn run_pipeline_for_diff_text_with_language_config(
         .changed_files
         .into_iter()
         .partition(|file| !diff::is_ripr_artifact_path_under(&file.path, &artifact_roots));
+    // #9277: the operator's `--path`/`--exclude` scope narrows the changed
+    // files before any size guard or adapter sees them, so the guards measure
+    // only what was asked for. Out-of-scope files become a typed limitation
+    // below; they are never dropped silently and never read as clean.
+    let (changed_files, out_of_scope_files): (Vec<_>, Vec<_>) = changed_files
+        .into_iter()
+        .partition(|file| diff_scope.admits(&file.path));
+    if !out_of_scope_files.is_empty() && changed_files.is_empty() {
+        return Err(scope_matched_nothing_error(diff_scope, &out_of_scope_files));
+    }
     let mut limitations = parsed_diff
         .limitations
         .into_iter()
         .filter(|limitation| diff_limitation_in_scope(limitation, languages))
         .collect::<Vec<_>>();
+    if !out_of_scope_files.is_empty() {
+        limitations.push(out_of_scope_limitation(diff_scope, &out_of_scope_files)?);
+    }
     let mut harness_projections: Vec<crate::analysis::harness_projection::TestHarnessProjection> =
         Vec::new();
     let deleted_file_count = parsed_diff.deleted_file_count;
@@ -1535,7 +1608,13 @@ fn run_pipeline_for_diff_text_with_language_config(
     } else {
         AnalysisOutcomeKind::CompleteWithFindings
     };
-    let input_digest = Sha256::digest(diff_text.as_bytes());
+    let mut input_digest = Sha256::new();
+    input_digest.update(diff_text.as_bytes());
+    // The same diff under a different scope is a different analysis subject.
+    if let Some(suffix) = diff_scope.identity_suffix() {
+        input_digest.update(suffix.as_bytes());
+    }
+    let input_digest = input_digest.finalize();
     let input_identity = format!(
         "sha256:{}",
         input_digest
@@ -6515,6 +6594,7 @@ index 0000000..1111111 100644
                 &RustLanguageConfig::default(),
                 &crate::config::LanguagesConfig::default(),
                 None,
+                &DiffScopeFilter::default(),
                 crate::analysis::DisclosureProbes::Run,
             );
             let elapsed = started.elapsed();
@@ -6659,6 +6739,7 @@ index 0000000..1111111 100644
                 &RustLanguageConfig::default(),
                 &crate::config::LanguagesConfig::default(),
                 None,
+                &DiffScopeFilter::default(),
                 crate::analysis::DisclosureProbes::Skip,
             )
             .map_err(|err| format!("worktree pipeline failed: {err}"))?;
@@ -6704,5 +6785,160 @@ index 0000000..1111111 100644
         })();
         let _ = fs::remove_dir_all(&root);
         result
+    }
+    /// #9277 fixture: one real one-line edit in `src/lib.rs` plus a
+    /// `src/big.rs` that alone exceeds the default 2000-line cap.
+    fn scoped_oversized_diff() -> String {
+        let mut diff = String::from(SAMPLE_RUST_DIFF);
+        let added = 2_100;
+        diff.push_str(&format!(
+            "diff --git a/src/big.rs b/src/big.rs\n--- a/src/big.rs\n+++ b/src/big.rs\n@@ -0,0 +1,{added} @@\n"
+        ));
+        for index in 0..added {
+            diff.push_str(&format!("+pub fn big_{index}() -> u32 {{ {index} }}\n"));
+        }
+        diff
+    }
+
+    fn run_scoped(
+        label: &str,
+        include: &[&str],
+        exclude: &[&str],
+        diff_text: &str,
+    ) -> Result<Result<AnalysisResult, String>, String> {
+        let root = temp_root(label)?;
+        write(
+            root.join("src/lib.rs").as_path(),
+            "pub fn f(x: i32) -> bool { x >= 1 }\n",
+        )?;
+        write(root.join("src/big.rs").as_path(), "pub fn big_0() -> u32 { 0 }\n")?;
+        let scope = DiffScopeFilter::new(
+            include.iter().map(|pattern| pattern.to_string()),
+            exclude.iter().map(|pattern| pattern.to_string()),
+        )?;
+        Ok(run_pipeline_for_diff_text_with_language_config(
+            &sample_rust_diff_options(root),
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+            &crate::config::RustLanguageConfig::default(),
+            &crate::config::LanguagesConfig::default(),
+            None,
+            &scope,
+            diff_text,
+        ))
+    }
+
+    #[test]
+    fn oversized_diff_still_fails_closed_without_a_scope() -> Result<(), String> {
+        let refusal = run_scoped("scope-none", &[], &[], &scoped_oversized_diff())?
+            .err()
+            .ok_or("an unscoped oversized diff must be refused")?;
+        assert!(refusal.starts_with("diff_scope_oversized:"), "{refusal}");
+        Ok(())
+    }
+
+    #[test]
+    fn scope_narrows_the_diff_before_the_size_guard_and_discloses_what_it_left_out()
+    -> Result<(), String> {
+        for (label, include, exclude) in [
+            ("scope-path", vec!["src/lib.rs"], vec![]),
+            ("scope-exclude", vec![], vec!["src/big.rs"]),
+        ] {
+            let result = run_scoped(label, &include, &exclude, &scoped_oversized_diff())?
+                .map_err(|error| format!("{label}: scoped run must succeed: {error}"))?;
+            let outcome = result.analysis_outcome.ok_or("outcome must be projected")?;
+            assert_eq!(outcome.counts.changed_file_count, 1, "{label}");
+            assert!(!result.findings.is_empty(), "{label}: lib.rs finding expected");
+            assert!(
+                result
+                    .findings
+                    .iter()
+                    .all(|finding| finding.probe.location.file.ends_with("src/lib.rs")),
+                "{label}: no finding may come from the skipped file"
+            );
+            // The skipped file is disclosed, so the outcome is incomplete:
+            // it can never read as a clean or complete analysis.
+            assert_eq!(
+                outcome.kind,
+                AnalysisOutcomeKind::PartialWithLimitations,
+                "{label}"
+            );
+            assert!(!outcome.kind.is_complete(), "{label}");
+            let limitation = outcome
+                .limitations
+                .iter()
+                .find(|limitation| {
+                    limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported
+                })
+                .ok_or_else(|| format!("{label}: skipped-file limitation missing"))?;
+            assert_eq!(limitation.affected_items, Some(1), "{label}");
+            let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+            assert!(detail.contains("src/big.rs"), "{label}: {detail}");
+            assert!(
+                limitation.recovery.detail.contains("src/big.rs"),
+                "{label}: {}",
+                limitation.recovery.detail
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn scope_that_keeps_only_the_oversized_files_still_hits_the_guard() -> Result<(), String> {
+        let refusal = run_scoped("scope-oversized", &["src/big.rs"], &[], &scoped_oversized_diff())?
+            .err()
+            .ok_or("an oversized in-scope diff must be refused")?;
+        assert!(refusal.starts_with("diff_scope_oversized:"), "{refusal}");
+        assert!(refusal.contains("src/big.rs") || refusal.contains("2100"), "{refusal}");
+        Ok(())
+    }
+
+    #[test]
+    fn scope_that_matches_no_changed_file_is_an_error_not_a_clean_result() -> Result<(), String> {
+        let refusal = run_scoped("scope-empty", &["nope/**"], &[], &scoped_oversized_diff())?
+            .err()
+            .ok_or("a scope that matches nothing must be refused")?;
+        assert!(
+            refusal.starts_with("scope_filter_matched_nothing:"),
+            "{refusal}"
+        );
+        assert!(refusal.contains("--path nope/**"), "{refusal}");
+        assert!(refusal.contains("src/lib.rs"), "{refusal}");
+        Ok(())
+    }
+
+    #[test]
+    fn excluding_every_changed_file_is_also_an_error() -> Result<(), String> {
+        let refusal = run_scoped(
+            "scope-exclude-all",
+            &[],
+            &["src"],
+            &scoped_oversized_diff(),
+        )?
+        .err()
+        .ok_or("excluding every file must be refused")?;
+        assert!(
+            refusal.starts_with("scope_filter_matched_nothing:"),
+            "{refusal}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn scope_binds_into_the_input_identity() -> Result<(), String> {
+        let identity = |label: &str, include: &[&str], exclude: &[&str]| -> Result<String, String> {
+            let result = run_scoped(label, include, exclude, SAMPLE_RUST_DIFF)?
+                .map_err(|error| format!("{label}: {error}"))?;
+            result
+                .analysis_outcome
+                .and_then(|outcome| outcome.identity.input_identity)
+                .ok_or_else(|| format!("{label}: input identity missing"))
+        };
+        let unscoped = identity("identity-open", &[], &[])?;
+        let scoped = identity("identity-scoped", &["src/lib.rs"], &[])?;
+        let again = identity("identity-scoped-again", &["src/lib.rs"], &[])?;
+        assert_ne!(unscoped, scoped);
+        assert_eq!(scoped, again);
+        Ok(())
     }
 }

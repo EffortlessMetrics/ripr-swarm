@@ -210,6 +210,8 @@ Runs the static exposure analysis and renders findings.
 | `--diff PATH` | _(unset)_ | Path to a unified diff file. Overrides `--base`. `--diff -` reads from stdin. |
 | `--candidate-tree TREE` | _(unset)_ | Analyze exactly this immutable Git tree object, deriving the diff from Git objects alone. Mutually exclusive with `--diff` and `--base`. |
 | `--candidate-base BASE` | repository's empty tree | Base treeish for `--candidate-tree` (a commit, tag, or tree OID). |
+| `--path GLOB` | (all files) | Repeatable. Analyze only changed files matching the repository-relative file, directory or glob. Files left out are named in a `language_scope_unsupported` limitation. |
+| `--exclude GLOB` | (none) | Repeatable. Skip changed files matching the pattern; wins over `--path`. Same disclosure. |
 | `--worktree` | already the default when the tree has staged or unstaged tracked edits | Diff the base against the live working tree instead of `HEAD`, including staged and unstaged tracked edits (untracked files never select it; stage them with `git add -N`). Like the committed `<base>...HEAD` diff, it starts at the merge base of the base and `HEAD`, so commits the base gained after the branch forked are not reported as branch changes (the base tip when there is no merge base, as in a shallow clone). Cannot be combined with `--diff`. |
 | `--committed` | _(off)_ | Diff committed history only (`base...HEAD`) even when the working tree has uncommitted changes; the output notes that those edits were not analyzed. Cannot be combined with `--worktree`, `--diff`, `--candidate-tree`, or repo-scope formats. |
 | `--mode MODE` | `ripr.toml` `analysis.mode`, otherwise `draft` | One of `instant`, `draft`, `fast`, `deep`, `ready`. See the [mode reference](#analysis-modes). |
@@ -334,6 +336,27 @@ To run a deliberately large Rust extraction diff on a larger runner:
 ```bash
 RIPR_MAX_DIFF_CHANGED_RUST_LINES=5000 ripr check --root . --diff extraction.diff --json
 ```
+
+To analyze a subset of an oversized diff instead (generated, vendored or
+otherwise uninteresting files in the same PR), narrow the changed files with
+repeatable repository-relative `--path` and `--exclude` patterns. A literal
+pattern names a file or a directory; a pattern with `*`, `?` or `**` is a glob.
+The scope is applied before the size limits, so they measure only the chosen
+files:
+
+```bash
+ripr check --root . --base origin/main --exclude 'src/generated/**' --exclude vendor
+ripr check --root . --base origin/main --path crates/api --path 'src/**/*.rs'
+```
+
+Every changed file the scope leaves out is named in a
+`language_scope_unsupported` limitation and has no finding, so the outcome is
+`partial_with_limitations`, never a clean or complete analysis. A scope that
+leaves no changed file fails with `scope_filter_matched_nothing` (exit 2). Rust
+files with a generator header (`@generated`, `Code generated ... DO NOT EDIT`,
+rust-bindgen), `cargo vendor` crates and a root `target/` directory are already
+skipped with a named limitation before the limits apply, without any flag.
+`--path` and `--exclude` do not apply to repo-scoped formats.
 
 To reduce full-cache shard counts for a repo on a machine with enough headroom:
 

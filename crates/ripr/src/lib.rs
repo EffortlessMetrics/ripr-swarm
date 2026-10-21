@@ -139,6 +139,7 @@ pub mod provider_contract;
 mod terminal_text;
 mod workspace_status;
 
+pub use analysis::DiffScopeFilter;
 pub use analysis::LanguageRun;
 pub use analysis::LanguageRunStatus;
 pub use analysis::PartialDiffScope;

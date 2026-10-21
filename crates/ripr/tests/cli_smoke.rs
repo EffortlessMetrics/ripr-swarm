@@ -3393,6 +3393,129 @@ fn check_json_diff_scope_oversized_emits_limited_artifact() -> Result<(), String
     Ok(())
 }
 
+/// #9277: a diff with one real edit and one file that alone trips the line cap,
+/// run from a throwaway workspace so no git history is involved.
+fn scoped_check_fixture(label: &str) -> Result<(PathBuf, PathBuf), String> {
+    let dir = unique_temp_workspace(label);
+    std::fs::create_dir_all(dir.join("src")).map_err(|err| format!("mkdir: {err}"))?;
+    std::fs::write(
+        dir.join("Cargo.toml"),
+        "[package]\nname = \"scoped\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|err| format!("write manifest: {err}"))?;
+    std::fs::write(
+        dir.join("src/lib.rs"),
+        "pub fn gate(a: i32) -> bool { a >= 3 }\n",
+    )
+    .map_err(|err| format!("write lib: {err}"))?;
+    let big: String = (0..12)
+        .map(|index| format!("pub fn big_{index}() -> u32 {{ {index} }}\n"))
+        .collect();
+    std::fs::write(dir.join("src/big.rs"), &big).map_err(|err| format!("write big: {err}"))?;
+    let mut diff = String::from(
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,1 +1,1 @@\n\
+         -pub fn gate(a: i32) -> bool { a > 3 }\n+pub fn gate(a: i32) -> bool { a >= 3 }\n",
+    );
+    diff.push_str(
+        "diff --git a/src/big.rs b/src/big.rs\n--- a/src/big.rs\n+++ b/src/big.rs\n@@ -0,0 +1,12 @@\n",
+    );
+    for line in big.lines() {
+        diff.push('+');
+        diff.push_str(line);
+        diff.push('\n');
+    }
+    let diff_path = dir.join("change.diff");
+    std::fs::write(&diff_path, diff).map_err(|err| format!("write diff: {err}"))?;
+    Ok((dir, diff_path))
+}
+
+#[test]
+fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() -> Result<(), String>
+{
+    let (dir, diff) = scoped_check_fixture("check-scope-flags")?;
+    let root = dir.display().to_string();
+    let diff = diff.display().to_string();
+    let cap = [("RIPR_MAX_DIFF_CHANGED_RUST_LINES", "5")];
+    let run = |extra: &[&str]| {
+        let mut args = vec!["check", "--root", &root, "--diff", &diff, "--json", "--quiet"];
+        args.extend_from_slice(extra);
+        run_ripr_with_env(&args, &cap)
+    };
+
+    // The cap still fires with its own text, and now names the way out.
+    let refused = run(&[]);
+    assert_failure(&refused);
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("diff_scope_oversized"), "{stderr}");
+    assert!(stderr.contains("--path <glob>"), "{stderr}");
+
+    for flags in [vec!["--exclude", "src/big.rs"], vec!["--path", "src/lib.rs"]] {
+        let output = run(&flags);
+        assert_success(&output);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let value: serde_json::Value = serde_json::from_str(&stdout)
+            .map_err(|err| format!("scoped stdout should parse: {err}\n{stdout}"))?;
+        let outcome = &value["analysis_outcome"];
+        assert_eq!(outcome["analysis_complete"], false, "{flags:?}");
+        assert_eq!(
+            outcome["outcome"]["kind"], "partial_with_limitations",
+            "{flags:?}"
+        );
+        let limitations = outcome["outcome"]["limitations"]
+            .as_array()
+            .ok_or("limitations array")?;
+        assert!(
+            limitations.iter().any(|limitation| {
+                limitation["kind"] == "language_scope_unsupported"
+                    && limitation["bounded_detail"]
+                        .as_str()
+                        .is_some_and(|detail| detail.contains("src/big.rs"))
+            }),
+            "{flags:?}: skipped file must be named: {outcome}"
+        );
+        let findings = value["findings"].as_array().ok_or("findings array")?;
+        assert!(!findings.is_empty(), "{flags:?}: the lib.rs finding stays");
+        assert!(
+            findings
+                .iter()
+                .all(|finding| !finding.to_string().contains("src/big.rs")),
+            "{flags:?}: a skipped file must never carry a finding"
+        );
+    }
+
+    // A scope that matches nothing is an error, not a clean result.
+    let nothing = run(&["--path", "nowhere/**"]);
+    assert_eq!(nothing.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&nothing.stderr).contains("scope_filter_matched_nothing"),
+        "{}",
+        String::from_utf8_lossy(&nothing.stderr)
+    );
+
+    // A scope that keeps the oversized file still trips the guard.
+    let still_big = run(&["--path", "src/big.rs"]);
+    assert_failure(&still_big);
+    assert!(String::from_utf8_lossy(&still_big.stderr).contains("diff_scope_oversized"));
+
+    // Malformed patterns and repo-scoped formats are refused up front.
+    let bad = run(&["--path", "../escape"]);
+    assert_eq!(bad.status.code(), Some(2));
+    let repo_format = run_ripr_with_env(
+        &[
+            "check", "--root", &root, "--format", "repo-exposure-json", "--path", "src/lib.rs",
+        ],
+        &cap,
+    );
+    assert_eq!(repo_format.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&repo_format.stderr).contains("repo-scoped"),
+        "{}",
+        String::from_utf8_lossy(&repo_format.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
 /// #6834: shared shape assertions for a `check --json` refusal document —
 /// the one non-consumable envelope the scope guards already use, with the
 /// typed identity selecting run_status/category/limitation/basis.

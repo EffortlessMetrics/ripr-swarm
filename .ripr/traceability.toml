@@ -17261,6 +17261,36 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0305"
+name = "Check can analyze a named subset of an oversized diff"
+spec = "docs/specs/RIPR-SPEC-0305-check-scope-filter-for-oversized-diffs.md"
+tests = [
+  "crates/ripr/src/analysis/diff_scope_filter.rs::tests::a_literal_pattern_names_a_file_or_a_directory_not_a_prefix",
+  "crates/ripr/src/analysis/diff_scope_filter.rs::tests::exclude_wins_over_include_and_works_alone",
+  "crates/ripr/src/analysis/diff_scope_filter.rs::tests::a_pattern_that_cannot_name_a_repository_file_is_refused",
+  "crates/ripr/src/analysis/pipeline.rs::tests::scope_narrows_the_diff_before_the_size_guard_and_discloses_what_it_left_out",
+  "crates/ripr/src/analysis/pipeline.rs::tests::scope_that_keeps_only_the_oversized_files_still_hits_the_guard",
+  "crates/ripr/src/analysis/pipeline.rs::tests::scope_that_matches_no_changed_file_is_an_error_not_a_clean_result",
+  "crates/ripr/src/analysis/pipeline.rs::tests::excluding_every_changed_file_is_also_an_error",
+  "crates/ripr/src/analysis/pipeline.rs::tests::scope_binds_into_the_input_identity",
+  "crates/ripr/src/analysis/pipeline.rs::tests::oversized_diff_still_fails_closed_without_a_scope",
+  "crates/ripr/src/analysis/language/rust/mod.rs::tests::committed_root_target_is_build_output_but_a_nested_target_module_is_not",
+  "crates/ripr/tests/cli_smoke.rs::check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/diff_scope_filter.rs",
+  "crates/ripr/src/analysis/pipeline.rs",
+  "crates/ripr/src/cli/commands/check.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0305-check-scope-filter-for-oversized-diffs.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0285"
 name = "Python framework scan is bounded, deterministic, and string-aware"
 spec = "docs/specs/RIPR-SPEC-0285-python-framework-scan-bounded-deterministic-string-aware.md"

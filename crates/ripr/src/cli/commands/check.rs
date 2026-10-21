@@ -412,6 +412,8 @@ const CHECK_VALUE_OPTIONS: &[&str] = &[
     "--diff",
     "--candidate-tree",
     "--candidate-base",
+    "--path",
+    "--exclude",
     "--mode",
     "--format",
     "--gap-ledger",
@@ -683,6 +685,8 @@ fn check_inner(
     let mut candidate_tree: Option<String> = None;
     let mut candidate_base: Option<String> = None;
     let mut quiet = false;
+    let mut scope_include: Vec<String> = Vec::new();
+    let mut scope_exclude: Vec<String> = Vec::new();
     if let Some(all) = help_request(args) {
         help::print_check_help(all);
         return Ok(());
@@ -718,6 +722,16 @@ fn check_inner(
             "--candidate-base" => {
                 i += 1;
                 candidate_base = Some(expect_value(args, i, "--candidate-base")?.to_string());
+            }
+            // #9277: repeatable file-scope narrowing. Not a scope provider: it
+            // filters the diff another flag (or the default base) supplies.
+            "--path" => {
+                i += 1;
+                scope_include.push(expect_value(args, i, "--path")?.to_string());
+            }
+            "--exclude" => {
+                i += 1;
+                scope_exclude.push(expect_value(args, i, "--exclude")?.to_string());
             }
             "--worktree" => {
                 scope_explicitly_provided = true;
@@ -967,6 +981,41 @@ fn check_inner(
                 &envelope_input,
                 effective_format,
                 "check --committed cannot be combined with --candidate-tree".to_string(),
+            ));
+        }
+    }
+    // #9277: --path/--exclude narrow a diff's changed files. A repo-scoped
+    // format reads no diff, so accepting them there would claim a bound the
+    // run never applied; refuse instead. Pattern shape errors surface here,
+    // before any analysis starts.
+    if !scope_include.is_empty() || !scope_exclude.is_empty() {
+        let refusal = if input.format.is_repo_scope() {
+            Some(format!(
+                "--path/--exclude narrow a diff and do not apply to the repo-scoped format {}; \
+                 use a diff-scoped format such as --format json",
+                input.format.primary_cli_name()
+            ))
+        } else {
+            match crate::analysis::DiffScopeFilter::new(
+                std::mem::take(&mut scope_include),
+                std::mem::take(&mut scope_exclude),
+            ) {
+                Ok(filter) => {
+                    input.scope = filter;
+                    None
+                }
+                Err(error) => Some(error),
+            }
+        };
+        if let Some(message) = refusal {
+            return Err(super::check_fanout::refuse(
+                super::check_fanout::refusal_destination(
+                    fanout_custody.as_ref(),
+                    output_dir.as_deref(),
+                ),
+                &envelope_input,
+                effective_format,
+                message,
             ));
         }
     }

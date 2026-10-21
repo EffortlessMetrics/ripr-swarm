@@ -338,6 +338,7 @@ fn check_with_progress_and_origins_with_open_rust_paths(
             &config.languages().rust,
             config.languages(),
             config.perl().cache_dir(),
+            &input.scope,
         )?,
         AnalysisProgressScope::Worktree => {
             run_worktree_analysis_with_oracle_policy_and_rust_config(
@@ -347,6 +348,7 @@ fn check_with_progress_and_origins_with_open_rust_paths(
                 &config.languages().rust,
                 config.languages(),
                 config.perl().cache_dir(),
+                &input.scope,
                 disclosure_probes,
             )?
         }

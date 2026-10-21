@@ -397,6 +397,7 @@ fn run_ripr_check(repo: &Path, options: &PrEvidenceOptions) -> Result<String, St
         suppression_policy: None,
         git_timeout: None,
         git_candidate: None,
+        scope: crate::analysis::DiffScopeFilter::default(),
     };
     let output = check_workspace(input)?;
     // #5203: the internal packet input renders unbounded. Routing counts

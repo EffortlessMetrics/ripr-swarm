@@ -787,6 +787,7 @@ mod tests {
             &crate::config::RustLanguageConfig::default(),
             &crate::config::LanguagesConfig::default(),
             None,
+            &crate::analysis::DiffScopeFilter::default(),
             crate::analysis::DisclosureProbes::Run,
         )
         .err()

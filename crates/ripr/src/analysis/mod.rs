@@ -6,6 +6,7 @@ pub(crate) mod committed_source;
 pub(crate) mod consumed_source;
 pub(crate) mod diagnostic_origin;
 mod diff;
+mod diff_scope_filter;
 mod extract;
 mod facts;
 mod generated_rust_corpus;
@@ -45,6 +46,7 @@ mod witness;
 mod workspace;
 
 pub(crate) use diff::parse_unified_diff_bounded_with_metadata;
+pub use diff_scope_filter::DiffScopeFilter;
 
 /// Shared pinned PR-evidence diff assembly (#3930, #4004): the one named
 /// owner for packet diff presentation, consumed by the product route and the
@@ -1040,6 +1042,7 @@ pub(crate) fn run_analysis_with_oracle_policy_and_rust_config(
     rust_config: &crate::config::RustLanguageConfig,
     language_config: &crate::config::LanguagesConfig,
     perl_cache_dir: Option<&std::path::Path>,
+    scope: &DiffScopeFilter,
 ) -> Result<AnalysisResult, CoreError> {
     pipeline::run_diff_pipeline_with_oracle_policy_and_rust_config(
         options,
@@ -1048,6 +1051,7 @@ pub(crate) fn run_analysis_with_oracle_policy_and_rust_config(
         rust_config,
         language_config,
         perl_cache_dir,
+        scope,
     )
 }
 
@@ -1058,6 +1062,7 @@ pub(crate) fn run_worktree_analysis_with_oracle_policy_and_rust_config(
     rust_config: &crate::config::RustLanguageConfig,
     language_config: &crate::config::LanguagesConfig,
     perl_cache_dir: Option<&std::path::Path>,
+    scope: &DiffScopeFilter,
     disclosure_probes: DisclosureProbes,
 ) -> Result<AnalysisResult, CoreError> {
     pipeline::run_worktree_pipeline_with_oracle_policy_and_rust_config(
@@ -1067,6 +1072,7 @@ pub(crate) fn run_worktree_analysis_with_oracle_policy_and_rust_config(
         rust_config,
         language_config,
         perl_cache_dir,
+        scope,
         disclosure_probes,
     )
 }

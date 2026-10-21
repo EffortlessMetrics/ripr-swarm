@@ -146,6 +146,8 @@ Common options:
                     local origin/HEAD ref, then origin/main, origin/master,
                     main, and master in order.
   --diff PATH       Read a diff file instead of running git diff (`-` = stdin).
+  --path GLOB       Analyze only changed files matching GLOB; --exclude GLOB
+                    skips some (both repeatable; see --help --all).
   --worktree        Include staged and unstaged tracked edits (already the
                     default when the tree has them).
   --committed       Compare committed history only (base...HEAD).
@@ -204,6 +206,19 @@ Options:
   --candidate-base BASE    Base treeish for --candidate-tree (a commit, tag,
                            or tree OID). Defaults to the repository's empty
                            tree.
+  --path GLOB              Analyze only changed files matching GLOB
+                           (repeatable). A repository-relative file, directory
+                           or glob: `src/lib.rs`, `crates/api`, `src/**/*.rs`.
+                           Applied before the diff-size limits, so they measure
+                           only the chosen files. Changed files outside the
+                           scope are named in a language_scope_unsupported
+                           limitation and have no finding: the outcome is
+                           partial_with_limitations, never clean. A scope that
+                           leaves no changed file is an error. Not supported
+                           for repo-scoped formats.
+  --exclude GLOB           Skip changed files matching GLOB (repeatable;
+                           wins over --path). Same pattern shapes, same
+                           disclosure as --path.
   --worktree               Diff the base revision against the live working tree
                            instead of HEAD, including staged and unstaged
                            tracked edits. This is already the default when the
