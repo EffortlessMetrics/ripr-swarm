@@ -130,8 +130,11 @@ pub(crate) fn build_packet(options: &Options) -> Result<Packet, String> {
     ));
 
     let work_cleanup = exec::cleanup(&run_root);
+    let binary_path = identity.path.clone();
     let scrub = |text: &mut String| {
-        *text = text.replace(run_root.to_string_lossy().as_ref(), "<work-root>");
+        *text = text
+            .replace(run_root.to_string_lossy().as_ref(), "<work-root>")
+            .replace(binary_path.as_str(), "<binary>");
     };
     for row in &mut rows {
         scrub(&mut row.detail);

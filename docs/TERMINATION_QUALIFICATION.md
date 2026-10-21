@@ -81,7 +81,7 @@ matcher kept in `analysis/path_glob.rs` tests).
 ## Packet identity
 
 The packet carries the binary's path, size, SHA-256 and reported version, host
-and toolchain identity, the environment boundary, per-case argv, deadline,
+identity (OS, architecture, family), the environment boundary, per-case argv, deadline,
 termination, input digests, subject counts, stdout and stderr digests, cleanup
 state, controls, non-claims and the aggregate. The `digest` covers everything
 except elapsed time, the host-local binary path and itself. Owned workspace
@@ -94,3 +94,21 @@ corpus. It does not bind the binary to a source SHA or candidate ref, exercise
 LSP, prove absence of every crash or hang class, or establish latency. Python
 f-string replacement-field shapes the tree-depth estimate does not model are
 outside the corpus.
+
+Known gaps against the child issues, each deliberate for this first harness:
+
+- No toolchain identity, per-finding identities, parser or fallback state, or
+  separate exit-status field in a row (#4505, #4511, #4512 evidence rows).
+- `check` does not project the Rust `rust_nesting_budget` decline, so those
+  rows assert termination and changed-file evidence only, and human/JSON
+  parity is not checked (#9308).
+- Python rows use `check --diff` only: no `pilot` route, gate or agent
+  consumer, and no multi-line or continuation forms.
+- Glob corpus omits mixed separators, root-relative boundaries and an empty
+  path, and the generated-file family omits `.`/empty-segment and
+  adjacent-`**` rows (parity of normalization across consumers is partial).
+- #4510 execution controls are not built: planted ambient `ripr`, moved
+  candidate after setup, foreign CWD with a decoy repository, preseeded stale
+  artifact and simulated cleanup failure. `--expected-sha256` is optional; a
+  run without it admits any runnable binary.
+- A non-Unix host is refused rather than skipped.

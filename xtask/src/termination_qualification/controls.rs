@@ -157,7 +157,11 @@ pub(crate) fn instrument_controls(work_root: &Path, cases: &[Case]) -> Vec<Contr
             out.push(control);
             continue;
         }
-        let deadline = Duration::from_secs(2);
+        let deadline = if id == "instrument-hang" {
+            Duration::from_secs(2)
+        } else {
+            Duration::from_secs(10)
+        };
         let (row, _) = exec::run_case(
             &Binary { path: path.clone() },
             &work_root.join(id),
@@ -247,7 +251,10 @@ fn child_gone(pid_file: &Path) -> bool {
             .rsplit_once(')')
             .and_then(|(_, rest)| rest.split_whitespace().next().map(str::to_string))
             .is_some_and(|state| state == "Z" || state == "X"),
-        Err(_) => !PathBuf::from(format!("/proc/{pid}")).exists(),
+        // Without /proc the answer is unknown, which must not read as gone.
+        Err(_) => {
+            PathBuf::from("/proc/self").exists() && !PathBuf::from(format!("/proc/{pid}")).exists()
+        }
     }
 }
 
@@ -282,6 +289,15 @@ pub(crate) fn removal_controls(
             );
             out.push(control);
             continue;
+        };
+        let path = &match fs::canonicalize(path) {
+            Ok(path) if path.is_file() => path,
+            _ => {
+                control.detail =
+                    format!("removal control {} is not a readable file", path.display());
+                out.push(control);
+                continue;
+            }
         };
         let bytes = match fs::read(path) {
             Ok(bytes) => bytes,

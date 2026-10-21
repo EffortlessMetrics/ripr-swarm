@@ -300,6 +300,83 @@ fn a_malformed_selector_passes_only_as_a_policy_refusal() -> TestResult {
     Ok(())
 }
 
+#[test]
+fn a_nonzero_exit_distrusts_otherwise_correct_output() -> TestResult {
+    let case = case_named("python-supported-control")?;
+    let clean = check_json(&["src/app.py"], "", true);
+    let mut crashed = observe(&clean, "", None);
+    crashed.exit_code = Some(101);
+    if assess(&case, &crashed).result != RowResult::SemanticFailure {
+        return Err("valid JSON followed by exit 101 must not pass".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn pilot_disclosure_must_name_the_hostile_file() -> TestResult {
+    let case = case_named("rust-parentheses-over-budget.pilot")?;
+    let artifact = "{\"run_status\":\"complete\",\"seams\":[{\"seam_id\":\"a\",\"file\":\"src/lib.rs\",\"grip_class\":\"g\"}]}";
+    let other = "ripr: src/other.rs: static limit rust_nesting_budget: depth";
+    let result = assess(
+        &case,
+        &observe("{\"status\":\"complete\"}", other, Some(artifact)),
+    );
+    if result.result != RowResult::MissingOrFalseCleanLimitation {
+        return Err(format!(
+            "disclosure for another file classified {:?}",
+            result.result
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn glob_and_generated_passing_branches_need_their_evidence() -> TestResult {
+    let matched = case_named("glob-suppression-double-star-prefix")?;
+    let ok = "{\"findings\":[{\"canonical_gap\":{\"file\":\"src/lib.rs\"}}],\"suppression_policy\":{\"suppressed\":1},\"summary\":{\"suppressed_by_policy\":1}}";
+    if assess(&matched, &observe(ok, "", None)).result != RowResult::PassedSupportedAnalysis {
+        return Err("a suppressing match must pass".to_string());
+    }
+    let half = ok.replace("\"suppressed_by_policy\":1", "\"suppressed_by_policy\":0");
+    if assess(&matched, &observe(&half, "", None)).result != RowResult::SemanticFailure {
+        return Err("summary and policy counts must both show the suppression".to_string());
+    }
+
+    let excluded = case_named("glob-generated-star-in-segment")?;
+    let skipped = |findings: &str| {
+        format!(
+            "{{\"findings\":[{findings}],\"analysis_outcome\":{{\"analysis_complete\":false,\"outcome\":{{\"limitations\":[{{\"kind\":\"language_scope_unsupported\",\"bounded_detail\":\"1 generated file(s) were intentionally skipped: {}\"}}]}}}}}}",
+            excluded.changed
+        )
+    };
+    if assess(&excluded, &observe(&skipped(""), "", None)).result
+        != RowResult::PassedTypedLimitation
+    {
+        return Err("a disclosed exclusion must pass".to_string());
+    }
+    let finding = format!(
+        "{{\"canonical_gap\":{{\"file\":\"{}\"}}}}",
+        excluded.changed
+    );
+    if assess(&excluded, &observe(&skipped(&finding), "", None)).result
+        != RowResult::SemanticFailure
+    {
+        return Err("an excluded file that still has a finding must fail".to_string());
+    }
+
+    let refused = case_named("glob-suppression-empty-pattern-is-a-policy-error")?;
+    let mut with_finding = observe(
+        "{\"analysis_scope\":{\"limitation\":\"suppression_policy_invalid\"},\"findings\":[{}]}",
+        "",
+        None,
+    );
+    with_finding.exit_code = Some(2);
+    if assess(&refused, &with_finding).result == RowResult::PassedTypedLimitation {
+        return Err("a policy refusal that still reports findings must not pass".to_string());
+    }
+    Ok(())
+}
+
 fn row(id: &str, family: Family, result: RowResult) -> Row {
     Row {
         id: id.to_string(),
@@ -726,6 +803,63 @@ mod unix_stubs {
             }
             other => Err(format!("wrong digest was not refused up front: {other:?}")),
         }
+    }
+
+    #[test]
+    fn removal_controls_need_a_failing_and_different_binary() -> TestResult {
+        let root = scratch("removal")?;
+        let candidate = stub(&root, "#!/bin/sh\nexit 0\n")?;
+        let candidate_sha = crate::blind_journey::sha256_hex(
+            &fs::read(&candidate).map_err(|error| format!("read: {error}"))?,
+        );
+        let cases: Vec<Case> = all_cases()
+            .into_iter()
+            .filter(|case| case.family == Family::PythonNesting)
+            .collect();
+        let deadline = Duration::from_secs(10);
+
+        // Byte-identical to the candidate: never a control.
+        let same = super::super::controls::removal_controls(
+            &root.join("w1"),
+            &cases,
+            &[(Family::PythonNesting, candidate.clone())],
+            &candidate_sha,
+            deadline,
+        );
+        // An aborting binary is a valid removal control.
+        let aborting_dir = root.join("abort");
+        fs::create_dir_all(&aborting_dir).map_err(|error| format!("mkdir: {error}"))?;
+        let aborting = stub(&aborting_dir, "#!/bin/sh\nkill -ABRT $$\n")?;
+        let abort = super::super::controls::removal_controls(
+            &root.join("w2"),
+            &cases,
+            &[(Family::PythonNesting, aborting)],
+            &candidate_sha,
+            deadline,
+        );
+        // A binary that passes every row proves nothing.
+        let none = super::super::controls::removal_controls(
+            &root.join("w3"),
+            &cases,
+            &[],
+            &candidate_sha,
+            deadline,
+        );
+        let _ = fs::remove_dir_all(&root);
+        if same[0].discriminated || same[0].observed.as_deref() != Some("same_binary_as_candidate")
+        {
+            return Err("an identical binary must not discriminate".to_string());
+        }
+        if !abort[0].discriminated {
+            return Err(format!(
+                "aborting control did not discriminate: {:?}",
+                abort[0]
+            ));
+        }
+        if none[0].observed.is_some() || none[0].discriminated {
+            return Err("a missing control must read as not run".to_string());
+        }
+        Ok(())
     }
 
     #[test]

@@ -48,6 +48,20 @@ pub(crate) struct Observed<'a> {
 }
 
 pub(crate) fn assess(case: &Case, observed: &Observed<'_>) -> Assessment {
+    let expected_exit = if matches!(case.expect, Expect::PolicyRefused) {
+        2
+    } else {
+        0
+    };
+    if observed.exit_code != Some(expected_exit) && !matches!(case.expect, Expect::PolicyRefused) {
+        return Assessment::fail(
+            RowResult::SemanticFailure,
+            format!(
+                "exit code {:?}, expected {expected_exit}; output is not trusted",
+                observed.exit_code
+            ),
+        );
+    }
     match case.route {
         Route::Check => assess_check(case, observed),
         Route::Pilot => assess_pilot(case, observed),
