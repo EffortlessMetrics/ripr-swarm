@@ -202,10 +202,14 @@ pub(crate) fn check_release_selection() -> Result<(), String> {
     let text = match std::fs::read_to_string(RELEASE_SELECTION_PATH) {
         Ok(text) => text,
         Err(err) => {
-            let violations = vec![format!(
+            // Replace the JSON report too, so an earlier pass is never left
+            // standing as the current result for an unreadable packet.
+            let mut outcome = evaluate_release_selection(RELEASE_SELECTION_PATH, "");
+            outcome.violations = vec![format!(
                 "{RELEASE_SELECTION_PATH} [{RULE_SCHEMA}] cannot be read: {err}"
             )];
-            return finish_policy_report(report_spec(), &violations);
+            write_report("release-selection-packet.json", &selection_json(&outcome))?;
+            return finish_policy_report(report_spec(), &outcome.violations);
         }
     };
     let outcome = evaluate_release_selection(RELEASE_SELECTION_PATH, &text);
@@ -279,6 +283,7 @@ fn evaluate_release_selection(path: &str, text: &str) -> Outcome {
     check_header(&packet, &mut violations);
     check_claims(&packet, &mut violations);
     check_dependency_cycles(&packet, &mut violations);
+    check_dependency_resolutions(&packet, &mut violations);
     check_outside(&packet, &mut violations);
     check_partition(&packet, &mut violations);
     check_open_prs(&packet, &mut violations);
@@ -417,6 +422,45 @@ fn check_claims(packet: &Packet, violations: &mut Vec<String>) {
             }
         }
         check_claim_evidence(claim, violations);
+    }
+}
+
+/// A claim that is delivered cannot rest on a prerequisite the release has
+/// deferred, excluded or failed: the dependent would read as shipped without it.
+fn check_dependency_resolutions(packet: &Packet, violations: &mut Vec<String>) {
+    let resolutions: BTreeMap<&str, &str> = packet
+        .claims
+        .iter()
+        .map(|claim| (claim.claim_id.as_str(), claim.resolution.as_str()))
+        .collect();
+    for claim in &packet.claims {
+        if !matches!(
+            claim.resolution.as_str(),
+            "landed_and_accepted" | "final_candidate_execution_only"
+        ) {
+            continue;
+        }
+        for dependency in &claim.depends_on {
+            let blocked = resolutions
+                .get(dependency.as_str())
+                .is_some_and(|resolution| {
+                    matches!(
+                        *resolution,
+                        "accepted_defer_with_non_claim"
+                            | "candidate_exclusion_with_manifest"
+                            | "failed_release_hold"
+                    )
+                });
+            if blocked {
+                violations.push(rule(
+                    RULE_DEPENDENCY,
+                    format!(
+                        "claim `{}` is delivered but depends on `{dependency}`, which the release defers, excludes or holds",
+                        claim.claim_id
+                    ),
+                ));
+            }
+        }
     }
 }
 
@@ -742,8 +786,6 @@ fn check_stage(packet: &Packet, violations: &mut Vec<String>) {
                 ),
             ));
         }
-    }
-    if eligible {
         for claim in packet
             .claims
             .iter()
@@ -752,11 +794,13 @@ fn check_stage(packet: &Packet, violations: &mut Vec<String>) {
             violations.push(rule(
                 RULE_STAGE_LAW,
                 format!(
-                    "stage is hard_cut_eligible but claim `{}` is a failed_release_hold",
+                    "stage is {stage} but claim `{}` is a failed_release_hold; closed scope has no unresolved hold",
                     claim.claim_id
                 ),
             ));
         }
+    }
+    if eligible {
         if packet.observed_main.sha.is_none() {
             violations.push(rule(
                 RULE_STAGE_LAW,

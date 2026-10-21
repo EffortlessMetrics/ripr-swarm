@@ -264,6 +264,11 @@ fn dependency_must_name_another_claim() {
     let mut itself = valid();
     itself["claims"][0]["depends_on"] = json!(["a"]);
     assert_trips_only(RULE_DEPENDENCY, &itself);
+
+    // a landed claim cannot rest on a prerequisite the release defers
+    let mut deferred_prerequisite = valid();
+    deferred_prerequisite["claims"][0]["depends_on"] = json!(["b"]);
+    assert_trips_only(RULE_DEPENDENCY, &deferred_prerequisite);
 }
 
 #[test]
@@ -308,6 +313,13 @@ fn stage_cannot_outrun_the_rows() {
     hold["claims"][1]["resolution"] = json!("failed_release_hold");
     hold["claims"][1]["next"] = json!("Fix the failing predicate; owner is the corpus thread.");
     assert_trips_only(RULE_STAGE_LAW, &hold);
+
+    let mut closed_hold = eligible();
+    closed_hold["stage"] = json!("scope_closed");
+    closed_hold["claims"][1]["resolution"] = json!("failed_release_hold");
+    closed_hold["claims"][1]["next"] =
+        json!("Fix the failing predicate; owner is the corpus thread.");
+    assert_trips_only(RULE_STAGE_LAW, &closed_hold);
 
     let mut no_main = eligible();
     no_main["observed_main"] = json!({ "sha": null });
