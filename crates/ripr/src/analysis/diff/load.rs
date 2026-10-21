@@ -1234,8 +1234,15 @@ pub fn another_base_candidate(root: &Path, git_timeout: Option<Duration>) -> Opt
                 .unwrap_or(0)
                 .saturating_add(deleted.parse::<usize>().unwrap_or(0));
             total_lines = total_lines.saturating_add(changed);
-            let new_path = path.rsplit(" => ").next().unwrap_or(path);
-            if new_path.trim_end().ends_with(".rs") {
+            // Git quotes paths with special characters; unwrap the
+            // quoting so the extension still classifies the file.
+            let new_path = path
+                .rsplit(" => ")
+                .next()
+                .unwrap_or(path)
+                .trim()
+                .trim_matches('"');
+            if new_path.ends_with(".rs") {
                 rust_lines = rust_lines.saturating_add(changed);
             }
         }
