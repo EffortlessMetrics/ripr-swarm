@@ -294,7 +294,7 @@ impl RelatedTestCandidateIndex {
             }
         }
 
-        if owner_fn.is_some_and(equality_dispatch::is_partial_eq_method) {
+        if owner_fn.is_some_and(equality_dispatch::has_partial_eq_shape) {
             extend_bucket(&mut selected, Some(self.by_equality_assert.as_slice()));
         }
 
@@ -897,8 +897,9 @@ fn find_related_tests_with_candidates<'a>(
         // the owner's `PartialEq::eq` with no call fact naming it. A distinct
         // signal from `calls_owner`: it bypasses none of the cross-package
         // guards below, so only an in-package, same-file test can use it.
-        let equality_asserts_owner = !calls_owner
-            && !property_only_owner_call
+        // Evaluated independently of `calls_owner`: a name-only `Other::eq`
+        // call elsewhere in the test must not hide a real macro dispatch.
+        let equality_asserts_owner = !property_only_owner_call
             && match (owner_fn, equality_owner) {
                 (Some(owner), Some(equality)) => {
                     equality_dispatch::test_asserts_equality_through_owner(
@@ -1010,6 +1011,7 @@ fn find_related_tests_with_candidates<'a>(
         });
 
         if calls_owner
+            && !equality_asserts_owner
             && !calls_helper_entry
             && call_identity.as_ref().is_some_and(|identity| {
                 identity.resolve_test(test, index) == super::CallTarget::Other

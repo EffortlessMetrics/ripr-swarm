@@ -16977,3 +16977,28 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0286"
+name = "Comparison assertions reach a changed user PartialEq"
+spec = "docs/specs/RIPR-SPEC-0286-partialeq-assert-dispatch.md"
+tests = [
+  "crates/ripr/tests/partialeq_assert_dispatch.rs::an_assert_eq_over_two_keys_reaches_the_changed_eq",
+  "crates/ripr/tests/partialeq_assert_dispatch.rs::a_constructor_named_call_returning_another_type_is_not_a_key",
+  "crates/ripr/tests/partialeq_assert_dispatch.rs::a_local_partial_eq_trait_is_not_std_equality",
+  "crates/ripr/tests/partialeq_assert_dispatch.rs::a_crate_root_import_may_bind_a_different_key_than_the_nested_owner",
+  "crates/ripr/tests/partialeq_assert_dispatch.rs::a_name_only_eq_call_does_not_hide_the_macro_dispatch",
+  "crates/ripr/tests/partialeq_assert_dispatch.rs::a_debug_only_assertion_reaches_the_changed_eq",
+  "crates/ripr/tests/partialeq_assert_dispatch.rs::an_assert_eq_inside_an_opaque_property_macro_is_not_credited",
+  "crates/ripr/tests/partialeq_assert_dispatch.rs::a_non_partial_eq_owner_keeps_the_fixture_stop_reason_from_every_related_test",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/analysis/classify/related_tests/equality_dispatch.rs",
+  "crates/ripr/src/analysis/classify/related_tests.rs",
+  "crates/ripr/src/analysis/classifier/finding.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0286-partialeq-assert-dispatch.md",
+]
+metrics = ["unit_test_pass_rate"]

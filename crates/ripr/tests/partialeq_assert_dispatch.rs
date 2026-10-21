@@ -508,3 +508,221 @@ mod tests {{
     );
     Ok(())
 }
+
+/// Whole-file source with the changed `eq` line spliced in at `{body}`.
+fn custom(template: &'static str) -> Result<TempRepo, String> {
+    TempRepo::create(move |body| template.replace("{body}\n", body))
+}
+
+#[test]
+fn a_constructor_named_call_returning_another_type_is_not_a_key() -> Result<(), String> {
+    let repo = custom(
+        "#[derive(Debug, PartialEq)]
+pub struct Other;
+
+pub struct Key {
+    name: String,
+    id: u32,
+}
+
+impl Key {
+    pub fn new() -> Other {
+        Other
+    }
+}
+
+impl PartialEq for Key {
+    fn eq(&self, other: &Key) -> bool {
+{body}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_returns_other() {
+        assert_eq!(Key::new(), Key::new());
+    }
+}
+",
+    )?;
+    let findings = repo.findings()?;
+    assert_eq!(
+        direct_tests(&findings),
+        Vec::<String>::new(),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_local_partial_eq_trait_is_not_std_equality() -> Result<(), String> {
+    let repo = custom(
+        "trait PartialEq {
+    fn eq(&self, other: &Self) -> bool;
+}
+
+#[derive(Debug)]
+pub struct Key {
+    name: String,
+    id: u32,
+}
+
+impl PartialEq for Key {
+    fn eq(&self, other: &Key) -> bool {
+{body}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compares_two_keys() {
+        let a = Key { name: String::new(), id: 1 };
+        let b = Key { name: String::new(), id: 1 };
+        assert_eq!(a, b);
+    }
+}
+",
+    )?;
+    let findings = repo.findings()?;
+    assert_eq!(
+        direct_tests(&findings),
+        Vec::<String>::new(),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_crate_root_import_may_bind_a_different_key_than_the_nested_owner() -> Result<(), String> {
+    let repo = custom(
+        "#[derive(Debug, PartialEq)]
+pub struct Key {
+    id: u32,
+}
+
+mod inner {
+    #[derive(Debug)]
+    pub struct Key {
+        name: String,
+        id: u32,
+    }
+
+    impl PartialEq for Key {
+        fn eq(&self, other: &Key) -> bool {
+{body}
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use crate::Key;
+
+        #[test]
+        fn compares_the_root_key() {
+            let a = Key { id: 1 };
+            let b = Key { id: 1 };
+            assert_eq!(a, b);
+        }
+    }
+}
+",
+    )?;
+    let findings = repo.findings()?;
+    assert_eq!(
+        direct_tests(&findings),
+        Vec::<String>::new(),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_name_only_eq_call_does_not_hide_the_macro_dispatch() -> Result<(), String> {
+    let repo = custom(
+        "#[derive(Debug)]
+pub struct Other(u32);
+
+impl PartialEq for Other {
+    fn eq(&self, other: &Other) -> bool {
+        self.0 == other.0
+    }
+}
+
+#[derive(Debug)]
+pub struct Key {
+    name: String,
+    id: u32,
+}
+
+impl PartialEq for Key {
+    fn eq(&self, other: &Key) -> bool {
+{body}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mixes_both() {
+        let o = Other(1);
+        assert!(o.eq(&Other(1)));
+        let a = Key { name: String::new(), id: 1 };
+        let b = Key { name: String::new(), id: 1 };
+        assert_eq!(a, b);
+    }
+}
+",
+    )?;
+    let findings = repo.findings()?;
+    assert_eq!(direct_tests(&findings), ["mixes_both"], "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn a_debug_only_assertion_reaches_the_changed_eq() -> Result<(), String> {
+    let repo = plain(
+        "    #[test]
+    fn debug_only() {
+        let a = Key::new(\"a\", 1);
+        let b = Key::new(\"a\", 1);
+        debug_assert_eq!(a, b);
+    }
+",
+    )?;
+    let findings = repo.findings()?;
+    assert_eq!(direct_tests(&findings), ["debug_only"], "{findings:?}");
+    Ok(())
+}
+
+#[test]
+fn an_assert_eq_inside_an_opaque_property_macro_is_not_credited() -> Result<(), String> {
+    let repo = plain(
+        "    #[test]
+    fn plain_control() {
+        let a = Key::new(\"a\", 1);
+        let b = Key::new(\"a\", 1);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn inside_a_property_macro() {
+        let a = Key::new(\"a\", 1);
+        let b = Key::new(\"a\", 1);
+        proptest! {
+            assert_eq!(a, b);
+        }
+    }
+",
+    )?;
+    let findings = repo.findings()?;
+    assert_eq!(direct_tests(&findings), ["plain_control"], "{findings:?}");
+    Ok(())
+}

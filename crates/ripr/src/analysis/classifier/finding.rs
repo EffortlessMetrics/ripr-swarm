@@ -30,11 +30,16 @@ pub(in crate::analysis) fn build_finding(
     // establishes reach, only those tests can make the fixture opaque; with
     // none, and for every other owner, every related test is read as before.
     let owner_is_function = context.owner_fn.is_some();
-    let narrow_fixture_scan = context.owner_fn.is_some_and(is_partial_eq_method);
+    let narrow_fixture_scan = context
+        .owner_fn
+        .is_some_and(|owner| is_partial_eq_method(owner, context.index));
     let reaching_summaries: Vec<&TestSummary> = context
         .related_tests
         .iter()
-        .filter(|(_, reason)| reason.establishes_reach(owner_is_function))
+        .filter(|(_, reason)| {
+            reason.establishes_reach(owner_is_function)
+                || *reason == crate::domain::RelationReason::FixtureOwnerAffinity
+        })
         .map(|(test, _)| *test)
         .collect();
     let test_summaries = if !narrow_fixture_scan || reaching_summaries.is_empty() {

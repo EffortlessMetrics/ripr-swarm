@@ -26,8 +26,9 @@
 //! or refused by the ordinary oracle pipeline; nothing here raises a class.
 
 use super::{
-    FunctionSummary, RustIndex, TestSummary, ident_boundary, initializer_is_one_head_expr,
-    initializer_type_head, is_ident_byte, let_binding_mentions_type, mask_comments_and_strings,
+    FunctionImplContext, FunctionSummary, RustIndex, TestSummary, ident_boundary,
+    initializer_is_one_head_expr, is_ident_byte, is_variant_name, last_let_statement,
+    mask_comments_and_strings, type_head,
 };
 use crate::analysis::classify::owner_pin::{
     OwnerScope, file_renames_to, parent_chain_shadows_type, test_module_shadows_type,
@@ -52,6 +53,9 @@ pub(super) fn equality_owner<'a>(
     index: &RustIndex,
 ) -> Option<EqualityOwner<'a>> {
     let impl_type = partial_eq_impl_type(owner)?;
+    if !partial_eq_trait_is_std(owner, index) {
+        return None;
+    }
     let block_prefix = owner.id.0.strip_suffix(owner.name.as_str())?;
     let custom_ne = index.functions().iter().any(|function| {
         function.name == "ne" && function.id.0.strip_suffix("ne") == Some(block_prefix)
@@ -91,10 +95,86 @@ fn partial_eq_impl_type(owner: &FunctionSummary) -> Option<&str> {
     plain_type_name(self_ty.trim())
 }
 
-/// Whether `owner` is `eq`/`ne` of a plain `impl PartialEq for T`: the only
-/// owners the equality reading (and its prefilter bucket) applies to.
-pub(in crate::analysis) fn is_partial_eq_method(owner: &FunctionSummary) -> bool {
+/// Whether `owner` is shaped like `eq`/`ne` of a plain `impl PartialEq for T`.
+/// Id text alone cannot tell the standard trait from a local one of the same
+/// name, so this is only the candidate prefilter's superset test.
+pub(super) fn has_partial_eq_shape(owner: &FunctionSummary) -> bool {
     partial_eq_impl_type(owner).is_some()
+}
+
+/// Whether `owner` is `eq`/`ne` of a plain `impl PartialEq for T` where
+/// `PartialEq` is the standard trait: the only owners the equality reading
+/// and the fixture narrowing apply to.
+pub(in crate::analysis) fn is_partial_eq_method(
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    partial_eq_impl_type(owner).is_some() && partial_eq_trait_is_std(owner, index)
+}
+
+/// Whether the bare name `PartialEq` can only mean the standard trait for the
+/// owner's file: no workspace file declares a `trait PartialEq`, and the
+/// owner's file imports none by a non-standard path or glob. Any doubt reads
+/// as a shadow.
+fn partial_eq_trait_is_std(owner: &FunctionSummary, index: &RustIndex) -> bool {
+    let declares_local_trait = index.files().values().any(|facts| {
+        let source = facts.data().source.as_ref();
+        source.contains("trait PartialEq")
+            && declares_trait(&mask_comments_and_strings(source), "PartialEq")
+    });
+    if declares_local_trait {
+        return false;
+    }
+    let Some(facts) = index.files().get(&owner.file) else {
+        return false;
+    };
+    let masked = mask_comments_and_strings(facts.data().source.as_ref());
+    !use_paths(&masked).into_iter().any(|path| {
+        let words = path_words(path);
+        if matches!(words.first(), Some(&("std" | "core" | "alloc"))) {
+            return false;
+        }
+        let glob = words.contains(&"*");
+        words.contains(&"PartialEq") || (glob && !(words.len() == 2 && is_local_root(&words)))
+    })
+}
+
+fn is_local_root(words: &[&str]) -> bool {
+    matches!(words.first(), Some(&("super" | "self" | "crate")))
+}
+
+fn path_words(path: &str) -> Vec<&str> {
+    path.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '*'))
+        .filter(|word| !word.is_empty())
+        .collect()
+}
+
+/// Whether the masked source declares `trait name`.
+fn declares_trait(masked: &str, name: &str) -> bool {
+    declares_item(masked, &["trait"], name)
+}
+
+/// Number of whole-word `kw name` declarations (`struct Key`, ...).
+fn count_items(masked: &str, keywords: &[&str], name: &str) -> usize {
+    let bytes = masked.as_bytes();
+    let mut count = 0;
+    for keyword in keywords {
+        let needle = format!("{keyword} {name}");
+        let mut from = 0usize;
+        while let Some(relative) = masked[from..].find(&needle) {
+            let at = from + relative;
+            from = at + needle.len();
+            let before_ok = at == 0 || !is_ident_byte(bytes[at - 1]);
+            if before_ok && ident_boundary(bytes, at, at + needle.len()) {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+fn declares_item(masked: &str, keywords: &[&str], name: &str) -> bool {
+    count_items(masked, keywords, name) > 0
 }
 
 /// The identifier of a single-segment type, with at most lifetime
@@ -141,17 +221,27 @@ pub(super) fn test_asserts_equality_through_owner(
     }
     let impl_type = equality.impl_type;
     let masked = mask_comments_and_strings(&test.body);
+    // Text inside a property-test macro is opaque to every other relation
+    // (an explicit `a.eq(&b)` there is refused), so it is here too.
+    let opaque: Vec<std::ops::Range<usize>> =
+        crate::analysis::extract::property_macros::opaque_property_macros(&test.body)
+            .into_iter()
+            .map(|item| item.range)
+            .collect();
     let reaching: Vec<_> = comparison_macros(&masked)
         .into_iter()
+        .filter(|call| !opaque.iter().any(|range| range.contains(&call.start)))
         .filter(|call| {
             (if call.negated {
                 equality.via_ne
             } else {
                 equality.via_eq
             }) && call.operands.len() >= 2
-                && call.operands[..2]
-                    .iter()
-                    .all(|operand| operand_has_type(operand, impl_type, &masked[..call.start]))
+                && call.operands[..2].iter().all(|operand| {
+                    operand_has_type(operand, impl_type, &masked[..call.start], &|name| {
+                        associated_fn_returns_self(index, impl_type, name)
+                    })
+                })
         })
         .collect();
     if reaching.is_empty() {
@@ -167,42 +257,70 @@ pub(super) fn test_asserts_equality_through_owner(
         return false;
     }
     let masked_source = mask_comments_and_strings(source);
-    if imports_other_type(&masked_source, impl_type) {
+    if imports_other_type(&masked_source, impl_type, &owner.file) {
         return false;
     }
-    ![
+    const NAMES: [&str; 4] = [
         "assert_eq",
         "assert_ne",
         "debug_assert_eq",
         "debug_assert_ne",
-    ]
-    .iter()
-    .any(|name| defines_macro(&masked_source, name))
+    ];
+    // A user macro of the same name may be defined here, imported by `use`,
+    // brought in by `#[macro_use]`, or defined in any workspace file.
+    let imported = use_paths(&masked_source).into_iter().any(|path| {
+        let words = path_words(path);
+        !matches!(words.first(), Some(&("std" | "core" | "alloc")))
+            && words.iter().any(|word| NAMES.contains(word))
+    });
+    let defined_anywhere = index.files().values().any(|facts| {
+        let other = facts.data().source.as_ref();
+        other.contains("macro_rules!")
+            && NAMES
+                .iter()
+                .any(|name| defines_macro(&mask_comments_and_strings(other), name))
+    });
+    !(imported || masked_source.contains("macro_use") || defined_anywhere)
 }
 
-/// Whether the file may bring a different `T` into scope by `use`: a path
-/// naming `T` other than `super::T`/`self::T`/`crate::T`, or a glob other
-/// than `super::*`/`self::*`/`crate::*` and the standard library's. The owner
-/// id carries no module path, so `use super::b::Key;` beside `a::Key`'s impl
-/// cannot be told from the owner's own type; over-refusal only withholds the
+/// Whether the file may bring a different `T` into scope. The owner id
+/// carries no module path, so identity is only established when the file
+/// leaves no second candidate: more than one `struct`/`enum`/`union`/`type`
+/// named `T` is ambiguous; a `use` naming `T` must be `super::T` (the file
+/// declares `T` once, so the parent module can only mean that one) or
+/// `crate::T` from a crate-root file with the single declaration; any other
+/// named path, and any glob other than `super::*`/`self::*`/`crate::*` or the
+/// standard library's, may name another `T`. Over-refusal only withholds the
 /// relation.
-fn imports_other_type(masked_source: &str, impl_type: &str) -> bool {
+fn imports_other_type(masked_source: &str, impl_type: &str, file: &std::path::Path) -> bool {
+    let declarations = count_items(
+        masked_source,
+        &["struct", "enum", "union", "type"],
+        impl_type,
+    );
+    if declarations > 1 {
+        return true;
+    }
+    let crate_root = file
+        .file_name()
+        .is_some_and(|name| name == "lib.rs" || name == "main.rs");
     use_paths(masked_source).into_iter().any(|path| {
-        let words: Vec<&str> = path
-            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '*'))
-            .filter(|word| !word.is_empty())
-            .collect();
-        let local_root = matches!(words.first(), Some(&("super" | "self" | "crate")));
-        let std_root = matches!(words.first(), Some(&("std" | "core" | "alloc")));
-        let names_type = words.contains(&impl_type);
-        let glob = words.contains(&"*");
-        if std_root {
+        let words = path_words(path);
+        if matches!(words.first(), Some(&("std" | "core" | "alloc"))) {
             return false;
         }
-        if names_type {
-            return !(words.len() == 2 && local_root && !glob);
+        let glob = words.contains(&"*");
+        if words.contains(&impl_type) {
+            let plain = words.len() == 2 && !glob;
+            return !(plain
+                && declarations == 1
+                && match words.first() {
+                    Some(&"super") => true,
+                    Some(&"crate") => crate_root,
+                    _ => false,
+                });
         }
-        glob && !(words.len() == 2 && local_root)
+        glob && !(words.len() == 2 && is_local_root(&words))
     })
 }
 
@@ -237,6 +355,9 @@ fn rebound_by_pattern(before: &str, name: &str) -> bool {
         if !ident_boundary(bytes, at, at + name.len()) {
             continue;
         }
+        if in_struct_pattern(before, at) {
+            return true;
+        }
         let line_start = before[..at].rfind([';', '{', '}']).map_or(0, |i| i + 1);
         let prefix = before[line_start..at].trim_start();
         // Text between the keyword and the name is the pattern so far: an
@@ -261,6 +382,46 @@ fn rebound_by_pattern(before: &str, name: &str) -> bool {
     false
 }
 
+/// Whether the identifier at `at` sits inside a `{ .. }` group that is a
+/// destructuring pattern: the group is closed by `}` followed by a lone `=`
+/// or `in`, as in `let S { a, .. } = x`, `if let S { a } = x`,
+/// `for S { a } in xs`. A struct literal initialiser is followed by `;`.
+fn in_struct_pattern(before: &str, at: usize) -> bool {
+    let bytes = before.as_bytes();
+    let mut depth = 0usize;
+    let mut open = None;
+    for index in (0..at).rev() {
+        match bytes[index] {
+            b'}' => depth += 1,
+            b'{' if depth == 0 => {
+                open = Some(index);
+                break;
+            }
+            b'{' => depth -= 1,
+            _ => {}
+        }
+    }
+    let Some(open) = open else {
+        return false;
+    };
+    let mut depth = 0usize;
+    for (offset, &byte) in bytes[open..].iter().enumerate() {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    let rest = before[open + offset + 1..].trim_start();
+                    return (rest.starts_with('=') && !rest.starts_with("=="))
+                        || rest.starts_with("in ");
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 /// Whether a `macro_rules! name` definition appears in the masked source.
 fn defines_macro(masked: &str, name: &str) -> bool {
     let needle = "macro_rules!";
@@ -276,6 +437,18 @@ fn defines_macro(masked: &str, name: &str) -> bool {
         search += relative + needle.len();
     }
     false
+}
+
+/// Whether `before` ends with the whole path segment `root::` (not
+/// `foo_std::`) and that segment starts the path.
+fn path_root_before(before: &str, root: &str) -> bool {
+    let Some(head) = before.strip_suffix("::").and_then(|h| h.strip_suffix(root)) else {
+        return false;
+    };
+    !head
+        .as_bytes()
+        .last()
+        .is_some_and(|&b| is_ident_byte(b) || b == b':')
 }
 
 #[derive(Debug)]
@@ -307,7 +480,9 @@ fn comparison_macros(masked: &str) -> Vec<ComparisonMacro<'_>> {
                 continue;
             }
             let before = &masked[..start];
-            if before.ends_with("::") && !before.ends_with("std::") && !before.ends_with("core::") {
+            if before.ends_with("::")
+                && !(path_root_before(before, "std") || path_root_before(before, "core"))
+            {
                 continue;
             }
             let after = masked[search..].trim_start();
@@ -361,9 +536,19 @@ fn split_arguments(masked: &str, open: usize) -> Option<Vec<&str>> {
     None
 }
 
-/// Whether `operand` evaluates to a value of `impl_type`, from syntax alone.
-/// `before` is the masked body up to the assertion, for `let` bindings.
-fn operand_has_type(operand: &str, impl_type: &str, before: &str) -> bool {
+/// Whether `operand` evaluates to a value of `impl_type`. Only forms whose
+/// type the syntax (or a resolved declaration) guarantees count: the unit
+/// struct, `T { .. }`, `T(..)`, `T::Variant(..)`, `T::assoc(..)` whose
+/// declared return type is `Self`/`T` (`returns_self`), and a binding whose
+/// last `let` is annotated `: T` or initialised by one of those. A
+/// constructor-shaped name is not a return type: `T::new()` may return
+/// another type. `before` is the masked body up to the assertion.
+fn operand_has_type(
+    operand: &str,
+    impl_type: &str,
+    before: &str,
+    returns_self: &dyn Fn(&str) -> bool,
+) -> bool {
     let mut operand = operand.trim();
     while let Some(rest) = operand
         .strip_prefix('&')
@@ -378,11 +563,82 @@ fn operand_has_type(operand: &str, impl_type: &str, before: &str) -> bool {
         // A unit struct is its own value; any other bare name is a binding.
         return operand == impl_type
             || (!rebound_by_pattern(before, operand)
-                && let_binding_mentions_type(before, operand, impl_type));
+                && last_let_statement(before, operand)
+                    .is_some_and(|stmt| statement_has_type(stmt, impl_type, returns_self)));
     }
-    initializer_is_one_head_expr(operand)
-        && !operand.contains("::<")
-        && initializer_type_head(operand) == Some(impl_type)
+    expression_has_type(operand, impl_type, returns_self)
+}
+
+fn statement_has_type(stmt: &str, impl_type: &str, returns_self: &dyn Fn(&str) -> bool) -> bool {
+    let Some(eq) = stmt.find('=') else {
+        return false;
+    };
+    let pattern = &stmt[..eq];
+    if let Some(colon) = pattern.find(':') {
+        return type_head(&pattern[colon + 1..])
+            .is_some_and(|(segments, _)| segments.as_slice() == [impl_type]);
+    }
+    expression_has_type(&stmt[eq + 1..], impl_type, returns_self)
+}
+
+fn expression_has_type(expr: &str, impl_type: &str, returns_self: &dyn Fn(&str) -> bool) -> bool {
+    let expr = expr.trim();
+    if !initializer_is_one_head_expr(expr) || expr.contains("::<") {
+        return false;
+    }
+    let Some((segments, next)) = type_head(expr) else {
+        return false;
+    };
+    match (segments.as_slice(), next) {
+        ([ty], Some(b'(' | b'{')) => *ty == impl_type,
+        ([ty, call], Some(b'(')) if *ty == impl_type => returns_self(call) || is_variant_name(call),
+        ([ty, variant], Some(b'{')) if *ty == impl_type => is_variant_name(variant),
+        _ => false,
+    }
+}
+
+/// Whether every function `name` defined in an `impl` of `impl_type` declares
+/// `Self` or `impl_type` as its return type, and at least one exists. The
+/// signature is read from the function's own file, from its line up to the
+/// body or `;`.
+fn associated_fn_returns_self(index: &RustIndex, impl_type: &str, name: &str) -> bool {
+    let mut found = false;
+    for function in index.functions().iter() {
+        let in_impl = matches!(
+            &function.impl_context,
+            FunctionImplContext::Impl { self_type } if self_type == impl_type
+        );
+        if function.name != name || !in_impl {
+            continue;
+        }
+        let Some(facts) = index.files().get(&function.file) else {
+            return false;
+        };
+        let masked = mask_comments_and_strings(facts.data().source.as_ref());
+        if !signature_returns(&masked, function.start_line, impl_type) {
+            return false;
+        }
+        found = true;
+    }
+    found
+}
+
+/// Whether the signature starting at 1-based `line` ends `-> Self` or
+/// `-> ty`, with no generics or wrappers.
+fn signature_returns(masked: &str, line: usize, ty: &str) -> bool {
+    let text: String = masked
+        .lines()
+        .skip(line.saturating_sub(1))
+        .skip_while(|l| l.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let end = text.find(['{', ';']).unwrap_or(text.len());
+    let signature = &text[..end];
+    let Some((_, ret)) = signature.rsplit_once("->") else {
+        return false;
+    };
+    let ret = ret.split(" where ").next().unwrap_or(ret).trim();
+    ret == "Self" || ret == ty
 }
 
 #[cfg(test)]
@@ -421,11 +677,14 @@ mod tests {
         assert_eq!(macros("debug_assert_ne!(a, b);").len(), 1);
         assert_eq!(macros("std::assert_eq!(a, b);").len(), 1);
         assert!(macros("other::assert_eq!(a, b);").is_empty());
+        assert!(macros("foo_std::assert_eq!(a, b);").is_empty());
+        assert!(macros("x::std::assert_eq!(a, b);").is_empty());
     }
 
     #[test]
     fn operands_resolve_only_to_syntactically_established_types() {
-        let before = "let a = Key::new(1);\nlet b: Key = make();\nlet c = make();\nlet d = Key::new(1).id();\n";
+        let before = "let a = Key::new(1);\nlet b: Key = make();\nlet c = make();\nlet d = Key::new(1).id();\nlet e = Key::other(1);\n";
+        let ctor = |name: &str| name == "new";
         for typed in [
             "a",
             "&a",
@@ -434,8 +693,9 @@ mod tests {
             "Key { id: 1 }",
             "Key(1)",
             "Key",
+            "Key::Circle(1)",
         ] {
-            assert!(operand_has_type(typed, "Key", before), "{typed}");
+            assert!(operand_has_type(typed, "Key", before, &ctor), "{typed}");
         }
         for untyped in [
             "c",
@@ -444,20 +704,26 @@ mod tests {
             "make()",
             "Key::new(1).id()",
             "Key::make_other()",
+            "Key::default()",
+            "e",
+            "a::Key { id: 1 }",
             "Other::new(1)",
             "String::from(\"x\")",
             "1",
             "Key::<u8>::new(1)",
             "",
         ] {
-            assert!(!operand_has_type(untyped, "Key", before), "{untyped}");
+            assert!(
+                !operand_has_type(untyped, "Key", before, &ctor),
+                "{untyped}"
+            );
         }
     }
 
     #[test]
     fn a_later_shadowing_let_decides_the_binding_type() {
         let before = "let a = Key::new(1);\nlet a = make();\n";
-        assert!(!operand_has_type("a", "Key", before));
+        assert!(!operand_has_type("a", "Key", before, &|_| true));
     }
 
     #[test]
@@ -505,25 +771,37 @@ mod tests {
 
     #[test]
     fn imports_that_may_name_another_key_are_refused() {
+        let file = std::path::Path::new("src/inner.rs");
         for refused in [
-            "use super::b::Key;",
-            "use crate::b::Key;",
-            "use other::Key;",
-            "use super::{Key, X};",
-            "use super::b::*;",
-            "use other::*;",
+            "struct Key; use super::b::Key;",
+            "struct Key; use crate::b::Key;",
+            "struct Key; use other::Key;",
+            "struct Key; use super::{Key, X};",
+            "struct Key; use super::b::*;",
+            "struct Key; use other::*;",
+            "struct Key; use crate::Key;",
+            "use super::Key;",
+            "struct Key; mod m { struct Key; }",
+            "struct Key; enum Key {}",
         ] {
-            assert!(imports_other_type(refused, "Key"), "{refused}");
+            assert!(imports_other_type(refused, "Key", file), "{refused}");
         }
         for allowed in [
-            "use super::*;",
-            "use super::Key;",
-            "use crate::Key;",
-            "use std::collections::HashMap;",
-            "use super::other::Thing;",
+            "struct Key; use super::*;",
+            "struct Key; use super::Key;",
+            "struct Key; use std::collections::HashMap;",
+            "struct Key; use super::other::Thing;",
+            "struct KeyOther; struct Key;",
         ] {
-            assert!(!imports_other_type(allowed, "Key"), "{allowed}");
+            assert!(!imports_other_type(allowed, "Key", file), "{allowed}");
         }
+        let root = std::path::Path::new("src/lib.rs");
+        assert!(!imports_other_type(
+            "struct Key; use crate::Key;",
+            "Key",
+            root
+        ));
+        assert!(imports_other_type("use crate::Key;", "Key", root));
     }
 
     #[test]
@@ -533,14 +811,21 @@ mod tests {
             "let a = Key::new(1); if let Some(a) = f() { ",
             "let a = Key::new(1); let (a, c) = f(); ",
             "let a = Key::new(1); xs.map(|a| a + 1); ",
+            "let a = Key::new(1); let Wrap { a, .. } = w; ",
+            "let a = Key::new(1); if let Foo { a } = x { ",
+            "let a = Key::new(1); for S { a } in xs { ",
         ] {
             assert!(rebound_by_pattern(rebound, "a"), "{rebound}");
-            assert!(!operand_has_type("a", "Key", rebound), "{rebound}");
+            assert!(
+                !operand_has_type("a", "Key", rebound, &|_| true),
+                "{rebound}"
+            );
         }
         for plain in [
             "let a = Key::new(1); let b = Key::new(a); ",
             "let mut a = Key::new(1); f(a); ",
             "let a: Key = make(); for x in a.items() { ",
+            "let a = Key::new(1); let b = Wrap { a }; ",
         ] {
             assert!(!rebound_by_pattern(plain, "a"), "{plain}");
         }
