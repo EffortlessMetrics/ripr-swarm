@@ -5726,7 +5726,10 @@ mod composition_tests;
 /// RIPR-SPEC-0235 rule 17: `isnt` rejects one value, so passing it does not
 /// show the changed value is the right one. The producer grades it
 /// `strong_exact`; a reading that credits it names a mutant `isnt` still
-/// passes (the corpus rows `perl-test2-fee-isnt-zero`, `perl-testmore-clamp-isnt`).
+/// passes. The corpus rows `perl-test2-fee-isnt-zero` and
+/// `perl-testmore-clamp-isnt` showed it before the producer pin moved to
+/// 07320a4; the edited `perl-0235-*` packets that keep a `strong_exact` `isnt`
+/// still exercise it.
 #[test]
 fn perl_isnt_is_a_smoke_oracle_not_an_exact_one() -> Result<(), String> {
     use crate::domain::ExposureClass;
