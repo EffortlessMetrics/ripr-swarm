@@ -1,5 +1,6 @@
 use super::cfg_predicates;
 use super::index::{FactArena, IndexedFileFacts};
+use super::local_test_alias::{FileAliasCredit, LocalTestAliases};
 use super::{FunctionFact, FunctionSourceRole, RustIndex, TestFact};
 use crate::analysis::cancellation;
 use crate::analysis::extract::extract_assertions;
@@ -42,12 +43,15 @@ impl<'a> FunctionKey<'a> {
 /// every index consumer sees the same executable-test role regardless of
 /// which syntax producer handled the file.
 pub(super) fn normalize_index_test_styles(index: &mut RustIndex) -> Result<(), String> {
+    let aliases = LocalTestAliases::collect(&index.files, &index.function_facts);
     for facts in index.files.values_mut() {
         cancellation::checkpoint()?;
+        let alias_credit = aliases.credit_for(&facts.path);
         normalize_indexed_file_test_styles(
             facts,
             &mut index.function_facts,
             &mut index.test_facts,
+            alias_credit,
         )?;
     }
     index.test_order.clear();
@@ -90,6 +94,7 @@ fn normalize_indexed_file_test_styles(
     facts: &mut IndexedFileFacts,
     functions: &mut FactArena<FunctionFact>,
     tests: &mut FactArena<TestFact>,
+    alias_credit: FileAliasCredit,
 ) -> Result<(), String> {
     let mut existing_tests = std::mem::take(&mut facts.tests)
         .into_iter()
@@ -109,13 +114,18 @@ fn normalize_indexed_file_test_styles(
                 let attributes = lexical_attributes_before(lines, function.start_line);
                 let gates = lexical_gate_attributes_before(lines, function.start_line);
                 (
-                    attributes_define_test(attributes.iter().copied()),
+                    attributes_define_test(attributes.iter().copied())
+                        || attributes_use_local_alias(attributes.iter().copied(), alias_credit),
                     attributes_compile_out_in_test_build(gates.iter().map(String::as_str)),
                     cfg_predicates::attributes_require_test(gates.iter().map(String::as_str)),
                 )
             }
             None => (
-                attributes_define_test(function.attrs.iter().map(String::as_str)),
+                attributes_define_test(function.attrs.iter().map(String::as_str))
+                    || attributes_use_local_alias(
+                        function.attrs.iter().map(String::as_str),
+                        alias_credit,
+                    ),
                 attributes_compile_out_in_test_build(function.attrs.iter().map(String::as_str)),
                 cfg_predicates::attributes_require_test(function.attrs.iter().map(String::as_str)),
             ),
@@ -185,6 +195,19 @@ pub(crate) fn attributes_define_test<'attribute>(
         normalized_test_attribute_path(attribute)
             .as_deref()
             .is_some_and(is_test_attribute_path)
+    })
+}
+
+/// Whether any attribute is `#[crate::test]` / `#[self::test]` and the file's
+/// crate establishes a local test-wrapper alias for it (#9001).
+fn attributes_use_local_alias<'attribute>(
+    attributes: impl IntoIterator<Item = &'attribute str>,
+    credit: FileAliasCredit,
+) -> bool {
+    attributes.into_iter().any(|attribute| {
+        normalized_test_attribute_path(attribute)
+            .as_deref()
+            .is_some_and(|path| credit.credits(path))
     })
 }
 

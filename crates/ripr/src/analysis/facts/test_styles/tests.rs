@@ -1207,7 +1207,12 @@ fn normalize_file_test_styles(facts: &mut FileFacts) -> Result<(), String> {
         .files
         .get_mut(&path)
         .ok_or("normalization fixture file")?;
-    normalize_indexed_file_test_styles(file, &mut index.function_facts, &mut index.test_facts)?;
+    normalize_indexed_file_test_styles(
+        file,
+        &mut index.function_facts,
+        &mut index.test_facts,
+        FileAliasCredit::default(),
+    )?;
     *facts = index.owned_file(&path).ok_or("normalized fixture file")?;
     Ok(())
 }
@@ -1387,6 +1392,116 @@ fn direct_cfg_helpers_have_evidence_role_on_parser_and_lexical_paths() -> Result
         for name in ["standalone_helper", "conjunct_helper"] {
             assert_evidence_only_dead_test(&facts, name);
         }
+    }
+    Ok(())
+}
+
+const ALIAS_ROOT: &str = "use my_macros::wrapped_test as test;\npub fn value() -> i32 { 3 }\n";
+const WRAPPER_MACRO: &str = "#[proc_macro_attribute]\npub fn wrapped_test(attr: TokenStream, item: TokenStream) -> TokenStream {\n    quote! { #[::tokio::test] #item }\n}\n";
+const USER: &str = "#[crate::test]\nasync fn aliased() { assert_eq!(crate::value(), 3); }\n#[crate::tests]\nfn lookalike() {}\n#[other::test]\nfn arbitrary() {}\n";
+
+fn alias_test_names(files: &[(&str, &str)]) -> Result<Vec<String>, String> {
+    let mut index = RustIndex::default();
+    for (file, source) in files {
+        let facts = RaRustSyntaxAdapter.summarize_file(Path::new(file), source)?;
+        index.insert_file(PathBuf::from(file), facts, true);
+    }
+    normalize_index_test_styles(&mut index)?;
+    Ok(index_test_names(&index)
+        .into_iter()
+        .map(str::to_string)
+        .collect())
+}
+
+#[test]
+fn crate_test_alias_to_workspace_test_wrapper_macro_is_a_test() -> Result<(), String> {
+    let names = alias_test_names(&[
+        ("app/src/lib.rs", ALIAS_ROOT),
+        ("app/src/user.rs", USER),
+        ("macros/src/lib.rs", WRAPPER_MACRO),
+    ])?;
+    // Only the exact `crate::test` spelling is credited: neither the
+    // `crate::tests` lookalike nor an arbitrary `other::test` is.
+    assert_eq!(names, ["aliased"]);
+    Ok(())
+}
+
+#[test]
+fn self_test_alias_is_credited_only_in_the_aliasing_file() -> Result<(), String> {
+    let root = format!("{ALIAS_ROOT}#[self::test]\nfn in_root() {{}}\n");
+    let names = alias_test_names(&[
+        ("app/src/lib.rs", &root),
+        ("app/src/user.rs", "#[self::test]\nfn elsewhere() {}\n"),
+        ("macros/src/lib.rs", WRAPPER_MACRO),
+    ])?;
+    assert_eq!(names, ["in_root"]);
+    Ok(())
+}
+
+#[test]
+fn crate_test_stays_a_non_test_without_a_resolvable_wrapper() -> Result<(), String> {
+    let cases: [(&str, Vec<(&str, &str)>); 6] = [
+        (
+            "no alias at the crate root",
+            vec![
+                ("app/src/lib.rs", "pub fn value() -> i32 { 3 }\n"),
+                ("app/src/user.rs", USER),
+                ("macros/src/lib.rs", WRAPPER_MACRO),
+            ],
+        ),
+        (
+            "alias target is not in the analyzed workspace",
+            vec![("app/src/lib.rs", ALIAS_ROOT), ("app/src/user.rs", USER)],
+        ),
+        (
+            "macro never names a test attribute",
+            vec![
+                ("app/src/lib.rs", ALIAS_ROOT),
+                ("app/src/user.rs", USER),
+                (
+                    "macros/src/lib.rs",
+                    "#[proc_macro_attribute]\npub fn wrapped_test(a: TokenStream, i: TokenStream) -> TokenStream {\n    // tokio::test is only mentioned in a comment\n    i\n}\n",
+                ),
+            ],
+        ),
+        (
+            "alias is cfg-gated",
+            vec![
+                (
+                    "app/src/lib.rs",
+                    "#[cfg(feature = \"x\")]\nuse my_macros::wrapped_test as test;\n",
+                ),
+                ("app/src/user.rs", USER),
+                ("macros/src/lib.rs", WRAPPER_MACRO),
+            ],
+        ),
+        (
+            "alias target is a plain fn, not a proc-macro attribute",
+            vec![
+                ("app/src/lib.rs", ALIAS_ROOT),
+                ("app/src/user.rs", USER),
+                (
+                    "macros/src/lib.rs",
+                    "pub fn wrapped_test() { let _ = \"tokio::test\"; }\n",
+                ),
+            ],
+        ),
+        (
+            "two proc-macro candidates share the aliased name",
+            vec![
+                ("app/src/lib.rs", ALIAS_ROOT),
+                ("app/src/user.rs", USER),
+                ("macros/src/lib.rs", WRAPPER_MACRO),
+                ("other/src/lib.rs", WRAPPER_MACRO),
+            ],
+        ),
+    ];
+    for (label, files) in cases {
+        let names = alias_test_names(&files)?;
+        assert!(
+            names.is_empty(),
+            "{label}: crate::test must not be credited, got {names:?}"
+        );
     }
     Ok(())
 }
