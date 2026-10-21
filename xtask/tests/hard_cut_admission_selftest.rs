@@ -47,7 +47,18 @@ fn run_wrapper(second_ref_packet_state: &str, initial_absent: bool) -> Result<i3
 /// live ref does not move. `base_parent` is the first parent of the base commit.
 /// Returns the exit code and the `cut_reason` the action published.
 fn run_active_wrapper(files_json: &str, base_parent: &str) -> Result<(i32, String), String> {
-    let (code, outputs, _) = run_scenario("active", false, Some((files_json, base_parent)))?;
+    let extras = Extras {
+        proposed: Some(packet_json("inactive", "cut-1", "", "")),
+        ..Extras::default()
+    };
+    let (code, outputs, _) = run_scenario_full(
+        "active",
+        false,
+        Some((files_json, base_parent)),
+        false,
+        false,
+        &extras,
+    )?;
     let reason = outputs
         .lines()
         .find_map(|line| line.strip_prefix("cut_reason="))
@@ -60,7 +71,18 @@ fn run_active_wrapper_summary(
     files_json: &str,
     base_parent: &str,
 ) -> Result<(i32, String, String), String> {
-    let (code, outputs, summary) = run_scenario("active", false, Some((files_json, base_parent)))?;
+    let extras = Extras {
+        proposed: Some(packet_json("inactive", "cut-1", "", "")),
+        ..Extras::default()
+    };
+    let (code, outputs, summary) = run_scenario_full(
+        "active",
+        false,
+        Some((files_json, base_parent)),
+        false,
+        false,
+        &extras,
+    )?;
     let reason = outputs
         .lines()
         .find_map(|line| line.strip_prefix("cut_reason="))
@@ -599,10 +621,29 @@ fn wrapper_unusable_base_packet_refuses_products_but_admits_the_repair() -> Resu
             "packet-only repair must admit, got {code} {reason:?}"
         ));
     }
+    let active = packet_json("active", "cut-9", &"f".repeat(40), &"f".repeat(40));
+    let (code, reason) = broken(PACKET_ONLY, Some(active))?;
+    if code != 1 || reason != "cut_packet_invalid" {
+        return Err(format!(
+            "a repair may only land inactive, got {code} {reason:?}"
+        ));
+    }
     let (code, reason) = broken(PACKET_ONLY, Some("{still broken".to_string()))?;
     if code != 1 || reason != "cut_packet_invalid" {
         return Err(format!(
             "a repair that stays invalid must be refused, got {code} {reason:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn wrapper_unreadable_head_packet_fails_closed_for_a_packet_only_pr() -> Result<(), String> {
+    // No proposed.json: the mock answers the head-ref read with HTTP 404.
+    let (code, outputs, _) = run_scenario("active", false, Some((PACKET_ONLY, &"b".repeat(40))))?;
+    if code != 1 || !outputs.contains("cut_reason=cut_packet_transition_invalid") {
+        return Err(format!(
+            "unreadable head packet must refuse, got {code}: {outputs}"
         ));
     }
     Ok(())

@@ -224,8 +224,11 @@ runs:
           cut_sha="$(jq -r 'if .state == "active" then .observed_main.sha // "" else "" end' "$packet" 2>/dev/null || true)"
           cut_args=()
           if [[ "$cut_sha" =~ ^[0-9a-f]{40}$ ]]; then
-            gh api "repos/${ADMISSION_REPOSITORY}/git/commits/${cut_sha}" > "$cut_commit"
-            cut_args=(--cut-commit "$cut_commit")
+            # An unreadable cut commit must not abort the step: the decision
+            # script refuses ordinary PRs as cut_commit_missing.
+            if gh api "repos/${ADMISSION_REPOSITORY}/git/commits/${cut_sha}" > "$cut_commit" 2>/dev/null; then
+              cut_args=(--cut-commit "$cut_commit")
+            fi
           fi
 
           # The PR head's packet is read only to check a packet-only control

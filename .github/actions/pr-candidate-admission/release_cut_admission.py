@@ -5,7 +5,7 @@ The checked-in packet is inert while ``state`` is ``inactive``. After all
 selected product PRs land, a packet-only control commit changes it to ``active``
 and binds the exact product cut SHA/tree in that commit's sole first parent.
 While active, ordinary PR qualification is refused. A packet-only control PR may
-move the state to a successor generation or ``candidate_pinned``; no product PR
+reopen the cut (``inactive``) or move it to ``candidate_pinned``; no product PR
 can self-admit by editing its checkout copy of the packet because the action
 reads the packet from the exact base commit.
 
@@ -232,11 +232,16 @@ def decide(
         "base_sha": base_sha,
         "base_tree": base_tree,
     }
-    if _changed_paths(pr_files) == [PACKET_PATH] and proposed_packet is not None:
+    if _changed_paths(pr_files) == [PACKET_PATH]:
         # A control update is the only way through or out of a freeze, so it
-        # must be sound before it can become the base every later PR reads.
-        problem = check_transition(
-            packet, proposed_packet, base_sha=base_sha, base_tree=base_tree
+        # must be sound before it can become the base every later PR reads. An
+        # unreadable head copy fails closed: retry rather than admit unchecked.
+        problem = (
+            "the PR head's packet could not be read; refresh the exact PR/head evidence and retry"
+            if proposed_packet is None
+            else check_transition(
+                packet, proposed_packet, base_sha=base_sha, base_tree=base_tree
+            )
         )
         if problem is not None:
             return {
@@ -347,31 +352,38 @@ def check_transition(
     return None
 
 
-def watch_main(
-    packet: dict[str, Any],
-    *,
-    head_commit: dict[str, Any],
-    head_files: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """Judge a commit that just landed on main against the packet it carries.
+def watch_main(packet: dict[str, Any], *, compare: dict[str, Any]) -> dict[str, Any]:
+    """Judge main's tip against the packet it carries.
 
-    The PR path cannot stop a PR whose required check was already green when
-    the freeze began (branch protection is not strict), so a push check records
-    the movement instead of letting it extend the denominator silently.
+    ``compare`` is the Git compare of the active cut to the tip. Judging the
+    whole range rather than the pushed commit keeps a skipped or coalesced push
+    run from hiding a violating commit: under an active cut the only legal
+    range is exactly one packet-only control commit sitting directly on the
+    cut. The PR path cannot stop a PR whose required check was green before the
+    freeze (protection is not strict), so this records the movement instead of
+    letting it extend the denominator silently.
     """
-    head_sha, _, _ = _commit_identity(head_commit, "head_commit")
     result = {
         "status": "ok",
         "reason": "cut_inactive",
         "detail": "",
         "cut_state": packet["state"],
         "cut_generation": packet["generation"],
-        "head_sha": head_sha,
     }
     if packet["state"] != "active":
         return result
     cut_sha = packet["observed_main"]["sha"]
-    if _changed_paths(head_files) == [PACKET_PATH]:
+    commits = compare.get("commits")
+    if compare.get("status") != "ahead" or not isinstance(commits, list):
+        return {
+            **result,
+            "status": "violation",
+            "reason": "cut_main_moved",
+            "detail": f"main is not a descendant of the active cut {cut_sha} (compare status {compare.get('status')!r})",
+        }
+    paths = _changed_paths(compare.get("files") or [])
+    parent = ((commits[0].get("parents") or [{}])[0].get("sha")) if commits else None
+    if len(commits) == 1 and paths == [PACKET_PATH] and parent == cut_sha:
         result["reason"] = "cut_packet_control_update"
         return result
     return {
@@ -379,9 +391,10 @@ def watch_main(
         "status": "violation",
         "reason": "cut_main_moved",
         "detail": (
-            f"{head_sha} landed on main while the cut {cut_sha} is active and is not a "
-            "packet-only control commit; the denominator is no longer the cut. Reconcile "
-            "via #5114/#2768: revert it, or reopen the cut and freeze a successor"
+            f"main is {len(commits)} commit(s) past the active cut {cut_sha} touching "
+            f"{', '.join(paths) or 'nothing'}; only one packet-only control commit may "
+            "sit on the cut. The denominator is no longer the cut: reconcile via "
+            "#5114/#2768 (revert, or reopen and freeze a successor cut)"
         ),
     }
 
@@ -450,6 +463,7 @@ def self_test() -> None:
             "base_commit": fixture_commit("d" * 40, "e" * 40, ["b" * 40]),
             "cut_commit": fixture_commit("b" * 40, "c" * 40, ["1" * 40]),
             "pr_files": [{"filename": "src/lib.rs"}],
+            "proposed_packet": fixture_packet(),
         }
         values.update(overrides)
         return decide(validate_packet(packet), **values)
@@ -564,26 +578,35 @@ def self_test() -> None:
         result(active, proposed_packet=fixture_packet())["reason"] == "cut_frozen"
     )
 
-    # Main watch: unadmitted movement under an active cut is a violation.
-    head = fixture_commit("d" * 40, "e" * 40, ["b" * 40])
-    assert watch_main(inactive_p, head_commit=head, head_files=[])["status"] == "ok"
-    verdict = watch_main(
-        active_p, head_commit=head, head_files=[{"filename": "src/lib.rs"}]
-    )
-    assert verdict["status"] == "violation" and verdict["reason"] == "cut_main_moved"
-    assert (
-        watch_main(
-            active_p, head_commit=head, head_files=[{"filename": PACKET_PATH}]
-        )["status"]
-        == "ok"
-    )
-    assert (
-        watch_main(
-            pinned_p, head_commit=head, head_files=[{"filename": "src/lib.rs"}]
-        )["status"]
-        == "ok"
-    )
+    # Main watch judges the whole range cut..tip, not just the pushed commit.
+    def compare(n: int, files: list[str], parent: str = "b" * 40) -> dict[str, Any]:
+        return {
+            "status": "ahead",
+            "commits": [{"parents": [{"sha": parent}]}] + [{}] * (n - 1),
+            "files": [{"filename": f} for f in files],
+        }
 
+    assert watch_main(inactive_p, compare=compare(5, ["src/lib.rs"]))["status"] == "ok"
+    assert watch_main(pinned_p, compare=compare(5, ["src/lib.rs"]))["status"] == "ok"
+    assert watch_main(active_p, compare=compare(1, [PACKET_PATH]))["status"] == "ok"
+    for bad in (
+        compare(1, ["src/lib.rs"]),
+        compare(2, [PACKET_PATH]),
+        compare(2, [PACKET_PATH, "src/lib.rs"]),
+        compare(1, [PACKET_PATH], parent="f" * 40),
+        {"status": "diverged", "commits": [], "files": []},
+        {},
+    ):
+        verdict = watch_main(active_p, compare=bad)
+        assert verdict["status"] == "violation" and verdict["reason"] == "cut_main_moved"
+
+    # An unreadable head copy fails closed for a packet-only PR only.
+    assert (
+        result(active, pr_files=[{"filename": PACKET_PATH}], proposed_packet=None)[
+            "reason"
+        ]
+        == "cut_packet_transition_invalid"
+    )
     print("release-cut-admission self-test: all controls passed")
 
 
@@ -597,11 +620,8 @@ def load_json(path: Path, label: str) -> Any:
 def run_watch(args: argparse.Namespace) -> int:
     try:
         packet = validate_packet(load_json(args.packet, "packet"))
-        result = watch_main(
-            packet,
-            head_commit=load_json(args.head_commit, "head commit"),
-            head_files=load_json(args.head_files, "head files"),
-        )
+        compare = load_json(args.compare, "compare") if args.compare else {}
+        result = watch_main(packet, compare=compare)
     except PacketError as error:
         result = {
             "status": "violation",
@@ -631,7 +651,10 @@ def run_admit(args: argparse.Namespace) -> int:
             # update that repairs it. Only a packet-only PR carrying a valid
             # packet is let through; everything else stays refused.
             if _changed_paths(pr_files) == [PACKET_PATH] and proposed is not None:
-                validate_packet(proposed)
+                if validate_packet(proposed)["state"] != "inactive":
+                    raise PacketError(
+                        f"{error}; a repair of an unusable packet must land inactive"
+                    )
                 result = {
                     "status": "admitted",
                     "reason": "cut_packet_repair",
@@ -680,8 +703,8 @@ def main() -> int:
     parser.add_argument("--pr-files", type=Path)
     parser.add_argument("--proposed-packet", type=Path)
     parser.add_argument("--expected-head")
-    parser.add_argument("--head-commit", type=Path)
-    parser.add_argument("--head-files", type=Path)
+    parser.add_argument("--watch", action="store_true")
+    parser.add_argument("--compare", type=Path)
     parser.add_argument("--render-activation", action="store_true")
     parser.add_argument("--cut-sha")
     parser.add_argument("--cut-tree")
@@ -706,9 +729,9 @@ def main() -> int:
             return 2
         print(json.dumps(packet, indent=2))
         return 0
-    if args.head_commit:
-        if not (args.packet and args.head_files):
-            parser.error("--packet and --head-files are required with --head-commit")
+    if args.watch:
+        if not args.packet:
+            parser.error("--packet is required with --watch")
         return run_watch(args)
     if not all(
         (args.packet, args.current, args.base_commit, args.pr_files, args.expected_head)
