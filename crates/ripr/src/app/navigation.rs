@@ -280,13 +280,7 @@ pub(crate) fn finding_navigation_with_worktree(
     let args = navigation_args(input, artifact_path, mode_explicit, worktree);
     // `ripr check` has no `--from`: the listing always re-runs the original
     // scope, even when the drill-in commands replay a written artifact.
-    let mut list_args = navigation_args(input, None, mode_explicit, worktree);
-    // Unlike explain/context, check defaults to the worktree when it is dirty.
-    // Pin the committed listing so recovery cannot silently change its subject.
-    // Supplied patches and explicit worktree input already bind their source.
-    if !worktree && input.diff_file.is_none() && input.git_candidate.is_none() {
-        list_args.push_str(" --committed");
-    }
+    let list_args = navigation_args(input, None, mode_explicit, worktree);
     FindingNavigation {
         explain_prefix: format!("ripr explain {args}"),
         context_prefix: format!("ripr context {args}"),
@@ -346,6 +340,10 @@ fn navigation_args(
         }
         if worktree {
             args.push("--worktree".to_string());
+        } else if input.git_candidate.is_none() {
+            // All live CLI siblings default to the dirty worktree. A command
+            // for committed input must therefore carry its explicit source.
+            args.push("--committed".to_string());
         }
     }
 
@@ -582,7 +580,7 @@ mod tests {
         assert_eq!(
             navigation.explain_command("probe:id"),
             format!(
-                "ripr explain --root {} --base origin/main --mode draft probe:id",
+                "ripr explain --root {} --base origin/main --committed --mode draft probe:id",
                 bound(".")
             )
         );
