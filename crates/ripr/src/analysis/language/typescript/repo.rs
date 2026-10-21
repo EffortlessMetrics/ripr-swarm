@@ -221,6 +221,12 @@ fn select_and_analyze(
         file_read_limit,
         workspace_read_budget,
     );
+    let unread_tests = test_read.limits.len() + test_read.io_failures.len();
+    if unread_tests > 0 {
+        reasons.push(format!(
+            "typescript_repo_unread_tests: {unread_tests} test file(s) could not be read and left the evidence index, so related-test evidence may be missing"
+        ));
+    }
     let unparseable_tests = input
         .tests
         .iter()

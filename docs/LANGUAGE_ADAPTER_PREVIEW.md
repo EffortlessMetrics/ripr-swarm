@@ -255,7 +255,7 @@ analysis. Repo-mode analysis differs per adapter:
   capped run, a truncated walk, an unreadable root, unreadable or
   unparseable files, or typed indexing limitations disclose a partial
   language run whose `partial_reason` starts with a stable `typescript_repo_*:`
-  code (`capped`, `discovery_truncated`, `links_skipped`, `unread`,
+  code (`capped`, `discovery_truncated`, `links_skipped`, `unread`, `unread_tests`,
   `test_parse_failure`, `limitations`, `root_unreadable`), joined by ` | `,
   and can never back an all-clear, badge or baseline claim; a
   fully discovered workspace without TS/JS production source is an honest

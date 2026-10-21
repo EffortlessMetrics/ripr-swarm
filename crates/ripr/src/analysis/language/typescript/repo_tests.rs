@@ -164,8 +164,12 @@ fn parse_failure_is_partial_not_complete_zero() -> Result<(), String> {
     let _ = std::fs::remove_dir_all(&root);
     let result = result?;
     assert!(
-        result.partial_reason.is_some(),
-        "a parse failure must never become a complete zero"
+        result
+            .partial_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("typescript_repo_limitations:")),
+        "a parse failure must never become a complete zero: {:?}",
+        result.partial_reason
     );
     Ok(())
 }
@@ -174,7 +178,12 @@ fn parse_failure_is_partial_not_complete_zero() -> Result<(), String> {
 fn unreadable_root_is_partial_not_honest_zero() -> Result<(), String> {
     let result = run(Path::new("/nonexistent_workspace"), 800)?;
     assert!(result.findings.is_empty());
-    assert!(result.partial_reason.is_some());
+    assert!(
+        result
+            .partial_reason
+            .as_deref()
+            .is_some_and(|reason| reason.starts_with("typescript_repo_root_unreadable:"))
+    );
     Ok(())
 }
 
@@ -289,5 +298,20 @@ fn over_read_bound_file_leaves_the_denominator_and_is_partial() -> Result<(), St
     assert!(result.findings.is_empty());
     let reason = result.partial_reason.ok_or("unread file must be partial")?;
     assert!(reason.contains("typescript_repo_unread:"), "{reason}");
+    Ok(())
+}
+
+#[test]
+fn unreadable_test_file_makes_the_run_partial() -> Result<(), String> {
+    let root = ts_unique_tempdir("repo-unreadable-test")?;
+    ts_write_file(&root.join("src/lib.ts"), TS_SRC)?;
+    std::fs::create_dir_all(root.join("test")).map_err(|err| err.to_string())?;
+    // Invalid UTF-8: a plain IO/decode failure, not a size limit.
+    std::fs::write(root.join("test/lib.test.ts"), [0xff, 0xfe, 0xfd])
+        .map_err(|err| err.to_string())?;
+    let result = run(&root, 800);
+    let _ = std::fs::remove_dir_all(&root);
+    let reason = result?.partial_reason.ok_or("must be partial")?;
+    assert!(reason.contains("typescript_repo_unread_tests:"), "{reason}");
     Ok(())
 }
