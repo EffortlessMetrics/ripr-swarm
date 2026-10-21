@@ -28,9 +28,9 @@ Support-tier impact:
 
 Policy impact:
 
-- Adds the controlled output enum `related_test_miss` to
-  `policy/output_contracts.txt` and `docs/OUTPUT_SCHEMA.md`. No gate, badge,
-  or report file changes.
+- The controlled output enum `related_test_miss` is registered in
+  `policy/output_contracts.txt` and `docs/OUTPUT_SCHEMA.md` by the Rust slice.
+  This revision adds no policy entry and changes no gate, badge or report file.
 
 ## Problem
 
@@ -149,6 +149,27 @@ cards or packets. No transport defines its own miss semantics.
 controlled in `policy/output_contracts.txt`. Additions are additive and bump
 the schema only as `docs/OUTPUT_SCHEMA.md` requires. Explanatory prose is
 excluded from deterministic identity.
+
+### Current Rust conformance gaps
+
+The contract above is the target. The Rust slice described under Behavior does
+not yet satisfy all of it, and these gaps are tracked rather than claimed away:
+
+- Decision independence (#5563): `RelatedTest::is_unmatched()` is derived from
+  `miss == assertion_not_observing`, and `Finding::oracle_related_tests`,
+  `exact_oracle_gap_next_step` and the diagnostic witness read it, so changing
+  a row's miss can change triage ordering, next step or fix-site selection.
+- Row-owned support (#5564): the annotation pass computes boundary and
+  exact-assertion presence once from the finding-wide `missing_discriminators`
+  list and assigns `missing_input` or `missing_exact_assertion` to eligible
+  rows, so a row can carry a fact that belongs to another test.
+- Family-typed rendering (#5493): `input_boundary_fact` and the reason renderer
+  select facts from text such as ` == ` rather than the typed `ProbeFamily`.
+
+Until those land, Rust is listed as supported in the capability table only for
+the vocabulary it emits, not as conforming to decision independence, row
+ownership or typed-family rendering. New adapters must meet the contract as
+written and must not copy these gaps.
 
 ## Behavior
 
