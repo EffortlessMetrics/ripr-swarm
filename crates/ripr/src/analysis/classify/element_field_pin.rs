@@ -1851,10 +1851,30 @@ mod tests {
     /// even when it never spells `Drop`, as before the index existed.
     #[test]
     fn an_unparseable_source_keeps_every_type_non_plain() -> Result<(), String> {
-        let index = drop_index(&[
-            ("src/a.rs", "pub struct Row { pub total: u32 }\n"),
-            ("src/b.rs", "pub fn broken( {\n"),
-        ])?;
+        // The summarizer refuses broken source, so summarize readable text
+        // and swap in an unparseable source before indexing.
+        use crate::analysis::facts::OwnedRustIndex;
+        let mut files = std::collections::BTreeMap::new();
+        for (path, text, replaced) in [
+            ("src/a.rs", "pub struct Row { pub total: u32 }\n", None),
+            ("src/b.rs", "pub fn fine() {}\n", Some("pub fn broken( {\n")),
+        ] {
+            let mut facts = crate::analysis::syntax::ra::summarize_file_with_parser(
+                std::path::Path::new(path),
+                text,
+            )?;
+            if let Some(broken) = replaced {
+                facts.source = std::sync::Arc::from(broken);
+                if parse_clean_source_file(&facts.source).is_some() {
+                    return Err("fixture: the swapped source must not parse".to_string());
+                }
+            }
+            files.insert(PathBuf::from(path), facts);
+        }
+        let index = RustIndex::from_owned(OwnedRustIndex {
+            files,
+            ..Default::default()
+        });
         if drop_is_plain(&index, "Row") {
             return Err("an unreadable source must fail closed".to_string());
         }
