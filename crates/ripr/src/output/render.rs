@@ -773,7 +773,7 @@ mod tests {
         let seams_md =
             render_check_with_config(&output, &OutputFormat::RepoSeamsMd, &RiprConfig::default())?;
 
-        assert!(seams_json.contains("\"schema_version\": \"0.2\""));
+        assert!(seams_json.contains("\"schema_version\": \"0.3\""));
         assert!(seams_json.contains("over_threshold"));
         assert!(seams_md.contains("over_threshold"));
         remove_temp_root(&output.root)?;
