@@ -87,6 +87,19 @@ developer who disagreed had to re-derive the analysis.
   the reason: `unconfirmed` for `observation_unconfirmed`, `misses` otherwise.
   Human-full, `ripr explain`, LSP hover and LSP related information use it;
   JSON, MCP and the context packet carry no label.
+- `output::related_test_miss::oracle_projection` owns the oracle phrase of a
+  related-test row, after "uses" (#8388): `<strength> <kind> oracle` for a
+  graded row; `<kind> oracle, not graded against this probe` when the
+  strength is `unknown` (the probe family has no typed oracle relationships,
+  so the assertion is not graded, not of unknown quality); `an unclassified
+  oracle, not graded against this probe` when the kind is also `unknown` and
+  an assertion was selected; and `no oracle` when no assertion was selected.
+  Pinned by `oracle_projection_separates_ungraded_assertions_from_absent_ones`.
+  Finding hover, fix-site diagnostic links, seam diagnostic links and targeted
+  agent briefs use this same phrase (#8951). The diagnostic witness owns the
+  selected test; prose does not reselect a stronger row. Finding hover retains
+  its reason-only form when no assertion is recorded. Compact seam-hover
+  metadata and structured oracle kind/strength fields retain their raw tags.
 - `ripr explain` adds a "Why this verdict" section: every retained examined
   test with its verdict and checked assertion, what a test would need to change
   the verdict (gap classes only), and the meaning of each stop reason.
@@ -292,6 +305,10 @@ actionability or rendered output.
 
 ## Test Mapping
 
+- The `oracle_wording` controls in `lsp/tests.rs`, the seam diagnostic tests and
+  `output/agent_seam_packets.rs` pin ungraded classified and unclassified rows,
+  graded rows, reason-only absent-assertion hover and producer-owned fix-site
+  selection beside a stronger row.
 - `crates/ripr/src/analysis/classify/reveal.rs::tests` — examined misses are
   listed and rank after matched tests.
 - `crates/ripr/src/output/related_test_miss.rs::tests` — reason prose.
@@ -348,6 +365,8 @@ actionability or rendered output.
 | `crates/ripr/src/analysis/language/perl/mod.rs` | Perl v1 `observation_unconfirmed` rows |
 | `crates/ripr/src/analysis/language/{python,typescript}/admission.rs` | fail-closed assertion admission state per extracted test |
 | `crates/ripr/src/output/related_test_miss.rs` | the one prose and label owner |
+| `crates/ripr/src/domain/diagnostic_witness.rs` | selected typed fix-site test shared with diagnostic prose |
+| `crates/ripr/src/output/agent_seam_packets.rs` | targeted brief oracle prose |
 | `crates/ripr/src/analysis/language/python/assertion_selection.rs` | family-relevant assertion selection per related test |
 | `crates/ripr/src/analysis/language/python/{classify,related_tests,boundary,no_behavior,static_limits}.rs`, `python/repo/evidence.rs` | consumers of the one selection; non-delegatable alignment reasons |
 | `crates/ripr/src/output/gap_decision_ledger.rs` | never delegates `no_family_relevant_assertion` or `other_behavior_assertion_passed_over` |

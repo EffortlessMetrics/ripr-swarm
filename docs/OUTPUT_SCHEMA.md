@@ -814,6 +814,16 @@ unchanged. It is the one limitation kind that may ride on a complete outcome
 (`complete_with_findings` / `complete_no_findings`); every other kind marks the
 outcome incomplete. Human output renders it without the incomplete-scope hedge.
 
+`unevaluated_condition` (#8714) discloses conditional assertion credit: a
+credited test assertion sits under a branch condition static analysis cannot
+evaluate, so the credited oracle may never execute. The limitation names the
+test file and the condition (detail prefix `typescript_conditional_assertion_credit`),
+and human output says the credited assertion sits under an unevaluable
+condition rather than claiming files were not analyzed. Unlike `eol_only_churn`,
+this kind still marks the outcome incomplete — consumers gating on
+`analysis_complete` see these runs as partial; letting it ride a complete
+outcome is a separate, consumer-visible design decision (#8714 review).
+
 When an *unchanged* Rust test file is indexed by lexical fallback after the
 reference parser refuses it, and a classified owner consults that file for
 related-test evidence (a related test came from it, or the file source calls
@@ -1469,7 +1479,8 @@ The evidence-first fields are additive in schema `0.2`:
   assertions observe the changed value; `oracle` then carries the first
   assertion as checked text and `oracle_strength` is `none`.
   `assertion_not_credited`: an assertion exists but ripr could not establish
-  that it runs as the standard macro. `weak_assertion`: the matched oracle is
+  that this assertion counts here (a local macro, a feature cfg or another
+  limit can each cause it). `weak_assertion`: the matched oracle is
   weak or smoke-only. `missing_input`: on a predicate probe, the oracle
   observes the behavior but no input reaches the boundary value in
   `missing_discriminators` (the `left == right` entry); on a match-arm probe,
@@ -2222,7 +2233,9 @@ JSON fields:
   `python_transitive_reach_unresolved`, or
   `rust_assertion_context_unresolved`, or
   `rust_log_capture_unresolved`, or
-  `rust_panic_outcome_unresolved`.
+  `rust_panic_outcome_unresolved`, or
+  `rust_call_fact_budget`, or
+  `rust_framework_oracle_unresolved`.
 - `rust_field_match_selector_unresolved`: a plain owner-parameter field selects a changed statement-free tail match. A strong oracle in a directly calling test exists, but the field value at that invocation and whether an assertion observes that invocation's return are unresolved. The match header and unique direct-arm lines may carry this metadata; computed selectors, local bindings, nested matches, guarded arms and ambiguous same-line subjects are excluded. This does not establish an `Option` type, same-invocation proof, coverage, or absence of a test gap. Finding/probe IDs, classes, RIPR stages, missing discriminators and raw class counts are unchanged. The existing typed-limitation contract withholds canonical repair-gap projection and can change repair readiness and derived gate routing; this names uncertainty, not resolved test debt. Inspect the existing call/assertion before adding a test. The optional kind uses the existing wire shape/version; consumers still require their own producer compatibility qualification.
 - `static_limitation` is an additive optional per-finding object emitted only
   when a finding with `static_limit_kind` also carries a complete structured
@@ -2755,6 +2768,8 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 - `rust_assertion_context_unresolved` -- (RIPR-SPEC-0240, additive) Every related `assert_eq!` ripr refused was refused for a limit of its own reading (an unparsed or unplaced file, an unidentified test, a feature `cfg`, a binding that only may rebind the macro). The `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim.
 - `rust_log_capture_unresolved` -- (#7133, additive) A changed `log::` record is checked by a related test that installs a capturing logger before calling the owner and asserts exactly on the captured store, against a string literal that carries the record's static template text. `tracing::` events and count or status assertions (`lines.len()`) keep their gap. ripr does not resolve the logger or the format template, so the `weakly_exposed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim.
 - `rust_panic_outcome_unresolved` -- (RIPR-SPEC-0240, additive) A related, non-ignored test with no assertion carries `#[should_panic]` (bare, `expected = ""`, or an `expected` message found in a literal argument of a panicking macro on or after the changed line), calls the owner directly, and the owner invokes a panicking macro on or after the changed line. ripr does not resolve whether the changed code decides that panic, so the `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`; this is a named limitation, not a missing-test, coverage, or repair claim.
+- `rust_call_fact_budget` -- (#8600, additive) A related test has a source line holding 256 distinct callees, the per-line call-fact budget, so further calls on that line may have been omitted (exactly 256 is treated as possibly truncated, not as proof a call was dropped). A negative claim that depends on the test's calls (`reachable_unrevealed` or `weakly_exposed`) is withheld as `static_unknown` with stop reason `gap_evidence_unresolved`; an already-unknown finding keeps its class, gains the named reason, and drops its call-derived absence lines, missing discriminators and next-step prescription. Saturation is read over every matched related test before the eight-row render cap, and a saturated test's `no_call_path`, `no_assertion`, `missing_input` and `assertion_not_observing` row misses read `observation_unconfirmed`. Findings with no related saturated test are unchanged, and the reason never raises a class. The `repo-exposure-json` and `repo-exposure-summary-json` seam readings apply the same decision to their stage evidence: a stage that read `no` or `weak` becomes `unknown`, the seam's missing boundary values are dropped, and the evidence record carries a `static_limitations[]` row whose `category` is `rust_call_fact_budget`, a `static_limitation` actionability and a `limitation` canonical item with no repair command; an already-unknown seam keeps its class and gains the reason. A named limitation, not a missing-test, coverage, or repair claim.
+- `rust_framework_oracle_unresolved` -- (RIPR-SPEC-0240, additive) A related test checks the owner through an environment variable it sets or removes, a mockall `returning` closure that reads its arguments, an expect-test `assert_debug_eq` literal, or an insta snapshot whose redactions do not name the changed field. ripr does not evaluate that oracle, so a `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
 
 Reserved `flow_sink` values:
 
@@ -3346,9 +3361,12 @@ Policy reports are advisory unless `--mode fail-on-new-warning` is used.
 
 ```json
 {
-  "version": "1.0",
+  "version": "1.1",
   "tool": "ripr",
   "canonical_gap_id": "gap:rust:src/lib.rs:discount:predicate_boundary:predicate:amount>=discount_threshold",
+  "classification": "weakly_exposed",
+  "severity": "warning",
+  "confidence": 0.75,
   "probe": {
     "id": "probe:src_lib.rs:predicate:bbaa2c25",
     "family": "predicate",
@@ -3405,6 +3423,13 @@ Policy reports are advisory unless `--mode fail-on-new-warning` is used.
   "recommended_next_step": "Add below, equal, and above threshold tests."
 }
 ```
+
+Since packet version 1.1 (#8743), `classification`, `severity`, and
+`confidence` state the finding's exposure verdict outright, wire-identical to
+the `ripr check --json` finding fields of the same names; consumers must not
+derive the class from the `ripr` stage states, which are underdetermined on
+their own. `severity` resolves through the run's `ripr.toml` severity config,
+so a user override applies here exactly as it does on the check surface.
 
 `witness.explain_command` names the resolved repository root, not the spelling
 typed on the command line, so it analyzes the same repository when pasted from
@@ -13962,19 +13987,24 @@ Field contract:
   commit that descends from it; for an attempt with an after verdict, whether
   `HEAD` is still the head that verdict recorded; `null` when `HEAD` cannot be
   read or related to the prepared head), `disposition` (`resumable`,
-  `prepared_at_other_head`, `head_unknown`, `not_published`, `finished`,
-  `gap_open`, `unconfirmed`, or `ended`), `manifest`, `command` (the command
+  `prepared_at_other_head`, `retry_budget_spent`, `head_unknown`,
+  `not_published`, `finished`, `gap_open`, `unconfirmed`, or `ended`), `manifest`, `command` (the command
   that would move this attempt or its seam forward, or `null`),
   `receipt`, and `last_after_refusal`. A `ready_to_finish` attempt reads
   `finished` only when its receipt is `advisory` with movement `improved`;
   `gap_open` when its receipt shows movement `unchanged`, `changed`, or
-  `regressed` (the seam is restarted); otherwise `unconfirmed` (no restart; a
+  `regressed` (the seam is restarted unless the repair eligibility gate refuses it, in
+  which case `command` is `null`); otherwise `unconfirmed` (no restart; a
   `repair_receipt_unconfirmed` warning says why). An attempt awaiting its
   edit reads `prepared_at_other_head` when its after phase would not evaluate
   the current `HEAD`: a trust-bound attempt whose `HEAD` moved, or an ordinary
   attempt whose `HEAD` no longer descends from its prepared head, in which case
   the restart reason repeats the after phase's recovery (`git reset --soft
-  <prepared-head>`, then the attempt's after command).
+  <prepared-head>`, then the attempt's after command). An attempt awaiting its edit that recorded 5
+  after-phase refusals reads `retry_budget_spent`: its after phase refuses
+  without running, so `command` is the fresh before-phase start (or `null`
+  when the repair eligibility gate refuses the seam) and never the after
+  command.
   - `receipt` - `null` unless the attempt is `ready_to_finish`. Otherwise an
     object read from the attempt-local terminal receipt when that attempt
     retained one, else from `target/ripr/reports/agent-receipt.json` for a
@@ -13997,11 +14027,16 @@ Field contract:
     `null` and `shows_gap_closed` `false`. An old result can remain
     historically valid while `head_current` is false for today's HEAD;
     retained history is not current proof.
-  - `last_after_refusal` - `null`, or `{reason, recorded_unix_ms}` when the
+  - `last_after_refusal` - `null`, or `{reason, recorded_unix_ms,
+    refusal_count, retry_budget_exhausted, history}` when the
     attempt's most recent after phase refused after selecting the attempt (the
     attempt manifest's `last_after_refusal`: the final error followed by the
     cause and recovery the after phase printed, such as the changed analysis
-    inputs, bounded to 4096 bytes).
+    inputs, bounded to 4096 bytes). `refusal_count` is the total after-phase
+    refusals recorded for the attempt, `retry_budget_exhausted` is `true` once
+    that reaches 5 (the after phase then refuses without running and a new
+    attempt is required), and `history` lists up to the 8 most recent refusals
+    oldest first as `{reason, recorded_unix_ms}`.
 - `test_run` - `null`, or `{status, test_changed, next_step}` when a repair
   receipt issued for an attempt records `verification.status`
   `verification_not_run`. `status` is `"not_recorded"`: the repair receipt
@@ -14035,8 +14070,12 @@ Field contract:
   `multiple_open_repair_seams`, `repair_attempt_head_unknown`,
   `pilot_found_no_repair_target`,
   `pilot_withheld_static_limitations_no_repair_target`,
-  `pilot_routed_to_check_no_repair_target`) then names the choices. The
-  withheld warning names `target/ripr/pilot/repo-exposure.md`; when that
+  `pilot_routed_to_check_no_repair_target`) then names the choices. A seam
+  the repair eligibility gate refuses (or cannot verify) is not offered a
+  start: `repair_start_withheld` names it, states that the remaining work is
+  strengthening the oracle of the related test by hand (or that the seam
+  could not be verified, naming `ripr check`), and the matching
+  `repair_attempts[].command` is `null`. The withheld warning names `target/ripr/pilot/repo-exposure.md`; when that
   run's `repo-exposure.json` reports `run_status: seam_limit_applied` it
   reads the count as "at least N" and names raising the seam limits and
   rerunning pilot, since seams past the cut may hold gaps. The last names the recorded check command and the
@@ -14179,7 +14218,18 @@ Field contract:
   non-claim, the retained-evidence non-claim (a finished result does not
   establish the repair is correct or that any project test ran), the
   manifest's own limitations and non-claims, and the store resolver's
-  non-claims. The Markdown rendering prints the same fields.
+  non-claims. When a restart would be recommended but the repair eligibility
+  gate refuses the seam (or cannot verify it), `next_action` carries no
+  restart: it is absent, except that an attempt whose prepared head moved keeps
+  its recovery `next_action` (step `repair_attempt_after`, restore the prepared
+  head, then rerun the after phase), and `claim_boundary` carries the
+  `restart_withheld` line naming the by-hand work. In that case
+  `diverged_recovery.restart` is `null` (`reset` is kept), and recorded
+  `last_after_refusal.reason` and receipt `recommended_action` text have their
+  `--phase before` clause replaced by "a new attempt is not offered". The
+  internal `start_withheld` marker is not part of the JSON. The MCP durable attempt document carries the same line in its
+  `limitations` and likewise omits `next_command`. The Markdown rendering
+  prints the same fields.
 
 ## Agent Review Summary
 
@@ -18059,7 +18109,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.83",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.86",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -18759,7 +18809,7 @@ targeted-rerun receipt shape:
     "direct_call_names": ["discounted_total"]
   },
   "cache": {
-    "schema_version": "1.44",
+    "schema_version": "1.45",
     "reuse_state": "reused_file_facts",
     "file_fact_status": "hits_2_misses_0_corrupt_0_store_errors_0",
     "hits": 2,
@@ -18770,7 +18820,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.83",
+      "schema_version": "1.86",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

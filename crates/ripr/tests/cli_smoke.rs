@@ -2688,7 +2688,10 @@ fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
             "explain output's context command lost the scope: {next_line}"
         ));
     }
-    if !String::from_utf8_lossy(&context.stdout).contains("\"version\": \"1.0\"") {
+    // #8743: the packet contract is 1.1 since classification/severity/
+    // confidence joined the packet; the assertion only proves the
+    // context command emitted its JSON packet.
+    if !String::from_utf8_lossy(&context.stdout).contains("\"version\": \"1.1\"") {
         return Err("context command did not return its JSON packet".to_string());
     }
     Ok(())
@@ -2799,7 +2802,10 @@ fn check_explain_and_context_replay_from_a_checkout_path_with_space_and_apostrop
         assert_success(&explain);
         let context = replay_printed_ripr(context_line, &decoy)?;
         assert_success(&context);
-        if !String::from_utf8_lossy(&context.stdout).contains("\"version\": \"1.0\"") {
+        // #8743: the packet contract is 1.1 since classification/severity/
+        // confidence joined the packet; the assertion only proves the
+        // context command emitted its JSON packet.
+        if !String::from_utf8_lossy(&context.stdout).contains("\"version\": \"1.1\"") {
             return Err("context command did not return its JSON packet".to_string());
         }
         let explain_stdout = String::from_utf8_lossy(&explain.stdout);
@@ -3867,9 +3873,11 @@ fn context_json_missing_artifact_emits_refusal_envelope() -> Result<(), String> 
         "--from",
         "nope-7331.json",
     ]);
+    // #8743: the refusal envelope is keyed with the context packet's own
+    // version, now 1.1.
     let value = assert_json_refusal_envelope(
         &output,
-        "1.0",
+        "1.1",
         "diff",
         "check_artifact_unusable",
         "analysis/check-artifact",
@@ -4036,9 +4044,11 @@ fn context_json_refusal_reports_configured_mode() -> Result<(), String> {
         "--from",
         "nope-7331.json",
     ]);
+    // #8743: the refusal envelope is keyed with the context packet's own
+    // version, now 1.1.
     let value = assert_json_refusal_envelope(
         &output,
-        "1.0",
+        "1.1",
         "diff",
         "check_artifact_unusable",
         "analysis/check-artifact",
@@ -4111,9 +4121,11 @@ fn context_json_scope_mismatch_refuses_as_artifact_unusable() -> Result<(), Stri
             "--at",
             "src/lib.rs:1",
         ]);
+        // #8743: the refusal envelope is keyed with the context packet's
+        // own version, now 1.1.
         let value = assert_json_refusal_envelope(
             &output,
-            "1.0",
+            "1.1",
             "diff",
             "check_artifact_unusable",
             "analysis/check-artifact",
@@ -5563,9 +5575,10 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     );
 
     // The repair transaction accepts the finding-ID namespace too (#8166
-    // residual): an unmapped probe ID refuses through the packet surface's
-    // family-named hint, which now names the equivalent `ripr repair`
-    // command, and starts no attempt.
+    // residual): an unmapped probe ID refuses in this command's own terms
+    // naming the stale state and the pilot listing route (#8685) — not the
+    // packet surface's hint, which would promise the resolution that just
+    // failed — and starts no attempt.
     let repair = run_ripr(&[
         "agent",
         "repair",
@@ -5579,11 +5592,22 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     ]);
     assert!(!repair.status.success());
     let stderr = String::from_utf8_lossy(&repair.stderr);
-    assert!(stderr.contains("not a seam ID"), "{stderr}");
+    // #8685: the translating surface refuses in its own terms and names the
+    // stale state; it must not repeat the `ripr repair <finding-id>` route
+    // the shared resolver just ran and failed, and must not borrow the
+    // packet surface's `agent packet` wording.
     assert!(
-        stderr.contains("`ripr repair <finding-id> --root ")
-            && stderr.contains("agent-packet-unknown-seam"),
-        "the hint must name the equivalent command for the failing root:\n{stderr}"
+        stderr.contains("agent repair --seam-id")
+            && stderr.contains("the `ripr check` finding ID is stale or maps to no current seam"),
+        "the refusal must name the stale state in this command's terms:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("agent packet"),
+        "the translating surface must not borrow the packet wording:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("ripr repair <finding-id>"),
+        "the circular resolution route must not be promised:\n{stderr}"
     );
     assert!(
         stderr.contains("ripr pilot --root ") && stderr.contains("agent-packet-unknown-seam"),
@@ -8368,11 +8392,20 @@ fn agent_repair_still_refuses_writes_outside_build_output_and_test_surface()
             stderr.contains(&format!("ripr:   {offending} (")),
             "the failure must name the refused path:\n{stderr}"
         );
+        // #8766: the attempt's boundary test grips the seam, so the same
+        // build's repair gate refuses a new start. The undo guidance stays and
+        // the `--phase before` recipe is not printed.
         assert!(
-            stderr.contains(&format!(
-                "--seam-id {BOUNDARY_GAP_SEAM_ID} --phase before` while the gap still exists"
-            )),
-            "the failure must name the recovery route:\n{stderr}"
+            stderr.contains("undo the refused changes"),
+            "the failure must keep the undo recovery:\n{stderr}"
+        );
+        assert!(
+            !stderr.contains("--phase before"),
+            "a start the gate refuses must not be printed:\n{stderr}"
+        );
+        assert!(
+            stderr.contains("a new attempt is not offered"),
+            "the failure must say a new attempt is not offered:\n{stderr}"
         );
         std::fs::remove_dir_all(root)?;
     }
@@ -22113,6 +22146,68 @@ fn receipt_check_orphan_exits_nonzero() -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
+/// #8932: a present but invalid `canonical_gap_id` (null, numeric, empty,
+/// blank) must be rejected by `ripr receipt check --json` before any success
+/// output, while the same file recovers after replacing only that identity.
+#[test]
+fn receipt_check_rejects_present_invalid_canonical_gap_id() -> Result<(), Box<dyn std::error::Error>>
+{
+    let out_dir = unique_temp_workspace("receipt-check-invalid-gap-id");
+    std::fs::create_dir_all(&out_dir)?;
+    let receipt_path = out_dir.join("receipt.json");
+    let receipt_arg = receipt_path.to_str().ok_or("receipt path not UTF-8")?;
+    let write = |identity: serde_json::Value| -> Result<(), Box<dyn std::error::Error>> {
+        let receipt = serde_json::json!({
+            "schema_version": "0.1",
+            "tool": "ripr",
+            "kind": "receipt",
+            "canonical_gap_id": identity,
+            "verify_command": "cargo test",
+            "verify_status": "passed",
+            "current_head": "0123456789abcdef0123456789abcdef01234567",
+            "written_at": "2026-06-14T00:00:00Z"
+        });
+        std::fs::write(&receipt_path, receipt.to_string())?;
+        Ok(())
+    };
+
+    // Control: an exact nonblank identity still succeeds with not_available.
+    write(serde_json::json!("gap:test:json-identity"))?;
+    let ok = run_ripr(&["receipt", "check", "--path", receipt_arg, "--json"]);
+    assert_success(&ok);
+    let ok_json: serde_json::Value = serde_json::from_slice(&ok.stdout)?;
+    assert_eq!(ok_json["ok"], true, "{ok_json:#}");
+
+    for (label, identity) in [
+        ("null", serde_json::Value::Null),
+        ("number", serde_json::json!(7)),
+        ("empty", serde_json::json!("")),
+        ("whitespace", serde_json::json!("   ")),
+    ] {
+        write(identity)?;
+        let bad = run_ripr(&["receipt", "check", "--path", receipt_arg, "--json"]);
+        assert_eq!(bad.status.code(), Some(2), "{label}: should exit 2");
+        assert!(
+            bad.stdout.is_empty(),
+            "{label}: stdout must be empty, got {}",
+            String::from_utf8_lossy(&bad.stdout)
+        );
+        let stderr = String::from_utf8_lossy(&bad.stderr);
+        assert!(
+            stderr.contains("`canonical_gap_id`"),
+            "{label}: stderr should name the field; got {stderr}"
+        );
+    }
+
+    // Recovery: replacing only the identity makes the same file succeed.
+    write(serde_json::json!("gap:test:json-identity"))?;
+    let recovered = run_ripr(&["receipt", "check", "--path", receipt_arg, "--json"]);
+    assert_success(&recovered);
+
+    ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
 /// Smoke: `ripr agent receipt` (legacy alias) still exits non-zero with a
 /// parse error rather than panicking or silently succeeding with no args —
 /// which confirms the alias is still wired.
@@ -25109,6 +25204,27 @@ fn agent_status_restarts_a_failed_attempt_and_completes_a_finished_one()
         report["repair_attempts"][0]["state"], "failed",
         "{report:#}"
     );
+    // #8766: with the exact boundary assertion in the tree the seam already
+    // reads as exposed, the repair gate refuses a new start, and status
+    // withholds the restart instead of printing one the build refuses.
+    let (withheld_step, _) = repair_route_next(&report);
+    assert_eq!(withheld_step, "", "{report:#}");
+    assert!(
+        report["warnings"]
+            .as_array()
+            .is_some_and(|warnings| warnings
+                .iter()
+                .any(|warning| warning["kind"] == "repair_start_withheld")),
+        "{report:#}"
+    );
+    assert!(
+        report["repair_attempts"][0]["command"].is_null(),
+        "{report:#}"
+    );
+    // With the focused test reverted the gap is open again, the gate admits
+    // the seam, and the failed attempt restarts.
+    std::fs::write(root.join("tests/pricing.rs"), REPAIR_ROUTE_WEAK_TEST)?;
+    let report = repair_route_status(&root)?;
     let (step, command) = repair_route_next(&report);
     assert_eq!(step, "repair_attempt_before", "{report:#}");
     assert_installed_command(&command)?;
@@ -25410,6 +25526,148 @@ fn agent_status_names_a_refused_after_phase_before_repeating_it()
         serde_json::Value::Null,
         "{report:#}"
     );
+
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// #8726: repeated no-movement refusals keep a bounded, append-only history
+/// and a count (the single `last_after_refusal` slot is overwritten), the
+/// narration escalates, and a spent retry budget stops the after phase with a
+/// typed refusal instead of another retry. The stop is a state observation:
+/// it is not recorded as one more refusal, and it fails closed even when the
+/// next edit would have moved the gap.
+#[test]
+fn repeated_no_movement_refusals_keep_history_and_stop_at_the_retry_budget()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = repair_route_workspace("refusal retry budget")?;
+    let printed = repair_route_before(&root)?;
+    let attempt_id = repair_route_attempt_id(&printed)?;
+
+    for refusal_number in 1..=5_u64 {
+        let refused = repair_route_after(&root, &attempt_id);
+        assert_eq!(refused.status.code(), Some(3), "{refused:?}");
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert!(stderr.contains("no repository movement"), "{stderr}");
+        // Escalation starts at the second refusal, never on the first.
+        assert_eq!(
+            stderr.contains("retry budget for this attempt"),
+            refusal_number > 1,
+            "{stderr}"
+        );
+        let manifest = repair_route_manifest(&root, &attempt_id)?;
+        assert_eq!(manifest["state"], "awaiting_edit", "{manifest:#}");
+        assert_eq!(
+            manifest["after_refusal_count"], refusal_number,
+            "{manifest:#}"
+        );
+        let history = manifest["after_refusal_history"]
+            .as_array()
+            .ok_or("missing refusal history")?;
+        // Earlier refusals survive every later one.
+        assert_eq!(history.len() as u64, refusal_number, "{manifest:#}");
+        assert_eq!(
+            history.last().map(|entry| &entry["reason"]),
+            Some(&manifest["last_after_refusal"]["reason"]),
+            "{manifest:#}"
+        );
+    }
+
+    // Status discloses the count, the history, and the spent budget.
+    let report = repair_route_status(&root)?;
+    let attempt = repair_route_attempt(&report, &attempt_id)?;
+    assert_eq!(
+        attempt["last_after_refusal"]["refusal_count"], 5,
+        "{report:#}"
+    );
+    assert_eq!(
+        attempt["last_after_refusal"]["retry_budget_exhausted"], true,
+        "{report:#}"
+    );
+    assert_eq!(
+        attempt["last_after_refusal"]["history"]
+            .as_array()
+            .map(Vec::len),
+        Some(5),
+        "{report:#}"
+    );
+    let reason = report["next_command"]["reason"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        reason.contains("spent its after-phase retry budget"),
+        "{reason}"
+    );
+    // The spent attempt's after command is a refusal, so status must not offer
+    // it as the next command (the #8766 false-actionable class): it recommends
+    // a new attempt through the shared repair-start gate or withholds it.
+    assert_eq!(attempt["disposition"], "retry_budget_spent", "{report:#}");
+    let (step, command) = repair_route_next(&report);
+    assert!(
+        !command.contains(&attempt_id) && !command.contains("--phase after"),
+        "status offered the refused after phase: {step} {command}"
+    );
+    assert!(
+        attempt["command"]
+            .as_str()
+            .is_none_or(|offered| !offered.contains(&attempt_id)),
+        "{report:#}"
+    );
+    assert_ne!(step, "repair_attempt_after", "{report:#}");
+    if !command.is_empty() {
+        assert_eq!(step, "repair_attempt_before", "{report:#}");
+        assert!(command.contains("--phase before"), "{command}");
+    }
+    let root_arg = root.to_string_lossy().into_owned();
+    let selected = run_ripr(&[
+        "agent",
+        "status",
+        "--root",
+        &root_arg,
+        "--attempt",
+        &attempt_id,
+        "--json",
+    ]);
+    assert_success(&selected);
+    let selected_text = String::from_utf8_lossy(&selected.stdout).into_owned();
+    let selected_json: serde_json::Value = serde_json::from_str(&selected_text)?;
+    let selected_action = selected_json["next_action"]["command"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        !selected_action.contains(&attempt_id) && !selected_action.contains("--phase after"),
+        "selected-attempt status offered the refused after phase: {selected_json:#}"
+    );
+
+    // Even an edit that would move the gap does not finish a spent attempt.
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{REPAIR_ROUTE_WEAK_TEST}{REPAIR_ROUTE_BOUNDARY_TEST}"),
+    )?;
+    let stopped = repair_route_after(&root, &attempt_id);
+    assert_eq!(stopped.status.code(), Some(3), "{stopped:?}");
+    let stopped_stderr = String::from_utf8_lossy(&stopped.stderr);
+    assert!(
+        stopped_stderr.contains("spent its after-phase retry budget"),
+        "{stopped_stderr}"
+    );
+    // The recovery names a new attempt; the shared repair gate may withhold
+    // the literal start command, which is its own authority.
+    assert!(
+        stopped_stderr.contains("set the failed edits aside"),
+        "{stopped_stderr}"
+    );
+    let manifest = repair_route_manifest(&root, &attempt_id)?;
+    assert_eq!(manifest["state"], "awaiting_edit", "{manifest:#}");
+    assert!(
+        manifest.get("after").is_none_or(serde_json::Value::is_null),
+        "{manifest:#}"
+    );
+    assert_eq!(
+        manifest["after_refusal_count"], 5,
+        "the stop is not a refusal: {manifest:#}"
+    );
+    assert!(!root.join("target/ripr/reports/agent-receipt.json").exists());
 
     let _ = std::fs::remove_dir_all(&root);
     Ok(())
@@ -26079,8 +26337,19 @@ fn agent_status_reports_the_after_phase_recovery_for_rewritten_history()
         "{report:#}"
     );
     assert_eq!(attempt["head_current"], false, "{report:#}");
-    let (step, _) = repair_route_next(&report);
-    assert_eq!(step, "repair_attempt_before", "{report:#}");
+    // #8766: the amended history already carries the exact boundary
+    // assertion, so the repair gate refuses a new attempt. Only the restart
+    // is withheld; the reset-and-rerun-after recovery stays.
+    let (step, command) = repair_route_next(&report);
+    assert_eq!(step, "repair_attempt_after", "{report:#}");
+    assert!(
+        command.contains("--phase after") && !command.contains("--phase before"),
+        "{command}"
+    );
+    assert!(
+        repair_route_warning_kinds(&report).contains(&"repair_start_withheld".to_string()),
+        "{report:#}"
+    );
     let reason = report["next_command"]["reason"]
         .as_str()
         .unwrap_or_default()

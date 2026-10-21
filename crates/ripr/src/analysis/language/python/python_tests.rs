@@ -821,7 +821,7 @@ class CheckoutTests(unittest.TestCase):
 
     assert_eq!(pytest_test.qualified_name, "TestCheckout.test_pytest_route");
     assert_eq!(
-        verify_command_for_test(pytest_test).as_deref(),
+        verify_command_for_test_on(pytest_test, false).as_deref(),
         Some("python -m pytest tests/test_checkout.py::TestCheckout::test_pytest_route")
     );
     assert_eq!(
@@ -829,7 +829,7 @@ class CheckoutTests(unittest.TestCase):
         "CheckoutTests.test_unittest_route"
     );
     assert_eq!(
-        verify_command_for_test(unittest_test).as_deref(),
+        verify_command_for_test_on(unittest_test, false).as_deref(),
         Some("python -m unittest tests.test_checkout.CheckoutTests.test_unittest_route")
     );
     Ok(())
@@ -845,15 +845,16 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
         .find(|test| test.name == "test_ok")
         .ok_or_else(|| "missing hostile pytest".to_string())?;
     assert_eq!(
-        verify_command_for_test(hostile_test).as_deref(),
+        verify_command_for_test_on(hostile_test, false).as_deref(),
         Some("python -m pytest 'tests/foo$(id).py'::test_ok")
     );
-    let placement = python_repair_placement(
+    let placement = python_repair_placement_on(
         &ExposureClass::WeaklyExposed,
         &[PythonRelatedCandidate {
             test: hostile_test,
             relation: PythonRelationKind::SyntacticCall,
         }],
+        false,
     )
     .ok_or_else(|| "weak pytest relation should still place a repair".to_string())?;
     assert_eq!(
@@ -876,7 +877,7 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
         .find(|test| test.name == "test_ok")
         .ok_or_else(|| "missing spaced pytest".to_string())?;
     assert_eq!(
-        verify_command_for_test(spaced_test).as_deref(),
+        verify_command_for_test_on(spaced_test, false).as_deref(),
         Some("python -m pytest 'tests/my file.py'::test_ok")
     );
 
@@ -886,7 +887,7 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
         .find(|test| test.name == "test_ok")
         .ok_or_else(|| "missing quoted pytest".to_string())?;
     assert_eq!(
-        verify_command_for_test(quoted_test).as_deref(),
+        verify_command_for_test_on(quoted_test, false).as_deref(),
         Some("python -m pytest 'tests/o'\\''brien.py'::test_ok")
     );
 
@@ -896,7 +897,7 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
         .find(|test| test.name == "test_ok")
         .ok_or_else(|| "missing plain pytest".to_string())?;
     assert_eq!(
-        verify_command_for_test(plain_test).as_deref(),
+        verify_command_for_test_on(plain_test, false).as_deref(),
         Some("python -m pytest tests/test_checkout.py::test_ok"),
         "a plain relative path must stay unquoted"
     );
@@ -907,15 +908,16 @@ fn verify_command_quotes_shell_metacharacters_and_leaves_plain_paths_raw() -> Re
         .find(|test| test.name == "test_ok")
         .ok_or_else(|| "missing hostile unittest".to_string())?;
     assert_eq!(
-        verify_command_for_test(hostile_unit_test).as_deref(),
+        verify_command_for_test_on(hostile_unit_test, false).as_deref(),
         Some("python -m unittest 'tests.foo$(id)'.T.test_ok")
     );
-    let unit_placement = python_repair_placement(
+    let unit_placement = python_repair_placement_on(
         &ExposureClass::WeaklyExposed,
         &[PythonRelatedCandidate {
             test: hostile_unit_test,
             relation: PythonRelationKind::SyntacticCall,
         }],
+        false,
     )
     .ok_or_else(|| "weak unittest relation should still place a repair".to_string())?;
     assert_eq!(unit_placement.suggested_test_node_id, None);

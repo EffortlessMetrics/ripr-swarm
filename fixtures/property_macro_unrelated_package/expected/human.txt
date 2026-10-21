@@ -28,6 +28,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/property_macro_unrelated_package/input --diff <cwd>/fixtures/property_macro_unrelated_package/diff.patch --mode fast probe:crates_a_src_lib.rs:predicate:bdf7ae04
   ripr context --root <cwd>/fixtures/property_macro_unrelated_package/input --diff <cwd>/fixtures/property_macro_unrelated_package/diff.patch --mode fast --at probe:crates_a_src_lib.rs:predicate:bdf7ae04
+  no repair start offered: repair route not ready; run `ripr repair probe:crates_a_src_lib.rs:predicate:bdf7ae04 --root <cwd>/fixtures/property_macro_unrelated_package/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/property_macro_unrelated_package/input --at crates/a/src/lib.rs:2 --kind predicate
 

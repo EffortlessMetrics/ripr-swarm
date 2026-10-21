@@ -28,6 +28,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/binding_predicate_two_uses/input --diff <cwd>/fixtures/binding_predicate_two_uses/diff.patch --mode fast probe:src_lib.rs:predicate:dda2cb0b
   ripr context --root <cwd>/fixtures/binding_predicate_two_uses/input --diff <cwd>/fixtures/binding_predicate_two_uses/diff.patch --mode fast --at probe:src_lib.rs:predicate:dda2cb0b
+  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:predicate:dda2cb0b --root <cwd>/fixtures/binding_predicate_two_uses/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/binding_predicate_two_uses/input --at src/lib.rs:3 --kind predicate
 

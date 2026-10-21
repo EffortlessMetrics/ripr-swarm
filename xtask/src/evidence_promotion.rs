@@ -3037,7 +3037,29 @@ pub(crate) fn evidence_promotion_human_oracle_line_matches(
             {
                 continue;
             }
-            return related_test[separator + " uses ".len()..].starts_with(projection.as_str());
+            let phrase = &related_test[separator + " uses ".len()..];
+            // A row ungraded against the probe reads "<kind> oracle, not
+            // graded against this probe" (an unclassified kind reads "an
+            // unclassified oracle") (#8388).
+            let ungraded = if expected_kind == "unknown" {
+                "an unclassified oracle, not graded against this probe:".to_string()
+            } else {
+                format!(
+                    "{} oracle, not graded against this probe:",
+                    expected_kind.replace('_', " ")
+                )
+            };
+            // A row with no oracle reads "no oracle" (#8747).
+            let absent = phrase
+                .strip_prefix("no oracle")
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with([';', ':', ',']));
+            return if expected_strength == "none" {
+                expected_kind == "unknown" && absent
+            } else if expected_strength == "unknown" {
+                phrase.starts_with(ungraded.as_str())
+            } else {
+                phrase.starts_with(projection.as_str())
+            };
         }
         return false;
     }
@@ -5103,8 +5125,22 @@ mod harness_limitation_assertion_tests {
             "fixtures/evidence-promotion-honesty-corpus/patches/semver-matches-greater.diff"
         )));
         assert!(!evidence_promotion_case_is_diff_sourced(None));
-        assert!(!evidence_promotion_case_is_diff_sourced(Some(
-            "fixtures/split_test_boundary_oracle"
-        )));
+        // Absolute paths: the check reads the filesystem, and other xtask
+        // tests move the process cwd to the repo root. A relative
+        // `fixtures/split_test_boundary_oracle` flipped to diff-sourced
+        // (it carries a `diff.patch`) whenever one of them ran concurrently.
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let diff_fixture = manifest_dir
+            .parent()
+            .unwrap_or(manifest_dir)
+            .join("fixtures/split_test_boundary_oracle");
+        assert!(diff_fixture.join("diff.patch").exists());
+        assert!(evidence_promotion_case_is_diff_sourced(
+            diff_fixture.to_str()
+        ));
+        assert!(!manifest_dir.join("diff.patch").exists());
+        assert!(!evidence_promotion_case_is_diff_sourced(
+            manifest_dir.to_str()
+        ));
     }
 }

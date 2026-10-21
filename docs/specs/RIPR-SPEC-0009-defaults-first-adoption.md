@@ -36,6 +36,14 @@ The default contract is:
   conservative defaults and is reported as such by `ripr doctor`.
 - `ripr init` materializes repo policy. It does not unlock the useful
   experience.
+- `ripr init --ci` accepts only `github`. Unknown providers use the shared
+  CLI value-suggestion rules: nearby values such as `githb`, `githbu`, and
+  `gitlab` name `github`; distant values such as `gitlab-ci` and
+  `zzzzzzzzzzzz` list the accepted provider without a suggestion. A hint
+  never accepts or executes the rejected spelling: unknown providers exit 2,
+  write the error and accepted list to stderr, leave stdout empty, and create
+  no files. A missing provider retains the missing-value refusal. Valid
+  `github` parsing, preview, and generated file contents remain unchanged.
 - With a lossless root, successful `ripr init --ci github` names the generated
   workflow and tells the adopter to review and commit it, then open or update
   a pull request and read the advisory job summary. Blocking gates remain opt-in through the
@@ -54,6 +62,12 @@ The default contract is:
   initialize or overwrite that directory. Real and dry runs retain the same
   refusal. If no lossless root spelling exists, omit executable retries and
   name the UTF-8-parent/alias remedy while leaving existing files intact.
+- Workflow refresh advisories from `init` and `doctor` also bind executable
+  refresh commands to the selected root, including after an upgrade and during
+  an init dry run. Preserve config customizations and provide PowerShell quoting
+  when needed. Commands remain byte-preserving after terminal sanitization,
+  including roots with literal line breaks or tabs. If no lossless command root exists, retain the advisory but omit
+  the refresh command with the same UTF-8-parent/alias remedy.
 - A missing `ripr.toml` and a freshly generated `ripr.toml` should produce
   equivalent default policy behavior, except for filesystem artifacts
   intentionally created by `init` or other commands.
@@ -416,6 +430,20 @@ Defaults-first adoption evidence should cover:
 - implicit-root saved-diff analysis beneath invalid Git markers matching the
   explicit-root and genuine-repository positives with nonzero changed files,
   probes, findings and related tests;
+- implicit-root parity for the task-first commands (`repair`, `pilot`, `status`,
+  `continue`, `agent stub`) from a workspace member directory, including
+  member-relative `file:line` selectors that must not reach a sibling member;
+- the same implicit-root parity for `agent start/repair/card/status/verify`,
+  `rerun`, `diff` and `explain` from a workspace member directory, with
+  member-relative `--before/--after`, `--changed-test` and `file:line` inputs
+  bound to the invocation directory when they name an existing file (an
+  unresolved `rerun --changed-test` stays RIPR-SPEC-0123's named limitation),
+  `--root .` as the opt-out, and root-resolution failures of `diff --json` and
+  `rerun --json` keeping the refusal envelope, and a member-relative
+  `file:line` for `repair`, `agent repair` and `explain` refused (fail closed)
+  when a workspace-root file with the same path suffix exists, even without a
+  root finding there, with `--root .` or a seam, gap or finding ID as the
+  escape hatches;
 - shared cache-root parity, real nested and linked-worktree boundaries,
   inherited-selector isolation, and the gitless saved-diff route;
 - built-in missing-config behavior matching the generated init profile's
@@ -508,6 +536,17 @@ A valid UTF-8 absolute alias to the physical root still yields usable follow-ups
 Given a workspace with an existing ripr.toml,
 when a user runs ripr init without --force,
 then ripr exits with an actionable message and leaves the file unchanged.
+```
+
+### Init provider recovery does not initialize a rejected value
+
+```text
+Given an empty selected repository,
+when a user runs ripr init --ci githb,
+then ripr exits 2 with a github suggestion and Accepted: github on stderr,
+leaves stdout empty, and creates neither config nor workflow files.
+With gitlab-ci instead, the same refusal has no suggestion.
+With github, the existing preview and generated files retain their contract.
 ```
 
 ### Pilot points at one next action
@@ -719,6 +758,8 @@ Current tests and reports that support the contract:
 - `crates/ripr/src/cli/commands.rs::tests::init_parses_root_dry_run_and_force`
 - `crates/ripr/src/cli/commands.rs::tests::init_requires_root_value`
 - `crates/ripr/src/cli/commands.rs::tests::init_rejects_unknown_arguments`
+- `crates/ripr/tests/cli_help_hierarchy.rs::init_ci_provider_errors_recover_near_misses`
+- `crates/ripr/tests/cli_help_hierarchy.rs::init_ci_provider_valid_preview_keeps_workflow_contract`
 - `crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_is_advisory`
 - `crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_uploads_reports_and_makes_sarif_optional`
 - `crates/ripr/src/cli/commands.rs::tests::init_ci_github_writes_workflow_and_preserves_existing_config`
@@ -728,6 +769,10 @@ Current tests and reports that support the contract:
 - `crates/ripr/tests/cli_smoke/init_ci_guidance.rs::init_ci_followup_does_not_claim_adoption_for_config_only_or_preview`
 - `crates/ripr/tests/cli_smoke/init_followups.rs::init_followups_replay_the_selected_root_from_foreign_cwd`
 - `crates/ripr/tests/cli_smoke/init_followups.rs::init_refusal_retries_replay_the_selected_root`
+- `crates/ripr/tests/cli_smoke/init_followups.rs::init_upgrade_warning_refresh_replays_selected_root`
+- `crates/ripr/tests/cli_smoke/init_followups.rs::doctor_workflow_warning_refresh_replays_selected_root`
+- `crates/ripr/tests/cli_smoke/init_followups.rs::workflow_warning_omits_refresh_for_unrepresentable_root`
+- `crates/ripr/tests/cli_smoke/init_followups.rs::workflow_refresh_control_roots_replay_without_touching_escaped_siblings`
 - `crates/ripr/tests/cli_smoke/init_followups.rs::init_refusal_omits_retries_for_an_unrepresentable_root`
 - `crates/ripr/tests/cli_smoke/init_followups.rs::init_omits_followups_for_an_unrepresentable_implicit_root`
 - `crates/ripr/tests/cli_smoke/init_followups.rs::init_followups_replay_a_utf8_alias_to_a_non_utf8_root`
