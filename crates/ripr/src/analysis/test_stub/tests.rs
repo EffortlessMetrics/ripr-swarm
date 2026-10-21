@@ -128,9 +128,9 @@ fn recomputed_stub_for_the_same_seam_is_flagged_already_present() -> Result<(), 
 
 /// A different test that happens to share the base name is not ripr's stub:
 /// the `--write` semantics are unchanged and the name still suffixes.
-/// #8990 review X1: applying the write twice must report ripr's own `_2`
-/// write as already present on the second run — the file stays unchanged —
-/// instead of suffixing a `_3` duplicate.
+/// Recomputing after insertion must find ripr's own `_2` function instead of
+/// proposing `_3`. The command-level no-write contract is exercised through
+/// the binary in `agent_stub_at_disclosure.rs`.
 #[test]
 fn same_named_but_different_test_still_suffixes() -> Result<(), String> {
     let with_other_test = "pub fn price(amount: u32, threshold: u32) -> u32 {
@@ -180,16 +180,16 @@ mod tests {
         second.test_name, "price_boundary_discriminator_2",
         "the already-written report names the test on disk"
     );
-    // The second run proposes no edit: applying its text leaves the file
-    // byte-identical, which is what the CLI's already-present skip
-    // guarantees.
-    let close = rewritten.rfind('}').ok_or("module close brace")?;
-    let (head, tail) = rewritten.split_at(close);
-    let re_rewritten = format!("{head}{}{tail}", second.text.trim_start_matches('\n'));
+    // The resolver retains the full rendered function even when present;
+    // the CLI's write guard, rather than an empty insertion, makes it a no-op.
+    assert_eq!(second.text, stub.text);
     assert_eq!(
-        re_rewritten, rewritten,
-        "an already-present second run must leave the file unchanged"
+        rewritten
+            .matches("fn price_boundary_discriminator_2(")
+            .count(),
+        1
     );
+    assert!(!rewritten.contains("fn price_boundary_discriminator_3("));
     Ok(())
 }
 

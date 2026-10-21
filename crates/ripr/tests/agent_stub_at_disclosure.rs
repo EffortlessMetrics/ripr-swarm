@@ -287,3 +287,96 @@ fn second_write_reports_already_written_instead_of_a_duplicate() -> Result<(), S
     }
     Ok(())
 }
+
+/// The first write must change the source; repeated writes must leave every
+/// byte alone, including when a different test owns the base name. Comparing
+/// metadata also catches an unnecessary rewrite of identical bytes. Analysis
+/// may populate target caches; this contract covers the source file.
+#[test]
+fn repeated_writes_preserve_source_bytes_and_metadata_with_name_collisions() -> Result<(), String> {
+    const OPEN_GAP: &str =
+        "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n";
+    const COLLISION: &str = "\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn clamp_to_boundary_discriminator() {\n        assert_eq!(super::clamp_to(80), 80);\n    }\n}\n";
+    for collision in [false, true] {
+        for crlf in [false, true] {
+            let mut source = OPEN_GAP.to_string();
+            if collision {
+                source.push_str(COLLISION);
+            }
+            if crlf {
+                source = source.replace('\n', "\r\n");
+            }
+            let scratch = Scratch::create("rewrite-collision", &source)?;
+            let path = scratch.0.join("src/lib.rs");
+            let expected_name = if collision {
+                "clamp_to_boundary_discriminator_2"
+            } else {
+                "clamp_to_boundary_discriminator"
+            };
+            let first = stub_write(&scratch.0, "src/lib.rs:2", "predicate", true)?;
+            assert!(first.status.success(), "first write: {first:?}");
+            let document: serde_json::Value = serde_json::from_slice(&first.stdout)
+                .map_err(|error| format!("first write JSON: {error}: {first:?}"))?;
+            assert_eq!(document["state"], "ready");
+            assert_eq!(document["test_name"], expected_name);
+            assert_eq!(document["already_present"], false);
+            assert_eq!(document["written"], true);
+            let written = std::fs::read(&path).map_err(|error| error.to_string())?;
+            assert_ne!(
+                written,
+                source.as_bytes(),
+                "first write must reach the file"
+            );
+            let text = std::str::from_utf8(&written).map_err(|error| error.to_string())?;
+            assert_eq!(text.matches(&format!("fn {expected_name}(")).count(), 1);
+            assert!(!text.contains("fn clamp_to_boundary_discriminator_3("));
+            if crlf {
+                assert!(!text.replace("\r\n", "").contains('\n'));
+            }
+            let before = std::fs::metadata(&path).map_err(|error| error.to_string())?;
+            for json in [false, true] {
+                let repeat = stub_write(&scratch.0, "src/lib.rs:2", "predicate", json)?;
+                assert!(repeat.status.success(), "repeat write: {repeat:?}");
+                if json {
+                    let document: serde_json::Value = serde_json::from_slice(&repeat.stdout)
+                        .map_err(|error| format!("repeat JSON: {error}: {repeat:?}"))?;
+                    assert_eq!(document["state"], "ready");
+                    assert_eq!(document["test_name"], expected_name);
+                    assert_eq!(document["already_present"], true);
+                    assert_eq!(document["written"], false);
+                } else {
+                    let stdout = String::from_utf8_lossy(&repeat.stdout);
+                    assert!(stdout.contains("Stub already written at"), "{stdout}");
+                    assert!(stdout.contains("Run it:"), "{stdout}");
+                    assert!(stdout.contains(expected_name), "{stdout}");
+                    assert!(!stdout.contains("Wrote test stub"), "{stdout}");
+                }
+                assert_eq!(
+                    std::fs::read(&path).map_err(|error| error.to_string())?,
+                    written
+                );
+                let after = std::fs::metadata(&path).map_err(|error| error.to_string())?;
+                assert_eq!(after.len(), before.len());
+                assert_eq!(
+                    after.modified().map_err(|error| error.to_string())?,
+                    before.modified().map_err(|error| error.to_string())?
+                );
+                assert_eq!(after.permissions(), before.permissions());
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    assert_eq!((after.dev(), after.ino()), (before.dev(), before.ino()));
+                    assert_eq!(
+                        (after.mtime(), after.mtime_nsec()),
+                        (before.mtime(), before.mtime_nsec())
+                    );
+                    assert_eq!(
+                        (after.ctime(), after.ctime_nsec()),
+                        (before.ctime(), before.ctime_nsec())
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
