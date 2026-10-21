@@ -464,6 +464,62 @@ async fn typed_shape_error_keeps_a_recoverable_request_id() -> Result<(), String
 }
 
 #[tokio::test]
+async fn typed_shape_error_with_an_oversized_id_uses_null_and_the_session_continues()
+-> Result<(), String> {
+    let huge = "i".repeat(super::super::MAX_RESPONSE_BYTES);
+    let input = format!(
+        "{{\"jsonrpc\":\"2.0\",\"id\":\"{huge}\",\"method\":\"tools/list\",\"params\":[]}}\n\
+         {{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"ping\"}}\n"
+    );
+    let writer = Arc::new(Mutex::new(FrameWriter::new(Vec::<u8>::new())));
+    let mut transport = BoundedTransport {
+        reader: Arc::new(Mutex::new(FrameReader::new(input.as_bytes()))),
+        writer: writer.clone(),
+        failure: Arc::new(TransportFailure::default()),
+        admission: Arc::new(Admission::default()),
+        pending_protocol_error: None,
+        writer_needs_drain: false,
+    };
+    let message = transport.receive().await.ok_or_else(|| {
+        "the request after the oversized-id shape error was not delivered".to_string()
+    })?;
+    let ClientJsonRpcMessage::Request(delivered) = message else {
+        return Err("expected the following ping request".into());
+    };
+    if delivered.id != rmcp::model::RequestId::Number(7) {
+        return Err("delivered the wrong request".into());
+    }
+    let guard = writer.lock().await;
+    let frames: Vec<_> = guard
+        .output()
+        .split(|byte| *byte == b'\n')
+        .filter(|frame| !frame.is_empty())
+        .collect();
+    let [frame] = frames.as_slice() else {
+        return Err(format!("expected one error frame, got {}", frames.len()));
+    };
+    let error: Value = serde_json::from_slice(frame).map_err(|error| error.to_string())?;
+    if frame.len() > 512
+        || error.get("id") != Some(&Value::Null)
+        || error.pointer("/error/code").and_then(Value::as_i64) != Some(-32600)
+    {
+        return Err(format!(
+            "oversized-id shape error must be bounded with a null id: {error}"
+        ));
+    }
+    if transport
+        .failure
+        .reason
+        .lock()
+        .map_err(|e| e.to_string())?
+        .is_some()
+    {
+        return Err("oversized id on the shape-error path must not fail the transport".into());
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn framing_delivers_valid_undelimited_eof_and_then_closes() -> Result<(), String> {
     let mut reader = FrameReader::new(b"{\"eof\":true}".as_slice());
     match read_frame(&mut reader).await? {
