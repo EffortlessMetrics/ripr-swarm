@@ -756,11 +756,61 @@ fn module_declaration_facts(
             requires_test: cfg_predicates::attributes_require_test(
                 attributes.iter().map(String::as_str),
             ),
+            cfg_guard: simple_cfg_guard(&attributes),
         });
     }
     declarations.sort_by(|left, right| left.line.cmp(&right.line).then(left.name.cmp(&right.name)));
     declarations.dedup();
     declarations
+}
+
+/// Returns `(X, negated)` when the attributes contain exactly one cfg-like
+/// attribute and it is `#[cfg(X)]` or `#[cfg(not(X))]` with `X` a bare
+/// identifier or `ident = "literal"`. Anything else (`cfg_attr`, compound
+/// predicates, several cfg attributes) returns `None` so exclusivity is never
+/// inferred from a shape this function does not fully understand.
+fn simple_cfg_guard(attributes: &[String]) -> Option<(String, bool)> {
+    let compact = |attribute: &String| -> String {
+        let mut out = String::new();
+        let mut in_string = false;
+        for ch in attribute.chars() {
+            if ch == '"' {
+                in_string = !in_string;
+            }
+            if in_string || !ch.is_whitespace() {
+                out.push(ch);
+            }
+        }
+        out
+    };
+    let mut cfgs = attributes.iter().map(compact).filter(|text| {
+        text.starts_with("#[cfg") || text.starts_with("#![cfg") || text.contains("cfg_attr")
+    });
+    let only = cfgs.next()?;
+    if cfgs.next().is_some() {
+        return None;
+    }
+    let body = only.strip_prefix("#[cfg(")?.strip_suffix(")]")?;
+    let (predicate, negated) = match body.strip_prefix("not(") {
+        Some(inner) => (inner.strip_suffix(')')?, true),
+        None => (body, false),
+    };
+    let simple = !predicate.is_empty()
+        && !predicate.contains(['(', ')', ','])
+        && match predicate.split_once('=') {
+            Some((name, value)) => {
+                !name.is_empty()
+                    && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    && value.len() >= 2
+                    && value.starts_with('"')
+                    && value.ends_with('"')
+                    && !value[1..value.len() - 1].contains('"')
+            }
+            None => predicate
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_'),
+        };
+    simple.then(|| (predicate.to_string(), negated))
 }
 
 /// Collects the parser-backed test-body shadow facts for one function
