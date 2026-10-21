@@ -511,6 +511,14 @@ fn conftest_reexports_option_splats_and_autouse_factories_make_admission_unresol
         "import pytest\n\n\ndef pytest_collection_modifyitems(items):\n    for item in items:\n        item.add_marker(pytest.mark.usefixtures(\"strict\"))\n",
         "def pytest_runtestloop(session):\n    return None\n",
         "pytest_runtest_call: object = other.hook\n",
+        // aliases of the fixture decorator or of an external fixture
+        "from pytest import fixture as fx\n\n\n@fx(autouse=True)\ndef leak():\n    yield\n    assert not LEAKS\n",
+        "import pytest\n\nfx = pytest.fixture\n",
+        "import fixtures_lib\n\nleak_check = fixtures_lib.leak_check\n",
+        // a bare statement or annotated assignment applying the decorator
+        "import pytest\n\npytest.fixture(autouse=True)(_impl)\n",
+        "import pytest\n\nleak: object = pytest.fixture(autouse=True)(_impl)\n",
+        "a, pytest_runtest_call = x, y\n",
     ];
     for conftest in cases {
         let got = tax_admission(&[
@@ -524,6 +532,7 @@ fn conftest_reexports_option_splats_and_autouse_factories_make_admission_unresol
         "import pytest\n\n\n@pytest.fixture\ndef db():\n    return 1\n",
         "from pathlib import Path\n",
         "from typing import Any\n",
+        "import os\n\nROOT = \"x\"\nitems = [1]\n",
     ] {
         let got = tax_admission(&[
             ("tests/conftest.py", inert),

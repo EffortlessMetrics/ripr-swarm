@@ -33,10 +33,13 @@
 //! (`config.pluginmanager.register`), and a plugin installed by entry point
 //! can still fail a `NoAssertionLike` test, as can pytest configuration
 //! outside any conftest (`-p` or `usefixtures` in an ini file's `addopts`)
-//! (#6657). A conftest that imports names from outside a short standard-library
-//! list (they may be an autouse fixture or hook), star-imports, aliases a hook
-//! or builds an autouse-fixture factory is tainted; setup installed through
-//! `globals()` or other runtime registration is not seen. A module imported from
+//! (#6657). A conftest that imports names from outside a short list of pytest
+//! and standard-library modules (they may be an autouse fixture or hook),
+//! star-imports, aliases a hook or the fixture decorator, aliases an external
+//! fixture by assignment, or builds an autouse-fixture factory is tainted.
+//! Not seen: setup installed through `globals()` or other runtime registration,
+//! `@pytest.hookimpl(specname=...)` on a differently named function, and an
+//! autouse fixture imported into the test module itself. A module imported from
 //! the test file's own directory or below is treated as test support; for a
 //! test file at the repository root, a relative import is treated as test
 //! support by alias. A `no_assertion` miss must account for the rest before
@@ -258,6 +261,7 @@ impl PythonAdmissionContext {
                 // hook the def-based scan does not see.
                 Stmt::Assign(assign)
                     if builds_autouse_fixture(&assign.value)
+                        || is_alias_value(&assign.value)
                         || assign.targets.iter().any(is_runtest_hook_target) =>
                 {
                     self.has_conftest_reexport = true;
@@ -275,6 +279,11 @@ impl PythonAdmissionContext {
                                     .asname
                                     .as_ref()
                                     .is_some_and(|name| is_runtest_hook_name(name.as_str()))
+                                || (alias.asname.is_some()
+                                    && matches!(
+                                        alias.name.as_str(),
+                                        "fixture" | "yield_fixture"
+                                    ))
                         }) =>
                 {
                     self.has_conftest_reexport = true;
@@ -282,7 +291,17 @@ impl PythonAdmissionContext {
                 Stmt::AnnAssign(assign) if is_pytest_plugins_target(&assign.target) => {
                     self.has_plugins = true;
                 }
-                Stmt::AnnAssign(assign) if is_runtest_hook_target(&assign.target) => {
+                Stmt::AnnAssign(assign)
+                    if is_runtest_hook_target(&assign.target)
+                        || assign.value.as_deref().is_some_and(|value| {
+                            builds_autouse_fixture(value) || is_alias_value(value)
+                        }) =>
+                {
+                    self.has_conftest_reexport = true;
+                }
+                // `pytest.fixture(autouse=True)(fn)` as a bare statement still
+                // registers `fn` on older pytest.
+                Stmt::Expr(expr) if builds_autouse_fixture(&expr.value) => {
                     self.has_conftest_reexport = true;
                 }
                 Stmt::AugAssign(assign) if is_pytest_plugins_target(&assign.target) => {
@@ -414,7 +433,20 @@ fn is_inert_import_module(module: &str) -> bool {
 }
 
 fn is_runtest_hook_target(target: &Expr) -> bool {
-    matches!(target, Expr::Name(name) if is_runtest_hook_name(name.id.as_str()))
+    match target {
+        Expr::Name(name) => is_runtest_hook_name(name.id.as_str()),
+        Expr::Tuple(tuple) => tuple.elts.iter().any(is_runtest_hook_target),
+        Expr::List(list) => list.elts.iter().any(is_runtest_hook_target),
+        _ => false,
+    }
+}
+
+/// A bare name or attribute on the right-hand side
+/// (`leak_check = fixtures_lib.leak_check`, `fx = pytest.fixture`): pytest
+/// collects fixtures by module attribute, so the alias may register a fixture
+/// or decorator defined elsewhere.
+fn is_alias_value(value: &Expr) -> bool {
+    matches!(value, Expr::Name(_) | Expr::Attribute(_))
 }
 
 /// A value that builds an autouse fixture decorator for later use:
