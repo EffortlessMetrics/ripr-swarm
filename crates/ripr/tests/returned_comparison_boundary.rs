@@ -164,3 +164,94 @@ fn an_operator_change_keeps_the_return_value_reading() -> Result<(), String> {
     );
     Ok(())
 }
+
+const FAR_INPUTS: &str = "use thr::thr;\n\n#[test]\nfn low() {\n    assert!(!thr(50));\n}\n\n#[test]\nfn high() {\n    assert!(thr(500));\n}\n";
+
+#[test]
+fn an_explicit_return_is_read_at_its_boundary_like_the_tail_form() -> Result<(), String> {
+    // #9116: `return x > 100;` to `return x > 101;` is the same threshold move
+    // as the implicit tail, so far inputs must not expose it.
+    let findings = findings("    return x > 101;", "    return x > 100;", FAR_INPUTS)?;
+    // Fixture construction: the changed line is a parser-backed return_value
+    // probe that still carries the explicit `return`.
+    let return_value = family(&findings, "return_value")?;
+    assert!(
+        return_value.probe.expression.contains("return"),
+        "{return_value:?}"
+    );
+    assert_ne!(
+        return_value.class,
+        ExposureClass::Exposed,
+        "{return_value:?}"
+    );
+    assert!(
+        return_value
+            .ripr
+            .infect
+            .summary
+            .contains("equality-boundary discriminator is missing"),
+        "{return_value:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_explicit_return_with_a_boundary_input_stays_exposed() -> Result<(), String> {
+    // Positive control: `thr(101)` separates the versions.
+    let findings = findings(
+        "    return x > 101;",
+        "    return x > 100;",
+        "use thr::thr;\n\n#[test]\nfn at() {\n    assert!(!thr(101));\n}\n\n#[test]\nfn above() {\n    assert!(thr(102));\n}\n",
+    )?;
+    let return_value = family(&findings, "return_value")?;
+    assert!(
+        return_value.probe.expression.contains("return"),
+        "{return_value:?}"
+    );
+    assert_eq!(
+        return_value.class,
+        ExposureClass::Exposed,
+        "{return_value:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_explicit_return_operator_change_keeps_the_return_value_reading() -> Result<(), String> {
+    // Control: `== 100` to `> 101` is not a threshold move.
+    let findings = findings(
+        "    return x > 101;",
+        "    return x == 100;",
+        "use thr::thr;\n\n#[test]\nfn at_old() {\n    assert!(!thr(100));\n}\n",
+    )?;
+    let return_value = family(&findings, "return_value")?;
+    assert!(
+        !return_value
+            .ripr
+            .infect
+            .summary
+            .contains("equality-boundary discriminator is missing"),
+        "{return_value:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn an_explicit_return_of_a_compound_value_keeps_the_return_value_reading() -> Result<(), String> {
+    // Control: the explicit-return strip does not broaden to `&&`/`||`.
+    let findings = findings(
+        "    return x > 101 && x < 900;",
+        "    return x > 100 && x < 900;",
+        FAR_INPUTS,
+    )?;
+    let return_value = family(&findings, "return_value")?;
+    assert!(
+        !return_value
+            .ripr
+            .infect
+            .summary
+            .contains("equality-boundary discriminator is missing"),
+        "{return_value:?}"
+    );
+    Ok(())
+}

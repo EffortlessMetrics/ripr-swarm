@@ -2543,3 +2543,10 @@ infection reading instead of crediting `yes`, so inputs far from the threshold
 (`unresolved`), a compound expression, a non-comparison return value and an
 operator change (`x == 100` to `x > 101`, where an off-boundary input can
 separate the versions) keep their previous reading: the rule only downgrades and is not a runtime claim.
+
+An explicit `return x > 101;` is the same returned comparison as the tail form:
+the leading `return ` and trailing `;` are dropped from the changed and prior
+text before boundary extraction (#9116). Only a top-level comparison normalises;
+a comparison nested in a call, index, turbofish (`x.parse::<i32>() > 5`) or
+compound value keeps the return-value reading, as does a reversed-operand move
+(`100 < x` to `101 < x`), which this rule does not read.

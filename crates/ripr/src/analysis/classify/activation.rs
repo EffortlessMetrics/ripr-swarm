@@ -852,9 +852,9 @@ fn missing_discriminator_facts(
     // resolved gap counts: a boundary the lens cannot read leaves the
     // return-value reading as it was and sets no unresolved reason.
     let mut returned_unresolved = None;
-    if is_returned_comparison(probe)
+    if let Some(view) = returned_comparison_view(probe)
         && let Some(fact) = missing_boundary_discriminator(
-            probe,
+            &view,
             owner_fn,
             related_tests,
             flow_sinks,
@@ -3658,22 +3658,87 @@ fn body_contains_direct_local_alias(body: &str, operand: &str, parameter: &str) 
     })
 }
 
-/// Whether a `return_value` probe's changed expression is one bare relational
+/// A `return_value` probe's changed expression is one bare relational
 /// comparison (`x > 101`), so the returned bool is the changed predicate and
 /// its boundary is the boundary a `predicate` probe on the same line reads.
 /// When the predicate lens resolves a missing boundary discriminator for it,
 /// the probe reads that gap too: reaching the owner with inputs that never
 /// separate the old and new threshold is not an activated change. A compound (`&&`/`||`)
 /// or non-comparison expression keeps the return-value reading.
-pub(in crate::analysis) fn is_returned_comparison(probe: &Probe) -> bool {
-    matches!(probe.family, ProbeFamily::ReturnValue)
-        && !probe.expression.contains("&&")
-        && !probe.expression.contains("||")
-        && comparison_operands(&probe.expression).is_some()
-        && probe
-            .before
-            .as_deref()
-            .is_some_and(|before| same_comparison_shape(before, &probe.expression))
+///
+/// The probe re-read as the bare comparison it returns, when it is one. An
+/// explicit `return x > 101;` is the same returned comparison as the implicit
+/// tail `x > 101`, so a leading `return ` and trailing `;` are dropped from the
+/// changed and prior text before boundary extraction (#9116). Only the
+/// comparison itself is exposed: a comparison nested in a call, index,
+/// turbofish or compound value never normalises to one and keeps the
+/// return-value reading.
+pub(in crate::analysis) fn returned_comparison_view(probe: &Probe) -> Option<Probe> {
+    if !matches!(probe.family, ProbeFamily::ReturnValue) {
+        return None;
+    }
+    let (expression, explicit) = strip_explicit_return(&probe.expression);
+    if explicit && !is_top_level_comparison(&expression) {
+        return None;
+    }
+    let before = probe.before.as_deref().map(|before| {
+        let (before, before_explicit) = strip_explicit_return(before);
+        (before, before_explicit)
+    });
+    if let Some((before, true)) = &before
+        && !is_top_level_comparison(before)
+    {
+        return None;
+    }
+    if expression.contains("&&")
+        || expression.contains("||")
+        || comparison_operands(&expression).is_none()
+        || !before
+            .as_ref()
+            .is_some_and(|(before, _)| same_comparison_shape(before, &expression))
+    {
+        return None;
+    }
+    let mut view = probe.clone();
+    view.expression = expression;
+    view.before = before.map(|(before, _)| before);
+    Some(view)
+}
+
+/// `return x > 1;` -> (`x > 1`, true); a text without a leading `return `
+/// comes back unchanged and `false`.
+fn strip_explicit_return(text: &str) -> (String, bool) {
+    let trimmed = text.trim();
+    match trimmed.strip_prefix("return ") {
+        Some(rest) => (rest.trim().trim_end_matches(';').trim().to_string(), true),
+        None => (text.to_string(), false),
+    }
+}
+
+/// One relational comparison whose operator sits outside every bracket, with
+/// no turbofish: `x > 101` and `(a + 1) > 5` qualify; `f(a > 1)`,
+/// `v[a > 1]` and `x.parse::<i32>() > 5` do not.
+fn is_top_level_comparison(expression: &str) -> bool {
+    if expression.contains("::<") {
+        return false;
+    }
+    let mut depth = 0i32;
+    let mut top_level = 0usize;
+    for ch in expression.chars() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            '<' | '>' | '=' | '!' if depth == 0 => top_level += 1,
+            '<' | '>' => return false,
+            _ => {}
+        }
+    }
+    depth == 0 && top_level > 0
 }
 
 /// Whether `before` and `after` are bare comparisons in the same operator
@@ -6351,6 +6416,32 @@ assert_eq!(input.amount, 100);"#
             expected_sinks: Vec::new(),
             required_oracles: Vec::new(),
         }
+    }
+
+    /// #9116: an explicit `return` normalises only to a top-level comparison.
+    #[test]
+    fn explicit_return_normalises_only_a_top_level_comparison() {
+        let view = |before: &str, after: &str| {
+            let mut p = probe(ProbeFamily::ReturnValue, after);
+            p.before = Some(before.to_string());
+            returned_comparison_view(&p).map(|v| (v.expression, v.before))
+        };
+        assert_eq!(
+            view("return x > 100", "return x > 101;"),
+            Some(("x > 101".to_string(), Some("x > 100".to_string())))
+        );
+        assert_eq!(
+            view("x > 100", "x > 101").map(|v| v.0),
+            Some("x > 101".to_string())
+        );
+        assert_eq!(view("return f(x > 100)", "return f(x > 101)"), None);
+        assert_eq!(view("return v[x > 1]", "return v[x > 2]"), None);
+        assert_eq!(
+            view("return x.parse::<i32>() > 5", "return x.parse::<i32>() > 6"),
+            None
+        );
+        assert_eq!(view("return x > 1 && y", "return x > 2 && y"), None);
+        assert_eq!(view("return x == 100", "return x > 101"), None);
     }
 
     /// RIPR-SPEC-0228 keyed reads: argument `i` of a method call is call
