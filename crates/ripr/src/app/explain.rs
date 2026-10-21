@@ -215,6 +215,10 @@ pub(crate) fn selector_limitation_fresh_run(
 /// name the listing that can actually contain the id, not a bare
 /// `ripr check --worktree --json` that analyzes the caller's directory at its
 /// default base.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the miss message carries the selector, both scope listings, and the retry together; splitting the packet would misalign the recovery contract"
+)]
 pub(crate) fn no_finding_matched_fresh_run(
     selector: &str,
     list_command: &str,
