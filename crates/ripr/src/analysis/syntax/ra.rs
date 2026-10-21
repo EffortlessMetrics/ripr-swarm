@@ -76,16 +76,19 @@ pub(crate) fn rust_include_directives(
         let Some(path) = macro_call.path() else {
             continue;
         };
-        let Some(name) = path.segment().and_then(|segment| segment.name_ref()) else {
+        let Some(segment) = path
+            .as_single_segment()
+            .filter(|segment| segment.coloncolon_token().is_none())
+        else {
+            continue;
+        };
+        let Some(name) = segment.name_ref() else {
             continue;
         };
         // Only bare include calls enter compilation-unit composition. Read
         // the identifier itself: raw spelling and intervening comments do
         // not change its name, and comment text may itself contain `!`.
-        if path.qualifier().is_some()
-            || path.coloncolon_token().is_some()
-            || cfg_predicates::rust_ident_name(name.text()) != "include"
-        {
+        if cfg_predicates::rust_ident_name(name.text()) != "include" {
             continue;
         }
         // Keep diagnostics anchored at the path, outside its attributes.
@@ -4243,6 +4246,7 @@ mod include_directive_tests {
         for source in [
             "std::include!(\"fragment.rs\");",
             "::include!(\"fragment.rs\");",
+            "::r#include!(\"fragment.rs\");",
             "other_include!(\"fragment.rs\");",
             "// r#include!(\"fragment.rs\");",
             "const TEXT: &str = r###\"r#include!(\"fragment.rs\");\"###;",
