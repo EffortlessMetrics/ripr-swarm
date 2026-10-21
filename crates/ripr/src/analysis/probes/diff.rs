@@ -991,20 +991,30 @@ fn signature_open_line(
     index: &RustIndex,
     path: &Path,
     function: &crate::analysis::rust_index::FunctionSummary,
+    line: usize,
 ) -> Option<usize> {
     /// Bound on the downward walk; a longer header is not grouped.
     const MAX_SIGNATURE_LINES: usize = 64;
+    // Cheap pre-filter: a line far below the `fn` line is never in the header,
+    // so no source is read or masked for it.
+    if line < function.start_line || line - function.start_line > MAX_SIGNATURE_LINES {
+        return None;
+    }
     let facts = find_file_facts(index, path)?;
     let count = function.end_line.checked_sub(function.start_line)?;
-    // Comment and string text is masked (length and lines preserved), so a
-    // trailing `// note {` or a brace in a literal cannot move the extent.
-    let masked = mask_comments_and_strings(&facts.source);
-    for (offset, raw) in masked
+    // Only a bounded window from the `fn` line is masked (that line starts in
+    // code, so the window starts outside any comment or string). Comment and
+    // string text is masked (length and lines preserved), so a trailing
+    // `// note {` or a brace in a literal cannot move the extent.
+    let window = facts
+        .source
         .lines()
         .skip(function.start_line.checked_sub(1)?)
         .take(count.min(MAX_SIGNATURE_LINES) + 1)
-        .enumerate()
-    {
+        .collect::<Vec<_>>()
+        .join("\n");
+    let masked = mask_comments_and_strings(&window);
+    for (offset, raw) in masked.lines().enumerate() {
         let text = raw.trim();
         if text.contains('{') {
             return (text.ends_with('{') && text.matches('{').count() == 1)
@@ -1037,7 +1047,7 @@ fn opens_new_function_with_added_body(
     let Some(function) = find_owner_function(index, &changed.path, line) else {
         return false;
     };
-    let Some(open_line) = signature_open_line(index, &changed.path, function) else {
+    let Some(open_line) = signature_open_line(index, &changed.path, function, line) else {
         return false;
     };
     line <= open_line
@@ -1074,7 +1084,7 @@ fn continues_changed_signature(
     let Some(function) = find_owner_function(index, &changed.path, line) else {
         return false;
     };
-    let Some(open_line) = signature_open_line(index, &changed.path, function) else {
+    let Some(open_line) = signature_open_line(index, &changed.path, function, line) else {
         return false;
     };
     if line > open_line
@@ -4255,7 +4265,7 @@ mod tests {
             crate::analysis::rust_index::summarize_file(path.clone(), source.to_string()),
         );
         let function = find_owner_function(&index, &path, line)?;
-        signature_open_line(&index, &path, function)
+        signature_open_line(&index, &path, function, line)
     }
 
     /// #8999 review: the signature extent is claimed only when unambiguous.
