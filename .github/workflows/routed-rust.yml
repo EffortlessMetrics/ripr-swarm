@@ -194,6 +194,7 @@ jobs:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
+          GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
         run: |
           set -euo pipefail
@@ -203,13 +204,17 @@ jobs:
             # queued: .../pr-<number>-<head sha>. That immutable head is the
             # exact-head binding, so a push after enqueue fails admission.
             # Admission is per PR: the queued commit must be one squash commit
-            # of that PR. The ruleset's group size of 1 keeps other entries out.
+            # of that PR directly on the group's base, so the workflow itself refuses a
+            # batch (fail closed) even if the ruleset group size is misconfigured.
             [[ "$GROUP_HEAD_REF" =~ /pr-([0-9]+)-([0-9a-f]{40})$ ]] || { echo "::error::merge group ref names no queued PR: $GROUP_HEAD_REF"; exit 1; }
             pr="${BASH_REMATCH[1]}" head="${BASH_REMATCH[2]}"
             commit="$(gh api "repos/${REPOSITORY}/commits/${GROUP_HEAD_SHA}")"
             parents="$(jq -r '.parents | length' <<<"$commit")"
             subject="$(jq -r '.commit.message | split("\n")[0]' <<<"$commit")"
-            { [ "$parents" = "1" ] && [[ "$subject" == *"(#${pr})" ]]; } || { echo "::error::queued commit is not a single squash commit of PR #${pr} ($parents parents: $subject); candidate admission requires exactly one queued PR per group"; exit 1; }
+            parent="$(jq -r '.parents[0].sha // empty' <<<"$commit")"
+            # A group's base is the parent of its first commit, so a one-entry
+            # group has base == the queued commit's parent; a batch does not.
+            { [ "$parents" = "1" ] && [ "$parent" = "$GROUP_BASE_SHA" ] && [[ "$subject" == *"(#${pr})" ]]; } || { echo "::error::queued commit is not a single squash commit of PR #${pr} ($parents parents, parent $parent, base $GROUP_BASE_SHA: $subject); candidate admission requires exactly one queued PR per group"; exit 1; }
             current="$(gh api "repos/${REPOSITORY}/pulls/${pr}")"
             labels="$(jq -r '[.labels[].name] | join(",")' <<<"$current")"
           fi
