@@ -14908,15 +14908,22 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     // pins the end-to-end wiring and consistency.
     let generator = env!("CARGO_PKG_VERSION");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let warned = stderr.contains("is not released");
+    let warned = stderr.contains("is a development version");
     if warned {
+        // The pin is compiled into the binary, so the note must say to
+        // upgrade ripr before refreshing (the same old binary re-pins).
+        let upgrade_at = stderr.find("upgrade ripr, then refresh");
+        assert!(
+            upgrade_at.is_some(),
+            "note must say to upgrade ripr first: {stderr}"
+        );
         // The warning names the fallback pin; both install routes must
         // carry exactly it (#5244 review: positive exact pins, not just
         // the absence of the generator version).
         let pinned = stderr
-            .split("pins the latest release (")
+            .split("installs ripr ")
             .nth(1)
-            .and_then(|rest| rest.split(") instead").next())
+            .and_then(|rest| rest.split(", the latest published release").next())
             .ok_or_else(|| format!("warning must name the fallback pin: {stderr}"))?;
         assert!(
             workflow.contains(&format!("          version={pinned}\n")),
@@ -14939,7 +14946,7 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
             "a warned run must not self-pin the fallback either"
         );
         assert!(
-            stderr.contains("pins the latest release")
+            stderr.contains("the latest published release")
                 && stderr.contains("ripr init --ci github --force"),
             "missing unreleased-generator warning: {stderr}"
         );
@@ -15216,12 +15223,14 @@ fn init_force_replaces_a_symlinked_config_without_writing_its_target() -> Result
 
 #[test]
 fn baseline_create_writes_reviewed_ledger_and_refuses_overwrite() -> Result<(), String> {
-    let workspace = unique_temp_workspace("baseline-create");
+    let workspace = unique_temp_workspace("baseline create it's quoted");
     std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
-    let source = workspace_root().join(
+    let fixture = workspace_root().join(
         "fixtures/boundary_gap/expected/calibrated-gate/visible-only-advisory/gate-decision.json",
     );
-    let out = workspace.join(".ripr/gate-baseline.json");
+    let source = workspace.join("gate decision it's current.json");
+    std::fs::copy(fixture, &source).map_err(|e| format!("copy gate decision: {e}"))?;
+    let out = workspace.join("chosen baseline it's ledger.json");
     let source_arg = source.display().to_string();
     let out_arg = out.display().to_string();
 
@@ -15251,8 +15260,55 @@ fn baseline_create_writes_reviewed_ledger_and_refuses_overwrite() -> Result<(), 
         &out_arg,
     ]);
     assert_failure(&overwrite);
+    assert_eq!(overwrite.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&overwrite.stderr);
-    assert!(stderr.contains("--force"));
+    assert_eq!(
+        std::fs::read_to_string(&out).map_err(|e| format!("read refused output: {e}"))?,
+        baseline,
+        "refusing overwrite must preserve the baseline"
+    );
+    assert_eq!(
+        stderr.contains("On Windows, use Git Bash (not WSL)"),
+        cfg!(windows),
+        "overwrite shell guidance must match the running host: {stderr}"
+    );
+    let retry = stderr
+        .split_once("rerun `")
+        .and_then(|(_, rest)| rest.split_once("` to overwrite it"))
+        .map(|(command, _)| command)
+        .ok_or_else(|| format!("missing overwrite recovery command: {stderr}"))?;
+    let retry_args = if cfg!(windows) {
+        printed_ripr_args(retry)?
+    } else {
+        let words = shell_words::posix_words(retry)?;
+        if words.first().map(String::as_str) != Some("ripr") {
+            return Err(format!("unexpected recovery program: {retry}"));
+        }
+        words.into_iter().skip(1).collect()
+    };
+    // Replacing a sentinel proves the retry writes to the chosen output.
+    std::fs::write(&out, "existing baseline must be replaced\n")
+        .map_err(|e| format!("seed overwrite witness: {e}"))?;
+    let retry_refs: Vec<&str> = retry_args.iter().map(String::as_str).collect();
+    let recovered = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&workspace), &retry_refs)
+        .map_err(|e| format!("replay {retry}: {e}"))?;
+    assert_success(&recovered);
+    let recovered_baseline =
+        std::fs::read_to_string(&out).map_err(|e| format!("read recovered baseline: {e}"))?;
+    let original: serde_json::Value = serde_json::from_str(&baseline).map_err(|e| e.to_string())?;
+    let recovered: serde_json::Value =
+        serde_json::from_str(&recovered_baseline).map_err(|e| e.to_string())?;
+    assert_eq!(recovered["source_report"], original["source_report"]);
+    assert_eq!(recovered["summary"]["entries"], 1);
+    assert_eq!(recovered["entries"].as_array().map(Vec::len), Some(1));
+    // A retry has a fresh timestamp; its debt identity and evidence must match.
+    for field in ["identity", "evidence", "decision", "path"] {
+        assert_eq!(
+            recovered["entries"][0][field],
+            original["entries"][0][field]
+        );
+    }
+    assert!(!workspace.join(".ripr/gate-baseline.json").exists());
 
     let dry_run_out = workspace.join(".ripr/dry-run-baseline.json");
     let dry_run_out_arg = dry_run_out.display().to_string();
@@ -30639,6 +30695,77 @@ fn first_pr_unresolvable_refs_warn_once_per_ref_with_uniform_spellings()
             "resolved_root must use the slash spelling: {resolved_root}"
         );
     }
+    std::fs::remove_dir_all(&root)?;
+    Ok(())
+}
+
+/// #9033: `ripr repair` on a seam whose inline test target is a production
+/// file with uncommitted changes refuses before writing any workflow artifact,
+/// and `ripr status` then says no repair attempt started instead of reporting
+/// an in-progress repair awaiting an after snapshot.
+#[test]
+fn repair_refuses_uncommitted_inline_target_before_writing_artifacts_and_status_says_so()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unbuilt_repair_fixture("repair-uncommitted-inline-no-writes")?;
+    let tests = std::fs::read_to_string(root.join("tests/pricing.rs"))?.replace(
+        "use boundary_gap_fixture::discounted_total;",
+        "use super::discounted_total;",
+    );
+    let mut source = std::fs::read_to_string(root.join("src/lib.rs"))?;
+    source.push_str(&format!("\n#[cfg(test)]\nmod tests {{\n{tests}\n}}\n"));
+    std::fs::write(root.join("src/lib.rs"), &source)?;
+    std::fs::remove_file(root.join("tests/pricing.rs"))?;
+    run_git(&root, &["add", "src/lib.rs", "tests/pricing.rs"])?;
+    commit_repair_fixture(&root, &["-qm", "inline tests"])?;
+    // The uncommitted edit to the production file that holds the test module.
+    source.push_str("\n// uncommitted edit\n");
+    std::fs::write(root.join("src/lib.rs"), source)?;
+
+    let root_arg = root.display().to_string();
+    let repair = run_ripr(&["repair", BOUNDARY_GAP_SEAM_ID, "--root", &root_arg]);
+    assert_eq!(
+        repair.status.code(),
+        Some(3),
+        "the facade refusal is a decision, not a failure: {}",
+        String::from_utf8_lossy(&repair.stderr)
+    );
+    assert!(repair.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&repair.stderr);
+    assert!(
+        stderr.contains(
+            "No repair attempt started. Commit or stash `src/lib.rs`, then run `ripr repair "
+        ) && stderr.contains("--root"),
+        "{stderr}"
+    );
+    for artifact in [
+        "workflow.json",
+        "commands.md",
+        "agent-packet.json",
+        "agent-brief.json",
+        "before.repo-exposure.json",
+    ] {
+        assert!(
+            !root.join("target/ripr/workflow").join(artifact).exists(),
+            "a refused start must write no {artifact}; stderr:\n{stderr}"
+        );
+    }
+
+    // The advanced spelling keeps its failure exit code.
+    let advanced = run_repair_phase(&root, &["--seam-id", BOUNDARY_GAP_SEAM_ID], "before")?;
+    assert_eq!(advanced.status.code(), Some(2));
+    assert!(!root.join("target/ripr/workflow/workflow.json").exists());
+
+    let status = run_ripr(&["status", "--root", &root_arg]);
+    let status_out = String::from_utf8_lossy(&status.stdout);
+    let status_err = String::from_utf8_lossy(&status.stderr);
+    assert!(
+        !status_out.contains("after snapshot artifact is missing"),
+        "status must not claim a repair is in progress:\n{status_out}\n{status_err}"
+    );
+    assert!(
+        status_out.contains("Seam: unknown") && !status_out.contains("agent_packet"),
+        "status must report no repair in progress:\n{status_out}\n{status_err}"
+    );
     std::fs::remove_dir_all(&root)?;
     Ok(())
 }
