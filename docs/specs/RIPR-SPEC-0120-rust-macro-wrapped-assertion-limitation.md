@@ -116,7 +116,10 @@ no arm takes credit nothing. Only the asserted operands count (the first for
 appears only in a diagnostic message does not attribute the assertion. A
 transcriber with a branch, loop, `match`, closure, early exit or repetition
 credits nothing, because its assertion may not run. An unrelated assertion on
-the same line as the call does not suppress the credit. The call then earns one oracle of kind `unknown`
+the same line as the call does not suppress the credit. When every recognized
+oracle of a `weakly_exposed` finding is such an unknown-grade macro credit, the
+finding keeps this limit (it is not reported as a gap), since the macro's
+discrimination remains unresolved. The call then earns one oracle of kind `unknown`
 and strength `unknown`, never `weak` or stronger, so it records that an
 assertion exists without grading what it pins. A hand-rolled
 `if bad { panic!() }` body, a macro that only logs, a macro with one arm that

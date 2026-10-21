@@ -9419,6 +9419,7 @@ tests = [
   "crates/ripr/src/analysis/facts/test_helpers/tests/assertion_macros.rs::unattributable_local_macros_grant_nothing",
   "crates/ripr/src/analysis/facts/test_helpers/tests/assertion_macros.rs::macro_defined_inside_the_test_or_exported_twice_grants_nothing",
   "crates/ripr/src/analysis/facts/test_helpers/tests/assertion_macros.rs::multi_attribute_cfg_gated_macro_grants_nothing",
+  "crates/ripr/src/analysis/language/rust/oracles.rs::tests::credited_local_macro_oracle_keeps_the_macro_limit_but_a_graded_one_does_not",
   "crates/ripr/src/analysis/facts/test_helpers/tests/assertion_macros.rs::attributed_macros_still_earn_an_unknown_credit",
   "crates/ripr/src/analysis/facts/test_helpers/tests/assertion_macros.rs::macro_credit_survives_an_unrelated_assertion_on_the_same_line",
   "crates/ripr/src/analysis/facts/test_helpers/tests/assertion_macros.rs::macro_call_nested_in_a_multiline_helper_call_is_not_credited",
