@@ -113,6 +113,9 @@ mod retained_evidence_guidance;
 mod same_line_owner_tail;
 #[path = "cli_smoke/sample_output.rs"]
 mod sample_output;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/selector_recovery_scope.rs"]
+mod selector_recovery_scope;
 #[path = "cli_smoke/shell_words.rs"]
 mod shell_words;
 #[cfg(all(unix, feature = "lang-rust"))]
@@ -14234,17 +14237,17 @@ fn doctor_recommends_worktree_check_on_dirty_worktree() -> Result<(), String> {
     let dirty_out = String::from_utf8_lossy(&dirty.stdout);
     assert_eq!(
         recommended_first_command_line(&dirty_out),
-        Some(first_command_at(&root_str, " --base HEAD --worktree").as_str()),
+        Some(first_command_at(&root_str, "").as_str()),
         "dirty worktree must recommend the worktree command:\n{dirty_out}"
     );
     assert!(
         dirty_out.contains("staged and unstaged tracked edits"),
         "dirty worktree must disclose the tracked-edit scope:\n{dirty_out}"
     );
-    assert_ne!(
+    assert_eq!(
         recommended_first_command_line(&dirty_out),
         Some(first_command_at(&root_str, "").as_str()),
-        "dirty worktree must NOT give the unconditional clean recommendation:\n{dirty_out}"
+        "a dirty worktree recommends plain `ripr check`, which includes tracked edits by default:\n{dirty_out}"
     );
 
     ignore_remove_dir_all(&root);
@@ -14431,7 +14434,7 @@ fn doctor_without_git_names_the_fix_and_recommends_the_diff_route() -> Result<()
         "doctor must not recommend a git-backed check:\n{stdout}"
     );
     assert!(
-        !stdout.contains("Recommended first command: ripr check --base HEAD --worktree"),
+        !stdout.contains("Recommended first command: ripr check --worktree"),
         "a gitless doctor must not recommend --worktree:\n{stdout}"
     );
     assert!(
@@ -14473,7 +14476,7 @@ fn doctor_without_git_does_not_recommend_worktree_on_a_dirty_tree() -> Result<()
     assert_success(&with_git);
     assert_eq!(
         recommended_first_command_line(&String::from_utf8_lossy(&with_git.stdout)),
-        Some(first_command_at(&root_str, " --base HEAD --worktree").as_str()),
+        Some(first_command_at(&root_str, "").as_str()),
         "control: dirty tree with git still recommends --worktree:\n{}",
         String::from_utf8_lossy(&with_git.stdout)
     );
@@ -14487,7 +14490,7 @@ fn doctor_without_git_does_not_recommend_worktree_on_a_dirty_tree() -> Result<()
         "dirty tree cannot win over a missing git binary:\n{stdout}"
     );
     assert!(
-        !stdout.contains("Recommended first command: ripr check --base HEAD --worktree"),
+        !stdout.contains("Recommended first command: ripr check --worktree"),
         "gitless doctor must not recommend --worktree:\n{stdout}"
     );
 
@@ -23176,6 +23179,20 @@ fn check_gitignored_files_are_disclosed_not_silent() -> Result<(), String> {
         "pub fn built() -> u8 { 3 }\n",
     )
     .map_err(|err| format!("write bgen.rs: {err}"))?;
+    // Cargo build output under the root `target/` is noise, not a staging
+    // candidate: it must never be named by the disclosure.
+    std::fs::create_dir_all(root.join("target/release/build/crunchy-x/out"))
+        .map_err(|err| format!("create root target out: {err}"))?;
+    std::fs::write(
+        root.join("target/CACHEDIR.TAG"),
+        "Signature: 8a477f597d28d172789f06886806bc55\n",
+    )
+    .map_err(|err| format!("write CACHEDIR.TAG: {err}"))?;
+    std::fs::write(
+        root.join("target/release/build/crunchy-x/out/lib.rs"),
+        "pub fn out() {}\n",
+    )
+    .map_err(|err| format!("write build output lib.rs: {err}"))?;
     // Fixture precondition: git's own default status hides both files — the
     // silence this test pins the disclosure for.
     let status = common::fixture_git::fixture_git_output(&root, &["status", "--porcelain"])?;
@@ -23216,6 +23233,14 @@ fn check_gitignored_files_are_disclosed_not_silent() -> Result<(), String> {
             ));
         }
     }
+    if ignored
+        .iter()
+        .any(|path| path.as_str().is_some_and(|p| p.starts_with("target/")))
+    {
+        return Err(format!(
+            "JSON must not name root target/ build output; got:\n{report}"
+        ));
+    }
 
     // Human and human-full name the files and the force intent-to-add repair
     // (`git add -N` refuses ignored paths, verified against real git).
@@ -23237,6 +23262,11 @@ fn check_gitignored_files_are_disclosed_not_silent() -> Result<(), String> {
                     "{label} must disclose {expected:?}; got:\n{rendered}"
                 ));
             }
+        }
+        if rendered.contains("crunchy-x") {
+            return Err(format!(
+                "{label} must not name root target/ build output; got:\n{rendered}"
+            ));
         }
     }
 
@@ -23356,13 +23386,14 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
             "empty default-base run must keep the no-scope disclosure (base-naming form per #4012); got:\n{stdout}"
         ));
     }
-    // Clean-install walk (0.11): Start-here must name the flag that analyzes
-    // uncommitted edits, not only "make a change". "tracked" per #5258: the
-    // runtime wording must match `check --help` and cannot promise that
-    // `--worktree` covers untracked files.
-    if !stdout.contains("add `--worktree` to include uncommitted tracked edits") {
+    // Clean-install walk (0.11): on the base branch Start-here says the tree
+    // is already the comparison base and names the next edit, instead of
+    // suggesting `--worktree` for a clean tree.
+    if !stdout
+        .contains("you are on `main`, which is the comparison base; edit a tracked source file")
+    {
         return Err(format!(
-            "empty-range Start-here must name `--worktree` for tracked edits; got:\n{stdout}"
+            "empty-range Start-here on the base branch must say so and name the next edit; got:\n{stdout}"
         ));
     }
     // RIPR-SPEC-0116 amendment: a clean tree (an untracked non-source file
@@ -24144,6 +24175,95 @@ fn first_finding_id(stdout: &[u8]) -> Result<String, String> {
         .ok_or_else(|| format!("check --json must list a finding: {report}"))
 }
 
+/// `ripr check` analyzes uncommitted edits by default on a dirty tree, so the
+/// ids it prints must resolve in `explain` and `context` without a manual
+/// `--worktree`; a clean tree keeps committed-history scope.
+#[test]
+fn dirty_tree_default_check_ids_resolve_in_explain_and_context() -> Result<(), String> {
+    let root = unique_temp_workspace("dirty-default-drill-in");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n",
+    )
+    .map_err(|err| format!("write base lib.rs: {err}"))?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"dirty-default-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "initial"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold\n}\n",
+    )
+    .map_err(|err| format!("write dirty lib.rs: {err}"))?;
+    let root_str = root.to_string_lossy().into_owned();
+
+    // No `--worktree` anywhere: `check` picks the dirty tree by default.
+    let listed = run_ripr(&["check", "--root", &root_str, "--base", "HEAD", "--json"]);
+    assert_success(&listed);
+    let finding_id = first_finding_id(&listed.stdout)?;
+
+    let explained = run_ripr(&[
+        "explain",
+        "--root",
+        &root_str,
+        "--base",
+        "HEAD",
+        &finding_id,
+    ]);
+    assert_success(&explained);
+    let explanation = String::from_utf8_lossy(&explained.stdout).into_owned();
+    if !explanation.contains(&format!("id: {finding_id}")) {
+        return Err(format!(
+            "explain must render the check-listed finding {finding_id}:\n{explanation}"
+        ));
+    }
+
+    let context = run_ripr(&[
+        "context",
+        "--root",
+        &root_str,
+        "--base",
+        "HEAD",
+        "--at",
+        &finding_id,
+    ]);
+    assert_success(&context);
+    let packet: serde_json::Value = serde_json::from_slice(&context.stdout)
+        .map_err(|err| format!("parse context JSON: {err}"))?;
+    if packet
+        .pointer("/probe/id")
+        .and_then(serde_json::Value::as_str)
+        != Some(finding_id.as_str())
+    {
+        return Err(format!(
+            "context must select finding {finding_id}: {packet}"
+        ));
+    }
+
+    // Discriminating negative: a clean tree analyzes committed history, where
+    // the uncommitted finding does not exist.
+    run_git(&root, &["checkout", "--", "src/lib.rs"])?;
+    let clean = run_ripr(&[
+        "explain",
+        "--root",
+        &root_str,
+        "--base",
+        "HEAD",
+        &finding_id,
+    ]);
+    if clean.status.success() {
+        return Err("explain on a clean tree must not resolve the uncommitted id".to_string());
+    }
+    Ok(())
+}
+
 /// `check --worktree` lists findings from uncommitted edits. Its drill-in
 /// commands must carry `--worktree`, and `explain` / `context` must accept it:
 /// without it they analyze committed history, where the finding does not
@@ -24244,15 +24364,11 @@ fn check_worktree_drill_in_commands_reach_the_uncommitted_finding() -> Result<()
         ));
     }
 
-    // Negative controls on the printed command itself: dropping `--worktree`
-    // replays committed history, where the finding does not exist, and a
-    // corrupted selector misses.
-    let committed = run_printed(&printed_explain.replace(" --worktree", ""))?;
-    if committed.status.success() {
-        return Err(
-            "the printed explain without --worktree must miss the uncommitted finding".to_string(),
-        );
-    }
+    // Negative controls on the printed command itself: a corrupted selector
+    // misses. Dropping `--worktree` on a dirty tree follows `check`'s default
+    // and still resolves the uncommitted finding.
+    let defaulted = run_printed(&printed_explain.replace(" --worktree", ""))?;
+    assert_success(&defaulted);
     let corrupted = run_printed(&printed_explain.replace(&finding_id, "probe:no-such-finding"))?;
     if corrupted.status.success() {
         return Err("a corrupted printed selector must miss".to_string());
@@ -24518,48 +24634,21 @@ fn explain_context_miss_names_the_worktree_route_when_uncommitted_edits_exist() 
         return Err("the committed listing must not contain the worktree finding".to_string());
     }
 
-    // The copied-id miss on a repository with uncommitted tracked edits:
-    // the message names the scope-bound worktree retry (same root and base
-    // as the failed run, #7328 review) and the worktree listing.
-    for (command, retry) in [
-        (
-            "explain",
-            format!("ripr explain --root {root_str} --base 'HEAD~1' --worktree {finding_id}"),
-        ),
-        (
-            "context",
-            format!("ripr context --root {root_str} --base 'HEAD~1' --worktree --at {finding_id}"),
-        ),
-    ] {
+    // The copied id on a repository with uncommitted tracked edits now
+    // resolves: `explain` / `context` follow `check`'s dirty-tree default, so
+    // the former committed-history dead-end (#7328) is no longer reachable
+    // without a supplied scope.
+    for command in ["explain", "context"] {
         let mut args = vec![command, "--root", root_str.as_str(), "--base", "HEAD~1"];
         if command == "context" {
             args.push("--at");
         }
         args.push(finding_id.as_str());
-        let miss = run_ripr(&args);
-        if miss.status.success() || !miss.stdout.is_empty() {
+        let resolved = run_ripr(&args);
+        assert_success(&resolved);
+        if !String::from_utf8_lossy(&resolved.stdout).contains(&finding_id) {
             return Err(format!(
-                "{command} miss changed the CLI failure contract: {miss:?}"
-            ));
-        }
-        let stderr = String::from_utf8_lossy(&miss.stderr);
-        if !stderr.contains("not analyzed without `--worktree`")
-            || !stderr.contains("Uncommitted tracked edits exist")
-        {
-            return Err(format!(
-                "{command} miss must disclose the uncommitted-edits cause:\n{stderr}"
-            ));
-        }
-        if !stderr.contains(&retry) {
-            return Err(format!(
-                "{command} miss must name the working retry `{retry}`:\n{stderr}"
-            ));
-        }
-        if !stderr.contains(&format!(
-            "ripr check --root {root_str} --base 'HEAD~1' --worktree --json"
-        )) {
-            return Err(format!(
-                "{command} miss must name the worktree listing for this run's root/base:\n{stderr}"
+                "{command} must resolve the dirty-tree finding {finding_id}: {resolved:?}"
             ));
         }
     }
