@@ -228,7 +228,12 @@ rule only for an assertion whose context was admitted.
    scope re-raises an unjoined thread's panic) or carries the same join chain.
    The closure `std::thread::scope` runs is itself on an ordinary path: it is
    called once on the test thread and its panic propagates. A `::thread::`
-   path names an extern crate, so it never matches. Names are not
+   path names an extern crate, so it never matches. A bare `scope(..)` or
+   `spawn(..)` (#8999) matches only when the function's own module holds
+   exactly `use std::thread::scope;` (or `spawn`) with no rename or list form,
+   and nothing else in the file is named `scope` (`spawn`) or ends a `use` in
+   that name; a local function, another import, a rename or an import in a
+   different module stays refused. Names are not
    resolved, so the test's file refuses when it holds an item, alias or
    binding named `std` or `thread`; an `extern crate thread;`; a `use` ending in `std` or `thread`
    other than exactly `use std::thread;`, or a `self` in a `use` list under
