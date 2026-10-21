@@ -11378,6 +11378,18 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             Some("full-ci"),
             RoutedRustEventRoute::WorkflowNotTriggered,
         ),
+        (
+            "merge_group",
+            Some("checks_requested"),
+            None,
+            RoutedRustEventRoute::LaunchFullGate,
+        ),
+        (
+            "merge_group",
+            Some("destroyed"),
+            None,
+            RoutedRustEventRoute::WorkflowNotTriggered,
+        ),
         ("push", None, None, RoutedRustEventRoute::LaunchFullGate),
         (
             "workflow_dispatch",
@@ -11451,6 +11463,46 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             .any(|violation| violation.contains("inline pull_request types array")),
         "removing types must fail closed: {:?}",
         routed_rust_ready_event_contract_violations(&missing_types)
+    );
+
+    let queue_dropped = workflow.replace("    types: [checks_requested]\n", "");
+    assert_ne!(
+        queue_dropped, workflow,
+        "fixture must remove the queue types"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&queue_dropped)
+            .iter()
+            .any(|violation| violation.contains("inline merge_group types array")),
+        "removing the merge-queue types must fail closed: {:?}",
+        routed_rust_ready_event_contract_violations(&queue_dropped)
+    );
+    let queue_widened = workflow.replace(
+        "    types: [checks_requested]",
+        "    types: [checks_requested, destroyed]",
+    );
+    assert_ne!(
+        queue_widened, workflow,
+        "fixture must widen the queue types"
+    );
+    assert!(
+        routed_rust_ready_event_contract_violations(&queue_widened)
+            .iter()
+            .any(|violation| violation.contains("merge_group types must be exactly")),
+        "extra merge_group activity types must fail: {:?}",
+        routed_rust_ready_event_contract_violations(&queue_widened)
+    );
+    let queue_unbound = workflow.replace(
+        "GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}",
+        "GROUP_HEAD_REF: ''",
+    );
+    assert_ne!(queue_unbound, workflow, "fixture must unbind the queued PR");
+    assert!(
+        routed_rust_ready_event_contract_violations(&queue_unbound)
+            .iter()
+            .any(|violation| violation.contains("resolve the queued PR")),
+        "admission must stay bound to the queued PR: {:?}",
+        routed_rust_ready_event_contract_violations(&queue_unbound)
     );
 
     let cancellation_disabled = workflow.replace(

@@ -1,5 +1,5 @@
 name: Routed Rust Small
-run-name: ${{ github.event_name == 'pull_request' && (github.event.label.name == 'merge-ready' && format('Merge-ready request {0}', github.event.pull_request.head.sha) || format('Label metadata {0}', github.run_id)) || format('{0} {1}', github.workflow, github.ref_name) }}
+run-name: ${{ github.event_name == 'merge_group' && format('Merge queue {0}', github.event.merge_group.head_sha) || github.event_name == 'pull_request' && (github.event.label.name == 'merge-ready' && format('Merge-ready request {0}', github.event.pull_request.head.sha) || format('Label metadata {0}', github.run_id)) || format('{0} {1}', github.workflow, github.ref_name) }}
 
 on:
   pull_request:
@@ -10,6 +10,11 @@ on:
     # never `Ripr Rust Small Result`: a skipped required job reports success,
     # so the required context must be earned by a merge-ready run or absent.
     types: [labeled]
+  merge_group:
+    # The merge queue requests the same qualification once per queue entry, on
+    # the exact queued merge commit. Both requests coexist while the repository
+    # cuts over to the queue; the label request is then retired.
+    types: [checks_requested]
   push:
     branches: [main, master]
   workflow_dispatch:
@@ -101,12 +106,12 @@ jobs:
         id: check
         env:
           EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: |
           docs_only=false reason=not_pull_request
           classify() {
-            [ "$EVENT_NAME" = "pull_request" ] || return 0
+            [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "merge_group" ] || return 0
             reason=missing_identity
             [ -n "$BASE_SHA" ] && [ -n "$HEAD_SHA" ] || return 0
             reason=invalid_identity
@@ -163,6 +168,7 @@ jobs:
       competing_prs: ${{ steps.candidate.outputs.competing_prs }}
       changed_files: ${{ steps.candidate.outputs.changed_files }}
       changed_lines: ${{ steps.candidate.outputs.changed_lines }}
+      labels: ${{ steps.entry.outputs.labels }}
     steps:
       - uses: actions/checkout@v6
       - name: Exercise admission discriminators
@@ -171,14 +177,42 @@ jobs:
           mode: self-test
           max-changed-files: '160'
           max-changed-lines: '3000'
+      - name: Resolve queued PR
+        id: entry
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
+          GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        run: |
+          set -euo pipefail
+          pr="$PR_NUMBER" head="$PR_HEAD_SHA" labels="$PR_LABELS"
+          if [ "$EVENT_NAME" = "merge_group" ]; then
+            # The queue branch is named for the entry's PR: .../pr-<number>-<sha>.
+            # Admission is per PR, so a merge group holding more than one
+            # squash commit (batching) is refused rather than half-admitted.
+            [[ "$GROUP_HEAD_REF" =~ /pr-([0-9]+)-[0-9a-f]{40}$ ]] || { echo "::error::merge group ref names no queued PR: $GROUP_HEAD_REF"; exit 1; }
+            pr="${BASH_REMATCH[1]}"
+            commits="$(gh api "repos/${REPOSITORY}/compare/${GROUP_BASE_SHA}...${GROUP_HEAD_SHA}" --jq '.total_commits')"
+            [ "$commits" = "1" ] || { echo "::error::merge group carries $commits commits; candidate admission requires exactly one queued PR per group"; exit 1; }
+            current="$(gh api "repos/${REPOSITORY}/pulls/${pr}")"
+            head="$(jq -r '.head.sha' <<<"$current")"
+            labels="$(jq -r '[.labels[].name] | join(",")' <<<"$current")"
+          fi
+          { echo "pr=$pr"; echo "head=$head"; echo "labels=$labels"; } >> "$GITHUB_OUTPUT"
       - name: Admit exact candidate
         id: candidate
         uses: ./.github/actions/pr-candidate-admission
         with:
           token: ${{ github.token }}
           repository: ${{ github.repository }}
-          pr-number: ${{ github.event.pull_request.number || '' }}
-          expected-head: ${{ github.event.pull_request.head.sha || '' }}
+          pr-number: ${{ steps.entry.outputs.pr }}
+          expected-head: ${{ steps.entry.outputs.head }}
           docs-only: ${{ needs.detect-docs-only.outputs.docs_only || 'false' }}
           max-changed-files: '160'
           max-changed-lines: '3000'
@@ -193,12 +227,13 @@ jobs:
       cargo-build-jobs: "12"
       disk-guard-threshold: 35
       use-scratch: true
+      pr-labels: ${{ needs.admission.outputs.labels }}
       artifact-name: ripr-rust-small-cx43
       # 120min hard deadline: the rust-gates PR-evidence producer itself
       # allows 3600s (#3731), so the job envelope must exceed it.
       job-timeout-minutes: 120
-      run-advisory-reports: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
-      upload-success-artifacts: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+      run-advisory-reports: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
+      upload-success-artifacts: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
 
   rust-cpx42:
     name: Ripr Rust Small on CPX42
@@ -210,12 +245,13 @@ jobs:
       cargo-build-jobs: "8"
       disk-guard-threshold: 35
       use-scratch: true
+      pr-labels: ${{ needs.admission.outputs.labels }}
       artifact-name: ripr-rust-small-cpx42
       # 120min hard deadline: the rust-gates PR-evidence producer itself
       # allows 3600s (#3731), so the job envelope must exceed it.
       job-timeout-minutes: 120
-      run-advisory-reports: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
-      upload-success-artifacts: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+      run-advisory-reports: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
+      upload-success-artifacts: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
 
   rust-cx53:
     name: Ripr Rust Small on CX53
@@ -227,12 +263,13 @@ jobs:
       cargo-build-jobs: "12"
       disk-guard-threshold: 50
       use-scratch: true
+      pr-labels: ${{ needs.admission.outputs.labels }}
       artifact-name: ripr-rust-small-cx53
       # 120min hard deadline: the rust-gates PR-evidence producer itself
       # allows 3600s (#3731), so the job envelope must exceed it.
       job-timeout-minutes: 120
-      run-advisory-reports: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
-      upload-success-artifacts: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+      run-advisory-reports: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
+      upload-success-artifacts: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
 
   rust-github:
     name: Ripr Rust Small on GitHub Hosted
@@ -257,17 +294,18 @@ jobs:
       cargo-build-jobs: "8"
       disk-guard-threshold: 0
       use-scratch: false
+      pr-labels: ${{ needs.admission.outputs.labels }}
       artifact-name: ripr-rust-small-github
       # 120min hard deadline: the rust-gates PR-evidence producer itself
       # allows 3600s (#3731), so the job envelope must exceed it.
       job-timeout-minutes: 120
-      run-advisory-reports: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
-      upload-success-artifacts: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+      run-advisory-reports: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
+      upload-success-artifacts: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(format(',{0},', needs.admission.outputs.labels), ',full-ci,') }}
 
   docs-gate:
     name: Ripr Docs Gate
     needs: [admission, detect-docs-only]
-    if: needs.admission.result == 'success' && github.event_name == 'pull_request' && needs.detect-docs-only.outputs.docs_only == 'true'
+    if: needs.admission.result == 'success' && (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.detect-docs-only.outputs.docs_only == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -348,7 +386,7 @@ jobs:
           if [ "$EVENT_NAME" = "pull_request" ] && [ "${LABEL_NAME,,}" != "merge-ready" ]; then message="not a merge-ready request; named Merge-ready Nonrequest, never the required context"
           elif [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$WORKFLOW_REF" != "refs/heads/main" ] && [ "$WORKFLOW_REF" != "refs/heads/master" ]; then
             status=fail
-            message="branch/tag dispatch is diagnostic-only; PR qualification requires the merge-ready label"
+            message="branch/tag dispatch is diagnostic-only; PR qualification requires the merge queue or the merge-ready label"
           elif [ "$ADMISSION_RESULT" != "success" ]; then
             status=fail
             message="candidate admission result was $ADMISSION_RESULT"
@@ -358,7 +396,7 @@ jobs:
           elif [ "$DOCS_DETECT_RESULT" != "success" ]; then
             status=fail
             message="docs-surface detection result was $DOCS_DETECT_RESULT"
-          elif [ "$DOCS_ONLY" = "true" ] && [ "$EVENT_NAME" = "pull_request" ]; then
+          elif [ "$DOCS_ONLY" = "true" ] && { [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "merge_group" ]; }; then
             if [ "$DOCS_GATE_RESULT" = "success" ]; then
               message="docs-only surface; heavy lanes skipped; docs-gate passed"
             else

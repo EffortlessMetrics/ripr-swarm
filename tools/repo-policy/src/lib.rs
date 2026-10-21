@@ -909,6 +909,15 @@ pub enum RoutedRustEventRoute {
 
 pub const ROUTED_RUST_READY_EVENT: &str = "labeled";
 
+/// The merge-queue activity type that requests the same qualification once per
+/// queue entry (#4986). It coexists with the label request while the
+/// repository cuts over to the merge queue.
+pub const ROUTED_RUST_QUEUE_EVENT: &str = "checks_requested";
+
+/// The queue-entry resolver must read the PR out of the merge-group ref.
+pub const ROUTED_RUST_QUEUE_ENTRY_SNIPPET: &str =
+    "GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}";
+
 /// The only label whose event requests the protected qualification (#4986).
 pub const ROUTED_RUST_REQUEST_LABEL: &str = "merge-ready";
 
@@ -934,12 +943,17 @@ pub const ROUTED_RUST_IGNORED_LABEL_RESULT_NAME: &str = "Ripr Rust Small Ignored
 pub const ROUTED_RUST_DRAFT_GUARD_SNIPPET: &str = "github.event.pull_request.draft";
 
 pub fn routed_rust_pull_request_types(workflow: &str) -> Option<Vec<String>> {
+    routed_rust_event_types(workflow, "pull_request")
+}
+
+pub fn routed_rust_event_types(workflow: &str, event: &str) -> Option<Vec<String>> {
     // Parse the repository's static inline on.pull_request.types declaration.
     // A commented declaration, dispatch input, or job's block-scalar text must
     // not impersonate event admission. Unsupported layouts return None so the
     // policy caller can reject unauditable declarations.
     let mut in_events = false;
     let mut in_pull_request = false;
+    let header = format!("  {event}:");
     for raw in workflow.lines() {
         let line = raw.split(" #").next()?.trim_end();
         if line.trim().is_empty() || line.trim_start().starts_with('#') {
@@ -956,7 +970,7 @@ pub fn routed_rust_pull_request_types(workflow: &str) -> Option<Vec<String>> {
             break;
         }
         if line.starts_with("  ") && !line.starts_with("   ") {
-            in_pull_request = line == "  pull_request:";
+            in_pull_request = line == header;
             continue;
         }
         if in_pull_request && let Some(types) = line.strip_prefix("    types:") {
@@ -991,6 +1005,14 @@ pub fn routed_rust_event_route(
     action: Option<&str>,
     label: Option<&str>,
 ) -> RoutedRustEventRoute {
+    if event_name == "merge_group" {
+        let action = action.unwrap_or("");
+        if !routed_rust_event_types(workflow, "merge_group")
+            .is_some_and(|types| types.iter().any(|value| value == action))
+        {
+            return RoutedRustEventRoute::WorkflowNotTriggered;
+        }
+    }
     if event_name == "pull_request" {
         let action = action.unwrap_or("");
         if let Some(types) = routed_rust_pull_request_types(workflow)
@@ -1032,6 +1054,20 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
         ];
     };
     let mut violations = Vec::new();
+    match routed_rust_event_types(workflow, "merge_group") {
+        None => violations.push(
+            ".github/workflows/routed-rust.yml must declare an inline merge_group types array so the merge-queue admission contract is auditable (#4986)".to_string(),
+        ),
+        Some(types) if types != [ROUTED_RUST_QUEUE_EVENT] => violations.push(format!(
+            ".github/workflows/routed-rust.yml merge_group types must be exactly `[{ROUTED_RUST_QUEUE_EVENT}]`; found {types:?} (#4986)"
+        )),
+        Some(_) => {}
+    }
+    if !workflow.contains(ROUTED_RUST_QUEUE_ENTRY_SNIPPET) {
+        violations.push(format!(
+            ".github/workflows/routed-rust.yml admission must resolve the queued PR from the merge-group ref (`{ROUTED_RUST_QUEUE_ENTRY_SNIPPET}`) so claim and scope admission (#8192) still bind the merged candidate"
+        ));
+    }
     let ready_only = [ROUTED_RUST_READY_EVENT];
     let unexpected: Vec<&str> = types
         .iter()

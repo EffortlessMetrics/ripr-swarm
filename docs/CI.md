@@ -47,6 +47,21 @@ overbroad policy filter. Enumeration is separate from the step's test execution;
 these source controls do not qualify a built wheel or guard every possible
 zero-test command.
 
+## Merge queue request (cutover)
+
+`routed-rust.yml` also subscribes to `merge_group` (`checks_requested`), so the
+required `Ripr Rust Small Result` can be earned once per merge-queue entry, on
+the exact queued merge commit, instead of by a label. The queue run reads the
+queued PR's claim and scope (#8192) through the same admission job: the PR
+number comes from the merge-group branch name
+(`gh-readonly-queue/<base>/pr-<n>-<sha>`) and the PR's labels are forwarded to
+the gate (`full-ci` still selects the advisory reports, `ripr-waive` still
+reaches the PR-evidence step). Admission is per PR, so the queue must use a
+group size of 1; a merge group carrying more than one commit is refused, never
+half-admitted. Batching needs per-PR admission (#8082) and is a follow-up. The
+`merge-ready` label request below still works until the label request is
+retired in a follow-up, after the repository's merge queue is enabled.
+
 ## Merge-ready label flow
 
 The non-required lanes gated by `merge-ready` do not run on a Draft or plain Ready

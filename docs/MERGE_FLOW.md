@@ -49,6 +49,10 @@ local `git merge-tree` runs of open PR heads against `main`:
 
 ## Required check only on the merge-ready request (#4986)
 
+Cutover: the same required check is also earned by a merge-queue entry
+(`merge_group`, see [CI](CI.md#merge-queue-request-cutover)). Once the queue is
+enabled for `main`, add PRs to the queue instead of applying `merge-ready`.
+
 `Ripr Rust Small Result` runs only when the `merge-ready` label is applied to a
 PR. Ready is review state and requests nothing; any other label posts only
 `Merge-ready Nonrequest`.
