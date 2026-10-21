@@ -3255,30 +3255,7 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // finding); with an unmoved root it is used as typed.
     let replay = from_artifact.is_some() || input.diff_file.is_some();
     let selector = selector
-        .map(
-            |item| match check::bind_member_selector_item(prefix.as_deref(), &input.root, &item) {
-                Err(_) if replay => match prefix.as_deref() {
-                    Some(prefix) => {
-                        // Normalize `./` first so `./pkg/x.rs:2` is not prefixed twice.
-                        let bare = item.trim_start_matches("./");
-                        let anchored = if bare.starts_with(&format!("{prefix}/")) {
-                            bare.to_string()
-                        } else {
-                            format!("{prefix}/{bare}")
-                        };
-                        match anchored.rsplit_once(':') {
-                            Some((file, _)) => {
-                                check::refuse_root_shadowed_selector(&input.root, file)
-                                    .map(|()| anchored)
-                            }
-                            None => Ok(anchored),
-                        }
-                    }
-                    None => Ok(item),
-                },
-                bound => bound,
-            },
-        )
+        .map(|item| bind_member_drill_in_selector(prefix.as_deref(), &input.root, item, replay))
         .transpose()?;
     let config = load_for_root(&input.root)?;
     apply_to_check_input(&mut input, &config, explicit);
@@ -3356,19 +3333,40 @@ pub(super) fn missing_selector_error(what: &str, listing: &str) -> String {
     )
 }
 
-/// A `--worktree` drill-in without `--root` resolves the implicit project
-/// root the same way `ripr check --worktree` does, so a manual invocation
-/// from a project subdirectory analyzes the scope that listed the finding.
-/// An explicit `--root` is kept as given.
-pub(super) fn resolve_worktree_root(
-    input: &mut CheckInput,
-    worktree: bool,
-    root_explicitly_provided: bool,
-) -> Result<(), String> {
-    if worktree && !root_explicitly_provided {
-        check::resolve_implicit_workspace_root(input)?;
+/// #8872/#8902: bind a member-relative `file:line` drill-in selector (`explain`
+/// and `context`) to the invocation directory. With `--from`/`--diff`
+/// (`replay`) the named file need not exist in the working tree (for example a
+/// file the diff deletes), so a selector that binds to nothing is not refused:
+/// it is anchored to the invocation directory instead (never left as a bare
+/// suffix that could match a sibling member's finding); with an unmoved root it
+/// is used as typed.
+fn bind_member_drill_in_selector(
+    prefix: Option<&str>,
+    root: &Path,
+    item: String,
+    replay: bool,
+) -> Result<String, String> {
+    match check::bind_member_selector_item(prefix, root, &item) {
+        Err(_) if replay => match prefix {
+            Some(prefix) => {
+                // Normalize `./` first so `./pkg/x.rs:2` is not prefixed twice.
+                let bare = item.trim_start_matches("./");
+                let anchored = if bare.starts_with(&format!("{prefix}/")) {
+                    bare.to_string()
+                } else {
+                    format!("{prefix}/{bare}")
+                };
+                match anchored.rsplit_once(':') {
+                    Some((file, _)) => {
+                        check::refuse_root_shadowed_selector(root, file).map(|()| anchored)
+                    }
+                    None => Ok(anchored),
+                }
+            }
+            None => Ok(item),
+        },
+        bound => bound,
     }
-    Ok(())
 }
 
 /// `ripr check` reads the working tree by default when it holds uncommitted
