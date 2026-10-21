@@ -616,6 +616,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "release-denominator --apply-adjudication --input <ledger.json> --decisions <adjudication.json> --output <ledger.json>",
         "release-ledger --input <ledger.json> [--packet <selection-packet.json>] [--markdown <ledger.md>] [--manifest <manifest.json>] [--expected-base <sha>] [--final]",
         "release-ledger capture --base <sha> [--cut <rev>] [--main <rev>] [--repo <dir>] [--repository <owner/name>] --output <facts.json>",
+        "release-ledger derive --facts <facts.json> --packet <release-selection.json> [--overrides <overrides.json>] [--audit <file>] [--stage <dry_run|final>] --output <ledger.json>",
         "source-promotion preflight --source-parent <sha> --swarm-parent <sha> --swarm-ref <protected-tag-ref> --source-repo <path> --swarm-repo <path> --version <version> --controller-root <path> --candidate-manifest <relative-path> --selection-decision <native-1609-comment> --qualification-bundle <relative-path> --qualification-decision <native-2769-comment> [--resolved-tree <full-tree-sha>] [--swarm-main <rev>] [--source-main <rev>] [--out <dir>]",
         "back-sync verify --swarm-before <sha> --source-release-head <sha> --source-release-tag <tag> --join <sha> --tree <tree-sha> --swarm-repo <path> --source-repo <path> --version <version> --release-receipt <path> --policy-before <path> --policy-exception <path> --policy-after <path> [--swarm-main <rev>] [--source-main <rev>] [--out <dir>]",
         "release-scope --input <scope.json>",
@@ -1615,6 +1616,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Reads local Git only: the exact base..cut first-parent and reachable ranges, per-commit changed paths and the final tree effect of each commit (last first-parent toucher, then bounded git blame); it fails closed on any unknown effect and never selects or qualifies a candidate.",
+        ),
+        command_entry(
+            "release-ledger derive --facts <facts.json> --packet <release-selection.json> [--overrides <overrides.json>] [--audit <file>] [--stage <dry_run|final>] --output <ledger.json>",
+            "report_only",
+            "<ledger.json>",
+            false,
+            false,
+            "Applies the published rule v1 (final tree effect and path class) to captured Git facts and the #2766 packet, applies reviewed overrides, then validates the ledger; dispositions are rule_derived and never claim per-commit review.",
         ),
         command_entry(
             "source-promotion preflight --source-parent <sha> --swarm-parent <sha> --swarm-ref <protected-tag-ref> --source-repo <path> --swarm-repo <path> --version <version> --controller-root <path> --candidate-manifest <relative-path> --selection-decision <native-1609-comment> --qualification-bundle <relative-path> --qualification-decision <native-2769-comment> [--resolved-tree <full-tree-sha>] [--swarm-main <rev>] [--source-main <rev>] [--out <dir>]",

@@ -10,10 +10,13 @@
 
 mod capture;
 mod dto;
+mod rule;
 mod validate;
 
 #[cfg(test)]
 mod capture_tests;
+#[cfg(test)]
+mod rule_tests;
 #[cfg(test)]
 mod tests;
 
@@ -39,8 +42,10 @@ struct Args<'a> {
 }
 
 pub(crate) fn release_ledger(args: &[String]) -> Result<(), String> {
-    if args.first().map(String::as_str) == Some("capture") {
-        return run_capture(&args[1..]);
+    match args.first().map(String::as_str) {
+        Some("capture") => return run_capture(&args[1..]),
+        Some("derive") => return run_derive(&args[1..]),
+        _ => {}
     }
     let args = parse_args(args)?;
     let ledger: Ledger = read_json(args.input, "ledger")?;
@@ -88,6 +93,112 @@ pub(crate) fn release_ledger(args: &[String]) -> Result<(), String> {
     }
 }
 
+fn run_derive(args: &[String]) -> Result<(), String> {
+    let mut facts = None;
+    let mut packet = None;
+    let mut overrides = None;
+    let mut audit = None;
+    let mut stage = dto::STAGE_DRY_RUN;
+    let mut output = None;
+    let mut index = 0;
+    while index < args.len() {
+        let flag = args[index].as_str();
+        let value = args
+            .get(index + 1)
+            .map(String::as_str)
+            .ok_or_else(|| format!("{flag} requires a value"))?;
+        match flag {
+            "--facts" => facts = Some(value),
+            "--packet" => packet = Some(value),
+            "--overrides" => overrides = Some(value),
+            "--audit" => audit = Some(value),
+            "--stage" => stage = value,
+            "--output" => output = Some(value),
+            _ => return Err(format!("unknown release-ledger derive argument `{flag}`")),
+        }
+        index += 2;
+    }
+    let facts_path = facts.ok_or("release-ledger derive requires --facts <facts.json>")?;
+    let packet_path =
+        packet.ok_or("release-ledger derive requires --packet <release-selection.json>")?;
+    let output = output.ok_or("release-ledger derive requires --output <ledger.json>")?;
+    let facts: capture::GitFacts = read_json(facts_path, "facts")?;
+    if facts.kind != capture::FACTS_KIND {
+        return Err(format!(
+            "{facts_path} is not a {} document",
+            capture::FACTS_KIND
+        ));
+    }
+    let packet = read_packet(packet_path)?;
+    let overrides: Option<rule::Overrides> = overrides
+        .map(|path| read_json(path, "overrides"))
+        .transpose()?;
+    let audit = audit
+        .map(|path| {
+            let bytes =
+                fs::read(path).map_err(|error| format!("failed to read audit {path}: {error}"))?;
+            Ok::<_, String>(dto::AuditRef {
+                path: path.to_string(),
+                sha256: format!("{:x}", Sha256::digest(&bytes)),
+            })
+        })
+        .transpose()?;
+    if stage != dto::STAGE_DRY_RUN && stage != STAGE_FINAL {
+        return Err(format!(
+            "--stage must be {} or {STAGE_FINAL}",
+            dto::STAGE_DRY_RUN
+        ));
+    }
+    let ledger = rule::derive(&rule::DeriveInput {
+        facts: &facts,
+        packet: &packet,
+        overrides: overrides.as_ref(),
+        stage,
+        audit,
+    })?;
+    let text = serde_json::to_string_pretty(&ledger)
+        .map_err(|error| format!("failed to serialize release-ledger: {error}"))?;
+    write_output(output, &format!("{text}\n"))?;
+    let by_disposition = counts(
+        ledger
+            .records
+            .iter()
+            .map(|r| r.release_disposition.as_str()),
+    );
+    println!(
+        "Wrote {output}: {} records, rule {}",
+        ledger.records.len(),
+        ledger.rule_version
+    );
+    for (name, count) in by_disposition {
+        println!("  {name}: {count}");
+    }
+    let context = Context {
+        packet: Some(packet),
+        ..Context::default()
+    };
+    let reasons = validate(&ledger, &context);
+    if reasons.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "derived ledger is invalid ({} reasons); first: {}",
+            reasons.len(),
+            reasons[0]
+        ))
+    }
+}
+
+fn write_output(output: &str, text: &str) -> Result<(), String> {
+    if let Some(parent) = std::path::Path::new(output).parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+    }
+    fs::write(output, text).map_err(|error| format!("failed to write {output}: {error}"))
+}
+
 fn run_capture(args: &[String]) -> Result<(), String> {
     let mut base = None;
     let mut cut = "origin/main";
@@ -131,14 +242,7 @@ fn run_capture(args: &[String]) -> Result<(), String> {
     })?;
     let text = serde_json::to_string_pretty(&facts)
         .map_err(|error| format!("failed to serialize release-ledger facts: {error}"))?;
-    if let Some(parent) = std::path::Path::new(output).parent()
-        && !parent.as_os_str().is_empty()
-    {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
-    }
-    fs::write(output, format!("{text}\n"))
-        .map_err(|error| format!("failed to write {output}: {error}"))?;
+    write_output(output, &format!("{text}\n"))?;
     println!(
         "Wrote {output}: {} first-parent, {} reachable commits, {} alive paths, {} blamed paths",
         facts.range.first_parent.len(),

@@ -17360,6 +17360,14 @@ tests = [
   "xtask/src/reports/release_ledger/tests.rs::open_pr_inside_range_or_with_included_disposition_is_rejected",
   "xtask/src/reports/release_ledger/tests.rs::packet_roster_and_final_capture_commit_are_compared",
   "xtask/src/reports/release_ledger/tests.rs::final_ledger_rejects_pending_claims_and_open_non_terminal_prs",
+  "xtask/src/reports/release_ledger/rule_tests.rs::path_classes_follow_the_published_table",
+  "xtask/src/reports/release_ledger/rule_tests.rs::rule_steps_apply_in_order",
+  "xtask/src/reports/release_ledger/rule_tests.rs::unjudgeable_commits_block_instead_of_defaulting",
+  "xtask/src/reports/release_ledger/rule_tests.rs::deferred_claim_owner_issue_in_subject_gives_a_nonclaim_row",
+  "xtask/src/reports/release_ledger/rule_tests.rs::derived_ledger_validates_and_overrides_resolve_blocking_rows",
+  "xtask/src/reports/release_ledger/rule_tests.rs::bad_overrides_are_rejected",
+  "xtask/src/reports/release_ledger/capture_tests.rs::lines_written_under_a_renamed_path_are_attributed_by_blame",
+  "xtask/src/reports/release_ledger/tests.rs::merge_only_commit_must_be_historical_and_owned_lines_need_no_alive_path",
   "xtask/src/reports/release_ledger/tests.rs::valid_ledger_has_no_reasons",
   "xtask/src/reports/release_ledger/capture_tests.rs::capture_derives_exact_range_and_tree_effects",
   "xtask/src/reports/release_ledger/capture_tests.rs::split_refs_takes_only_the_trailing_pull_request",
@@ -17370,6 +17378,8 @@ code = [
   "xtask/src/reports/release_ledger/dto.rs",
   "xtask/src/reports/release_ledger/validate.rs",
   "xtask/src/reports/release_ledger/capture.rs",
+  "xtask/src/reports/release_ledger/rule.rs",
+  "policy/release-ledger-overrides.json",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0301-release-ledger-direct-main.md",

@@ -1,0 +1,66 @@
+{
+  "schema_version": "1",
+  "kind": "release_ledger_overrides",
+  "overrides": [
+    {
+      "commit_sha": "58cfeed0a7b2d5cda0e81b73279917a800df6862",
+      "disposition": "included_superseded_by_later_fix",
+      "owner": "ledger-v1-review",
+      "note": "two-parent first-parent merge; the rule cannot judge it, so it is dispositioned by what the rule would give the diff against its first parent: effect present_but_superseded"
+    },
+    {
+      "commit_sha": "6edc2782e63d751adbc85a789bf2066f545baca3",
+      "disposition": "included_accepted_product",
+      "owner": "ledger-v1-review",
+      "note": "two-parent first-parent merge; the rule cannot judge it, so it is dispositioned by what the rule would give the diff against its first parent: strongest class product (crates/ripr/src)"
+    },
+    {
+      "commit_sha": "6ab836c2e4d8497aed3dabdf59469fb6ed67bdd2",
+      "disposition": "included_superseded_by_later_fix",
+      "owner": "ledger-v1-review",
+      "note": "two-parent first-parent merge; the rule cannot judge it, so it is dispositioned by what the rule would give the diff against its first parent: effect present_but_superseded"
+    },
+    {
+      "commit_sha": "61c377fcfe171ea28a7ba21d5c0fc03ea0d31c80",
+      "disposition": "included_accepted_product",
+      "owner": "ledger-v1-review",
+      "note": "two-parent first-parent merge; the rule cannot judge it, so it is dispositioned by what the rule would give the diff against its first parent: strongest class product (crates/ripr/src)"
+    },
+    {
+      "commit_sha": "88ef9b2afb169c6083f2e4da4582bd0924fb3392",
+      "disposition": "included_structural_no_semantic_delta",
+      "owner": "ledger-v1-review",
+      "note": "empty diff against its first parent: no tree change, so no semantic delta to carry"
+    },
+    {
+      "commit_sha": "3ae96d16bc6718a830866ee87b90efa40eac7c2a",
+      "disposition": "included_structural_no_semantic_delta",
+      "owner": "ledger-v1-review",
+      "note": "empty diff against its first parent: no tree change, so no semantic delta to carry"
+    },
+    {
+      "commit_sha": "5d20d229de79738fa02bfe90f7429b3662b6362a",
+      "disposition": "included_structural_no_semantic_delta",
+      "owner": "ledger-v1-review",
+      "note": "empty diff against its first parent: no tree change, so no semantic delta to carry"
+    },
+    {
+      "commit_sha": "89ac47a603092ba7f9f55cf74999b88649621abf",
+      "disposition": "included_structural_no_semantic_delta",
+      "owner": "ledger-v1-review",
+      "note": "empty diff against its first parent: no tree change, so no semantic delta to carry"
+    },
+    {
+      "commit_sha": "e9dc68ee946299276376822311f896c2b54934bb",
+      "disposition": "included_structural_no_semantic_delta",
+      "owner": "ledger-v1-review",
+      "note": "empty diff against its first parent: no tree change, so no semantic delta to carry"
+    },
+    {
+      "commit_sha": "3b8090e83dfac09f6a26d19752b4f6ad064ed4ad",
+      "disposition": "included_historical_reachable_only",
+      "owner": "ledger-v1-review",
+      "note": "empty diff and reached through a merge, not first-parent: historical reachable only"
+    }
+  ]
+}
