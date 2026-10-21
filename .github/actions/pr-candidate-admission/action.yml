@@ -218,12 +218,27 @@ runs:
           else
             refuse_early "cut_packet_read_failed" "hard-cut packet read from the live base failed for a reason other than absence; refresh the exact base evidence and retry"
           fi
-          cut_sha="$(jq -r 'if .state == "active" then .observed_main.sha // "" else "" end' "$packet")"
+          # An unreadable or malformed base packet must reach the decision
+          # script, which refuses ordinary PRs but admits the packet-only
+          # repair; refusing here would deadlock the one way to fix it.
+          cut_sha="$(jq -r 'if .state == "active" then .observed_main.sha // "" else "" end' "$packet" 2>/dev/null || true)"
           cut_args=()
-          if [ -n "$cut_sha" ]; then
-            [[ "$cut_sha" =~ ^[0-9a-f]{40}$ ]] || refuse_early "cut_packet_invalid_sha" "hard-cut packet has an invalid product-cut SHA; fix policy/release-hard-cut-admission.json on the base"
-            gh api "repos/${ADMISSION_REPOSITORY}/git/commits/${cut_sha}" > "$cut_commit"
-            cut_args=(--cut-commit "$cut_commit")
+          if [[ "$cut_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            # An unreadable cut commit must not abort the step: the decision
+            # script refuses ordinary PRs as cut_commit_missing.
+            if gh api "repos/${ADMISSION_REPOSITORY}/git/commits/${cut_sha}" > "$cut_commit" 2>/dev/null; then
+              cut_args=(--cut-commit "$cut_commit")
+            fi
+          fi
+
+          # The PR head's packet is read only to check a packet-only control
+          # update before it can become the base; it never grants admission.
+          head_sha="$(jq -r '.head.sha // empty' "$current")"
+          proposed_packet="$tmp/proposed-packet.json"
+          proposed_args=()
+          if [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]] && gh api "repos/${ADMISSION_REPOSITORY}/contents/${packet_path}?ref=${head_sha}" > "$packet_meta" 2>/dev/null; then
+            jq -r '.content' "$packet_meta" | tr -d '\n' | base64 --decode > "$proposed_packet" || rm -f "$proposed_packet"
+            proposed_args=(--proposed-packet "$proposed_packet")
           fi
 
           docs_flag=()
@@ -244,6 +259,7 @@ runs:
             --base-commit "$base_commit" \
             --pr-files "$pr_files" \
             --expected-head "${ADMISSION_EXPECTED_HEAD:-}" \
+            "${proposed_args[@]}" \
             "${cut_args[@]}" > "$cut_result"
           rc_cut=$?
           set -e
