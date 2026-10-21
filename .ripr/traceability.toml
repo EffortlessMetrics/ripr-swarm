@@ -16444,6 +16444,8 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence/snapshot_owner_binding.rs::tests::prefixed_raw_strings_and_nested_comments_are_blanked",
   "crates/ripr/src/analysis/test_grip_evidence/snapshot_owner_binding.rs::tests::a_binder_in_the_assertion_arguments_or_a_repeated_assertion_is_judged",
   "crates/ripr/src/analysis/test_grip_evidence/snapshot_owner_binding.rs::tests::non_ascii_neighbours_do_not_make_another_identifier_the_local",
+  "crates/ripr/src/analysis/test_grip_evidence/snapshot_owner_binding.rs::tests::a_macro_defined_in_the_test_withholds_credit",
+  "crates/ripr/src/analysis/test_grip_evidence/snapshot_owner_binding.rs::tests::lifetimes_and_numeric_suffixes_are_not_locals",
   "crates/ripr/src/analysis/test_grip_evidence/snapshot_owner_binding.rs::tests::a_generated_sweep_of_binder_shapes_and_placements_withholds_credit",
   "crates/ripr/src/analysis/test_grip_evidence/snapshot_owner_binding.rs::tests::an_open_plain_let_keeps_the_previous_binding_but_not_a_binder_in_its_initializer",
   "crates/ripr/src/analysis/test_grip_evidence/snapshot_owner_binding.rs::tests::a_shadow_or_parameter_earlier_on_the_assertion_line_is_judged",

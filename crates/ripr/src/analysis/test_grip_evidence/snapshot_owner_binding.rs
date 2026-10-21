@@ -56,6 +56,10 @@ fn free_identifiers(code: &str) -> Vec<String> {
         while index < bytes.len() && is_identifier_byte(bytes[index]) {
             index += 1;
         }
+        // A lifetime (`'x`) or a literal suffix (`1e5`, `0xFF`) is no local.
+        if code[..start].ends_with(|ch: char| ch == '\'' || ch.is_ascii_digit()) {
+            continue;
+        }
         let before = code[..start].trim_end().chars().next_back();
         let after = code[index..].trim_start().chars().next();
         let qualified = matches!(before, Some('.') | Some(':'));
@@ -141,19 +145,47 @@ pub(crate) fn local_is_owner_result_before(
     walk_bindings(code, name, owner_name, reach, true)
 }
 
-/// `text` with every whitespace run replaced by one space.
+/// `text` with every whitespace run replaced by one space, and a space after
+/// a keyword that is followed directly by punctuation (`for(a, x) in`,
+/// `let[x] =`, `match(x) {`), so keywords are matched as `kw ` everywhere.
 fn squash_whitespace(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
+    const KEYWORDS: [&str; 12] = [
+        "for", "let", "if", "while", "match", "fn", "move", "in", "else", "loop", "unsafe", "async",
+    ];
+    let mut squashed = String::with_capacity(text.len());
     let mut last_space = false;
     for ch in text.chars() {
         if ch.is_whitespace() {
             if !last_space {
-                out.push(' ');
+                squashed.push(' ');
             }
             last_space = true;
         } else {
-            out.push(ch);
+            squashed.push(ch);
             last_space = false;
+        }
+    }
+    let chars: Vec<char> = squashed.chars().collect();
+    let mut out = String::with_capacity(squashed.len() + 8);
+    let mut at = 0;
+    while at < chars.len() {
+        if !(chars[at].is_alphanumeric() || chars[at] == '_') {
+            out.push(chars[at]);
+            at += 1;
+            continue;
+        }
+        let start = at;
+        while at < chars.len() && (chars[at].is_alphanumeric() || chars[at] == '_') {
+            at += 1;
+        }
+        let word: String = chars[start..at].iter().collect();
+        out.push_str(&word);
+        let raw = start >= 2 && chars[start - 2] == 'r' && chars[start - 1] == '#';
+        if !raw
+            && KEYWORDS.contains(&word.as_str())
+            && chars.get(at).is_some_and(|next| *next != ' ')
+        {
+            out.push(' ');
         }
     }
     out
@@ -219,6 +251,11 @@ fn walk_bindings(
     // (newline, tab, a masked comment) is one space before anything is read.
     let squashed = squash_whitespace(code);
     let code = squashed.as_str();
+    // A macro defined in the test can bind any name it is handed
+    // (`macro_rules! m { ($n:ident) => { let $n = 5; } }`): not tracked.
+    if contains_word(code, "macro_rules") {
+        return false;
+    }
     let mut scope: Vec<(usize, bool)> = Vec::new();
     let mut depth = 0usize;
     let mut statement_depth = 0usize;
@@ -1401,6 +1438,21 @@ mod tests {
             "'a: for {n} in v {\n",
             "for (a, {n}) in v {\n",
             "let c = &mut {n};\n",
+            "for({n}) in v {\n",
+            "for({n})in v {\n",
+            "for(a, {n}) in v {\n",
+            "for(a, {n})in v {\n",
+            "for[{n}] in v {\n",
+            "for&{n} in v {\n",
+            "for &{n} in v {\n",
+            "run(move |{n}| {\n",
+            "run(move|{n}| {\n",
+            "if(c) && let Some({n}) = foo() {\n",
+            "while(c) && let Some({n}) = it.next() {\n",
+            "match(p) {\n ({n}, y) => {\n",
+            "let(a, {n}) = foo();\n",
+            "let[a, {n}] = foo();\n",
+            "fn f({n}: u8) {\n",
             "let (a, {n}) = foo();\n",
             "fn inner({n}: u8) {\n",
             "fn f({n}: u8) { ",
@@ -1450,8 +1502,15 @@ mod tests {
         ];
         let mut cases = 0;
         // Every space may be a newline, a tab, a CRLF or an empty comment.
-        let spacings: [Option<&str>; 5] =
-            [None, Some("\n"), Some("\t"), Some("\r\n"), Some("/**/")];
+        let spacings: [Option<&str>; 6] = [
+            None,
+            Some("\n"),
+            Some("\t"),
+            Some("\r\n"),
+            Some("/**/"),
+            // Tight: no space between a keyword and the punctuation after it.
+            Some(""),
+        ];
         for (setup, reach) in modes {
             for placement in placements {
                 for shape in shapes {
@@ -1459,6 +1518,20 @@ mod tests {
                         let build = |name: &str| {
                             let text = format!("{setup}{placement}{}", shape.replace("{n}", name));
                             let text = match spacing {
+                                Some("") => {
+                                    let mut tight = text;
+                                    for keyword in
+                                        ["for", "let", "if", "while", "match", "fn", "move", "in"]
+                                    {
+                                        for next in ['(', '[', '&', '|'] {
+                                            tight = tight.replace(
+                                                &format!("{keyword} {next}"),
+                                                &format!("{keyword}{next}"),
+                                            );
+                                        }
+                                    }
+                                    tight
+                                }
                                 Some(space) => text.replace(' ', space),
                                 None => text,
                             };
@@ -1579,5 +1652,30 @@ mod tests {
     #[test]
     fn non_ascii_neighbours_do_not_make_another_identifier_the_local() {
         assert_eq!(super::free_identifiers("xé + éx + x"), ["xé", "éx", "x"]);
+    }
+
+    #[test]
+    fn a_macro_defined_in_the_test_withholds_credit() {
+        for reach in [
+            super::BindingReach::DirectOwnerCall,
+            super::BindingReach::OwnerCallInInitializer,
+        ] {
+            let code =
+                "let x = own(2);\nmacro_rules! m { ($n:ident) => { let $n = 5; }; }\nm!(x);\n";
+            assert!(!super::local_is_owner_result_before(
+                code, "x", "own", reach
+            ));
+            assert!(super::local_is_owner_result_before(
+                "let x = own(2);\nm!(x);\n",
+                "x",
+                "own",
+                reach
+            ));
+        }
+    }
+
+    #[test]
+    fn lifetimes_and_numeric_suffixes_are_not_locals() {
+        assert_eq!(super::free_identifiers("f::<'x>(0xFF, 1e5, x)"), ["x"]);
     }
 }

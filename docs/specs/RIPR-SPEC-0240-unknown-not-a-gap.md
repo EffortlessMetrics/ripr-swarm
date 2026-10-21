@@ -283,6 +283,12 @@ non-ignored related test matches one of these shapes:
   newlines, tabs and comments, a
   binder inside the assertion's own arguments, a macro-brace `let`, a binding closed
   with its block, and a binding made only after the assertion do not reach it.
+  A test that defines a `macro_rules!` before the assertion gets no credit (a
+  macro can bind any name it is handed). Residuals, kept as gaps: mutation
+  through a method on a `let mut` binding (`x.push(..)`) is not tracked; the
+  strict snapshot grader names the owner by its identifier, so a different
+  receiver's `other.own(..)` or a shadowed `own` is read as the owner; aliasing
+  and escape are not followed.
 - **insta**: a `direct_owner_call` test with a snapshot macro that has no
   inline `@` literal, whose snapshotted value (after an optional literal name)
   derives from the owner as above (a live binding at the assertion), and no `add_redaction`, `with_settings` or `Settings`,
