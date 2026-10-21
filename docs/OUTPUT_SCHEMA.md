@@ -1876,7 +1876,11 @@ JSON fields:
   This normalization is for report grouping only and does not change check JSON.
   It is not a support-tier, gate, badge, baseline, or RIPR Zero claim.
   Samples are bounded to three findings per limitation kind and are examples,
-  not exhaustive proof.
+  not exhaustive proof. They are the lexically smallest samples by finding ID,
+  language, optional file, then optional line (missing values sort first),
+  independent of input finding order. Duplicate sample rows remain counted and
+  may occupy separate sample slots. Limitation ranking remains count descending,
+  then kind ascending.
 
 #### TypeScript False-Actionable Audit Report
 

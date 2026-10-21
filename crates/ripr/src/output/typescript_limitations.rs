@@ -53,7 +53,7 @@ struct TypeScriptLimitationEntry {
     samples: Vec<TypeScriptLimitationSample>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 struct TypeScriptLimitationSample {
     finding_id: String,
     language: String,
@@ -273,9 +273,11 @@ fn collect_limitations_from_check_output(
             let aggregate = aggregates.entry(kind).or_default();
             aggregate.count += 1;
             aggregate.sources.extend(sources);
-            if aggregate.samples.len() < MAX_SAMPLES_PER_LIMITATION {
-                aggregate.samples.push(sample.clone());
-            }
+            // Retain the same bounded examples regardless of finding order.
+            // The sample's total field order also handles tied finding IDs.
+            aggregate.samples.push(sample.clone());
+            aggregate.samples.sort();
+            aggregate.samples.truncate(MAX_SAMPLES_PER_LIMITATION);
         }
     }
     Ok(summary)

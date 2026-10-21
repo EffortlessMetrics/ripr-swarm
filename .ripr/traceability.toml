@@ -7091,6 +7091,8 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests.rs::named_limitation_target_unresolved_emitted_for_cross_package_reference",
   "crates/ripr/src/analysis/language/typescript/tests.rs::named_limitation_target_unresolved_not_emitted_for_same_package",
   "crates/ripr/src/output/typescript_limitations.rs::tests::typescript_limitation_leaderboard_counts_unique_kinds_per_finding",
+  "crates/ripr/src/output/typescript_limitations.rs::tests::typescript_limitation_samples_are_stable_across_permutations",
+  "crates/ripr/src/output/typescript_limitations.rs::tests::typescript_limitation_samples_use_all_fields_and_keep_duplicates",
   "crates/ripr/src/output/typescript_limitations.rs::tests::typescript_limitation_leaderboard_renders_json_and_markdown",
   "crates/ripr/src/output/typescript_limitations.rs::tests::typescript_limitation_leaderboard_blocks_on_malformed_check_output",
   "crates/ripr/src/cli/commands.rs::tests::reports_ts_limitations_requires_check_output_input",
