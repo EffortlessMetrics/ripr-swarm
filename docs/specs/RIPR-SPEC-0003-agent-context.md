@@ -21,9 +21,13 @@ matching and location matching. A well-formed missing ID or
 location remains a lookup miss. Fresh-analysis recovery must list findings
 with the requested root and diff scope so a corrected selector can be retried
 from another working directory. Committed-history recovery explicitly selects
-`check --committed`, including when tracked worktree edits would change the
-check default. Explicit `--worktree` and supplied `--diff` recovery retain their
-own input sources. Misses remain exit 2 with no machine stdout.
+`--committed` on check, explain and context, including when tracked worktree
+edits would change the default. A committed check's printed drill-ins and
+context's reciprocal explain command retain that choice. Without an explicit
+source, the CLI siblings follow check's dirty-worktree default. Explicit
+`--worktree`, supplied `--diff`, and verified `--from` replay retain their own
+input sources. `--committed` conflicts with those three explicit sources and
+refuses before input or root reads. Misses remain exit 2 with no machine stdout.
 A selector naming several findings (for example two findings at one
 `file:line`, or a canonical gap identity shared by grouped findings) refuses
 as ambiguous with the bounded candidate finding IDs instead of silently

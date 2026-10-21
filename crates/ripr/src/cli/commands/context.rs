@@ -32,6 +32,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     let mut base_explicitly_provided = false;
     // `--worktree` matches `ripr check --worktree` (see `explain`).
     let mut worktree = false;
+    let mut committed = false;
     let mut root_explicitly_provided = false;
     let mut i = 0usize;
     while i < args.len() {
@@ -76,6 +77,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
                 )?));
             }
             "--worktree" => worktree = true,
+            "--committed" => committed = true,
             "--at" => {
                 i += 1;
                 selector = Some(expect_value(args, i, "--at")?.to_string());
@@ -119,13 +121,14 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     if from_artifact.is_none() && base_explicitly_provided && input.diff_file.is_some() {
         return Err(base_with_diff_conflict_error("context"));
     }
-    super::worktree_scope_conflict(
+    super::drill_in_scope_conflict(
         "context",
         worktree,
+        committed,
         input.diff_file.is_some(),
         from_artifact.is_some(),
     )?;
-    if selector.is_none() && !worktree {
+    if selector.is_none() && !worktree && !committed {
         return Err(super::missing_selector_error(
             "missing --at or --finding selector",
             "ripr check --json",
@@ -174,8 +177,8 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
         )
     })?;
     apply_to_check_input(&mut input, &config, explicit);
-    let worktree =
-        worktree || super::dirty_tree_default_is_worktree(&input, from_artifact.is_some());
+    let worktree = worktree
+        || super::dirty_tree_default_is_worktree(&input, from_artifact.is_some(), committed);
     // Capture the effective mode after config merging: a configured
     // `[analysis] mode` replaces the default, and later refusals must name
     // the mode analysis actually ran with, not the pre-merge default

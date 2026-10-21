@@ -93,7 +93,18 @@ fn selector_recovery_replays_committed_worktree_and_supplied_diff_scopes() -> Re
             &committed,
             &worktree,
         ),
-        ("committed", vec!["--base", "HEAD~1"], &committed, &worktree),
+        (
+            "dirty default",
+            vec!["--base", "HEAD~1"],
+            &worktree,
+            &committed,
+        ),
+        (
+            "committed",
+            vec!["--base", "HEAD~1", "--committed"],
+            &committed,
+            &worktree,
+        ),
     ] {
         for command in ["explain", "context"] {
             let mut args = vec![command, "--root", &root_str];
@@ -248,4 +259,46 @@ fn committed_check_printed_drill_ins_preserve_unstaged_scope() -> Result<(), Str
 #[test]
 fn committed_check_printed_drill_ins_preserve_staged_scope() -> Result<(), String> {
     printed_drill_in_scope(true)
+}
+
+#[test]
+fn committed_drill_in_scope_conflicts_refuse_before_input_reads() -> Result<(), String> {
+    let absent = unique_temp_workspace("committed-conflict-missing-root");
+    let absent = absent.to_string_lossy().into_owned();
+    for command in ["explain", "context"] {
+        for (conflict, other) in [
+            ("--worktree", vec!["--worktree"]),
+            ("--diff", vec!["--diff", "-"]),
+            ("--from", vec!["--from", "missing.artifact.json"]),
+        ] {
+            for committed_first in [false, true] {
+                let mut args = vec![command, "--root", &absent];
+                if committed_first {
+                    args.push("--committed");
+                }
+                args.extend_from_slice(&other);
+                if !committed_first {
+                    args.push("--committed");
+                }
+                if command == "context" {
+                    args.push("--at");
+                }
+                args.push("probe:missing");
+                let output = run_ripr(&args);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if output.status.code() != Some(2)
+                    || !output.stdout.is_empty()
+                    || !stderr.contains("--committed")
+                    || !stderr.contains(conflict)
+                    || stderr.contains("loading_input")
+                    || stderr.contains("does not exist")
+                {
+                    return Err(format!(
+                        "{command} {conflict} must refuse before reading root/stdin/artifact: {output:?}"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
