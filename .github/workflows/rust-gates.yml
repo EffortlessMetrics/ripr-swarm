@@ -41,6 +41,11 @@ on:
         required: false
         default: false
         type: boolean
+      pr-labels:
+        description: Comma-separated labels of the queued PR (merge_group events carry none).
+        required: false
+        default: ''
+        type: string
     outputs:
       scratch_status:
         value: ${{ jobs.rust-gates.outputs.scratch_status }}
@@ -313,11 +318,11 @@ jobs:
 
       - name: PR evidence
         id: pr_evidence
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          GITHUB_PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          GITHUB_PR_LABELS: ${{ inputs.pr-labels || join(github.event.pull_request.labels.*.name, ',') }}
           RIPR_REVIEW_COMMENTS_TIMEOUT_SECS: "60"
           # Raised from the 2000 default as the PR #3592 decision artifact, then
           # to 3500 for #3532 (3,060-line capability diff), then to 4500 for
@@ -359,10 +364,10 @@ jobs:
           cargo xtask ripr-annotations --check
 
       - name: Proof route dry-run (advisory)
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: |
           cargo xtask proof route --base "$BASE_SHA" --head "$HEAD_SHA" || true
           { echo "### Proof Route (dry-run, advisory)"; echo ""; cat target/ripr/reports/proof-route.md; } >> "$GITHUB_STEP_SUMMARY" || true

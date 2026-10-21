@@ -52,7 +52,7 @@
     "packet": "packets/perl-0235-ex08-mention-only.json",
     "sha256": "43cd67d0e9ebbf87eda5617290e143f67204e7e674178be4a0efd992c6475b02",
     "provenance": "edited_producer",
-    "edits": "Started from the producer packet of perl-test2-deposit-lives-only, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"kind\": \"mention_only\", \"strength\": \"mention_only\"}; the packet fingerprint was recomputed."
+    "edits": "Started from the producer packet of perl-test2-deposit-lives-only, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"kind\": \"mention_only\", \"strength\": \"mention_only\"}; the packet fingerprint was recomputed. The retained oracle facts predate the producer pin: its `isnt` oracle stays `strong_exact` here, where the pinned producer now emits `weak_smoke` (RIPR-SPEC-0235 rule 17 demotes it either way)."
   },
   "spec_examples": [
     "RIPR-SPEC-0235#8"
