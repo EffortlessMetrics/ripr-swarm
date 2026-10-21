@@ -20,6 +20,8 @@ Support-tier impact:
 
 - None. No command, output field, or vocabulary changes; only the
   eligibility and ranking of an already-printed advice candidate change.
+- Claim boundaries remain governed by
+  [support tiers](../status/SUPPORT_TIERS.md).
 
 ## Problem
 
