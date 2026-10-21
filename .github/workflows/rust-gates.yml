@@ -353,6 +353,11 @@ jobs:
           # a hung producer wastes at most one hour — the scope guard
           # still caps memory).
           RIPR_PR_EVIDENCE_TIMEOUT_SECS: "3600"
+          # `ripr check` carries its own 600s analysis budget (#5369) beneath
+          # the producer timeout above; a large analyzer diff otherwise stops
+          # at 600s with analysis_timeout (exit 2) long before the 3,600s
+          # ceiling. Align the two so one number bounds the step.
+          RIPR_CHECK_TIMEOUT: "3600"
         run: |
           cargo xtask ripr-pr --base "$BASE_SHA" --head "$HEAD_SHA"
           cargo xtask ripr-pr --base "$BASE_SHA" --head "$HEAD_SHA" --check

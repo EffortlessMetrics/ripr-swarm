@@ -1,7 +1,8 @@
 use super::*;
 use crate::analysis::classify::{
-    CallTarget, call_text_may_call_free_function, impl_self_type_name,
-    method_call_resolves_to_impl, module_stem, owner_dispatch_trait, test_calls_free_function,
+    CallTarget, call_text_may_call_free_function, free_helper_call_resolves, impl_self_type_name,
+    inherent_owner_call_resolves, method_call_resolves_to_impl, module_stem, owner_dispatch_trait,
+    requires_inherent_receiver_identity, test_calls_free_function,
 };
 use crate::analysis::facts::FunctionImplContext;
 use std::sync::Arc;
@@ -63,7 +64,7 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
 /// Cached facts about a seam's owning function that every relationship
 /// strategy reads from. Resolved once per seam to avoid re-walking the
 /// index and re-deriving file stems / module paths per strategy.
-pub(super) struct OwnerContext {
+pub(super) struct OwnerContext<'index> {
     name: String,
     name_lower: String,
     file_stem: String,
@@ -77,13 +78,15 @@ pub(super) struct OwnerContext {
     /// The owner is a module-level `fn` (parser-established), so a
     /// receiver or type-path call of its name reaches something else.
     free_function: bool,
+    inherent_receiver: bool,
+    inherent_owner: Option<&'index FunctionSummary>,
     impl_trait: Option<String>,
     same_name_count: usize,
     identity: Option<std::sync::Arc<crate::analysis::classify::OwnerCallIdentity>>,
 }
 
-impl OwnerContext {
-    fn resolve(seam: &RepoSeam, context: &CompactGripContext<'_>) -> Self {
+impl<'index> OwnerContext<'index> {
+    fn resolve(seam: &RepoSeam, context: &CompactGripContext<'index>) -> Self {
         let owner_fn = context.owner_function(seam.file(), seam.display_line());
         let name = owner_fn.map(|f| f.name.as_str()).unwrap_or("").to_string();
         let name_lower = name.to_ascii_lowercase();
@@ -104,6 +107,7 @@ impl OwnerContext {
         let impl_type = owner_fn.and_then(|owner| impl_self_type_name(&owner.id.0));
         let free_function =
             owner_fn.is_some_and(|owner| owner.impl_context == FunctionImplContext::Free);
+        let inherent_receiver = owner_fn.is_some_and(requires_inherent_receiver_identity);
         let impl_trait = owner_fn.and_then(owner_dispatch_trait);
         let same_name_count = context.function_name_count(&name);
         // Shared per analysis run with the finding-level relation (#7716):
@@ -122,6 +126,8 @@ impl OwnerContext {
             fixture_names,
             impl_type,
             free_function,
+            inherent_receiver,
+            inherent_owner: owner_fn.filter(|owner| requires_inherent_receiver_identity(owner)),
             impl_trait,
             same_name_count,
             identity,
@@ -242,7 +248,7 @@ pub(super) fn match_direct_owner_call(
     candidates: &mut BTreeMap<usize, RelationReason>,
     context: &CompactGripContext<'_>,
     prefix: Option<&str>,
-    owner: &OwnerContext,
+    owner: &OwnerContext<'_>,
 ) {
     if owner.name.is_empty() {
         return;
@@ -250,23 +256,28 @@ pub(super) fn match_direct_owner_call(
     let Some(indices) = context.tests_by_call_name.get(&owner.name) else {
         return;
     };
-    let require_impl_identity = owner.same_name_count > 1 && owner.impl_type.is_some();
     for test_index in indices {
-        if require_impl_identity {
-            let Some(indexed) = context.tests.get(*test_index) else {
+        let Some(indexed) = context.tests.get(*test_index) else {
+            continue;
+        };
+        if owner.inherent_receiver {
+            // Every inherent entry borrows the complete shared owner refusal,
+            // independently of the legacy impl-name ambiguity shortcut.
+            if !owner.inherent_owner.is_some_and(|function| {
+                inherent_owner_call_resolves(indexed.test, function, context.index)
+            }) {
                 continue;
-            };
-            let Some(impl_type) = owner.impl_type.as_deref() else {
-                continue;
-            };
-            if !method_call_resolves_to_impl(
+            }
+        } else if owner.same_name_count > 1
+            && let Some(impl_type) = owner.impl_type.as_deref()
+            && !method_call_resolves_to_impl(
                 indexed.test,
                 &owner.name,
                 impl_type,
                 owner.impl_trait.as_deref(),
-            ) {
-                continue;
-            }
+            )
+        {
+            continue;
         }
         // `ByteSize::kb(1)` or `size.kb()` never calls a free `kb` (#6713).
         if owner.free_function
@@ -291,7 +302,7 @@ pub(super) fn match_helper_owner_call(
     candidates: &mut BTreeMap<usize, RelationReason>,
     context: &CompactGripContext<'_>,
     prefix: Option<&str>,
-    owner: &OwnerContext,
+    owner: &OwnerContext<'_>,
 ) {
     if owner.name.is_empty() {
         return;
@@ -310,6 +321,13 @@ pub(super) fn match_helper_owner_call(
         return;
     };
     for test_index in indices {
+        if owner.inherent_receiver
+            && !owner.inherent_owner.is_some_and(|function| {
+                context.inherent_helper_reaches_owner(*test_index, function)
+            })
+        {
+            continue;
+        }
         insert_related_candidate(
             candidates,
             context,
@@ -325,7 +343,7 @@ pub(super) fn match_target_affinity_owner_call(
     seam: &RepoSeam,
     context: &CompactGripContext<'_>,
     prefix: Option<&str>,
-    owner: &OwnerContext,
+    owner: &OwnerContext<'_>,
     target_tokens: &BTreeSet<String>,
 ) {
     if requires_concrete_activation_values(seam)
@@ -349,7 +367,12 @@ pub(super) fn match_target_affinity_owner_call(
         let Some(test) = context.tests.get(*test_index) else {
             continue;
         };
-        if !test_assertion_mentions_any_target_token(test, target_tokens) {
+        if !test_assertion_mentions_any_target_token(test, target_tokens)
+            || (owner.inherent_receiver
+                && !owner.inherent_owner.is_some_and(|function| {
+                    context.inherent_helper_reaches_owner(*test_index, function)
+                }))
+        {
             continue;
         }
         insert_related_candidate(
@@ -438,7 +461,7 @@ pub(super) fn match_same_test_file(
     candidates: &mut BTreeMap<usize, RelationReason>,
     context: &CompactGripContext<'_>,
     prefix: Option<&str>,
-    owner: &OwnerContext,
+    owner: &OwnerContext<'_>,
 ) {
     if owner.file_stem.is_empty() {
         let indices = owner
@@ -480,7 +503,7 @@ pub(super) fn match_same_module(
     candidates: &mut BTreeMap<usize, RelationReason>,
     context: &CompactGripContext<'_>,
     prefix: Option<&str>,
-    owner: &OwnerContext,
+    owner: &OwnerContext<'_>,
 ) {
     let Some(module_path) = owner.module_path.as_deref() else {
         return;
@@ -500,7 +523,7 @@ pub(super) fn match_owner_named_test(
     candidates: &mut BTreeMap<usize, RelationReason>,
     context: &CompactGripContext<'_>,
     prefix: Option<&str>,
-    owner: &OwnerContext,
+    owner: &OwnerContext<'_>,
 ) {
     for test_index in context.owner_named_indices(&owner.name_lower) {
         insert_related_candidate(
@@ -517,7 +540,7 @@ pub(super) fn match_import_path_affinity(
     candidates: &mut BTreeMap<usize, RelationReason>,
     context: &CompactGripContext<'_>,
     prefix: Option<&str>,
-    owner: &OwnerContext,
+    owner: &OwnerContext<'_>,
 ) {
     if owner.name.is_empty() {
         return;
@@ -547,7 +570,7 @@ pub(super) fn match_fixture_owner_affinity(
     candidates: &mut BTreeMap<usize, RelationReason>,
     context: &CompactGripContext<'_>,
     prefix: Option<&str>,
-    owner: &OwnerContext,
+    owner: &OwnerContext<'_>,
 ) {
     for fixture_name in owner.fixture_names.iter() {
         if let Some(indices) = context.tests_by_call_name.get(fixture_name) {

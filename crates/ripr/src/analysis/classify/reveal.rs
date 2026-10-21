@@ -4046,6 +4046,13 @@ pub(in crate::analysis) struct FileUseStatements {
     macro_defined: crate::analysis::sync_memo::SyncMemo<
         std::collections::BTreeMap<(std::path::PathBuf, String), bool>,
     >,
+    /// Each file's macro sites, parsed once however many names ask.
+    macro_sites: crate::analysis::sync_memo::SyncMemo<
+        std::collections::BTreeMap<
+            std::path::PathBuf,
+            std::sync::Arc<super::macro_item_names::MacroSites>,
+        >,
+    >,
 }
 
 impl FileUseStatements {
@@ -4062,7 +4069,15 @@ impl FileUseStatements {
         if let Some(known) = self.macro_defined.borrow().get(&key) {
             return *known;
         }
-        let defined = super::macro_item_names::macro_may_define_item_named(source, callee);
+        let sites = std::sync::Arc::clone(
+            self.macro_sites
+                .borrow_mut()
+                .entry(file.to_path_buf())
+                .or_insert_with(|| {
+                    std::sync::Arc::new(super::macro_item_names::MacroSites::scan(source))
+                }),
+        );
+        let defined = sites.may_define(callee);
         self.macro_defined.borrow_mut().insert(key, defined);
         defined
     }

@@ -19638,3 +19638,288 @@ fn field_projected_collection_repo_seam_retains_indexed_target() -> Result<(), S
     }
     Ok(())
 }
+
+#[test]
+fn named_call_scan_sees_calls_after_an_earlier_line_comment() {
+    // The single-line stripper truncated a whole body at its first `//`.
+    let body = "// delegates to compute\nfn wrapper() {\n    compute(1);\n}\n";
+    assert!(call_text_contains_named_call(body, "compute"));
+    // Positive/negative controls: commented, quoted or declared-only names.
+    assert!(!call_text_contains_named_call(
+        "fn wrapper() {\n    // compute(1);\n}\n",
+        "compute"
+    ));
+    assert!(!call_text_contains_named_call(
+        "fn wrapper() {\n    let s = \"compute(1)\";\n}\n",
+        "compute"
+    ));
+    assert!(!call_text_contains_named_call(
+        "fn compute() {}\n",
+        "compute"
+    ));
+}
+
+// #7415 review: index-backed oracles for the permissive factory and
+// helper-hop routes of the bounded inherent-receiver rule.
+fn receiver_rule_index(source: &str) -> Result<FixtureIndex, String> {
+    index_from_files(&[(PathBuf::from("src/lib.rs"), source)])
+}
+
+fn receiver_rule_parts<'a>(
+    index: &'a RustIndex,
+    owner: &str,
+    caller: &str,
+) -> Result<(&'a FunctionSummary, &'a TestSummary), String> {
+    let owner = index
+        .functions()
+        .iter()
+        .find(|function| function.name == owner && function.item.has_self_param)
+        .ok_or_else(|| format!("missing owner {owner}"))?;
+    let caller = index
+        .tests()
+        .iter()
+        .find(|test| test.name == caller)
+        .ok_or_else(|| format!("missing test {caller}"))?;
+    Ok((owner, caller))
+}
+
+#[test]
+fn inherent_factory_binding_admits_only_a_plain_self_returning_declaration() -> Result<(), String> {
+    for (factory, expected) in [
+        ("pub fn make() -> Self { Site(1) }", true),
+        ("pub fn make() -> Site { Site(1) }", true),
+        ("pub fn make() -> Result<Self, ()> { Ok(Site(1)) }", false),
+        ("pub async fn make() -> Self { Site(1) }", false),
+        ("pub fn make(&self) -> Self { Site(1) }", false),
+        ("pub fn make() -> Foreign { Foreign }", false),
+        ("pub fn make<Site>() -> Site { todo!() }", false),
+        (
+            "pub fn make<F>(f: F) -> Foreign where F: Fn() -> Self { f(); Foreign }",
+            false,
+        ),
+        (
+            "pub fn make<F: Fn() -> Self>(f: F) -> Foreign { f(); Foreign }",
+            false,
+        ),
+        // Two same-name declarations: the factory is not unique.
+        (
+            "pub fn make() -> Self { Site(1) }\n}\nimpl Site {\npub fn make() -> Foreign { Foreign }",
+            false,
+        ),
+    ] {
+        let source = format!(
+            "pub struct Site(u32);\npub struct Foreign;\nimpl Site {{\n{factory}\npub fn area(&self) -> u32 {{ self.0 }}\n}}\n#[test]\nfn t() {{\n    let s = Site::make();\n    assert_eq!(s.area(), 1);\n}}\n#[test]\nfn other_type() {{\n    let s = Other::make();\n    assert_eq!(s.area(), 1);\n}}\n"
+        );
+        let index = receiver_rule_index(&source)?;
+        let (owner, caller) = receiver_rule_parts(&index, "area", "t")?;
+        assert_eq!(
+            crate::analysis::classify::inherent_owner_call_resolves(caller, owner, &index),
+            expected,
+            "{factory}"
+        );
+        let (_, other) = receiver_rule_parts(&index, "area", "other_type")?;
+        assert!(
+            !crate::analysis::classify::inherent_owner_call_resolves(other, owner, &index),
+            "a different spelled type never resolves: {factory}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn inherent_helper_hop_credits_only_a_sync_helper_that_binds_the_owner_type() -> Result<(), String>
+{
+    for (helper, caller_body, expected) in [
+        (
+            "fn helper() -> u32 { let s = Site::new(); s.area() }",
+            "assert_eq!(helper(), 1);",
+            true,
+        ),
+        (
+            "fn helper() -> u32 { let s = Foreign::new(); s.area() }",
+            "assert_eq!(helper(), 1);",
+            false,
+        ),
+        (
+            "async fn helper() -> u32 { let s = Site::new(); s.area() }",
+            "let _ = helper();",
+            false,
+        ),
+        (
+            "fn helper() -> u32 { let s = Site::new(); s.area() }",
+            "assert_eq!(1, 1);",
+            false,
+        ),
+    ] {
+        let source = format!(
+            "pub struct Site(u32);\nimpl Site {{\npub fn new() -> Self {{ Site(1) }}\npub fn area(&self) -> u32 {{ self.0 }}\n}}\n{helper}\n#[test]\nfn t() {{\n    {caller_body}\n}}\n"
+        );
+        let index = receiver_rule_index(&source)?;
+        let (owner, caller) = receiver_rule_parts(&index, "area", "t")?;
+        assert_eq!(
+            inherent_helper_path_reaches_owner(
+                caller,
+                owner,
+                &index,
+                HELPER_OWNER_CALL_GRAPH_MAX_HOPS,
+                &mut BTreeSet::new(),
+            ),
+            expected,
+            "{helper} / {caller_body}"
+        );
+        let helper_fn = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "helper")
+            .ok_or("missing helper")?;
+        assert_eq!(
+            crate::analysis::classify::function_declaration_is_async(helper_fn, &index),
+            Some(helper.starts_with("async")),
+            "{helper}"
+        );
+        assert_eq!(
+            crate::analysis::classify::free_helper_call_resolves(caller, helper_fn, &index),
+            caller_body.contains("helper("),
+            "{helper} / {caller_body}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn inherent_receiver_initializer_needs_indexed_return_type_and_unqualified_path()
+-> Result<(), String> {
+    for (receiver, expected) in [
+        // Positive controls: indexed Self/type-returning constructors,
+        // unqualified struct literal and enum-style variant spelling.
+        ("Site::new()", true),
+        ("Site::with_x()", true),
+        ("Site::from_parts(1)", true),
+        ("Site { v: 1 }", true),
+        // Constructor-sounding names that return a foreign type.
+        ("Site::with_cache()", false),
+        ("Site::new_cache()", false),
+        ("Site::from_cache(1)", false),
+        // Qualified paths do not establish the owner's type.
+        ("foreign::Site::new()", false),
+        ("foreign::Site { v: 1 }", false),
+        ("crate::foreign::Site::with_x()", false),
+        // Undeclared associated call.
+        ("Site::missing()", false),
+    ] {
+        for form in ["bound", "inline"] {
+            let body = if form == "bound" {
+                format!("let s = {receiver};\n    assert_eq!(s.area(), 1);")
+            } else {
+                format!("assert_eq!({receiver}.area(), 1);")
+            };
+            let source = format!(
+                "pub struct Site {{ v: u32 }}\npub struct Cache;\nimpl Site {{\n\
+                 pub fn new() -> Self {{ Site {{ v: 1 }} }}\n\
+                 pub fn with_x() -> Self {{ Site {{ v: 1 }} }}\n\
+                 pub fn from_parts(v: u32) -> Site {{ Site {{ v }} }}\n\
+                 pub fn with_cache() -> Cache {{ Cache }}\n\
+                 pub fn new_cache() -> Cache {{ Cache }}\n\
+                 pub fn from_cache(_v: u32) -> Cache {{ Cache }}\n\
+                 pub fn area(&self) -> u32 {{ self.v }}\n}}\n#[test]\nfn t() {{\n    {body}\n}}\n"
+            );
+            let index = receiver_rule_index(&source)?;
+            let (owner, caller) = receiver_rule_parts(&index, "area", "t")?;
+            assert_eq!(
+                crate::analysis::classify::inherent_owner_call_resolves(caller, owner, &index),
+                expected,
+                "{receiver} ({form})"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn inherent_receiver_default_from_and_generic_heads_need_positive_index_evidence()
+-> Result<(), String> {
+    // (type declarations, impls, receiver expression, expected)
+    for (decls, receiver, expected) in [
+        // derive(Default) on the owner type.
+        (
+            "#[derive(Default)]\npub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }",
+            "Site::default()",
+            true,
+        ),
+        // Manual impl Default for the owner type.
+        (
+            "pub struct Site { v: u32 }\nimpl Default for Site { fn default() -> Self { Site { v: 1 } } }\nimpl Site { pub fn area(&self) -> u32 { self.v } }",
+            "Site::default()",
+            true,
+        ),
+        // impl From<u8> for the owner type.
+        (
+            "pub struct Site { v: u32 }\nimpl From<u8> for Site { fn from(v: u8) -> Self { Site { v: v.into() } } }\nimpl Site { pub fn area(&self) -> u32 { self.v } }",
+            "Site::from(1)",
+            true,
+        ),
+        // Generic owner: turbofish head and generic inherent factory.
+        (
+            "pub struct Site<T> { v: T }\nimpl<T> Site<T> { pub fn new(v: T) -> Self { Site { v } } pub fn area(&self) -> u32 { 1 } }",
+            "Site::<u8>::new(1)",
+            true,
+        ),
+        (
+            "pub struct Site<T> { v: T }\nimpl<T> Site<T> { pub fn new(v: T) -> Self { Site { v } } pub fn area(&self) -> u32 { 1 } }",
+            "Site::new(1)",
+            true,
+        ),
+        // No Default/From evidence at all.
+        (
+            "pub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }",
+            "Site::default()",
+            false,
+        ),
+        (
+            "pub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }",
+            "Site::from(1)",
+            false,
+        ),
+        // Inherent default() is judged by its declared return type.
+        (
+            "pub struct Site { v: u32 }\npub struct Cache;\nimpl Site { pub fn default() -> Cache { Cache } pub fn area(&self) -> u32 { self.v } }",
+            "Site::default()",
+            false,
+        ),
+        (
+            "pub struct Site { v: u32 }\nimpl Site { pub fn default() -> Self { Site { v: 1 } } pub fn area(&self) -> u32 { self.v } }",
+            "Site::default()",
+            true,
+        ),
+        // derive(Default) on a DIFFERENT type does not credit Site.
+        (
+            "#[derive(Default)]\npub struct Cache;\npub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }",
+            "Site::default()",
+            false,
+        ),
+        // From implemented for a different type only.
+        (
+            "pub struct Site { v: u32 }\npub struct Cache;\nimpl From<u8> for Cache { fn from(_v: u8) -> Self { Cache } }\nimpl Site { pub fn area(&self) -> u32 { self.v } }",
+            "Site::from(1)",
+            false,
+        ),
+        // Unqualified-path and Self refusals stay.
+        (
+            "#[derive(Default)]\npub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }",
+            "foreign::Site::default()",
+            false,
+        ),
+    ] {
+        let source = format!(
+            "{decls}\n#[test]\nfn t() {{\n    let s = {receiver};\n    assert_eq!(s.area(), 1);\n}}\n"
+        );
+        let index = receiver_rule_index(&source)?;
+        let (owner, caller) = receiver_rule_parts(&index, "area", "t")?;
+        assert_eq!(
+            crate::analysis::classify::inherent_owner_call_resolves(caller, owner, &index),
+            expected,
+            "{receiver} over {decls}"
+        );
+    }
+    Ok(())
+}

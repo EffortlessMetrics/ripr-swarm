@@ -76,9 +76,9 @@ pub(in crate::analysis) use operand_pin::operand_only_pin;
 pub(in crate::analysis) use owner_pin::nested_parallelism_allowed;
 pub(in crate::analysis) use owner_pin::{
     AssertionRefusal, OwnerPinSyntax, OwnerReturnPin, WithheldMacroBindings, direct_call_name,
-    expected_operand_value, helper_pins_owner_call, owner_builds_declared_error_variant,
-    pin_scope_needs, targeted_free_call_reaches_owner, targeted_name_is_alias,
-    targeted_type_name_is_unresolved, trait_impl_self_type_names,
+    expected_operand_value, function_declaration_is_async, helper_pins_owner_call,
+    owner_builds_declared_error_variant, pin_scope_needs, targeted_free_call_reaches_owner,
+    targeted_name_is_alias, targeted_type_name_is_unresolved, trait_impl_self_type_names,
 };
 pub(in crate::analysis) use owner_pin::{FallibleCheckReceipt, fallible_check_receipt};
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
@@ -101,9 +101,11 @@ pub(in crate::analysis) use reach::{
 };
 pub(in crate::analysis) use related_tests::{
     DependencyEdgeContext, RelatedTestCandidateIndex, body_contains_owner_call,
-    call_text_may_call_free_function, find_related_tests_with_candidate_index, impl_self_type_name,
+    call_text_may_call_free_function, find_related_tests_with_candidate_index,
+    free_helper_call_resolves, impl_self_type_name, inherent_owner_call_resolves,
     manifests_with_unindexed_files, method_call_resolves_to_impl, module_stem, owner_call_text,
-    owner_dispatch_trait, package_prefix, test_calls_free_function,
+    owner_dispatch_trait, package_prefix, requires_inherent_receiver_identity,
+    test_calls_free_function,
 };
 pub(in crate::analysis) use reveal::is_inline_expect_snapshot;
 pub(in crate::analysis) use reveal::reveal_outcome;
