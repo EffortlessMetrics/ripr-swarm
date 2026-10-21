@@ -236,21 +236,26 @@ fn watched_typescript_inputs_reload_config_and_refresh_analysis() -> Result<(), 
     let backend = service.inner();
     backend.initialize_test_workspace_root();
 
-    for relative in ["tsconfig.json", "src/cart.ts"] {
+    // (path, event type, expect a TypeScript analysis refresh)
+    let cases = [
+        ("tsconfig.json", FileChangeType::CHANGED, true),
+        ("src/cart.ts", FileChangeType::CREATED, true),
+        ("src/cart.ts", FileChangeType::DELETED, true),
+        // An ordinary save of an existing source file is not an input.
+        ("src/cart.ts", FileChangeType::CHANGED, false),
+    ];
+    for (relative, typ, refresh) in cases {
         let uri = file_uri_for_path(&root.join(relative))
             .map_err(|err| format!("{relative} URI failed: {err}"))?;
-        let changes = vec![FileEvent {
-            uri,
-            typ: FileChangeType::CHANGED,
-        }];
+        let changes = vec![FileEvent { uri, typ }];
         assert_eq!(
             backend.watched_file_change_kinds(&changes),
             WatchedFileChanges {
                 config_changed: true,
-                typescript_input_changed: true,
+                typescript_input_changed: refresh,
                 ..WatchedFileChanges::default()
             },
-            "{relative}"
+            "{relative} {typ:?}"
         );
     }
     Ok(())

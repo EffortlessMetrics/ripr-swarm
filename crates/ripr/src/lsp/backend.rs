@@ -3407,11 +3407,15 @@ impl Backend {
             };
             kinds.config_changed |= kind.reloads_repository_config();
             kinds.workspace_graph_changed |= kind.invalidates_workspace_graph();
-            kinds.typescript_input_changed |= matches!(
-                kind,
-                WorkspaceInputKind::TypescriptProjectMarker
-                    | WorkspaceInputKind::TypescriptSourcePresence
-            );
+            // Source presence only matters when a file appears or disappears;
+            // an ordinary save of an existing TypeScript file is not an input.
+            kinds.typescript_input_changed |= match kind {
+                WorkspaceInputKind::TypescriptProjectMarker => true,
+                WorkspaceInputKind::TypescriptSourcePresence => {
+                    event.typ != tower_lsp_server::ls_types::FileChangeType::CHANGED
+                }
+                _ => false,
+            };
             kinds.diagnostics_input_changed |= kind == WorkspaceInputKind::DiagnosticsInput;
         }
         kinds
