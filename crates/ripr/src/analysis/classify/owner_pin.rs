@@ -959,6 +959,19 @@ impl OwnerPinSyntax {
         }
     }
 
+    /// #9211: pay the whole workspace macro-site scan once, before the
+    /// classify workers start. The first consumer otherwise runs it in line on
+    /// one worker while holding the memo lock, and every sibling worker sleeps
+    /// on that lock until the whole corpus is parsed. Called on a thread of
+    /// the classify pool before any probe is queued, so the scan fans out over
+    /// that pool (the large-stack workers the parse needs) and the probes only
+    /// read the filled memos. The memo content is what the first consumer
+    /// would have produced, so no output changes.
+    pub(in crate::analysis) fn prime_workspace_macro_scan(&self, index: &RustIndex) {
+        let _fan_out = PrimedScanFanOut::enter();
+        self.complete_workspace_site_scan(index);
+    }
+
     /// #8255 test witness: how many full-index macro-site passes this run
     /// paid, bounded at two (the ambiguity pass plus at most one
     /// completion) however many (name, test root) refusals follow.
@@ -2024,6 +2037,18 @@ fn scan_macro_sites(
     index: &RustIndex,
     module_resolved: &(dyn Fn(&Path, usize, &str) -> bool + Sync),
 ) -> Vec<(PathBuf, String, MacroBindingSite)> {
+    #[cfg(test)]
+    {
+        use std::hash::{Hash, Hasher};
+        let fanned_out = scan_fans_out();
+        if let Ok(mut log) = SCAN_LOG.lock() {
+            for (_, source, _) in files {
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                source.hash(&mut hasher);
+                log.push((hasher.finish(), fanned_out));
+            }
+        }
+    }
     let context_macros = assertion_context_macros();
     let scan_file = |(path, source, candidates): &MacroScanFile<'_>| {
         // A file whose stored candidates rule out every trusted name
@@ -2063,7 +2088,7 @@ thread_local! {
 /// from classification goes through here, so that guard has one seam (the
 /// `#[cfg(test)]` oracle `workspace_macro_binding_site` keeps its own copy).
 fn map_scans<T: Sync, R: Send>(items: &[T], scan: impl Fn(&T) -> R + Sync + Send) -> Vec<R> {
-    if nested_parallelism_allowed() {
+    if scan_fans_out() {
         #[cfg(test)]
         LAST_SCAN_FAN_OUT.with(|last| last.set(Some(true)));
         items.par_iter().map(scan).collect()
@@ -2073,6 +2098,41 @@ fn map_scans<T: Sync, R: Send>(items: &[T], scan: impl Fn(&T) -> R + Sync + Send
         items.iter().map(scan).collect()
     }
 }
+
+thread_local! {
+    /// Set while [`OwnerPinSyntax::prime_workspace_macro_scan`] runs on a
+    /// classify-pool thread before any probe is queued (#9211).
+    static PRIMED_SCAN_FAN_OUT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Lets the priming scan fan out over the pool it runs on. Safe where
+/// [`nested_parallelism_allowed`] refuses: no sibling probe is queued yet, so
+/// the blocked thread has nothing to steal that could need the memo lock it
+/// holds (#8756).
+struct PrimedScanFanOut(bool);
+
+impl PrimedScanFanOut {
+    fn enter() -> Self {
+        Self(PRIMED_SCAN_FAN_OUT.with(|flag| flag.replace(true)))
+    }
+}
+
+impl Drop for PrimedScanFanOut {
+    fn drop(&mut self) {
+        PRIMED_SCAN_FAN_OUT.with(|flag| flag.set(self.0));
+    }
+}
+
+/// Whether a production macro-site scan on this thread maps over the pool.
+fn scan_fans_out() -> bool {
+    nested_parallelism_allowed() || PRIMED_SCAN_FAN_OUT.with(std::cell::Cell::get)
+}
+
+/// Test witness (#9211): the `(source hash, fanned out)` of every file a
+/// [`scan_macro_sites`] call mapped, from any thread.
+#[cfg(test)]
+pub(in crate::analysis) static SCAN_LOG: std::sync::Mutex<Vec<(u64, bool)>> =
+    std::sync::Mutex::new(Vec::new());
 
 /// Whether a scan may fan out on the rayon pool. A probe classified on a pool
 /// worker already runs beside its siblings, and a worker blocked in a nested

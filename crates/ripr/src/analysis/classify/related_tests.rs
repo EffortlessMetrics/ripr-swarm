@@ -204,6 +204,13 @@ impl RelatedTestCandidateIndex {
         &self.owner_pin_syntax
     }
 
+    /// Pays the workspace macro-site scan once, ahead of the classify
+    /// workers (#9211). Call it on a classify-pool thread before any probe is
+    /// queued.
+    pub(in crate::analysis) fn prime_workspace_macro_scan(&self, index: &RustIndex) {
+        self.owner_pin_syntax.prime_workspace_macro_scan(index);
+    }
+
     pub(in crate::analysis) fn unseen_reach_names(&self) -> &super::UnseenReachNames {
         &self.unseen_reach
     }

@@ -2394,6 +2394,15 @@ impl RustAdapter {
             };
             match builder.build() {
                 Ok(pool) => pool.install(|| {
+                    // #9211: the first probe to need the workspace macro-site
+                    // scan would run it in line on one worker while the rest
+                    // sleep on the memo lock. Pay it here, before any probe
+                    // is queued, so it fans out over this pool.
+                    cancellation::with_optional_token(token.as_ref(), || {
+                        committed_source::with_overlay(overlay.clone(), || {
+                            related_test_candidate_index.prime_workspace_macro_scan(&index);
+                        });
+                    });
                     seeded_probes
                         .par_iter()
                         .map_init(crate::analysis::syntax::run_memo::enter, |_, probe| {
