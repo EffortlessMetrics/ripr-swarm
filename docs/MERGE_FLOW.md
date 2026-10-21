@@ -8,12 +8,18 @@ The target replaces the earlier no-queue mechanism; it does not weaken review,
 proof, ordinary protected squash, or separate release authority.
 
 **Target selected; live queue activation is not established by this document.**
-At inspected main `9911925ad6267bb3929be323cbcfdbe6da18f613`,
-`.github/workflows/routed-rust.yml` requests PR qualification on the explicit
-`merge-ready` label and also runs on main/master push and manual dispatch. It
-has no `merge_group` trigger. The branch summary names `Ripr Rust Small Result`
-(application 15368); a complete current enforcement readback is still required
-before changing settings. A file or issue edit does not install new protection.
+Since #9106, `.github/workflows/routed-rust.yml` also subscribes to
+`merge_group` (`checks_requested`) so the required `Ripr Rust Small Result` can be
+earned once per queue entry on the exact queued merge commit (see
+[CI](CI.md#merge-queue-request-cutover)). Admission is per PR, so the queue must
+use a group size of 1 and the queued commit must be a single squash commit on the
+group's `base_sha`; batching needs per-PR admission (#8082). The workflow also
+still requests PR qualification on the explicit `merge-ready` label and runs on
+main/master push and manual dispatch. The branch summary names
+`Ripr Rust Small Result` (application 15368); a complete current enforcement
+readback is still required before changing settings, and whether the repository's
+merge queue is enabled for `main` is a live setting this document does not
+establish. A file or issue edit does not install new protection.
 
 Until the replacement is qualified and activated, use the installed label route
 below. Do not treat a proposed enqueue command, Ready state, or this target as

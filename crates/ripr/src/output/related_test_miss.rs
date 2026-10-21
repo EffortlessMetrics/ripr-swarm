@@ -83,6 +83,7 @@ pub(crate) fn oracle_projection(
 ) -> String {
     use crate::domain::{OracleKind, OracleStrength};
     match (strength, kind) {
+        (OracleStrength::None, _) => "no oracle".to_string(),
         // A row with no selected assertion has no oracle to describe.
         (OracleStrength::Unknown, OracleKind::Unknown) if !has_assertion => "no oracle".to_string(),
         (OracleStrength::Unknown, OracleKind::Unknown) => {
@@ -93,9 +94,11 @@ pub(crate) fn oracle_projection(
             kind.as_str().replace('_', " ")
         ),
         (strength, kind) => format!(
-            "{} {} oracle",
-            strength.as_str(),
-            kind.as_str().replace('_', " ")
+            "{} oracle",
+            crate::output::oracle_phrase::oracle_phrase(
+                strength.as_str(),
+                &kind.as_str().replace('_', " ")
+            )
         ),
     }
 }
@@ -149,6 +152,16 @@ mod tests {
         assert_eq!(
             oracle_projection(&OracleStrength::Unknown, &OracleKind::ExactValue, true),
             "exact value oracle, not graded against this probe"
+        );
+        // A row with no oracle strength reads "no oracle" whatever its kind.
+        assert_eq!(
+            oracle_projection(&OracleStrength::None, &OracleKind::ExactValue, false),
+            "no oracle"
+        );
+        // A kind that already leads with its strength word is not doubled.
+        assert_eq!(
+            oracle_projection(&OracleStrength::Smoke, &OracleKind::SmokeOnly, true),
+            "smoke only oracle"
         );
         // A graded pair keeps the "<strength> <kind> oracle" spelling.
         assert_eq!(

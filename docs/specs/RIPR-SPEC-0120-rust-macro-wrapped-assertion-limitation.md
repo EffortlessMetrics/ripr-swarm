@@ -103,6 +103,40 @@ The class stays `weakly_exposed`; the finding names the limit instead of
 reporting a gap. An owner value that reaches the macro only through a binding,
 or a direct test that also holds a recognized oracle, keeps the gap.
 
+### Same-file macro whose arms show a recognized assertion (#9122)
+
+A macro defined in the test's own file is not unresolved when every arm of its
+unique, un-gated, in-scope `macro_rules!` definition itself contains an
+assertion the ordinary extractor recognizes (`assert_eq!`, `assert!`, ...) over
+a `$fragment` that arm's matcher binds, and the test calls it as a plain
+statement of its own body. A tautology (`assert!(true)`, `assert_eq!(1, 1)`,
+`assert_eq!($x, $x)`), a self-recursive macro and a call whose argument count
+no arm takes credit nothing. Only the asserted operands count (the first for
+`assert!`, the first two for `assert_eq!`/`assert_ne!`); a fragment that
+appears only in a diagnostic message does not attribute the assertion. A
+transcriber with a branch, loop, `match`, closure, early exit or repetition
+credits nothing, because its assertion may not run. An unrelated assertion on
+the same line as the call does not suppress the credit. When every recognized
+oracle of a `weakly_exposed` finding is such an unknown-grade macro credit, the
+finding keeps this limit (it is not reported as a gap), since the macro's
+discrimination remains unresolved. The call then earns one oracle of kind `unknown`
+and strength `unknown`, never `weak` or stronger, so it records that an
+assertion exists without grading what it pins. A hand-rolled
+`if bad { panic!() }` body, a macro that only logs, a macro with one arm that
+shows no assertion, a duplicate, imported or cfg-gated definition, a macro
+from another file or crate, and a call in a closure, branch or `use`-bearing
+test keep this limit.
+
+### Helper call with a macro among its arguments (#9122)
+
+An `assert_*` helper call (`common::assert_matches(snapbox::file![..], cmd)`)
+whose arguments contain a macro is still recognized as a helper call when its
+callee, the text before the first `(`, is the `assert_*` path. The macro hides
+what the call compares, so the call is graded `unknown` and never exact, even
+for an equality-named helper. A macro invocation (`assert_eq!(..)`) or a
+macro in the callee position is not a helper call. Negation and inequality
+arguments (`!x`, `a != b`) do not change this grade.
+
 ## Fail-Closed Boundaries
 
 - Never promote the finding because a custom assertion macro exists.

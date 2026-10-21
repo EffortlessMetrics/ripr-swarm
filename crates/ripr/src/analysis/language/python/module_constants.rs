@@ -112,6 +112,13 @@ pub(super) struct PythonTestRebinding {
     /// apart from `names` so a function-local import of an owner is not
     /// mistaken for a module-level replacement (#8247).
     pub(super) module_names: Vec<String>,
+    /// Every name the test's module binds at least once (imports, `def`,
+    /// `class`, assignments, loop and `with` targets), so a builtin it replaces
+    /// is visible even when bound a single time.
+    pub(super) module_bound: Vec<String>,
+    /// The module's bindings cannot be enumerated (a star import, a dynamic
+    /// namespace writer, a module-scope `match`): no builtin name is trusted.
+    pub(super) module_opaque: bool,
     /// Attribute names the test file assigns anywhere (`pricing.LIMIT = 5`),
     /// or `*` when it names a dynamic namespace writer (`setattr`,
     /// `sys.modules`, ...); either can rewrite another module's constant at
@@ -153,6 +160,8 @@ pub(super) fn python_test_rebinding(
         opaque: locals.is_none() || contains_nested_scope(body) || body_text.contains(":="),
         names: locals.unwrap_or_default(),
         module_names: Vec::new(),
+        module_bound: Vec::new(),
+        module_opaque: false,
         attributes: Vec::new(),
     }
 }
@@ -194,6 +203,10 @@ pub(super) fn with_module_rebinding(source: &str, statements: &[Stmt], tests: &m
             .extend(rebound.iter().map(|name| (*name).clone()));
         rebinding.module_names.sort();
         rebinding.module_names.dedup();
+        rebinding.module_opaque = module.opaque || dynamic;
+        rebinding.module_bound.clone_from(&module.names);
+        rebinding.module_bound.sort();
+        rebinding.module_bound.dedup();
         rebinding.attributes.clone_from(&attributes);
     }
 }

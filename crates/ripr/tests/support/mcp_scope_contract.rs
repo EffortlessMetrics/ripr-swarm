@@ -26,7 +26,10 @@ fn status_and_refresh_advertise_committed_scope_variants() -> Result<(), String>
     let expected = json!({
         "type": ["object", "null"],
         "properties": {
-            "analyzed": { "type": "string", "const": "committed default-branch diff" },
+            "analyzed": {
+                "type": "string",
+                "pattern": "^committed (default-branch diff|diff against base .+)$"
+            },
             "uncommitted_edits": { "type": "string", "const": "outside this analysis" },
             "note": { "type": "string" },
             "untracked_edits": {

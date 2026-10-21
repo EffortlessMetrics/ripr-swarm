@@ -1,3 +1,5 @@
+mod module_extraction;
+
 use super::related_tests::context::*;
 use super::related_tests::*;
 use super::*;
@@ -27,7 +29,7 @@ fn index_from_files(files: &[(PathBuf, &str)]) -> Result<FixtureIndex, String> {
     index_from_files_at_stamp(files, stamp)
 }
 
-fn claim_index_fixture_root(stamp: u128) -> Result<AuthorityFixtureRoot, String> {
+pub(super) fn claim_index_fixture_root(stamp: u128) -> Result<AuthorityFixtureRoot, String> {
     static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
     for _ in 0..32 {
         let id = NEXT_FIXTURE_ID.fetch_add(1, Ordering::Relaxed);
@@ -82,7 +84,7 @@ fn index_from_files_at_stamp(
     })
 }
 
-struct AuthorityFixtureRoot(PathBuf);
+pub(super) struct AuthorityFixtureRoot(PathBuf);
 
 impl std::ops::Deref for AuthorityFixtureRoot {
     type Target = Path;
