@@ -99,12 +99,11 @@ pub(crate) fn owner_reference_count(source: &str, owner: &str) -> Option<usize> 
         })
 }
 
-pub(crate) fn constant_table_call_column(
-    fn_text: &str,
-    owner: &str,
-    parameter: usize,
-) -> Option<(Vec<String>, String, usize)> {
-    let parse = parse_clean_source_file(fn_text)?;
+/// The test function and its assertion macros, or `None` when suspension,
+/// nested execution or a non-assertion macro could skip or hide a later call.
+fn assertion_only_function(
+    parse: &ra_ap_syntax::Parse<ast::SourceFile>,
+) -> Option<(ast::Fn, Vec<ast::MacroCall>)> {
     let function = parse
         .tree()
         .syntax()
@@ -141,6 +140,105 @@ pub(crate) fn constant_table_call_column(
     }) {
         return None;
     }
+    Some((function, macros))
+}
+
+fn is_owner_call(call: &ast::CallExpr, owner: &str) -> bool {
+    matches!(call.expr(), Some(ast::Expr::PathExpr(path))
+        if path.path().is_some_and(|path| path.qualifier().is_none()
+            && path.segment().and_then(|segment| segment.name_ref()).is_some_and(|name| name.text() == owner)))
+}
+
+/// Straight-line direct calls: every use of the owner is an ordinary call inside
+/// an assertion macro, and its slice argument is spelled as a literal `&[..]`.
+/// Returns each call's argument text in source order and the assertion count.
+pub(crate) fn direct_literal_call_column(
+    fn_text: &str,
+    owner: &str,
+    parameter: usize,
+) -> Option<(Vec<String>, usize)> {
+    let parse = parse_clean_source_file(fn_text)?;
+    let (function, macros) = assertion_only_function(&parse)?;
+    // Macro arguments are token trees, so the owner's calls live in the parsed
+    // operands. Every use must be one of those calls: an alias, qualified or
+    // foreign call or local shadow cannot disappear from the count.
+    let uses = function
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| token.text().trim_start_matches("r#") == owner)
+        .count();
+    // Other calls can terminate or change control flow without an explicit
+    // return/try token; this reader does not resolve their effects.
+    if function.syntax().descendants().any(|node| {
+        ast::MethodCallExpr::can_cast(node.kind()) || ast::CallExpr::can_cast(node.kind())
+    }) {
+        return None;
+    }
+    let first_return = function
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| token.text() == "return")
+        .map(|token| token.text_range().start())
+        .min();
+    let mut column = Vec::new();
+    for assertion in &macros {
+        eager_path(assertion.syntax().clone(), &function, false, first_return).ok()?;
+        let tokens = assertion.token_tree()?.syntax().text().to_string();
+        let inner = [('(', ')'), ('[', ']'), ('{', '}')]
+            .iter()
+            .find_map(|(open, close)| tokens.strip_prefix(*open)?.strip_suffix(*close))?;
+        let operands = parse_clean_source_file(&format!("fn operands() {{ let _ = ({inner}); }}"))?;
+        let initializer = operands
+            .tree()
+            .syntax()
+            .descendants()
+            .find_map(ast::LetStmt::cast)?
+            .initializer()?;
+        for node in initializer.syntax().descendants() {
+            if let Some(call) = ast::CallExpr::cast(node.clone()) {
+                if !is_owner_call(&call, owner) {
+                    return None;
+                }
+                let argument = call.arg_list()?.args().nth(parameter)?;
+                column.push(argument.syntax().text().to_string());
+            } else if let Some(path) = ast::PathExpr::cast(node.clone()) {
+                // Only the callee names a path; a variable could hold a computed value.
+                if !path.syntax().parent().is_some_and(|parent| {
+                    ast::CallExpr::cast(parent).is_some_and(|call| is_owner_call(&call, owner))
+                }) {
+                    return None;
+                }
+            } else if ast::ClosureExpr::can_cast(node.kind())
+                || ast::AwaitExpr::can_cast(node.kind())
+                || ast::YieldExpr::can_cast(node.kind())
+                || ast::LoopExpr::can_cast(node.kind())
+                || ast::WhileExpr::can_cast(node.kind())
+                || ast::ForExpr::can_cast(node.kind())
+                || ast::RecordExpr::can_cast(node.kind())
+                || ast::FieldExpr::can_cast(node.kind())
+                || ast::IndexExpr::can_cast(node.kind())
+                || ast::LetStmt::can_cast(node.kind())
+                || ast::Item::can_cast(node.kind())
+                || ast::MethodCallExpr::can_cast(node.kind())
+                || ast::MacroCall::can_cast(node.kind())
+            {
+                return None;
+            }
+        }
+    }
+    (!column.is_empty() && column.len() == uses && column.len() <= 64)
+        .then_some((column, macros.len()))
+}
+
+pub(crate) fn constant_table_call_column(
+    fn_text: &str,
+    owner: &str,
+    parameter: usize,
+) -> Option<(Vec<String>, String, usize)> {
+    let parse = parse_clean_source_file(fn_text)?;
+    let (function, macros) = assertion_only_function(&parse)?;
     // One use must be the actual call. An alias, macro-hidden call,
     // qualified/foreign call or local shadow cannot disappear from it.
     if function
@@ -153,11 +251,11 @@ pub(crate) fn constant_table_call_column(
     {
         return None;
     }
-    let mut calls = function.syntax().descendants().filter_map(ast::CallExpr::cast).filter(|call| {
-        matches!(call.expr(), Some(ast::Expr::PathExpr(path))
-            if path.path().is_some_and(|path| path.qualifier().is_none()
-                && path.segment().and_then(|segment| segment.name_ref()).is_some_and(|name| name.text() == owner)))
-    });
+    let mut calls = function
+        .syntax()
+        .descendants()
+        .filter_map(ast::CallExpr::cast)
+        .filter(|call| is_owner_call(call, owner));
     let call = calls.next()?;
     if calls.next().is_some() {
         return None;
