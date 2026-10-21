@@ -886,13 +886,20 @@ mod tests {
 
     static NEXT_ROOT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-    fn named_bound(files: &[(&str, &str)], owner_file: &str, name: &str) -> Option<i128> {
+    /// `Err` is a fixture/setup failure; `Ok(None)` is the production refusal.
+    /// Keeping them apart stops a failed setup from satisfying a refusal assertion.
+    fn named_bound(
+        files: &[(&str, &str)],
+        owner_file: &str,
+        name: &str,
+    ) -> Result<Option<i128>, String> {
         let root = std::env::temp_dir().join(format!(
             "ripr-guard-entry-{}-{}",
             std::process::id(),
             NEXT_ROOT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
-        std::fs::create_dir(&root).ok()?;
+        std::fs::create_dir(&root)
+            .map_err(|error| format!("create fixture root {}: {error}", root.display()))?;
         struct CleanupGuard(PathBuf);
         impl Drop for CleanupGuard {
             fn drop(&mut self) {
@@ -903,40 +910,48 @@ mod tests {
         let mut paths = Vec::new();
         for (relative, source) in files {
             let path = root.join(relative);
-            std::fs::create_dir_all(path.parent()?).ok()?;
-            std::fs::write(&path, source).ok()?;
+            let parent = path
+                .parent()
+                .ok_or_else(|| format!("fixture path {relative} has no parent"))?;
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("create {}: {error}", parent.display()))?;
+            std::fs::write(&path, source)
+                .map_err(|error| format!("write {}: {error}", path.display()))?;
             paths.push(PathBuf::from(*relative));
         }
-        let index = crate::analysis::rust_index::build_index(&root, &paths).ok()?;
+        let index = crate::analysis::rust_index::build_index(&root, &paths)
+            .map_err(|error| format!("build index: {error:?}"))?;
         let owner = index
             .functions()
             .iter()
-            .find(|f| f.name == "add" && f.file == Path::new(owner_file))?;
-        named_integer_bound(&index, owner, name)
+            .find(|f| f.name == "add" && f.file == Path::new(owner_file))
+            .ok_or_else(|| format!("fixture has no `add` owner in {owner_file}"))?;
+        Ok(named_integer_bound(&index, owner, name))
     }
 
     #[test]
-    fn named_integer_bound_reads_one_file_level_integer_const_and_refuses_the_rest() {
+    fn named_integer_bound_reads_one_file_level_integer_const_and_refuses_the_rest()
+    -> Result<(), String> {
         let owner = "pub fn add(v: &mut Vec<u32>, x: u32) {\n    if x > LIMIT {\n        v.push(x);\n    }\n}\n";
         let with = |declaration: &str| format!("{declaration}\n{owner}");
         let read = |declaration: &str| {
             named_bound(&[("src/lib.rs", &with(declaration))], "src/lib.rs", "LIMIT")
         };
-        assert_eq!(read("const LIMIT: u32 = 10;"), Some(10));
-        assert_eq!(read("const LIMIT: i64 = 0x10;"), Some(16));
-        assert_eq!(read("const LIMIT: u8 = 1_0;"), Some(10));
+        assert_eq!(read("const LIMIT: u32 = 10;")?, Some(10));
+        assert_eq!(read("const LIMIT: i64 = 0x10;")?, Some(16));
+        assert_eq!(read("const LIMIT: u8 = 1_0;")?, Some(10));
         // Not an integer type, not a literal, or attributed: unread.
-        assert_eq!(read("type Small = u32;\nconst LIMIT: Small = 10;"), None);
-        assert_eq!(read("const LIMIT: u32 = 5 + 5;"), None);
-        assert_eq!(read("const LIMIT: f32 = 10.0;"), None);
-        assert_eq!(read("#[cfg(unix)]\nconst LIMIT: u32 = 10;"), None);
+        assert_eq!(read("type Small = u32;\nconst LIMIT: Small = 10;")?, None);
+        assert_eq!(read("const LIMIT: u32 = 5 + 5;")?, None);
+        assert_eq!(read("const LIMIT: f32 = 10.0;")?, None);
+        assert_eq!(read("#[cfg(unix)]\nconst LIMIT: u32 = 10;")?, None);
         // A renaming or same-name import may bind the name instead.
         assert_eq!(
-            read("use other::MAX as LIMIT;\nconst LIMIT: u32 = 10;"),
+            read("use other::MAX as LIMIT;\nconst LIMIT: u32 = 10;")?,
             None
         );
         // No declaration at all.
-        assert_eq!(read("const OTHER: u32 = 10;"), None);
+        assert_eq!(read("const OTHER: u32 = 10;")?, None);
         // A second declaration of the name anywhere in the index is ambiguous.
         assert_eq!(
             named_bound(
@@ -946,14 +961,15 @@ mod tests {
                 ],
                 "src/lib.rs",
                 "LIMIT"
-            ),
+            )?,
             None
         );
         // An owner inside an inline module is outside the file-level scope.
         let nested = format!("const LIMIT: u32 = 10;\nmod inner {{\n{owner}}}\n");
         assert_eq!(
-            named_bound(&[("src/lib.rs", &nested)], "src/lib.rs", "LIMIT"),
+            named_bound(&[("src/lib.rs", &nested)], "src/lib.rs", "LIMIT")?,
             None
         );
+        Ok(())
     }
 }
