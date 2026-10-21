@@ -2540,5 +2540,6 @@ resolves a missing equality-boundary discriminator for it and its infection
 reading is `weak`, the return-value finding takes that discriminator and that
 infection reading instead of crediting `yes`, so inputs far from the threshold
 (`thr(50)`, `thr(500)`) never read `exposed`. A boundary the lens cannot read
-(`unresolved`), a compound expression and a non-comparison return value keep
-their previous reading: the rule only downgrades and is not a runtime claim.
+(`unresolved`), a compound expression, a non-comparison return value and an
+operator change (`x == 100` to `x > 101`, where an off-boundary input can
+separate the versions) keep their previous reading: the rule only downgrades and is not a runtime claim.

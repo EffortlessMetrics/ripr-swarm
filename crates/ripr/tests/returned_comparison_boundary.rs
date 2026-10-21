@@ -142,3 +142,25 @@ fn a_returned_compound_predicate_keeps_the_return_value_reading() -> Result<(), 
     );
     Ok(())
 }
+
+#[test]
+fn an_operator_change_keeps_the_return_value_reading() -> Result<(), String> {
+    // Control: `x == 100` to `x > 101` is not a threshold move. `thr(100)` is
+    // true before and false after, so the off-boundary input separates the
+    // versions and the `x == 101` boundary gap must not be claimed.
+    let findings = findings(
+        "    x > 101",
+        "    x == 100",
+        "use thr::thr;\n\n#[test]\nfn at_old() {\n    assert!(!thr(100));\n}\n",
+    )?;
+    let return_value = family(&findings, "return_value")?;
+    assert!(
+        !return_value
+            .ripr
+            .infect
+            .summary
+            .contains("equality-boundary discriminator is missing"),
+        "{return_value:?}"
+    );
+    Ok(())
+}

@@ -3670,6 +3670,40 @@ pub(in crate::analysis) fn is_returned_comparison(probe: &Probe) -> bool {
         && !probe.expression.contains("&&")
         && !probe.expression.contains("||")
         && comparison_operands(&probe.expression).is_some()
+        && probe
+            .before
+            .as_deref()
+            .is_some_and(|before| same_comparison_shape(before, &probe.expression))
+}
+
+/// Whether `before` and `after` are bare comparisons in the same operator
+/// family (`>`/`>=`, `<`/`<=`, `==`, `!=`) on the same left operand, so only
+/// the boundary differs. An operator change across families (`x == 100` to
+/// `x > 101`) can separate the versions at an off-boundary input, so it keeps
+/// the return-value reading.
+fn same_comparison_shape(before: &str, after: &str) -> bool {
+    fn operator_and_left(expression: &str) -> Option<(&'static str, String)> {
+        for (operator, family) in [
+            (">=", ">"),
+            ("<=", "<"),
+            ("==", "=="),
+            ("!=", "!="),
+            (">", ">"),
+            ("<", "<"),
+        ] {
+            if let Some((left, right)) = expression.split_once(operator) {
+                let left = clean_operand(left);
+                if !left.is_empty() && !clean_operand(right).is_empty() {
+                    return Some((family, left));
+                }
+            }
+        }
+        None
+    }
+    match (operator_and_left(before), operator_and_left(after)) {
+        (Some(before), Some(after)) => before == after,
+        _ => false,
+    }
 }
 
 pub(in crate::analysis) fn comparison_operands(expression: &str) -> Option<(String, String)> {

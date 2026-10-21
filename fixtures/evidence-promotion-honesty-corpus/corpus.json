@@ -10233,6 +10233,18 @@
         { "type": "must_not_report_clean" },
         { "type": "must_not_promote" }
       ]
+    },
+    {
+      "id": "rust_returned_comparison_boundary_gap",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/returned_comparison_boundary_gap",
+      "vector": "returned_bare_comparison_exposed_without_an_input_on_the_changed_boundary",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" }
+      ]
     }
   ]
 }
