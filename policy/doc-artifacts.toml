@@ -1738,6 +1738,8 @@ path = "docs/specs/RIPR-SPEC-0293-doctor-cargo-build-path-warning.md"
 status = "proposed"
 owner = "product-output"
 standalone_reason = "Issue #9097 records the doctor PATH-warning contract: the PATH-mismatch warning is suppressed when the running binary is a Cargo build output (the already-computed executable_is_cargo_build_output), because that is the normal contributor setup, while a genuinely different installed ripr on PATH still warns and identity fields stay truthful about both paths; no schema or exit-code change."
+
+[[artifact]]
 id = "RIPR-SPEC-0294"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0294-mutation-calibration-clarity.md"
