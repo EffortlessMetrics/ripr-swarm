@@ -1,0 +1,50 @@
+{
+  "purpose": "Technical evidence only; not a product candidate, canonical adoption, merge, hosted qualification, or release.",
+  "reviewed_subject": "267beac2e65162936e64bbd5040d296ca41c1bb7",
+  "reviewed_tree": "e2176263299f724d59bb4ee8b2b07eb5fd1bc1b1",
+  "subject_parents": [
+    "078e04e579d68948ed5f1337cf8a5b79c0963a00",
+    "00c92f9c79900c1a97d0222a5cbc6be6f5b258ff"
+  ],
+  "inputs": {
+    "lane_w_adoption": "feca3f42887b287b99b05f81c14ba9b9a8c2d295",
+    "lane_x_adoption": "2432492e44827b697677e65947a73338e9b9b7f4",
+    "main_basis": "00c92f9c79900c1a97d0222a5cbc6be6f5b258ff"
+  },
+  "joint_binary_sha256": "a9d9d6adcc4ad20f5f22a74b808e0353869371916b0e3fab90bf7a73a11aaefa",
+  "independent_review": {
+    "reviewer": "/root/review_json_refusal",
+    "disposition": "No new actionable integration findings; exact source/conflict review and focused joint runtime complete. REVIEW_INCOMPLETE for merge readiness: hosted qualification and canonical disposition of remaining #8990 findings pending.",
+    "observed": "Reviewer inspected joint six-pass log, independently verified binary SHA256, unchanged HEAD and clean checkout; verified both parent behavior records, tests and conflict resolutions."
+  },
+  "handoff": "https://github.com/EffortlessMetrics/ripr-swarm/pull/8989#issuecomment-6304786793",
+  "remaining": "Canonical Lane W/X adoption and #8990 substantive findings; accepted-head review/proof and actual required hosted checks. No Ready transition or merge performed.",
+  "denial_preserved": "Adjacent all-state PR search 8990 oracle: HTTP403 secondary rate limit, request13D3:23936:27861:8034A:6AD8051D. Not retried or retrieved by alternate route.",
+  "receipts": {
+    "joint-cli.log": {
+      "sha256": "e0dffd55e0ef5f16b46ae516e3bf55798e385afabd81166c48bf97808331fe2b",
+      "bytes": 886,
+      "git_blob": "d44461b58c626247e29a60dd471922085ae6ecd9"
+    },
+    "original-json-red.log": {
+      "sha256": "83107cc714736c967b275a624b40362305002743d62e4d7b1f04e4745017fbd6",
+      "bytes": 1260,
+      "git_blob": "94bcf81911b52f4539b2db2d9ba81385a6d46f61"
+    },
+    "late-guard-red.log": {
+      "sha256": "a1f09ed3db50dbe6c6a47e551a73ddeb79a674cded63844b2dbd01ff3acef37b",
+      "bytes": 704,
+      "git_blob": "9b1babc9253ba39deb3ce255f8fb941fcf0680cb"
+    },
+    "adoption-ci-policy.json": {
+      "sha256": "d8e6978422f957237b22d57dab9a3faa948771cdef49fc7dde602c248c0da087",
+      "bytes": 5412,
+      "git_blob": "be95b68a2bbb9f614c3fc4ef0cf9be88b0d69a2d"
+    },
+    "adoption-clippy.log": {
+      "sha256": "7fd3f27679eb0024ca20d8255287f6a90556d74b02b966f18624dc1eda33fa16",
+      "bytes": 135,
+      "git_blob": "83a1f84217ddbddbb5257189739e21ec932adc34"
+    }
+  }
+}

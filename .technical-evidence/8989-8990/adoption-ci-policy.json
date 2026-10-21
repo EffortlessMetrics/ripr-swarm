@@ -1,0 +1,226 @@
+{
+  "schema_version": "0.2",
+  "composition": "ci_policy",
+  "status": "pass",
+  "failure_kind": null,
+  "repository_root": "$REPO",
+  "head_sha": "feca3f42887b287b99b05f81c14ba9b9a8c2d295",
+  "merge_base_ref": "origin/main",
+  "merge_base_sha": "ca2b3429891e1420c63467c2f28e6a090608b108",
+  "change_set": {
+    "changes": [
+      {
+        "kind": "added",
+        "path": "changelog.d/8727-agent-stub-next-repair.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "docs/specs/RIPR-SPEC-0287-agent-stub-repair-journey-pointer.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": ".ripr/traceability.toml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/app/test_stub.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/cli/commands/agent_stub.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/src/cli/help/agent.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/tests/agent_stub_at_disclosure.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/tests/agent_stub_compiles.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "crates/ripr/tests/cli_smoke/closed_stderr.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "docs/AGENT_WORKFLOWS.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "docs/EXIT_CODES.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "docs/OUTPUT_SCHEMA.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "docs/specs/README.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "policy/doc-artifacts.toml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "policy/process_allowlist.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      }
+    ],
+    "complete": true,
+    "limitations": []
+  },
+  "impact_plan": {
+    "impacted_packages": [
+      "ripr",
+      "xtask"
+    ],
+    "workspace_clippy": false,
+    "workspace_widening_reason": null,
+    "skipped_reason": null
+  },
+  "commands": [
+    {
+      "command": "cargo metadata --format-version 1 --no-deps --manifest-path $REPO/Cargo.toml",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": null
+    },
+    {
+      "command": "existing repository policy precommit",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": null
+    },
+    {
+      "command": "git diff --check ca2b3429891e1420c63467c2f28e6a090608b108...HEAD",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": {
+        "program": "git",
+        "argv": [
+          "-C",
+          "$REPO",
+          "diff",
+          "--check",
+          "ca2b3429891e1420c63467c2f28e6a090608b108...HEAD"
+        ],
+        "outcome": "pass",
+        "status": "exit status: 0",
+        "exit_code": 0,
+        "elapsed_ms": 100,
+        "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
+        "cargo_progress": null
+      }
+    },
+    {
+      "command": "git diff --cached --check",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": {
+        "program": "git",
+        "argv": [
+          "-C",
+          "$REPO",
+          "diff",
+          "--cached",
+          "--check"
+        ],
+        "outcome": "pass",
+        "status": "exit status: 0",
+        "exit_code": 0,
+        "elapsed_ms": 100,
+        "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
+        "cargo_progress": null
+      }
+    },
+    {
+      "command": "git diff --check",
+      "outcome": "pass",
+      "detail": null,
+      "diagnostic": {
+        "program": "git",
+        "argv": [
+          "-C",
+          "$REPO",
+          "diff",
+          "--check"
+        ],
+        "outcome": "pass",
+        "status": "exit status: 0",
+        "exit_code": 0,
+        "elapsed_ms": 100,
+        "elapsed_scope": "runner_start_to_observed_exit_excluding_pipe_drain",
+        "cargo_progress": null
+      }
+    }
+  ],
+  "skipped": [
+    "local selected Clippy is outside ci-policy; CI must run its explicit cargo clippy --workspace --all-targets -- -D warnings obligation"
+  ],
+  "limitations": [],
+  "report_digest": "sha256:63a3e62d85a76bfa4b70def19736e53bbd5a5e3c8707e29d70b205cab1dbb58d"
+}
