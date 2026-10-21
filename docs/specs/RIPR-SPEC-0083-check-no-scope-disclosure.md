@@ -185,7 +185,9 @@ stays `false` and the `Note: no analysis scope was provided` guidance, the
 `missing_scope` triage state and JSON `scope_disclosures` do not appear. The
 human forms (bounded and `human-full`) still must not end on the bare
 "No diff-derived static exposure probes found." line. When the analysis
-outcome is `no_scope` with zero changed files, a base is named, no
+outcome is `no_scope` with zero changed files, the loader read a Git range
+(producer-backed `analyzed_revisions`; `--diff <file>` never does, even with a
+retained `--base`), a base is named, no
 preview-language advisories or language runs exist, and uncommitted
 working-tree edits are not the unanalyzed subject, they add:
 
@@ -233,8 +235,8 @@ GitHub and JSON `why` strings are tracked separately.
 
 | Output | Schema impact | Notes |
 | --- | --- | --- |
-| Human text `Note:` line | None | Additive; absent when scope was provided; does not change exit code |
-| JSON `scope_disclosures[]` | Additive field | Absent when scope was provided; no schema version bump |
+| Human text `Note:` line | None | Additive; absent when scope was provided, except the narrower explicit-base empty-range note (#9033); does not change exit code |
+| JSON `scope_disclosures[]` | Additive field | Absent when scope was provided (including an explicit base with an empty range); no schema version bump |
 
 ## Acceptance Examples
 
@@ -242,10 +244,15 @@ GitHub and JSON `why` strings are tracked separately.
    includes `Note: no analysis scope was provided` and guidance; JSON includes
    `scope_disclosures[0].scope_status == "no_scope_provided"`.
 2. **Scope provided, empty**: `ripr check --base origin/main` produces 0 probes
-   → existing "No diff-derived mutation exposure probes found." message only;
-   NO `Note:` guidance; NO `scope_disclosures` in JSON.
+   → existing "No diff-derived mutation exposure probes found." message, plus
+   (#9033) the narrower human-only note that `origin/main...HEAD` has no
+   analyzable changed files and that this does NOT mean no behavior changed;
+   NO `Note: no analysis scope was provided` guidance; NO `scope_disclosures`
+   in JSON.
 3. **Scope provided via diff**: `ripr check --diff comment.diff` produces 0
-   probes → same as case 2; no disclosure.
+   probes → no disclosure and no range note: the supplied diff, not a Git
+   range, was analyzed, even when `--base` is also given
+   (`--diff empty.patch --base HEAD`).
 4. **Speed tier without scope, empty range**: `ripr check --mode fast`
    (no `--diff`/`--base`) on an established-but-empty default range →
    disclosure fires but names the compared base (`<base>...HEAD` contains no
@@ -273,6 +280,7 @@ GitHub and JSON `why` strings are tracked separately.
 - `crates/ripr/tests/cli_smoke.rs::check_bare_run_on_changed_files_shows_no_scope_disclosure_smoke` (#4012: bare run that analyzed changed files emits no disclosure in any form)
 - `crates/ripr/tests/cli_smoke.rs::check_default_base_with_clean_worktree_keeps_no_scope_note_only` (SPEC-0112 intent preserved: clean tree keeps disclosure-only output; wording updated to the #4012 base-naming form)
 - `crates/ripr/tests/cli_smoke.rs::check_with_base_scope_does_not_show_no_scope_disclosure_smoke` (explicit `--base HEAD`: no "no analysis scope was provided" disclosure, and the empty range is named as having no analyzable changed files)
+- `crates/ripr/tests/cli_smoke.rs::check_diff_file_with_base_does_not_report_a_git_range_note` (#9033: `--diff empty.patch --base HEAD` in both human formats)
 - `crates/ripr/tests/cli_smoke.rs::check_explicit_base_deletion_only_range_does_not_claim_no_behavior_changed` (#9033: a deletion-only range never gets a "no behavior changed" assurance)
 - `crates/ripr/src/output/human.rs::tests::explicit_base_with_an_empty_range_explains_the_empty_result` (#9033: range and working-tree wording, bounded and full forms)
 - `crates/ripr/src/output/human.rs::tests::empty_range_note_is_suppressed_when_it_would_be_untrue_or_redundant` (#9033: off for other outcome kinds, changed file count alone, no base, unanalyzed working tree, preview advisories and language runs)

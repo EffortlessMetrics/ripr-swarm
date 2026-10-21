@@ -7036,6 +7036,7 @@ tests = [
   "crates/ripr/src/output/human.rs::tests::explicit_base_with_an_empty_range_explains_the_empty_result",
   "crates/ripr/src/output/human.rs::tests::empty_range_note_is_suppressed_when_it_would_be_untrue_or_redundant",
   "crates/ripr/tests/cli_smoke.rs::check_with_base_scope_does_not_show_no_scope_disclosure_smoke",
+  "crates/ripr/tests/cli_smoke.rs::check_diff_file_with_base_does_not_report_a_git_range_note",
   "crates/ripr/tests/cli_smoke.rs::check_explicit_base_deletion_only_range_does_not_claim_no_behavior_changed"
 ]
 fixtures = []

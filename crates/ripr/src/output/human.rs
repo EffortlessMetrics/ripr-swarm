@@ -218,6 +218,11 @@ fn empty_scope_note(output: &CheckOutput) -> Option<String> {
     {
         return None;
     }
+    // Producer-backed provenance: `analyzed_revisions` is set only when the
+    // loader read a Git range. `--diff <file>` carries no effective base, so a
+    // base retained on the output (`--diff empty.patch --base HEAD`) must not
+    // be reported as the range that was analyzed.
+    output.analyzed_revisions.as_ref()?;
     let base = output.base.as_deref()?;
     let range = if crate::output::analyzed_revisions::is_working_tree_read(output) {
         format!("the working tree has no analyzable changed files against `{base}`")
@@ -1329,7 +1334,13 @@ mod tests {
             suppression: None,
             analysis_outcome: Some(outcome),
             partial_scope: None,
-            analyzed_revisions: None,
+            analyzed_revisions: base.map(|base| crate::analysis::AnalyzedRevisions {
+                base_ref: base.to_string(),
+                base_commit: Some("1a2b3c4d5e6f".to_string()),
+                merge_base_commit: None,
+                head_commit: Some("1a2b3c4d5e6f".to_string()),
+                working_tree: false,
+            }),
         })
     }
 
@@ -1411,6 +1422,13 @@ mod tests {
                     .as_mut()
                     .ok_or("fixture must carry an outcome")?;
                 outcome.counts.changed_file_count = 1;
+                output
+            }),
+            ("diff file with a retained base", {
+                // `--diff empty.patch --base HEAD`: the output keeps the base
+                // but the loader read no Git range, so there is no provenance.
+                let mut output = empty_range_output(Some("HEAD"), AnalysisOutcomeKind::NoScope, 0)?;
+                output.analyzed_revisions = None;
                 output
             }),
             (
