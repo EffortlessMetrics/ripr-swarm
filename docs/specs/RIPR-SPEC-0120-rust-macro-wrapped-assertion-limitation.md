@@ -107,10 +107,13 @@ or a direct test that also holds a recognized oracle, keeps the gap.
 
 A macro defined in the test's own file is not unresolved when every arm of its
 unique, un-gated, in-scope `macro_rules!` definition itself contains an
-assertion the ordinary extractor recognizes (`assert_eq!`, `assert!`, ...) and
-the test calls it as a plain statement of its own body. The call then earns one
-oracle of kind `unknown` and strength no stronger than `weak`, so the finding
-reads from that weak oracle instead of this limit. A hand-rolled
+assertion the ordinary extractor recognizes (`assert_eq!`, `assert!`, ...) over
+a `$fragment` that arm's matcher binds, and the test calls it as a plain
+statement of its own body. A tautology (`assert!(true)`, `assert_eq!(1, 1)`,
+`assert_eq!($x, $x)`), a self-recursive macro and a call whose argument count
+no arm takes credit nothing. The call then earns one oracle of kind `unknown`
+and strength `unknown`, never `weak` or stronger, so it records that an
+assertion exists without grading what it pins. A hand-rolled
 `if bad { panic!() }` body, a macro that only logs, a macro with one arm that
 shows no assertion, a duplicate, imported or cfg-gated definition, a macro
 from another file or crate, and a call in a closure, branch or `use`-bearing

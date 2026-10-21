@@ -6720,6 +6720,32 @@ mod tests {
         assert_eq!(related[0].oracle, None);
     }
 
+    // #9122: a same-file assertion macro earns only an unknown-strength fact.
+    // Crediting it must never read as a weak or exact discriminator, however
+    // little the macro's body actually pins.
+    #[test]
+    fn local_assertion_macro_credit_never_reads_as_a_discriminator() {
+        for family in [ProbeFamily::ReturnValue, ProbeFamily::Predicate] {
+            let probe = probe(family, "score");
+            let macro_test = test_with_assertions(
+                "score_through_macro",
+                vec![oracle(
+                    "assert_tautology!(score())",
+                    OracleKind::Unknown,
+                    OracleStrength::Unknown,
+                )],
+            );
+            let (_, discriminate, _) =
+                reveal_evidence(&probe, &[(&macro_test, RelationReason::DirectOwnerCall)]);
+
+            assert!(
+                !matches!(discriminate.state, StageState::Yes | StageState::Weak),
+                "macro credit raised the discriminator to {:?}",
+                discriminate.state
+            );
+        }
+    }
+
     #[test]
     fn reveal_evidence_records_matching_assertions_and_sorts_related_tests() {
         let probe = probe(

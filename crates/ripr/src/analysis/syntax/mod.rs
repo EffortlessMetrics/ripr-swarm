@@ -27,7 +27,7 @@ pub(crate) mod ra;
 pub use adapter::{
     LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange,
 };
-pub(crate) use local_assertion_macros::{LocalMacroCall, local_macro_calls};
+pub(crate) use local_assertion_macros::{LocalMacroCall, MacroArm, local_macro_calls};
 pub(crate) use local_test_macros::{
     GeneratedTestPins, expand_local_test_macros, generated_test_pins,
 };

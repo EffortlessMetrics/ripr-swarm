@@ -50,8 +50,15 @@ pub(crate) struct LocalMacroCall {
     pub end_line: usize,
     /// Source text of the call.
     pub text: String,
-    /// The transcriber text of every arm of the macro, delimiters included.
-    pub arms: Vec<String>,
+    /// Every arm of the macro.
+    pub arms: Vec<MacroArm>,
+}
+
+/// One `matcher => transcriber` arm, delimiters included.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MacroArm {
+    pub matcher: String,
+    pub transcriber: String,
 }
 
 /// Every attributable statement-level call of a same-file macro.
@@ -105,7 +112,7 @@ pub(crate) fn local_macro_calls(source: &str) -> Vec<LocalMacroCall> {
 }
 
 /// A usable definition and the transcriber text of each of its arms.
-type Definitions = BTreeMap<String, (ast::MacroRules, Vec<String>)>;
+type Definitions = BTreeMap<String, (ast::MacroRules, Vec<MacroArm>)>;
 
 /// Unique, scoped, un-gated definitions and the names a `use` imports.
 fn definitions(root: &SyntaxNode) -> (Definitions, BTreeSet<String>) {
@@ -119,11 +126,12 @@ fn definitions(root: &SyntaxNode) -> (Definitions, BTreeSet<String>) {
             || name.starts_with("r#")
             || !is_item_position(rule.syntax())
             || !supported_item_context(rule.syntax())
-            || rule.attrs().next().is_some_and(|attr| {
+            || rule.attrs().any(|attr| {
                 // `#[macro_export]` and `#[macro_use]` do not change the
                 // textual scope read here; any other attribute may gate it.
-                let text = attr.syntax().text().to_string();
-                !(text.contains("macro_export") || text.contains("macro_use"))
+                !attr.path().is_some_and(|path| {
+                    path.syntax().text() == "macro_export" || path.syntax().text() == "macro_use"
+                })
             })
         {
             continue;
@@ -136,7 +144,7 @@ fn definitions(root: &SyntaxNode) -> (Definitions, BTreeSet<String>) {
 }
 
 /// The transcriber text of every arm; `None` for any unexpected layout.
-fn transcribers(definition: &ast::MacroRules) -> Option<Vec<String>> {
+fn transcribers(definition: &ast::MacroRules) -> Option<Vec<MacroArm>> {
     let body = definition.token_tree()?;
     let elements = inner_elements(body.syntax());
     let mut arms = Vec::new();
@@ -152,7 +160,10 @@ fn transcribers(definition: &ast::MacroRules) -> Option<Vec<String>> {
         {
             return None;
         }
-        arms.push(transcriber.as_node()?.text().to_string());
+        arms.push(MacroArm {
+            matcher: matcher.as_node()?.text().to_string(),
+            transcriber: transcriber.as_node()?.text().to_string(),
+        });
         index += 4;
         if elements
             .get(index)
@@ -222,7 +233,8 @@ fn a() {
         assert_eq!(call.function, "a");
         assert_eq!(call.start_line, 8);
         assert_eq!(call.arms.len(), 1);
-        assert!(call.arms[0].contains("assert_eq!"));
+        assert!(call.arms[0].transcriber.contains("assert_eq!"));
+        assert_eq!(call.arms[0].matcher, "($v:expr)");
         Ok(())
     }
 

@@ -467,9 +467,6 @@ fn text_has_conditional_attribute(text: &str) -> bool {
         })
 }
 
-/// Names a `use` item in the file brings into scope. A named import of a
-/// generator's name makes the invocation ambiguous for rustc (E0659), so
-/// the expander does not guess which macro runs.
 /// How many macros of each name a file defines, and the names a `use`
 /// brings into scope.
 pub(super) fn local_macro_names(root: &SyntaxNode) -> (BTreeMap<String, usize>, BTreeSet<String>) {
@@ -485,6 +482,9 @@ pub(super) fn local_macro_names(root: &SyntaxNode) -> (BTreeMap<String, usize>, 
     (counts, imported_names(root))
 }
 
+/// Names a `use` item in the file brings into scope. A named import of a
+/// generator's name makes the invocation ambiguous for rustc (E0659), so
+/// the expander does not guess which macro runs.
 fn imported_names(root: &SyntaxNode) -> BTreeSet<String> {
     root.descendants()
         .filter_map(ast::UseTree::cast)

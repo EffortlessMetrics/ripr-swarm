@@ -22,7 +22,7 @@ fn module_with(definition: &str, test_body: &str) -> String {
 }
 
 #[test]
-fn local_assertion_macro_call_earns_a_weak_oracle_never_the_inner_strength()
+fn local_assertion_macro_call_earns_an_unknown_oracle_never_the_inner_strength()
 -> Result<(), Box<dyn Error>> {
     let index = index_for(&module_with(
         "macro_rules! assert_gate {\n        ($x:expr, $want:expr) => {{\n            assert_eq!(gate($x), $want);\n        }};\n    }",
@@ -35,8 +35,8 @@ fn local_assertion_macro_call_earns_a_weak_oracle_never_the_inner_strength()
     assert_eq!(test.assertions[0].text, "assert_gate!(11, true)");
     assert_eq!(
         strengths(&index, "probe")?,
-        vec![OracleStrength::Weak],
-        "an in-body assert_eq! is strong; the wrapper is capped at weak"
+        vec![OracleStrength::Unknown],
+        "an in-body assert_eq! is strong; the wrapper is capped at unknown"
     );
     Ok(())
 }
@@ -127,6 +127,112 @@ fn local_macro_reusing_a_recognized_assertion_name_keeps_the_recognized_grade()
     assert_eq!(
         test.assertions[0].text, "assert_matches!(gate(11), true);",
         "the ordinary extractor's fact stands; no wrapper fact is added"
+    );
+    Ok(())
+}
+
+#[test]
+fn unattributable_local_macros_grant_nothing() -> Result<(), Box<dyn Error>> {
+    for (shape, definition, call) in [
+        (
+            "assert!(true) tautology",
+            "($x:expr) => {{ assert!(true); }};",
+            "assert_gate!(gate(3));",
+        ),
+        (
+            "assert_eq!(1, 1) tautology",
+            "($x:expr) => {{ assert_eq!(1, 1); }};",
+            "assert_gate!(gate(3));",
+        ),
+        (
+            "fragment compared with itself",
+            "($x:expr) => {{ assert_eq!($x, $x); }};",
+            "assert_gate!(gate(3));",
+        ),
+        (
+            "assertion over no fragment of the arm",
+            "($x:expr) => {{ assert_eq!(gate(11), true); }};",
+            "assert_gate!(gate(3));",
+        ),
+        (
+            "one arm attributes, another asserts a constant",
+            "(1) => {{ assert!(true); }};\n        ($x:expr) => {{ assert_eq!(gate($x), true); }};",
+            "assert_gate!(3);",
+        ),
+        (
+            "recursive macro",
+            "($x:expr) => {{ assert_eq!(gate($x), true); assert_gate!($x); }};",
+            "assert_gate!(3);",
+        ),
+        (
+            "no arm takes the call's argument count",
+            "($x:expr, $y:expr) => {{ assert_eq!(gate($x), $y); }};",
+            "assert_gate!(3);",
+        ),
+        (
+            "matcher binds no fragment",
+            "() => {{ assert_eq!(gate(3), true); }};",
+            "assert_gate!();",
+        ),
+    ] {
+        let index = index_for(&module_with(
+            &format!("macro_rules! assert_gate {{\n        {definition}\n    }}"),
+            call,
+        ))?;
+        let test = test_named(&index, "probe")?;
+        assert!(
+            test.assertions.is_empty(),
+            "{shape}: {:?}",
+            assertion_texts(test)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn macro_defined_inside_the_test_or_exported_twice_grants_nothing() -> Result<(), Box<dyn Error>> {
+    let definition =
+        "macro_rules! assert_gate {\n        ($x:expr) => { assert_eq!(gate($x), true); };\n    }";
+    // Defined inside the test function: not at item position.
+    let index = index_for(&module_with(
+        "",
+        &format!("{definition}\n        assert_gate!(11);"),
+    ))?;
+    assert!(test_named(&index, "probe")?.assertions.is_empty());
+    // A second `#[macro_export]` definition of the name makes it ambiguous.
+    let index = index_for(&module_with(
+        &format!(
+            "#[macro_export]\n    {definition}\n    mod other {{\n        #[macro_export]\n        macro_rules! assert_gate {{ ($x:expr) => {{}}; }}\n    }}"
+        ),
+        "assert_gate!(11);",
+    ))?;
+    assert!(test_named(&index, "probe")?.assertions.is_empty());
+    Ok(())
+}
+
+#[test]
+fn multi_attribute_cfg_gated_macro_grants_nothing() -> Result<(), Box<dyn Error>> {
+    let index = index_for(&module_with(
+        "#[allow(unused_macros)]\n    #[cfg(feature = \"never\")]\n    macro_rules! assert_gate {\n        ($x:expr) => { assert_eq!(gate($x), true); };\n    }",
+        "assert_gate!(11);",
+    ))?;
+    assert!(test_named(&index, "probe")?.assertions.is_empty());
+    Ok(())
+}
+
+#[test]
+fn macro_call_nested_in_a_multiline_helper_call_is_not_credited() -> Result<(), Box<dyn Error>> {
+    let index = index_for(&module_with(
+        "macro_rules! assert_gate {\n        ($x:expr) => { assert_eq!(gate($x), true); };\n    }",
+        "assert_x(\n            assert_gate!(11),\n        );",
+    ))?;
+    let test = test_named(&index, "probe")?;
+    assert!(
+        test.assertions
+            .iter()
+            .all(|assertion| !assertion.text.starts_with("assert_gate!")),
+        "{:?}",
+        assertion_texts(test)
     );
     Ok(())
 }
