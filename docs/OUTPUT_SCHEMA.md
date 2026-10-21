@@ -106,7 +106,7 @@ map is:
 | `ripr gate evaluate` | `schema_version` | `0.1` |
 | `ripr doctor --json` | `schema_version` | `0.4` |
 | `ripr diff --json` (`kind: "ripr_diff"`) | `schema_version` | `0.1` |
-| `ripr check --format repo-exposure-json` | `schema_version` | `0.4` |
+| `ripr check --format repo-exposure-json` | `schema_version` | `0.5` |
 | `ripr rerun --json` | `schema_version` | `ripr-targeted-rerun-v1` |
 | `ripr agent packet` and `ripr check --format agent-seam-packets-json` | `schema_version` | `0.5` |
 | `ripr agent brief` | `schema_version` | `0.1` |
@@ -2649,6 +2649,36 @@ is never complete:
   budget (...)`, naming the applied setting and the `=0` full-set repair.
 - `repair_route` — always `"output/check-findings-budget"`.
 
+When the budget engages, `analysis_outcome` also carries the additive
+members `document_complete: false`, `findings_rendered` and `findings_total`
+(#9010). They are emitted only when the findings array is a strict prefix;
+unbounded runs and all existing goldens omit them. `analysis_complete` remains
+the analysis verdict derived from `outcome.kind` and no `outcome.kind` variant
+is added: the enum describes analysis, not the rendered document. The shared
+incomplete-analysis predicate (`discloses_incomplete_analysis_outcome`) treats
+`document_complete: false` as incomplete, so the gate, baseline and ledger
+inputs, `baseline-delta`, and RIPR Zero refuse it even when `run_limitations[]`
+is absent. The `pr-evidence` summary keeps the producer's `analysis_complete`
+verdict, reports `run_status: incomplete` for either disclosure shape (the
+`document_complete` flag or the legacy `run_limitations[]` bound), propagates the
+`analysis_outcome` members, and renders `Document Complete: false` with the
+rendered/total finding counts and the `RIPR_CHECK_FINDINGS_BYTES` recovery. The repository xtask readers of
+check JSON (eval-sweep refresh, release smoke, the Python and Rust judged-panel
+replay and packet readers) use `check_document_analysis_complete`, which applies
+the same rule. The typed analysis-outcome artifact validator (shared by
+`agent review-summary` and the agent loop, whose command builder redirects
+`ripr check --format json` into `analysis-outcome.json`) and the
+`review-comments --check-output` loader reject both disclosure shapes: a
+present non-`true` `document_complete` (false, string, null) and the legacy
+`run_limitations[]` `limited_findings_bound` entry. `agent review-summary`
+Markdown carries the refusal reason and the `RIPR_CHECK_FINDINGS_BYTES`
+recovery as an escaped `Analysis outcome reason` line. Agent-packet currentness never reads check-JSON
+`analysis_complete`, and the MCP, LSP, SARIF and badge surfaces do not either.
+RIPR Zero keeps its bounded-denominator refusal for `document_complete: false`
+and prints an incomplete-analysis warning only when the producer's own
+`analysis_complete` is `false`. A non-boolean `document_complete` is a
+malformed disclosure that RIPR Zero reports as unknown.
+
 `summary` keeps full analysis counts (`summary.findings` is the analyzed
 total, `rendered + omitted == total`); `finding_alignment` covers the rendered
 prefix only, so alignment rows always resolve inside the document; per-finding
@@ -3480,7 +3510,7 @@ introduced by RIPR-SPEC-0005. The artifact lands at
 
 ```json
 {
-  "schema_version": "0.2",
+  "schema_version": "0.3",
   "artifact": { "...": "see Repo Exposure Report — producer identity envelope" },
   "scope": "repo",
   "seams": [
@@ -3508,10 +3538,12 @@ introduced by RIPR-SPEC-0005. The artifact lands at
 
 Field contract:
 
-- `schema_version` — currently `"0.2"`. Bumping requires updating this section,
+- `schema_version` — currently `"0.3"`. Bumping requires updating this section,
   the renderer (`crates/ripr/src/output/repo_seams.rs`), and any downstream
   consumers in lockstep. `0.1` → `0.2`: seams gained the additive `column` /
-  `end_line` / `end_column` span coordinates (#5336). The top-level
+  `end_line` / `end_column` span coordinates (#5336). `0.2` → `0.3`:
+  actual Rust arms gain complete parser geometry and coherent span start
+  lines (#5905). The top-level
   `artifact` envelope below is additive within `0.2` and does not bump the
   version, per the repo-exposure envelope (#2203) and gate-subject (#5474)
   precedents.
@@ -3537,16 +3569,18 @@ Field contract:
   `field_construction`, `side_effect`, `match_arm`, `call_presence`. The spec
   also reserves `validation_branch` for a future detection PR.
 - `file` — repo-root-relative Unix-separator path (no leading `./`).
-- `line` — 1-based start line for human display only. Not part of the seam ID
-  hash; `byte_offset` is the canonical position field internally.
+- `line` — 1-based span start line when geometry is present, otherwise the
+  display line. Not part of the seam ID hash; `byte_offset` remains the
+  token identity internally. Version 0.3 adds complete match-arm geometry
+  and makes multiline pattern starts coherent with `column` (#5905).
 - `column`, `end_line`, `end_column` — 1-based parser-owned span geometry
   (columns count Unicode scalar values from the line start plus one; the
   end is exclusive),
   matching cargo-mutants span columns for calibration joins. Present only when
   span geometry was available; absent on legacy or span-less entries, which
-  consumers must treat as line-only. Match-arm seams are span-less by policy:
-  the parser records the `match`/`=>` token range while the seam describes a
-  wider construct, so no span is emitted rather than a misleading one. Not
+  consumers must treat as line-only. Actual match-arm spans start at the
+  pattern and end after the body and optional trailing comma. The `=>`
+  token remains the internal identity; `match` keyword shapes stay span-less. Not
   part of the seam ID hash.
 - `owner` — fully-qualified module/symbol path of the enclosing function.
   Backslashes from native paths are normalized to forward slashes before
@@ -3824,7 +3858,7 @@ Consumers must not treat limited artifacts as canonical actionable counts.
 
 ```json
 {
-  "schema_version": "0.4",
+  "schema_version": "0.5",
   "scope": "repo",
   "metrics": {
     "seams_total": 9355,
@@ -4078,7 +4112,7 @@ Consumers must not treat limited artifacts as canonical actionable counts.
 
 Field contract:
 
-- `schema_version` — currently `"0.4"`. Bumping requires updating this
+- `schema_version` — currently `"0.5"`. Bumping requires updating this
   section, the renderer (`crates/ripr/src/output/repo_exposure.rs`), and
   any downstream consumers in lockstep. `0.1` → `0.2`: per-related-test
   entries gained `relation_reason` and `relation_confidence` fields
@@ -4086,7 +4120,10 @@ Field contract:
   the additive `evidence_record` projection (`RIPR-SPEC-0021`) while
   preserving existing top-level seam fields. `0.3` → `0.4`: seams gained
   the additive `column` / `end_line` / `end_column` span coordinates
-  (#5336). `relation_reason` is an additive string enum within `0.3`;
+  (#5336). `0.4` → `0.5`: actual match arms gain complete pattern-through-body
+  geometry; `line` uses the span start when present, including multiline
+  patterns (#5905). Token identities and span-less fallback remain unchanged.
+  `relation_reason` is an additive string enum within `0.3`;
   `helper_owner_call` extends the existing relation taxonomy without
   changing the field shape.
 - `scope` — always `"repo"`.
@@ -4762,7 +4799,7 @@ runtime execution.
     "root": ".",
     "source": "repo-exposure-json",
     "repo_exposure_mode": "instant",
-    "repo_exposure_schema_version": "0.4",
+    "repo_exposure_schema_version": "0.5",
     "repo_exposure_generation": {
       "command": "target/debug/ripr check --root . --mode instant --format repo-exposure-json",
       "timeout_ms": 120000,
@@ -18289,9 +18326,27 @@ JSON shape:
 
 ```jsonc
 {
-  "schema_version": "0.2",
+  "schema_version": "0.3",
   "scope": "repo",
   "status": "advisory",
+  "provenance": {
+    "repo_exposure_head": "2bd22c0b0718157870e2e78c9a70b9da1c9c1b21",
+    "mutants_head": null,
+    "verdict": "only_repo_exposure_head",
+    "disclosure": "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; the repo-exposure snapshot reports repository head 2bd22c0b0718157870e2e78c9a70b9da1c9c1b21, so the join assumes that subject. The cargo-mutants JSON does not carry a head SHA, so ensure the mutants were produced from the same repository and adjacent commits."
+  },
+  "how_to_read": {
+    "static_gap": "a static seam whose grip class is outside the strong set: anything other than strongly_gripped, intentional, or suppressed (for example ungripped or weakly_gripped)",
+    "runtime_gap_signal": "an imported cargo-mutants outcome the runtime failed to catch: missed, survived, not_caught, or uncaught",
+    "runtime_clean_signal": "an imported cargo-mutants outcome the runtime caught: caught or timeout",
+    "buckets": {
+      "static_gap_and_runtime_signal": "ripr flags a static gap (a seam outside the strongly_gripped / intentional / suppressed set) and a runtime mutant went uncaught at that seam: the two sources agree, which supports the static classification.",
+      "static_gap_without_runtime_signal": "ripr flags a static gap but this import produced no runtime gap signal (missed / survived / not_caught / uncaught) for it, so the bucket only says the static gap lacks runtime corroboration — not that it went unexercised: `contradicts_static_gap` rows caught the mutant (the runtime disagrees with the static gap), `no_runtime_data` rows matched only inconclusive or unobserved outcomes, and seams with no matched runtime record were not exercised by this import; see the Static gaps without runtime signals table.",
+      "runtime_signal_without_static_gap": "a runtime mutant went uncaught where ripr reports no static gap. Joined rows (`contradicts_static_clean`) genuinely disagree with a static-clean seam and are the first ones to investigate; unmatched rows (`runtime_only_signal`) had no static seam to contradict, so they are runtime-only evidence, not a disagreement; see the Runtime signals without static gaps table.",
+      "static_clean_and_runtime_clean": "ripr reports no static gap (the seam is strongly_gripped, intentional, or suppressed) and the runtime caught the mutant: the two sources agree.",
+      "runtime_inconclusive": "ambiguous joins (several seams on one line, or crossing spans) or unobserved runtime outcomes: counted separately as evidence neither for nor against the static verdict until a seam_id or unambiguous location is available."
+    }
+  },
   "metrics": {
     "static_seams_total": 120,
     "mutants_total": 8,
@@ -18473,9 +18528,46 @@ JSON shape:
 
 Field contract:
 
-- `schema_version` — currently `"0.2"`. 0.2 added `span_containment`,
+- `schema_version` — currently `"0.3"`. 0.3 added the top-level
+  `provenance` and `how_to_read` keys. 0.2 added `span_containment`,
   `ambiguous_span_overlap_*`, `unmatched_reason` and runtime span fields.
 - `status` — always `"advisory"`; this report does not block CI by default.
+- `provenance.repo_exposure_head` — the repo-exposure snapshot's repository
+  head, or `null` when the snapshot does not carry one (or carries a
+  placeholder/short SHA; the same `is_full_sha` rule as `ripr outcome`
+  decides what counts as a head).
+- `provenance.mutants_head` — the cargo-mutants artifact's repository head,
+  or `null` — the common case, since `outcomes.json` does not carry a head
+  SHA. When `--mutants-json` names a cargo-mutants directory, the member
+  files (`outcomes.json` and `mutants.json`) are read before they are
+  combined: a head recorded by either member surfaces here, so a headed
+  directory import does not read as headless.
+- `provenance.mutants_head_conflict` — present only when the directory
+  member files record more than one distinct head. It lists every distinct
+  head and no single mutants subject is named; a disagreement is disclosed
+  as a conflict, never misreported as a missing head.
+- `provenance.disclosure` — the full join qualification, identical to stderr
+  and the Markdown Provenance section. It names every known head, including
+  the snapshot head when directory members conflict. Matching heads do not
+  authenticate producers or establish identical dirty working trees.
+- `provenance.verdict` — one of `same_head`, `different_heads`,
+  `only_repo_exposure_head`, `only_mutants_head`, `no_head_recorded`, or
+  `conflicting_mutants_heads`, derived from the two optional heads (or from
+  the member conflict). The verdict is evidence about the artifacts, not
+  the join: it never refuses, rewrites, or re-labels a match. The md
+  renderer prints the same facts as a `## Provenance` section between the
+  preamble and `## Summary`.
+The spot-check consumer accepts schema 0.2 and 0.3 with unchanged record
+classification; unsupported schemas and inconsistent runtime totals remain
+errors. The canonical 0.3 head fields are `repo_exposure_head` and
+`mutants_head`, with the detailed `verdict`; no duplicate head aliases are
+part of this contract.
+
+- `how_to_read` — the vocabulary the agreement section uses:
+  `static_gap`, `runtime_gap_signal`, and `runtime_clean_signal` define the
+  terms, and `buckets` carries one interpretation line per agreement
+  bucket, verbatim the guide lines the md renderer prints under "How to
+  read this table:".
 - `metrics.static_seams_total` — count of seams imported from
   `repo-exposure.json`.
 - `metrics.mutants_total` — count of runtime mutation records imported from the
