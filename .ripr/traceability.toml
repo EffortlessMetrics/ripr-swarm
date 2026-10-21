@@ -14563,6 +14563,22 @@ tests = [
   "crates/ripr/src/lsp/diagnostics.rs::seam_diagnostic_tests::seam_diagnostic_oracle_wording_distinguishes_ungraded_assertions",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::targeted_test_brief_oracle_wording_distinguishes_ungraded_assertions",
   "crates/ripr/src/analysis/language/python/python_tests.rs::assertion_admission_separates_no_assertion_from_unresolved_assertion_like_forms",
+  "crates/ripr/src/analysis/language/python/conftest_admission_tests.rs::conftest_autouse_fixture_makes_admission_unresolved",
+  "crates/ripr/src/analysis/language/python/conftest_admission_tests.rs::without_conftest_the_same_test_stays_extraction_complete_no_assertion",
+  "crates/ripr/src/analysis/language/python/conftest_admission_tests.rs::conftest_without_implicit_setup_does_not_taint",
+  "crates/ripr/src/analysis/language/python/conftest_admission_tests.rs::conftest_autouse_in_an_unrelated_directory_does_not_taint",
+  "crates/ripr/src/analysis/language/python/conftest_admission_tests.rs::conftest_on_an_ancestor_directory_taints_nested_tests",
+  "crates/ripr/src/analysis/language/python/conftest_admission_tests.rs::conftest_hooks_plugins_and_nested_autouse_make_admission_unresolved",
+  "crates/ripr/src/analysis/language/python/conftest_admission_tests.rs::recognized_assertion_stays_recognized_under_a_conftest_autouse",
+  "crates/ripr/src/analysis/language/python/conftest_admission_tests.rs::a_chain_conftest_that_was_not_read_is_unresolved",
+  "crates/ripr/src/analysis/language/python/conftest_admission_tests.rs::usefixtures_mark_and_in_file_plugins_make_admission_unresolved",
+  "crates/ripr/src/analysis/language/python/conftest_admission_tests.rs::plain_name_registering_decorator_taints_the_registry",
+  "crates/ripr/src/analysis/language/python/conftest_admission_tests.rs::module_level_while_and_match_registry_fills_taint_the_registry",
+  "crates/ripr/src/analysis/language/python/conftest_admission_tests.rs::definitions_under_module_level_loops_and_match_are_known_names",
+  "crates/ripr/src/analysis/language/python/conftest_admission_tests.rs::root_level_test_file_treats_relative_imports_as_test_support",
+  "crates/ripr/src/analysis/language/python/conftest_admission_tests.rs::repo_mode_withholds_no_assertion_under_a_conftest_autouse",
+  "crates/ripr/src/analysis/language/python/conftest_admission_tests.rs::diff_mode_withholds_no_assertion_under_a_conftest_autouse",
+  "crates/ripr/src/analysis/language/python/conftest_admission_tests.rs::conftest_reexports_option_splats_and_autouse_factories_make_admission_unresolved",
   "crates/ripr/src/analysis/language/typescript/admission_tests.rs::assertion_admission_separates_no_assertion_from_unresolved_assertion_like_forms",
   "crates/ripr/src/analysis/language/python/assertion_selection_tests.rs::family_relevant_assertion_selection_controls",
   "crates/ripr/src/analysis/language/python/assertion_selection_tests.rs::the_fixtures_parse_to_the_intended_oracle_shapes",
@@ -17353,6 +17369,27 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0290"
+name = "Pilot repair start root display preserves literal backslashes"
+spec = "docs/specs/RIPR-SPEC-0290-pilot-repair-root-display.md"
+tests = [
+  "crates/ripr/src/output/pilot/tests.rs::pilot_repair_start_preserves_a_literal_backslash_unix_root",
+  "crates/ripr/src/output/pilot/tests/native_artifacts.rs::pilot_followups_preserve_native_default_artifacts",
+  "crates/ripr/src/output/pilot/tests.rs::pilot_repair_line_follows_the_canonical_pilot_decision",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/output/pilot/commands.rs",
+  "crates/ripr/src/agent/loop_commands.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0290-pilot-repair-root-display.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0292"
 name = "Mutation spot check calibration-schema admission"
 spec = "docs/specs/RIPR-SPEC-0292-spot-check-schema-admission.md"
@@ -17386,6 +17423,19 @@ code = [
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0296-first-run-over-budget-step-occurrences.md",
+id = "RIPR-SPEC-0295"
+name = "Doctor suppresses PATH-mismatch warning for Cargo build outputs"
+spec = "docs/specs/RIPR-SPEC-0295-doctor-cargo-build-path-warning.md"
+tests = [
+  "crates/ripr/src/output/doctor_binary.rs::tests::cargo_build_output_running_binary_suppresses_path_mismatch_warning",
+  "crates/ripr/src/output/doctor_binary.rs::tests::different_installed_ripr_on_path_warns_without_build_output_claim",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/output/doctor_binary.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0295-doctor-cargo-build-path-warning.md",
 ]
 metrics = [
   "unit_test_pass_rate",
