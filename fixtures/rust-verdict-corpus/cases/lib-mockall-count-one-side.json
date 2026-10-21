@@ -1,0 +1,54 @@
+{
+  "case_id": "lib-mockall-count-one-side",
+  "subject_id": "authored-lib-mockall-count",
+  "diff": "cases/lib-mockall-count-one-side.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 20
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "mockall_times_call_count",
+  "hard_case": "times(1) with a call at 31 only: the count sees the taken side and nothing at the edge.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "GRACE_DAYS <= overdue_days",
+        "mutated_line": "if GRACE_DAYS <= overdue_days {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 30 days now sends"
+      },
+      {
+        "replacement": "GRACE_DAYS + 1 < overdue_days",
+        "mutated_line": "if GRACE_DAYS + 1 < overdue_days {",
+        "outcome": "tests_failed",
+        "failing_test": "tests::sends_once_after_the_grace_period",
+        "equivalence_review": "not equivalent: 31 days no longer sends"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Under `<=` 30 would send, but no test passes 30, so the test passes; under `GRACE_DAYS + 1 <` the call at 31 no longer sends and times(1) fails on drop. Spec cell: RIPR-SPEC-0295 example 2.",
+  "labeling_observation": {
+    "ripr_commit": "98c8f172b + RIPR-SPEC-0295 candidate",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0295#2"
+  ]
+}

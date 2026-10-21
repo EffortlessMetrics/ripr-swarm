@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A Rust guard whose block alone calls one mockall `automock` method now reads `exposed` when one test calls the owner on adjacent inputs on both sides of the edge under a literal `times(N)` or `once()` that the inputs meet: moving the edge changes the call count and mockall fails the test. Range counts, sequences, `checkpoint`, closure matchers, unawaited `async` or labeled blocks, a second call of the method or the receiver elsewhere in the owner, and one-sided or far inputs keep the earlier reading (RIPR-SPEC-0295, #6578).

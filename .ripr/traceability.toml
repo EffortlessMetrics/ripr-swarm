@@ -15875,6 +15875,32 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0295"
+name = "Rust mock call-count side flip"
+spec = "docs/specs/RIPR-SPEC-0295-rust-mock-call-count-side-flip.md"
+tests = [
+  "crates/ripr/src/analysis/classifier/evidence/side_flip/mock_count.rs::tests::the_corpus_shape_reads_and_counts",
+  "crates/ripr/src/analysis/classifier/evidence/side_flip/mock_count.rs::tests::other_owner_shapes_the_rule_reads",
+  "crates/ripr/src/analysis/classifier/evidence/side_flip/mock_count.rs::tests::other_test_shapes_the_rule_counts",
+  "crates/ripr/src/analysis/classifier/evidence/side_flip/mock_count.rs::tests::tests_the_count_cannot_vouch_for_are_not_counted",
+  "crates/ripr/src/analysis/classifier/evidence/side_flip/mock_count.rs::tests::owners_whose_call_count_is_not_plain_are_not_read",
+  "crates/ripr/src/analysis/classifier/evidence/side_flip/mock_count.rs::tests::the_old_line_must_order",
+]
+fixtures = [
+  "fixtures/rust-verdict-corpus",
+]
+code = [
+  "crates/ripr/src/analysis/classifier/evidence/side_flip/mock_count.rs",
+  "crates/ripr/src/analysis/classifier/evidence.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0295-rust-mock-call-count-side-flip.md",
+]
+metrics = [
+  "rust_mock_call_count_mismatch",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0265"
 name = "Rust closures in iterator adaptors"
 spec = "docs/specs/RIPR-SPEC-0265-rust-closures-in-iterator-adaptors.md"

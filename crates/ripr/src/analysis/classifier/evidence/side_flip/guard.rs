@@ -274,7 +274,7 @@ impl Guard {
     }
 }
 
-const INTEGER_TYPES: &[&str] = &[
+pub(super) const INTEGER_TYPES: &[&str] = &[
     "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
 ];
 
@@ -312,7 +312,7 @@ fn cannot_return_err(node: &SyntaxNode) -> bool {
 }
 
 /// A bare single-segment path, read as a parameter name.
-fn parameter_name(expression: &ast::Expr) -> Option<String> {
+pub(super) fn parameter_name(expression: &ast::Expr) -> Option<String> {
     let ast::Expr::PathExpr(path) = expression else {
         return None;
     };
@@ -325,7 +325,7 @@ fn parameter_name(expression: &ast::Expr) -> Option<String> {
 
 /// A decimal integer literal, optionally negated, with an integer suffix
 /// or none.
-fn integer_literal(expression: &ast::Expr) -> Option<i128> {
+pub(super) fn integer_literal(expression: &ast::Expr) -> Option<i128> {
     let (negative, literal) = match expression {
         ast::Expr::PrefixExpr(prefix) if prefix.op_kind() == Some(ast::UnaryOp::Neg) => {
             let ast::Expr::Literal(literal) = prefix.expr()? else {
@@ -352,7 +352,7 @@ fn integer_literal(expression: &ast::Expr) -> Option<i128> {
 }
 
 /// `a < b` is `b > a`.
-fn flipped(op: ast::CmpOp) -> ast::CmpOp {
+pub(super) fn flipped(op: ast::CmpOp) -> ast::CmpOp {
     match op {
         ast::CmpOp::Ord { ordering, strict } => ast::CmpOp::Ord {
             ordering: match ordering {
@@ -365,7 +365,7 @@ fn flipped(op: ast::CmpOp) -> ast::CmpOp {
     }
 }
 
-fn line_of(source: &str, node: &SyntaxNode) -> Option<usize> {
+pub(super) fn line_of(source: &str, node: &SyntaxNode) -> Option<usize> {
     let offset = u32::from(node.text_range().start()) as usize;
     Some(
         source
@@ -381,7 +381,7 @@ fn line_of(source: &str, node: &SyntaxNode) -> Option<usize> {
 /// the new ordering guard at the edge pair while differing elsewhere
 /// (`len == 256` to `len >= 256` changes only `257..`), so the edge
 /// oracles do not observe what changed.
-fn is_equality(condition: &ast::Expr) -> bool {
+pub(super) fn is_equality(condition: &ast::Expr) -> bool {
     matches!(
         unwrap_parens(condition.clone()),
         ast::Expr::BinExpr(comparison)

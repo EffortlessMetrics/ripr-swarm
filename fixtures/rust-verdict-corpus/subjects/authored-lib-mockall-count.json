@@ -1,0 +1,21 @@
+{
+  "subject_id": "authored-lib-mockall-count",
+  "origin": "authored",
+  "version_label": "authored 2026-10-15 for RIPR-SPEC-0295 mock call-count shapes; labeled against mockall 0.13.1 from crates.io (not vendored)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.lock",
+      "sha256": "fb8d3dd68b75dde3570532151d6e5f8e43ae23db3063229f97cbdae38c3886ec"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "0b11866702768ca18dbacd52d17beaf82f030c4ffa234453b3ef0d5780d4b132"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "5295d2df5973e6186432c42321da31946df37a15aebb749484a7fd10c474a9d2"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -10,7 +10,7 @@ pub trait Mailer {
+ pub const GRACE_DAYS: u32 = 30;
+ 
+ pub fn remind_both(mailer: &dyn Mailer, user: &str, overdue_days: u32) -> bool {
+-    if overdue_days > GRACE_DAYS {
++    if GRACE_DAYS < overdue_days {
+         return mailer.send(user, "late");
+     }
+     false
