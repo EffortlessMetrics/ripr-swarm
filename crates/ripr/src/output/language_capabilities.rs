@@ -170,7 +170,7 @@ mod tests {
     #[test]
     fn human_output_names_limits_and_the_absent_row_rule() {
         let text = render_human(Some(LanguageId::TypeScript));
-        assert!(text.contains("unsupported_with_typed_limit"), "{text}");
+        assert!(text.contains("supported_with_required_fallback"), "{text}");
         assert!(text.contains("typescript_diff_first"), "{text}");
         assert!(text.contains("not_proven"), "{text}");
     }

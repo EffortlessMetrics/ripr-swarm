@@ -13,7 +13,7 @@
 use super::LanguageId;
 use AnalysisMode::{Diff, Repo};
 use CapabilityFamily::{RepairRouting, StaticFacts};
-use SupportState::{NotProven, SupportedWithRequiredFallback, UnsupportedWithTypedLimit};
+use SupportState::{NotProven, SupportedWithRequiredFallback};
 use TierCeiling::{Preview, UsableAlpha};
 use sha2::{Digest, Sha256};
 
@@ -142,7 +142,7 @@ const PYTHON_FACTS_LIMIT: &str = "syntax-first and advisory; static-limit, heuri
 const PYTHON_REPO_LIMIT: &str = "bounded working set; capped or partial runs are disclosed on language_runs and never back a full-denominator, all-clear, badge, or baseline claim; repo-scoped seam formats render no Python seams (python_diff_first)";
 const PYTHON_REPAIR_LIMIT: &str = "selected static repair routes only: direct weak evidence, concrete missing discriminator, safe test location, and verify command; no test execution, generated tests, or production edits";
 const TS_FACTS_LIMIT: &str = "syntax-first preview; static limits such as mocked modules stay visible; no framework-specific activation claim";
-const TS_REPO_LIMIT: &str = "typescript_diff_first: repo mode is a stub that returns an empty result; a zero-seam report is not evidence of clean coverage";
+const TS_REPO_LIMIT: &str = "typescript_diff_first: repo mode analyzes a bounded working set (RIPR_MAX_REPO_INDEX_FILES); capped, truncated or partial runs are disclosed through partial_reason and never back an all-clear; repo-scoped seam formats render none";
 const TS_REPAIR_LIMIT: &str = "advisory preview actionability only; repair_packet_ready gates each packet; no default blocking";
 const PERL_LIMIT: &str = "requires a ripr build with Cargo feature lang-perl plus a compatible fact exporter; default builds report changed Perl files as not analyzed and no released ripr plus exporter combination analyzes Perl yet";
 const PERL_REPAIR_LIMIT: &str =
@@ -260,7 +260,7 @@ pub(crate) const CAPABILITY_CELLS: &[CapabilityCell] = &[
         FRAMEWORK_ANY,
         Repo,
         StaticFacts,
-        UnsupportedWithTypedLimit,
+        SupportedWithRequiredFallback,
         Preview,
         Some(TS_REPO_LIMIT),
         SPEC_TS,
@@ -290,7 +290,7 @@ pub(crate) const CAPABILITY_CELLS: &[CapabilityCell] = &[
         FRAMEWORK_ANY,
         Repo,
         StaticFacts,
-        UnsupportedWithTypedLimit,
+        SupportedWithRequiredFallback,
         Preview,
         Some(TS_REPO_LIMIT),
         SPEC_TS,
@@ -479,8 +479,14 @@ mod tests {
         );
         assert_eq!(
             state(AnalysisMode::Repo),
-            Some(SupportState::UnsupportedWithTypedLimit)
+            Some(SupportState::SupportedWithRequiredFallback)
         );
+        let repo_limit = cells_for(LanguageId::TypeScript)
+            .find(|cell| {
+                cell.mode == AnalysisMode::Repo && cell.family == CapabilityFamily::StaticFacts
+            })
+            .and_then(|cell| cell.limit);
+        assert!(repo_limit.is_some_and(|limit| limit.contains("partial_reason")));
     }
 
     #[test]
