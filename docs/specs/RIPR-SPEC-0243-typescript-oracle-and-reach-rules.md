@@ -29,6 +29,7 @@ Linked issues:
 - #8714 (conditional-branch assertion guard and disclosure)
 - #9138 (assertion after an always-exiting try/finally)
 - #8959 (lexically bound runner registrations)
+- #9182 (`var`/`let` CommonJS runner bindings)
 
 Linked PRs:
 
@@ -248,7 +249,10 @@ bindings in modules and strict scripts do not shadow a sibling registration.
 A sibling suite's
 helper is outside this lexical scope. Re-exports do not create local runner
 bindings, and an ESM namespace object is not a callable registration root.
-The CommonJS exemption requires an immutable runner declaration and
+The CommonJS exemption requires an immutable runner declaration (a `const`,
+or a `var`/`let` whose binding the file never writes outside its own
+initializer: no assignment, update, `for` target or redeclaration, and no
+`eval`/`with`/`\u` opacity, #9182) and
 either ambient `require` syntax or an immutable loader created by a locally
 imported `node:module`/`module` `createRequire(import.meta.url)`. Mutable loaders
 or runner bindings and same-spelled helper factories remain uncredited.

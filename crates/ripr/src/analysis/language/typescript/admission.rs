@@ -139,6 +139,8 @@ impl TypeScriptAdmissionContext {
             .collect();
         let known_require =
             program_require_is_known(statements, &esm_imports, block_functions_are_lexical);
+        let code = super::tests_extract::byte_preserving_code_mask(program.source_text)
+            .filter(|code| !super::tests_extract::file_is_opaque(code));
         let mut context = Self {
             block_functions_are_lexical,
             imports: imports.to_vec(),
@@ -148,7 +150,8 @@ impl TypeScriptAdmissionContext {
                     matches!(statement, Statement::ImportDeclaration(_))
                         || matches!(statement, Statement::VariableDeclaration(declaration)
                             if known_require && !declaration.declare
-                                && declaration.kind == oxc_ast::ast::VariableDeclarationKind::Const)
+                                && (declaration.kind == oxc_ast::ast::VariableDeclarationKind::Const
+                                    || unwritten_binding_declaration(declaration, code.as_deref())))
                 })
                 .flat_map(|statement| {
                     let mut imports =
@@ -293,6 +296,38 @@ impl TypeScriptAdmissionContext {
     fn import_class(&self, import: &TypeScriptImport) -> ImportClass {
         classify_source(&import.source, &self.test_dir)
     }
+}
+
+/// A `var`/`let` declaration whose bindings the file never writes after
+/// their initializer, so it is as immutable as a `const` one (RIPR-SPEC-0243
+/// rule 1; pre-ES2015 CommonJS binds `var test = require('tape')`). Every
+/// binding must be unwritten outside its own declarator: a reassignment, an
+/// update, a `for (x of ...)` target or a redeclaration with an initializer
+/// elsewhere refuses. Without a readable masked source (parse-width mismatch,
+/// `eval`, `with`, `\u` escapes) nothing qualifies.
+fn unwritten_binding_declaration(
+    declaration: &oxc_ast::ast::VariableDeclaration<'_>,
+    code: Option<&str>,
+) -> bool {
+    use oxc_ast::ast::VariableDeclarationKind::{Let, Var};
+    let Some(code) = code else {
+        return false;
+    };
+    if !matches!(declaration.kind, Var | Let) {
+        return false;
+    }
+    declaration.declarations.iter().all(|declarator| {
+        let outside = format!(
+            "{}{}",
+            &code[..declarator.span.start as usize],
+            &code[declarator.span.end as usize..]
+        );
+        declarator
+            .id
+            .get_binding_identifiers()
+            .iter()
+            .all(|id| !super::tests_extract::identifier_written_in(&outside, id.name.as_str()))
+    })
 }
 
 /// A bounded fixture-extension registration: one immutable top-level result
