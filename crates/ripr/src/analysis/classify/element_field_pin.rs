@@ -24,7 +24,6 @@ use ra_ap_syntax::{
     AstNode, AstToken, SyntaxKind,
     ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasName},
 };
-use rayon::prelude::*;
 use std::collections::BTreeSet;
 
 /// Whether `test` pins the field `probe` constructs inside the array `owner`
@@ -512,25 +511,16 @@ impl DropImplIndex {
             .iter()
             .map(|(_, facts)| std::sync::Arc::clone(&facts.source))
             .collect();
-        // Counted on the calling thread: the scans below run on the rayon
-        // pool, whose threads a test cannot read.
+        // Counted per build: a lookup that rebuilt would add `sources.len()`.
         #[cfg(test)]
         DROP_SCAN_COUNT.with(|count| count.set(count.get() + sources.len()));
-        // Classification runs on pool workers, and a worker blocked in a
-        // nested `par_iter` steals sibling probes that re-enter this
-        // `OnceLock` (#8756), so scan in line there.
-        let scans: Vec<Option<BTreeSet<String>>> = if super::owner_pin::nested_parallelism_allowed()
-        {
-            sources
-                .par_iter()
-                .map(|source| non_plain_drop_types(source))
-                .collect()
-        } else {
-            sources
-                .iter()
-                .map(|source| non_plain_drop_types(source))
-                .collect()
-        };
+        // Scanned in line, once per index. A nested `par_iter` inside this
+        // `OnceLock` init can deadlock against probes that re-enter it
+        // (#8756), and the scan is a one-time cost.
+        let scans: Vec<Option<BTreeSet<String>>> = sources
+            .iter()
+            .map(|source| non_plain_drop_types(source))
+            .collect();
         let mut built = Self::default();
         for scan in scans {
             match scan {
@@ -1829,10 +1819,11 @@ mod tests {
         Ok(())
     }
 
-    /// #9209: a pool worker builds the index in line, and every worker's
+    /// #9209: a pool worker builds the index (serially), and every worker's
     /// lookup agrees with the caller thread's.
     #[test]
     fn a_pool_worker_builds_the_drop_index_in_line() -> Result<(), String> {
+        use rayon::prelude::*;
         let index = drop_index(&[
             ("src/a.rs", "pub struct Row;\n"),
             (
