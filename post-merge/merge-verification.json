@@ -1,0 +1,20 @@
+{
+  "observed_utc": "2026-10-21T00:28:51Z",
+  "pr": 8961,
+  "candidate": "fc7e17a409cf81b99c2447a409b55ec699752d06",
+  "merged_at": "2026-10-21T00:24:49Z",
+  "merge_sha": "1fe845e1db0f215203022b0b09c41b044b3ec575",
+  "merge_parent": "d6abf07cfb282541f0fc31296cfcf70a5ed9034e",
+  "merge_tree": "70359c33378d9e8f954faf857e762374ae9685b6",
+  "git_commands": {
+    "fetch": "git fetch origin main (exit 0)",
+    "tree": "git merge-tree --write-tree d6abf07cfb282541f0fc31296cfcf70a5ed9034e fc7e17a409cf81b99c2447a409b55ec699752d06 (exit 0, exact landed tree)",
+    "ancestry": "git merge-base --is-ancestor 1fe845e1db0f215203022b0b09c41b044b3ec575 origin/main (exit 0)",
+    "diff_check": "git diff --check d6abf07cfb282541f0fc31296cfcf70a5ed9034e 1fe845e1db0f215203022b0b09c41b044b3ec575 (exit 0)"
+  },
+  "fresh_runtime_tests": "none; original focused and hosted proof retain original identities",
+  "merge_attempt_by_this_worker": false,
+  "previous_inventory_gap": "No claim that this worker resolved its earlier denied full-pagination evidence gap. The designated integration owner independently recorded final review; existing denial was not retried or routed around.",
+  "parent_acceptance": "bounded brief-input claim landed; umbrella/release/deployment not completed",
+  "runtime": "Linux x86_64/Bash; git 2.52.0"
+}

@@ -1,0 +1,3 @@
+Post-merge reconciliation for #8961
+
+merge-verification.json binds actual main ancestry and candidate composition. receipt.json and manifest.json retain the bounded local archive/restoration result. The 789054970-byte archive is retained locally, not uploaded or claimed delivered; source, patches and executed test logs remain in this branch and the earlier immutable local-evidence branch. Full restoration matched all 9995 entries before releasing only the exclusively owned verification copy. Original target and clean source worktree remain awaiting owner verification because several process fd directories were inaccessible. No denied read was repeated, original witness deleted, broad test rerun, release or deployment performed.

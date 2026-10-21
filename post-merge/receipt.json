@@ -1,0 +1,40 @@
+{
+  "candidate": "fc7e17a409cf81b99c2447a409b55ec699752d06",
+  "merged_sha": "1fe845e1db0f215203022b0b09c41b044b3ec575",
+  "started_utc": "2026-10-21T00:26:34Z",
+  "source": "/workspace/brief-status",
+  "archive": "/workspace/scratch/brief-status-closeout-fc7e17a4/build-state.tar.zst",
+  "restore_destination": "/workspace/brief-status",
+  "expanded_verification_path": "/workspace/scratch/brief-status-closeout-fc7e17a4/restore",
+  "free_before": 28399407104,
+  "peak_additional_bound_bytes": 6800000000,
+  "reserve_bytes": 8589934592,
+  "resources": [
+    "target",
+    ".github/actions/pr-candidate-admission/__pycache__"
+  ],
+  "archive_bytes": 789054970,
+  "archive_sha256": "586a0221dcbcec2a765e759de254b0f67cf6d38950ae9476186e267e8b04eb4a",
+  "manifest_sha256": "d759d861b8be0f7ff04da2219f5220c49cafa849de323ed2f8b9ed746be494ad",
+  "entries": 9995,
+  "restored_equal": true,
+  "original_rechecked_equal": true,
+  "active_resource_consumers": [],
+  "inaccessible_processes": [
+    "1",
+    "2",
+    "118",
+    "170",
+    "435",
+    "25112",
+    "25114"
+  ],
+  "expanded_originals": "awaiting owner verification: no observed active consumer, but listed process fd directories were inaccessible; no denied lookup repeated",
+  "verification_copy": "released after exact restoration comparison; exclusively created and consumed by the completed closeout controller",
+  "recoverable_archive": "retained locally with original executable and dependency bytes; not claimed delivered",
+  "source_worktree": "retained clean at exact candidate with original proof pending ownership verification",
+  "free_after": 27607412736,
+  "finished_utc": "2026-10-21T00:28:19Z",
+  "restore_command": "tar --same-permissions --acls --xattrs -I \"zstd -d\" -xf /workspace/scratch/brief-status-closeout-fc7e17a4/build-state.tar.zst -C /workspace/brief-status",
+  "free_space_gain_bytes": -791994368
+}
