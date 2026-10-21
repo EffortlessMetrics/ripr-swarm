@@ -16,7 +16,7 @@ benchmarks). The speed figures come from the committed
 marked runner-dependent) and are the worst repo of four, always `ripr-swarm`
 itself; serde, ripgrep and regex meet their targets. Corpus rates are the
 coordinator's figures of 2026-10-21 and may differ by a case or two from
-`0.11-readiness.md`.
+the 0.11 readiness report (kept in project files, not this repo; tracker #9271).
 
 ## What meets the bar today
 
@@ -42,7 +42,7 @@ per bullet in the issue. Acceptance criteria live in the issue.
 | Oversized diff is all-or-nothing; generated files count toward the cap | 200k-line repro | #9277 | after |
 | Dependabot PRs cannot pass admission or fixture identity checks | four PRs on 2026-10-21 | #9259, #9261 | after |
 | Perl and corpus false verdicts (Perl 1/60; Rust 5/499, TypeScript 3/178, Python 0/80) | `verdict-corpus report` | #8979 and the corpus threads | yes |
-| Install and CI routes: Windows signal on a current head, wheelhouse route, packaged routes on the exact candidate | `0.11-readiness.md` | #2769, #1703 (its milestone label says 0.12.0; confirm) | yes |
+| Install and CI routes: Windows signal on a current head, wheelhouse route, packaged routes on the exact candidate | the 0.11 readiness report (kept in project files, not this repo; tracker #9271) | #2769, #1703 (its milestone label says 0.12.0; confirm) | yes |
 
 ## Not established
 
