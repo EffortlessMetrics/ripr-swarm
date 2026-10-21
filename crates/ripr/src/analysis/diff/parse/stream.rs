@@ -67,9 +67,29 @@ fn parse_lines<'a, E>(
     // this file-count policy does not bound its bytes or a single large hunk.
     let mut lines = lines.peekable();
     while let Some(raw) = lines.next() {
-        // Depth admission precedes every consumer of a path header: deeper
-        // paths make ancestor walks and path comparisons quadratic.
-        admit_line(raw)?;
+        if state.combined_quarantine()
+            && parse_old_path_marker(raw)
+            && lines.peek().is_some_and(|next| is_new_path_marker(next))
+        {
+            // Quarantined parent columns remain inert until this grammar
+            // recognizes an unprefixed plain file boundary.
+            state.close_combined_quarantine();
+        }
+
+        if state.in_hunk()
+            && state.can_end_at_plain_boundary()
+            && parse_old_path_marker(raw)
+            && lines.peek().is_some_and(|next| is_new_path_marker(next))
+        {
+            state.close_hunk();
+        }
+
+        // Decide whether ---/+++ is hunk data before path admission. A Git
+        // boundary can close even an unfinished hunk and resolves its old
+        // path immediately, so it must still be admitted before that work.
+        if (!state.in_hunk() && !state.combined_quarantine()) || raw.starts_with("diff --git ") {
+            admit_line(raw)?;
+        }
         if state.handle_diff_boundary(raw) {
             continue;
         }
@@ -92,23 +112,6 @@ fn parse_lines<'a, E>(
         if state.handle_rename_metadata(raw, &mut files) {
             admit_file_count(files.len())?;
             continue;
-        }
-
-        if state.combined_quarantine()
-            && parse_old_path_marker(raw)
-            && lines.peek().is_some_and(|next| is_new_path_marker(next))
-        {
-            // Unprefixed plain markers may follow a combined hunk without a
-            // diff --git boundary; quarantined parent columns must stay inert.
-            state.close_combined_quarantine();
-        }
-
-        if state.in_hunk()
-            && state.can_end_at_plain_boundary()
-            && parse_old_path_marker(raw)
-            && lines.peek().is_some_and(|next| is_new_path_marker(next))
-        {
-            state.close_hunk();
         }
 
         if state.register_path_marker(raw, &mut files) {
@@ -144,3 +147,6 @@ fn parse_lines<'a, E>(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod path_admission_tests;
