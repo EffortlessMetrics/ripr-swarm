@@ -511,6 +511,36 @@ pub fn should_ignore_changed_line(text: &str) -> bool {
         || text.starts_with("pub use ")
         || text.starts_with("mod ")
         || text.starts_with("#")
+        || is_visible_module_or_use_declaration(text)
+}
+
+/// A visibility-qualified out-of-line `mod name;` or `use path;` declaration
+/// (`pub mod new;`, `pub(crate) use a::b;`) names an item or import and holds
+/// no behavior to check. The bare and `pub use` spellings are already
+/// ignored; this covers the remaining visibility spellings. Only the
+/// `;`-terminated form qualifies, so an inline module body or any trailing
+/// code stays probed.
+fn is_visible_module_or_use_declaration(text: &str) -> bool {
+    let rest = super::diff::strip_visibility(text);
+    if rest.len() == text.len() {
+        return false;
+    }
+    let Some(body) = rest.strip_suffix(';') else {
+        return false;
+    };
+    if body.contains(['{', '}', ';', '=']) {
+        return false;
+    }
+    let after_keyword = |keyword: &str| {
+        body.strip_prefix(keyword)
+            .filter(|tail| tail.starts_with(char::is_whitespace))
+            .map(str::trim)
+    };
+    after_keyword("use").is_some_and(|path| !path.is_empty())
+        || after_keyword("mod").is_some_and(|name| {
+            let name = name.strip_prefix("r#").unwrap_or(name);
+            !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
 }
 
 /// An `impl` header (`impl Tr for K where Self: Sized {`; other item headers
@@ -621,6 +651,34 @@ mod tests {
             "T: Debug + Clone,",
         ] {
             assert!(!is_item_header(behavior), "`{behavior}`");
+        }
+    }
+
+    /// #9033: a visibility-qualified module or import declaration has no
+    /// behavior; inline module bodies, trailing code and other items stay probed.
+    #[test]
+    fn visible_module_and_use_declarations_are_ignored_but_behavior_is_not() {
+        for ignored in [
+            "pub mod new;",
+            "pub(crate) mod new;",
+            "pub ( super ) mod r#raw;",
+            "pub(crate) use a::b;",
+            "pub use a::{b, c};",
+            "mod new;",
+        ] {
+            assert!(should_ignore_changed_line(ignored), "`{ignored}`");
+        }
+        for kept in [
+            "pub mod new { fn go() {} }",
+            "pub mod new { pub fn go() { 1 } }",
+            "pub mod new; fn go() {}",
+            "pub fn mod_new() {}",
+            "pub const MODE: u8 = 1;",
+            "pub modx;",
+            "pub mod ;",
+            "pub(crate) static X: u8 = 1;",
+        ] {
+            assert!(!should_ignore_changed_line(kept), "`{kept}`");
         }
     }
 

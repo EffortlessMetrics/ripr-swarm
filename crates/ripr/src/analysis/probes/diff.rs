@@ -1251,7 +1251,7 @@ fn parse_inline_module(
 /// (whitespace between `pub` and the qualifier is legal Rust).
 /// Text without a qualifier passes through unchanged; unrecognized shapes
 /// fall through so the module parse fails closed below.
-fn strip_visibility(text: &str) -> &str {
+pub(super) fn strip_visibility(text: &str) -> &str {
     let Some(after_pub) = text.strip_prefix("pub") else {
         return text;
     };
