@@ -705,7 +705,10 @@ mod tests {
         let evidence = reach_evidence(&related, Some(&owner), || false);
 
         assert_eq!(evidence.state, StageState::Yes);
-        assert_eq!(evidence.summary, "Related tests appear to reach discount: d");
+        assert_eq!(
+            evidence.summary,
+            "Related tests appear to reach discount: d"
+        );
     }
 
     // #3714 round-2 review (devin hDRL2): mixed relations keep the
