@@ -338,16 +338,40 @@ fn body_declares_methods(owner_source: &str) -> bool {
 }
 
 /// Whether a body `{` follows the `)` that ends just before `next`: directly,
-/// or after a `: ReturnType` annotation (`run(c: string): Promise<void> {`).
-/// A ternary arm such as `c ? f(x) : {..}` is over-refused, which is safe.
+/// or after a `: ReturnType` annotation (`run(c: string): () => void {`). The
+/// annotation is scanned structurally with paren, bracket and angle depth: a
+/// `{` at depth 0 before a `;`, a `}` or an unmatched `)` opens the body. A
+/// ternary arm such as `c ? f(x) : {..}` is over-refused, which is safe.
 fn opens_body_after_paren(chars: &[char], next: usize) -> bool {
     match chars.get(next) {
         Some('{') => true,
-        Some(':') => chars[next + 1..]
-            .iter()
-            .take(200)
-            .take_while(|c| !matches!(c, ';' | '}' | ')'))
-            .any(|c| *c == '{'),
+        Some(':') => {
+            let (mut parens, mut brackets, mut angles) = (0usize, 0usize, 0usize);
+            let mut at = next + 1;
+            while at < chars.len() {
+                let c = chars[at];
+                // `=>` in a function type is not a closing angle bracket.
+                if c == '=' && chars.get(at + 1) == Some(&'>') {
+                    at += 2;
+                    continue;
+                }
+                let nested = parens + brackets + angles > 0;
+                match c {
+                    '(' => parens += 1,
+                    ')' if parens == 0 => return false,
+                    ')' => parens -= 1,
+                    '[' => brackets += 1,
+                    ']' => brackets = brackets.saturating_sub(1),
+                    '<' => angles += 1,
+                    '>' => angles = angles.saturating_sub(1),
+                    '{' if !nested => return true,
+                    ';' | '}' if !nested => return false,
+                    _ => {}
+                }
+                at += 1;
+            }
+            false
+        }
         _ => false,
     }
 }
@@ -1335,12 +1359,7 @@ mod tests {
 
     #[test]
     fn annotated_methods_getters_and_async_methods_shadow_parameters() {
-        for method in [
-            "run(coupon: string): void {",
-            "get v(): number {",
-            "async run(coupon: string): Promise<void> {",
-            "run(coupon: string): Map<string, number> {",
-        ] {
+        let check = |method: &str| {
             let source = format!(
                 "function price(qty: number, coupon?: string): number {{\n  const o = {{\n    {method}\n      if (coupon === 'HALF') {{\n        qty = 1;\n      }}\n    }},\n  }};\n  return qty;\n}}\n"
             );
@@ -1350,6 +1369,21 @@ mod tests {
                 None,
                 "{method}"
             );
+        };
+        for method in [
+            "run(coupon: string): void {",
+            "get v(): number {",
+            "async run(coupon: string): Promise<void> {",
+            "run(coupon: string): Map<string, number> {",
+            "run(coupon: string): () => void {",
+            "get v(): (() => void) {",
+            "async run(c: string): Promise<(x: number) => void> {",
+            "run(c: string): (A | B)[] {",
+            "run(c: string): [number, () => void] {",
+        ] {
+            check(method);
         }
+        // No length cap on the annotation.
+        check(&format!("run(c: string): {}B {{", "A | ".repeat(120)));
     }
 }

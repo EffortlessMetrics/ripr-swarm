@@ -431,6 +431,7 @@ fn bracket_calls_and_loaders_keep_exposed() -> Result<(), String> {
             "async run(coupon: string): Promise<void> {",
         ),
         ("guard-shadow-plain", "run(coupon: string) {"),
+        ("guard-shadow-fn-type", "run(coupon: string): () => void {"),
     ] {
         let source = format!(
             "export function price(qty: number, coupon?: string): number {{\n  let total = qty * 10;\n  const o = {{\n    {method}\n      if (coupon === 'HALF') {{\n        total = total / 2;\n      }}\n    }},\n  }};\n  o.run('HALF');\n  return total;\n}}\n"
