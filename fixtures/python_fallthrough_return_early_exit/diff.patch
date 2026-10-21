@@ -1,0 +1,9 @@
+diff --git a/src/quote.py b/src/quote.py
+--- a/src/quote.py
++++ b/src/quote.py
+@@ -1,4 +1,4 @@
+ def quote(total):
+     if total > 1000:
+         return 0
+-    return round(total * 1.05, 2)
++    return round(total * 1.10, 2)

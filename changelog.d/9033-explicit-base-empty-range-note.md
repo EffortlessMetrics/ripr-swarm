@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- `ripr check --base <ref>` on a range with no analyzable changed files (for example `--base HEAD`, or the base branch while on it) now ends its human output with a note naming the compared range and saying nothing was analyzed, instead of stopping at "No diff-derived static exposure probes found." The note states that deleted files, submodule pointer changes and files ripr does not analyze are not counted, so the empty result does not mean no behavior changed (#9033).

@@ -27,6 +27,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_trait_default_shadow/input --diff <cwd>/fixtures/rust_trait_default_shadow/diff.patch --mode fast probe:src_lib.rs:return_value:f04fc840
   ripr context --root <cwd>/fixtures/rust_trait_default_shadow/input --diff <cwd>/fixtures/rust_trait_default_shadow/diff.patch --mode fast --at probe:src_lib.rs:return_value:f04fc840
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:return_value:f04fc840 --root <cwd>/fixtures/rust_trait_default_shadow/input` for the full gate's answer
 No test stub here: the owner is a trait default method or nested function, sits in an impl local to a block or whose self type is not a plain path, sits behind a cfg a plain `cargo test` build may not enable, or takes a typed `self` receiver
 
 More:

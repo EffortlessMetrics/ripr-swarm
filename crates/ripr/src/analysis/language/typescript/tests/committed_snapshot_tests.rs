@@ -58,6 +58,10 @@ fn generic_or_bracket_snapshot_calls_are_counted_and_refuse() -> Result<(), Stri
         "expect(price(90)).toMatchSnapshot<number>();",
         "expect(price(90))[\"toMatchSnapshot\"]();",
         "expect(price(90)).toMatchSnapshot.call(this);",
+        "expect(price(90)).toMatchSnapshot?.();",
+        "expect(price(90))[\"toMatchSnapshot\" ]();",
+        "expect(price(90)).toMatchSnapshot /* c */ ();",
+        "expect(price(90)).toMatchSnapshot!();",
     ] {
         let source = format!(
             "import {{ price }} from \"../src/price\";\n\ntest(\"price\", () => {{\n  expect(price(150)).toMatchSnapshot();\n  {second}\n}});\n"
@@ -68,6 +72,104 @@ fn generic_or_bracket_snapshot_calls_are_counted_and_refuse() -> Result<(), Stri
                 .all(|strength| *strength != OracleStrength::Strong),
             "{second}: {got:?}"
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn line_comment_value_reference_and_alias_snapshot_spellings_refuse() -> Result<(), String> {
+    // #8895: each spelling is its own check so one pass cannot hide another.
+    let snap = jest_snap(&[("price 1", "140")]);
+    let seconds = [
+        "expect(price(90)).toMatchSnapshot // c\n();",
+        "(expect(price(90)).toMatchSnapshot)();",
+        "(expect(price(90)).toMatchSnapshot as any)();",
+        "(expect(price(90)).toMatchSnapshot satisfies Fn)();",
+        "const f = expect(price(90)).toMatchSnapshot; f();",
+        "const { toMatchSnapshot: g } = expect(price(90)); g();",
+        "const h = expect(price(90)).toMatchSnapshot.bind(null); h(); h();",
+    ];
+    for second in seconds {
+        let source = format!(
+            "import {{ price }} from \"../src/price\";\n\ntest(\"price\", () => {{\n  expect(price(150)).toMatchSnapshot();\n  {second}\n}});\n"
+        );
+        let got = strengths("snap-undercount", &source, &[(SNAP_PATH, &snap)])?;
+        assert!(
+            got.iter()
+                .all(|strength| *strength != OracleStrength::Strong),
+            "{second}: {got:?}"
+        );
+    }
+    // Control: the one honest call stays strong.
+    assert_eq!(
+        strengths("snap-undercount-ok", PRICE_TEST, &[(SNAP_PATH, &snap)])?,
+        vec![OracleStrength::Strong]
+    );
+    Ok(())
+}
+
+#[test]
+fn snapshot_calls_counts_each_spelling() {
+    let cases: [(&str, usize); 25] = [
+        ("a.toMatchSnapshot()", 1),
+        ("a.toMatchSnapshot // c\n()", 1),
+        ("(a.toMatchSnapshot)()", 2),
+        ("(a.toMatchSnapshot as any)()", 2),
+        ("(a.toMatchSnapshot satisfies F)()", 2),
+        ("const f = a.toMatchSnapshot; f()", 2),
+        ("toMatchSnapshotLike", 0),
+        ("see the Snapshot docs", 0),
+        ("a.toMatchSnapshot // c", 2),
+        ("a.toMatchSnapshot(); b.toMatchSnapshot()", 2),
+        ("a.toMatchSnapshot // note\r()", 1),
+        ("a.toMatchSnapshot // note\u{2028}()", 1),
+        ("a.toMatchSnapshot // note\u{2029}()", 1),
+        ("a.toMatchSnapshot // note\r\n()", 1),
+        ("const f = a.toMatchSnapshot.bind(null); f()", 2),
+        ("a.toMatchSnapshot.call(this)", 1),
+        ("a.toMatchSnapshot.apply(this, [])", 1),
+        ("a.toMatchInlineSnapshot('x')", 1),
+        ("const f = a.toThrowErrorMatchingSnapshot; f()", 2),
+        ("import { toMatchSnapshot } from 'x'", 2),
+        ("// uses toMatchSnapshot below\n", 2),
+        ("type FooSnapshot = string;", 0),
+        ("const s = getSnapshot;", 0),
+        ("a.toMatchSnapshot\u{301}()", 2),
+        ("a.toMatchSnapshot\u{200c}()", 2),
+    ];
+    for (text, want) in cases {
+        assert_eq!(snapshot_calls(text), want, "{text}");
+    }
+}
+
+#[test]
+fn line_comment_ending_in_any_line_terminator_keeps_honest_call_strong() -> Result<(), String> {
+    // The `//` comment stops at CR, U+2028 and U+2029 too, so the real `()`
+    // after it is a call (one), not a value reference (two) that refuses.
+    let snap = jest_snap(&[("price 1", "140")]);
+    for terminator in ["\r", "\u{2028}", "\u{2029}", "\r\n"] {
+        let source = format!(
+            "import {{ price }} from \"../src/price\";\n\ntest(\"price\", () => {{\n  expect(price(150)).toMatchSnapshot // note{terminator}();\n}});\n"
+        );
+        let got = strengths("snap-terminator", &source, &[(SNAP_PATH, &snap)])?;
+        assert_eq!(got, vec![OracleStrength::Strong], "{terminator:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn non_matcher_snapshot_names_do_not_refuse_an_honest_call() -> Result<(), String> {
+    // #8895: only matcher-shaped value references refuse; other `...Snapshot`
+    // names are not the runner's counter.
+    let snap = jest_snap(&[("price 1", "140")]);
+    for prefix in [
+        "type FooSnapshot = string;\n",
+        "const read = getSnapshot;\n",
+        "const toMatchSnapshotLike = 1;\n",
+    ] {
+        let source = format!("{prefix}{PRICE_TEST}");
+        let got = strengths("snap-non-matcher", &source, &[(SNAP_PATH, &snap)])?;
+        assert_eq!(got, vec![OracleStrength::Strong], "{prefix}");
     }
     Ok(())
 }
@@ -269,6 +371,16 @@ fn snapshot_location_or_update_override_stays_medium() -> Result<(), String> {
         (
             "package.json",
             "{ \"scripts\": { \"test\": \"jest -u\" } }",
+            &jest,
+        ),
+        (
+            "package.json",
+            "{ \"scripts\": { \"test\": \"jest\t-u\" } }",
+            &jest,
+        ),
+        (
+            "jest.config.js",
+            "module.exports = { snapshotFormat: { escapeString: false } };",
             &jest,
         ),
         (
@@ -559,9 +671,11 @@ fn config_passed_by_path_or_custom_named_stays_medium() -> Result<(), String> {
         );
     }
     // A custom-named config that overrides nothing and a script without a
-    // config flag keep the credit.
+    // config flag keep the credit. `-` and `_` stem separators are read the
+    // same way as `.` (`jest.unit.config.js`).
     for (config, text) in [
         ("jest.unit.config.js", "module.exports = {};"),
+        ("jest_unit.config.js", "module.exports = {};"),
         (
             "package.json",
             "{ \"scripts\": { \"test\": \"jest --ci --coverage\" } }",
@@ -578,17 +692,44 @@ fn config_passed_by_path_or_custom_named_stays_medium() -> Result<(), String> {
         );
     }
     // A Vitest custom-named config that overrides nothing keeps the credit.
+    // `unit-vitest.config.ts` must mention vitest in the file (the name does
+    // not start with `vite`, which is how `mentions_vitest` is set).
     let vitest_snap = format!("{VITEST_HEADER}{}", entry("price 1", "140"));
+    let vitest_plain = "import { defineConfig } from \"vitest/config\";\nexport default defineConfig({ test: {} });";
+    for name in ["vitest.unit.config.ts", "unit-vitest.config.ts"] {
+        assert_eq!(
+            strengths(
+                "snap-vitest-custom",
+                PRICE_TEST,
+                &[(SNAP_PATH, &vitest_snap), (name, vitest_plain)]
+            )?,
+            vec![OracleStrength::Strong],
+            "{name}"
+        );
+    }
+    // The same `-` / `_` stems with an override refuse, so the walk did read
+    // them (a name the walk skipped would keep Strong).
     assert_eq!(
         strengths(
-            "snap-vitest-custom",
+            "snap-underscore-override",
+            PRICE_TEST,
+            &[(SNAP_PATH, &snap), ("jest_unit.config.js", RESOLVER_CONFIG)]
+        )?,
+        vec![OracleStrength::Medium]
+    );
+    assert_eq!(
+        strengths(
+            "snap-hyphen-override",
             PRICE_TEST,
             &[
                 (SNAP_PATH, &vitest_snap),
-                ("vitest.unit.config.ts", "export default { test: {} };")
+                (
+                    "unit-vitest.config.ts",
+                    "import { defineConfig } from \"vitest/config\";\nexport default defineConfig({ test: { update: true } });"
+                )
             ]
         )?,
-        vec![OracleStrength::Strong]
+        vec![OracleStrength::Medium]
     );
     Ok(())
 }
@@ -809,5 +950,126 @@ fn config_above_the_root_without_a_repository_boundary_is_not_read() -> Result<(
         "boundary unknown: medium"
     );
     assert_eq!(with_marker, vec![OracleStrength::Strong]);
+    Ok(())
+}
+
+/// RIPR-SPEC-0258 / #8768: a runner config that names another config
+/// (`projects`, `workspace`, or `root`) is not walked, so the reading
+/// refuses. A `rootDir` / `<rootDir>` mention is not that key: a broad
+/// `root` substring would refuse the TypeScript verdict corpus alias and
+/// monorepo subjects.
+#[test]
+fn runner_config_that_delegates_stays_medium() -> Result<(), String> {
+    let jest = jest_snap(&[("price 1", "140")]);
+    let vitest = format!("{VITEST_HEADER}{}", entry("price 1", "140"));
+    for (config, text, snap) in [
+        (
+            "jest.config.js",
+            "module.exports = { projects: [\"<rootDir>/config/app.jest.js\"] };",
+            &jest,
+        ),
+        (
+            "jest.config.js",
+            "module.exports = { \"projects\": [\"<rootDir>/config/app.jest.js\"] };",
+            &jest,
+        ),
+        (
+            "vitest.config.ts",
+            "export default { test: { workspace: [\"./packages/*\"] } };",
+            &vitest,
+        ),
+        (
+            "vitest.config.ts",
+            "export default { workspace: [\"./packages/*\"] };",
+            &vitest,
+        ),
+        (
+            "vitest.config.ts",
+            "export default { test: { root: \"./pkg\" } };",
+            &vitest,
+        ),
+        (
+            "vitest.config.ts",
+            "export default { root: \"./pkg\" };",
+            &vitest,
+        ),
+        (
+            "vite.config.ts",
+            "export default { test: { root: \"./pkg\" } };",
+            &vitest,
+        ),
+        (
+            "jest.config.js",
+            "const projects = [\"<rootDir>/config/app.jest.js\"];\nmodule.exports = { projects };",
+            &jest,
+        ),
+        (
+            "vitest.config.ts",
+            "const workspace = [\"./packages/*\"];\nexport default { workspace };",
+            &vitest,
+        ),
+        (
+            "vitest.config.ts",
+            "const root = \"./pkg\";\nexport default { root };",
+            &vitest,
+        ),
+    ] {
+        assert_eq!(
+            strengths(
+                "snap-delegate",
+                PRICE_TEST,
+                &[(SNAP_PATH, snap), (config, text)]
+            )?,
+            vec![OracleStrength::Medium],
+            "{config}: {text}"
+        );
+    }
+    // `<rootDir>` in a mapper, and Jest's `rootDir` key, do not delegate to
+    // another config file. Matching the `root` substring would refuse these.
+    for (config, text) in [
+        (
+            "jest.config.js",
+            "module.exports = { moduleNameMapper: { \"^@/(.*)$\": \"<rootDir>/src/$1\" } };",
+        ),
+        ("jest.config.js", "module.exports = { rootDir: \"src\" };"),
+    ] {
+        assert_eq!(
+            strengths(
+                "snap-rootdir",
+                PRICE_TEST,
+                &[(SNAP_PATH, &jest), (config, text)]
+            )?,
+            vec![OracleStrength::Strong],
+            "{config}: {text}"
+        );
+    }
+    Ok(())
+}
+
+/// A `.git` *file* (worktree `gitdir:` pointer) is a repository boundary,
+/// the same as a `.git` directory. A parent config above that file is not
+/// read.
+#[test]
+fn git_file_is_a_repository_boundary() -> Result<(), String> {
+    let (outer, package_root) = monorepo("snap-git-file", None)?;
+    let written = ts_write_file(
+        &package_root.join(".git"),
+        "gitdir: ../.git/worktrees/app\n",
+    )
+    .and_then(|()| ts_write_file(&outer.join("jest.config.js"), RESOLVER_CONFIG));
+    let above = directories_above_root(&package_root, 16);
+    let got = strengths_at(&package_root);
+    let _ = std::fs::remove_dir_all(&outer);
+    written?;
+    assert_eq!(
+        above,
+        Some(Vec::new()),
+        ".git file at the analysis root: nothing above is read"
+    );
+    assert_eq!(
+        got,
+        vec![OracleStrength::Strong],
+        "parent snapshotResolver stays unseen when .git is a file at the root"
+    );
     Ok(())
 }

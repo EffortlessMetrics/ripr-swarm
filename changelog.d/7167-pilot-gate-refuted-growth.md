@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- The Pilot Ranking gate no longer fails when the judged pick set grows: the pooled refuted counts may rise by the picks the run admitted beyond the baseline's (`pick_growth_allowance`), while a flipped or newly refuted pick at a flat or smaller pick count, and any precision, scored-share, diversity or pick-count regression, still fail. A pick-level matched-set join remains open (#7167).

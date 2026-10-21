@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr mcp --stdio` tool descriptions now disambiguate the two same-shaped per-item reads: `ripr_get_gap` is the analysis-evidence read when no repair intent exists (its "complete" claim is narrowed to analysis evidence), while `ripr_get_repair_card` is the richer document — fix instruction, edit cage, done-when goals, typed next action — for an agent that intends to repair, and each description names the other as the alternative (#8734).

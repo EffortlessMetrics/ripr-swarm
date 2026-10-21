@@ -35,6 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_broad_boolean_assertion/input --diff <cwd>/fixtures/python_broad_boolean_assertion/diff.patch --mode fast probe:src_priority.py:python_preview:5c6fb782
   ripr context --root <cwd>/fixtures/python_broad_boolean_assertion/input --diff <cwd>/fixtures/python_broad_boolean_assertion/diff.patch --mode fast --at probe:src_priority.py:python_preview:5c6fb782
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_priority.py:python_preview:5c6fb782 --root <cwd>/fixtures/python_broad_boolean_assertion/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

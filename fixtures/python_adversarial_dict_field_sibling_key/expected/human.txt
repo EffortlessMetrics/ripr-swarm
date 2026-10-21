@@ -35,6 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_adversarial_dict_field_sibling_key/input --diff <cwd>/fixtures/python_adversarial_dict_field_sibling_key/diff.patch --mode fast probe:src_conf.py:python_preview:932c667d
   ripr context --root <cwd>/fixtures/python_adversarial_dict_field_sibling_key/input --diff <cwd>/fixtures/python_adversarial_dict_field_sibling_key/diff.patch --mode fast --at probe:src_conf.py:python_preview:932c667d
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_conf.py:python_preview:932c667d --root <cwd>/fixtures/python_adversarial_dict_field_sibling_key/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

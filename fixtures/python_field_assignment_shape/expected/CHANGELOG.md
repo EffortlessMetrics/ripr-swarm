@@ -525,3 +525,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_field_assignment_shape (18)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless python_field_assignment_shape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -805,6 +805,24 @@ covered_by_unix = [
     "cargo test -p ripr --locked --offline --test portable_consumer_packet",
 ]
 
+[[allow]]
+glob = ".github/actions/pr-candidate-admission/*.py"
+kind = "admission_decision_script"
+owner = "ci/admission"
+surface = "ci"
+classification = "tooling"
+reason = "Stdlib Python decision logic extracted from the pre-allocation admission action so the hard-cut and candidate decisions are testable outside embedded YAML shell (#5391, #2022)."
+covered_by = ["cargo test -p xtask --test hard_cut_admission_selftest"]
+
+[[allow]]
+glob = "policy/release-hard-cut-admission.json"
+kind = "release_hard_cut_packet"
+owner = "release/control"
+surface = "ci"
+classification = "config"
+reason = "Base-owned 0.11 hard-cut admission packet read by the pre-allocation admission action; inactive by default, changed only by packet-only control PRs (#5391, #5114)."
+covered_by = ["cargo test -p xtask --test hard_cut_admission_selftest", "cargo xtask check-file-policy"]
+
 # ---------------------------------------------------------------------------
 # Brand / assets
 # ---------------------------------------------------------------------------

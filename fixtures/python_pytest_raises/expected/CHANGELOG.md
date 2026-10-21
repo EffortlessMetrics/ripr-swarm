@@ -574,3 +574,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_pytest_raises (18)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless python_pytest_raises --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
