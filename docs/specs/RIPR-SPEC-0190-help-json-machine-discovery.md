@@ -44,7 +44,7 @@ non-claims.
 authorities into one strict JSON document on `ripr help --json`. The
 document carries:
 
-- `schema_version` (integer, currently `2`; bumped on any material DTO shape
+- `schema_version` (integer, currently `3`; bumped on any material DTO shape
   change, pinned by tests, and registered in `docs/OUTPUT_SCHEMA.md`),
   `product_version`, and `catalog_contract_version`;
 - `commands`: one row per C1 catalog entry joined to its C2 metadata row on
@@ -127,7 +127,9 @@ Authority:
     card` / `agent stub` refuse with 3 and empty stdout; `agent
     verify-execute` refuses with 3 and a stdout document; `agent repair`
     refuses with 3 and json-optional stdout; `receipt check` orphan or gap
-    mismatch is 2, not 3. A metadata row that contradicts that mapping is a
+    mismatch is 2, not 3; `doctor` completed-with-findings is 3 under the
+    `doctor_findings` kind while its usage/operational failures stay 2
+    (#5102). A metadata row that contradicts that mapping is a
     catalog integrity failure. `stop_states` remains free-text and is not
     the exit authority. The document does not prove a given invocation's
     status.
@@ -149,7 +151,7 @@ command or workflow claim.
 ## Required Evidence
 
 - Production document integrity is empty of violations and the document is
-  valid JSON with `schema_version` 2, non-empty `commands` and `workflows`,
+  valid JSON with `schema_version` 3, non-empty `commands` and `workflows`,
   and a 64-hex-character sha256 digest.
 - Determinism fixtures: reversing the source table order normalizes to the
   same digest; the rendered bytes are stable across builds of the same
@@ -198,7 +200,7 @@ command or workflow claim.
 
 ## Acceptance Examples
 
-1. `ripr help --json` prints one JSON line carrying `schema_version` 2,
+1. `ripr help --json` prints one JSON line carrying `schema_version` 3,
    every catalog command row, every workflow row, and the catalog digest;
    stderr is empty and the workspace is untouched. The `cmd:check` row's
    `exit` object names findings including `exposed` and
