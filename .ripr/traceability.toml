@@ -985,6 +985,9 @@ id = "RIPR-SPEC-0007"
 name = "repository configuration"
 spec = "docs/specs/RIPR-SPEC-0007-repository-configuration.md"
 tests = [
+  "crates/ripr/src/analysis/diff/path.rs::tests::artifact_root_gitignore_entry_escapes_patterns_separately_from_paths",
+  "crates/ripr/src/cli/commands/doctor.rs::tests::ripr_artifact_ignore_advice_covers_only_the_literal_root",
+  "crates/ripr/src/analysis/pipeline.rs::tests::ripr_artifact_disclosure_escapes_gitignore_metacharacters",
   "crates/ripr/tests/cli_smoke.rs::config_validate_does_not_consume_root_flag_as_a_path",
   "crates/ripr/tests/cli_smoke.rs::check_github_over_broad_suppression_policy_emits_denominator_notice",
   "crates/ripr/tests/cli_smoke/suppression_notice.rs::retained_oracle_rejects_silence_wrong_counts_and_leaked_annotations",
@@ -1128,6 +1131,8 @@ tests = [
 ]
 fixtures = []
 code = [
+  "crates/ripr/src/analysis/diff/path.rs",
+  "crates/ripr/src/analysis/pipeline.rs",
   "crates/ripr/src/config.rs",
   "crates/ripr/src/workspace_status.rs",
   "crates/ripr/src/app/python_repair_binding.rs",
