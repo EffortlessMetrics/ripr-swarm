@@ -10342,7 +10342,7 @@
       "id": "rust_observation_verified_side_effect_call_deletion",
       "language": "rust",
       "tier": "pure",
-      "source_fixture": "fixtures/observation_verified_side_effect",
+      "source_fixture": "fixtures/observation_verified_semicolon_effect",
       "vector": "effect_assertion_that_runs_keeps_its_exposed_credit",
       "probe_family": "call_deletion",
       "assertions": [
@@ -10351,6 +10351,50 @@
         { "type": "expected_class", "class": "exposed" }
       ],
       "control": "must_stay_exposed"
-    }
+    },
+      {
+        "id": "rust_semicolon_effect_line18_side_effect",
+        "language": "rust",
+        "tier": "pure",
+        "source_fixture": "fixtures/observation_verified_semicolon_effect",
+        "vector": "aligned_standalone_call_with_persisted_payload_observer",
+        "probe_family": "side_effect",
+        "control": "must_stay_exposed",
+        "assertions": [
+          {
+            "type": "expected_finding_count",
+            "count": 1
+          },
+          {
+            "type": "must_promote"
+          },
+          {
+            "type": "expected_class",
+            "class": "exposed"
+          }
+        ]
+      },
+      {
+        "id": "rust_semicolon_effect_line18_call_deletion",
+        "language": "rust",
+        "tier": "pure",
+        "source_fixture": "fixtures/observation_verified_semicolon_effect",
+        "vector": "aligned_standalone_call_with_persisted_payload_observer",
+        "probe_family": "call_deletion",
+        "control": "must_stay_exposed",
+        "assertions": [
+          {
+            "type": "expected_finding_count",
+            "count": 1
+          },
+          {
+            "type": "must_promote"
+          },
+          {
+            "type": "expected_class",
+            "class": "exposed"
+          }
+        ]
+      }
   ]
 }

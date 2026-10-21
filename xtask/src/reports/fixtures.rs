@@ -21,6 +21,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+mod observation_tail_return;
 mod preparation;
 
 /// Result of a single fixture run: violation lines + optional run output.
@@ -1041,6 +1042,9 @@ fn clear_fixture_cache(dir: &Path) -> Result<(), String> {
 
 pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
     let name = fixture_name(path)?;
+    if name == observation_tail_return::FIXTURE {
+        observation_tail_return::validate(path)?;
+    }
     let diff = path.join("diff.patch");
     let input = path.join("input");
     if !diff.exists() {

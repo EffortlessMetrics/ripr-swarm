@@ -2,31 +2,39 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/observation_verified_side_effect/input
 
-Summary: 2 probes (2 exposed, 0 weak, 0 unrevealed, 0 no path); 2 of 2 findings unsuppressed
+Summary: 2 probes (1 exposed, 1 weak, 0 unrevealed, 0 no path); 2 of 2 findings unsuppressed
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
 
 Start here:
-  State: no gap selected for repair
-  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation
-  File: ./src/lib.rs:17
-  Static exposure: exposed (severity: info, confidence 1.00)
-  Canonical gap: gap:rust:src/lib.rs:process_order:call_deletion:call_deletion:notifier.send_order_id
+  State: a test gap to inspect or repair
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  File: ./src/lib.rs:18
+  Static exposure: weak (severity: warning, confidence 0.92)
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:rust:src/lib.rs:process_order:return_value:return_value:notifier.send_order_id
   Changed behavior: notifier.send(order_id)
-  Related test: tests/process_tests.rs:4 process_order_sends_exact_order_id
-  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
+  Missing discriminator: No strong discriminator was detected
+  Related test: tests/process_tests.rs:4 process_order_sends_exact_order_id (ripr could not confirm that this assertion observes the changed behavior)
+  Next step: The related test `process_order_sends_exact_order_id` already has an exact assertion;
+    this does not establish observation of the returned value. Check whether the change can affect
+    the returned value. If it can, add a separating input and assert the exact returned value. If it
+    cannot, test the changed effect separately; another input cannot distinguish unchanged returns
+  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     - reach yes: Related tests appear to reach process_order: process_order_sends_exact_order_id
     - infection yes: Reachable tests can plausibly activate this changed behavior
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/observation_verified_side_effect/input --diff <cwd>/fixtures/observation_verified_side_effect/diff.patch --mode fast probe:src_lib.rs:call_deletion:934aa430
-  ripr context --root <cwd>/fixtures/observation_verified_side_effect/input --diff <cwd>/fixtures/observation_verified_side_effect/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:934aa430
-  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:call_deletion:934aa430 --root <cwd>/fixtures/observation_verified_side_effect/input` for the full gate's answer
+  ripr explain --root <cwd>/fixtures/observation_verified_side_effect/input --diff <cwd>/fixtures/observation_verified_side_effect/diff.patch --mode fast probe:src_lib.rs:return_value:880ed6e6
+  ripr context --root <cwd>/fixtures/observation_verified_side_effect/input --diff <cwd>/fixtures/observation_verified_side_effect/diff.patch --mode fast --at probe:src_lib.rs:return_value:880ed6e6
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:return_value:880ed6e6 --root <cwd>/fixtures/observation_verified_side_effect/input` for the full gate's answer
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/observation_verified_side_effect/input --at src/lib.rs:18 --kind return_value
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:17 (exposed)
+    - ./src/lib.rs:18 (exposed)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

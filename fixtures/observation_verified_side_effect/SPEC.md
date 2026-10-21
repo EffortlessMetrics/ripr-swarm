@@ -45,8 +45,19 @@ ripr check --root fixtures/observation_verified_side_effect/input \
 
 ## Then
 
-`ripr` must classify the SideEffect/CallDeletion probe as `exposed` and must
-NOT emit `observation_unverified`.
+The diff's new-side call must coincide with `input/src/lib.rs:18`. The call
+is a tail-return expression without a semicolon: the real parser inventory is
+one SideEffect and one ReturnValue probe, with no CallDeletion probe. The
+persisted-payload observer keeps SideEffect `exposed` without
+`observation_unverified`. ReturnValue is `weakly_exposed`: the test does not
+assert the returned boolean.
+
+The fixture runner rejects a shifted new-side coordinate before analysis.
+Its regression controls shift the retained hunk one line early and one line
+late, reject an independently shifted old side, and independently pin the real
+public analyzer's two-family inventory and classifications.
+Standalone-call deletion coverage belongs to
+[`observation_verified_call_deletion`](../observation_verified_call_deletion/SPEC.md).
 
 This fixture is the **verified-effect control** for
 [RIPR-SPEC-0094](../../docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md):
@@ -58,4 +69,5 @@ does not over-correct legitimately-observed effects.
 
 - Emit `observation_unverified` when the assertion observes the changed effect.
 - Downgrade a strong, token-matching effect observer to `weakly_exposed`.
+- Claim CallDeletion coverage for this tail-return expression.
 - Use mutation-runtime outcome vocabulary.

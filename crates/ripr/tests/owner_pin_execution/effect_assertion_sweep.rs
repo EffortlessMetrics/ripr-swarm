@@ -7,7 +7,7 @@ use super::*;
 #[test]
 fn effect_assertion_dead_context_sweep_refuses_every_never_run_assertion() -> Result<(), String> {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/observation_verified_side_effect");
+        .join("../../fixtures/observation_verified_semicolon_effect");
     let eq = "*notifier.sent.borrow(), vec![\"order-42\".to_string()]";
     let forms: Vec<(String, String)> = vec![
         ("assert_eq".into(), format!("assert_eq!({eq});")),
@@ -135,8 +135,34 @@ fn effect_assertion_dead_context_sweep_refuses_every_never_run_assertion() -> Re
             let json: serde_json::Value =
                 serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
                     .map_err(|e| e.to_string())?;
+            assert_eq!(
+                json["analysis_outcome"]["analysis_complete"], true,
+                "{name}/{ctx}"
+            );
+            let findings = json["findings"].as_array().ok_or("missing findings")?;
+            assert_eq!(findings.len(), 2, "{name}/{ctx}: exact subjects");
+            let families = findings
+                .iter()
+                .map(|f| f["probe"]["family"].as_str().unwrap_or(""))
+                .collect::<std::collections::BTreeSet<_>>();
+            assert_eq!(
+                families,
+                std::collections::BTreeSet::from(["call_deletion", "side_effect"]),
+                "{name}/{ctx}"
+            );
             let mut effect_findings = 0;
-            for f in json["findings"].as_array().ok_or("f")? {
+            for f in findings {
+                assert_eq!(f["probe"]["line"], 18, "{name}/{ctx}");
+                assert_eq!(
+                    f["probe"]["expression"], "notifier.send(order_id)",
+                    "{name}/{ctx}"
+                );
+                assert!(
+                    f["related_tests"]
+                        .as_array()
+                        .is_some_and(|tests| !tests.is_empty()),
+                    "{name}/{ctx}"
+                );
                 let fam = f["probe"]["family"].as_str().unwrap_or("");
                 if fam != "side_effect" && fam != "call_deletion" {
                     continue;

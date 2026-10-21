@@ -102,6 +102,17 @@ effect assertion in the same test still supplies its existing observation and
 discriminator; a refused sibling does not remove it. This does not change effect
 identity, propagation or observer matching.
 
+Effect-family fixture evidence must use a real standalone call: the three
+`effect_assertion_*` fixtures and generated execution tests use
+`notifier.send(order_id);` at line 18, followed by `true` at line 19, with an
+aligned `@@ -16,5 +16,5 @@` hunk. The live control is
+`observation_verified_semicolon_effect`, with exactly one CallDeletion and one
+SideEffect finding. The inherited `observation_verified_side_effect` is a tail
+return: it retains its SideEffect positive but supplies no CallDeletion row.
+Complete analysis, exact family inventory, coordinates and related tests precede
+classification assertions; effect runtime controls establish no return-value
+separation when both payloads return `true` (#8954).
+
 An effect oracle whose fact text is a compound statement rather than the macro
 invocation (`loop { break; assert_eq!(..); }`, a labeled block, a `macro_rules!`
 body, a cfg-dropped `let`) names no invocation to admit, so it is gated by the

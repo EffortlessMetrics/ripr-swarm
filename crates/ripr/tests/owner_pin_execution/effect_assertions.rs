@@ -4,7 +4,7 @@ use super::*;
 
 fn effect_source(assertion: &str, context: &str) -> Result<String, String> {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/observation_verified_side_effect/input/src/lib.rs");
+        .join("../../fixtures/observation_verified_semicolon_effect/input/src/lib.rs");
     let production = std::fs::read_to_string(fixture).map_err(|error| error.to_string())?;
     let oracle = match context {
         "direct" => assertion.to_string(),
@@ -51,7 +51,7 @@ fn human_has_effect_guidance(report: &ripr::CheckOutput) -> Result<bool, String>
 #[test]
 fn effect_assertions_require_execution_but_keep_reachable_oracles() -> Result<(), String> {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/observation_verified_side_effect");
+        .join("../../fixtures/observation_verified_semicolon_effect");
     for (macro_name, assertion, kind, strength) in ASSERTIONS {
         for (context, exposed) in [
             ("direct", true),
