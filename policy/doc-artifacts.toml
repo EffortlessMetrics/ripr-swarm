@@ -1738,3 +1738,11 @@ path = "docs/specs/RIPR-SPEC-0292-spot-check-schema-admission.md"
 status = "proposed"
 owner = "product-xtask"
 standalone_reason = "Issue #8996 records the mutation spot check calibration-schema admission contract: the spot check classifies calibration documents at schema 0.2 and 0.3 (0.3 adds provenance and how_to_read without changing the joined-record shape), keeping the gate working both before and after the calibrate schema 0.3 work lands; any other version fails closed with an actionable refusal naming the found version, the supported versions, and the renderer's owning MUTATION_CALIBRATION_SCHEMA_VERSION constant."
+
+[[artifact]]
+id = "RIPR-SPEC-0294"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0294-mutation-calibration-clarity.md"
+status = "proposed"
+owner = "product-output"
+standalone_reason = "Issues #8750 and #8753 record the mutation calibration output clarity contract: the calibration report (schema 0.2 to 0.3) carries in-band provenance (repo-exposure and cargo-mutants head identities with a same/different/missing verdict and disclosure sentence) on both md and JSON surfaces so a report saved with --out keeps the same-subject caveat, and the agreement section gains a how-to-read block defining static/runtime gaps, clean signals, and per-bucket interpretation from one shared map; RIPR-SPEC-0006 governs only the calibration report and its join."

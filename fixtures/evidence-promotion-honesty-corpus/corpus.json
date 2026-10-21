@@ -7967,6 +7967,35 @@
       ]
     },
     {
+      "id": "ts_dead_assertion_after_try_finally",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/ts_dead_assertion_after_try_finally",
+      "vector": "strong_assertion_after_always_exiting_try_finally_in_test_body_treated_as_discriminator",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "ts_dropped_term_zero_input",
       "language": "typescript",
       "tier": "pure",
@@ -10324,6 +10353,18 @@
       "tier": "pure",
       "source_fixture": "fixtures/returned_comparison_boundary_gap",
       "vector": "returned_bare_comparison_exposed_without_an_input_on_the_changed_boundary",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_not_promote" }
+      ]
+    },
+    {
+      "id": "rust_returned_explicit_comparison_boundary_gap",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/returned_explicit_comparison_boundary_gap",
+      "vector": "explicit_return_comparison_exposed_without_an_input_on_the_changed_boundary",
       "probe_family": "return_value",
       "assertions": [
         { "type": "must_not_report_clean" },
