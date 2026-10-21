@@ -1779,7 +1779,6 @@ fn same_stem_related_handles_missing_stems() {
         term_facts: Default::default(),
     };
     let test = PythonTest {
-        decorator_text: String::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),
@@ -3302,7 +3301,6 @@ fn assertion_admission_separates_no_assertion_from_unresolved_assertion_like_for
 #[test]
 fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     let mocked = PythonTest {
-        decorator_text: String::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),
@@ -3326,7 +3324,6 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     };
     assert!(test_has_mocked_module(&mocked));
     let bare = PythonTest {
-        decorator_text: String::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),
@@ -3348,7 +3345,6 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     };
     assert!(test_has_mocked_module(&bare));
     let clean = PythonTest {
-        decorator_text: String::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),
@@ -3861,7 +3857,6 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
 
     // With `apply_tax as taxed`, the oracle's `taxed(...)` observes the owner.
     let alias_test = PythonTest {
-        decorator_text: String::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),
@@ -3938,7 +3933,6 @@ fn align_strong(oracle: &str) -> RelatedTest {
 /// module is usually `"owner"`.
 fn align_importing_test(imported: &str, module: &str) -> PythonTest {
     PythonTest {
-        decorator_text: String::new(),
         activation_controls: Vec::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
@@ -3986,7 +3980,6 @@ fn sink_alignment_is_alias_when_oracle_uses_import_alias() {
     let line = "return amount + 2";
     let related = [align_strong("assert taxed(10) == 12")];
     let alias_test = PythonTest {
-        decorator_text: String::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
         constant_rebinding: Default::default(),

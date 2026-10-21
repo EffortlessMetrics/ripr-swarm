@@ -308,15 +308,25 @@ fn own_statement_indent(body: &str) -> Option<usize> {
     lines.find(|l| !l.trim().is_empty()).map(indent_of)
 }
 
-/// Decorators (a `parametrize` argument list can hand the owner to the test as
-/// a parameter) and the bodies of the fixtures the test resolves are outside
-/// `body_text`. Any mention of the owner name or an import alias there is
-/// treated as a possible invocation: fail closed.
+/// Decorator arguments are outside `body_text` and are not retained as text
+/// (`decorators` keeps names only), so this reads them fail closed: a
+/// parametrized or generated test, or any decorator other than a plain
+/// `pytest.mark.<marker>` (`patch`, `given`, `example`, user decorators), may
+/// hand the owner to the test as a parameter or wrap it, and withholds the
+/// claim. The bodies of the fixtures the test resolves are checked for the
+/// owner name or an import alias.
 fn header_mentions_owner(test: &PythonTest, names: &[&str]) -> bool {
-    let mentions = |text: &str| names.iter().any(|name| word_count(text, name) > 0);
-    mentions(&test.decorator_text)
-        || test
-            .fixture_defs
-            .iter()
-            .any(|fixture| mentions(&fixture.body_text))
+    let opaque_decorator = test.decorators.iter().any(|decorator| {
+        decorator == "pytest.mark.parametrize" || !decorator.starts_with("pytest.mark.")
+    });
+    opaque_decorator
+        || test.parametrized
+        || test.parametrize.is_some()
+        || !test.direct_parametrized.is_empty()
+        || !test.generated_inputs.is_empty()
+        || test.fixture_defs.iter().any(|fixture| {
+            names
+                .iter()
+                .any(|name| word_count(&fixture.body_text, name) > 0)
+        })
 }
