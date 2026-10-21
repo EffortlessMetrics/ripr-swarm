@@ -1,0 +1,199 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/atomic_ordering_swap_strong_object_oracle/input",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":2,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:236c7ca659a23281a470d80f7b514e3bdc74607c008e7933eb225ebe8d5b1201","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:static_unknown:1c12b20e",
+      "canonical_gap_id": "gap:rust:src/lib.rs:impl Slot::claim:static_unknown:static_unknown:self.inner.store_id_ordering_release",
+      "canonical_gap_group_size": 2,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:impl Slot::claim:static_unknown:static_unknown:self.inner.store_id_ordering_release",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "impl Slot::claim",
+        "behavior_kind": "static_unknown",
+        "probe_kind": "static_unknown",
+        "normalized_discriminator": "self.inner.store_id_ordering_release"
+
+      },
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.50,
+      "probe": {
+        "id": "probe:src_lib.rs:static_unknown:1c12b20e",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/lib.rs",
+        "line": 13,
+        "expression": "self.inner.store(id, Ordering::Release);"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach claim: claims_an_empty_slot"},
+        "infect": {"state":"unknown","confidence":"unknown","summary":"Changed syntax is not mapped to a high-confidence probe family"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"No propagation model is available for this changed syntax"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"unknown","confidence":"low","summary":"Assertions exist, but oracle strength is unknown"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach claim: claims_an_empty_slot", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 13)", "related test src/lib.rs:22 claims_an_empty_slot uses whole object equality oracle, not graded against this probe: assert_eq!(slot.snapshot(), Snapshot { owner: 7 });", "source function argument value id = 7 at line 24", "source assertion argument value 7 at line 25"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"unknown sink","line":13}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Assertions exist, but oracle strength is unknown", "Changed syntax is not mapped to a high-confidence probe family", "No propagation model is available for this changed syntax", "Related tests appear to reach claim: claims_an_empty_slot"],
+      "missing": ["No strong discriminator was detected", "Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests"],
+      "assertion_texts": {
+        "24": "slot.claim(7);",
+        "25": "assert_eq!(slot.snapshot(), Snapshot { owner: 7 });"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 24,
+            "value": "id = 7",
+            "context": "function_argument"
+          },
+          {
+            "line": 25,
+            "value": "7",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 24,
+          "value": "id = 7",
+          "context": "function_argument"
+        },
+        {
+          "line": 25,
+          "value": "7",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "claims_an_empty_slot",
+          "file": "src/lib.rs",
+          "line": 22,
+          "oracle_strength": "unknown",
+          "oracle_kind": "whole_object_equality",
+          "oracle": "assert_eq!(slot.snapshot(), Snapshot { owner: 7 });",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["static_probe_unknown"],
+      "oracle_kind": "whole_object_equality",
+      "oracle_strength": "unknown",
+      "recommended_next_step": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "suggested_next_action": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:static_unknown:1c12b20e.2",
+      "canonical_gap_id": "gap:rust:src/lib.rs:impl Slot::claim:static_unknown:static_unknown:self.inner.store_id_ordering_release",
+      "canonical_gap_group_size": 2,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:impl Slot::claim:static_unknown:static_unknown:self.inner.store_id_ordering_release",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "impl Slot::claim",
+        "behavior_kind": "static_unknown",
+        "probe_kind": "static_unknown",
+        "normalized_discriminator": "self.inner.store_id_ordering_release"
+
+      },
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.50,
+      "probe": {
+        "id": "probe:src_lib.rs:static_unknown:1c12b20e.2",
+        "family": "static_unknown",
+        "delta": "unknown",
+        "file": "./src/lib.rs",
+        "line": 13,
+        "expression": "self.inner.store(id, Ordering::Release);"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach claim: claims_an_empty_slot"},
+        "infect": {"state":"unknown","confidence":"unknown","summary":"Changed syntax is not mapped to a high-confidence probe family"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"No propagation model is available for this changed syntax"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"unknown","confidence":"low","summary":"Assertions exist, but oracle strength is unknown"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach claim: claims_an_empty_slot", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 13)", "related test src/lib.rs:22 claims_an_empty_slot uses whole object equality oracle, not graded against this probe: assert_eq!(slot.snapshot(), Snapshot { owner: 7 });", "source function argument value id = 7 at line 24", "source assertion argument value 7 at line 25"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"unknown sink","line":13}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Assertions exist, but oracle strength is unknown", "Changed syntax is not mapped to a high-confidence probe family", "No propagation model is available for this changed syntax", "Related tests appear to reach claim: claims_an_empty_slot"],
+      "missing": ["No strong discriminator was detected", "Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests"],
+      "assertion_texts": {
+        "24": "slot.claim(7);",
+        "25": "assert_eq!(slot.snapshot(), Snapshot { owner: 7 });"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 24,
+            "value": "id = 7",
+            "context": "function_argument"
+          },
+          {
+            "line": 25,
+            "value": "7",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 24,
+          "value": "id = 7",
+          "context": "function_argument"
+        },
+        {
+          "line": 25,
+          "value": "7",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "claims_an_empty_slot",
+          "file": "src/lib.rs",
+          "line": 22,
+          "oracle_strength": "unknown",
+          "oracle_kind": "whole_object_equality",
+          "oracle": "assert_eq!(slot.snapshot(), Snapshot { owner: 7 });",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["static_probe_unknown"],
+      "oracle_kind": "whole_object_equality",
+      "oracle_strength": "unknown",
+      "recommended_next_step": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "suggested_next_action": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}
