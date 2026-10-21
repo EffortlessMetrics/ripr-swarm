@@ -898,6 +898,11 @@ mod tests {
             std::process::id(),
             NEXT_ROOT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
+        if let Some(parent) = root.parent() {
+            // Cargo points TMPDIR under target/, which a fresh worktree lacks.
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("create temp parent {}: {error}", parent.display()))?;
+        }
         std::fs::create_dir(&root)
             .map_err(|error| format!("create fixture root {}: {error}", root.display()))?;
         struct CleanupGuard(PathBuf);

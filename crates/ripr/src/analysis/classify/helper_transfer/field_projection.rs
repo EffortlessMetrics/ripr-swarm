@@ -544,7 +544,8 @@ mod tests {
 
     #[test]
     fn integer_literal_accepts_only_plain_unsigned_decimal_digits() {
-        for text in ["0", "19", "007", "18446744073709551615"] {
+        let largest = usize::MAX.to_string();
+        for text in ["0", "19", "007", largest.as_str()] {
             assert!(integer_literal(text), "{text}");
         }
         for text in [
