@@ -17,11 +17,15 @@ impl Drop for TempRepo {
 }
 
 const LIB: &str = "pub mod a {\n    pub fn value(x: i32) -> i32 { x + 2 }\n}\n\npub mod b {\n    pub fn value(x: i32) -> i32 { x + 2 }\n}\n";
-const OLD_LINE: &str = "    pub fn value(x: i32) -> i32 { x + 1 }";
 
 /// The findings on line 2 of `src/lib.rs` (`a::value`, changed from `x + 1`
 /// to `x + 2`) when the integration test is `test`.
 fn findings(test: &str) -> Result<Vec<Finding>, String> {
+    findings_in(LIB, test)
+}
+
+/// Like [`findings`] with a different `lib`; its line 2 is the changed one.
+fn findings_in(lib: &str, test: &str) -> Result<Vec<Finding>, String> {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let repo = TempRepo {
@@ -40,9 +44,9 @@ fn findings(test: &str) -> Result<Vec<Finding>, String> {
         "Cargo.toml",
         "[package]\nname = \"globs\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
     )?;
-    write("src/lib.rs", LIB)?;
+    write("src/lib.rs", lib)?;
     write("tests/api.rs", test)?;
-    let lines = LIB.lines().collect::<Vec<_>>();
+    let lines = lib.lines().collect::<Vec<_>>();
     let new = lines
         .get(1)
         .ok_or_else(|| "lib has a second line".to_string())?;
@@ -51,8 +55,9 @@ fn findings(test: &str) -> Result<Vec<Finding>, String> {
         .skip(2)
         .map(|line| format!(" {line}\n"))
         .collect::<String>();
+    let old = new.replace("+ 2", "+ 1");
     let diff = format!(
-        "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,{count} +1,{count} @@\n {first}\n-{OLD_LINE}\n+{new}\n{rest}",
+        "diff --git a/src/lib.rs b/src/lib.rs\nindex 0000000..1111111 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,{count} +1,{count} @@\n {first}\n-{old}\n+{new}\n{rest}",
         count = lines.len(),
         first = lines.first().copied().unwrap_or_default(),
     );
@@ -122,5 +127,49 @@ fn a_dependency_glob_still_leaves_the_call_unsettled() -> Result<(), String> {
         "use other_dep::*;\n\n#[test]\nfn unknown() {\n    assert_eq!(b::value(1), 3);\n}\n",
     )?;
     assert!(relates_a_test(return_value(&findings)?), "{findings:?}");
+    Ok(())
+}
+
+/// The owner is `x::b::render` (line 2); `b::render` is a rival at the root.
+const NESTED_LIB: &str = "pub mod x {\n    pub mod b { pub fn render(v: i32) -> i32 { v + 2 } }\n}\n\npub mod b {\n    pub fn render(v: i32) -> i32 { v + 2 }\n}\n";
+
+fn render_finding(lib: &str, test: &str) -> Result<Finding, String> {
+    let findings = findings_in(lib, test)?;
+    return_value(&findings).cloned()
+}
+
+#[test]
+fn an_outer_import_of_the_rival_does_not_hide_a_glob_bound_owner_call() -> Result<(), String> {
+    // `b` is bound by the glob in the innermost module scope and by an
+    // explicit import of the rival further out. The glob is closer, so the
+    // call names the owner; ripr must not settle it on the rival.
+    let finding = render_finding(
+        NESTED_LIB,
+        "use globs::b;\n\nmod tests {\n    use super::*;\n    use globs::x::*;\n\n    #[test]\n    fn check() {\n        assert_eq!(b::render(1), 3);\n    }\n}\n",
+    )?;
+    assert!(relates_a_test(&finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_glob_bound_rival_call_is_still_dropped_without_an_outer_import() -> Result<(), String> {
+    // Control: the glob names the root, so `b::render` is the rival.
+    let finding = render_finding(
+        NESTED_LIB,
+        "use globs::*;\n\n#[test]\nfn check() {\n    assert_eq!(b::render(1), 3);\n}\n",
+    )?;
+    assert!(!relates_a_test(&finding), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn a_rebound_crate_name_does_not_make_a_glob_prefix_the_owners_crate() -> Result<(), String> {
+    // `globs` here is `other_dep`, so `b` comes from a foreign glob and the
+    // call may name the owner: nothing may be dropped.
+    let finding = render_finding(
+        NESTED_LIB,
+        "use other_dep as globs;\nuse globs::*;\n\n#[test]\nfn check() {\n    assert_eq!(b::render(1), 3);\n}\n",
+    )?;
+    assert!(relates_a_test(&finding), "{finding:?}");
     Ok(())
 }

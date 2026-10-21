@@ -732,6 +732,11 @@ impl OwnerCallIdentity {
                 let [binding] = imports.as_slice() else {
                     return Matches::Any;
                 };
+                // A nearer glob may bind `first` to a different module than
+                // this outer import; which wins is not read, so fail closed.
+                if !matches!(&from_globs, Matches::Some(set) if set.is_empty()) {
+                    return Matches::Any;
+                }
                 let module = match binding {
                     UseBinding::Path(path) | UseBinding::Renamed(path) => {
                         use_target(path, base, scope, crate_names)
@@ -843,9 +848,22 @@ fn use_target(
         "crate" | "self" | "super" => keyword_module(path, base?),
         "Self" => None,
         _ if scope.child_modules.contains(first) => Some(join(base?, path)),
-        _ if crate_names.contains(first) => Some(path[1..].to_vec()),
+        _ if crate_names.contains(first) && !crate_name_rebound(scope, first) => {
+            Some(path[1..].to_vec())
+        }
         _ => None,
     }
+}
+
+/// Whether `scope` binds the crate-name identifier `name` to something other
+/// than the crate itself (`use other_dep as globs;`), so a path starting with
+/// it no longer names the owner's crate.
+fn crate_name_rebound(scope: &NameScope, name: &str) -> bool {
+    scope.block_binds(name)
+        || scope.defines.contains(name)
+        || scope
+            .imports_of(name)
+            .any(|binding| !matches!(binding, UseBinding::Path(path) if path.len() == 1))
 }
 
 /// The crate-anchored module of a path that starts with `crate`, `self` or
