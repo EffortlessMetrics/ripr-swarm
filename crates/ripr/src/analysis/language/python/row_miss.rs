@@ -44,7 +44,9 @@ use super::boundary::python_row_boundary_omission;
 use super::related_tests::{PythonRelatedCandidate, PythonRelationKind};
 use super::sink_alignment::classify_sink_alignment_with_old;
 use super::{PythonOwner, PythonTest};
-use crate::domain::{ExposureClass, OracleStrength, ProbeFamily, RelatedTest, RelatedTestMiss};
+use crate::domain::{
+    ExposureClass, OracleStrength, OwnerKind, ProbeFamily, RelatedTest, RelatedTestMiss,
+};
 
 /// The changed line, as the classifier saw it.
 pub(super) struct RowMissChange<'a> {
@@ -67,6 +69,18 @@ pub(super) fn annotate_row_misses(
     if has_static_limit || !matches!(class, ExposureClass::WeaklyExposed) {
         return;
     }
+    // Rows are built one per candidate, in order (`classify.rs`), and nothing
+    // reorders them before this pass. Fail closed if that ever stops holding:
+    // a row must never take another test's reason.
+    if rows.len() != candidates.len()
+        || rows.iter().zip(candidates).any(|(row, candidate)| {
+            row.name != candidate.test.name
+                || row.file != candidate.test.file
+                || row.line != candidate.test.line
+        })
+    {
+        return;
+    }
     for (row, candidate) in rows.iter_mut().zip(candidates) {
         row.miss = row_miss(row, candidate, candidates, change, all_tests);
     }
@@ -83,7 +97,9 @@ fn row_miss(
         return match candidate.relation {
             PythonRelationKind::SameStem
             | PythonRelationKind::TestNameSimilarity
-            | PythonRelationKind::FixtureName => Some(RelatedTestMiss::NoCallPath),
+            | PythonRelationKind::FixtureName => {
+                callable_owner(change.owner).then_some(RelatedTestMiss::NoCallPath)
+            }
             // A fixture or same-module caller does call the owner, a dunder
             // protocol row reaches it implicitly, and a skip / xfail row is
             // `activation_limited`: no path claim.
@@ -127,4 +143,14 @@ fn strong_row_miss(
         all_tests,
     );
     (!alignment.observes()).then_some(RelatedTestMiss::ObservationUnconfirmed)
+}
+
+/// "No call to the changed code" is a claim about a callable. A module
+/// constant or module-level statement is read, not called, so a row for it
+/// cannot carry `no_call_path`.
+fn callable_owner(owner: &PythonOwner) -> bool {
+    matches!(
+        owner.owner_kind,
+        Some(OwnerKind::Function | OwnerKind::Method | OwnerKind::ClassMethod)
+    )
 }

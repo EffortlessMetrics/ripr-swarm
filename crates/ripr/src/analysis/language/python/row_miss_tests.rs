@@ -452,4 +452,243 @@ mod direct {
         );
         Ok(())
     }
+
+    #[test]
+    fn module_constant_owner_row_is_not_a_no_call_path() -> Result<(), String> {
+        let constant = case(
+            "BASE_DISCOUNT = 8\n",
+            "from src.subject import BASE_DISCOUNT\n\ndef test_subject_base_discount():\n    assert BASE_DISCOUNT > 0\n",
+            1,
+            "BASE_DISCOUNT = 7",
+            "BASE_DISCOUNT = 8",
+        )?;
+        let rows = run(&constant, &ExposureClass::WeaklyExposed, false);
+        assert!(!rows.is_empty(), "fixture rows must parse");
+        assert!(
+            rows.iter()
+                .all(|(_, miss)| *miss != Some(RelatedTestMiss::NoCallPath)),
+            "{rows:?}"
+        );
+        // Positive control: a callable owner with the same name-only relation.
+        let callable = case(
+            "def subject_base_discount():\n    return 8\n",
+            "from src.subject import subject_base_discount\n\ndef test_subject_base_discount_exists():\n    assert callable(subject_base_discount)\n",
+            2,
+            "    return 7",
+            "    return 8",
+        )?;
+        let rows = run(&callable, &ExposureClass::WeaklyExposed, false);
+        assert!(
+            rows.iter()
+                .any(|(_, miss)| *miss == Some(RelatedTestMiss::NoCallPath)),
+            "{rows:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn same_name_function_from_another_module_is_not_an_owner_call() -> Result<(), String> {
+        let source =
+            "def bulk(quantity):\n    if quantity > 100:\n        return 1\n    return 0\n";
+        let before = "    if quantity >= 100:";
+        let after = "    if quantity > 100:";
+        // Positive control: the import resolves to the owner's module.
+        let resolved = case_in(
+            "src/pricing/legacy.py",
+            "tests/test_bulk.py",
+            source,
+            "from pricing.legacy import bulk\n\ndef test_bulk():\n    assert bulk(101) == 1\n",
+            2,
+            before,
+            after,
+        )?;
+        assert!(
+            omission(&resolved, 0),
+            "import-resolved call is an owner call"
+        );
+        // Same name, different module: not the owner's call.
+        let other = case_in(
+            "src/pricing/legacy.py",
+            "tests/test_bulk.py",
+            source,
+            "from pricing.discounts import bulk\n\ndef test_bulk():\n    assert bulk(101) == 1\n",
+            2,
+            before,
+            after,
+        )?;
+        for index in 0..related_test_candidates(&other.owner, &other.tests).len() {
+            assert!(!omission(&other, index), "row {index}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn non_predicate_family_never_gets_missing_input() -> Result<(), String> {
+        let case = case(
+            "def score(value):\n    return 8\n",
+            "from src.subject import score\n\ndef test_score():\n    assert score(0) == 9\n",
+            2,
+            "    return 7",
+            "    return 8",
+        )?;
+        let rows = run(&case, &ExposureClass::WeaklyExposed, false);
+        assert!(!rows.is_empty());
+        assert!(
+            rows.iter()
+                .all(|(_, miss)| *miss != Some(RelatedTestMiss::MissingInput)),
+            "{rows:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn single_row_unresolved_or_computed_operand_gets_no_missing_input() -> Result<(), String> {
+        let source = "def can_reserve(qty, on_hand):\n    if qty >= on_hand:\n        return True\n    return False\n";
+        for body in [
+            "def test_unresolved(n):\n    assert can_reserve(n, 3) == True\n",
+            "def test_computed():\n    assert can_reserve(2 + 3, 3) == True\n",
+        ] {
+            let case = case(
+                source,
+                &format!("from src.subject import can_reserve\n{body}"),
+                2,
+                "    if qty > on_hand:",
+                "    if qty >= on_hand:",
+            )?;
+            let rows = run(&case, &ExposureClass::WeaklyExposed, false);
+            assert_eq!(rows.len(), 1, "{body}");
+            assert_ne!(rows[0].1, Some(RelatedTestMiss::MissingInput), "{body}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn miss_annotation_changes_nothing_but_the_miss_field() -> Result<(), String> {
+        let cases = [
+            case(
+                "def score(value):\n    return 8\n",
+                "from src.subject import score\n\ndef test_a():\n    assert score(0)\n\ndef test_score_is_importable():\n    assert callable(score)\n\ndef test_b():\n    assert score(1) == 8\n",
+                2,
+                "    return 7",
+                "    return 8",
+            )?,
+            case(
+                "def can_reserve(qty, on_hand):\n    if qty >= on_hand:\n        return True\n    return False\n",
+                "from src.subject import can_reserve\n\ndef test_off():\n    assert can_reserve(5, 3) == True\n\ndef test_weak():\n    assert can_reserve(4, 4)\n",
+                2,
+                "    if qty > on_hand:",
+                "    if qty >= on_hand:",
+            )?,
+        ];
+        let mut annotated_any = false;
+        for case in &cases {
+            let family = classify_probe_shape(&case.after).0;
+            let focus = PythonAssertionFocus::for_change(family, &case.after, Some(&case.before));
+            let candidates = related_test_candidates(&case.owner, &case.tests);
+            let stripped = related_tests_for_candidates(&candidates, Some(&focus));
+            assert!(stripped.iter().all(|row| row.miss.is_none()));
+            let mut rows = stripped.clone();
+            annotate_row_misses(
+                &mut rows,
+                &candidates,
+                &ExposureClass::WeaklyExposed,
+                false,
+                &RowMissChange {
+                    owner: &case.owner,
+                    line_text: &case.after,
+                    old_line_text: Some(&case.before),
+                    focus: &focus,
+                },
+                &case.tests,
+            );
+            assert_eq!(rows.len(), stripped.len());
+            for (row, base) in rows.iter().zip(&stripped) {
+                annotated_any |= row.miss.is_some();
+                // Order, identity, oracle, relation and confidence are the
+                // un-annotated row's; `is_unmatched` stays false.
+                let mut reset = row.clone();
+                reset.miss = None;
+                assert_eq!(&reset, base);
+                assert!(!row.is_unmatched());
+            }
+        }
+        assert!(annotated_any, "positive control: some row gains a miss");
+        Ok(())
+    }
+
+    fn two_row_case() -> Result<Case, String> {
+        case(
+            "def score(value):\n    return 8\n",
+            "from src.subject import score\n\ndef test_a():\n    assert score(0)\n\ndef test_score_is_importable():\n    assert callable(score)\n",
+            2,
+            "    return 7",
+            "    return 8",
+        )
+    }
+
+    fn base_rows(case: &Case) -> Vec<crate::domain::RelatedTest> {
+        let family = classify_probe_shape(&case.after).0;
+        let focus = PythonAssertionFocus::for_change(family, &case.after, Some(&case.before));
+        let candidates = related_test_candidates(&case.owner, &case.tests);
+        related_tests_for_candidates(&candidates, Some(&focus))
+    }
+
+    fn annotate(case: &Case, rows: &mut [crate::domain::RelatedTest]) {
+        let family = classify_probe_shape(&case.after).0;
+        let focus = PythonAssertionFocus::for_change(family, &case.after, Some(&case.before));
+        let candidates = related_test_candidates(&case.owner, &case.tests);
+        annotate_row_misses(
+            rows,
+            &candidates,
+            &ExposureClass::WeaklyExposed,
+            false,
+            &RowMissChange {
+                owner: &case.owner,
+                line_text: &case.after,
+                old_line_text: Some(&case.before),
+                focus: &focus,
+            },
+            &case.tests,
+        );
+    }
+
+    #[test]
+    fn mismatched_length_or_reordered_rows_annotate_nothing() -> Result<(), String> {
+        let case = two_row_case()?;
+        // Positive control: aligned rows gain misses.
+        let mut aligned = base_rows(&case);
+        assert_eq!(aligned.len(), 2);
+        annotate(&case, &mut aligned);
+        assert!(aligned.iter().any(|row| row.miss.is_some()), "control");
+
+        let mut truncated = base_rows(&case);
+        truncated.truncate(1);
+        annotate(&case, &mut truncated);
+        assert!(truncated.iter().all(|row| row.miss.is_none()));
+
+        let mut reordered = base_rows(&case);
+        reordered.reverse();
+        annotate(&case, &mut reordered);
+        assert!(reordered.iter().all(|row| row.miss.is_none()));
+        Ok(())
+    }
+
+    #[test]
+    fn recognized_oracle_with_unknown_strength_gets_no_miss() -> Result<(), String> {
+        let case = two_row_case()?;
+        let mut rows = base_rows(&case);
+        let row = rows
+            .iter_mut()
+            .find(|row| row.name == "test_a")
+            .ok_or("test_a row")?;
+        assert!(row.oracle.is_some());
+        row.oracle_strength = crate::domain::OracleStrength::Unknown;
+        annotate(&case, &mut rows);
+        let row = rows
+            .iter()
+            .find(|row| row.name == "test_a")
+            .ok_or("test_a row")?;
+        assert_eq!(row.miss, None);
+        Ok(())
+    }
 }

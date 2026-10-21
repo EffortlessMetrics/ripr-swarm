@@ -228,8 +228,8 @@
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
           "oracle": "assert bulk_discount(101) == 0.15",
-          "miss": "missing_input",
-          "why": "no test input reaches `quantity == 50`"
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "repair_placement": {

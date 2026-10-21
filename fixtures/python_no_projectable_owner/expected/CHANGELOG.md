@@ -562,3 +562,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_no_projectable_owner (21)
+
+Reason:
+RIPR-SPEC-0224 (#5491): no_call_path requires a callable owner; class, stages and decision fields unchanged
+
+Command:
+`cargo xtask goldens bless python_no_projectable_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

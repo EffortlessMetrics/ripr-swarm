@@ -143,15 +143,22 @@ Python (#5491) writes a miss only on a `weakly_exposed` finding without a
 static limit, one row at a time, in `python/row_miss.rs`:
 
 - `no_call_path`: `same_stem`, `test_name_similarity` and `fixture_name`
-  rows. `dunder_protocol` rows reach the owner through an implicit protocol
+  rows of a callable owner (function, method or classmethod); a module
+  constant or module-level owner is read, not called, so it keeps no such
+  claim. `dunder_protocol` rows reach the owner through an implicit protocol
   call, so they keep no miss, as do fixture-owner, helper-owner and
   activation-limited rows.
 - `weak_assertion`: the family-selected assertion is weak or smoke. A medium
   assertion (a mock that may pin the changed call) keeps no miss.
 - `missing_input`: a strong family-selected assertion on a predicate change
   whose own owner calls all bind, resolve both compared operands and place
-  neither on the boundary. An unresolved operand or an unreadable call is
-  unknown, and another row's input never counts.
+  neither on the boundary. The row-owned part is the omission computed in
+  `boundary.rs` from that row's own calls; the boundary quoted in the "why"
+  text is the finding-wide changed boundary. A free-function call counts as an
+  owner call only when the row's import resolves the name to the owner's
+  module; a same-named function of another module is not one. An unresolved
+  operand or an unreadable call is unknown, and another row's input never
+  counts.
 - `observation_unconfirmed`: a strong family-selected assertion that the row,
   evaluated alone, does not credit as observing the changed sink. Python's
   alignment only credits; no credit never becomes an affirmative mismatch.

@@ -366,6 +366,14 @@ pub(super) fn python_row_boundary_omission(
     let Some((left, right)) = simple_comparison_operands(&condition, *start, *len) else {
         return false;
     };
+    // A free function's bare-name call is the owner's only when this test's
+    // import resolves the name to the owner's module; a same-named function of
+    // another module is not an owner call.
+    if matches!(owner.owner_kind, Some(OwnerKind::Function))
+        && owner_module_callees(candidate.test, owner).is_empty()
+    {
+        return false;
+    }
     let constants = unrebound_constants(owner, all_candidates);
     let (rows, gaps) =
         strong_owner_call_rows_with_gaps(owner, &constants, std::slice::from_ref(candidate), focus);
