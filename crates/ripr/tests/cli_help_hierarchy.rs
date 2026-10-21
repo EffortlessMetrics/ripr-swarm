@@ -1114,6 +1114,52 @@ fn outcome_help_matches_the_enforced_canonical_gap_contract() -> Result<(), Stri
     Ok(())
 }
 
+/// #9033: `--phase before` resolves a `ripr check` finding ID, so neither the
+/// group help nor the missing-`--seam-id` refusal may say those IDs are not
+/// seam IDs, and the group help points a newcomer at `ripr repair` first.
+#[test]
+fn agent_help_and_missing_seam_refusal_agree_that_finding_ids_resolve() -> Result<(), String> {
+    let stdout = normalized(&rendered_help(&["agent", "--help"])?);
+    assert_contains(
+        "agent help",
+        &stdout,
+        "`ripr repair` then `ripr continue` is the shorter spelling of the same transaction",
+    )?;
+    assert_contains(
+        "agent help",
+        &stdout,
+        "`--phase before` also accepts a `ripr check` finding ID (`probe:...`)",
+    )?;
+    if stdout.contains("are not seam IDs") {
+        return Err("agent help still says finding IDs are not seam IDs".to_string());
+    }
+    let dir = std::env::temp_dir().join(format!("ripr-9033-agent-seam-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).map_err(|error| format!("create temp dir: {error}"))?;
+    let output = run_ripr_in(
+        &["agent", "repair", "--phase", "before", "--root", "."],
+        Some(&dir),
+    );
+    std::fs::remove_dir_all(&dir).map_err(|error| format!("remove temp dir: {error}"))?;
+    let output = output?;
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert_contains(
+        "missing --seam-id refusal",
+        &stderr,
+        "requires --seam-id <id>",
+    )?;
+    assert_contains(
+        "missing --seam-id refusal",
+        &stderr,
+        "pass a `ripr check` finding ID (`probe:...`)",
+    )?;
+    if stderr.contains("are not seam IDs") {
+        return Err(format!(
+            "refusal still says finding IDs are not seam IDs: {stderr}"
+        ));
+    }
+    Ok(())
+}
+
 #[test]
 fn agent_help_makes_repair_primary_without_removing_control_surfaces() -> Result<(), String> {
     for args in [["agent", "--help"].as_slice(), ["agent"].as_slice()] {

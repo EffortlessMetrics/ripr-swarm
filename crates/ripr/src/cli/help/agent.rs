@@ -19,7 +19,8 @@ Advanced and compatibility workflows:
   review-summary
              Join agent-loop artifacts into a compact review packet.
 
-Ordinary repair path:
+Explicit-phase repair path (`ripr repair` then `ripr continue` is the shorter
+spelling of the same transaction):
   ripr agent repair --seam-id ID --phase before
   # edit one focused test outside RIPR
   ripr agent repair --attempt ID --phase after
@@ -27,9 +28,10 @@ Ordinary repair path:
 From a `ripr check` finding, `ripr agent stub --at FILE:LINE` (the location
 the finding prints) gives a ready-to-run test for that gap in one step.
 
-Seam IDs come from `ripr pilot --root .` (or `ripr agent status`), which
-prints the exact `--phase before` command. The `probe:...` finding IDs that
-`ripr check` prints are not seam IDs.
+`--seam-id` takes a seam ID from `ripr pilot --root .` or `ripr agent status`,
+and `--phase before` also accepts a `ripr check` finding ID (`probe:...`), a
+canonical gap ID, or a `file:line` location that names one repair-eligible
+seam.
 
 Run `ripr agent repair --help` for the primary repair workflow. Run
 `ripr agent status --help` to inspect an interrupted or incomplete local loop.
