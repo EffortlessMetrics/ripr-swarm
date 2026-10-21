@@ -3383,6 +3383,7 @@ Policy reports are advisory unless `--mode fail-on-new-warning` is used.
     "observe": "yes",
     "discriminate": "weak"
   },
+  "related_tests_total": 0,
   "related_tests": [],
   "observed_values": [],
   "missing_discriminators": [],
@@ -3438,7 +3439,14 @@ artifact file is printed as a resolved path, stdin stays `--diff -`, and a
 `--base` or `--worktree` scope is repeated as given.
 
 The context packet is intentionally smaller than check output. It is optimized
-for coding agents and editor commands. `witness` is additive and is omitted
+for coding agents and editor commands. Its additive `related_tests_total`
+integer carries the finding's matched related-test row count before the
+packet's display limit, including when that limit is zero. It uses the same
+retained-count fallback and floor as check findings: older findings without
+matched-total metadata supply their known retained row count, which cannot
+establish how many rows an older producer discarded. `related_tests` remains
+the selected bounded window. Identical eight-row windows with totals 12 and
+13 therefore remain distinguishable. `witness` is additive and is omitted
 when an exposed finding has no unresolved discriminator. It contains only
 producer-owned facts: `fix_site` and `oracle_location` are absent when the
 producer cannot identify them, and `suggested_assertion` remains `null` until
