@@ -834,7 +834,7 @@ fn missing_discriminator_facts(
     unresolved_boundary: &mut Option<String>,
 ) -> Vec<MissingDiscriminatorFact> {
     let mut missing = Vec::new();
-    if matches!(probe.family, ProbeFamily::Predicate)
+    if (matches!(probe.family, ProbeFamily::Predicate) || is_returned_comparison(probe))
         && let Some(fact) = missing_boundary_discriminator(
             probe,
             owner_fn,
@@ -3637,6 +3637,20 @@ fn body_contains_direct_local_alias(body: &str, operand: &str, parameter: &str) 
         let local_name = left.split_once(':').map(|(name, _)| name).unwrap_or(left);
         local_name.trim() == operand && right.trim() == parameter
     })
+}
+
+/// Whether a `return_value` probe's changed expression is one bare relational
+/// comparison (`x > 101`), so the returned bool is the changed predicate and
+/// its boundary is the boundary a `predicate` probe on the same line reads.
+/// Such a probe takes the predicate lens's missing boundary discriminator and
+/// infection reading: reaching the owner with inputs that never separate the
+/// old and new threshold is not an activated change. A compound (`&&`/`||`)
+/// or non-comparison expression keeps the return-value reading.
+pub(in crate::analysis) fn is_returned_comparison(probe: &Probe) -> bool {
+    matches!(probe.family, ProbeFamily::ReturnValue)
+        && !probe.expression.contains("&&")
+        && !probe.expression.contains("||")
+        && comparison_operands(&probe.expression).is_some()
 }
 
 pub(in crate::analysis) fn comparison_operands(expression: &str) -> Option<(String, String)> {

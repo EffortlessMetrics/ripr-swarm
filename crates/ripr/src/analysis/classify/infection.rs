@@ -1,7 +1,7 @@
 use super::super::rust_index::{FunctionSummary, TestSummary, extract_literals};
 use super::activation::{
     boundary_constant_operand_name, comparison_operands, has_observed_boundary_equality,
-    is_computed_value_expression, owner_input_values,
+    is_computed_value_expression, is_returned_comparison, owner_input_values,
 };
 use super::owner_pin::short_circuit::ShortCircuitTail;
 use crate::analysis::probes::same_connectives;
@@ -252,6 +252,10 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
     )
 }
 
+fn is_returned_comparison_or_predicate(probe: &Probe) -> bool {
+    matches!(probe.family, ProbeFamily::Predicate) || is_returned_comparison(probe)
+}
+
 /// [`infection_evidence_with_boundary_input`] given the changed owner, which
 /// the `&&`/`||` skipped-operand reading (#7970) needs to know the owner's
 /// parameters and that its body is the whole chain. Without an owner, or when
@@ -267,7 +271,9 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
     owner_has_other_callers: bool,
 ) -> StageEvidence {
     match probe.family {
-        ProbeFamily::Predicate => {
+        ProbeFamily::Predicate | ProbeFamily::ReturnValue
+            if is_returned_comparison_or_predicate(probe) =>
+        {
             let probe_literals = boundary_literals(&probe.expression);
             // A number, a char (`'x'`) and a byte (`b'x'`) share no
             // comparable boundary in this report, so only literals of a kind
