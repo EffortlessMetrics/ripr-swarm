@@ -301,6 +301,9 @@ pub(crate) fn render_with_config(
     // this additive, only-when-bounded disclosure sits beside it so the shared
     // incomplete-outcome predicate can fail closed on a findings prefix.
     if let (Some(bound), Some(at)) = (findings_bound.as_ref(), analysis_outcome_close_at) {
+        // `at` was recorded before the findings array was appended, so it must
+        // sit on a char boundary inside the buffer.
+        debug_assert!(at <= out.len() && out.is_char_boundary(at));
         out.insert_str(
             at,
             &format!(
@@ -1168,21 +1171,11 @@ fn evidence_path_values(finding: &Finding) -> Vec<String> {
             crate::output::path::display_path(&test.file),
             test.line,
             test.name,
-            // TRANSITIONAL (#8747): the JSON evidence path keeps the legacy
-            // "none unknown oracle" phrase until its goldens are re-blessed.
-            if matches!(test.oracle_strength, crate::domain::OracleStrength::None) {
-                format!(
-                    "{} {} oracle",
-                    test.oracle_strength.as_str(),
-                    test.oracle_kind.as_str().replace('_', " ")
-                )
-            } else {
-                crate::output::related_test_miss::oracle_projection(
-                    &test.oracle_strength,
-                    &test.oracle_kind,
-                    test.oracle.is_some(),
-                )
-            }
+            crate::output::related_test_miss::oracle_projection(
+                &test.oracle_strength,
+                &test.oracle_kind,
+                test.oracle.is_some(),
+            )
         );
         if let Some(oracle) = &test.oracle {
             value.push_str(&format!(": {oracle}"));

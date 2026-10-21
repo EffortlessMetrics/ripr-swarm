@@ -1,7 +1,7 @@
 use crate::agent::command_specs::report_regeneration_command_spec_from_display;
 use crate::agent::loop_commands::{check_repo_exposure_command, display_path, shell_arg};
 use crate::app::agent_status::pilot_select_command;
-use crate::config::detect_python_project;
+use crate::config::{detect_python_project, detect_typescript_project};
 use crate::domain::CommandSpec;
 use crate::output::gap_decision_ledger::projection_eligible_from_value;
 use crate::output::receipt_lifecycle::receipt_lifecycle_state;
@@ -2611,53 +2611,6 @@ fn check_output_gap_ledger_command(
     format!("ripr check --root {root} --base {base}{worktree} --json > {check_output} && {ledger}")
 }
 
-fn detect_typescript_project(root: &Path) -> bool {
-    ["package.json", "tsconfig.json", "jsconfig.json"]
-        .iter()
-        .any(|marker| root.join(marker).is_file())
-        || ["src", "tests"]
-            .iter()
-            .any(|marker| dir_contains_typescript_source(&root.join(marker)))
-}
-
-fn dir_contains_typescript_source(dir: &Path) -> bool {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return false;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if file_type.is_dir() {
-            let name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or_default();
-            if matches!(name, ".git" | "target" | "node_modules" | "dist" | "build") {
-                continue;
-            }
-            if dir_contains_typescript_source(&path) {
-                return true;
-            }
-        } else if file_type.is_file() && is_typescript_source_file(&path) {
-            return true;
-        }
-    }
-    false
-}
-
-fn is_typescript_source_file(path: &Path) -> bool {
-    // #4116: consume the shared TS/JS extension authority so .mts/.cts
-    // first-use sources are detected exactly like .ts/.tsx.
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            crate::analysis::ts_js_source_kind(extension)
-                == Some(crate::analysis::TsJsSourceKind::TypeScript)
-        })
-}
-
 fn regenerate_repo_exposure_command(root: &str) -> String {
     check_repo_exposure_command(root, "instant", DEFAULT_REPO_EXPOSURE)
 }
@@ -2845,37 +2798,6 @@ fn repo_root() -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn is_typescript_source_file_recognizes_modern_ts_extensions() {
-        // #4116: first-use TypeScript-source detection consumes the shared
-        // extension authority; .mts/.cts join .ts/.tsx, JavaScript-family
-        // and near-miss extensions stay excluded, and `.d.ts` keeps its
-        // accepted declaration-file routing via the "ts" extension.
-        let cases = [
-            ("src/a.ts", true),
-            ("src/a.tsx", true),
-            ("src/a.mts", true),
-            ("src/a.cts", true),
-            ("src/a.d.ts", true),
-            ("src/a.js", false),
-            ("src/a.jsx", false),
-            ("src/a.mjs", false),
-            ("src/a.cjs", false),
-            ("src/a.mt", false),
-            ("src/a.mjsx", false),
-            ("src/a.ctsx", false),
-            ("Makefile", false),
-        ];
-
-        for (path, expected) in cases {
-            assert_eq!(
-                super::is_typescript_source_file(Path::new(path)),
-                expected,
-                "{path}"
-            );
-        }
-    }
-
     #[test]
     fn resolve_path_drops_the_roots_own_cur_dir() {
         // `--root .` used to render every emitted artifact as
@@ -6468,6 +6390,7 @@ mod tests {
         assert!(!is_first_run_repairable_gap(&record_ref));
     }
 
+    #[cfg(feature = "lang-typescript")]
     #[test]
     fn typescript_preview_gap_ledger_is_selected_for_start_here() -> Result<(), String> {
         let repo = temp_typescript_repo("first-pr-typescript-preview")?;
@@ -6761,6 +6684,11 @@ mod tests {
         for case in cases {
             let case_id = string_path(case, &["id"])
                 .ok_or_else(|| "first_successful_pr case is missing id".to_string())?;
+            // Without `lang-typescript` first-use detection is inert (same
+            // as `ripr check`), so the TypeScript route does not apply.
+            if cfg!(not(feature = "lang-typescript")) && case_id.starts_with("typescript-") {
+                continue;
+            }
             assert_first_successful_pr_case(&corpus, &case_id)?;
         }
         Ok(())
@@ -6802,6 +6730,7 @@ mod tests {
         })
     }
 
+    #[cfg(feature = "lang-typescript")]
     fn ledger_with_typescript_repairable_gap() -> Value {
         json!({
             "schema_version": "0.1",
@@ -7159,6 +7088,23 @@ mod tests {
         Ok(path)
     }
 
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn first_use_typescript_detection_follows_the_config_rules() -> Result<(), String> {
+        let root = write_temp_root(&env::temp_dir(), "first-pr-ts-detection")?;
+        fs::write(root.join("package.json"), "{}\n")
+            .map_err(|err| format!("package.json: {err}"))?;
+        assert!(
+            !uses_check_output_gap_ledger(&root),
+            "package.json alone is not a TypeScript project"
+        );
+        fs::write(root.join("tsconfig.json"), "{}\n")
+            .map_err(|err| format!("tsconfig.json: {err}"))?;
+        assert!(uses_check_output_gap_ledger(&root), "tsconfig.json marker");
+        fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))
+    }
+
+    #[cfg(feature = "lang-typescript")]
     fn temp_typescript_repo(name: &str) -> Result<PathBuf, String> {
         let path = write_temp_root(&env::temp_dir(), name)?;
         fs::write(
@@ -7166,7 +7112,11 @@ mod tests {
             r#"{"name":"first-pr-typescript-test","private":true,"devDependencies":{"jest":"^30.0.0","typescript":"^5.8.0"}}"#,
         )
         .map_err(|err| format!("write temp package.json: {err}"))?;
-        init_git_repo_with_initial_files(&path, &["package.json"])?;
+        // First-use detection follows the config rules: `package.json` alone
+        // does not select TypeScript, a root `tsconfig.json` does.
+        fs::write(path.join("tsconfig.json"), "{}\n")
+            .map_err(|err| format!("write temp tsconfig.json: {err}"))?;
+        init_git_repo_with_initial_files(&path, &["package.json", "tsconfig.json"])?;
         Ok(path)
     }
 
