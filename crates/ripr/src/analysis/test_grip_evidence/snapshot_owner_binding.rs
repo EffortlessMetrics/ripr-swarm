@@ -26,7 +26,7 @@ pub(super) fn snapshot_observes_owner_result(
     }
     free_identifiers(&snapshot)
         .iter()
-        .any(|name| name_is_direct_owner_result(name, owner_name, oracle.line, test))
+        .any(|name| name_is_direct_owner_result(name, owner_name, oracle, test))
 }
 
 fn strip_oracle_text(text: &str) -> String {
@@ -88,17 +88,29 @@ pub(crate) enum BindingReach {
 fn name_is_direct_owner_result(
     name: &str,
     owner_name: &str,
-    oracle_line: usize,
+    oracle: &OracleFact,
     test: &TestSummary,
 ) -> bool {
+    let oracle_line = oracle.line;
+    // The assertion's own line is read up to the assertion macro, so a
+    // shadow or closure parameter earlier on that line counts.
+    let macro_name = oracle.text.trim().split('!').next().unwrap_or("").trim();
     // Literals and comments are blanked over the whole body first: a `}` or
     // `;` on its own line inside a multi-line string is not code.
     let body = blank_literals_and_comments(&test.body);
     let before: Vec<String> = body
         .lines()
         .enumerate()
-        .take_while(|(offset, _)| test.start_line + offset < oracle_line)
-        .map(|(_, line)| strip_comments_and_strings(line))
+        .take_while(|(offset, _)| test.start_line + offset <= oracle_line)
+        .map(|(offset, line)| {
+            if test.start_line + offset < oracle_line {
+                return strip_comments_and_strings(line);
+            }
+            match line.find(macro_name).filter(|_| !macro_name.is_empty()) {
+                Some(at) => strip_comments_and_strings(&line[..at]),
+                None => String::new(),
+            }
+        })
         .collect();
     walk_bindings(
         &before.join("\n"),
@@ -145,7 +157,7 @@ impl Pending {
     }
 
     fn starts_with_let(&self) -> bool {
-        self.skeleton.trim_start().starts_with("let ")
+        without_attributes(self.skeleton.trim_start()).starts_with("let ")
     }
 }
 
@@ -227,7 +239,10 @@ fn walk_bindings(
                         .unwrap_or("")
                         .contains("=>");
                 let pattern_brace = in_arm_pattern || in_pattern_position(&statement.skeleton);
-                let part_of_statement = nest > 0 || statement.starts_with_let() || pattern_brace;
+                let part_of_statement = nest > 0
+                    || statement.starts_with_let()
+                    || pattern_brace
+                    || struct_like_statement(&statement.skeleton);
                 let keep_text = pattern_brace || ends_with_type_like_name(&statement.skeleton);
                 let in_match = contains_word(&statement.skeleton, "match");
                 let resumes = if part_of_statement {
@@ -238,7 +253,7 @@ fn walk_bindings(
                     // This holds even when the enclosing `let` binds the same
                     // name (`let x = |x| {`), which its own verdict calls a
                     // plain shadow.
-                    if binds_by_pattern(without_attributes(statement.skeleton.trim()), name)
+                    if header_binds(&statement.skeleton, name)
                         || matches!(
                             statement_binding_verdict(
                                 &statement.skeleton,
@@ -317,9 +332,10 @@ fn walk_bindings(
     }
     if judge_open_statement {
         // A `let` still open has not bound its name yet: the initializer
-        // (where the cut falls) reads the previous binding. Only a binder
-        // (`let r = foo(|x|`) is read from it.
-        let unbound_let = statement.starts_with_let()
+        // (where the cut falls) reads the previous binding. The initializer
+        // itself can still shadow or rewrite it (`let x = |x|`,
+        // `let x = (mem::replace(&mut x, 1),`), which is read from it alone.
+        let pending_let = statement.starts_with_let()
             && !matches!(
                 statement_binding_verdict(
                     &statement.skeleton,
@@ -330,8 +346,13 @@ fn walk_bindings(
                 ),
                 Some(BindingVerdict::Withdrawn)
             );
-        if !unbound_let {
+        if !pending_let {
             judge(&mut statement, statement_depth, &mut scope);
+        } else if initializer_binds(&statement.skeleton, name) {
+            for (_, owner_bound) in scope.iter_mut() {
+                *owner_bound = false;
+            }
+            scope.push((statement_depth, false));
         }
     }
     scope.last().is_some_and(|(_, owner_bound)| *owner_bound)
@@ -503,12 +524,9 @@ fn statement_binding_verdict(
     if binds_by_pattern(trimmed, name) || borrows_mutably(trimmed, name) {
         return Some(BindingVerdict::Withdrawn);
     }
-    match assignment_target(trimmed) {
-        Some(target) if contains_word(target, name) => Some(BindingVerdict::Withdrawn),
-        _ => destructuring_target(trimmed)
-            .filter(|target| contains_word(target, name))
-            .map(|_| BindingVerdict::Withdrawn),
-    }
+    assignment_target(trimmed)
+        .filter(|target| contains_word(target, name))
+        .map(|_| BindingVerdict::Withdrawn)
 }
 
 /// `if let` / `while let` / `for` headers, match arms and closure
@@ -534,20 +552,126 @@ fn binds_by_pattern(statement: &str, name: &str) -> bool {
     {
         return true;
     }
+    // A `let` anywhere but at the start is a let chain (`c && let Some(x) =
+    // ..`) or a binder in an initializer.
+    let body = statement.strip_prefix("let ").unwrap_or(statement);
+    if body.match_indices("let ").any(|(at, _)| {
+        !body[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    }) {
+        return true;
+    }
     if statement.contains("=>") {
         let mut arms: Vec<&str> = statement.split("=>").collect();
         arms.pop();
-        let in_arm = arms.iter().any(|pattern| {
-            let arm = pattern
-                .rsplit_once([',', '{'])
-                .map_or(*pattern, |(_, arm)| arm);
-            contains_word(arm, name)
-        });
-        if in_arm {
+        if arms
+            .iter()
+            .any(|pattern| contains_word(current_arm(pattern), name))
+        {
             return true;
         }
     }
     closure_parameters_name(statement, name)
+}
+
+/// The pattern of the arm that ends at the `=>` after `piece`: what follows
+/// the last top-level `,` (or the `{` that opened the match body), the whole
+/// pattern including tuple and struct parts and any guard.
+fn current_arm(piece: &str) -> &str {
+    let mut stack: Vec<char> = Vec::new();
+    let mut start = 0;
+    for (at, ch) in piece.char_indices() {
+        match ch {
+            '(' | '[' | '{' => stack.push(ch),
+            ')' | ']' | '}' => {
+                stack.pop();
+            }
+            ',' if stack.is_empty() => start = at + 1,
+            _ => {}
+        }
+    }
+    // An unmatched `{` is the match body itself.
+    if let Some(bottom) = stack_bottom_brace(piece) {
+        start = start.max(bottom + 1);
+    }
+    &piece[start..]
+}
+
+/// Byte offset of the outermost brace left open at the end of `piece`.
+fn stack_bottom_brace(piece: &str) -> Option<usize> {
+    let mut stack: Vec<(usize, char)> = Vec::new();
+    for (at, ch) in piece.char_indices() {
+        match ch {
+            '(' | '[' | '{' => stack.push((at, ch)),
+            ')' | ']' | '}' => {
+                stack.pop();
+            }
+            _ => {}
+        }
+    }
+    stack
+        .first()
+        .filter(|(_, ch)| *ch == '{')
+        .map(|(at, _)| *at)
+}
+
+/// The initializer of an open `let` (what follows its first `=`) binds or
+/// mutably borrows `name`.
+fn initializer_binds(skeleton: &str, name: &str) -> bool {
+    let trimmed = without_attributes(skeleton.trim());
+    let Some((_, initializer)) = trimmed.split_once('=') else {
+        return false;
+    };
+    binds_by_pattern(initializer, name) || borrows_mutably(initializer, name)
+}
+
+/// A binder of `name` in the header of the brace being opened. The pattern of
+/// a `let` is not part of its own initializer (`let x = |Foo { y }| {`).
+fn header_binds(skeleton: &str, name: &str) -> bool {
+    let trimmed = without_attributes(skeleton.trim());
+    match trimmed.strip_prefix("let ") {
+        Some(rest) => rest
+            .split_once('=')
+            .is_some_and(|(_, initializer)| binds_by_pattern(initializer, name)),
+        None => binds_by_pattern(trimmed, name),
+    }
+}
+
+/// A brace after a type-like name outside an item or block header: a struct
+/// pattern or literal that continues the statement (`Foo { x, y } = ..;`).
+fn struct_like_statement(skeleton: &str) -> bool {
+    let trimmed = without_attributes(skeleton.trim());
+    let first = trimmed
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .next()
+        .unwrap_or("");
+    !matches!(
+        first,
+        "if" | "while"
+            | "match"
+            | "for"
+            | "loop"
+            | "else"
+            | "unsafe"
+            | "impl"
+            | "struct"
+            | "enum"
+            | "trait"
+            | "mod"
+            | "fn"
+            | "pub"
+            | "type"
+            | "union"
+            | "return"
+            | "async"
+            | "move"
+            | "const"
+            | "static"
+            | "extern"
+            | "use"
+    ) && ends_with_type_like_name(skeleton)
 }
 
 /// A single `|` in `statement` (a name was already found in it): a closure
@@ -574,6 +698,30 @@ fn closure_parameters_name(statement: &str, _name: &str) -> bool {
 /// it is a struct pattern or literal, not a block header (`else`, `loop`,
 /// `async`, `unsafe`, `move`, a condition).
 fn ends_with_type_like_name(statement: &str) -> bool {
+    let mut statement = statement.trim_end();
+    // `Foo::<u8> {`: a turbofish between the path and the brace.
+    if statement.ends_with('>') {
+        let mut angles = 0usize;
+        let mut open_at = None;
+        for (at, ch) in statement.char_indices().rev() {
+            match ch {
+                '>' if statement[..at].ends_with('-') => {}
+                '>' => angles += 1,
+                '<' => {
+                    angles = angles.saturating_sub(1);
+                    if angles == 0 {
+                        open_at = Some(at);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        match open_at.and_then(|at| statement[..at].strip_suffix("::")) {
+            Some(path) => statement = path,
+            None => return false,
+        }
+    }
     let word: String = statement
         .trim_end()
         .chars()
@@ -591,7 +739,7 @@ fn ends_with_type_like_name(statement: &str) -> bool {
 /// The statement is inside the pattern of an `if let`, `while let` or `for`
 /// header: the keyword is open and its `=` (or `in`) has not come yet.
 fn in_pattern_position(statement: &str) -> bool {
-    ["if let ", "while let ", "for "]
+    ["let ", "for "]
         .iter()
         .filter_map(|keyword| {
             statement
@@ -654,10 +802,11 @@ fn initializer_is_owner_call(initializer: &str, owner_name: &str) -> bool {
     false
 }
 
-/// The place expression assigned by `statement`, when it is an assignment
-/// (`x = ..`, `x += ..`, `*x.y <<= ..`). Comparisons (`==`, `!=`, `<=`,
-/// `>=`), match arms (`=>`) and any left-hand side that is not a plain
-/// place (`if x == 0 {`, `debug_assert!(x == 3);`) are not assignments.
+/// The left-hand side of the assignment in `statement` (`x = ..`, `x += ..`,
+/// `x[0] = ..`, `(*x).y = ..`, `(x, y) = ..`, `Foo { x, .. } = ..`,
+/// `Some(x) = ..`): everything before the first `=` that is not part of a
+/// comparison (`==`, `!=`, `<=`, `>=`), a match arm (`=>`) or a range (`..=`).
+/// Any left-hand side that names the local is read as possibly rewriting it.
 fn assignment_target(statement: &str) -> Option<&str> {
     let bytes = statement.as_bytes();
     let at = (0..bytes.len()).find(|&at| {
@@ -665,37 +814,14 @@ fn assignment_target(statement: &str) -> Option<&str> {
             && !matches!(bytes.get(at + 1), Some(b'=') | Some(b'>'))
             && !matches!(
                 at.checked_sub(1).map(|prev| bytes[prev]),
-                Some(b'=') | Some(b'!')
+                Some(b'=') | Some(b'!') | Some(b'.')
             )
             && !is_comparison_angle(bytes, at)
     })?;
     let target = statement[..at]
         .trim_end_matches(['+', '-', '*', '/', '%', '&', '|', '^', '<', '>'])
         .trim();
-    let plain_place = !target.is_empty()
-        && target
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '*'));
-    plain_place.then_some(target)
-}
-
-/// The tuple or slice pattern assigned by `statement` (`(x, y) = ..`,
-/// `[x, _] = ..`).
-fn destructuring_target(statement: &str) -> Option<&str> {
-    let bytes = statement.as_bytes();
-    let at = (0..bytes.len()).find(|&at| {
-        bytes[at] == b'='
-            && !matches!(bytes.get(at + 1), Some(b'=') | Some(b'>'))
-            && !matches!(
-                at.checked_sub(1).map(|prev| bytes[prev]),
-                Some(b'=') | Some(b'!')
-            )
-            && !is_comparison_angle(bytes, at)
-    })?;
-    let target = statement[..at].trim();
-    (target.starts_with('(') && target.ends_with(')')
-        || target.starts_with('[') && target.ends_with(']'))
-    .then_some(target)
+    (!target.is_empty()).then_some(target)
 }
 
 /// `<=` / `>=` compare; `<<=` / `>>=` assign.
@@ -726,11 +852,23 @@ fn without_attributes(statement: &str) -> &str {
     rest
 }
 
-/// `&mut name` in `statement`: the value may be swapped or rewritten through
-/// the borrow (`mem::swap(&mut name, ..)`, `fill(&mut name)`).
+/// A mutable borrow of `name` in `statement` (`&mut name`, `& mut (name)`,
+/// `&raw mut name`, `&mut *name`): the value may be swapped or rewritten
+/// through the borrow (`mem::swap(&mut name, ..)`, `fill(&mut name)`).
 fn borrows_mutably(statement: &str, name: &str) -> bool {
-    statement.match_indices("&mut").any(|(at, _)| {
-        let rest = statement[at + "&mut".len()..].trim_start();
+    statement.match_indices('&').any(|(at, _)| {
+        let mut rest = statement[at + 1..].trim_start();
+        if let Some(raw) = rest.strip_prefix("raw") {
+            rest = raw.trim_start();
+        }
+        let Some(rest) = rest.strip_prefix("mut") else {
+            return false;
+        };
+        if rest.starts_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_') {
+            return false;
+        }
+        let rest =
+            rest.trim_start_matches(|ch: char| ch.is_whitespace() || matches!(ch, '(' | '*' | '&'));
         rest.strip_prefix(name).is_some_and(|after| {
             !after.starts_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_')
         })
@@ -922,7 +1060,44 @@ mod tests {
         let body = format!("{setup}\ninsta::assert_snapshot!(x);");
         let test = test_with(&body);
         let line = test.start_line + body.lines().count() - 1;
-        super::name_is_direct_owner_result("x", "own", line, &test)
+        let oracle = super::OracleFact {
+            line,
+            text: "insta::assert_snapshot!(x)".to_string(),
+            kind: crate::domain::OracleKind::Snapshot,
+            strength: crate::domain::OracleStrength::Medium,
+            observed_tokens: Vec::new(),
+            ok_value_observed: None,
+        };
+        super::name_is_direct_owner_result("x", "own", &oracle, &test)
+    }
+
+    /// The same, with the assertion sharing its line with `prefix`.
+    fn strict_same_line(setup: &str, prefix: &str) -> bool {
+        let body = format!("{setup}\n{prefix}insta::assert_snapshot!(x);");
+        let test = test_with(&body);
+        let line = test.start_line + body.lines().count() - 1;
+        let oracle = super::OracleFact {
+            line,
+            text: "insta::assert_snapshot!(x)".to_string(),
+            kind: crate::domain::OracleKind::Snapshot,
+            strength: crate::domain::OracleStrength::Medium,
+            observed_tokens: Vec::new(),
+            ok_value_observed: None,
+        };
+        super::name_is_direct_owner_result("x", "own", &oracle, &test)
+    }
+
+    #[test]
+    fn a_shadow_or_parameter_earlier_on_the_assertion_line_is_judged() {
+        assert!(!strict_same_line("let x = own(2);", "let x = 7; "));
+        assert!(!strict_same_line("let x = own(2);", "run(|x: usize| { "));
+        assert!(!strict_same_line(
+            "let x = own(2);",
+            "if let Some(x) = p { "
+        ));
+        assert!(strict_same_line("let x = own(2);", ""));
+        assert!(strict_same_line("let x = own(2);", "let y = 7; "));
+        assert!(strict_same_line("let x = own(2);", "run(|y: usize| { "));
     }
 
     #[test]
@@ -1047,6 +1222,149 @@ mod tests {
                 ),
                 "{text}"
             );
+        }
+    }
+
+    /// Every binder shape of the local, in every placement, in both modes:
+    /// the cut falls where the binder is live, so the owner credit must go.
+    /// The same shapes over a fresh name keep it.
+    #[test]
+    fn a_generated_sweep_of_binder_shapes_and_placements_withholds_credit() {
+        let shapes: &[&str] = &[
+            "let {n} = |{n}|\n",
+            "let {n} = (std::mem::replace(&mut {n}, 1),\n",
+            "let {n} = |Foo::<u8> { {n} }| {\n",
+            "let f = |Foo::<u8> { {n} }| {\n",
+            "run(|Foo::<u8> { {n} }| {\n",
+            "run(|module::Foo::<fn() -> u8> { {n} }| {\n",
+            "run(|{n}| {\n",
+            "run(a, |{n}| {\n",
+            "run(a | b, |{n}| {\n",
+            "run(|(i, {n})| {\n",
+            "let g = |{n}| {\n",
+            "let {n} = |{n}: usize| {\n",
+            "let {n} = if let Some({n}) = p {\n",
+            "foo(if let Some({n}) = p {\n",
+            "if let Some({n}) = foo() {\n",
+            "if let Foo { {n}, .. } = foo() {\n",
+            "while let Some({n}) = it.next() {\n",
+            "for {n} in v {\n",
+            "for Foo { {n} } in v {\n",
+            "match p {\n ({n}, y) => {\n",
+            "match p {\n ({n}, y) =>\n",
+            "match p {\n A => 1,\n ({n}, y) => {\n",
+            "match (a, b) {\n ({n}, y) => {\n",
+            "match p {\n ({n}, y)\n => {\n",
+            "match p {\n ({n}, _) if c => {\n",
+            "match p {\n (1, {n}) if f(1, 2) => {\n",
+            "match p {\n Some(({n}, y)) => {\n",
+            "match p {\n Foo({n}, y) => {\n",
+            "match p {\n [{n}, y] => {\n",
+            "match p {\n Foo { {n}, y } => {\n",
+            "match p {\n Foo { {n}, .. } => {\n",
+            "match p {\n Foo { {n}, y, } => {\n",
+            "match p {\n Foo { ref {n}, .. } => {\n",
+            "match p {\n Foo {\n a,\n {n},\n } => {\n",
+            "match p {\n Foo {\n a,\n {n},\n } =>\n",
+            "match p {\n Foo { {n} } if matches!({n}, 1) => {\n",
+            "if c && let Some({n}) = foo() {\n",
+            "if c && let Foo { {n} } = foo() {\n",
+            "while c && let Some({n}) = it.next() {\n",
+            "if c {\n} else if c && let Some({n}) = foo() {\n",
+            "if c && let Some(a) = f() && let Some({n}) = g() {\n",
+            "if let Some(a) = f() && let Foo { {n} } = g() {\n",
+            "Foo { {n}, y } = foo();\n",
+            "Foo { {n}: {n}, .. } = foo();\n",
+            "Foo { y: {n}, .. } = foo();\n",
+            "Foo({n}, y) = foo();\n",
+            "Foo({n}, _) = foo();\n",
+            "Some({n}) = foo();\n",
+            "({n}, y) = foo();\n",
+            "[{n}, y] = foo();\n",
+            "{n} = 5;\n",
+            "{n} += 5;\n",
+            "{n}[0] = 5;\n",
+            "{n}[0] += 5;\n",
+            "{n}.f[0] = 5;\n",
+            "(*{n}).y = 5;\n",
+            "let t = std::mem::take(&mut {n});\n",
+            "f(&mut ({n}));\n",
+            "f(& mut {n});\n",
+            "f(&raw mut {n});\n",
+            "swap(&mut *{n}, &mut y);\n",
+        ];
+        let placements: &[&str] = &[
+            "",
+            "{\n",
+            "if c {\n",
+            "run(|| {\n",
+            "let r = {\n",
+            "unsafe {\n",
+            "match p {\n _ => {\n",
+        ];
+        let modes: &[(&str, super::BindingReach)] = &[
+            ("let x = own(2);\n", super::BindingReach::DirectOwnerCall),
+            (
+                "let mut x = own(2);\n",
+                super::BindingReach::OwnerCallInInitializer,
+            ),
+        ];
+        let mut cases = 0;
+        for (setup, reach) in modes {
+            for placement in placements {
+                for shape in shapes {
+                    let hit = format!("{setup}{placement}{}", shape.replace("{n}", "x"));
+                    assert!(
+                        !super::local_is_owner_result_before(&hit, "x", "own", *reach),
+                        "binder must withdraw credit: {hit:?}"
+                    );
+                    let miss = format!("{setup}{placement}{}", shape.replace("{n}", "q"));
+                    assert!(
+                        super::local_is_owner_result_before(&miss, "x", "own", *reach),
+                        "other name must keep credit: {miss:?}"
+                    );
+                    cases += 1;
+                }
+            }
+        }
+        assert!(cases > 100, "{cases}");
+    }
+
+    #[test]
+    fn an_open_plain_let_keeps_the_previous_binding_but_not_a_binder_in_its_initializer() {
+        for reach in [
+            super::BindingReach::DirectOwnerCall,
+            super::BindingReach::OwnerCallInInitializer,
+        ] {
+            assert!(super::local_is_owner_result_before(
+                "let x = own(2);\nlet x =\n",
+                "x",
+                "own",
+                reach
+            ));
+            assert!(!super::local_is_owner_result_before(
+                "let x = own(2);\nlet x = |x|\n",
+                "x",
+                "own",
+                reach
+            ));
+            for kept in [
+                "let x = own(2);\nlet x = |Foo::<u8> { y }| {\n",
+                "let x = own(2);\n#[inline]\nlet x =\n",
+                "let x = own(2);\n#[inline] let x =\n",
+                "let x = own(2);\n#[inline]\nlet x = {\n",
+            ] {
+                assert!(
+                    super::local_is_owner_result_before(kept, "x", "own", reach),
+                    "{kept:?}"
+                );
+            }
+            assert!(!super::local_is_owner_result_before(
+                "let x = own(2);\n#[inline]\nlet x = 5;\n",
+                "x",
+                "own",
+                reach
+            ));
         }
     }
 }

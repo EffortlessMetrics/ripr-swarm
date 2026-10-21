@@ -688,7 +688,7 @@ fn a_commented_environment_write_activates_nothing() -> Result<(), String> {
 fn a_shadow_inside_a_callback_reaches_an_assertion_inside_it() -> Result<(), String> {
     // Each case is the setup, then what closes the open block after the
     // assertion (nothing when the shadow is not in a block).
-    let cases: [(&str, &str); 25] = [
+    let cases: [(&str, &str); 39] = [
         // The assertion sits in the callback block that rebinds the local.
         (
             "let tokens = tokenize(\"7\");\n        apply(|| {\n            let tokens = vec![1u32];",
@@ -797,6 +797,62 @@ fn a_shadow_inside_a_callback_reaches_an_assertion_inside_it() -> Result<(), Str
             "let mut tokens = tokenize(\"7\");\n        std::mem::replace(&mut tokens, vec![1u32]);",
             "",
         ),
+        (
+            "let tokens = tokenize(\"7\");\n        let tokens = |tokens|",
+            "",
+        ),
+        (
+            "let mut tokens = tokenize(\"7\");\n        let tokens = (std::mem::replace(&mut tokens, vec![1u32]),",
+            "",
+        ),
+        (
+            "let tokens = tokenize(\"7\");\n        run(|Foo::<u8> { tokens }| {",
+            "\n        });",
+        ),
+        (
+            "let tokens = tokenize(\"7\");\n        run(|module::Foo::<fn() -> u8> { tokens }| {",
+            "\n        });",
+        ),
+        (
+            "let tokens = tokenize(\"7\");\n        match p {\n            (tokens, y) => {",
+            "\n            }\n        }",
+        ),
+        (
+            "let tokens = tokenize(\"7\");\n        match p {\n            A => 1,\n            (tokens, _) if c => {",
+            "\n            }\n        }",
+        ),
+        (
+            "let tokens = tokenize(\"7\");\n        match p {\n            Foo {\n                a,\n                tokens,\n            } => {",
+            "\n            }\n        }",
+        ),
+        (
+            "let tokens = tokenize(\"7\");\n        match p {\n            Foo { tokens } if matches!(tokens, 1) => {",
+            "\n            }\n        }",
+        ),
+        (
+            "let tokens = tokenize(\"7\");\n        if c && let Some(tokens) = foo() {",
+            "\n        }",
+        ),
+        (
+            "let tokens = tokenize(\"7\");\n        while c && let Some(tokens) = it.next() {",
+            "\n        }",
+        ),
+        (
+            "let tokens = tokenize(\"7\");\n        Foo { tokens, y } = foo();",
+            "",
+        ),
+        (
+            "let tokens = tokenize(\"7\");\n        Some(tokens) = foo();",
+            "",
+        ),
+        (
+            "let mut tokens = tokenize(\"7\");\n        tokens[0] = 5;",
+            "",
+        ),
+        (
+            "let mut tokens = tokenize(\"7\");\n        f(&raw mut tokens);",
+            "",
+        ),
     ];
     for (setup, close) in cases {
         all_keep_gap(setup, &format!("{EXPECT_ASSERT}{close}"))?;
@@ -817,6 +873,10 @@ fn a_closed_callback_shadow_leaves_the_owner_binding() -> Result<(), String> {
         "let tokens = tokenize(\"7\");\n        run(a | b, |other| {\n            foo();\n        });",
         // An unfinished `let tokens =` has not rebound the name where its initializer runs.
         "let tokens = tokenize(\"7\");\n        let tokens =",
+        "let tokens = tokenize(\"7\");\n        #[inline]\n        let tokens =",
+        "let tokens = tokenize(\"7\");\n        let tokens = |Foo::<u8> { y }| {\n            foo();",
+        "let tokens = tokenize(\"7\");\n        match p {\n            (y, z) => {\n                foo();\n            }\n        }",
+        "let tokens = tokenize(\"7\");\n        if c && let Some(y) = foo() {\n            bar();\n        }",
         "let tokens = tokenize(\"7\");\n        if let Foo { other } = foo() {\n            bar();\n        }",
         "let tokens = tokenize(\"7\");\n        run(|| {\n            foo(tokens);\n        });",
         "let tokens = tokenize(\"7\");\n        foo(if let Some(other) = p {\n            bar();\n        } else {\n            baz();\n        });",
