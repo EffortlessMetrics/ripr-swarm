@@ -18,8 +18,9 @@ use crate::analysis::classify::{
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
+use crate::analysis::sync_memo::SyncMemo;
 use crate::domain::*;
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -59,6 +60,9 @@ pub(in crate::analysis) struct ClassifiedProbeEvidence {
     /// related `assert_eq!` was refused for an analyzer limit, so the gap
     /// rests on what ripr could not read (RIPR-SPEC-0240).
     pub(in crate::analysis) refusals_are_analyzer_limits: bool,
+    /// #8600: some related test (before the render cap trims the rows) has a
+    /// line at the per-line call-fact budget, so a call there may be missing.
+    pub(in crate::analysis) related_call_budget_saturated: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -280,14 +284,28 @@ impl ClassifiedProbeEvidence {
             // #7970: a function that is not one of the related tests and
             // calls the owner by name (a wrapper, a helper, a production
             // caller) may feed it inputs the literal call lines do not show.
+            // #8462: a production function that holds the owner without a call
+            // shape (`let f = owner; f(1, 1)`) or a `macro_rules!` body that
+            // expands to a call is invisible to `calls`, so the bare name in
+            // either counts as another caller.
             context.owner_fn.is_none_or(|owner| {
-                context.index.functions().iter().any(|function| {
+                let other_function_holds_owner = context.index.functions().iter().any(|function| {
                     function.id != owner.id
                         && !test_summaries
                             .iter()
                             .any(|test| test.file == function.file && test.name == function.name)
-                        && function.calls.iter().any(|call| call.name == owner.name)
-                })
+                        && (function.calls.iter().any(|call| call.name == owner.name)
+                            || mentions_identifier(function.body.as_str(), &owner.name))
+                });
+                // Only the `&&`/`||` operand reading consumes this, so other
+                // families skip the per-file macro scan.
+                other_function_holds_owner
+                    || (matches!(context.probe.family, ProbeFamily::Predicate)
+                        && context.index.files().values().any(|file| {
+                            macro_rules_bodies(&file.source)
+                                .iter()
+                                .any(|body| mentions_identifier(body, &owner.name))
+                        }))
             }),
         );
         // #6796's computed-argument discipline, wrapper edition (#6672,
@@ -1068,6 +1086,11 @@ impl ClassifiedProbeEvidence {
                 && refusals.all(|refusal| is_limit(&refusal))
         };
 
+        let related_call_budget_saturated = context
+            .related_tests
+            .iter()
+            .any(|(test, _)| crate::analysis::extract::has_saturated_line(test.calls.iter()));
+
         Self {
             ripr,
             evidence,
@@ -1084,6 +1107,7 @@ impl ClassifiedProbeEvidence {
             reach_ruled_out,
             assertion_refusal,
             refusals_are_analyzer_limits,
+            related_call_budget_saturated,
         }
     }
 
@@ -1268,8 +1292,11 @@ type OwnerCallerSets = BTreeMap<usize, BTreeSet<(Option<String>, String)>>;
 
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct OwnerCallerNames {
-    index_identity: Cell<Option<(usize, usize, u64)>>,
-    by_owner_slot: RefCell<OwnerCallerSets>,
+    index_identity: SyncMemo<Option<(usize, usize, u64)>>,
+    by_owner_slot: SyncMemo<OwnerCallerSets>,
+    /// Walks the memo ran, so a test can tell a hit from a recompute.
+    #[cfg(test)]
+    walks: SyncMemo<usize>,
 }
 
 impl OwnerCallerNames {
@@ -1292,7 +1319,7 @@ impl OwnerCallerNames {
         if let Some(cached) = self.by_owner_slot.borrow().get(&slot) {
             return cached.iter().any(matches);
         }
-        let callers = transitive_caller_names(owner, index);
+        let callers = self.walk(owner, index);
         let found = callers.iter().any(matches);
         self.by_owner_slot.borrow_mut().insert(slot, callers);
         found
@@ -1311,26 +1338,48 @@ impl OwnerCallerNames {
         if let Some(cached) = self.by_owner_slot.borrow().get(&slot) {
             return cached.clone();
         }
-        let callers = transitive_caller_names(owner, index);
+        let callers = self.walk(owner, index);
         self.by_owner_slot
             .borrow_mut()
             .insert(slot, callers.clone());
         callers
     }
 
-    /// The cache cells, so tests can hold a shared borrow across a repeat
-    /// query: a hit only borrows, while a recompute's `borrow_mut` panics.
+    /// The cache cells, so tests can inspect them between queries. A guard
+    /// must not be held across a query: the memo is a lock, and re-entry
+    /// panics in test builds.
     #[cfg(test)]
-    pub(in crate::analysis) fn slots_for_test(&self) -> &std::cell::RefCell<OwnerCallerSets> {
+    pub(in crate::analysis) fn slots_for_test(&self) -> &SyncMemo<OwnerCallerSets> {
         &self.by_owner_slot
+    }
+
+    fn walk(
+        &self,
+        owner: &FunctionSummary,
+        index: &RustIndex,
+    ) -> BTreeSet<(Option<String>, String)> {
+        #[cfg(test)]
+        {
+            *self.walks.borrow_mut() += 1;
+        }
+        transitive_caller_names(owner, index)
+    }
+
+    /// How many times the memo walked callers instead of serving a hit.
+    #[cfg(test)]
+    pub(in crate::analysis) fn walks_for_test(&self) -> usize {
+        *self.walks.borrow()
     }
 
     fn slot_key(&self, index: &RustIndex, owner: &FunctionSummary) -> Option<usize> {
         let identity = index.storage_identity();
-        match self.index_identity.get() {
-            None => self.index_identity.set(Some(identity)),
-            Some(bound) if bound != identity => return None,
-            Some(_) => {}
+        {
+            let mut bound = self.index_identity.borrow_mut();
+            match *bound {
+                None => *bound = Some(identity),
+                Some(bound) if bound != identity => return None,
+                Some(_) => {}
+            }
         }
         index.function_slot(owner)
     }
@@ -1470,6 +1519,57 @@ fn preferred_refusal_note(notes: Vec<AssertionRefusalNote>) -> Option<AssertionR
     // `min_by_key` keeps the first of equal ranks, so test order still
     // decides within a rank.
     notes.into_iter().min_by_key(rank)
+}
+
+/// True when `name` occurs as a whole identifier in the code of `text`,
+/// ignoring comments and string contents.
+fn mentions_identifier(text: &str, name: &str) -> bool {
+    if name.is_empty() || !text.contains(name) {
+        return false;
+    }
+    mask_comments_and_strings(text)
+        .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .any(|token| token == name)
+}
+
+/// The brace-delimited bodies of every `macro_rules!` item in `source`.
+fn macro_rules_bodies(source: &str) -> Vec<String> {
+    if !source.contains("macro_rules!") {
+        return Vec::new();
+    }
+    let masked = mask_comments_and_strings(source);
+    let mut bodies = Vec::new();
+    let mut from = 0;
+    while let Some(found) = masked[from..].find("macro_rules!") {
+        let start = from + found;
+        let Some(open) = masked[start..]
+            .find(['{', '(', '['])
+            .map(|offset| start + offset)
+        else {
+            break;
+        };
+        let (opener, closer) = match masked.as_bytes().get(open) {
+            Some(b'{') => (b'{', b'}'),
+            Some(b'(') => (b'(', b')'),
+            _ => (b'[', b']'),
+        };
+        let mut depth = 0usize;
+        let mut end = masked.len();
+        for (offset, byte) in masked.as_bytes()[open..].iter().enumerate() {
+            if *byte == opener {
+                depth += 1;
+            } else if *byte == closer {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    end = open + offset + 1;
+                    break;
+                }
+            }
+        }
+        bodies.push(masked[open..end].to_string());
+        from = end;
+    }
+    bodies
 }
 
 #[cfg(test)]
@@ -2128,16 +2228,14 @@ mod tests {
             1,
             "the first query populated the cache"
         );
-        // The repeat query must hit: a shared borrow is held across it, so
-        // a recompute's `borrow_mut` panics instead of silently re-walking.
-        {
-            let _guard = memo.slots_for_test().borrow();
-            assert_eq!(
-                memo.callers_for(&index, owner),
-                direct,
-                "the repeat query serves the cached set"
-            );
-        }
+        // The repeat query must hit: the walk counter does not move.
+        assert_eq!(memo.walks_for_test(), 1, "the first query walked once");
+        assert_eq!(
+            memo.callers_for(&index, owner),
+            direct,
+            "the repeat query serves the cached set"
+        );
+        assert_eq!(memo.walks_for_test(), 1, "the repeat query hit the cache");
         // The borrow-scoped predicate agrees with the walked set.
         for (ty, caller) in &direct {
             assert!(

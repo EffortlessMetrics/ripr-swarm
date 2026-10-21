@@ -41,6 +41,12 @@ pub(crate) const CODE_NO_SNAPSHOT: &str = "no_snapshot";
 pub(crate) const CODE_ANALYSIS_IN_FLIGHT: &str = "analysis_in_flight";
 pub(crate) const CODE_STALE_SNAPSHOT: &str = "stale_snapshot";
 pub(crate) const CODE_ITEM_NOT_FOUND: &str = "item_not_found";
+/// #8736 review follow-up: one raw resource-id segment can resolve both as
+/// captured (legacy raw URI for a literal-`%` file) and as its percent-
+/// decoded form (a URI-emitting client addressing the decoded file) when
+/// both files exist; the wire form is then ambiguous and the route fails
+/// closed instead of silently picking one item.
+pub(crate) const CODE_ID_AMBIGUOUS: &str = "id_ambiguous";
 pub(crate) const CODE_RESULT_TOO_LARGE: &str = "result_too_large";
 /// #7462: `ripr_get_gap` is already one item. Retrying it cannot shrink the
 /// document. The recovery names `--committed` because the snapshot analyzed
@@ -363,9 +369,10 @@ impl Snapshot {
     /// outcomes (`unsupported_input`, `analysis_failed`) stay failures and
     /// never become snapshots; partial outcomes commit with their typed
     /// limitations so complete-zero and incomplete-zero stay distinct.
-    pub(crate) fn from_output(
+    pub(crate) fn from_output_admitted(
         output: &crate::app::CheckOutput,
         root_identity: Option<&str>,
+        admission: &super::repair_admission::SeamAdmission,
     ) -> Result<Self, AttemptFailure> {
         let outcome = output
             .analysis_outcome
@@ -407,7 +414,7 @@ impl Snapshot {
         let mut items = output
             .findings
             .iter()
-            .map(|finding| GapItem::from_finding(finding, &output.root))
+            .map(|finding| GapItem::from_finding_admitted(finding, &output.root, admission))
             .collect::<Result<Vec<_>, String>>()
             .map_err(|error| {
                 AttemptFailure::new(
@@ -454,6 +461,21 @@ impl Snapshot {
             selection,
             scope,
         })
+    }
+
+    /// Finding-level projection with no seam evaluation: unit tests build
+    /// snapshots over fabricated outputs that carry no seam inventory.
+    /// Production refresh always binds [`Self::from_output_admitted`].
+    #[cfg(test)]
+    pub(crate) fn from_output(
+        output: &crate::app::CheckOutput,
+        root_identity: Option<&str>,
+    ) -> Result<Self, AttemptFailure> {
+        Self::from_output_admitted(
+            output,
+            root_identity,
+            &super::repair_admission::SeamAdmission::unevaluated(),
+        )
     }
 
     pub(crate) fn item(&self, id: &str) -> Option<&GapItem> {
@@ -1314,14 +1336,25 @@ pub(crate) fn run_check(
             "retry with ripr_refresh; if the failure persists, run `ripr check --format json` in the repository for the full diagnostic",
         )
     })?;
-    let mut snapshot = Snapshot::from_output(&output, root_identity)?;
+    // The seam inventory is gathered once inside this bounded attempt and
+    // feeds both consumers: the shared repair validator that decides each
+    // item's repair readiness (#8717) and the repair-card seam bindings
+    // (RIPR-SPEC-0215). Readiness is projected before the snapshot identity
+    // is computed, so the identity binds the admission decision.
+    let inventory = super::repair_card::gather_seam_inventory(root, &config, &output.findings)?;
+    let admission = super::repair_admission::SeamAdmission::evaluate(
+        &output.findings,
+        &inventory.candidate_seams,
+        crate::app::agent_brief::AgentBriefPolicy::from_config(&config),
+    );
+    let mut snapshot = Snapshot::from_output_admitted(&output, root_identity, &admission)?;
     // Bind the repair-card producers inside the same bounded attempt, after
     // the shared check authority completed: the snapshot commits complete —
     // items, findings, head, and card seams — or not at all (RIPR-SPEC-0215).
     // The card producers consume the same resolved workspace configuration
     // as the findings (#6825 review), so one committed snapshot cannot
     // disagree with itself across the two producers.
-    super::repair_card::bind_snapshot_card_producers(root, &config, &mut snapshot)?;
+    super::repair_card::bind_snapshot_card_producers(root, inventory, &mut snapshot)?;
     Ok(snapshot)
 }
 
@@ -2941,6 +2974,37 @@ mod tests {
                 "equivalent roots must preserve one portable snapshot identity".to_string(),
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn related_test_totals_change_snapshot_identity_without_changing_rows() -> Result<(), String> {
+        let mut before = output(AnalysisOutcomeKind::CompleteWithFindings, 1, Vec::new())?;
+        let mut finding = gaps::test_finding()?;
+        finding.related_tests = vec![finding.related_tests[0].clone(); 8];
+        finding.related_tests_matched_total = Some(12);
+        before.findings.push(finding);
+        let mut after = before.clone();
+        after.findings[0].related_tests_matched_total = Some(13);
+        let twelve =
+            Snapshot::from_output(&before, Some("root:sha256:test")).map_err(|f| f.detail)?;
+        let thirteen =
+            Snapshot::from_output(&after, Some("root:sha256:test")).map_err(|f| f.detail)?;
+        assert_eq!(twelve.items.len(), 1);
+        assert_eq!(thirteen.items.len(), 1);
+        assert_eq!(
+            twelve.items[0].evidence_core["related_tests"],
+            thirteen.items[0].evidence_core["related_tests"]
+        );
+        assert_eq!(
+            twelve.items[0].evidence_bytes,
+            thirteen.items[0].evidence_bytes
+        );
+        assert_ne!(
+            twelve.items[0].evidence_sha256,
+            thirteen.items[0].evidence_sha256
+        );
+        assert_ne!(twelve.snapshot_id, thirteen.snapshot_id);
         Ok(())
     }
 

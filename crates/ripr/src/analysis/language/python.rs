@@ -60,6 +60,7 @@ mod boundary;
 mod classify;
 mod deleted_lines;
 mod guard_activation;
+mod wrapped_call;
 use classify::{PythonNoBehaviorContext, classify_change_with_context};
 #[cfg(test)]
 use classify::{classify_change, classify_change_with_old};
@@ -115,9 +116,9 @@ use related_tests::{
     PythonRelatedCandidate, PythonRelationKind, binding_target_for_construction, body_calls_owner,
     construct_result_is_called, contains_any_attribute_call, find_related_tests,
     has_unclosed_quote, imported_module_matches_owner, local_binding_calls_owner,
-    normalize_similarity_key, normalize_test_stem, owner_similarity_keys, python_repair_placement,
-    related_test_candidates, related_test_relation, same_stem_related, similarity_key_contains,
-    verify_command_for_test,
+    normalize_similarity_key, normalize_test_stem, owner_similarity_keys,
+    python_repair_placement_on, related_test_candidates, related_test_relation, same_stem_related,
+    similarity_key_contains, verify_command_for_test_on,
 };
 use related_tests::{
     assertion_calls_method_only_on_foreign_receiver, first_parenthesized_string_argument,
@@ -300,6 +301,9 @@ struct PythonTest {
     /// pass (`fixtures.rs`); empty until then.
     fixture_defs: Vec<PythonFixtureDef>,
     parametrized: bool,
+    /// Argnames a pytest parametrize decorator supplies directly (not routed
+    /// to a fixture by `indirect=`); never resolved as fixtures (#4563).
+    direct_parametrized: Vec<String>,
     /// Literal `@pytest.mark.parametrize` cases, when statically certain (#4559).
     parametrize: Option<parametrize::PythonParametrizeCases>,
     /// Parameters Hypothesis `@given(...)` supplies (#6601); never fixtures.

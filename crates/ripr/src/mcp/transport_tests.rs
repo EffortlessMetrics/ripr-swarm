@@ -246,6 +246,102 @@ async fn oversized_frame_error_carries_explicit_null_id() -> Result<(), String> 
 }
 
 #[tokio::test]
+async fn oversized_request_id_is_rejected_with_null_id_and_the_session_continues()
+-> Result<(), String> {
+    let huge = "i".repeat(super::super::MAX_RESPONSE_BYTES);
+    let boundary = "b".repeat(super::super::MAX_REQUEST_ID_BYTES - 2);
+    let request =
+        |id: &str| format!("{{\"jsonrpc\":\"2.0\",\"id\":\"{id}\",\"method\":\"ping\"}}\n");
+    let input = format!("{}{}", request(&huge), request(&boundary));
+    let writer = Arc::new(Mutex::new(FrameWriter::new(Vec::<u8>::new())));
+    let mut transport = BoundedTransport {
+        reader: Arc::new(Mutex::new(FrameReader::new(input.as_bytes()))),
+        writer: writer.clone(),
+        failure: Arc::new(TransportFailure::default()),
+        admission: Arc::new(Admission::default()),
+        pending_protocol_error: None,
+        writer_needs_drain: false,
+    };
+    let message = transport
+        .receive()
+        .await
+        .ok_or_else(|| "boundary-sized id was not delivered after the oversized one".to_string())?;
+    let ClientJsonRpcMessage::Request(delivered) = message else {
+        return Err("expected the boundary request".into());
+    };
+    if delivered.id != rmcp::model::RequestId::String(boundary.clone().into()) {
+        return Err("delivered the wrong request".into());
+    }
+    let guard = writer.lock().await;
+    let frames: Vec<_> = guard
+        .output()
+        .split(|byte| *byte == b'\n')
+        .filter(|frame| !frame.is_empty())
+        .collect();
+    if frames.len() != 1 || frames[0].len() > 512 {
+        return Err(format!(
+            "expected one bounded error frame, got {}",
+            frames.len()
+        ));
+    }
+    let error: Value = serde_json::from_slice(frames[0]).map_err(|error| error.to_string())?;
+    if error.get("id") != Some(&Value::Null)
+        || error.pointer("/error/code").and_then(Value::as_i64) != Some(-32600)
+    {
+        return Err(format!("oversized id error has wrong id/code: {error}"));
+    }
+    if transport
+        .failure
+        .reason
+        .lock()
+        .map_err(|e| e.to_string())?
+        .is_some()
+    {
+        return Err("oversized id must not fail the transport".into());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn oversized_id_on_a_shape_invalid_request_is_not_echoed() -> Result<(), String> {
+    let over = "o".repeat(super::super::MAX_REQUEST_ID_BYTES + 1);
+    let kept = "k".repeat(64);
+    let request = |id: &str| {
+        format!("{{\"jsonrpc\":\"2.0\",\"id\":\"{id}\",\"method\":\"tools/list\",\"params\":[]}}\n")
+    };
+    let input = format!("{}{}", request(&over), request(&kept));
+    let writer = Arc::new(Mutex::new(FrameWriter::new(Vec::<u8>::new())));
+    let mut transport = BoundedTransport {
+        reader: Arc::new(Mutex::new(FrameReader::new(input.as_bytes()))),
+        writer: writer.clone(),
+        failure: Arc::new(TransportFailure::default()),
+        admission: Arc::new(Admission::default()),
+        pending_protocol_error: None,
+        writer_needs_drain: false,
+    };
+    if transport.receive().await.is_some() {
+        return Err("shape-invalid requests must not be delivered".into());
+    }
+    let guard = writer.lock().await;
+    let frames: Vec<Value> = guard
+        .output()
+        .split(|byte| *byte == b'\n')
+        .filter(|frame| !frame.is_empty())
+        .map(|frame| serde_json::from_slice(frame).map_err(|error| error.to_string()))
+        .collect::<Result<_, _>>()?;
+    if frames.len() != 2
+        || frames[0].get("id") != Some(&Value::Null)
+        || frames[0].to_string().len() > 512
+        || frames[1].get("id") != Some(&Value::String(kept))
+    {
+        return Err(format!(
+            "oversized id was echoed or in-bound id lost: {frames:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn sdk_syntax_ignore_and_typed_shape_error_recover_next_request() -> Result<(), String> {
     let input = b"{not json}\ntrue\n{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"control\",\"version\":\"1\"}}}\n";
     let writer = Arc::new(Mutex::new(FrameWriter::new(Vec::<u8>::new())));
@@ -283,6 +379,86 @@ async fn sdk_syntax_ignore_and_typed_shape_error_recover_next_request() -> Resul
         || error.pointer("/error/code").and_then(Value::as_i64) != Some(-32600)
     {
         return Err("protocol typed-shape error ID/code differs".into());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn typed_shape_error_keeps_a_recoverable_request_id() -> Result<(), String> {
+    // JSON-RPC: the error id is the request id when it can be detected. A
+    // request whose `params` is the wrong shape still names its id; frames
+    // with no readable request id keep the explicit null.
+    let cases: [(&[u8], Value); 9] = [
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/list\",\"params\":[]}\n",
+            json!(5),
+        ),
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":\"req-a\",\"method\":\"tools/list\",\"params\":[]}\n",
+            json!("req-a"),
+        ),
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":1.5,\"method\":\"tools/list\",\"params\":[]}\n",
+            Value::Null,
+        ),
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":{\"a\":1},\"method\":\"tools/list\",\"params\":[]}\n",
+            Value::Null,
+        ),
+        (b"{\"jsonrpc\":\"2.0\",\"id\":7}\n", Value::Null),
+        // A notification (method, no id) has no request to correlate.
+        (
+            b"{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\",\"params\":[]}\n",
+            Value::Null,
+        ),
+        // An explicit null id names no request.
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":null,\"method\":\"tools/list\",\"params\":[]}\n",
+            Value::Null,
+        ),
+        // A boolean is not a JSON-RPC id.
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":true,\"method\":\"tools/list\",\"params\":[]}\n",
+            Value::Null,
+        ),
+        // A u64 above i64::MAX is a valid JSON integer id the client sent but
+        // outside the SDK's i64 `RequestId`; the transport echoes the client's
+        // own id verbatim rather than leaving the reply unmatchable.
+        (
+            b"{\"jsonrpc\":\"2.0\",\"id\":18446744073709551615,\"method\":\"tools/list\",\"params\":[]}\n",
+            json!(18446744073709551615_u64),
+        ),
+    ];
+    for (input, expected_id) in cases {
+        let writer = Arc::new(Mutex::new(FrameWriter::new(Vec::<u8>::new())));
+        let mut transport = BoundedTransport {
+            reader: Arc::new(Mutex::new(FrameReader::new(input))),
+            writer: writer.clone(),
+            failure: Arc::new(TransportFailure::default()),
+            admission: Arc::new(Admission::default()),
+            pending_protocol_error: None,
+            writer_needs_drain: false,
+        };
+        if transport.receive().await.is_some() {
+            return Err("an invalid typed shape must not yield a message".into());
+        }
+        let guard = writer.lock().await;
+        let frames: Vec<_> = guard
+            .output()
+            .split(|byte| *byte == b'\n')
+            .filter(|frame| !frame.is_empty())
+            .collect();
+        let [frame] = frames.as_slice() else {
+            return Err(format!("expected exactly one error frame for {input:?}"));
+        };
+        let error: Value = serde_json::from_slice(frame).map_err(|error| error.to_string())?;
+        if error.get("id") != Some(&expected_id)
+            || error.pointer("/error/code").and_then(Value::as_i64) != Some(-32600)
+        {
+            return Err(format!(
+                "wrong id/code for {input:?}: expected id {expected_id}, got {error}"
+            ));
+        }
     }
     Ok(())
 }
