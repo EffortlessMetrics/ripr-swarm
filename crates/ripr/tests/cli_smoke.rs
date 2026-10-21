@@ -14036,8 +14036,10 @@ fn write_marker_perl_exporter(dir: &Path, marker: &Path) -> Result<(), String> {
         "perllsp"
     };
     let marker_text = marker.display().to_string();
+    // The marker write uses only shell builtins: the probe runs with the
+    // test's PATH (often just `bin`), where external `touch` may not resolve.
     let unix = format!(
-        "#!/bin/sh\ntouch '{marker_text}'\nif [ \"$1\" = \"--version\" ]; then echo 'perllsp 9.9.9'; exit 0; fi\necho 'Usage: perllsp ripr-facts --schema X'\nexit 0\n"
+        "#!/bin/sh\n: > '{marker_text}'\nif [ \"$1\" = \"--version\" ]; then echo 'perllsp 9.9.9'; exit 0; fi\necho 'Usage: perllsp ripr-facts --schema X'\nexit 0\n"
     );
     let windows = format!(
         "@echo off\r\necho ran> \"{marker_text}\"\r\nif \"%1\"==\"--version\" echo perllsp 9.9.9\r\nif \"%1\"==\"ripr-facts\" echo Usage: perllsp ripr-facts --schema X\r\nexit /b 0\r\n"
