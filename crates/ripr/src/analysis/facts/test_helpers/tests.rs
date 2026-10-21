@@ -930,3 +930,5 @@ fn the_parser_stores_the_scopes_crediting_would_parse_and_the_cache_keeps_them()
     assert_eq!(decoded.item_scopes, facts.item_scopes);
     Ok(())
 }
+
+mod assertion_macros;

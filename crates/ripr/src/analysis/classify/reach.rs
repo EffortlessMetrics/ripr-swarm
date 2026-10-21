@@ -101,10 +101,14 @@ pub(in crate::analysis) fn reach_evidence(
             format!("{CALLEE_ONLY_REACH_PREFIX}: {names}"),
         );
     }
-    let names = owner_anchored
+    // Name only the tests whose relation establishes reach: a proximity-only
+    // neighbour ranked beside the reaching test must not be named as reaching
+    // the owner (#9033).
+    let names = related_tests
         .iter()
+        .filter(|(_, reason)| relation_establishes_reach(*reason, owner_is_function))
         .take(3)
-        .map(|t| t.name.as_str())
+        .map(|(test, _)| test.name.as_str())
         .collect::<Vec<_>>()
         .join(", ");
     StageEvidence::new(
@@ -802,6 +806,26 @@ mod tests {
         assert_eq!(
             evidence.summary,
             "Related tests exercise the wrapper seam's converted callee (the changed owner is not invoked by them): observes_callee_outcome, other_callee_probe"
+        );
+    }
+
+    #[test]
+    fn given_mixed_reaching_and_proximity_relations_when_building_reach_evidence_then_only_reaching_tests_are_named()
+     {
+        let owner = function("discount");
+        let reaching = test("d");
+        let neighbour = test("t");
+        let related = vec![
+            (&reaching, RelationReason::DirectOwnerCall),
+            (&neighbour, RelationReason::SameTestFile),
+        ];
+
+        let evidence = reach_evidence(&related, Some(&owner), || false);
+
+        assert_eq!(evidence.state, StageState::Yes);
+        assert_eq!(
+            evidence.summary,
+            "Related tests appear to reach discount: d"
         );
     }
 

@@ -6,13 +6,15 @@
 //! local test macro expansion and helper-oracle extraction each re-parse
 //! source text that has not changed within the run. Each product is a pure
 //! function of its source text, so it is stored under a digest of that text
-//! for the lifetime of one analysis call and dropped when the call ends.
+//! for the lifetime of one scope and dropped when the scope ends.
 //!
 //! The memo is thread-local: a caller opts in on its own thread with
-//! [`enter`], and a thread without a scope (parallel workers, tests, other
-//! analyses) computes every product directly, exactly as before. Nothing
-//! outlives the outermost scope, so no product can be served for content
-//! that changed between runs.
+//! [`enter`]. The analysis thread enters one, and each parallel classification
+//! worker enters its own (rayon `map_init` in the Rust language analysis), so
+//! workers memoize independently and never share entries. A thread without a
+//! scope (tests, other analyses) computes every product directly, exactly as
+//! before. Nothing outlives the outermost scope, so no product can be served
+//! for content that changed between runs.
 
 use sha2::{Digest, Sha256};
 use std::any::Any;
@@ -27,6 +29,7 @@ pub(crate) enum Product {
     ExternalDocs,
     LocalTestMacros,
     FunctionOracles,
+    ForeignEntryImport,
 }
 
 type Key = (Product, [u8; 32]);
@@ -63,9 +66,11 @@ impl Drop for RunMemoScope {
     }
 }
 
-fn key(product: Product, discriminator: usize, source: &str) -> Key {
+fn key(product: Product, discriminator: usize, extra: &str, source: &str) -> Key {
     let mut hasher = Sha256::new();
     hasher.update(discriminator.to_le_bytes());
+    hasher.update(extra.len().to_le_bytes());
+    hasher.update(extra.as_bytes());
     hasher.update(source.as_bytes());
     (product, hasher.finalize().into())
 }
@@ -79,10 +84,22 @@ pub(crate) fn memoize<T: Clone + 'static>(
     source: &str,
     compute: impl FnOnce() -> T,
 ) -> T {
+    memoize_with(product, discriminator, "", source, compute)
+}
+
+/// [`memoize`] for a product that also depends on `extra` (a name or other
+/// query beside the source text): the entry is keyed by both.
+pub(crate) fn memoize_with<T: Clone + 'static>(
+    product: Product,
+    discriminator: usize,
+    extra: &str,
+    source: &str,
+    compute: impl FnOnce() -> T,
+) -> T {
     if MEMO.with(|memo| memo.borrow().depth == 0) {
         return compute();
     }
-    let key = key(product, discriminator, source);
+    let key = key(product, discriminator, extra, source);
     let cached = MEMO.with(|memo| memo.borrow().entries.get(&key).cloned());
     if let Some(value) = cached.as_ref().and_then(|value| value.downcast_ref::<T>()) {
         return value.clone();
@@ -124,7 +141,7 @@ pub(crate) fn memoize_many<T: Clone + Send + 'static>(
     }
     let keys: Vec<Key> = sources
         .iter()
-        .map(|source| key(product, 0, source))
+        .map(|source| key(product, 0, "", source))
         .collect();
     let recall = |key: &Key| {
         MEMO.with(|memo| {
@@ -258,5 +275,25 @@ mod tests {
         let other = super::memoize_many(Product::LocalTestMacros, &["a"], compute);
         assert_eq!(other, vec![1]);
         assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn the_query_beside_the_source_is_part_of_the_key() {
+        let calls = Cell::new(0);
+        let _scope = enter();
+        let ask = |extra: &str| {
+            super::memoize_with(Product::ForeignEntryImport, 0, extra, "src", || {
+                calls.set(calls.get() + 1);
+                extra.len()
+            })
+        };
+        assert_eq!((ask("a"), ask("a"), ask("bcd")), (1, 1, 3));
+        assert_eq!(calls.get(), 2, "same query reuses, another query computes");
+        // An empty query is the plain form's entry.
+        assert_eq!(counted(&calls, Product::ForeignEntryImport, 0, "src"), 3);
+        assert_eq!(
+            super::memoize_with(Product::ForeignEntryImport, 0, "", "src", || 99usize),
+            3
+        );
     }
 }

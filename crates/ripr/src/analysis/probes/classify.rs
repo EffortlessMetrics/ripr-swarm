@@ -511,6 +511,34 @@ pub fn should_ignore_changed_line(text: &str) -> bool {
         || text.starts_with("pub use ")
         || text.starts_with("mod ")
         || text.starts_with("#")
+        || is_visible_module_declaration(text)
+}
+
+/// A visibility-qualified out-of-line `mod name;` declaration
+/// (`pub mod new;`, `pub(crate) mod x;`) names a module and holds no behavior
+/// to check. Visibility-qualified `use` lines are deliberately not covered: a
+/// retargeted re-export (`pub(crate) use fast::selected;` to
+/// `pub(crate) use slow::selected;`) changes which implementation existing call
+/// sites use. Only the `;`-terminated form qualifies, so an inline module body
+/// or any trailing code stays probed.
+fn is_visible_module_declaration(text: &str) -> bool {
+    let rest = super::diff::strip_visibility(text);
+    if rest.len() == text.len() {
+        return false;
+    }
+    let Some(body) = rest.strip_suffix(';') else {
+        return false;
+    };
+    if body.contains(['{', '}', ';', '=']) {
+        return false;
+    }
+    body.strip_prefix("mod")
+        .filter(|tail| tail.starts_with(char::is_whitespace))
+        .map(str::trim)
+        .is_some_and(|name| {
+            let name = name.strip_prefix("r#").unwrap_or(name);
+            !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
 }
 
 /// An `impl` header (`impl Tr for K where Self: Sized {`; other item headers
@@ -622,6 +650,79 @@ mod tests {
         ] {
             assert!(!is_item_header(behavior), "`{behavior}`");
         }
+    }
+
+    /// #9033: a visibility-qualified `mod name;` declaration has no behavior;
+    /// inline module bodies, trailing code, and every visibility-qualified
+    /// `use` (a retargeted re-export changes behavior) stay probed.
+    #[test]
+    fn visible_module_declarations_are_ignored_but_behavior_is_not() {
+        for ignored in [
+            "pub mod new;",
+            "pub(crate) mod x;",
+            "pub(in crate::a) mod y;",
+            "pub ( super ) mod r#raw;",
+            "mod new;",
+        ] {
+            assert!(should_ignore_changed_line(ignored), "`{ignored}`");
+        }
+        for kept in [
+            "pub mod new { fn go() {} }",
+            "pub mod new { pub fn go() { 1 } }",
+            "pub mod new; fn go() {}",
+            "pub fn mod_new() {}",
+            "pub const MODE: u8 = 1;",
+            "pub modx;",
+            "pub mod ;",
+            "pub(crate) mod",
+            "pub( mod x;",
+            "pub(crate) static X: u8 = 1;",
+            "pub(crate) use a::b;",
+            "pub(crate) use fast::selected;",
+            "pub(in crate::a) use slow::selected;",
+        ] {
+            assert!(!is_visible_module_declaration(kept), "`{kept}`");
+        }
+        // `pub use` keeps its pre-existing ignore; the new helper must not
+        // be what claims it.
+        assert!(!is_visible_module_declaration("pub use a::b;"));
+    }
+
+    /// Producer level: an added `pub mod new;` yields no probe, while a
+    /// retargeted `pub(crate) use` re-export still yields one.
+    #[test]
+    fn diff_producer_ignores_visible_mod_but_probes_retargeted_use() -> Result<(), String> {
+        use crate::analysis::diff::{ChangedFile, ChangedLine};
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        let source = "pub mod new;\npub(crate) use slow::selected;\n";
+        let path = PathBuf::from("src/lib.rs");
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: BTreeMap::from([(path.clone(), facts)]),
+            ..Default::default()
+        });
+        let probes_for = |line: usize| {
+            let text = source.lines().nth(line - 1).unwrap_or_default().to_string();
+            let changed = ChangedFile {
+                path: path.clone(),
+                added_lines: vec![ChangedLine {
+                    line,
+                    new_side_line: line,
+                    text,
+                }],
+                removed_lines: Vec::new(),
+            };
+            super::super::diff::probes_for_file(std::path::Path::new("."), &changed, &index)
+        };
+        assert!(
+            probes_for(1).is_empty(),
+            "`pub mod new;` must yield no probe"
+        );
+        assert!(
+            !probes_for(2).is_empty(),
+            "a retargeted `pub(crate) use` must still be probed"
+        );
+        Ok(())
     }
 
     #[test]
