@@ -78,8 +78,9 @@ than assuming parity from a fabricated verdict alone.
 - Raw Rust parsing accepts the over-budget control without syntax errors.
 - An ordinary production edit produces `production_edit`, retains recovery,
   and has no parse hint on those surfaces.
-- A valid inserted discriminating test completes with a compliant verdict
-  and no recorded refusal.
+- A valid inserted discriminating test compiles and passes alongside the
+  existing fixture test, then completes with a compliant verdict and no
+  recorded refusal.
 - Unit tests pin the literal first line and unchanged recovery detail.
 
 ## Non-Goals

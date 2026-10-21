@@ -4128,7 +4128,7 @@ mod tests {
         );
         let joined = lines.join("\n");
         assert!(
-            !joined.contains("does not parse"),
+            !joined.contains("the selected file could not be parsed"),
             "a non-parse refusal must not carry the parse hint: {joined}"
         );
         assert!(

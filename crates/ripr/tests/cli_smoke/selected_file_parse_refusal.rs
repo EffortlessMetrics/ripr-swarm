@@ -13,10 +13,7 @@ fn selected_file_parse_refusal_reaches_actual_consumers() -> Result<(), Box<dyn 
 {
     const HINT: &str = "the selected file could not be parsed for the inline test region (syntax errors or an analysis limit); if there is a syntax error, fix it, then start a new attempt.";
     const RECORDED_HINT: &str = "The selected file could not be parsed for the inline test region (syntax errors or an analysis limit); if there is a syntax error, fix it, then start a new attempt";
-    const INLINE: &str = "\n#[cfg(test)]\nmod tests {\n    use super::{
-    assert_success, repair_route_after, repair_route_attempt_id, repair_route_before,
-    repair_route_commit, repair_route_manifest, repair_route_status, repair_route_workspace, run_git,
-};\n    #[test]\n    fn below() { assert_eq!(discounted_total(50, 100), 50); }\n}\n";
+    const INLINE: &str = "\n#[cfg(test)]\nmod tests {\n    use super::discounted_total;\n    #[test]\n    fn below() { assert_eq!(discounted_total(50, 100), 50); }\n}\n";
     for case in [
         "test_syntax",
         "production_syntax",
@@ -26,6 +23,9 @@ fn selected_file_parse_refusal_reaches_actual_consumers() -> Result<(), Box<dyn 
     ] {
         let root = repair_route_workspace(&format!("parse-refusal-{case}"))?;
         std::fs::remove_dir_all(root.join("tests"))?;
+        let manifest_path = root.join("Cargo.toml");
+        let manifest_text = std::fs::read_to_string(&manifest_path)?;
+        std::fs::write(&manifest_path, format!("{manifest_text}\n[workspace]\n"))?;
         let production = std::fs::read_to_string(root.join("src/lib.rs"))?;
         let before_source = format!("{production}{INLINE}");
         std::fs::write(root.join("src/lib.rs"), &before_source)?;
@@ -53,6 +53,19 @@ fn selected_file_parse_refusal_reaches_actual_consumers() -> Result<(), Box<dyn 
             );
         }
         std::fs::write(root.join("src/lib.rs"), after_source)?;
+        if case == "valid_test" {
+            let target = root.join("target").display().to_string();
+            let tests = run_command(
+                "cargo",
+                Some(&root),
+                &["test", "--offline", "--lib", "--target-dir", &target],
+            )?;
+            assert_success(&tests);
+            assert!(
+                String::from_utf8_lossy(&tests.stdout).contains("2 passed"),
+                "{tests:?}"
+            );
+        }
         let after = repair_route_after(&root, &attempt_id);
         if case == "valid_test" {
             assert_success(&after);
@@ -64,7 +77,7 @@ fn selected_file_parse_refusal_reaches_actual_consumers() -> Result<(), Box<dyn 
                 "{manifest}"
             );
             assert!(manifest.get("last_after_refusal").is_none(), "{manifest}");
-            eprintln!("control {case}: compliant finish, no refusal");
+            eprintln!("control {case}: two fixture tests passed, compliant finish, no refusal");
             std::fs::remove_dir_all(root)?;
             continue;
         }
