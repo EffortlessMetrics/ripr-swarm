@@ -10766,6 +10766,8 @@ tests = [
   "crates/ripr/src/output/sarif.rs::tests::sarif_empty_findings_run_omits_omitted_not_current_property",
   "crates/ripr/src/output/sarif.rs::tests::sarif_mixed_current_and_not_current_records_omitted_count_beside_results",
   "crates/ripr/src/output/github.rs::tests::base_deleted_findings_emit_no_github_annotations",
+  "crates/ripr/src/output/human.rs::tests::base_side_finding_renders_at_note_severity",
+  "crates/ripr/src/output/human.rs::tests::base_side_digest_and_configured_severity_passthrough",
 ]
 fixtures = []
 code = [
@@ -10774,6 +10776,7 @@ code = [
   "crates/ripr/src/output/json/finding_alignment.rs",
   "crates/ripr/src/output/gap_decision_ledger.rs",
   "crates/ripr/src/output/human/triage.rs",
+  "crates/ripr/src/output/human/sections.rs",
   "crates/ripr/src/lsp/diagnostics.rs",
   "crates/ripr/src/output/sarif.rs",
   "crates/ripr/src/output/github.rs",
