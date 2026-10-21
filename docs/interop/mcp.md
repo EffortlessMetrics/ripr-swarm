@@ -76,6 +76,31 @@ default branch before `ripr_refresh` (a commit on the default branch itself
 leaves an empty diff), or use `ripr check --worktree --format json` outside
 MCP.
 
+When the repository's default branch is not `main` or `master` (for example
+`trunk`) and there is no `origin/main`, the default base cannot be resolved and
+`ripr_refresh` fails with `analysis_failed` naming candidate branches. Retry
+`ripr_refresh` with its optional `base` argument (`{"base": "trunk"}`): it is
+the only way to choose a base from inside MCP, since `ripr mcp` has no `--base`
+flag. Each refresh states its own base, so omitting `base` returns to the
+default branch. The additions are explicit-base-only so a base-less caller
+sees the unchanged v1 shapes: `ripr_refresh` adds `requested_base` and
+`ripr_workspace_status` reports `session.current_desired_input.base:
+explicit` with `base_revision` only after a refresh named a base, and the
+committed snapshot's `session.analysis_outcome.identity.base_revision` names
+the base it analyzed even when the worktree is clean and `scope` is null. A
+directory with a project marker but no usable Git work tree is a validated
+root, but refresh needs Git; status then adds `workspace.root.git_work_tree`
+(`not_detected`, or `marker_invalid` when the nearest `.git` is neither a
+directory nor a gitfile whose first line is `gitdir: <path>`) with a
+limitation instead of leaving that to the first failed refresh. The field is a
+bounded marker probe, not a Git invocation, and is absent when a plausible
+marker exists: absence does not mean Git accepted it.
+
+`ripr_refresh` is read-only with respect to source, but the shared analysis
+writes its warm cache under the root's `target/ripr/`. Cargo projects normally
+gitignore `target/`; in a repository that does not, those files show as
+untracked in `git status` and are never source.
+
 ## Progressive flow
 
 ```text
@@ -131,7 +156,7 @@ runs no tests or verification and grants no execution or edit authority.
 | Surface | Name |
 | --- | --- |
 | Tool (no arguments) | `ripr_workspace_status` |
-| Tool (no arguments) | `ripr_refresh` |
+| Tool (`base?`) | `ripr_refresh` |
 | Tool (`snapshot_id?`, `offset?`, `limit?`, `file?`, `class?`, `language?`, `repair_ready?`) | `ripr_list_gaps` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_get_gap` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_prepare_repair` |
@@ -160,7 +185,8 @@ document, schema `ripr-mcp-workspace-status-v1`. It wraps:
   source edit, verification execution, mutation execution, and model provider
   all `none`;
 - a `ripr-mcp-session-v1` session block: the current desired input (workspace
-  diff against the default branch, draft mode, the workspace's own
+  diff against the resolved default branch or the explicit `ripr_refresh`
+  `base` with `base_revision` when present, draft mode, the workspace's own
   configuration), the current
   attempt state (`no_snapshot`, `in_flight`, `completed`, `failed`), the last
   completed snapshot identity, last-known-good state, freshness relative to
@@ -460,7 +486,8 @@ shapes receive Invalid Request and the transport can read the next frame.
 Unknown request IDs are omitted in SDK-dispatched error responses, while
 transport-level protocol errors (well-formed messages with invalid typed
 shapes) carry an explicit null id per JSON-RPC; readable IDs remain
-correlated. Messages are capped at 256 KiB and response envelopes at
+correlated, except that ids over 16 KiB (serialized) are rejected at receive
+with `-32600` and `id: null` rather than echoed. Messages are capped at 256 KiB and response envelopes at
 128 KiB; the 1-byte newline delimiter is appended after the cap check, so a
 wire frame is at most 128 KiB+1 (pinned by
 `exactly_max_response_bytes_passes_and_one_more_falls_back`). The bound is

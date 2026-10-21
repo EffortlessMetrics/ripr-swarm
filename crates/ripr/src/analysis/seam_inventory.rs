@@ -2700,25 +2700,83 @@ pub(crate) fn inventory_seams_from_index(
     seams_from_index_files(production_files, index)
 }
 
+/// One bounded seam index over a caller-named file set (#8547), built
+/// once through the file-fact cache and shared by the consumers that
+/// would otherwise each rebuild it (the `ripr check` stub and repair
+/// routes, and the stub resolver's repeated consumer probes). Seam
+/// shapes and classification read the same post-processed facts the
+/// per-consumer builders produced; only the build is shared, and it is
+/// scoped to one invocation: nothing is retained across runs.
+pub(crate) struct FileSeamIndex {
+    index: RustIndex,
+    files: std::collections::BTreeSet<PathBuf>,
+}
+
+impl FileSeamIndex {
+    pub(crate) fn build(
+        root: &Path,
+        config: &RiprConfig,
+        files: &[PathBuf],
+    ) -> Result<Self, String> {
+        let cached = rust_index::build_index_from_paths_with_cache_and_test_harnesses(
+            root,
+            files,
+            harness_registrations(config),
+        )?;
+        let mut index = cached.index;
+        rust_index::apply_oracle_policy(&mut index, config.oracles());
+        Ok(Self {
+            index,
+            files: files.iter().cloned().collect(),
+        })
+    }
+
+    pub(crate) fn covers(&self, files: &[PathBuf]) -> bool {
+        files.iter().all(|file| self.files.contains(file))
+    }
+
+    pub(crate) fn seams_in_file(&self, file: &Path) -> Vec<RepoSeam> {
+        seams_from_index_files(std::slice::from_ref(&file.to_path_buf()), &self.index)
+    }
+
+    pub(crate) fn classify_in_file(&self, file: &Path) -> Vec<ClassifiedSeam> {
+        let seams = self.seams_in_file(file);
+        let evidence = test_grip_evidence::evidence_for_seams(&seams, &self.index);
+        seam_classification::classify_seams(&seams, &evidence)
+    }
+}
+
 /// The seams of one Rust file from a parse of that file alone, with no
-/// workspace index, test evidence, or classification (#5471). The seam
-/// fields (file, owner, kind, offset, expression) come from the file's own
-/// facts, so they and the seam ids match the workspace inventory's. A file
-/// that does not seed production findings has no seams here, as in the
-/// workspace inventory.
-pub(crate) fn file_seams_without_evidence_at_with_config(
+/// workspace index, test evidence, or classification (#5471), over a
+/// shared invocation-scoped [`FileSeamIndex`] (#8547). The seam fields
+/// (file, owner, kind, offset, expression) come from the file's own
+/// facts, so they and the seam ids match the workspace inventory's. A
+/// file that does not seed production findings has no seams here, as in
+/// the workspace inventory. The production-role gate runs exactly as
+/// the unshared builder's, and the index is built (and stored for the
+/// next consumer) only when the shared one does not already cover
+/// `file`; with no shared index this is the historical single-file
+/// builder.
+pub(crate) fn scoped_file_seams(
     root: &Path,
     config: &RiprConfig,
     file: &Path,
+    seam_index: &mut Option<FileSeamIndex>,
 ) -> Result<Vec<RepoSeam>, String> {
     let context = production_role_context(root, config, std::iter::once(file));
     if !workspace::classify_with(file, &context).seeds_production_findings() {
         return Ok(Vec::new());
     }
-    let files = [file.to_path_buf()];
-    let index =
-        rust_index::build_index_with_test_harnesses(root, &files, harness_registrations(config))?;
-    Ok(seams_from_index_files(&files, &index))
+    if let Some(index) = seam_index
+        .as_ref()
+        .filter(|index| index.covers(std::slice::from_ref(&file.to_path_buf())))
+    {
+        return Ok(index.seams_in_file(file));
+    }
+    let built = FileSeamIndex::build(root, config, std::slice::from_ref(&file.to_path_buf()))?;
+    let seams = built.seams_in_file(file);
+    *seam_index = Some(built);
+    Ok(seams)
 }
 
 /// Classify only the seams in `file`, gathering test-grip evidence from a
@@ -2731,11 +2789,17 @@ pub(crate) fn file_seams_without_evidence_at_with_config(
 /// must therefore treat a route admitted from this scope as bounded
 /// evidence and fail closed when the scope cannot decide, never as a
 /// workspace-wide eligibility proof.
-pub(crate) fn classify_seams_in_file_with_related_at_with_config(
+/// The shared-index form of the bounded classification above (#8547):
+/// gate and file set are identical to the unshared builder's; the index
+/// is built (and stored for the next consumer) only when the shared one
+/// does not already cover the whole set. With no shared index this is
+/// the historical bounded builder.
+pub(crate) fn classify_seams_in_file_with_shared_index(
     root: &Path,
     config: &RiprConfig,
     file: &Path,
     evidence_files: &[PathBuf],
+    seam_index: &mut Option<FileSeamIndex>,
 ) -> Result<Vec<ClassifiedSeam>, String> {
     let context = production_role_context(root, config, std::iter::once(file));
     if !workspace::classify_with(file, &context).seeds_production_findings() {
@@ -2747,12 +2811,13 @@ pub(crate) fn classify_seams_in_file_with_related_at_with_config(
             files.push(evidence_file.clone());
         }
     }
-    let mut index =
-        rust_index::build_index_with_test_harnesses(root, &files, harness_registrations(config))?;
-    rust_index::apply_oracle_policy(&mut index, config.oracles());
-    let seams = seams_from_index_files(&[file.to_path_buf()], &index);
-    let evidence = test_grip_evidence::evidence_for_seams(&seams, &index);
-    Ok(seam_classification::classify_seams(&seams, &evidence))
+    if let Some(index) = seam_index.as_ref().filter(|index| index.covers(&files)) {
+        return Ok(index.classify_in_file(file));
+    }
+    let built = FileSeamIndex::build(root, config, &files)?;
+    let classified = built.classify_in_file(file);
+    *seam_index = Some(built);
+    Ok(classified)
 }
 
 fn seams_from_index_files(production_files: &[PathBuf], index: &RustIndex) -> Vec<RepoSeam> {
@@ -5357,6 +5422,532 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
             return Err("probe fixture must yield at least one seam".into());
         }
 
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #8547: an unchanged BOM-prefixed or lossy-decoded file is current
+    /// for reuse (the stored source is decoded text, not raw bytes), so
+    /// reuse performs no fact-cache lookup for it.
+    #[test]
+    fn reuse_treats_unchanged_bom_and_lossy_files_as_current() -> Result<(), String> {
+        let root = make_tempdir("reuse-bom-current")?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"reusebom\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        let mut bom = b"\xEF\xBB\xBF".to_vec();
+        bom.extend_from_slice(b"pub fn a() -> i32 { 1 }\n");
+        let lossy = b"pub fn b() -> i32 { 2 }\n// \xFF\n".to_vec();
+        let files = vec![
+            (PathBuf::from("src/lib.rs"), bom),
+            (PathBuf::from("src/b.rs"), lossy),
+        ];
+        let core = rust_index::build_analysis_index_from_loaded_files(&root, &files, &[])?;
+        let before = core.file_fact_cache.hits + core.file_fact_cache.misses;
+        let reused = rust_index::reuse_cached_index_with_loaded_files(core, &root, &files, &[])?;
+        let after = reused.file_fact_cache.hits + reused.file_fact_cache.misses;
+        let _ = std::fs::remove_dir_all(&root);
+        if before != after {
+            return Err(format!(
+                "unchanged BOM/lossy files must not be re-looked-up on reuse ({before} -> {after})"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #8547: extending the admission probe's core index with the
+    /// admitted extras must produce the same index facts (and therefore
+    /// the same seams) as one fresh build over the whole file set, and
+    /// reusing it with an unchanged file list must be a no-op.
+    #[test]
+    fn reused_core_index_matches_fresh_main_build() -> Result<(), String> {
+        let root = make_tempdir("reuse-core-index")?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"reuse8547\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub mod other;\n\n/// ```\n/// assert_eq!(200 / 10, 20);\n/// ```\npub fn discount(total: i32) -> i32 {\n    if total >= 100 { total / 10 } else { 0 }\n}\n\nfn check_discount() -> bool {\n    discount(200) == 20\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    fn check_discount_helper(total: i32) {\n        assert_eq!(discount(total), 20);\n    }\n\n    #[test]\n    fn high_total_gets_discount() {\n        assert_eq!(discount(200), 20);\n    }\n\n    #[test]\n    fn high_total_uses_helper() {\n        check_discount_helper(200);\n    }\n}\n",
+        )?;
+        write_file(
+            &root.join("src/other.rs"),
+            "pub fn shipping(total: i32) -> i32 {\n    if total >= 50 { 0 } else { 5 }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn shipping_is_free_over_threshold() {\n        assert_eq!(shipping(60), 0);\n    }\n}\n",
+        )?;
+        write_file(
+            &root.join("tests/it.rs"),
+            "use reuse8547::discount;\n\n#[test]\nfn discount_from_integration() {\n    assert_eq!(discount(50), 0);\n}\n",
+        )?;
+        let loaded = |paths: &[&str]| -> Vec<(PathBuf, Vec<u8>)> {
+            paths
+                .iter()
+                .map(|path| {
+                    (
+                        PathBuf::from(path),
+                        std::fs::read(root.join(path)).unwrap_or_default(),
+                    )
+                })
+                .collect()
+        };
+        let core_files = loaded(&["src/lib.rs", "src/other.rs"]);
+        let all_files = loaded(&["src/lib.rs", "src/other.rs", "tests/it.rs"]);
+
+        let core = rust_index::build_analysis_index_from_loaded_files(&root, &core_files, &[])?;
+        let reused =
+            rust_index::reuse_cached_index_with_loaded_files(core, &root, &all_files, &[])?;
+        let fresh = rust_index::build_analysis_index_from_loaded_files(&root, &all_files, &[])?;
+
+        // Full facts, not name lists: calls and assertions are where
+        // helper credit and stale flat memberships would inflate or
+        // duplicate evidence.
+        let facts_of = |index: &RustIndex| {
+            let mut tests: Vec<crate::analysis::facts::TestFact> =
+                index.tests().iter().cloned().collect();
+            tests.sort_by(|left, right| {
+                left.file
+                    .cmp(&right.file)
+                    .then(left.start_line.cmp(&right.start_line))
+                    .then(left.name.cmp(&right.name))
+            });
+            let mut functions: Vec<crate::analysis::facts::FunctionFact> =
+                index.functions().iter().cloned().collect();
+            functions.sort_by(|left, right| {
+                left.file
+                    .cmp(&right.file)
+                    .then(left.start_line.cmp(&right.start_line))
+                    .then(left.name.cmp(&right.name))
+            });
+            (tests, functions)
+        };
+        if facts_of(&reused.index) != facts_of(&fresh.index) {
+            return Err(
+                "reused core index must carry the fresh build's full test/function facts".into(),
+            );
+        }
+        // The helper-credited test must carry the helper's call and
+        // assertion exactly once in both builds.
+        for (label, index) in [("reused", &reused.index), ("fresh", &fresh.index)] {
+            let helper_test = index
+                .tests()
+                .iter()
+                .find(|test| test.name == "high_total_uses_helper")
+                .ok_or("reuse fixture must index the helper-credited test")?;
+            let credited_calls = helper_test
+                .calls
+                .iter()
+                .filter(|call| call.name == "discount")
+                .count();
+            if credited_calls != 1 || helper_test.assertions.len() != 1 {
+                return Err(format!(
+                    "{label} helper-credited test must carry one credited call and assertion, got {credited_calls} calls and {} assertions",
+                    helper_test.assertions.len()
+                ));
+            }
+        }
+        let production = vec![PathBuf::from("src/lib.rs"), PathBuf::from("src/other.rs")];
+        let reused_seams = inventory_seams_from_index(&production, &reused.index);
+        let fresh_seams = inventory_seams_from_index(&production, &fresh.index);
+        if reused_seams != fresh_seams {
+            return Err("reused core index must yield the fresh build's seams".into());
+        }
+        if reused_seams.is_empty() {
+            return Err("reuse fixture must yield at least one seam".into());
+        }
+        // Dropped file: a core file absent from the main list must
+        // disappear from the flat test/function views, not survive as
+        // related-test evidence.
+        let dropped_core =
+            rust_index::build_analysis_index_from_loaded_files(&root, &all_files, &[])?;
+        let dropped_target = loaded(&["src/lib.rs", "src/other.rs"]);
+        let dropped_reused = rust_index::reuse_cached_index_with_loaded_files(
+            dropped_core,
+            &root,
+            &dropped_target,
+            &[],
+        )?;
+        let dropped_fresh =
+            rust_index::build_analysis_index_from_loaded_files(&root, &dropped_target, &[])?;
+        if facts_of(&dropped_reused.index) != facts_of(&dropped_fresh.index) {
+            return Err("dropped-file reuse must carry the fresh build's full facts".into());
+        }
+        if dropped_reused
+            .index
+            .tests()
+            .iter()
+            .any(|test| test.name == "discount_from_integration")
+            || dropped_reused
+                .index
+                .files()
+                .get(&PathBuf::from("tests/it.rs"))
+                .is_some()
+        {
+            return Err("dropped file must disappear from tests() and files()".into());
+        }
+        // Changed file: the main list carries new bytes for a core file;
+        // its old facts must be replaced, not duplicated next to the new
+        // ones in the flat views.
+        let changed_core =
+            rust_index::build_analysis_index_from_loaded_files(&root, &core_files, &[])?;
+        let changed_lib_text = std::fs::read_to_string(root.join("src/lib.rs"))
+            .map_err(|err| err.to_string())?
+            .replace("total >= 100", "total >= 90");
+        if !changed_lib_text.contains("total >= 90") {
+            return Err("changed-file fixture must contain the discount threshold".into());
+        }
+        let changed_lib = changed_lib_text.into_bytes();
+        let changed_files: Vec<(PathBuf, Vec<u8>)> = core_files
+            .iter()
+            .map(|(path, bytes)| {
+                if path == &PathBuf::from("src/lib.rs") {
+                    (path.clone(), changed_lib.clone())
+                } else {
+                    (path.clone(), bytes.clone())
+                }
+            })
+            .collect();
+        let changed_reused = rust_index::reuse_cached_index_with_loaded_files(
+            changed_core,
+            &root,
+            &changed_files,
+            &[],
+        )?;
+        let changed_fresh =
+            rust_index::build_analysis_index_from_loaded_files(&root, &changed_files, &[])?;
+        if facts_of(&changed_reused.index) != facts_of(&changed_fresh.index) {
+            return Err("changed-file reuse must carry the fresh build's full facts".into());
+        }
+        let lib_test_names: Vec<&str> = changed_reused
+            .index
+            .tests()
+            .iter()
+            .filter(|test| test.file.as_path() == Path::new("src/lib.rs"))
+            .map(|test| test.name.as_str())
+            .collect();
+        let mut deduped = lib_test_names.clone();
+        deduped.sort_unstable();
+        deduped.dedup();
+        if lib_test_names.len() != deduped.len() {
+            return Err(format!(
+                "changed file must not duplicate its tests in tests(): {lib_test_names:?}"
+            ));
+        }
+        // An unchanged file list reuses the built index untouched: no
+        // file is re-parsed, re-decoded, or dropped.
+        let file_count = reused.index.files().len();
+        let again =
+            rust_index::reuse_cached_index_with_loaded_files(reused, &root, &all_files, &[])?;
+        if again.index.files().len() != file_count {
+            return Err("unchanged reuse must keep every indexed file".into());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// Builds a core index over `core`, reuses it for `target`, and requires
+    /// the whole serialized index to equal a fresh build over `target` (#8547).
+    fn reuse_equals_fresh(
+        root: &Path,
+        core: &[(PathBuf, Vec<u8>)],
+        target: &[(PathBuf, Vec<u8>)],
+    ) -> Result<(RustIndex, RustIndex), String> {
+        let core_index = rust_index::build_analysis_index_from_loaded_files(root, core, &[])?;
+        let reused =
+            rust_index::reuse_cached_index_with_loaded_files(core_index, root, target, &[])?;
+        let fresh = rust_index::build_analysis_index_from_loaded_files(root, target, &[])?;
+        let reused_json = serde_json::to_string(&reused.index).map_err(|err| err.to_string())?;
+        let fresh_json = serde_json::to_string(&fresh.index).map_err(|err| err.to_string())?;
+        if reused_json != fresh_json {
+            return Err("reused index must serialize identically to a fresh build".into());
+        }
+        Ok((reused.index, fresh.index))
+    }
+
+    fn reuse_fixture_root(name: &str, files: &[(&str, &str)]) -> Result<PathBuf, String> {
+        let root = make_tempdir(name)?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"reusefix\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        for (path, text) in files {
+            write_file(&root.join(path), text)?;
+        }
+        Ok(root)
+    }
+
+    fn bytes_of(files: &[(&str, &str)]) -> Vec<(PathBuf, Vec<u8>)> {
+        files
+            .iter()
+            .map(|(path, text)| (PathBuf::from(path), text.as_bytes().to_vec()))
+            .collect()
+    }
+
+    /// A changed parent that deletes `#[cfg(test)] mod child;` must not leave
+    /// the child's composed test role or module provenance behind.
+    #[test]
+    fn reuse_of_changed_parent_deleting_mod_declaration_matches_fresh() -> Result<(), String> {
+        let before = [
+            (
+                "src/lib.rs",
+                "#[cfg(test)]\nmod child;\npub fn top() -> i32 { 1 }\n",
+            ),
+            ("src/child.rs", "pub fn helper() -> i32 { 2 }\n"),
+        ];
+        let after = [
+            ("src/lib.rs", "pub fn top() -> i32 { 1 }\n"),
+            ("src/child.rs", "pub fn helper() -> i32 { 2 }\n"),
+        ];
+        let root = reuse_fixture_root("reuse-mod-delete", &before)?;
+        let result = reuse_equals_fresh(&root, &bytes_of(&before), &bytes_of(&after));
+        let _ = std::fs::remove_dir_all(&root);
+        let (reused, _) = result?;
+        let child = reused
+            .files()
+            .get(&PathBuf::from("src/child.rs"))
+            .ok_or("child must stay indexed")?;
+        if !child.role_provenance.edges.is_empty() {
+            return Err("deleted `mod child;` must leave no module edge on the child".into());
+        }
+        Ok(())
+    }
+
+    /// Removing an `include!` from a changed file must drop the include
+    /// parent/target state it produced.
+    #[test]
+    fn reuse_of_changed_file_removing_include_matches_fresh() -> Result<(), String> {
+        let before = [
+            (
+                "src/lib.rs",
+                "include!(\"frag.rs\");\npub fn top() -> i32 { 1 }\n",
+            ),
+            ("src/frag.rs", "pub fn fragment() -> i32 { 2 }\n"),
+        ];
+        let after = [
+            ("src/lib.rs", "pub fn top() -> i32 { 1 }\n"),
+            ("src/frag.rs", "pub fn fragment() -> i32 { 2 }\n"),
+        ];
+        let root = reuse_fixture_root("reuse-include-remove", &before)?;
+        let core = bytes_of(&before);
+        let core_index = rust_index::build_analysis_index_from_loaded_files(&root, &core, &[])?;
+        if core_index.index.include_parents.is_empty() {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err("fixture must produce an include parent".into());
+        }
+        let result = reuse_equals_fresh(&root, &core, &bytes_of(&after));
+        let _ = std::fs::remove_dir_all(&root);
+        let (reused, _) = result?;
+        if !reused.include_parents.is_empty() {
+            return Err("removed `include!` must leave no include parent".into());
+        }
+        Ok(())
+    }
+
+    /// An addition with an unknown `#[path]` target makes module composition
+    /// unknowable, so a retained file's `outside_module_tree` claim must be
+    /// withdrawn exactly as a fresh build does.
+    #[test]
+    fn reuse_with_added_unknown_path_target_matches_fresh() -> Result<(), String> {
+        let core_src = [
+            ("src/lib.rs", "pub fn top() -> i32 { 1 }\n"),
+            ("src/orphan.rs", "pub fn orphan() -> i32 { 2 }\n"),
+        ];
+        let extra = (
+            "src/extra.rs",
+            "#[cfg(test)]\n#[cfg_attr(\u{e9}, path = \"alternate.rs\")]\nmod imp;\n",
+        );
+        let target_src = [core_src[0], core_src[1], extra];
+        let root = reuse_fixture_root("reuse-unknown-path", &core_src)?;
+        let core = bytes_of(&core_src);
+        let core_index = rust_index::build_analysis_index_from_loaded_files(&root, &core, &[])?;
+        let orphan = PathBuf::from("src/orphan.rs");
+        let outside = |index: &RustIndex| {
+            index
+                .files()
+                .get(&orphan)
+                .is_some_and(|facts| facts.role_provenance.outside_module_tree)
+        };
+        if !outside(&core_index.index) {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err("fixture must start with the orphan outside the module tree".into());
+        }
+        let result = reuse_equals_fresh(&root, &core, &bytes_of(&target_src));
+        let _ = std::fs::remove_dir_all(&root);
+        let (reused, fresh) = result?;
+        if outside(&fresh) || outside(&reused) {
+            return Err("an unknown `#[path]` target must withdraw the unlinked claim".into());
+        }
+        Ok(())
+    }
+
+    /// A changed file differing from the indexed one only by a BOM is
+    /// current: no re-parse, no fact-cache lookup, index untouched.
+    #[test]
+    fn reuse_treats_bom_only_changed_file_as_current() -> Result<(), String> {
+        let text = "pub fn a() -> i32 { 1 }\n";
+        let root = reuse_fixture_root("reuse-bom-only", &[("src/lib.rs", text)])?;
+        let plain = vec![(PathBuf::from("src/lib.rs"), text.as_bytes().to_vec())];
+        let mut with_bom = b"\xEF\xBB\xBF".to_vec();
+        with_bom.extend_from_slice(text.as_bytes());
+        let bom = vec![(PathBuf::from("src/lib.rs"), with_bom)];
+        let core = rust_index::build_analysis_index_from_loaded_files(&root, &plain, &[])?;
+        let before = core.file_fact_cache.hits + core.file_fact_cache.misses;
+        let reused = rust_index::reuse_cached_index_with_loaded_files(core, &root, &bom, &[])?;
+        let after = reused.file_fact_cache.hits + reused.file_fact_cache.misses;
+        let _ = std::fs::remove_dir_all(&root);
+        if before != after {
+            return Err(format!(
+                "BOM-only difference must not re-parse ({before} -> {after})"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #8547: one shared bounded seam index serves both check routes:
+    /// classification populates it once, and the seam-shape consumer
+    /// reuses it instead of building a second index, with results
+    /// identical to the unshared builders.
+    #[test]
+    fn shared_file_seam_index_serves_both_route_consumers() -> Result<(), String> {
+        let root = make_tempdir("shared-seam-index")?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"shared8547\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub fn discount(total: i32) -> i32 {\n    if total >= 100 { total / 10 } else { 0 }\n}\n",
+        )?;
+        write_file(
+            &root.join("tests/it.rs"),
+            "use shared8547::discount;\n\n#[test]\nfn discount_from_integration() {\n    assert_eq!(discount(50), 0);\n}\n",
+        )?;
+        let config = RiprConfig::default();
+        let lib = PathBuf::from("src/lib.rs");
+        let evidence = vec![PathBuf::from("tests/it.rs")];
+
+        let mut shared: Option<FileSeamIndex> = None;
+        let classified_shared =
+            classify_seams_in_file_with_shared_index(&root, &config, &lib, &evidence, &mut shared)?;
+        if shared
+            .as_ref()
+            .is_none_or(|index| !index.covers(&[lib.clone(), evidence[0].clone()]))
+        {
+            return Err("classification must populate the shared seam index".into());
+        }
+        let seams_shared = scoped_file_seams(&root, &config, &lib, &mut shared)?;
+
+        let classified_fresh =
+            classify_seams_in_file_with_shared_index(&root, &config, &lib, &evidence, &mut None)?;
+        let seams_fresh = scoped_file_seams(&root, &config, &lib, &mut None)?;
+
+        if seams_shared != seams_fresh || seams_shared.is_empty() {
+            return Err("shared seam shapes must match the unshared builder".into());
+        }
+        let classified_ids = |classified: &[ClassifiedSeam]| {
+            classified
+                .iter()
+                .map(|entry| format!("{}:{:?}", entry.seam.id().as_str(), entry.class))
+                .collect::<Vec<_>>()
+        };
+        if classified_ids(&classified_shared) != classified_ids(&classified_fresh) {
+            return Err("shared classification must match the unshared builder".into());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #8547 acceptance 1, build-count proof: a check-shaped sequence
+    /// (admission core, main reuse, then both human-output routes over a
+    /// shared seam index) starts exactly one workspace index build and
+    /// one bounded route build. The reuse step parses only the admitted
+    /// extra file through the cache — it is not a second workspace build
+    /// — and the second route consumer builds nothing. Counts are the
+    /// `index_cached_parse` phase starts the latency trace emits.
+    #[test]
+    fn check_shaped_sequence_builds_one_workspace_and_one_route_index() -> Result<(), String> {
+        use crate::analysis::facts::index_build_probe::observe;
+        let root = make_tempdir("build-count-8547")?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"count8547\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub fn discount(total: i32) -> i32 {\n    if total >= 100 { total / 10 } else { 0 }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn high_total_gets_discount() {\n        assert_eq!(discount(200), 20);\n    }\n}\n",
+        )?;
+        write_file(
+            &root.join("tests/it.rs"),
+            "use count8547::discount;\n\n#[test]\nfn discount_from_integration() {\n    assert_eq!(discount(50), 0);\n}\n",
+        )?;
+        let loaded = |paths: &[&str]| -> Vec<(PathBuf, Vec<u8>)> {
+            paths
+                .iter()
+                .map(|path| {
+                    (
+                        PathBuf::from(path),
+                        std::fs::read(root.join(path)).unwrap_or_default(),
+                    )
+                })
+                .collect()
+        };
+        let core_files = loaded(&["src/lib.rs"]);
+        let all_files = loaded(&["src/lib.rs", "tests/it.rs"]);
+
+        let (core, workspace_builds) =
+            observe(|| rust_index::build_analysis_index_from_loaded_files(&root, &core_files, &[]));
+        let core = core?;
+        if workspace_builds != 1 {
+            return Err(format!(
+                "admission core must be one workspace index build, got {workspace_builds}"
+            ));
+        }
+        let core_lookups = core.file_fact_cache.hits + core.file_fact_cache.misses;
+        let (reused, reuse_builds) = observe(|| {
+            rust_index::reuse_cached_index_with_loaded_files(core, &root, &all_files, &[])
+        });
+        let reused = reused?;
+        // One incremental parse phase over only the admitted extra: the
+        // cache-lookup total grows by that one file, never by the whole
+        // file list a second time.
+        let reuse_lookups = reused.file_fact_cache.hits + reused.file_fact_cache.misses;
+        if reuse_builds != 1 || reuse_lookups != core_lookups + 1 {
+            return Err(format!(
+                "main reuse must parse only the admitted extra (builds={reuse_builds}, lookups {core_lookups} -> {reuse_lookups})"
+            ));
+        }
+        let (again, unchanged_builds) = observe(|| {
+            rust_index::reuse_cached_index_with_loaded_files(reused, &root, &all_files, &[])
+        });
+        again?;
+        if unchanged_builds != 0 {
+            return Err(format!(
+                "unchanged reuse must build nothing, got {unchanged_builds}"
+            ));
+        }
+        let config = RiprConfig::default();
+        let lib = PathBuf::from("src/lib.rs");
+        let evidence = vec![PathBuf::from("tests/it.rs")];
+        let mut shared: Option<FileSeamIndex> = None;
+        let (routes, route_builds) = observe(|| {
+            let classified = classify_seams_in_file_with_shared_index(
+                &root,
+                &config,
+                &lib,
+                &evidence,
+                &mut shared,
+            )?;
+            let seams = scoped_file_seams(&root, &config, &lib, &mut shared)?;
+            Ok::<_, String>((classified, seams))
+        });
+        let (_, seams) = routes?;
+        if route_builds != 1 {
+            return Err(format!(
+                "both routes together must build one bounded seam index, got {route_builds}"
+            ));
+        }
+        if seams.is_empty() {
+            return Err("build-count fixture must yield at least one route seam".into());
+        }
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
