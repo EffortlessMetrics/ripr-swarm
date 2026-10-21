@@ -196,7 +196,8 @@ reads `exposed`.
   predicate stays `weakly_exposed`. The credit is the edge-pair claim, as in
   RIPR-SPEC-0227, not a claim about every mutant of the predicate.
 - Tests in a file that declares or imports an item named like the generated
-  mock (`struct MockT`, `use other::MockT`): the name may not resolve to the
+  mock (`struct MockT`, `use other::MockT`), globs in anything but
+  `super::*`, or defines a `macro_rules!`: the name may not resolve to the
   `automock` type and a stand-in enforces no count, so the file refuses.
 
 ## Acceptance Examples

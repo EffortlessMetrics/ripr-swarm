@@ -378,7 +378,8 @@ impl CountGate {
     }
 
     /// The test's file declares or imports an item named like the generated
-    /// mock (`struct MockT`, `use other::MockT`). The name then may not
+    /// mock (`struct MockT`, `use other::MockT`), globs in anything but
+    /// `super::*`, or defines a `macro_rules!`. The name then may not
     /// resolve to the `automock` type, and a stand-in with the same
     /// expectation-chain methods enforces no count, so the file refuses.
     fn mock_type_is_declared_or_imported(&self, test: &ast::Fn) -> bool {
@@ -386,7 +387,18 @@ impl CountGate {
             return true;
         };
         root.descendants().any(|node| {
-            ast::Name::cast(node.clone()).is_some_and(|name| name.text() == self.mock_type)
+            // A glob other than `super::*` or a local `macro_rules!` can bring
+            // in or generate a stand-in without ever spelling its name.
+            ast::MacroRules::can_cast(node.kind())
+                || ast::Use::cast(node.clone()).is_some_and(|import| {
+                    let text = import.syntax().text().to_string();
+                    text.contains('*')
+                        && !text
+                            .split_whitespace()
+                            .collect::<String>()
+                            .ends_with("super::*;")
+                })
+                || ast::Name::cast(node.clone()).is_some_and(|name| name.text() == self.mock_type)
                 || ast::Use::can_cast(node.kind())
                     && node
                         .descendants_with_tokens()
@@ -1208,6 +1220,8 @@ mod tests {
             ("a local struct", "struct MockMailer;\n"),
             ("an imported name", "use fakes::MockMailer;\n"),
             ("a local alias", "type MockMailer = Fake;\n"),
+            ("a foreign glob", "use fakes::*;\n"),
+            ("a local macro", "macro_rules! stand_in { () => {}; }\n"),
         ] {
             let owner = format!("{OWNER}{extra}");
             assert!(!counted(&owner, TEST)?, "{label}");
