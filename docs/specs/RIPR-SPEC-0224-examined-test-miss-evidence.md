@@ -162,8 +162,11 @@ not yet satisfy all of it, and these gaps are tracked rather than claimed away:
   `miss == assertion_not_observing`, and `Finding::oracle_related_tests`,
   `exact_oracle_gap_next_step` and the diagnostic witness read it, and
   `exact_oracle_gap_next_step` also branches directly on
-  `miss == missing_exact_assertion`, so changing a row's miss can change triage
-  ordering, next step or fix-site selection.
+  `miss == missing_exact_assertion`, and the Rust oracle pass reads
+  `assertion_not_credited` when choosing the macro-wrapped-assertion limit and
+  its next step. Changing a row's miss can therefore change triage ordering,
+  next step, limit kind or fix-site selection. These readers are examples, not
+  a complete inventory; #5563 owns the inventory and the decoupling.
 - Row-owned support (#5564): the annotation pass computes boundary and
   exact-assertion presence once from the finding-wide `missing_discriminators`
   list and assigns `missing_input` or `missing_exact_assertion` to eligible
@@ -210,8 +213,9 @@ written and must not copy these gaps.
   miss: advisory relations, weak or missing oracles, partial or blocked
   packets, and the finding-wide discriminator, which has no test identity.
 - `miss` is evidence only (target; the Rust exceptions are listed under
-  Current Rust conformance gaps). No stage, class, confidence or stop reason
-  reads it, and the next-step and ordering exceptions are those gaps. Post-classification gates that asked whether any related
+  Current Rust conformance gaps). The target is that no stage, class,
+  confidence, stop reason, limit or next step reads it; the Rust readers are
+  those gaps. Post-classification gates that asked whether any related
   test survived oracle matching use `Finding::oracle_related_tests`, which
   skips `assertion_not_observing` rows, so their decisions are unchanged.
 - Oracle rows are ranked and packed into the eight-row window exactly as
