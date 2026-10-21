@@ -20,6 +20,7 @@ use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use crate::analysis::sync_memo::SyncMemo;
 use crate::domain::*;
+use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};

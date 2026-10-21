@@ -572,6 +572,7 @@ mod tests {
             Vec::new(),
         )?;
         Ok(crate::app::CheckOutput {
+            value_origins: Default::default(),
             schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
             harness_projections: Vec::new(),
             tool: "ripr".to_string(),

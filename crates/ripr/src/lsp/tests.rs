@@ -2565,7 +2565,6 @@ fn witness_finding() -> Finding {
         flow_sink: None,
     }];
     finding.activation.observed_values = vec![ValueFact {
-        file: None,
         line: 12,
         text: "assert!(result.is_err())".to_string(),
         value: "result.is_err()".to_string(),
@@ -15026,13 +15025,15 @@ fn sample_classified_seam() -> crate::analysis::ClassifiedSeam {
                 Confidence::Medium,
                 "boundary value missing",
             ),
-            observed_values: vec![ValueFact {
-                file: None,
-                line: 12,
-                text: "discounted_total(50, 100)".to_string(),
-                value: "50".to_string(),
-                context: ValueContext::FunctionArgument,
-            }],
+            observed_values: vec![
+                ValueFact {
+                    line: 12,
+                    text: "discounted_total(50, 100)".to_string(),
+                    value: "50".to_string(),
+                    context: ValueContext::FunctionArgument,
+                }
+                .into(),
+            ],
             missing_discriminators: vec![MissingDiscriminatorFact {
                 value: "discount_threshold (equality boundary)".to_string(),
                 reason: "observed values skip equality boundary".to_string(),
@@ -15135,7 +15136,6 @@ fn finding_hover_response_includes_evidence_details() -> Result<(), String> {
     }];
     finding.activation = ActivationEvidence {
         observed_values: vec![ValueFact {
-            file: None,
             line: 12,
             text: "assert_eq!".to_string(),
             value: "amount == threshold".to_string(),

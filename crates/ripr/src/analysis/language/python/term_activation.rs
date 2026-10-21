@@ -39,7 +39,10 @@ use super::related_tests::{PythonRelatedCandidate, python_text_hides_code};
 use super::source_utils::{SourceText, line_for_range_end, line_for_range_start, text_for_range};
 use super::static_limits::has_identifier_boundary;
 use super::{PythonAssertion, PythonOwner, PythonParameter, PythonTest, expr_full_name};
-use crate::domain::{OracleStrength, OwnerKind, ValueContext, ValueFact};
+use crate::{
+    domain::{OracleStrength, OwnerKind, ValueContext},
+    value_origins::LocatedValueFact as ValueFact,
+};
 use rustpython_parser::ast::{self, Expr, Mod, Ranged, Stmt};
 use rustpython_parser::text_size::TextSize;
 use rustpython_parser::{Mode, parse};

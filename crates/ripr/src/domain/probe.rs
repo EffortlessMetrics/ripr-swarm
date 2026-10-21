@@ -343,12 +343,6 @@ impl ValueContext {
 /// consumers recover it via `finding.assertion_texts[line.to_string()]`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ValueFact {
-    /// Test file the value was read from, when the producer knows it. The
-    /// human renderer can print it next to `line`. The field itself is omitted
-    /// from serde output; using it for fact identity can still change rendered
-    /// fact counts, ordering and derived evidence.
-    #[serde(skip)]
-    pub file: Option<PathBuf>,
     pub line: usize,
     pub text: String,
     pub value: String,

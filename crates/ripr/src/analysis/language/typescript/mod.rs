@@ -227,6 +227,7 @@ impl LanguageAdapter for TypeScriptAdapter {
         // docs/LANGUAGE_ADAPTER_PREVIEW.md § "Repo-Mode Analysis" for
         // the limitation contract.
         Ok(LanguageRepoResult {
+            value_origins: Default::default(),
             findings: Vec::new(),
             harness_projections: Vec::new(),
             production_files: 0,
@@ -962,6 +963,7 @@ impl TypeScriptAdapter {
         // distinct (mirror of the Rust path's `dedup_probe_ids`).
         dedup_typescript_probe_ids(&mut findings);
         Ok(LanguageDiffResult {
+            value_origins: Default::default(),
             findings,
             harness_projections: Vec::new(),
             changed_files: changed_count,

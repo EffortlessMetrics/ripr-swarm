@@ -12,7 +12,7 @@ use crate::app::CheckOutput;
 use crate::config::{ConfigSeverity, RiprConfig};
 use crate::domain::{
     ExposureClass, Finding, LanguageId, LanguageStatus, MissingDiscriminatorFact, RelatedTest,
-    StageEvidence, ValueFact,
+    StageEvidence,
 };
 use crate::output::next_step::reconcile_next_step;
 use crate::output::observed_values::{bounded_observed_values, elided_observed_values_total};
@@ -852,20 +852,10 @@ fn related_test_properties(test: &RelatedTest) -> Value {
 
 /// The bounded observed-value projection (`output::observed_values`); the
 /// call site discloses `observed_values_total` when the cap drops values.
-fn value_facts(values: &[ValueFact]) -> Value {
-    json!(
-        bounded_observed_values(values)
-            .into_iter()
-            .map(|value| {
-                json!({
-                    "line": value.line,
-                    "text": value.text.as_str(),
-                    "value": value.value.as_str(),
-                    "context": value.context.as_str()
-                })
-            })
-            .collect::<Vec<_>>()
-    )
+fn value_facts<T: crate::output::observed_values::SourceValue + serde::Serialize>(
+    values: &[T],
+) -> Value {
+    json!(bounded_observed_values(values))
 }
 
 fn missing_discriminators(missing: &[MissingDiscriminatorFact]) -> Value {
@@ -1170,6 +1160,7 @@ mod tests {
         AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
     };
     use crate::app::{CheckOutput, Mode};
+    use crate::domain::ValueFact;
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, FindingCanonicalGap, FlowSinkFact, FlowSinkKind,
         LanguageId, LanguageStatus, OracleKind, OracleStrength, OwnerKind, Probe, ProbeFamily,
@@ -2056,7 +2047,6 @@ weakly_gripped = "note"
     fn assertion_values(count: usize) -> Vec<ValueFact> {
         (1..=count)
             .map(|line| ValueFact {
-                file: None,
                 line,
                 text: format!("assert_eq!(value, {line});"),
                 value: format!("value_{line}"),
@@ -2080,7 +2070,7 @@ weakly_gripped = "note"
         assert_eq!(props["observed_values_total"], 500);
 
         let mut seam = weakly_gripped_classified();
-        seam.evidence.observed_values = assertion_values(500);
+        seam.evidence.observed_values = assertion_values(500).into_iter().map(Into::into).collect();
         let sarif = parse_json(&render_repo_seams_sarif(
             &[seam],
             None,
@@ -2390,6 +2380,7 @@ weakly_gripped = "note"
 
     fn sample_output() -> CheckOutput {
         CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -2497,7 +2488,6 @@ weakly_gripped = "note"
             }],
             activation: ActivationEvidence {
                 observed_values: vec![ValueFact {
-                    file: None,
                     line: 12,
                     text: "discounted_total(50, 100)".to_string(),
                     value: "amount = 50".to_string(),
@@ -2580,13 +2570,15 @@ weakly_gripped = "note"
             propagate: stage(StageState::Yes, "return value sink reached"),
             observe: stage(StageState::Yes, "returned value asserted"),
             discriminate: stage(StageState::Weak, "equality boundary absent"),
-            observed_values: vec![ValueFact {
-                file: None,
-                line: 12,
-                text: "discounted_total(50, 100)".to_string(),
-                value: "amount = 50".to_string(),
-                context: ValueContext::FunctionArgument,
-            }],
+            observed_values: vec![
+                ValueFact {
+                    line: 12,
+                    text: "discounted_total(50, 100)".to_string(),
+                    value: "amount = 50".to_string(),
+                    context: ValueContext::FunctionArgument,
+                }
+                .into(),
+            ],
             missing_discriminators: vec![MissingDiscriminatorFact {
                 value: "amount == discount_threshold".to_string(),
                 reason: "observed values do not include equality boundary".to_string(),

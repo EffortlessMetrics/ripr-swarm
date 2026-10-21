@@ -20,6 +20,7 @@ use std::path::Path;
 /// to every other adapter to the same partition.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct LanguageDiffResult {
+    pub(crate) value_origins: crate::value_origins::ValueOrigins,
     pub(crate) findings: Vec<Finding>,
     /// Test-harness registry projections (#3532): what each exact
     /// registration established for this run. Empty without registrations.
@@ -55,6 +56,7 @@ pub(crate) struct LanguageDiffResult {
 /// the adapter classified as production code, used by the summary builder.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct LanguageRepoResult {
+    pub(crate) value_origins: crate::value_origins::ValueOrigins,
     pub(crate) findings: Vec<Finding>,
     /// Test-harness registry projections (#3532); empty without
     /// registrations.

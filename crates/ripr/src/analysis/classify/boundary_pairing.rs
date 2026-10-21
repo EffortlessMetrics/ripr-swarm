@@ -20,6 +20,9 @@ use super::reveal::assertion_comparison_operands;
 use super::text::delimited_contents_at;
 use crate::analysis::syntax::HelperLoan;
 use crate::domain::*;
+use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
+#[cfg(test)]
+use crate::value_origins::LocatedValueFact as ValueFact;
 
 /// Token carried in the discriminate summary when a predicate would otherwise
 /// read `exposed` without an admitted oracle on the boundary call.

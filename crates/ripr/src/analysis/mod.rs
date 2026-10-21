@@ -933,6 +933,7 @@ impl LanguageRunStatus {
 
 #[derive(Clone, Debug)]
 pub struct AnalysisResult {
+    pub(crate) value_origins: crate::value_origins::ValueOrigins,
     /// Test-harness registry projections (#3532): what each exact
     /// registration established for this run — harness kind, provenance,
     /// subject identity, selector capability, and typed limitations.

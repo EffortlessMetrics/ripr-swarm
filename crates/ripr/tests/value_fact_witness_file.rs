@@ -1,5 +1,5 @@
 //! #8389: value facts retain their source locations through classification.
-//! Exercise typed provenance, human windows and JSON's separate ranked cap;
+//! Exercise producer-owned provenance, human windows and JSON's separate ranked cap;
 //! the machine value objects omit the file field while retaining fact counts.
 
 use ripr::{CheckInput, Mode, OutputFormat, check_workspace};
@@ -79,7 +79,14 @@ fn slice_table_witness_names_its_test_file() -> Result<(), String> {
     );
     for fact in witnesses {
         assert_eq!(
-            fact.file.as_deref(),
+            output.findings.iter().find_map(|finding| {
+                let index = finding
+                    .activation
+                    .observed_values
+                    .iter()
+                    .position(|value| std::ptr::eq(value, fact))?;
+                output.source_value_files(finding)?.get(index)?.as_deref()
+            }),
             Some(Path::new("src/lib.rs")),
             "{fact:?}"
         );
@@ -114,11 +121,11 @@ fn cross_file_boundary_facts_reach_human_and_json_windows() -> Result<(), String
     let mut config = ripr::config::RiprConfig::default();
     config.languages.enabled = vec![ripr::domain::LanguageId::Python];
     for (calls, second_file, padding, expected_total) in [
-        (8, false, 0, 8),
-        (8, true, 0, 9),
         (12, false, 0, 12),
         (12, true, 0, 13),
         (12, true, 20, 13),
+        (8, false, 0, 8),
+        (8, true, 0, 9),
         (32, false, 0, 32),
         (32, true, 0, 33),
     ] {
@@ -162,11 +169,31 @@ fn cross_file_boundary_facts_reach_human_and_json_windows() -> Result<(), String
         );
         let finding = predicates[0];
         let facts = &finding.activation.observed_values;
-        assert_eq!(facts.len(), expected_total, "{facts:?}");
+        let human = ripr::app::render_check(&output, &OutputFormat::HumanFull)?;
+        let json: serde_json::Value = serde_json::from_str(&ripr::output::json::render(&output))
+            .map_err(|e| e.to_string())?;
+        let json_finding = json["findings"]
+            .as_array()
+            .and_then(|all| all.iter().find(|f| f["id"] == finding.id))
+            .ok_or("missing JSON finding")?;
+        assert_eq!(
+            facts.len(),
+            expected_total,
+            "human:\n{human}\nJSON value counts: activation={:?}, promoted={:?}",
+            json_finding["activation"]["observed_values"]
+                .as_array()
+                .map(Vec::len),
+            json_finding["observed_values"].as_array().map(Vec::len)
+        );
+        let files = output
+            .source_value_files(finding)
+            .ok_or("missing producer value origins")?;
+        assert_eq!(files.len(), facts.len());
         let repeated_locations = facts
             .iter()
-            .filter(|fact| fact.value == "x = 10")
-            .map(|fact| (fact.file.as_deref(), fact.line))
+            .zip(files)
+            .filter(|(fact, _)| fact.value == "x = 10")
+            .map(|(fact, file)| (file.as_deref(), fact.line))
             .collect::<Vec<_>>();
         let mut expected = vec![(Some(Path::new("tests/test_a.py")), 4)];
         if second_file {
@@ -174,7 +201,59 @@ fn cross_file_boundary_facts_reach_human_and_json_windows() -> Result<(), String
         }
         assert_eq!(repeated_locations, expected);
 
-        let human = ripr::output::human::render_finding(finding);
+        if calls == 12 && second_file && padding == 0 {
+            // A detached four-field DTO retains counts but cannot invent paths.
+            let bare = ripr::output::human::render_finding(finding);
+            assert!(
+                bare.contains("source function argument value x = 10 at line 4"),
+                "{bare}"
+            );
+            assert!(
+                !bare.contains("source function argument value x = 10 at tests/"),
+                "{bare}"
+            );
+            assert_eq!(output.source_value_files(&finding.clone()), Some(files));
+            let mut edited = output.clone();
+            let original_id = finding.id.clone();
+            let changed = edited
+                .findings
+                .iter_mut()
+                .find(|f| f.id == original_id)
+                .ok_or("missing cloned finding")?;
+            changed.activation.observed_values[0].text.push(' ');
+            let changed = edited
+                .findings
+                .iter()
+                .find(|f| f.id == original_id)
+                .ok_or("missing edited finding")?;
+            assert!(edited.source_value_files(changed).is_none());
+            let edited_human = ripr::app::render_check(&edited, &OutputFormat::HumanFull)?;
+            assert!(
+                !edited_human.contains("source function argument value x = 10 at tests/"),
+                "{edited_human}"
+            );
+            // Fresh explain owns the context too; only artifact/detached routes fall back.
+            let explained = ripr::app::explain_finding_with_config(
+                CheckInput {
+                    root: scratch.0.clone(),
+                    diff_file: Some(scratch.0.join("change.diff")),
+                    mode: Mode::Fast,
+                    format: OutputFormat::HumanFull,
+                    include_unchanged_tests: true,
+                    ..CheckInput::default()
+                },
+                &finding.id,
+                &config,
+            )?;
+            for file in ["tests/test_a.py", "tests/test_b.py"] {
+                assert!(
+                    explained.contains(&format!(
+                        "source function argument value x = 10 at {file}:4"
+                    )),
+                    "{explained}"
+                );
+            }
+        }
         let source_lines = human
             .lines()
             .filter(|line| line.contains("source function argument value"))
@@ -220,8 +299,6 @@ fn cross_file_boundary_facts_reach_human_and_json_windows() -> Result<(), String
             );
         }
 
-        let json: serde_json::Value = serde_json::from_str(&ripr::output::json::render(&output))
-            .map_err(|e| e.to_string())?;
         let rendered = json["findings"]
             .as_array()
             .and_then(|findings| findings.iter().find(|item| item["id"] == finding.id))
@@ -328,12 +405,20 @@ fn cross_file_guard_and_term_facts_reach_consumers() -> Result<(), String> {
         );
         let facts = &finding.activation.observed_values;
         assert_eq!(facts.len(), 2, "{label}: {facts:?}");
-        for (fact, file) in facts.iter().zip(["tests/test_a.py", "tests/test_b.py"]) {
-            assert_eq!(fact.file.as_deref(), Some(Path::new(file)));
+        let origins = output
+            .source_value_files(finding)
+            .ok_or("missing producer value origins")?;
+        assert_eq!(origins.len(), facts.len());
+        for ((fact, origin), file) in facts
+            .iter()
+            .zip(origins)
+            .zip(["tests/test_a.py", "tests/test_b.py"])
+        {
+            assert_eq!(origin.as_deref(), Some(Path::new(file)));
             assert_eq!(fact.line, 4);
             assert_eq!(fact.value, value);
         }
-        let human = ripr::output::human::render_finding(finding);
+        let human = ripr::app::render_check(&output, &OutputFormat::HumanFull)?;
         for file in ["tests/test_a.py", "tests/test_b.py"] {
             assert!(
                 human.contains(&format!(
@@ -437,7 +522,7 @@ fn classified_input_beyond_first_32_outranks_assertion_values_in_json() -> Resul
         );
     }
     assert_eq!(rendered["observed_values_total"], facts.len());
-    let human = ripr::output::human::render_finding(finding);
+    let human = ripr::app::render_check(&output, &OutputFormat::HumanFull)?;
     assert!(
         human.contains(&format!(
             "showing 8 of {} read from related tests",

@@ -59,28 +59,45 @@ pub(super) struct EvidenceEntry {
 }
 
 pub(super) fn evidence_path_lines(finding: &Finding, wording: JsonPointerWording) -> Vec<String> {
-    evidence_path(finding, wording, |text, _| text)
+    evidence_path_lines_with_files(finding, wording, None)
 }
 
-pub(super) fn evidence_path_entries(finding: &Finding, with_keys: bool) -> Vec<EvidenceEntry> {
-    evidence_path(finding, JsonPointerWording::CheckFlag, |text, source| {
-        // Multi-line literals retain their existing rendering locally and cannot
-        // forge a catalogue definition or generated reference.
-        let key = if !with_keys
-            || matches!(source, EvidenceSource::Window)
-            || text.contains(['\n', '\r'])
-        {
-            None
-        } else {
-            serde_json::to_vec(&(source, &text)).ok()
-        };
-        EvidenceEntry { text, key }
-    })
+pub(super) fn evidence_path_lines_with_files(
+    finding: &Finding,
+    wording: JsonPointerWording,
+    files: Option<&[Option<std::path::PathBuf>]>,
+) -> Vec<String> {
+    evidence_path(finding, wording, files, |text, _| text)
+}
+pub(super) fn evidence_path_entries(
+    finding: &Finding,
+    with_keys: bool,
+    files: Option<&[Option<std::path::PathBuf>]>,
+) -> Vec<EvidenceEntry> {
+    evidence_path(
+        finding,
+        JsonPointerWording::CheckFlag,
+        files,
+        |text, source| {
+            // Multi-line literals retain their existing rendering locally and cannot
+            // forge a catalogue definition or generated reference.
+            let key = if !with_keys
+                || matches!(source, EvidenceSource::Window)
+                || text.contains(['\n', '\r'])
+            {
+                None
+            } else {
+                serde_json::to_vec(&(source, &text)).ok()
+            };
+            EvidenceEntry { text, key }
+        },
+    )
 }
 
 fn evidence_path<T>(
     finding: &Finding,
     wording: JsonPointerWording,
+    files: Option<&[Option<std::path::PathBuf>]>,
     mut project: impl FnMut(String, EvidenceSource<'_>) -> T,
 ) -> Vec<T> {
     let mut lines = vec![
@@ -241,16 +258,23 @@ fn evidence_path<T>(
         .collect::<Vec<_>>();
     // #8389: a bare `at line N` is only ambiguous when the shown window mixes
     // facts from more than one test file; then each line names its file.
-    let name_files = shown_values
-        .iter()
-        .filter_map(|value| value.file.as_deref())
-        .collect::<std::collections::BTreeSet<_>>()
-        .len()
-        > 1;
-    for value in shown_values {
+    let files = files.filter(|files| files.len() == observed_values_total);
+    let name_files = files
+        .map(|files| {
+            files
+                .iter()
+                .take(MAX_OBSERVED_VALUES_SHOWN)
+                .filter_map(|file| file.as_deref())
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                > 1
+        })
+        .unwrap_or(false);
+    for (index, value) in shown_values.into_iter().enumerate() {
+        let file = files.and_then(|files| files[index].as_deref());
         lines.push(project(
             if name_files {
-                crate::output::observed_values::source_value_evidence_line_with_file(value)
+                crate::output::observed_values::source_value_evidence_line_with_file(value, file)
             } else {
                 crate::output::observed_values::source_value_evidence_line(value)
             },

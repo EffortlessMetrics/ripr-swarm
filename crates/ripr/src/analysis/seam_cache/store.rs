@@ -1398,7 +1398,8 @@ mod tests {
     #[test]
     fn codec_round_trip_keeps_observed_value_test_files() -> Result<(), String> {
         use super::super::related_test_table::tests::seam;
-        use crate::domain::{ValueContext, ValueFact};
+        use crate::domain::ValueContext;
+        use crate::value_origins::LocatedValueFact as ValueFact;
         let mut fresh = seam(1, Vec::new());
         fresh.evidence.observed_values = ["tests/a.rs", "tests/b.rs"]
             .into_iter()

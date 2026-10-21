@@ -324,6 +324,7 @@ mod tests {
 
         fn report_with(findings: Vec<Finding>) -> crate::app::CheckOutput {
             crate::app::CheckOutput {
+                value_origins: Default::default(),
                 harness_projections: Vec::new(),
                 schema_version: "0.2".to_string(),
                 tool: "ripr".to_string(),

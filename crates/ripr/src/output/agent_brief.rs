@@ -235,8 +235,7 @@ mod tests {
     };
     use crate::config::{CONFIG_FILE_NAME, load_for_root};
     use crate::domain::{
-        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence,
-        StageState, ValueFact,
+        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence, StageState,
     };
     use serde_json::Value;
     use std::path::PathBuf;
@@ -287,7 +286,7 @@ mod tests {
                 propagate: stage(StageState::Yes),
                 observe: stage(StageState::Yes),
                 discriminate: stage(StageState::Weak),
-                observed_values: Vec::<ValueFact>::new(),
+                observed_values: Vec::new(),
                 missing_discriminators: vec![MissingDiscriminatorFact {
                     value: "discount_threshold (equality boundary)".to_string(),
                     reason: "observed values do not include the equality-boundary case".to_string(),

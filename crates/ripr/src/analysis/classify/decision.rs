@@ -3,6 +3,7 @@ use super::boundary_pairing::SAME_TEST_PAIRING_MISSING;
 use super::operand_pin::FIELD_PINNED_EQUAL_TO_OPERAND;
 use super::reveal::wrapper_error_seam_expression;
 use crate::domain::*;
+use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
 
 pub(in crate::analysis) fn ensure_unknown_stop_reason(
     class: &ExposureClass,

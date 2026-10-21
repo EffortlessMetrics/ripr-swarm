@@ -48,7 +48,10 @@ use super::related_tests::{
     owner_module_callees, owner_module_paths, python_text_hides_code, test_body_binds_local,
 };
 use super::{PythonOwner, PythonTest};
-use crate::domain::{OracleStrength, OwnerKind, ValueContext, ValueFact};
+use crate::{
+    domain::{OracleStrength, OwnerKind, ValueContext},
+    value_origins::LocatedValueFact as ValueFact,
+};
 use std::collections::BTreeMap;
 
 /// One strong related call to the owner with the literal value each bound

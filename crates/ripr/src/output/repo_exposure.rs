@@ -1642,13 +1642,15 @@ mod tests {
             propagate: stage(StageState::Yes),
             observe: stage(StageState::Yes),
             discriminate: stage(StageState::Yes),
-            observed_values: vec![ValueFact {
-                file: None,
-                line: 5,
-                text: "discounted_total(50, 100)".to_string(),
-                value: "50".to_string(),
-                context: crate::domain::ValueContext::FunctionArgument,
-            }],
+            observed_values: vec![
+                ValueFact {
+                    line: 5,
+                    text: "discounted_total(50, 100)".to_string(),
+                    value: "50".to_string(),
+                    context: crate::domain::ValueContext::FunctionArgument,
+                }
+                .into(),
+            ],
             missing_discriminators: vec![MissingDiscriminatorFact {
                 value: "discount_threshold (equality boundary)".to_string(),
                 reason: "observed values do not include the equality-boundary case".to_string(),

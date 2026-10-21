@@ -967,6 +967,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         .collect::<Vec<_>>();
 
     let mut findings: Vec<Finding> = Vec::new();
+    let mut value_origins = crate::value_origins::ValueOrigins::default();
     let mut rust_diagnostic_origins =
         crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default();
     let mut rust_consumed_sources =
@@ -1046,6 +1047,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         harness_projections.extend(result.harness_projections);
         rust_diagnostic_origins = result.rust_diagnostic_origins;
         rust_consumed_sources = result.rust_consumed_sources;
+        value_origins.extend(result.value_origins);
         findings.extend(result.findings);
         rust_changed_files += result.changed_files;
         candidate_line_count += result.candidate_line_count;
@@ -1116,6 +1118,7 @@ fn run_pipeline_for_diff_text_with_language_config(
                     .candidate_line_count
                     .max(candidate_lines_from_findings(&result.findings));
                 let produced_findings = !result.findings.is_empty();
+                value_origins.extend(result.value_origins);
                 findings.extend(result.findings);
                 // A preview adapter indexes its whole language across the
                 // workspace even when the diff touches none of it. Its
@@ -1562,6 +1565,7 @@ fn run_pipeline_for_diff_text_with_language_config(
     )?);
 
     Ok(AnalysisResult {
+        value_origins,
         harness_projections,
         analysis_outcome,
         summary: summary_result,
@@ -1688,6 +1692,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
     rust_config: &crate::config::RustLanguageConfig,
 ) -> Result<AnalysisResult, String> {
     let mut findings: Vec<Finding> = Vec::new();
+    let mut value_origins = crate::value_origins::ValueOrigins::default();
     let mut rust_diagnostic_origins =
         crate::analysis::diagnostic_origin::RustDiagnosticOrigins::default();
     let mut rust_consumed_sources =
@@ -1722,6 +1727,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
             rust_harness_projections = result.harness_projections;
             rust_diagnostic_origins = result.rust_diagnostic_origins;
             rust_consumed_sources = result.rust_consumed_sources;
+            value_origins.extend(result.value_origins);
             findings.extend(result.findings);
             rust_production_files += result.production_files;
             files_by_language.push((LanguageId::Rust, result.production_files));
@@ -1752,6 +1758,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
                         reason: Some(reason.clone()),
                     });
                 }
+                value_origins.extend(result.value_origins);
                 findings.extend(result.findings);
                 files_by_language.push((*language, result.production_files));
             }
@@ -1781,6 +1788,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
     }
 
     Ok(AnalysisResult {
+        value_origins,
         harness_projections: rust_harness_projections,
         analysis_outcome: None,
         summary: summary_result,
@@ -2343,6 +2351,7 @@ fn rebase_finding_paths_to_repository(
             |relative| repository_root.join(relative),
         )
     };
+    result.value_origins.rebase(rebase);
     for finding in &mut result.findings {
         finding.probe.location.file = rebase(&finding.probe.location.file);
     }

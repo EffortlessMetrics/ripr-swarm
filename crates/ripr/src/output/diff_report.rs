@@ -515,6 +515,7 @@ mod tests {
         let mut finding = sample_finding();
         finding.probe.location.file = file;
         CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -641,6 +642,7 @@ mod tests {
     fn diff_report_preserves_diff_complete_full_repo_limited_status() -> Result<(), String> {
         let report = build_diff_report(
             &CheckOutput {
+                value_origins: Default::default(),
                 harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),
@@ -718,6 +720,7 @@ mod tests {
         )?;
         let report = build_diff_report(
             &CheckOutput {
+                value_origins: Default::default(),
                 harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),
@@ -803,6 +806,7 @@ mod tests {
         )?;
         let report = build_diff_report(
             &CheckOutput {
+                value_origins: Default::default(),
                 harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),
@@ -920,6 +924,7 @@ mod tests {
         use crate::analysis::PreviewLanguageAdvisory;
         let report = build_diff_report(
             &CheckOutput {
+                value_origins: Default::default(),
                 harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),
@@ -980,6 +985,7 @@ mod tests {
     fn diff_report_omits_preview_languages_for_pure_rust_scope() -> Result<(), String> {
         let report = build_diff_report(
             &CheckOutput {
+                value_origins: Default::default(),
                 harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),

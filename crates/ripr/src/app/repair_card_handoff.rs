@@ -1134,13 +1134,15 @@ mod tests {
         };
         let mut entry = weakly_gripped_entry();
         entry.evidence.discriminate = stage(StageState::Weak);
-        entry.evidence.observed_values = vec![ValueFact {
-            file: None,
-            line: 120,
-            text: "discounted_total(50, 100)".to_string(),
-            value: "50".to_string(),
-            context: ValueContext::FunctionArgument,
-        }];
+        entry.evidence.observed_values = vec![
+            ValueFact {
+                line: 120,
+                text: "discounted_total(50, 100)".to_string(),
+                value: "50".to_string(),
+                context: ValueContext::FunctionArgument,
+            }
+            .into(),
+        ];
         entry.evidence.missing_discriminators = vec![MissingDiscriminatorFact {
             value: "discount_threshold (equality boundary)".to_string(),
             reason: "observed values do not include the equality-boundary case".to_string(),

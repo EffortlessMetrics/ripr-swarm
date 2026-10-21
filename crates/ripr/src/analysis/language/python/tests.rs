@@ -7297,6 +7297,12 @@ fn every_materializing_wrapper_is_transparent_to_sink_alignment() -> Result<(), 
 /// Classifies a changed `x > 5` predicate of `price(x, k)` against one pytest
 /// test whose body is `body`, importing `price` from its package.
 fn classify_price_boundary_with_test_body(body: &str) -> Result<crate::domain::Finding, String> {
+    classify_price_boundary_with_test_body_and_origins(body).map(|(finding, _)| finding)
+}
+
+fn classify_price_boundary_with_test_body_and_origins(
+    body: &str,
+) -> Result<(crate::domain::Finding, crate::value_origins::ValueOrigins), String> {
     let owner_file = "src/pkg/mod.py";
     let owners = extract_owners(
         Path::new(owner_file),
@@ -7307,8 +7313,20 @@ fn classify_price_boundary_with_test_body(body: &str) -> Result<crate::domain::F
         &format!("from pkg.mod import price\n\n\ndef test_price():\n{body}\n"),
     );
     assert_eq!(tests.len(), 1, "fixture must parse exactly one pytest test");
-    classify_change(Path::new(owner_file), 2, "    if x > 5:", &owners, &tests)
-        .ok_or_else(|| "changed predicate should classify".to_string())
+    let mut origins = crate::value_origins::ValueOrigins::default();
+    let finding = classify::classify_change_with_value_origins(
+        Path::new(owner_file),
+        2,
+        "    if x > 5:",
+        None,
+        &owners,
+        &tests,
+        PythonNoBehaviorContext::default(),
+        None,
+        &mut origins,
+    )
+    .ok_or_else(|| "changed predicate should classify".to_string())?;
+    Ok((finding, origins))
 }
 
 /// #8389: identical calls in distinct files retain both source locations,
@@ -7322,34 +7340,64 @@ fn boundary_value_facts_preserve_identical_calls_from_two_files() -> Result<(), 
     );
     let source =
         "from pkg.mod import price\n\n\ndef test_price():\n    assert price(5, 2) == 0\n\n";
-    let observed = |files: &[&str]| -> Result<Vec<crate::domain::ValueFact>, String> {
+    let observed = |files: &[&str]| -> Result<
+        (
+            Vec<crate::domain::ValueFact>,
+            Vec<Option<std::path::PathBuf>>,
+        ),
+        String,
+    > {
         let tests = files
             .iter()
             .flat_map(|file| extract_tests(Path::new(file), source))
             .collect::<Vec<_>>();
         assert_eq!(tests.len(), files.len(), "one pytest test per file");
-        let finding = classify_change(Path::new(owner_file), 2, "    if x > 5:", &owners, &tests)
-            .ok_or_else(|| "changed predicate should classify".to_string())?;
-        Ok(finding.activation.observed_values)
+        let mut origins = crate::value_origins::ValueOrigins::default();
+        let finding = classify::classify_change_with_value_origins(
+            Path::new(owner_file),
+            2,
+            "    if x > 5:",
+            None,
+            &owners,
+            &tests,
+            PythonNoBehaviorContext::default(),
+            None,
+            &mut origins,
+        )
+        .ok_or_else(|| "changed predicate should classify".to_string())?;
+        let files = origins
+            .files(&finding)
+            .ok_or_else(|| "classifier must retain exact value origins".to_string())?
+            .to_vec();
+        Ok((finding.activation.observed_values, files))
     };
-    let single = observed(&["tests/test_a.py"])?;
+    let (single, single_files) = observed(&["tests/test_a.py"])?;
+    assert!(!single.is_empty());
+    assert_eq!(
+        single_files,
+        vec![Some(std::path::PathBuf::from("tests/test_a.py")); single.len()]
+    );
     let expected = single
         .iter()
-        .flat_map(|fact| {
-            ["tests/test_a.py", "tests/test_b.py"].map(|file| crate::domain::ValueFact {
-                file: Some(std::path::PathBuf::from(file)),
-                ..fact.clone()
-            })
+        .flat_map(|fact| [fact.clone(), fact.clone()])
+        .collect::<Vec<_>>();
+    let expected_files = single
+        .iter()
+        .flat_map(|_| {
+            [
+                Some(std::path::PathBuf::from("tests/test_a.py")),
+                Some(std::path::PathBuf::from("tests/test_b.py")),
+            ]
         })
         .collect::<Vec<_>>();
     for order in [
         ["tests/test_a.py", "tests/test_b.py"],
         ["tests/test_b.py", "tests/test_a.py"],
     ] {
-        let both = observed(&order)?;
-        assert!(!single.is_empty());
+        let (both, files) = observed(&order)?;
         assert_eq!(both.len(), 2 * single.len(), "{both:?}");
         assert_eq!(both, expected);
+        assert_eq!(files, expected_files);
     }
     Ok(())
 }
@@ -7357,7 +7405,7 @@ fn boundary_value_facts_preserve_identical_calls_from_two_files() -> Result<(), 
 #[test]
 fn boundary_call_row_keeps_an_ordinary_assert_line_whole() -> Result<(), String> {
     let line = "    assert price(5, 2) == 0";
-    let finding = classify_price_boundary_with_test_body(line)?;
+    let (finding, origins) = classify_price_boundary_with_test_body_and_origins(line)?;
     assert!(
         finding
             .activation
@@ -7368,12 +7416,10 @@ fn boundary_call_row_keeps_an_ordinary_assert_line_whole() -> Result<(), String>
         finding.activation.observed_values
     );
     // #8389: the boundary value facts name the test file they were read from.
-    let files = finding
-        .activation
-        .observed_values
-        .iter()
-        .map(|fact| fact.file.clone())
-        .collect::<Vec<_>>();
+    let files = origins
+        .files(&finding)
+        .ok_or_else(|| "classifier must retain exact value origins".to_string())?;
+    assert_eq!(files.len(), finding.activation.observed_values.len());
     assert!(
         !files.is_empty()
             && files

@@ -10,9 +10,12 @@ use crate::analysis::rust_index::FunctionSummary;
 use crate::analysis::syntax::{
     constant_table_call_column, owner_reference_count, parse_clean_source_file,
 };
-use crate::domain::{
-    FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact, ProbeFamily, RelationReason,
-    ValueContext, ValueFact,
+use crate::{
+    domain::{
+        FlowSinkFact, FlowSinkKind, MissingDiscriminatorFact, ProbeFamily, RelationReason,
+        ValueContext,
+    },
+    value_origins::LocatedValueFact as ValueFact,
 };
 use ra_ap_syntax::{
     AstNode,

@@ -6,14 +6,25 @@ use crate::analysis::classify::{
 };
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::*;
+use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
 
 const STATIC_UNKNOWN_UNREACHED_NEXT_STEP: &str = "No static test path reaches this change; a test may still reach it through paths ripr cannot follow.";
 const PROXIMITY_ONLY_INSPECTION_NEXT_STEP: &str = "The indexed related tests do not establish a call to the changed owner. Inspect existing tests, doctests and examples before changing assertions; they may already constrain the changed behavior. Add or strengthen a test only if that inspection finds a gap.";
 
+#[cfg(test)]
 pub(in crate::analysis) fn build_finding(
     context: &ProbeContext<'_>,
     class: ExposureClass,
+    evidence: ClassifiedProbeEvidence,
+) -> Finding {
+    build_finding_with_origins(context, class, evidence, None)
+}
+
+pub(in crate::analysis) fn build_finding_with_origins(
+    context: &ProbeContext<'_>,
+    class: ExposureClass,
     mut evidence: ClassifiedProbeEvidence,
+    origins: Option<&std::sync::Mutex<crate::value_origins::ValueOrigins>>,
 ) -> Finding {
     let missing = missing_evidence(
         context.probe,
@@ -195,7 +206,8 @@ pub(in crate::analysis) fn build_finding(
         ));
     }
 
-    Finding {
+    let (activation, files) = evidence.activation.into_public();
+    let finding = Finding {
         id: context.probe.id.0.clone(),
         canonical_gap: None,
         probe: context.probe.clone(),
@@ -205,7 +217,7 @@ pub(in crate::analysis) fn build_finding(
         evidence: evidence_lines,
         missing,
         flow_sinks: evidence.flow_sinks,
-        activation: evidence.activation,
+        activation,
         stop_reasons,
         related_tests_matched_total: Some(evidence.related_tests_matched_total),
         related_tests,
@@ -225,7 +237,15 @@ pub(in crate::analysis) fn build_finding(
         // evidence; this constructor has none, so the disposition stays the
         // explicit unknown (#3280).
         source_currentness: crate::domain::SourceCurrentness::UnresolvedSubject,
+    };
+    let receipt =
+        origins.and_then(|_| crate::value_origins::ValueOrigins::prepare(&finding, files));
+    if let (Some(origins), Some(receipt)) = (origins, receipt)
+        && let Ok(mut origins) = origins.lock()
+    {
+        origins.insert_receipt(receipt);
     }
+    finding
 }
 
 /// Which matched rows `reveal` left without a confirmed observation of the
@@ -609,16 +629,16 @@ fn refused_assertion_next_step(note: Option<&AssertionRefusalNote>, macro_name: 
 #[cfg(test)]
 mod tests {
     use super::{
-        Unconfirmed, annotate_related_test_misses, bound_identifiers_from_owner_calls,
-        exact_oracle_aligns_with_sink, oracle_binds_sink_identity, oracle_text_aligns_with_sink,
-        sink_kind_corresponds,
+        ActivationEvidence, Unconfirmed, annotate_related_test_misses,
+        bound_identifiers_from_owner_calls, exact_oracle_aligns_with_sink,
+        oracle_binds_sink_identity, oracle_text_aligns_with_sink, sink_kind_corresponds,
     };
     use crate::analysis::classifier::evidence::ClassifiedProbeEvidence;
     use crate::analysis::rust_index::TestSummary;
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, FlowSinkFact, FlowSinkKind, OracleKind,
-        OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RelationReason, RevealEvidence,
-        RiprEvidence, SourceLocation, StageEvidence, StageState, SymbolId,
+        Confidence, DeltaKind, FlowSinkFact, FlowSinkKind, OracleKind, OracleStrength, Probe,
+        ProbeFamily, ProbeId, RelatedTest, RelationReason, RevealEvidence, RiprEvidence,
+        SourceLocation, StageEvidence, StageState, SymbolId,
     };
     use std::path::PathBuf;
 

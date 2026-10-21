@@ -117,6 +117,7 @@ fn perl_static_limit_missing_runner_keeps_observation() -> Result<(), String> {
     assert!(!human.contains("No test change needed"));
 
     let output = CheckOutput {
+        value_origins: Default::default(),
         schema_version: "0.2".to_string(),
         harness_projections: Vec::new(),
         tool: "ripr".to_string(),

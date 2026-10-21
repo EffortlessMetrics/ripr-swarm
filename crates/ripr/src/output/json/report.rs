@@ -1737,7 +1737,6 @@ mod provenance_tests {
 
     fn fact(line: usize, value: &str, text: &str) -> ValueFact {
         ValueFact {
-            file: None,
             line,
             text: text.to_string(),
             value: value.to_string(),
@@ -1831,6 +1830,7 @@ mod harness_projection_tests {
 
     fn output_with(projections: Vec<TestHarnessProjection>) -> CheckOutput {
         CheckOutput {
+            value_origins: Default::default(),
             harness_projections: projections,
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),

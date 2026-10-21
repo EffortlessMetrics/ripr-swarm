@@ -1438,6 +1438,7 @@ mod tests {
         limitations: Vec<AnalysisLimitation>,
     ) -> Result<crate::app::CheckOutput, String> {
         Ok(crate::app::CheckOutput {
+            value_origins: Default::default(),
             schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
             harness_projections: Vec::new(),
             tool: "ripr".to_string(),
@@ -1669,6 +1670,7 @@ mod tests {
             })
             .collect::<Result<Vec<_>, String>>()?;
         let output = crate::app::CheckOutput {
+            value_origins: Default::default(),
             schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
             harness_projections: Vec::new(),
             tool: "ripr".to_string(),
@@ -1747,6 +1749,7 @@ mod tests {
 
         let findings = vec![ready, exposed_python, unready, unlocalized];
         let output = crate::app::CheckOutput {
+            value_origins: Default::default(),
             schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
             harness_projections: Vec::new(),
             tool: "ripr".to_string(),

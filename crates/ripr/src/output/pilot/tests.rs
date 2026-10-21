@@ -16,7 +16,6 @@ use crate::analysis_outcome::{
 use crate::app::Mode;
 use crate::domain::{
     Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence, StageState,
-    ValueFact,
 };
 use crate::output::markdown::powershell_command;
 use crate::output::path::display_path;
@@ -197,7 +196,7 @@ fn classified_with(
             propagate: stage(StageState::Yes),
             observe: stage(StageState::Yes),
             discriminate: stage(StageState::Weak),
-            observed_values: Vec::<ValueFact>::new(),
+            observed_values: Vec::new(),
             missing_discriminators,
             statically_contradicted_related_tests: 0,
             new_test_target: None,
@@ -1796,7 +1795,7 @@ fn why_line_uses_static_discriminator_summary_when_no_missing_discriminator() {
                 Confidence::Medium,
                 "weak boundary oracle",
             ),
-            observed_values: Vec::<ValueFact>::new(),
+            observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
             statically_contradicted_related_tests: 0,
             new_test_target: None,
@@ -1822,7 +1821,7 @@ fn why_line_falls_back_to_class_label_when_no_summary_or_missing_discriminator()
             propagate: stage(StageState::Yes),
             observe: stage(StageState::Yes),
             discriminate: StageEvidence::new(StageState::Weak, Confidence::Medium, "   "),
-            observed_values: Vec::<ValueFact>::new(),
+            observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
             statically_contradicted_related_tests: 0,
             new_test_target: None,

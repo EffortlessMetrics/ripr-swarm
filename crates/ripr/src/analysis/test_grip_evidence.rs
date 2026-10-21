@@ -46,9 +46,12 @@ use super::rust_index::{
 };
 use super::seams::{ExpectedSink, RepoSeam, SeamId, SeamKind};
 use crate::analysis::cancellation;
-use crate::domain::{
-    Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence, StageState,
-    SymbolId, ValueContext, ValueFact,
+use crate::{
+    domain::{
+        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence,
+        StageState, SymbolId, ValueContext,
+    },
+    value_origins::LocatedValueFact as ValueFact,
 };
 // Re-export so callers that import from this module continue to compile.
 pub(crate) use crate::domain::{RelationConfidence, RelationReason};

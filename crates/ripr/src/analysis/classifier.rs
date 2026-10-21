@@ -6,7 +6,7 @@ pub(in crate::analysis) use evidence::OwnerCallerNames;
 pub(in crate::analysis) use finding::oracle_binds_sink_identity;
 
 use self::evidence::ClassifiedProbeEvidence;
-use self::finding::build_finding;
+use self::finding::build_finding_with_origins;
 use self::owner::resolve_owner_function;
 use super::classify::{
     DependencyEdgeContext, HelperChain, ProbeContext, RelatedTestCandidateIndex,
@@ -26,7 +26,7 @@ pub fn classify_probe(
 ) -> Finding {
     let candidate_index = RelatedTestCandidateIndex::new(index);
     let transitive_reach = TransitiveReachIndex::new(index);
-    classify_probe_with_candidate_index(
+    classify_probe_with_candidate_index_and_origins(
         probe,
         index,
         workspace_complete,
@@ -34,9 +34,11 @@ pub fn classify_probe(
         &candidate_index,
         &transitive_reach,
         None,
+        None,
     )
 }
 
+#[cfg(test)]
 pub(in crate::analysis) fn classify_probe_with_candidate_index(
     probe: &Probe,
     index: &RustIndex,
@@ -45,6 +47,32 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     candidate_index: &RelatedTestCandidateIndex,
     transitive_reach: &TransitiveReachIndex<'_>,
     propagation_origin: Option<&crate::analysis::diff::ChangedLine>,
+) -> Finding {
+    classify_probe_with_candidate_index_and_origins(
+        probe,
+        index,
+        workspace_complete,
+        dependency_edges,
+        candidate_index,
+        transitive_reach,
+        propagation_origin,
+        None,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "classification inputs plus explicit run-local origin context"
+)]
+pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
+    probe: &Probe,
+    index: &RustIndex,
+    workspace_complete: bool,
+    dependency_edges: Option<&DependencyEdgeContext<'_>>,
+    candidate_index: &RelatedTestCandidateIndex,
+    transitive_reach: &TransitiveReachIndex<'_>,
+    propagation_origin: Option<&crate::analysis::diff::ChangedLine>,
+    value_origins: Option<&std::sync::Mutex<crate::value_origins::ValueOrigins>>,
 ) -> Finding {
     let owner_fn = resolve_owner_function(probe, index);
     // #3296: one chain resolution per probe, shared by the relation
@@ -104,7 +132,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
         .map(|test| test.miss)
         .collect();
 
-    let mut finding = build_finding(&context, class, evidence);
+    let mut finding = build_finding_with_origins(&context, class, evidence, value_origins);
     if let Some(chain) = resolved_chain.as_ref() {
         withhold_helper_uniqueness_as_unknown(&mut finding, chain, index, &reveal_misses);
     }
@@ -2354,7 +2382,17 @@ fn far_above_threshold_discounts() {
             required_oracles: vec![],
         };
 
-        let finding = classify_probe(&probe, &index, true, None);
+        let origins = std::sync::Mutex::new(crate::value_origins::ValueOrigins::default());
+        let finding = classify_probe_with_candidate_index_and_origins(
+            &probe,
+            &index,
+            true,
+            None,
+            &RelatedTestCandidateIndex::new(&index),
+            &TransitiveReachIndex::new(&index),
+            None,
+            Some(&origins),
+        );
 
         assert_eq!(finding.class, ExposureClass::WeaklyExposed);
         assert_eq!(finding.ripr.infect.state, StageState::Weak);
@@ -2368,12 +2406,10 @@ fn far_above_threshold_discounts() {
             fact.context == ValueContext::FunctionArgument && fact.value == "threshold = 100"
         }));
         // #8389: every retained value names the test file it was read from.
-        let files = finding
-            .activation
-            .observed_values
-            .iter()
-            .map(|fact| fact.file.clone())
-            .collect::<Vec<_>>();
+        let origins = origins
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let files = origins.files(&finding).unwrap_or(&[]);
         assert!(
             !files.is_empty()
                 && files

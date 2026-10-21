@@ -1125,6 +1125,7 @@ mod tests {
 
     fn test_output(findings: Vec<Finding>) -> CheckOutput {
         CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),

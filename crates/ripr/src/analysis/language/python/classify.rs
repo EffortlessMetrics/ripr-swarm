@@ -93,6 +93,7 @@ pub(super) fn classify_change_with_source(
         all_tests,
         PythonNoBehaviorContext::default(),
         owner_source,
+        None,
     )
 }
 
@@ -142,6 +143,7 @@ fn same_indentation(old: &str, new: &str) -> bool {
     clippy::too_many_arguments,
     reason = "entry point mirrors the per-line classification inputs; bundling them would hide which caller lacks each input"
 )]
+#[cfg(test)]
 pub(super) fn classify_change_with_context(
     file: &Path,
     line: usize,
@@ -161,6 +163,35 @@ pub(super) fn classify_change_with_context(
         all_tests,
         no_behavior,
         owner_source,
+        None,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "same classification inputs plus run-local producer provenance"
+)]
+pub(super) fn classify_change_with_value_origins(
+    file: &Path,
+    line: usize,
+    line_text: &str,
+    old_line_text: Option<&str>,
+    owners: &[PythonOwner],
+    all_tests: &[PythonTest],
+    no_behavior: PythonNoBehaviorContext,
+    owner_source: Option<&str>,
+    origins: &mut crate::value_origins::ValueOrigins,
+) -> Option<Finding> {
+    classify_change_full(
+        file,
+        line,
+        line_text,
+        old_line_text,
+        owners,
+        all_tests,
+        no_behavior,
+        owner_source,
+        Some(origins),
     )
 }
 
@@ -181,6 +212,7 @@ fn classify_change_full(
     all_tests: &[PythonTest],
     no_behavior: PythonNoBehaviorContext,
     owner_source: Option<&str>,
+    value_origins: Option<&mut crate::value_origins::ValueOrigins>,
 ) -> Option<Finding> {
     // No-op / no-behavior-delta guard (#1279): a docstring-only, comment-only, or
     // blank-line change has no runtime behavior, so there is nothing for a test to
@@ -233,7 +265,7 @@ fn classify_change_full(
         return None;
     }
     let owner = owner_for_changed_line(file, line, owners)?;
-    classify_change_for_owner(
+    classify_change_for_owner_with_value_origins(
         ChangeSite { file, line, owner },
         line_text,
         old_line_text,
@@ -241,6 +273,7 @@ fn classify_change_full(
         all_tests,
         no_behavior,
         owner_source,
+        value_origins,
     )
 }
 
@@ -254,7 +287,11 @@ pub(super) struct ChangeSite<'a> {
 }
 
 /// Classify a change at a resolved owner.
-pub(super) fn classify_change_for_owner(
+#[allow(
+    clippy::too_many_arguments,
+    reason = "resolved owner inputs plus explicit run-local origin context"
+)]
+pub(super) fn classify_change_for_owner_with_value_origins(
     site: ChangeSite<'_>,
     line_text: &str,
     old_line_text: Option<&str>,
@@ -262,6 +299,7 @@ pub(super) fn classify_change_for_owner(
     all_tests: &[PythonTest],
     no_behavior: PythonNoBehaviorContext,
     owner_source: Option<&str>,
+    value_origins: Option<&mut crate::value_origins::ValueOrigins>,
 ) -> Option<Finding> {
     let ChangeSite { file, line, owner } = site;
     // Bare-variable annotation-only suppression at MODULE SCOPE only (#1289):
@@ -1104,6 +1142,27 @@ pub(super) fn classify_change_for_owner(
         probe.after.as_deref(),
     );
 
+    let (activation, files) = crate::value_origins::LocatedActivationEvidence {
+        // A term downgrade names `f(...) != 0`; show the values that
+        // support it even when a predicate line also has boundary values.
+        observed_values: if term_downgraded {
+            inactive_term
+                .map(|term| term.observed_values)
+                .unwrap_or_default()
+        } else if guarded_arm_downgraded {
+            // A guarded-arm downgrade names the guarding comparison; show
+            // the literal inputs the strong related calls actually bind.
+            guarded_arm_gap
+                .map(|gap| gap.observed_values)
+                .unwrap_or_default()
+        } else {
+            boundary
+                .map(|evidence| evidence.observed_values)
+                .unwrap_or_default()
+        },
+        missing_discriminators,
+    }
+    .into_public();
     let mut finding = Finding {
         id: probe.id.0.clone(),
         canonical_gap,
@@ -1122,26 +1181,7 @@ pub(super) fn classify_change_for_owner(
         evidence,
         missing,
         flow_sinks: flow_sink.into_iter().collect(),
-        activation: crate::domain::ActivationEvidence {
-            // A term downgrade names `f(...) != 0`; show the values that
-            // support it even when a predicate line also has boundary values.
-            observed_values: if term_downgraded {
-                inactive_term
-                    .map(|term| term.observed_values)
-                    .unwrap_or_default()
-            } else if guarded_arm_downgraded {
-                // A guarded-arm downgrade names the guarding comparison; show
-                // the literal inputs the strong related calls actually bind.
-                guarded_arm_gap
-                    .map(|gap| gap.observed_values)
-                    .unwrap_or_default()
-            } else {
-                boundary
-                    .map(|evidence| evidence.observed_values)
-                    .unwrap_or_default()
-            },
-            missing_discriminators,
-        },
+        activation,
         stop_reasons: static_limit
             .as_ref()
             .map(stop_reason_for_python_static_limit)
@@ -1162,5 +1202,8 @@ pub(super) fn classify_change_for_owner(
         source_currentness,
     };
     apply_python_no_static_path_limit(&mut finding, owner, owners, all_tests);
+    if let Some(origins) = value_origins {
+        origins.record(&finding, files);
+    }
     Some(finding)
 }

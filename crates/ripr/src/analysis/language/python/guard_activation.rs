@@ -27,7 +27,7 @@ use super::boundary::{
 };
 use super::module_constants::PythonModuleConstant;
 use super::related_tests::PythonRelatedCandidate;
-use crate::domain::{ValueContext, ValueFact};
+use crate::{domain::ValueContext, value_origins::LocatedValueFact as ValueFact};
 
 /// Why a guarded changed line never executes under any observed input.
 pub(super) struct GuardedArmGap {

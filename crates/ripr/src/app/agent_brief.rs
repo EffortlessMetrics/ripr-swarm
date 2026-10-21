@@ -901,8 +901,7 @@ mod tests {
     };
     use crate::config::{RiprConfig, tests_only_parse};
     use crate::domain::{
-        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence,
-        StageState, ValueFact,
+        Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence, StageState,
     };
 
     fn stage(state: StageState) -> StageEvidence {
@@ -956,7 +955,7 @@ mod tests {
                 propagate: stage(StageState::Yes),
                 observe: stage(StageState::Yes),
                 discriminate: stage(StageState::Weak),
-                observed_values: Vec::<ValueFact>::new(),
+                observed_values: Vec::new(),
                 missing_discriminators: vec![MissingDiscriminatorFact {
                     value: "boundary value".to_string(),
                     reason: "missing equality boundary".to_string(),

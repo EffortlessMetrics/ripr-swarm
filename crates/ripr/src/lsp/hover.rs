@@ -1416,13 +1416,15 @@ mod seam_hover_tests {
             propagate: stage(StageState::Yes, "Seam flows to return_value"),
             observe: stage(StageState::Yes, "Exact value assertion exists"),
             discriminate: stage(StageState::Weak, "Equality boundary missing"),
-            observed_values: vec![ValueFact {
-                file: None,
-                line: 12,
-                text: "discounted_total(50, 100)".to_string(),
-                value: "50".to_string(),
-                context: ValueContext::FunctionArgument,
-            }],
+            observed_values: vec![
+                ValueFact {
+                    line: 12,
+                    text: "discounted_total(50, 100)".to_string(),
+                    value: "50".to_string(),
+                    context: ValueContext::FunctionArgument,
+                }
+                .into(),
+            ],
             missing_discriminators: vec![MissingDiscriminatorFact {
                 value: "discount_threshold (equality boundary)".to_string(),
                 reason: "observed values do not include the equality-boundary case".to_string(),

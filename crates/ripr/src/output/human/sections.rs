@@ -393,7 +393,7 @@ pub(crate) fn render_finding_with_config(
     root: &Path,
     wording: JsonPointerWording,
 ) -> String {
-    render_finding_with_shared_sections(finding, config, root, wording, None)
+    render_finding_with_shared_sections(finding, config, root, wording, None, None)
 }
 
 pub(super) fn render_finding_with_shared_sections(
@@ -402,6 +402,7 @@ pub(super) fn render_finding_with_shared_sections(
     root: &Path,
     wording: JsonPointerWording,
     shared: Option<&super::shared::SharedSections>,
+    files: Option<&[Option<std::path::PathBuf>]>,
 ) -> String {
     let mut out = String::new();
     let severity = config.severity().for_exposure(&finding.class).as_str();
@@ -486,7 +487,7 @@ pub(super) fn render_finding_with_shared_sections(
     if let Some(shared) = shared {
         out.push_str(&shared.evidence);
     } else {
-        for line in evidence_path_lines(finding, wording) {
+        for line in super::evidence_lines::evidence_path_lines_with_files(finding, wording, files) {
             push_evidence_line(&mut out, &line);
         }
     }

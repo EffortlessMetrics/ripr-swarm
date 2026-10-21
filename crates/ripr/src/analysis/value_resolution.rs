@@ -46,7 +46,8 @@
 
 use super::rust_index::{FileFactsView, RustIndex, TestSummary};
 use super::seams::{RepoSeam, RequiredDiscriminator};
-use crate::domain::{ValueContext, ValueFact};
+use crate::domain::ValueContext;
+use crate::value_origins::LocatedValueFact as ValueFact;
 use std::collections::BTreeMap;
 
 /// Per-test value facts that do not depend on a specific seam. Built

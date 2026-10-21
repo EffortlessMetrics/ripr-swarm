@@ -8,7 +8,9 @@
 //! for Python. A base-side record is never a candidate edit target, so every
 //! counted, gated, annotated and diagnostic surface skips it (#3281).
 
-use super::classify::{ChangeSite, classify_change_for_owner, is_python_declaration_line};
+use super::classify::{
+    ChangeSite, classify_change_for_owner_with_value_origins, is_python_declaration_line,
+};
 use super::{
     ChangedFile, Finding, PythonNoBehaviorContext, PythonOwner, PythonTest, is_python_import_line,
     is_python_no_behavior_line, is_python_structural_line, line_is_in_ranges, normalized_path,
@@ -34,7 +36,11 @@ pub(super) type NewSource<'a> = Option<&'a str>;
 /// with. `counterparts` is the file's one pairing
 /// (`ChangedFile::aligned_counterparts`); `findings` holds the file's
 /// candidate-side findings so a repeated probe id gets an ordinal suffix.
-pub(super) fn deleted_line_findings(
+#[allow(
+    clippy::too_many_arguments,
+    reason = "deleted-line inputs plus explicit producer origin context"
+)]
+pub(super) fn deleted_line_findings_with_value_origins(
     changed: &ChangedFile,
     counterparts: &BTreeMap<usize, &ChangedLine>,
     old_side: &OldSideRanges<'_>,
@@ -42,6 +48,7 @@ pub(super) fn deleted_line_findings(
     owners: &[PythonOwner],
     tests: &[PythonTest],
     findings: &[Finding],
+    value_origins: &mut crate::value_origins::ValueOrigins,
 ) -> Vec<Finding> {
     let paired: BTreeSet<usize> = counterparts.values().map(|removed| removed.line).collect();
     // Removed headers an added header replaced: the owner they open lives on.
@@ -92,7 +99,8 @@ pub(super) fn deleted_line_findings(
             line: removed.new_side_line,
             owner,
         };
-        let Some(mut finding) = classify_change_for_owner(
+        let mut finding_origins = crate::value_origins::ValueOrigins::default();
+        let Some(mut finding) = classify_change_for_owner_with_value_origins(
             site,
             &removed.text,
             None,
@@ -103,9 +111,11 @@ pub(super) fn deleted_line_findings(
             // (#7392) reads new-side guards around a live line, so it stays
             // off here.
             None,
+            Some(&mut finding_origins),
         ) else {
             continue;
         };
+        let original_probe = finding.probe.clone();
         let expression = removed.text.trim();
         // Same-text evidence is the only movement evidence; without it the
         // record stays `base_deleted` (RIPR-SPEC-0156).
@@ -126,6 +136,8 @@ pub(super) fn deleted_line_findings(
             finding.probe.id.0 = format!("{}.{}", finding.probe.id.0, count);
             finding.id = finding.probe.id.0.clone();
         }
+        finding_origins.rebind_probe(&original_probe, &finding.probe);
+        value_origins.extend(finding_origins);
         out.push(finding);
     }
     out

@@ -93,14 +93,15 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
         config,
         selector,
     ) {
-        FindingSelection::Unique(finding) => {
-            Ok(output::human::render_finding_with_context_command(
+        FindingSelection::Unique(finding) => Ok(
+            output::human::render_finding_with_context_command_and_files(
                 finding,
                 config,
                 &navigation.context_command(selector),
                 &output.root,
-            ))
-        }
+                output.source_value_files(finding),
+            ),
+        ),
         FindingSelection::Ambiguous(candidates) => Err(ambiguous_finding_match(
             selector,
             &candidates,

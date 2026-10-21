@@ -271,6 +271,7 @@ impl LanguageAdapter for PerlAdapter {
         };
 
         Ok(LanguageDiffResult {
+            value_origins: Default::default(),
             findings,
             changed_files,
             candidate_line_count: 0,
@@ -328,6 +329,7 @@ impl LanguageAdapter for PerlAdapter {
         };
 
         Ok(LanguageRepoResult {
+            value_origins: Default::default(),
             findings,
             production_files,
             skipped_files: 0,

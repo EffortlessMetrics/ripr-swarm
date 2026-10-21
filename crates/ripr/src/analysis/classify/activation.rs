@@ -13,6 +13,9 @@ use super::text::{
 };
 use crate::analysis::sync_memo::SyncMemo;
 use crate::domain::*;
+use crate::value_origins::{
+    LocatedActivationEvidence as ActivationEvidence, LocatedValueFact as ValueFact,
+};
 
 #[cfg(test)]
 pub(in crate::analysis) fn activation_evidence(
