@@ -445,3 +445,120 @@ fn ts_single_line_branch_holding_the_assertion_discloses() -> Result<(), String>
     );
     Ok(())
 }
+
+/// Statements after an unconditional `return`/`throw`/`break`/`continue` are
+/// dead: their assertions never run, so collection withholds them and the
+/// finding cannot reach `exposed` on them. Everything before the exit stays
+/// credited.
+#[test]
+fn ts_assertion_after_unconditional_exit_is_withheld() {
+    for exit in ["return;", "throw new Error(\"x\");", "{ return; }"] {
+        let body =
+            format!("  expect(price(150)).toBe(130);\n  {exit}\n  expect(price(150)).toBe(130);");
+        let assertions = extracted_assertions(&body);
+        assert_eq!(
+            assertions.len(),
+            1,
+            "only the assertion before `{exit}` may be credited: {assertions:?}"
+        );
+    }
+    for exit in ["break;", "continue;"] {
+        let body = format!(
+            "  for (const n of [1]) {{\n    {exit}\n    expect(price(150)).toBe(130);\n  }}"
+        );
+        assert!(
+            extracted_assertions(&body).is_empty(),
+            "assertion after `{exit}` is dead and must be withheld"
+        );
+    }
+}
+
+/// A conditional exit is not decidable, so the later assertion keeps its
+/// credit; and `return expect(..)` keeps its own returned assertion.
+#[test]
+fn ts_assertion_after_conditional_exit_stays_credited() {
+    let guarded =
+        extracted_assertions("  if (skip) {\n    return;\n  }\n  expect(price(150)).toBe(130);");
+    assert_eq!(
+        guarded.len(),
+        1,
+        "conditional exit keeps credit: {guarded:?}"
+    );
+    let returned = extracted_assertions("  return expect(price(150)).resolves.toBe(130);");
+    assert_eq!(
+        returned.len(),
+        1,
+        "returned assertion is credited: {returned:?}"
+    );
+}
+
+/// Decidable `if` exits end the list too; an undecidable one-sided exit does
+/// not (#9003 review).
+#[test]
+fn ts_decidable_if_exit_withholds_following_assertion() {
+    for exit in [
+        "if (true) { return; }",
+        "if (true) return;",
+        "if (false) { x(); } else { return; }",
+        "if (flag) { return; } else { throw new Error(\"x\"); }",
+    ] {
+        let body = format!("  {exit}\n  expect(price(150)).toBe(130);");
+        assert!(
+            extracted_assertions(&body).is_empty(),
+            "assertion after `{exit}` is dead and must be withheld"
+        );
+    }
+    for live in [
+        "if (flag) { return; }",
+        "if (false) { return; }",
+        "if (true) { x(); }",
+        "if (flag) { return; } else { x(); }",
+    ] {
+        let body = format!("  {live}\n  expect(price(150)).toBe(130);");
+        assert_eq!(
+            extracted_assertions(&body).len(),
+            1,
+            "assertion after `{live}` stays credited"
+        );
+    }
+}
+
+/// A dead conditional assertion after `return;` must not produce a
+/// conditional-credit limitation; the live assertion before it is credited.
+#[test]
+fn ts_dead_conditional_after_return_yields_no_credit_gap() {
+    let body = "  expect(price(150)).toBe(130);\n  return;\n  if (flag) {\n    expect(price(150)).toBe(130);\n  }";
+    let source = test_file(body);
+    let (tests, gap) =
+        extract_tests_and_conditional_credit_gap(Path::new("tests/lib.test.ts"), &source);
+    assert_eq!(tests.len(), 1, "fixture must register its test");
+    assert_eq!(
+        tests[0].assertions.len(),
+        1,
+        "only the live assertion counts"
+    );
+    assert!(gap.is_none(), "dead `if (flag)` must not disclose: {gap:?}");
+    assert!(
+        credit_gap_for_body(body).is_none(),
+        "standalone detector must agree"
+    );
+    let control =
+        "  expect(price(150)).toBe(130);\n  if (flag) {\n    expect(price(150)).toBe(130);\n  }";
+    assert!(
+        credit_gap_for_body(control).is_some(),
+        "live conditional control still discloses"
+    );
+}
+
+/// End to end: the only strong oracle sits after `return;`, so the changed
+/// predicate must not classify `exposed`.
+#[test]
+fn ts_dead_assertion_after_return_does_not_expose() -> Result<(), String> {
+    let got = finding_for_body("  return;\n  expect(price(150)).toBe(130);")?;
+    assert_ne!(
+        got.class,
+        ExposureClass::Exposed,
+        "an unreachable assertion must not expose the change: {got:?}"
+    );
+    Ok(())
+}
