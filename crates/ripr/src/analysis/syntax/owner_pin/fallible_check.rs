@@ -337,4 +337,198 @@ mod tests {
             assert_eq!(decimal_u8(text), value, "{text}");
         }
     }
+
+    const OWNER: &str =
+        "pub fn answer() -> u8 { 7 }\n\n#[cfg(test)]\n#[path = \"test_support.rs\"]\nmod tests;\n";
+    const CHECK: &str = "use anyhow::{Result, ensure};\n\nfn check_answer() -> Result<()> {\n    let actual = super::answer();\n    ensure!(actual == 7);\n    Ok(())\n}\n\n#[test]\nfn observes_answer() -> Result<()> {\n    check_answer()\n}\n";
+
+    fn owner_of(source: &str) -> Result<FunctionSummary, String> {
+        let facts =
+            crate::analysis::rust_index::summarize_file("src/lib.rs".into(), source.to_string());
+        facts
+            .functions
+            .into_iter()
+            .find(|f| f.name == "answer")
+            .ok_or_else(|| "answer owner".to_string())
+    }
+
+    fn test_of(source: &str) -> Result<TestSummary, String> {
+        let facts = crate::analysis::rust_index::summarize_file(
+            "src/test_support.rs".into(),
+            source.to_string(),
+        );
+        facts
+            .tests
+            .into_iter()
+            .find(|t| t.name == "observes_answer")
+            .ok_or_else(|| "observes_answer test".to_string())
+    }
+
+    #[test]
+    fn literal_owner_syntax_accepts_only_the_closed_owner_shape() -> Result<(), String> {
+        let owner = owner_of(OWNER)?;
+        let syntax = literal_owner_syntax(OWNER, &owner).ok_or("canonical owner shape")?;
+        assert_eq!(syntax.value, 7);
+        assert_eq!(syntax.module_name, "tests");
+        assert_eq!(syntax.module_line, 5);
+        assert_eq!(
+            &OWNER[u32::from(syntax.literal.start()) as usize
+                ..u32::from(syntax.literal.end()) as usize],
+            "7"
+        );
+        for (name, from, to) in [
+            ("out_of_range_literal", "{ 7 }", "{ 300 }"),
+            ("statement_before_tail", "{ 7 }", "{ let x = 1; 7 }"),
+            ("non_literal_tail", "{ 7 }", "{ 3 + 4 }"),
+            ("wrong_return_type", "-> u8", "-> u16"),
+            ("takes_parameter", "answer()", "answer(x: u8)"),
+            ("const_qualifier", "pub fn", "pub const fn"),
+            ("extern_abi", "pub fn", "pub extern \"C\" fn"),
+            ("owner_attribute", "pub fn", "#[inline]\npub fn"),
+            (
+                "file_attribute",
+                "pub fn answer",
+                "#![forbid(unsafe_code)]\npub fn answer",
+            ),
+            ("missing_path_attr", "#[path = \"test_support.rs\"]\n", ""),
+            ("inline_module_body", "mod tests;", "mod tests {}"),
+            ("not_cfg_test", "#[cfg(test)]", "#[cfg(not(test))]"),
+            ("reserved_module_name", "mod tests;", "mod Result;"),
+            ("module_named_owner", "mod tests;", "mod answer;"),
+            ("extra_item", "mod tests;", "mod tests;\nfn other() {}"),
+        ] {
+            let source = OWNER.replace(from, to);
+            // Control: the mutated source must still be a distinct subject.
+            assert_ne!(source, OWNER, "{name}");
+            let facts =
+                crate::analysis::rust_index::summarize_file("src/lib.rs".into(), source.clone());
+            let Some(owner) = facts.functions.into_iter().find(|f| f.name == "answer") else {
+                return Err(format!("{name}: owner fact"));
+            };
+            assert!(literal_owner_syntax(&source, &owner).is_none(), "{name}");
+        }
+        // The summary must describe the same function text and line.
+        let mut stale = owner_of(OWNER)?;
+        stale.start_line += 1;
+        assert!(literal_owner_syntax(OWNER, &stale).is_none());
+        let mut renamed = owner_of(OWNER)?;
+        renamed.name = "other".into();
+        assert!(literal_owner_syntax(OWNER, &renamed).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn literal_check_syntax_accepts_both_assertion_spellings_and_function_orders()
+    -> Result<(), String> {
+        let test = test_of(CHECK)?;
+        let check = literal_check_syntax(CHECK, &test, "answer").ok_or("canonical check")?;
+        assert_eq!(check.expected, 7);
+        assert_eq!(check.helper_name, "check_answer");
+        assert_eq!(check.helper_line, 3);
+        assert_eq!(check.assertion_line, 5);
+        assert_eq!(check.assertion_text, "ensure!(actual == 7);");
+        assert_eq!(check.local, "actual");
+        assert_eq!(check.spans.len(), 4);
+        // The collected test may precede its helper, and the import order is free.
+        let reordered = "use anyhow::{ensure, Result};\n\n#[test]\nfn observes_answer() -> Result<()> {\n    check_answer()\n}\n\nfn check_answer() -> Result<()> {\n    let actual = super::answer();\n    ensure!(actual == 7u8);\n    Ok(())\n}\n";
+        let test = test_of(reordered)?;
+        let check = literal_check_syntax(reordered, &test, "answer").ok_or("reordered check")?;
+        assert_eq!(check.expected, 7);
+        assert_eq!(check.helper_line, 8);
+        assert_eq!(check.assertion_line, 10);
+        Ok(())
+    }
+
+    #[test]
+    fn literal_check_syntax_refuses_outside_the_closed_check_grammar() -> Result<(), String> {
+        for (name, from, to) in [
+            (
+                "foreign_import",
+                "use anyhow::{Result, ensure};",
+                "use anyhow::Result;",
+            ),
+            ("mismatched_literal", "actual == 7", "actual == 7u8 + 0"),
+            ("split_suffix_tokens", "actual == 7", "actual == 7 u8"),
+            (
+                "different_local_in_assertion",
+                "ensure!(actual == 7)",
+                "ensure!(other == 7)",
+            ),
+            ("assertion_message", "actual == 7", "actual == 7, \"why\""),
+            ("inequality", "actual == 7", "actual != 7"),
+            ("mutable_binding", "let actual", "let mut actual"),
+            ("wrong_owner_call", "super::answer()", "super::other()"),
+            (
+                "extra_statement",
+                "    Ok(())\n}\n\n#[test]",
+                "    let _ = 1;\n    Ok(())\n}\n\n#[test]",
+            ),
+            (
+                "helper_not_tail_of_test",
+                "    check_answer()\n",
+                "    check_answer()?;\n    Ok(())\n",
+            ),
+            (
+                "helper_takes_parameter",
+                "fn check_answer()",
+                "fn check_answer(x: u8)",
+            ),
+            ("helper_named_ensure", "check_answer", "ensure"),
+            (
+                "helper_shadows_test",
+                "fn check_answer",
+                "fn observes_answer",
+            ),
+            (
+                "async_test",
+                "fn observes_answer",
+                "async fn observes_answer",
+            ),
+            (
+                "helper_attribute",
+                "fn check_answer",
+                "#[inline]\nfn check_answer",
+            ),
+            ("test_extra_attribute", "#[test]", "#[test]\n#[ignore]"),
+            (
+                "file_attribute",
+                "use anyhow",
+                "#![forbid(unsafe_code)]\nuse anyhow",
+            ),
+            (
+                "non_ok_tail",
+                "    Ok(())\n}\n\n#[test]",
+                "    Ok(1).map(|_| ())\n}\n\n#[test]",
+            ),
+            ("extra_item", "\n#[test]", "\nfn extra() {}\n#[test]"),
+        ] {
+            let source = CHECK.replace(from, to);
+            assert_ne!(source, CHECK, "{name}");
+            let facts = crate::analysis::rust_index::summarize_file(
+                "src/test_support.rs".into(),
+                source.clone(),
+            );
+            let Some(test) = facts
+                .tests
+                .into_iter()
+                .find(|t| t.name == "observes_answer")
+            else {
+                return Err(format!("{name}: collected test"));
+            };
+            assert!(
+                literal_check_syntax(&source, &test, "answer").is_none(),
+                "{name}"
+            );
+        }
+        // The owner name may not collide with the test or the helper.
+        let test = test_of(CHECK)?;
+        assert!(literal_check_syntax(CHECK, &test, "check_answer").is_none());
+        assert!(literal_check_syntax(CHECK, &test, "observes_answer").is_none());
+        assert!(literal_check_syntax(CHECK, &test, "r#answer").is_none());
+        // The summary must describe the same test text and line.
+        let mut stale = test_of(CHECK)?;
+        stale.start_line += 1;
+        assert!(literal_check_syntax(CHECK, &stale, "answer").is_none());
+        Ok(())
+    }
 }
