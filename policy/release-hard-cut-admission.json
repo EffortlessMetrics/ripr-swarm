@@ -2,13 +2,13 @@
   "schema_version": "1",
   "kind": "ripr_release_cut_admission",
   "release": "0.11.0",
-  "state": "inactive",
-  "generation": "pre-cut-unselected",
+  "state": "active",
+  "generation": "dryrun-1",
   "controller_issue": 5114,
   "selection_issue": 2766,
   "observed_main": {
-    "sha": null,
-    "tree": null
+    "sha": "07b84702be8034c3aa799a099e9dd71965d621b9",
+    "tree": "7a1ced22abd1710b0d894b9393a6cb9b5dc08f63"
   },
   "admitted": [],
   "non_claims": [
