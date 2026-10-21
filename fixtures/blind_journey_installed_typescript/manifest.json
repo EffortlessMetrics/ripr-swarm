@@ -50,10 +50,10 @@
     }
    },
    "variant-reassignment": {
-    "commit": "f626bf455a8a0d47d45928e49f295b6afe1b0c7d",
-    "tree": "afd28c7e75c32083e4a4fb21a2e893604c5dc103",
+    "commit": "935405e0fe41cf9b25adc556cc720f5221edd134",
+    "tree": "8afa5b80c90946dd18b1035df79613e9aed5d8ac",
     "files": {
-     "package-lock.json": "33b11eeaac39f8f8ef3da4bfe5f2857b638f7a63b46af961f0e130e04cc71379",
+     "package-lock.json": "a93951553edc81a4be8db16f3e7012d3bb06a84cddf746bcf7c4af88192f3b51",
      "package.json": "3a6a29b8a24f3a57abecdd9324e3e887353a12e7a372a8e970a04480d6f780dd",
      "src/pricing.ts": "284b0a47aeb33eea010f2a0ff4cd0a235e0231c11947047640b63729fa925646",
      "test/pricing.test.ts": "57e14e54b5ce8302d8457fa1b9ff947571cabf4d6448ef9c3e2fc293e85250da"
