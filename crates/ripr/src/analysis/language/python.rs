@@ -293,6 +293,9 @@ struct PythonTest {
     body_text: String,
     imports: Vec<PythonImport>,
     decorators: Vec<String>,
+    /// Source text of every decorator expression (arguments included), so a
+    /// `parametrize` list that hands a callable to the test stays visible.
+    decorator_text: String,
     /// Recognized test controls resolved before test-body imports can shadow aliases.
     activation_controls: Vec<test_activation::PythonActivationControl>,
     fixtures: Vec<String>,

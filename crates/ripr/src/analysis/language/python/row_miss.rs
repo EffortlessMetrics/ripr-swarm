@@ -47,7 +47,7 @@
 //!   `missing_discriminators` is finding-wide.
 
 use super::related_tests::{PythonRelatedCandidate, PythonRelationKind};
-use super::sink_alignment::classify_sink_alignment_with_old;
+use super::sink_alignment::{AlignmentPrep, classify_sink_alignment_prepared};
 use super::{PythonOwner, PythonTest};
 use crate::domain::{ExposureClass, OracleStrength, OwnerKind, RelatedTest, RelatedTestMiss};
 
@@ -83,8 +83,10 @@ pub(super) fn annotate_row_misses(
     {
         return;
     }
+    // Built once per finding; each strong row is still aligned on its own.
+    let prep = AlignmentPrep::new(change.owner, all_tests);
     for (row, candidate) in rows.iter_mut().zip(candidates) {
-        row.miss = row_miss(row, candidate, change, all_tests);
+        row.miss = row_miss(row, candidate, change, &prep);
     }
 }
 
@@ -92,7 +94,7 @@ fn row_miss(
     row: &RelatedTest,
     candidate: &PythonRelatedCandidate<'_>,
     change: &RowMissChange<'_>,
-    all_tests: &[PythonTest],
+    prep: &AlignmentPrep<'_>,
 ) -> Option<RelatedTestMiss> {
     if !candidate.relation.uses_oracle() {
         return match candidate.relation {
@@ -109,6 +111,7 @@ fn row_miss(
                         .map(|import| import.alias.as_str()),
                 );
                 (callable_owner(change.owner)
+                    && !header_mentions_owner(candidate.test, &names)
                     && !body_may_invoke_owner(&candidate.test.body_text, &names))
                 .then_some(RelatedTestMiss::NoCallPath)
             }
@@ -123,7 +126,7 @@ fn row_miss(
     row.oracle.as_ref()?;
     match row.oracle_strength {
         OracleStrength::Weak | OracleStrength::Smoke => Some(RelatedTestMiss::WeakAssertion),
-        OracleStrength::Strong => strong_row_miss(row, change, all_tests),
+        OracleStrength::Strong => strong_row_miss(row, change, prep),
         _ => None,
     }
 }
@@ -131,14 +134,14 @@ fn row_miss(
 fn strong_row_miss(
     row: &RelatedTest,
     change: &RowMissChange<'_>,
-    all_tests: &[PythonTest],
+    prep: &AlignmentPrep<'_>,
 ) -> Option<RelatedTestMiss> {
-    let alignment = classify_sink_alignment_with_old(
+    let alignment = classify_sink_alignment_prepared(
         change.owner,
         change.line_text,
         change.old_line_text,
         std::slice::from_ref(row),
-        all_tests,
+        prep,
     );
     (!alignment.observes()).then_some(RelatedTestMiss::ObservationUnconfirmed)
 }
@@ -303,4 +306,17 @@ fn own_statement_indent(body: &str) -> Option<usize> {
         t.starts_with("def ") || t.starts_with("async def ")
     })?;
     lines.find(|l| !l.trim().is_empty()).map(indent_of)
+}
+
+/// Decorators (a `parametrize` argument list can hand the owner to the test as
+/// a parameter) and the bodies of the fixtures the test resolves are outside
+/// `body_text`. Any mention of the owner name or an import alias there is
+/// treated as a possible invocation: fail closed.
+fn header_mentions_owner(test: &PythonTest, names: &[&str]) -> bool {
+    let mentions = |text: &str| names.iter().any(|name| word_count(text, name) > 0);
+    mentions(&test.decorator_text)
+        || test
+            .fixture_defs
+            .iter()
+            .any(|fixture| mentions(&fixture.body_text))
 }

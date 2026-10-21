@@ -390,6 +390,7 @@ pub(super) fn collect_tests_from_statements(
                     body_text: text_for_range(source, function.range),
                     imports,
                     decorators: decorator_names(&function.decorator_list),
+                    decorator_text: decorator_source_text(source, &function.decorator_list),
                     activation_controls: super::test_activation::activation_controls(
                         &decorator_names(&function.decorator_list),
                         &definition_imports,
@@ -466,6 +467,7 @@ pub(super) fn collect_tests_from_statements(
                     body_text: text_for_range(source, function.range),
                     imports,
                     decorators: decorator_names(&function.decorator_list),
+                    decorator_text: decorator_source_text(source, &function.decorator_list),
                     activation_controls: super::test_activation::activation_controls(
                         &decorator_names(&function.decorator_list),
                         &definition_imports,
@@ -1138,3 +1140,12 @@ fn route_decorator_literal_argument(source: &str, decorator: &Expr, name: &str) 
 
 #[cfg(test)]
 mod tests;
+
+/// Source text of each decorator expression, newline separated.
+fn decorator_source_text(source: &str, decorators: &[Expr]) -> String {
+    decorators
+        .iter()
+        .map(|decorator| text_for_range(source, decorator.range()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}

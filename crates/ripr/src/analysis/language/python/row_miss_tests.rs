@@ -177,6 +177,54 @@ fn strong_assertion_that_this_row_does_not_credit_is_observation_unconfirmed() -
 }
 
 #[test]
+fn owner_passed_through_a_decorator_is_not_a_no_call_path() -> Result<(), String> {
+    let finding = score_case(
+        "import pytest\n\n@pytest.mark.parametrize('cb', [score])\ndef test_score(cb):\n    assert callable(score)\n    assert cb(0) == 8\n",
+    )?;
+    assert!(!finding.related_tests.is_empty());
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .all(|row| row.miss != Some(RelatedTestMiss::NoCallPath)),
+        "{:?}",
+        misses(&finding)
+    );
+    // Control: an unrelated decorator keeps the claim.
+    let finding = score_case(
+        "import pytest\n\n@pytest.mark.slow\ndef test_score_exists():\n    assert callable(score)\n",
+    )?;
+    assert_eq!(
+        finding.related_tests[0].miss,
+        Some(RelatedTestMiss::NoCallPath)
+    );
+    Ok(())
+}
+
+#[test]
+fn several_strong_rows_are_aligned_independently() -> Result<(), String> {
+    // Two strong rows asserting on another function, plus a weak row: each row
+    // is aligned on its own from the shared prepared state.
+    let finding = score_case(
+        "from src.subject import other\n\ndef test_b():\n    score(0)\n    assert other(1) == 2\n\ndef test_c():\n    score(0)\n    assert other(2) == 3\n\ndef test_d():\n    assert score(1)\n",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(
+        miss_of(&finding, "test_b"),
+        Some(RelatedTestMiss::ObservationUnconfirmed)
+    );
+    assert_eq!(
+        miss_of(&finding, "test_c"),
+        Some(RelatedTestMiss::ObservationUnconfirmed)
+    );
+    assert_eq!(
+        miss_of(&finding, "test_d"),
+        Some(RelatedTestMiss::WeakAssertion)
+    );
+    Ok(())
+}
+
+#[test]
 fn owner_used_as_callback_or_alias_is_not_a_no_call_path() -> Result<(), String> {
     for body in [
         "def test_score_map():\n    assert list(map(score, [0, 1])) == [8, 8]\n",
