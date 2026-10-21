@@ -14908,8 +14908,8 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     // pins the end-to-end wiring and consistency.
     let generator = env!("CARGO_PKG_VERSION");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let warned = stderr.contains("is a development version");
-    if warned {
+    let noted = stderr.contains("is a development version");
+    if noted {
         // The pin is compiled into the binary, so the note must say to
         // upgrade ripr before refreshing (the same old binary re-pins).
         let upgrade_at = stderr.find("upgrade ripr, then refresh");
