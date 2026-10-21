@@ -167,11 +167,24 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
         }
     };
     let replay = from_artifact.is_some() || input.diff_file.is_some();
+    // A binding failure (for example a shadowed member selector) is a
+    // post-argv-parse failure like the root and config refusals, so it writes
+    // the shared refusal envelope before the prose error reaches stderr.
     let selector = selector
         .map(|item| {
             super::bind_member_drill_in_selector(prefix.as_deref(), &input.root, item, replay)
         })
-        .transpose()?;
+        .transpose()
+        .map_err(|err| {
+            crate::cli::commands_context::refuse_json_envelope(
+                crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
+                "diff",
+                Some(input.mode.as_str()),
+                &input.root,
+                input.base.as_deref(),
+                err,
+            )
+        })?;
     // #7331: `context` produces JSON only, so every post-argv-parse failure
     // below writes the shared refusal envelope (keyed with the context
     // packet's own version) to stdout before the prose error reaches

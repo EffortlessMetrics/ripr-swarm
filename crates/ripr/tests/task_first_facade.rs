@@ -4716,6 +4716,20 @@ fn member_directory_agent_artifact_root_failure_keeps_the_json_refusal_envelope(
                 .contains("cannot verify implicit Git root"),
             "{args:?}: {document}"
         );
+        // The refusal envelope names its own schema version (the context
+        // packet contract is 1.1; the agent artifacts are 0.1).
+        if args[0] == "context" {
+            assert_eq!(
+                document["schema_version"].as_str(),
+                Some("1.1"),
+                "{document}"
+            );
+        } else if args[1] != "verify-execute" {
+            assert!(
+                document["schema_version"].is_string(),
+                "{args:?} refusal must carry a schema_version: {document}"
+            );
+        }
         // brief, packet and context refuse with the root-unusable family;
         // verify-execute answers in its own typed disposition shape.
         if args[0] != "agent" || args[1] != "verify-execute" {
@@ -4768,10 +4782,23 @@ fn member_context_selector_shadowed_by_a_root_package_file_is_refused() -> Resul
         "{}",
         stderr_text(&refused)
     );
+    // The binding failure keeps the JSON refusal envelope on stdout (no packet).
+    let envelope: serde_json::Value = serde_json::from_str(&stdout_text(&refused))
+        .map_err(|e| format!("shadowed context selector must emit a JSON refusal: {e}"))?;
+    assert_eq!(
+        envelope["schema_version"].as_str(),
+        Some("1.1"),
+        "{envelope}"
+    );
     assert!(
-        !stdout_text(&refused).contains("src/lib.rs:2"),
-        "must not emit a packet for either file:\n{}",
-        stdout_text(&refused)
+        envelope
+            .to_string()
+            .contains("also matches the workspace-root file"),
+        "{envelope}"
+    );
+    assert!(
+        envelope.get("selected").is_none() && envelope.get("finding").is_none(),
+        "must not emit a packet for either file:\n{envelope}"
     );
     // Control: `--root .` analyzes the member alone and is not refused.
     let pinned = run_ripr(
