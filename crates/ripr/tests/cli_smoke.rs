@@ -11666,6 +11666,45 @@ fn doctor_exit_codes_distinguish_findings_usage_and_clean() -> Result<(), String
 }
 
 #[test]
+fn doctor_json_from_cargo_build_output_suppresses_path_mismatch_warning() -> Result<(), String> {
+    // #9097: the harness runs the Cargo-built binary; a different installed
+    // `ripr` earlier on PATH is the normal contributor setup, so the public
+    // doctor surface must not emit the PATH-mismatch warning.
+    let workspace = make_temp_workspace(None)?;
+    let fake_bin = workspace.join("fake-bin");
+    std::fs::create_dir_all(&fake_bin).map_err(|error| error.to_string())?;
+    let fake_name = if cfg!(windows) { "ripr.exe" } else { "ripr" };
+    std::fs::write(fake_bin.join(fake_name), b"not a real ripr\n")
+        .map_err(|error| error.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            fake_bin.join(fake_name),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    let path = std::env::join_paths(std::iter::once(fake_bin.clone()).chain(
+        std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+    ))
+    .map_err(|error| error.to_string())?;
+    let path = path.to_string_lossy().into_owned();
+    let root = workspace.display().to_string();
+    let output = run_ripr_with_env(&["doctor", "--json", "--root", &root], &[("PATH", &path)]);
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(
+        stdout.contains("fake-bin"),
+        "doctor must report the PATH ripr it found:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("not the running binary"),
+        "cargo build output must not warn about a PATH mismatch:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
 fn doctor_reports_missing_config_defaults() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
     let root = workspace.display().to_string();

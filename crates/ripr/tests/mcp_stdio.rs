@@ -612,9 +612,13 @@ fn pre_call_contract_discloses_committed_scope_on_wire_and_help() -> Result<(), 
         .get("description")
         .and_then(Value::as_str)
         .ok_or_else(|| "ripr_refresh omitted its description".to_string())?;
-    if refresh.pointer("/inputSchema/properties") != Some(&json!({})) {
+    if refresh
+        .pointer("/inputSchema/properties")
+        .and_then(Value::as_object)
+        .is_none_or(|properties| properties.len() != 1 || !properties.contains_key("base"))
+    {
         return Err(format!(
-            "refresh must retain its argument-free scope: {refresh}"
+            "refresh must accept exactly the optional base argument: {refresh}"
         ));
     }
     let discovery = line(json!({ "jsonrpc": "2.0", "id": 1,
@@ -3066,6 +3070,230 @@ fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
         let code = miss.pointer("/error/data/code").and_then(Value::as_str);
         if code != Some("item_not_found") {
             return Err(format!("{kind} resource miss lost item_not_found: {miss}"));
+        }
+    }
+    Ok(())
+}
+
+/// Cold-agent recovery journey for a repository whose default branch is
+/// `trunk` (no main/master/origin): the failed refresh must name a route the
+/// MCP session can take, and that route must work. `ripr mcp` has no `--base`
+/// flag, so a recovery that only says `--base trunk` can never succeed.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn refresh_base_argument_recovers_a_repository_without_a_main_default_branch() -> Result<(), String>
+{
+    let root = install_b4_repair_ready_fixture()?;
+    let _cleanup = FixtureGuard { root: root.clone() };
+    fixture_git_ok(&root, &["branch", "-m", "main", "trunk"])?;
+    let mut session = SequentialStdio::spawn(&root)?;
+    let timeout = Duration::from_mins(3);
+    session.call("discover", "server/discover", json!({}), timeout)?;
+
+    let failed = session.call_tool("plain", "ripr_refresh", json!({}), timeout)?;
+    let failed = structured_tool_success(&failed, "plain ripr_refresh")?;
+    if failed.pointer("/attempt/state").and_then(Value::as_str) != Some("failed")
+        || failed
+            .pointer("/attempt/failure/detail")
+            .and_then(Value::as_str)
+            .is_none_or(|detail| !detail.contains("trunk"))
+    {
+        return Err(format!("default refresh must fail naming trunk: {failed}"));
+    }
+    let recovery = failed
+        .pointer("/attempt/failure/recovery")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !recovery.contains("`base` argument") || recovery.contains("retry with ripr_refresh;") {
+        return Err(format!(
+            "recovery must name the reachable `base` argument route: {recovery}"
+        ));
+    }
+    if failed.get("requested_base").is_some() {
+        return Err(format!("plain refresh keeps the v1 shape: {failed}"));
+    }
+
+    // The named route works, and the session states what it analyzed.
+    let refreshed = session.call_tool(
+        "with-base",
+        "ripr_refresh",
+        json!({ "base": "trunk" }),
+        timeout,
+    )?;
+    let refreshed = structured_tool_success(&refreshed, "ripr_refresh base=trunk")?;
+    if refreshed.pointer("/attempt/state").and_then(Value::as_str) != Some("completed")
+        || refreshed.get("requested_base") != Some(&json!("trunk"))
+        || refreshed
+            .pointer("/snapshot/total_items")
+            .and_then(Value::as_u64)
+            .is_none_or(|total| total == 0)
+    {
+        return Err(format!(
+            "refresh with base=trunk must complete with findings: {refreshed}"
+        ));
+    }
+    let status = session.call_tool("status", "ripr_workspace_status", json!({}), timeout)?;
+    let status = structured_tool_success(&status, "ripr_workspace_status")?;
+    let desired = status
+        .pointer("/session/current_desired_input")
+        .ok_or_else(|| format!("status lost current_desired_input: {status}"))?;
+    if desired.get("base") != Some(&json!("explicit"))
+        || desired.get("base_revision") != Some(&json!("trunk"))
+    {
+        return Err(format!("status must name the explicit base: {desired}"));
+    }
+    // The committed snapshot itself names the base it analyzed, so a clean
+    // worktree (null scope disclosure) still leaves nothing implicit.
+    if status.pointer("/session/analysis_outcome/identity/base_revision") != Some(&json!("trunk")) {
+        return Err(format!("snapshot outcome must name its base: {status}"));
+    }
+
+    // An unresolvable base fails the attempt closed and keeps the snapshot.
+    for hostile in ["--output=/tmp/ripr-mcp-base-probe", "no-such-ref"] {
+        let refused = session.call_tool(
+            "bad-base",
+            "ripr_refresh",
+            json!({ "base": hostile }),
+            timeout,
+        )?;
+        let refused = structured_tool_success(&refused, "ripr_refresh bad base")?;
+        if refused.pointer("/attempt/state").and_then(Value::as_str) != Some("failed")
+            || refused.get("requested_base") != Some(&json!(hostile))
+            || refused
+                .pointer("/last_known_good/snapshot_id")
+                .and_then(Value::as_str)
+                .is_none()
+            || refused
+                .pointer("/attempt/failure/recovery")
+                .and_then(Value::as_str)
+                .is_none_or(|recovery| !recovery.contains("different `base`"))
+        {
+            return Err(format!("base {hostile:?} must fail closed: {refused}"));
+        }
+    }
+    if std::path::Path::new("/tmp/ripr-mcp-base-probe").exists() {
+        return Err("an option-shaped base reached Git as an option".to_string());
+    }
+
+    // Argument shapes stay typed invalid params.
+    for bad in [
+        json!({ "base": "" }),
+        json!({ "base": 7 }),
+        json!({ "base": "a".repeat(257) }),
+        json!({ "other": 1 }),
+    ] {
+        let reply = session.call_tool("bad-args", "ripr_refresh", bad.clone(), timeout)?;
+        if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602) {
+            return Err(format!("{bad} must be invalid params: {reply}"));
+        }
+    }
+    Ok(())
+}
+
+/// A directory with a project marker but no Git work tree is a validated root,
+/// yet refresh can never succeed there; status must say so up front.
+#[test]
+fn status_reports_the_missing_git_work_tree_precondition() -> Result<(), String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("clock before Unix epoch: {error}"))?
+        .as_nanos();
+    // The repository's cargo config points TMPDIR inside its own work tree, so
+    // the default temp dir is not Git-free; the system `/tmp` is.
+    let base = std::path::PathBuf::from("/tmp");
+    if !cfg!(unix) || !base.is_dir() {
+        return Ok(());
+    }
+    let root = base.join(format!(
+        "ripr-mcp-stdio-nogit-{}-{stamp}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    let _cleanup = FixtureGuard { root: root.clone() };
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"nogit\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), "pub fn f() {}\n")
+        .map_err(|error| error.to_string())?;
+    if root
+        .ancestors()
+        .any(|ancestor| ancestor.join(".git").exists())
+    {
+        return Err("the temp directory sits inside a Git work tree".to_string());
+    }
+    let mut session = SequentialStdio::spawn(&root)?;
+    let timeout = Duration::from_mins(1);
+    session.call("discover", "server/discover", json!({}), timeout)?;
+    let status = session.call_tool("status", "ripr_workspace_status", json!({}), timeout)?;
+    let status = structured_tool_success(&status, "ripr_workspace_status")?;
+    if status.pointer("/workspace/workspace_state") != Some(&json!("ready"))
+        || status.pointer("/workspace/root/git_work_tree") != Some(&json!("not_detected"))
+        || !status
+            .pointer("/workspace/limitations")
+            .and_then(Value::as_array)
+            .is_some_and(|limitations| {
+                limitations
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .any(|text| text.contains("no Git work tree"))
+            })
+    {
+        return Err(format!("status must report the Git precondition: {status}"));
+    }
+    let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), timeout)?;
+    let refresh = structured_tool_success(&refresh, "ripr_refresh")?;
+    let recovery = refresh
+        .pointer("/attempt/failure/recovery")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if refresh.pointer("/attempt/state").and_then(Value::as_str) != Some("failed")
+        || !recovery.contains("Git work tree")
+        || recovery.contains("`base` argument")
+    {
+        return Err(format!(
+            "refresh must fail naming the Git root precondition: {refresh}"
+        ));
+    }
+
+    fixture_git_ok(&root, &["-c", "init.defaultBranch=main", "init", "-q"])?;
+    let mut inside = SequentialStdio::spawn(&root)?;
+    inside.call("discover", "server/discover", json!({}), timeout)?;
+    let status = inside.call_tool("status", "ripr_workspace_status", json!({}), timeout)?;
+    let status = structured_tool_success(&status, "ripr_workspace_status")?;
+    if status.pointer("/workspace/root/git_work_tree").is_some() {
+        return Err(format!("a Git work tree keeps the v1 shape: {status}"));
+    }
+    Ok(())
+}
+
+/// `ripr_prepare_repair` transactions are in-memory session state; the
+/// not-found wording must not imply a durable store ever held them.
+#[test]
+fn unknown_attempt_wording_does_not_claim_a_durable_store_for_session_ids() -> Result<(), String> {
+    let root = install_b4_repair_ready_fixture()?;
+    let _cleanup = FixtureGuard { root: root.clone() };
+    let mut session = SequentialStdio::spawn(&root)?;
+    let timeout = Duration::from_mins(1);
+    session.call("discover", "server/discover", json!({}), timeout)?;
+    let attempt_id = format!("repair-attempt:sha256:{}", "0".repeat(64));
+    for (tool, argument) in [
+        ("ripr_get_repair_attempt", "attempt_id"),
+        ("ripr_get_receipt_status", "receipt_id"),
+    ] {
+        let reply = session.call_tool(tool, tool, json!({ argument: attempt_id }), timeout)?;
+        let failure = reply
+            .pointer("/result/structuredContent/failure")
+            .ok_or_else(|| format!("{tool} must fail typed: {reply}"))?;
+        let text = failure.to_string();
+        if failure.get("code") != Some(&json!("attempt_not_found"))
+            || !text.contains("memory")
+            || !text.contains("ripr_prepare_repair")
+            || text.contains("exists in this session or in the durable store")
+        {
+            return Err(format!("{tool} wording is inaccurate: {failure}"));
         }
     }
     Ok(())
