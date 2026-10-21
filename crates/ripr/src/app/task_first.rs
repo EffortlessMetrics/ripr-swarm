@@ -628,15 +628,16 @@ pub(crate) fn repair_start_refusal(root: &Path, seam_id: &str) -> Option<RepairS
 }
 
 /// The production file whose uncommitted changes make the before phase refuse
-/// `seam_id` (#9033), read from the same held-inline-target predicate the
-/// edit cage applies after the workflow artifacts are written. Asked first, it
-/// lets a start refuse before any artifact exists. `None` when the seam's
-/// target is committed, or when the inventory cannot say (the later phases
-/// still apply their own checks).
-pub(crate) fn held_inline_start_file(root: &Path, seam_id: &str) -> Option<String> {
-    let GateState::Loaded { classified, .. } = load_gate_state(root) else {
-        return None;
-    };
+/// `seam_id` (#9033), read from the inventory the before phase already loaded
+/// (no second load) and the same held-inline-target predicate the edit cage
+/// applies. Asked before any workflow artifact is written, it lets a start
+/// refuse with nothing on disk. `None` when the inventory does not name the
+/// seam or its target is committed.
+pub(crate) fn held_inline_start_file(
+    root: &Path,
+    seam_id: &str,
+    classified: &[crate::analysis::ClassifiedSeam],
+) -> Option<String> {
     let entry = classified
         .iter()
         .find(|entry| entry.seam.id().as_str() == seam_id)?;
@@ -645,9 +646,11 @@ pub(crate) fn held_inline_start_file(root: &Path, seam_id: &str) -> Option<Strin
 
 /// The refusal for a start held by an uncommitted production target: states
 /// that no attempt started and what to do about it (#9033).
-pub(crate) fn uncommitted_start_refusal_message(file: &str) -> String {
+pub(crate) fn uncommitted_start_refusal_message(root: &Path, seam_id: &str, file: &str) -> String {
     format!(
-        "No repair attempt started. Commit or stash `{file}`, then run `ripr repair`. A repair confined to its inline `#[cfg(test)]` module starts only from the committed file; no workflow artifact was written"
+        "No repair attempt started. Commit or stash `{file}`, then run `ripr repair {} --root {}`. A repair confined to its inline `#[cfg(test)]` module starts only from the committed file",
+        shell_arg(seam_id),
+        shell_arg(&bound_root(&root.to_string_lossy()))
     )
 }
 

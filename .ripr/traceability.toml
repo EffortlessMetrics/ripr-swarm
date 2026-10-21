@@ -1687,6 +1687,7 @@ tests = [
   "crates/ripr/tests/task_first_facade.rs::agent_repair_accepts_the_probe_id_check_prints",
   "crates/ripr/tests/task_first_facade.rs::repair_accepts_a_unique_file_line_location",
   "crates/ripr/tests/task_first_facade.rs::repair_refuses_an_ambiguous_probe_id",
+  "crates/ripr/tests/cli_smoke.rs::repair_refuses_uncommitted_inline_target_before_writing_artifacts_and_status_says_so",
   "crates/ripr/tests/task_first_facade.rs::check_drill_down_omits_repair_for_a_static_limited_finding",
   "crates/ripr/src/analysis/canonical_gap.rs::tests::probe_id_names_only_the_seam_it_was_minted_from",
   "crates/ripr/src/app/selector.rs::tests::seam_id_selector_resolves_through_the_seam_binding",

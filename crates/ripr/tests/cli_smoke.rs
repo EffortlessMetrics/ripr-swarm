@@ -30575,20 +30575,37 @@ fn repair_refuses_uncommitted_inline_target_before_writing_artifacts_and_status_
 
     let root_arg = root.display().to_string();
     let repair = run_ripr(&["repair", BOUNDARY_GAP_SEAM_ID, "--root", &root_arg]);
-    assert_failure(&repair);
+    assert_eq!(
+        repair.status.code(),
+        Some(3),
+        "the facade refusal is a decision, not a failure: {}",
+        String::from_utf8_lossy(&repair.stderr)
+    );
+    assert!(repair.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&repair.stderr);
     assert!(
         stderr.contains(
-            "No repair attempt started. Commit or stash `src/lib.rs`, then run `ripr repair`."
-        ),
+            "No repair attempt started. Commit or stash `src/lib.rs`, then run `ripr repair "
+        ) && stderr.contains("--root"),
         "{stderr}"
     );
-    for artifact in ["workflow.json", "agent-packet.json", "agent-brief.json"] {
+    for artifact in [
+        "workflow.json",
+        "commands.md",
+        "agent-packet.json",
+        "agent-brief.json",
+        "before.repo-exposure.json",
+    ] {
         assert!(
             !root.join("target/ripr/workflow").join(artifact).exists(),
             "a refused start must write no {artifact}; stderr:\n{stderr}"
         );
     }
+
+    // The advanced spelling keeps its failure exit code.
+    let advanced = run_repair_phase(&root, &["--seam-id", BOUNDARY_GAP_SEAM_ID], "before")?;
+    assert_eq!(advanced.status.code(), Some(2));
+    assert!(!root.join("target/ripr/workflow/workflow.json").exists());
 
     let status = run_ripr(&["status", "--root", &root_arg]);
     let status_out = String::from_utf8_lossy(&status.stdout);
