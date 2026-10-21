@@ -7,64 +7,63 @@
 //! exactly one documented row, so a new cell cannot appear without an explicit
 //! documented disposition. It never promotes a tier.
 
-use super::LanguageId;
-use super::language_capability::{CAPABILITY_CELLS, CapabilityCell, CapabilityFamily, TierCeiling};
+use super::language_capability::{CAPABILITY_CELLS, CapabilityCell, TierCeiling, cell_id};
 
-/// One support-map row and the cells it governs.
+/// One support-map row and the explicit cell identities it governs. A cell is
+/// never bound by pattern, so a new cell needs a deliberate documented row.
 struct Binding {
     row: &'static str,
-    languages: &'static [LanguageId],
-    family: Option<CapabilityFamily>,
+    cells: &'static [&'static str],
 }
 
 const BINDINGS: &[Binding] = &[
     Binding {
         row: "Rust static exposure loop",
-        languages: &[LanguageId::Rust],
-        family: Some(CapabilityFamily::StaticFacts),
+        cells: &["rust/any/diff/static_facts", "rust/any/repo/static_facts"],
     },
     Binding {
         row: "Rust gap repair loop",
-        languages: &[LanguageId::Rust],
-        family: Some(CapabilityFamily::RepairRouting),
+        cells: &["rust/any/diff/repair_routing"],
     },
     Binding {
         row: "TypeScript and JavaScript preview",
-        languages: &[LanguageId::TypeScript, LanguageId::JavaScript],
-        family: None,
+        cells: &[
+            "typescript/any/diff/static_facts",
+            "typescript/any/repo/static_facts",
+            "typescript/any/diff/repair_routing",
+            "javascript/any/diff/static_facts",
+            "javascript/any/repo/static_facts",
+            "javascript/any/diff/repair_routing",
+        ],
     },
     Binding {
         row: "Python repair routing",
-        languages: &[LanguageId::Python],
-        family: Some(CapabilityFamily::RepairRouting),
+        cells: &[
+            "python/pytest/diff/repair_routing",
+            "python/unittest/diff/repair_routing",
+        ],
     },
     Binding {
         row: "Python preview static facts",
-        languages: &[LanguageId::Python],
-        family: Some(CapabilityFamily::StaticFacts),
+        cells: &[
+            "python/any/diff/static_facts",
+            "python/any/repo/static_facts",
+        ],
     },
     Binding {
         row: "Perl repair routing",
-        languages: &[LanguageId::Perl],
-        family: None,
+        cells: &[
+            "perl/any/diff/static_facts",
+            "perl/any/repo/static_facts",
+            "perl/any/diff/repair_routing",
+        ],
     },
 ];
 
 impl Binding {
     fn governs(&self, cell: &CapabilityCell) -> bool {
-        self.languages.contains(&cell.language)
-            && self.family.is_none_or(|family| family == cell.family)
+        self.cells.contains(&cell_id(cell).as_str())
     }
-}
-
-fn cell_id(cell: &CapabilityCell) -> String {
-    format!(
-        "{}/{}/{}/{}",
-        cell.language.as_str(),
-        cell.framework,
-        cell.mode.as_str(),
-        cell.family.as_str()
-    )
 }
 
 /// Rows of the "Current Support Map" table as (capability, tier text).
@@ -105,9 +104,14 @@ fn drift_violations(doc: &str, cells: &[CapabilityCell], bindings: &[&Binding]) 
     let rows = support_map(doc);
     let mut violations = Vec::new();
     for binding in bindings {
-        let Some((_, tier_text)) = rows.iter().find(|(name, _)| name == binding.row) else {
+        let matching: Vec<&(String, String)> = rows
+            .iter()
+            .filter(|(name, _)| name == binding.row)
+            .collect();
+        let [(_, tier_text)] = matching.as_slice() else {
             violations.push(format!(
-                "support map has no row `{}` for its bound cells",
+                "support map has {} rows named `{}`, expected exactly 1",
+                matching.len(),
                 binding.row
             ));
             continue;
@@ -121,8 +125,13 @@ fn drift_violations(doc: &str, cells: &[CapabilityCell], bindings: &[&Binding]) 
         };
         let governed: Vec<&CapabilityCell> =
             cells.iter().filter(|cell| binding.governs(cell)).collect();
-        if governed.is_empty() {
-            violations.push(format!("row `{}` governs no capability cell", binding.row));
+        for id in binding.cells {
+            if !cells.iter().any(|cell| cell_id(cell) == *id) {
+                violations.push(format!(
+                    "row `{}` binds `{id}`, which is not a capability cell",
+                    binding.row
+                ));
+            }
         }
         for cell in governed {
             if cell.tier_ceiling != tier {
@@ -223,6 +232,87 @@ mod tests {
             violations
                 .iter()
                 .any(|v| v.contains("Rust gap repair loop")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_duplicate_support_row_is_drift() {
+        let with_dup = current_support_tiers().replacen(
+            "| Python repair routing | `usable alpha` |",
+            "| Python repair routing | `usable alpha` |\n| Python repair routing | `preview` |",
+            1,
+        );
+        assert_ne!(with_dup, current_support_tiers());
+        let violations = drift_violations(&with_dup, CAPABILITY_CELLS, &all_bindings());
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("2 rows named `Python repair routing`")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_cell_bound_to_two_rows_is_drift() {
+        let extra = Binding {
+            row: "Rust gap repair loop",
+            cells: &["perl/any/diff/static_facts"],
+        };
+        let mut bindings = all_bindings();
+        bindings.push(&extra);
+        let violations = drift_violations(&current_support_tiers(), CAPABILITY_CELLS, &bindings);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("perl/any/diff/static_facts") && v.contains("2 support-map")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_binding_to_an_unknown_cell_is_drift() {
+        let extra = Binding {
+            row: "Perl repair routing",
+            cells: &["perl/any/diff/nonexistent"],
+        };
+        let mut bindings = all_bindings();
+        bindings.push(&extra);
+        let violations = drift_violations(&current_support_tiers(), CAPABILITY_CELLS, &bindings);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("not a capability cell")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn an_unknown_tier_word_is_drift() {
+        let doc = current_support_tiers().replacen(
+            "| Perl repair routing | `preview` |",
+            "| Perl repair routing | `experimental` |",
+            1,
+        );
+        let violations = drift_violations(&doc, CAPABILITY_CELLS, &all_bindings());
+        assert!(
+            violations.iter().any(|v| v.contains("`experimental`")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn a_new_cell_without_an_explicit_binding_is_drift() {
+        let mut cells = CAPABILITY_CELLS.to_vec();
+        let mut extra = cells[0];
+        extra.framework = "vitest";
+        extra.language = super::super::LanguageId::TypeScript;
+        cells.push(extra);
+        let violations = drift_violations(&current_support_tiers(), &cells, &all_bindings());
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("typescript/vitest/") && v.contains("0 support-map")),
             "{violations:?}"
         );
     }
