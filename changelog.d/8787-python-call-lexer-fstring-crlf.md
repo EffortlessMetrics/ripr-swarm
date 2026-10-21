@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Python: the call-site lexer keeps a call inside a multiline triple-quoted f-string replacement field visible and treats a CRLF after a backslash as one line break, so a CRLF-continued string no longer exposes its continuation line or opens a fictitious triple-quoted region (#8787). Same-line and single-line f-string fields, and 3.12 nested same-type quotes, stay hidden (hide-only, filed as a follow-up).

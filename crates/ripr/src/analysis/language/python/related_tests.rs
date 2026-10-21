@@ -2472,27 +2472,43 @@ pub(super) fn python_text_hides_code(text: &str, idx: usize) -> bool {
 /// Whether `idx` falls inside an open triple-quoted string. A small lexer:
 /// triple delimiters inside ordinary single-line strings (`'"""'`) and `#`
 /// comments do not open a docstring, and a backslash escapes the next char.
+/// The replacement fields of a triple-quoted f-string (`f"""{\n  helper(1)\n}"""`)
+/// are code, not string text, so a call inside one stays visible (#8787).
 fn inside_triple_quoted_string(text: &str, idx: usize) -> bool {
-    let mut triple: Option<&str> = None;
+    // `(delimiter, is_f_string)` of the open triple-quoted string.
+    let mut triple: Option<(&str, bool)> = None;
     let mut cursor = 0;
     while cursor < idx {
         let rest = &text[cursor..];
-        if let Some(delimiter) = triple {
+        if let Some((delimiter, formatted)) = triple {
             if let Some(escaped) = rest.strip_prefix('\\') {
                 cursor += 1 + escaped.chars().next().map_or(0, char::len_utf8);
             } else if rest.starts_with(delimiter) {
                 triple = None;
                 cursor += delimiter.len();
+            } else if formatted && rest.starts_with("{{") {
+                cursor += 2;
+            } else if let Some(field) = (formatted && rest.starts_with('{'))
+                .then(|| fstring_field_scan(rest, delimiter, idx - cursor))
+                .flatten()
+            {
+                if field.target_hidden {
+                    return true;
+                }
+                if idx < cursor + field.len {
+                    return false;
+                }
+                cursor += field.len;
             } else {
                 cursor += rest.chars().next().map_or(1, char::len_utf8);
             }
             continue;
         }
-        if rest.starts_with("\"\"\"") {
-            triple = Some("\"\"\"");
-            cursor += 3;
-        } else if rest.starts_with("'''") {
-            triple = Some("'''");
+        let delimiter = ["\"\"\"", "'''"]
+            .into_iter()
+            .find(|delimiter| rest.starts_with(delimiter));
+        if let Some(delimiter) = delimiter {
+            triple = Some((delimiter, string_prefix_is_f_string(text, cursor)));
             cursor += 3;
         } else if rest.starts_with('#') || rest.starts_with('"') || rest.starts_with('\'') {
             let len = if rest.starts_with('#') {
@@ -2513,16 +2529,87 @@ fn inside_triple_quoted_string(text: &str, idx: usize) -> bool {
     triple.is_some()
 }
 
+/// Whether the string literal whose quote opens at `quote` carries an `f`
+/// prefix (`f`, `F`, `rf`, `fR`, ...), so its `{...}` fields are expressions.
+fn string_prefix_is_f_string(text: &str, quote: usize) -> bool {
+    let prefix_start = text[..quote]
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| !is_python_identifier_char(*ch))
+        .map_or(0, |(at, ch)| at + ch.len_utf8());
+    let prefix = &text[prefix_start..quote];
+    prefix.len() <= 2 && matches!(prefix.to_ascii_lowercase().as_str(), "f" | "rf" | "fr")
+}
+
+/// The extent of one f-string replacement field.
+struct FStringField {
+    /// Byte length from the opening `{` through its matching `}`.
+    len: usize,
+    /// The scanned offset sits inside a string literal nested in the field.
+    target_hidden: bool,
+}
+
+/// Scan the replacement field that begins at `rest` inside a triple-quoted
+/// f-string closed by `delimiter`, balancing braces and skipping nested
+/// single-line string literals. `None` when the field is not closed before the
+/// string's own closing delimiter, so the `{` stays literal text and the string
+/// keeps hiding its content. `target` is a byte offset into `rest`; the result
+/// records whether a nested string literal covers it.
+fn fstring_field_scan(rest: &str, delimiter: &str, target: usize) -> Option<FStringField> {
+    let bytes = rest.as_bytes();
+    let mut depth = 0usize;
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'{' => {
+                depth += 1;
+                index += 1;
+            }
+            b'}' => {
+                depth = depth.saturating_sub(1);
+                index += 1;
+                if depth == 0 {
+                    return Some(FStringField {
+                        len: index,
+                        target_hidden: false,
+                    });
+                }
+            }
+            b'"' | b'\'' => {
+                if rest[index..].starts_with(delimiter) {
+                    return None;
+                }
+                let len = single_line_string_len(&rest[index..]);
+                if target >= index && target < index + len {
+                    return Some(FStringField {
+                        len: index + len,
+                        target_hidden: true,
+                    });
+                }
+                index += len;
+            }
+            _ => index += 1,
+        }
+    }
+    None
+}
+
 /// Byte length of the ordinary single-line string literal at the start of
 /// `rest` (which begins with its quote): through the closing quote, or to the
-/// end of the line when unterminated.
+/// end of the line when unterminated. A backslash continues the string over the
+/// newline that follows it, including a CRLF pair.
 fn single_line_string_len(rest: &str) -> usize {
     let quote = rest.as_bytes()[0];
     let bytes = rest.as_bytes();
     let mut index = 1;
     while index < bytes.len() {
         match bytes[index] {
-            b'\\' => index += 2,
+            b'\\' => {
+                let crlf = bytes
+                    .get(index + 1..)
+                    .is_some_and(|tail| tail.starts_with(b"\r\n"));
+                index += if crlf { 3 } else { 2 };
+            }
             b'\n' => return index,
             byte if byte == quote => return index + 1,
             _ => index += 1,

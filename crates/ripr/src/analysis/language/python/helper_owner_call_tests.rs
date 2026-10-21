@@ -282,3 +282,115 @@ fn given_a_backslash_continued_string_then_a_call_on_the_continuation_line_is_hi
     let after = "x = \"about \\\nmore\"\nhelper(1)\n";
     assert!(related_tests::contains_call_name(after, "helper"));
 }
+
+fn sees_call(body: &str) -> bool {
+    related_tests::contains_call_name(body, "helper")
+}
+
+#[test]
+fn given_a_multiline_f_string_replacement_field_then_a_call_inside_it_is_kept() {
+    for body in [
+        "assert f\"\"\"value: {\n    helper(1)\n}\"\"\" == x\n",
+        "assert f'''value: {\n    helper(1)\n}''' == x\n",
+        "assert F\"\"\"value: {\n    helper(1)\n}\"\"\" == x\n",
+        "assert rf\"\"\"value: {\n    helper(1)\n}\"\"\" == x\n",
+        "assert fR\"\"\"value: {\n    helper(1)\n}\"\"\" == x\n",
+        "assert f\"\"\"a {x}\nb {\n    helper(1)\n}\"\"\" == x\n",
+        "assert f\"\"\"{{literal}} {\n    helper(1)\n}\"\"\" == x\n",
+        "assert f\"\"\"{\n    wrap(\n        helper(1)\n    )\n}\"\"\" == x\n",
+        "assert f\"\"\"{x:{\n    helper(1)\n}}\"\"\" == x\n",
+    ] {
+        assert!(sees_call(body), "{body}");
+    }
+}
+
+#[test]
+fn given_text_outside_an_f_string_field_then_a_call_shaped_mention_stays_hidden() {
+    for body in [
+        // Not an f-string: braces are plain text.
+        "assert \"\"\"value: {\n    helper(1)\n}\"\"\" == x\n",
+        "assert b\"\"\"value: {\n    helper(1)\n}\"\"\" == x\n",
+        // A space-separated `f` is not a prefix.
+        "f = 1\nassert f + \"\"\"value: {\n    helper(1)\n}\"\"\" == x\n",
+        // Text before, between and after the fields.
+        "assert f\"\"\"value:\n    helper(1) is text\n{x}\"\"\" == x\n",
+        "assert f\"\"\"{x}\n    helper(1) is text\n\"\"\" == x\n",
+        "assert f\"\"\"{x} and\n    helper(1) is text {y}\"\"\" == x\n",
+        // Doubled braces are literal text, not a field.
+        "assert f\"\"\"a {{\n    helper(1)\n}}\"\"\" == x\n",
+        // A nested string literal in a field is not a call.
+        "assert f\"\"\"{\n    \"helper(1)\"\n}\"\"\" == x\n",
+        // A field never closed before the string ends does not open code.
+        "assert f\"\"\"{\n    helper(1)\n\"\"\" == x\n",
+        // A docstring is still a docstring.
+        "\"\"\"\nhelper(1)\n\"\"\"\n",
+    ] {
+        assert!(!sees_call(body), "{body}");
+    }
+    // The call after the f-string closes is visible again.
+    assert!(sees_call("x = f\"\"\"{y}\n\"\"\"\nhelper(1)\n"));
+    assert!(sees_call("x = f\"\"\"{\n    y\n}\"\"\"\nhelper(1)\n"));
+}
+
+#[test]
+fn given_a_backslash_continued_string_containing_triple_quotes_then_later_calls_are_kept() {
+    for body in [
+        "x = 'begin \\\n\"\"\"'\nassert helper(1)\n",
+        "x = \"begin \\\n'''\"\nassert helper(1)\n",
+        "x = 'begin \\\r\n\"\"\"'\r\nassert helper(1)\r\n",
+        "x = 'a \\\n b \\\n \"\"\"'\nhelper(1)\n",
+    ] {
+        assert!(sees_call(body), "{body:?}");
+    }
+    assert!(!sees_call("x = 'begin \\\n\"\"\"helper(1)'\n"));
+    assert!(!sees_call("x = 'begin \\\r\n\"\"\"helper(1)'\r\n"));
+}
+
+#[test]
+fn given_crlf_line_endings_then_a_continued_string_hides_its_continuation_line() {
+    assert!(!sees_call("x = \"about \\\r\nhelper(1)\"\r\n"));
+    assert!(!sees_call("x = \"about \\\r\nmore \\\r\nhelper(1)\"\r\n"));
+    assert!(sees_call("x = \"about \\\r\nmore\"\r\nhelper(1)\r\n"));
+    // Without a backslash the CRLF ends the string line.
+    assert!(sees_call("x = \"about\"\r\nhelper(1)\r\n"));
+}
+
+#[test]
+fn given_degenerate_string_text_then_the_call_lexer_never_panics() {
+    let inputs = [
+        "x = 'a\\",
+        "x = 'a\\\r",
+        "x = 'a\\\r\n",
+        "x = \"\\",
+        "\\",
+        "x = '\\\u{e9}' helper(1)",
+        "x = '\\\u{1f600}'\nhelper(1)\n",
+        "x = 'abc",
+        "x = 'abc\nhelper(1)\n",
+        "x = \"\"\"abc",
+        "x = f\"\"\"{",
+        "x = f\"\"\"{\n    helper(1)",
+        "x = f\"\"\"{{",
+        "x = f\"\"\"{ 'a",
+        "x = f\"\"\"{ \"\"\"",
+        "x = f\"\"\"{\u{e9}\u{1f600}}\"\"\" helper(1)",
+        "x = f'''{ '\\",
+        "f\"\"\"",
+        "\u{e9}f\"\"\"{ helper(1)",
+        "\u{e9}\"\"\"{",
+        "#",
+        "",
+    ];
+    for input in inputs {
+        let _ = related_tests::contains_call_name(input, "helper");
+        for (idx, _) in input.char_indices().chain([(input.len(), ' ')]) {
+            let _ = related_tests::python_text_hides_code(input, idx);
+        }
+    }
+    // The values that are well-defined.
+    assert!(!sees_call("x = 'a\\"));
+    assert!(sees_call("helper(1); x = 'a\\"));
+    assert!(sees_call("x = '\\\u{e9}' + helper(1)\n"));
+    assert!(sees_call("x = 'abc\nhelper(1)\n"));
+    assert!(!sees_call("x = 'abc helper(1)"));
+}
