@@ -2367,6 +2367,20 @@ fn far_above_threshold_discounts() {
         assert!(finding.activation.observed_values.iter().any(|fact| {
             fact.context == ValueContext::FunctionArgument && fact.value == "threshold = 100"
         }));
+        // #8389: every retained value names the test file it was read from.
+        let files = finding
+            .activation
+            .observed_values
+            .iter()
+            .map(|fact| fact.file.clone())
+            .collect::<Vec<_>>();
+        assert!(
+            !files.is_empty()
+                && files
+                    .iter()
+                    .all(|file| file.as_deref() == Some(std::path::Path::new("tests/score.rs"))),
+            "{files:?}"
+        );
         assert_eq!(finding.activation.missing_discriminators.len(), 1);
         assert_eq!(
             finding.activation.missing_discriminators[0].value,

@@ -29,6 +29,8 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, PartialEq, Eq)]
 struct RerunOptions {
     root: PathBuf,
+    /// `--root` was typed, so the root is used as given (#8872).
+    root_explicit: bool,
     selector: RerunSelector,
     json: bool,
     out: Option<PathBuf>,
@@ -377,8 +379,41 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
 /// argv parser routes through `refuse`, which writes the shared refusal
 /// envelope to stdout on `--json` runs before the prose error reaches
 /// stderr. Argv usage errors above stay prose-only.
-fn run_refusing(options: RerunOptions) -> Result<(), String> {
+fn run_refusing(mut options: RerunOptions) -> Result<(), String> {
     let json = options.json;
+    // #8872: same implicit root `ripr check` uses; `--root .` opts out. A
+    // failure here is a post-argv failure, so a `--json` run still gets the
+    // refusal envelope (#7331). A member-relative `--changed-test` file that
+    // exists binds to the invocation directory; one that does not is passed
+    // through so the named-limitation report (RIPR-SPEC-0123) stays reachable.
+    let typed_root = options.root.clone();
+    let resolved =
+        super::commands::resolve_implicit_command_root(&mut options.root, options.root_explicit);
+    let prefix = match resolved {
+        Ok(prefix) => prefix,
+        Err(error) => {
+            return Err(if json {
+                refuse_json_envelope(
+                    TARGETED_RERUN_REFUSAL_SCHEMA_VERSION,
+                    "diff",
+                    None,
+                    &typed_root,
+                    None,
+                    CoreError::from(error),
+                )
+            } else {
+                error
+            });
+        }
+    };
+    if let RerunSelector::ChangedTest { file, .. } = &mut options.selector {
+        let typed = file.to_string_lossy().into_owned();
+        if let Ok(bound) =
+            super::commands::bind_member_selector_file(prefix.as_deref(), &options.root, &typed)
+        {
+            *file = PathBuf::from(bound);
+        }
+    }
     let refuse = |error: CoreError| -> String {
         if !json {
             return error.to_string();
@@ -434,6 +469,7 @@ fn run_refusing(options: RerunOptions) -> Result<(), String> {
 
 fn parse_options(args: &[String]) -> Result<RerunOptions, String> {
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut changed_test = None;
     let mut canonical_gap_id = None;
     let mut gap_ledger = None;
@@ -447,6 +483,7 @@ fn parse_options(args: &[String]) -> Result<RerunOptions, String> {
             "--root" => {
                 index += 1;
                 root = PathBuf::from(expect_value(args, index, "--root")?);
+                root_explicit = true;
             }
             "--changed-test" => {
                 index += 1;
@@ -513,6 +550,7 @@ fn parse_options(args: &[String]) -> Result<RerunOptions, String> {
     };
     Ok(RerunOptions {
         root,
+        root_explicit,
         selector,
         json,
         out,

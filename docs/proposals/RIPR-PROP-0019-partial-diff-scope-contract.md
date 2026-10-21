@@ -36,6 +36,46 @@ exactly what was and was not inspected.
 This contract defines how RIPR may return partial analysis. It is the design
 authority for #1999 (implementation) and for any future partition continuation.
 
+## Success criteria
+
+- A diff above the partial-selection budget but within the hard analysis-cost
+  guards returns `limited_partial_scope` with a non-empty, deterministic
+  partition instead of `diff_scope_oversized` and zero findings (decisions 1-3).
+- Every partial result names its selected files, the lower-bound uninspected
+  file and changed-line counts, and the stop reason (decision 4).
+- No partial result is accepted as a gate, baseline, badge, or RIPR Zero input
+  (decision 5).
+- Two runs are comparable only when their partition identity matches
+  (decision 7).
+
+## Alternatives considered
+
+- **Keep the all-or-nothing guards.** Honest, but a large PR then shows no
+  diagnostics at all. Rejected as the only behavior; the hard guards stay as
+  the memory backstop (decision 3).
+- **Partition at owner, hunk, or line level.** Rejected: an owner's function is
+  the probe identity and owners share files, so finer units would break
+  identity accounting (decision 1; listed under non-goals).
+- **Select the first N entries the filesystem or diff yields.** Rejected:
+  results would depend on enumeration order, so repeated runs could differ
+  (decision 2).
+- **Named partition continuation (partition N+1).** A non-goal of this
+  contract's first revision (decision 6; listed under non-goals): the only
+  continuation in this revision is the explicit budget override. No retained
+  source records a deliberation beyond this.
+
+## Risks
+
+- A reader may take a partial result as complete. Mitigation: the run state,
+  lower-bound uninspected counts, and `gate_eligibility: ineligible` are
+  required fields, and no field may imply the uninspected scope is clean
+  (decisions 4-5).
+- A partial budget set above a hard guard could mask the guard. Mitigation:
+  overrides are clamped to the guard and the clamp is disclosed (decision 3).
+- Selection drift between releases could make runs look comparable. Mitigation:
+  `partial-diff-v1` and `lang-tier-v1` are part of the partition identity
+  (decision 7).
+
 ## Required decisions
 
 ### 1. Selection unit

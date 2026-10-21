@@ -1,5 +1,22 @@
 use std::path::{Component, Path, PathBuf};
 
+/// Deepest accepted diff path, in components. Real repositories sit far below
+/// this; a crafted header with tens of thousands of `a/` components made
+/// ancestor walks and path comparisons quadratic in time and memory (hang or
+/// OOM). The bounded parser refuses such a header explicitly
+/// (`diff_path_too_deep`); `confine_to_relative_path` rejects it too so an
+/// unbounded caller can never register one.
+pub(super) const MAX_DIFF_PATH_COMPONENTS: usize = 256;
+
+/// Whether a path-bearing diff header line is deeper than the bound. A cheap
+/// separator count over the raw line: a `diff --git` line carries two paths,
+/// so the line allowance is twice the per-path bound plus the side prefixes.
+pub(super) fn path_marker_exceeds_depth_bound(raw: &str) -> bool {
+    const PREFIXES: [&str; 5] = ["--- ", "+++ ", "diff --git ", "rename from ", "rename to "];
+    PREFIXES.iter().any(|prefix| raw.starts_with(prefix))
+        && raw.bytes().filter(|byte| *byte == b'/').count() > 2 * MAX_DIFF_PATH_COMPONENTS + 4
+}
+
 pub(super) fn parse_new_path_marker(raw: &str) -> Option<PathBuf> {
     let marker = raw.strip_prefix("+++ ")?;
     let path = parse_diff_path_token(marker)?;
@@ -104,7 +121,7 @@ fn confine_to_relative_path(path: &DecodedPath) -> Option<PathBuf> {
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
         }
     }
-    if parts.is_empty() {
+    if parts.is_empty() || parts.len() > MAX_DIFF_PATH_COMPONENTS {
         return None;
     }
     // Unix native separators are `/`, so the platform join already
@@ -270,7 +287,8 @@ fn parse_diff_path_token(raw: &str) -> Option<DecodedPath> {
     }
 
     let token = raw.split_once('\t').map_or(raw, |(path, _metadata)| path);
-    let token = token.trim_end();
+    // Git leaves trailing filename spaces unquoted. Only the tab separates
+    // metadata; whitespace before it is part of the native path identity.
     (!token.is_empty()).then(|| DecodedPath::Text(token.to_string()))
 }
 
@@ -410,36 +428,145 @@ where
     u8::try_from(value).unwrap_or(0)
 }
 
-/// Whether a repository-relative diff path names one of ripr's own artifact
-/// roots — `target/ripr/...` (#7663). Python `.gitignore` templates do not
-/// cover `target/`, so a routine `git add -A` can commit ripr's reports and
-/// caches; once committed, the next analysis would count ripr's own output
-/// as changed user scope. Tool artifacts are not user source at any position
-/// of the diff, so the pipeline excludes them from changed-scope accounting
-/// even when tracked. Matching anchors at the repository-relative start: a
-/// hand-written `target/ripr` directory at any other depth is not an
-/// artifact path. Separator handling is the platform's own (`components()`):
-/// on Windows both `/` and `\` forms match; on Unix only the `/` form does,
-/// because a backslash there is an ordinary filename character.
-pub(crate) fn is_ripr_artifact_path(path: &Path) -> bool {
-    // Platform-native component semantics decide the separator family:
-    // Windows `components()` splits on both `/` and `\`, so a native
-    // backslash spelling matches there; Unix `components()` splits on `/`
-    // only, so a Unix path whose directory literally contains a backslash
-    // (`target\ripr/user.rs`) stays one component and is NOT an artifact
-    // path — the two spellings name different directories on that family.
-    // Git always spells diff paths with `/`, so no cross-family input
-    // reaches the predicate on Unix.
-    let mut components = path.components();
-    let head = components.next().and_then(|part| match part {
-        Component::Normal(name) => name.to_str(),
-        _ => None,
-    });
-    let second = components.next().and_then(|part| match part {
-        Component::Normal(name) => name.to_str(),
-        _ => None,
-    });
-    matches!(head, Some("target")) && matches!(second, Some("ripr"))
+/// Repository-relative roots whose contents are ripr's own artifacts
+/// (#8751). The default `target/ripr` always counts. A relocated seam-cache
+/// base (`RIPR_CACHE_DIR`, passed as `cache_base`) and a configured
+/// `[perl].cache_dir` add their roots only when the writer's resolved path
+/// stays anchored inside the repository; absolute bases outside the root and
+/// bases that traverse above it are refused, because diff paths are
+/// repository-relative and ripr cannot exclude — and doctor must not probe —
+/// a location it cannot anchor at the root.
+///
+/// The two relocated writers scope differently, matching what each writer
+/// actually owns (PR #8901 review, devin #3):
+///
+/// - The seam-cache base may be pointed at a directory that also holds user
+///   content (`RIPR_CACHE_DIR=src`). The writer only ever creates its named
+///   layer directories there — `CACHE_LAYER_NAMES`, the same inventory
+///   cache maintenance uses — so masking the whole base would erase real
+///   source from the diff. Each writer-owned layer directory under the base
+///   is an artifact root; the base itself stays user scope.
+/// - The Perl facts directory is exclusively ripr-owned by configuration
+///   (the writer stages packets directly inside it), so the whole
+///   configured directory is the root.
+///
+/// A root already covered by a broader root (every default writer location
+/// lives under `target/ripr`) is not listed twice.
+pub(crate) fn ripr_artifact_roots(
+    root: &Path,
+    cache_base: &Path,
+    perl_cache_dir: Option<&Path>,
+) -> Vec<PathBuf> {
+    let mut roots = vec![PathBuf::from("target").join("ripr")];
+    let push_root = |roots: &mut Vec<PathBuf>, candidate: PathBuf| {
+        if roots.iter().any(|existing| candidate.starts_with(existing)) {
+            return;
+        }
+        roots.retain(|existing| !existing.starts_with(&candidate));
+        roots.push(candidate);
+    };
+    if let Some(relative) = anchored_at_root(root, cache_base) {
+        for layer in crate::analysis::seam_cache::cache_layer_names() {
+            push_root(&mut roots, relative.join(layer));
+        }
+    }
+    if let Some(configured) = perl_cache_dir
+        && let Some(relative) = anchored_at_root(root, &root.join(configured))
+    {
+        push_root(&mut roots, relative);
+    }
+    roots
+}
+
+/// Anchor a writer's resolved path at the repository root, returning the
+/// repository-relative form, or `None` when it cannot be anchored: the root
+/// itself, a base outside the root, or any parent-traversing remainder.
+/// Relative roots and relative bases are both process-working-directory
+/// relative — the writers join the root to the default base and use an env
+/// base verbatim — so both sides are absolutized against the current
+/// directory before the lexical strip.
+fn anchored_at_root(root: &Path, path: &Path) -> Option<PathBuf> {
+    let absolutize = |candidate: &Path| -> Option<PathBuf> {
+        if candidate.is_absolute() {
+            Some(lexical_normalize(candidate))
+        } else {
+            Some(lexical_normalize(
+                &std::env::current_dir().ok()?.join(candidate),
+            ))
+        }
+    };
+    let root_abs = absolutize(root)?;
+    let path_abs = absolutize(path)?;
+    let relative = path_abs.strip_prefix(&root_abs).ok()?;
+    if relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return None;
+    }
+    Some(relative.to_path_buf())
+}
+
+/// Fold `.` components out and resolve `..` lexically, without touching the
+/// filesystem. A `..` that would escape the front is kept verbatim so the
+/// caller's component check rejects it.
+fn lexical_normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if out.file_name() == Some(std::ffi::OsStr::new("..")) || !out.pop() {
+                    out.push("..");
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// The forward-slash pathspec form of an artifact root, for git probes and
+/// warnings. Diff and git both spell repository paths with `/`.
+pub(crate) fn artifact_root_pathspec(root: &Path) -> String {
+    root.components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// A root-anchored, directory-only Gitignore rule for one literal artifact
+/// root. Gitignore escaping is separate from shell quoting and Git pathspec
+/// mode: the latter is unsupported by `check-ignore` and does not escape rules.
+pub(crate) fn artifact_root_gitignore_entry(root: &Path) -> String {
+    let mut entry = String::from("/");
+    for ch in artifact_root_pathspec(root).chars() {
+        if matches!(ch, '\\' | '*' | '?' | '[' | ']') {
+            entry.push('\\');
+        }
+        entry.push(ch);
+    }
+    entry.push('/');
+    entry
+}
+
+/// Whether a repository-relative diff path names content under one of
+/// ripr's own artifact roots (#7663, relocated bases #8751). Python
+/// `.gitignore` templates do not cover `target/`, so a routine `git add -A`
+/// can commit ripr's reports and caches; once committed, the next analysis
+/// would count ripr's own output as changed user scope. Tool artifacts are
+/// not user source at any position of the diff, so the pipeline excludes
+/// them from changed-scope accounting even when tracked. Matching anchors at
+/// the repository-relative start: a hand-written `target/ripr` directory at
+/// any other depth is not an artifact path. Separator handling is the
+/// platform's own (`Path::starts_with` is component-wise): on Windows both
+/// `/` and `\` forms match; on Unix only the `/` form does, because a
+/// backslash there is an ordinary filename character — so a Unix path whose
+/// directory literally contains a backslash (`target\ripr/user.rs`) stays
+/// one component and is NOT an artifact path.
+pub(crate) fn is_ripr_artifact_path_under(path: &Path, roots: &[PathBuf]) -> bool {
+    roots.iter().any(|root| path.starts_with(root))
 }
 
 #[cfg(test)]
@@ -447,16 +574,61 @@ mod tests {
     use super::*;
 
     #[test]
+    fn artifact_root_gitignore_entry_escapes_patterns_separately_from_paths() {
+        assert_eq!(
+            artifact_root_gitignore_entry(Path::new("target/ripr")),
+            "/target/ripr/"
+        );
+        for (root, expected) in [
+            ("build/cache*", r"/build/cache\*/"),
+            ("build/cache?", r"/build/cache\?/"),
+            ("build/cache[1]", r"/build/cache\[1\]/"),
+            ("build/cache space", "/build/cache space/"),
+        ] {
+            assert_eq!(artifact_root_gitignore_entry(Path::new(root)), expected);
+            assert_eq!(artifact_root_pathspec(Path::new(root)), root);
+        }
+        #[cfg(unix)]
+        assert_eq!(
+            artifact_root_gitignore_entry(Path::new(r"build/cache\one")),
+            r"/build/cache\\one/"
+        );
+    }
+
+    /// The default artifact-root list the pipeline builds when nothing is
+    /// relocated.
+    fn default_artifact_roots() -> Vec<PathBuf> {
+        vec![PathBuf::from("target").join("ripr")]
+    }
+
+    #[test]
     fn is_ripr_artifact_path_matches_the_artifact_root_only() {
-        assert!(is_ripr_artifact_path(Path::new("target/ripr/cache/x.json")));
-        assert!(is_ripr_artifact_path(Path::new(
-            "target/ripr/pilot/pilot-summary.md"
-        )));
-        assert!(is_ripr_artifact_path(Path::new("target/ripr")));
-        assert!(!is_ripr_artifact_path(Path::new("target/other/x.json")));
-        assert!(!is_ripr_artifact_path(Path::new("src/target/ripr/x.json")));
-        assert!(!is_ripr_artifact_path(Path::new("target.rs")));
-        assert!(!is_ripr_artifact_path(Path::new("targeted/ripr/x.json")));
+        let roots = default_artifact_roots();
+        assert!(is_ripr_artifact_path_under(
+            Path::new("target/ripr/cache/x.json"),
+            &roots
+        ));
+        assert!(is_ripr_artifact_path_under(
+            Path::new("target/ripr/pilot/pilot-summary.md"),
+            &roots
+        ));
+        assert!(is_ripr_artifact_path_under(
+            Path::new("target/ripr"),
+            &roots
+        ));
+        assert!(!is_ripr_artifact_path_under(
+            Path::new("target/other/x.json"),
+            &roots
+        ));
+        assert!(!is_ripr_artifact_path_under(
+            Path::new("src/target/ripr/x.json"),
+            &roots
+        ));
+        assert!(!is_ripr_artifact_path_under(Path::new("target.rs"), &roots));
+        assert!(!is_ripr_artifact_path_under(
+            Path::new("targeted/ripr/x.json"),
+            &roots
+        ));
     }
 
     #[cfg(windows)]
@@ -464,9 +636,10 @@ mod tests {
     fn is_ripr_artifact_path_matches_the_native_backslash_form() {
         // Windows components() splits on both separator families, so a
         // native backslash spelling from platform APIs matches there.
-        assert!(is_ripr_artifact_path(Path::new(
-            "target\\ripr\\reports\\gap.json"
-        )));
+        assert!(is_ripr_artifact_path_under(
+            Path::new("target\\ripr\\reports\\gap.json"),
+            &default_artifact_roots()
+        ));
     }
 
     #[cfg(unix)]
@@ -476,8 +649,160 @@ mod tests {
         // directory literally named `target\ripr` is NOT ripr's artifact
         // root, and a hand-written file under it must not be classified as
         // a tool artifact (#8257 review).
-        assert!(!is_ripr_artifact_path(Path::new("target\\ripr/user.rs")));
-        assert!(!is_ripr_artifact_path(Path::new("target\\ripr")));
+        let roots = default_artifact_roots();
+        assert!(!is_ripr_artifact_path_under(
+            Path::new("target\\ripr/user.rs"),
+            &roots
+        ));
+        assert!(!is_ripr_artifact_path_under(
+            Path::new("target\\ripr"),
+            &roots
+        ));
+    }
+
+    #[test]
+    fn ripr_artifact_roots_default_is_the_artifact_root() {
+        let root = std::env::temp_dir().join("ripr-artifact-roots-default");
+        assert_eq!(
+            ripr_artifact_roots(&root, &root.join("target/ripr/cache"), None),
+            vec![PathBuf::from("target").join("ripr")]
+        );
+        // The default Perl facts dir lives under target/ripr: no second root.
+        assert_eq!(
+            ripr_artifact_roots(
+                &root,
+                &root.join("target/ripr/cache"),
+                Some(Path::new("target/ripr/perl-facts")),
+            ),
+            vec![PathBuf::from("target").join("ripr")]
+        );
+    }
+
+    #[test]
+    fn ripr_artifact_roots_adds_relocated_bases_inside_the_repo() {
+        let root = std::env::temp_dir().join("ripr-artifact-roots-relocated");
+        // An in-repo relocation (RIPR_CACHE_DIR=.ripr-cache) joins the roots
+        // at the writer's layer directories: the writer only creates
+        // CACHE_LAYER_NAMES children there, so those are what ripr owns
+        // (PR #8901 review, devin #3).
+        let mut expected = vec![PathBuf::from("target").join("ripr")];
+        expected.extend(
+            crate::analysis::seam_cache::cache_layer_names()
+                .iter()
+                .map(|layer| PathBuf::from(".ripr-cache").join(layer)),
+        );
+        assert_eq!(
+            ripr_artifact_roots(&root, &root.join(".ripr-cache"), None),
+            expected
+        );
+        // A configured [perl].cache_dir leaving target/ripr joins too; the
+        // Perl writer owns the whole configured directory.
+        assert_eq!(
+            ripr_artifact_roots(
+                &root,
+                &root.join("target/ripr/cache"),
+                Some(Path::new("facts/perl"))
+            ),
+            vec![
+                PathBuf::from("target").join("ripr"),
+                PathBuf::from("facts").join("perl"),
+            ]
+        );
+    }
+
+    #[test]
+    fn ripr_artifact_roots_scopes_a_shared_cache_base_to_writer_layers() {
+        // PR #8901 review (devin #3): RIPR_CACHE_DIR may name a directory
+        // that also holds user content. Only the writer's layer directories
+        // are artifact roots; the base itself and everything beside the
+        // layers stay user scope.
+        let root = std::env::temp_dir().join("ripr-artifact-roots-shared-base");
+        let roots = ripr_artifact_roots(&root, &root.join("src"), None);
+        assert!(
+            !roots.iter().any(|root| root == Path::new("src")),
+            "the shared base itself must not be an artifact root: {roots:?}"
+        );
+        assert!(is_ripr_artifact_path_under(
+            Path::new("src/repo-seam-facts/1.0/key.json"),
+            &roots
+        ));
+        assert!(!is_ripr_artifact_path_under(
+            Path::new("src/lib.rs"),
+            &roots
+        ));
+    }
+
+    #[test]
+    fn ripr_artifact_roots_refuses_unanchorable_bases() {
+        let root = std::env::temp_dir().join("ripr-artifact-roots-refused");
+        // Outside the repository: nothing to exclude or probe.
+        let outside = std::env::temp_dir().join("ripr-artifact-roots-outside");
+        assert_eq!(
+            ripr_artifact_roots(&root, &outside, None),
+            vec![PathBuf::from("target").join("ripr")]
+        );
+        // Parent-traversing bases are refused as well.
+        assert_eq!(
+            ripr_artifact_roots(&root, &root.join("..").join("elsewhere"), None),
+            vec![PathBuf::from("target").join("ripr")]
+        );
+        assert_eq!(
+            ripr_artifact_roots(
+                &root,
+                &root.join("target/ripr/cache"),
+                Some(Path::new("../facts"))
+            ),
+            vec![PathBuf::from("target").join("ripr")]
+        );
+    }
+
+    #[test]
+    fn is_ripr_artifact_path_under_matches_relocated_roots() {
+        let roots = vec![
+            PathBuf::from("target").join("ripr"),
+            PathBuf::from(".ripr-cache").join("repo-seam-facts"),
+        ];
+        assert!(is_ripr_artifact_path_under(
+            Path::new(".ripr-cache/repo-seam-facts/1.0/x.json"),
+            &roots
+        ));
+        assert!(is_ripr_artifact_path_under(
+            Path::new(".ripr-cache/repo-seam-facts"),
+            &roots
+        ));
+        assert!(is_ripr_artifact_path_under(
+            Path::new("target/ripr/cache/x.json"),
+            &roots
+        ));
+        // Other depths and lookalikes stay user scope.
+        assert!(!is_ripr_artifact_path_under(
+            Path::new("pkg/.ripr-cache/repo-seam-facts/x"),
+            &roots
+        ));
+        assert!(!is_ripr_artifact_path_under(
+            Path::new(".ripr-cache/repo-seam-facts-extra/x"),
+            &roots
+        ));
+        assert!(!is_ripr_artifact_path_under(
+            Path::new(".ripr-cache/repo-corpus-fingerprint/x"),
+            &roots
+        ));
+        assert!(!is_ripr_artifact_path_under(
+            Path::new("src/lib.rs"),
+            &roots
+        ));
+    }
+
+    #[test]
+    fn artifact_root_pathspec_uses_forward_slashes() {
+        assert_eq!(
+            artifact_root_pathspec(&PathBuf::from("target").join("ripr")),
+            "target/ripr"
+        );
+        assert_eq!(
+            artifact_root_pathspec(&PathBuf::from(".ripr-cache")),
+            ".ripr-cache"
+        );
     }
 
     #[test]
@@ -636,6 +961,95 @@ mod tests {
         assert_eq!(files[0].removed_lines[0].text, "-- a/src/b space.rs\t");
         assert_eq!(files[0].added_lines[0].text, "++ b/src/b space.rs\t");
         assert_eq!(files[0].added_lines[1].line, 4);
+    }
+
+    #[test]
+    fn unquoted_path_tokens_preserve_trailing_whitespace() {
+        for suffix in [" ", "  ", "\u{2003}"] {
+            let path = format!("src/same.rs{suffix}");
+            let expected = Some(PathBuf::from(&path));
+            for metadata in ["", "2026-10-19 00:00:00 +0000"] {
+                assert_eq!(
+                    parse_new_path_marker(&format!("+++ b/{path}\t{metadata}\r")),
+                    expected
+                );
+                assert_eq!(
+                    parse_old_path_for_confinement(&format!("--- a/{path}\t{metadata}\r")),
+                    expected
+                );
+            }
+            assert_eq!(
+                parse_rename_from_path(&format!("rename from {path}")),
+                expected
+            );
+            assert_eq!(parse_rename_to_path(&format!("rename to {path}")), expected);
+            assert_eq!(
+                parse_git_old_path(&format!("diff --git a/{path} b/destination.rs")),
+                expected
+            );
+            assert_eq!(
+                parse_new_path_marker(&format!("+++ \"b/{path}\"")),
+                expected
+            );
+            assert_ne!(expected, Some(PathBuf::from("src/same.rs")));
+        }
+    }
+
+    #[test]
+    fn trailing_whitespace_file_sections_keep_distinct_paths_and_scope() -> Result<(), String> {
+        use super::super::parse::{
+            parse_unified_diff_with_limit, parse_unified_diff_with_metadata,
+        };
+
+        for suffix in [" ", "  ", "\u{2003}"] {
+            let path = format!("src/same.rs{suffix}");
+            let patch = format!(
+                "--- a/src/same.rs\t\n+++ b/src/same.rs\t\n@@ -2 +3 @@\n-before ordinary\n+after ordinary\n\
+                 --- a/{path}\t\n+++ b/{path}\t\n@@ -5 +7 @@\n-before spaced\n+after spaced\n"
+            );
+            for input in [patch.clone(), patch.replace('\n', "\r\n")] {
+                let parsed = parse_unified_diff_with_metadata(&input);
+                assert!(parsed.limitations.is_empty(), "{:?}", parsed.limitations);
+                assert_eq!(parsed.truncated_file_sections, 0);
+                let Err(error) = parse_unified_diff_with_limit(&input, 1) else {
+                    return Err("distinct whitespace paths fit in one file slot".to_string());
+                };
+                assert!(error.starts_with("diff_scope_oversized: at least 2 changed files"));
+                for files in [
+                    parsed.changed_files,
+                    parse_unified_diff_with_limit(&input, 2)?,
+                ] {
+                    assert_eq!(files.len(), 2, "{files:?}");
+                    for (file, expected, old, new, before, after) in [
+                        (
+                            &files[0],
+                            "src/same.rs",
+                            2,
+                            3,
+                            "before ordinary",
+                            "after ordinary",
+                        ),
+                        (
+                            &files[1],
+                            path.as_str(),
+                            5,
+                            7,
+                            "before spaced",
+                            "after spaced",
+                        ),
+                    ] {
+                        assert_eq!(file.path, Path::new(expected));
+                        assert_eq!(file.removed_lines.len(), 1);
+                        assert_eq!(file.added_lines.len(), 1);
+                        assert_eq!(file.removed_lines[0].line, old);
+                        assert_eq!(file.removed_lines[0].text, before);
+                        assert_eq!(file.added_lines[0].line, new);
+                        assert_eq!(file.added_lines[0].text, after);
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     #[test]

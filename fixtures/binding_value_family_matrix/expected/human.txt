@@ -30,6 +30,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/binding_value_family_matrix/input --diff <cwd>/fixtures/binding_value_family_matrix/diff.patch --mode fast probe:src_lib.rs:predicate:a54b7c0f
   ripr context --root <cwd>/fixtures/binding_value_family_matrix/input --diff <cwd>/fixtures/binding_value_family_matrix/diff.patch --mode fast --at probe:src_lib.rs:predicate:a54b7c0f
+  no repair start offered: repair route not ready; run `ripr repair probe:src_lib.rs:predicate:a54b7c0f --root <cwd>/fixtures/binding_value_family_matrix/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/binding_value_family_matrix/input --at src/lib.rs:12 --kind predicate
 

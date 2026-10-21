@@ -153,3 +153,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_reexport_directory_star_barrel (14)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless typescript_reexport_directory_star_barrel --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

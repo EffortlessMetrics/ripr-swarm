@@ -34,12 +34,17 @@ mod sort;
 #[cfg(test)]
 mod source_role_corpus;
 mod summary;
+mod sync_memo;
 mod syntax;
+mod test_changes;
+pub(crate) use test_changes::{DiffTestChanges, diff_test_changes};
 pub(crate) mod test_grip_evidence;
 pub(crate) mod test_stub;
 mod value_resolution;
 mod witness;
 mod workspace;
+
+pub(crate) use diff::parse_unified_diff_bounded_with_metadata;
 
 /// Shared pinned PR-evidence diff assembly (#3930, #4004): the one named
 /// owner for packet diff presentation, consumed by the product route and the
@@ -51,11 +56,12 @@ pub use diff::records::{
     PathRecordError, StatusRecord, parse_git_path_records, parse_git_status_records,
 };
 pub(crate) use diff::{
-    AnalyzedRevisions, another_base_candidate, load_diff, load_diff_core,
-    load_diff_range_with_deadline_core, load_diff_with_effective_base_core, load_worktree_diff,
+    AnalyzedRevisions, another_base_candidate, artifact_root_gitignore_entry,
+    artifact_root_pathspec, load_diff, load_diff_core, load_diff_range_with_deadline_core,
+    load_diff_with_effective_base_core, load_worktree_diff,
     load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis, parse_unified_diff,
     probe_working_tree_tracked_changes_within, resolve_base_commit, resolve_effective_base,
-    resolve_effective_base_core, working_tree_has_tracked_changes,
+    resolve_effective_base_core, ripr_artifact_roots, working_tree_has_tracked_changes,
     working_tree_has_uncommitted_changes,
 };
 /// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
@@ -82,7 +88,8 @@ pub use language::{
     PartialDiffStopReason,
 };
 pub(crate) use probes::{
-    fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression, sanitize_path,
+    fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
+    normalize_rust_expression, sanitize_path,
 };
 #[cfg(test)]
 pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustIndex, RustSyntaxAdapter};
@@ -97,18 +104,18 @@ pub(crate) use seam_inventory::apply_pilot_seam_budget_inner;
 #[cfg(test)]
 pub(crate) use seam_inventory::inventory_seams_from_index;
 pub(crate) use seam_inventory::{
-    ClassifiedChangeReport, ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT,
+    ClassifiedChangeReport, ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, FileSeamIndex,
     ScopedClassifiedSeamInventory, ScopedEvidenceConsumer, SeamLimitInfo, SeamLimitSource,
-    TargetedTestInventoryError, apply_pilot_seam_budget,
-    classify_seams_in_file_with_related_at_with_config, classify_seams_in_files_at_with_config,
-    diff_only_rust_files, file_seams_without_evidence_at_with_config,
+    TargetedTestInventoryError, apply_pilot_seam_budget, classify_seams_in_file_with_shared_index,
+    classify_seams_in_files_at_with_config, diff_only_rust_files,
     inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
     inventory_compact_classified_seams_at_with_config,
     inventory_diff_scoped_classified_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_at_with_config,
     inventory_pilot_seams_report_at_with_config, inventory_seams_at_with_config, pilot_seam_budget,
-    repo_exposure_seam_limit, seam_kind_for_probe_family, workspace_cache_key_at_with_config,
+    repo_exposure_seam_limit, scoped_file_seams, seam_kind_for_probe_family,
+    workspace_cache_key_at_with_config,
 };
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
 pub(crate) use syntax::fn_signature::{
@@ -1031,6 +1038,7 @@ pub(crate) fn run_analysis_with_oracle_policy_and_rust_config(
     languages: &[language::LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
     language_config: &crate::config::LanguagesConfig,
+    perl_cache_dir: Option<&std::path::Path>,
 ) -> Result<AnalysisResult, CoreError> {
     pipeline::run_diff_pipeline_with_oracle_policy_and_rust_config(
         options,
@@ -1038,6 +1046,7 @@ pub(crate) fn run_analysis_with_oracle_policy_and_rust_config(
         languages,
         rust_config,
         language_config,
+        perl_cache_dir,
     )
 }
 
@@ -1047,6 +1056,7 @@ pub(crate) fn run_worktree_analysis_with_oracle_policy_and_rust_config(
     languages: &[language::LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
     language_config: &crate::config::LanguagesConfig,
+    perl_cache_dir: Option<&std::path::Path>,
     disclosure_probes: DisclosureProbes,
 ) -> Result<AnalysisResult, CoreError> {
     pipeline::run_worktree_pipeline_with_oracle_policy_and_rust_config(
@@ -1055,6 +1065,7 @@ pub(crate) fn run_worktree_analysis_with_oracle_policy_and_rust_config(
         languages,
         rust_config,
         language_config,
+        perl_cache_dir,
         disclosure_probes,
     )
 }

@@ -56,8 +56,12 @@ pub(super) const PILOT_HELP: &str = r#"Find the top test gap in this repo and wr
 Usage: ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N] [--timeout-ms MS] [--format json] [--quiet]
 
 Options:
-  --root PATH       Workspace root to analyze. Defaults to current directory.
-  --out PATH        Output directory for the pilot packet. Defaults to target/ripr/pilot under --root.
+  --root PATH       Workspace root. Defaults to the current directory, then
+                    walks up to the enclosing workspace or package, or the git
+                    top level; `--root .` pins this directory.
+  --out PATH        Output directory for the pilot packet. Defaults to
+                    target/ripr/pilot under the resolved root (`--root .` pins
+                    this directory).
   --mode MODE       instant, draft, fast, deep, or ready. Defaults to draft unless ripr.toml sets one.
   --max-seams N     Maximum ranked seams in the pilot summary. Defaults to 5.
   --timeout-ms MS   Maximum analysis budget before writing a partial summary. Defaults to
@@ -306,6 +310,14 @@ Options:
                            error names git_invocation_timeout. 0 disables
                            the deadline. Default: 300 (5 minutes). Also
                            settable via RIPR_GIT_TIMEOUT env var.
+  --timeout SECS           Wall-clock budget in seconds for the whole
+                           diff or worktree analysis (not the repo-wide
+                           repo-exposure and seam formats). When it runs out, check stops
+                           and refuses with analysis_timeout: no findings
+                           are produced and the result is never a clean
+                           pass. 0 disables the budget. Default: 600 (10
+                           minutes). Also settable via RIPR_CHECK_TIMEOUT
+                           env var.
   --quiet                  Suppress analysis progress and heartbeats on
                            stderr. Does not change machine stdout, exit
                            codes, or error reporting.
@@ -407,7 +419,9 @@ pub(super) const DIFF_HELP: &str = r#"Analyze the changed surface first and repo
 Usage: ripr diff [--root PATH] [--base REV] [--head REV] [--mode MODE] [--format FORMAT] [--json]
 
 Options:
-  --root PATH              Workspace root. Defaults to current directory.
+  --root PATH              Workspace root. Defaults to the current directory, then
+                           walks up to the enclosing workspace or package, or the git
+                           top level; `--root .` pins this directory.
   --base REV               Base revision for git diff. When omitted, resolved
                            like check: the local origin/HEAD ref, then
                            origin/main, origin/master, main, and master.
@@ -431,9 +445,25 @@ Exit status:
 "#;
 pub(super) const EXPLAIN_HELP: &str = r#"Print why ripr flagged a specific change.
 
-Usage: ripr explain [--root PATH] [--base REV] [--worktree|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] <finding-id|file:line>
+Usage: ripr explain [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] [--quiet] <finding-id|file:line>
 
 Options:
+  --root PATH  Workspace root. Defaults to the current directory, then
+               walks up to the enclosing workspace or package, or the git
+               top level; `--root .` pins this directory. A member-relative
+               `file:line` selector binds to the directory you ran from and
+               is refused when a workspace-root file with the same path
+               suffix exists, even without a root finding there (use
+               `--root .` or a finding ID; with
+               --from or --diff, a selector naming no file is anchored to that
+               directory).
+  --quiet      Suppress analysis progress and heartbeats on stderr, like
+               `ripr check --quiet`. Does not change stdout, exit codes, or
+               error reporting.
+  --committed  Analyze committed history only (base...HEAD), even when the
+               working tree is dirty. Not combinable with --worktree, --diff
+               or --from. Without a supplied scope, dirty repositories use
+               the same worktree default as `ripr check`.
   --worktree   Analyze staged and unstaged tracked edits, like
                `ripr check --worktree`, so a finding listed from uncommitted
                edits can be selected. Not combinable with --diff or --from.
@@ -460,6 +490,10 @@ Options:
   --suppression-policy PATH
                Apply the explicit suppression policy for replay.
 
+Filesystem effects:
+  Fresh analysis may create or refresh disposable cache files under
+  target/ripr/cache/ (or RIPR_CACHE_DIR when set).
+
 Performance:
   Use --from to skip re-analysis when you already ran
   `ripr check --write-artifact PATH`. This avoids re-parsing the diff and
@@ -472,11 +506,24 @@ The packet is always JSON, for an agent or tool to consume; `--json` is
 accepted and changes nothing. To read the same finding as prose, run
 `ripr explain` with the same selector.
 
-Usage: ripr context [--root PATH] [--base REV] [--worktree|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json]
+Usage: ripr context [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json] [--quiet]
 
 Options:
+  --root PATH  Workspace root. Defaults to the current directory, then
+               walks up to the enclosing workspace or package, or the git
+               top level; `--root .` pins this directory. A member-relative
+               `file:line` selector binds to the directory you ran from like
+               `ripr explain`; --diff and --from paths are read as typed from
+               the current directory.
   --finding ID
                Select the finding by id or `file:line`, like `--at`.
+  --quiet      Suppress analysis progress and heartbeats on stderr, like
+               `ripr check --quiet`. Does not change stdout, exit codes, or
+               error reporting.
+  --committed  Analyze committed history only (base...HEAD), even when the
+               working tree is dirty. Not combinable with --worktree, --diff
+               or --from. Without a supplied scope, dirty repositories use
+               the same worktree default as `ripr check`.
   --worktree   Analyze staged and unstaged tracked edits, like
                `ripr check --worktree` (see `ripr explain --help`).
   --from PATH  Load findings from a check artifact written by
@@ -500,6 +547,10 @@ Options:
   --suppression-policy PATH
                Apply the explicit suppression policy for replay.
 
+Filesystem effects:
+  Fresh analysis may create or refresh disposable cache files under
+  target/ripr/cache/ (or RIPR_CACHE_DIR when set).
+
 Performance:
   Use --from to skip re-analysis when you already ran
   `ripr check --write-artifact PATH` (see `ripr explain --help`).
@@ -519,9 +570,15 @@ line, then compact passing groups. `-v`/`--verbose` prints binary identity,
 config defaults, test surfaces, Perl preview, known limitations, and start-here
 detail. `--json` is unchanged and remains the complete typed report.
 
-The JSON report is machine-readable advisory setup evidence. A `fail` status or
-non-zero exit means at least one core check failed; it is not a release or gate
-decision.
+The JSON report is machine-readable advisory setup evidence. A `fail` status
+means at least one core check failed; it is not a release or gate decision.
+A completed run with failed checks exits 3; exit 2 means the run could not
+complete (for example a usage error, where no check ran).
+
+Marks: `!` is a blocking failure that fails the run (exit 3); `~` is an
+advisory (for example artifacts under target/ripr not covered by git ignore
+rules, tracked artifacts, an unwritable cache, unanalyzed languages) and never
+changes the exit status.
 
 Checks:
   - root directory exists

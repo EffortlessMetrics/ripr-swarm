@@ -243,6 +243,7 @@ fn perl_guidance_review_strict_actionability_keeps_usable_command_and_reference(
         packet.verify_commands.retain(|command| {
             command.test_id.as_deref() != Some(test_id) || command.argv.is_empty()
         });
+        packet.reset_index();
         assert_eq!(
             packet.strict_actionability_for_change(change_id, &context),
             Err(PerlActionabilityBlocker::MissingVerifyCommand)

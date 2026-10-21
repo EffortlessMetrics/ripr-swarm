@@ -31,6 +31,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_repair_packet_boundary_parameter_constant_shaped/input --diff <cwd>/fixtures/ts_repair_packet_boundary_parameter_constant_shaped/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:c303d373
   ripr context --root <cwd>/fixtures/ts_repair_packet_boundary_parameter_constant_shaped/input --diff <cwd>/fixtures/ts_repair_packet_boundary_parameter_constant_shaped/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:c303d373
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_pricing.ts:typescript_preview:c303d373 --root <cwd>/fixtures/ts_repair_packet_boundary_parameter_constant_shaped/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

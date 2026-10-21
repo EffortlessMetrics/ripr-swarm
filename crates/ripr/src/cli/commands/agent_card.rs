@@ -13,18 +13,17 @@
 //! policy-omitted, witness-unavailable, identity-unnameable,
 //! budget-overflow, and incomplete-inventory — renders one versioned
 //! `agent_card_refusal` document on
-//! stderr under `--json` and maps to the decision exit code 3, so an
+//! stdout under `--json` and maps to the decision exit code 3, so an
 //! orchestrator branches on the exit status and the typed `error.kind`
-//! alone. Human prose stays the non-authority rendering of the kind; the
-//! card's own stdout stays empty on a refusal, exactly like `agent verify`
-//! (its stdout is the handoff artifact).
+//! alone. Human prose stays the non-authority rendering of the kind on
+//! stderr. Without `--json` stdout stays empty on a refusal.
 
 use crate::analysis;
 use crate::app::agent_brief::AgentBriefPolicy;
 use crate::app::repair_card_handoff::AgentCardError;
 use crate::cli::CommandError;
 use crate::cli::agent::AgentCardOptions;
-use crate::cli::commands_context::{ensure_command_root, write_stderr_refusal_json};
+use crate::cli::commands_context::{ensure_command_root, write_stdout_refusal_json};
 use crate::config::load_for_root;
 use crate::domain::{AgentCardRefusalKind, RepairCardTarget, RepairCardV1};
 use crate::output;
@@ -57,16 +56,19 @@ pub(super) fn agent_card_stdout(options: AgentCardOptions) -> Result<String, Com
         Err(AgentCardError::Refusal { kind, message }) => {
             // A deliberate named refusal maps to the decision exit code 3,
             // as the verify/verify-execute/repair siblings do. Under
-            // `--json` the typed envelope is the machine answer; stdout
-            // stays empty because it is the card-artifact stream. The
-            // prose message still reaches stderr through `CommandError`,
-            // after the envelope, as the human rendering.
+            // `--json` the typed envelope is the machine answer and goes to
+            // stdout, like `check`/`agent packet`; the prose message still
+            // reaches stderr through `CommandError` as the human rendering.
             if options.json {
                 match render_agent_card_refusal(&options, kind, &message) {
                     // A JSON document, not report text: bidi characters become
                     // JSON escapes so the envelope stays parseable (#6309).
-                    Ok(rendered) => write_stderr_refusal_json(rendered),
-                    Err(render_error) => eprintln!("ripr: {render_error}"),
+                    Ok(rendered) => {
+                        write_stdout_refusal_json(rendered).map_err(CommandError::Failure)?
+                    }
+                    // No envelope could be produced, so no machine answer
+                    // exists: an operational failure (exit 2), not decision 3.
+                    Err(render_error) => return Err(CommandError::Failure(render_error)),
                 }
             }
             return Err(CommandError::Decision(message));
@@ -431,6 +433,7 @@ mod tests {
         ] {
             let options = AgentCardOptions {
                 root: std::path::PathBuf::from("."),
+                root_explicit: true,
                 seam_id: "seam-a".to_string(),
                 json: true,
             };

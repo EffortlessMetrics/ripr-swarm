@@ -35,6 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_adversarial_replaced_block_non_delta_operand/input --diff <cwd>/fixtures/python_adversarial_replaced_block_non_delta_operand/diff.patch --mode fast probe:src_account.py:python_preview:c7d70a2d
   ripr context --root <cwd>/fixtures/python_adversarial_replaced_block_non_delta_operand/input --diff <cwd>/fixtures/python_adversarial_replaced_block_non_delta_operand/diff.patch --mode fast --at probe:src_account.py:python_preview:c7d70a2d
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_account.py:python_preview:c7d70a2d --root <cwd>/fixtures/python_adversarial_replaced_block_non_delta_operand/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

@@ -24,6 +24,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/property_macro_noop_qualified_collision/input --diff <cwd>/fixtures/property_macro_noop_qualified_collision/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
   ripr context --root <cwd>/fixtures/property_macro_noop_qualified_collision/input --diff <cwd>/fixtures/property_macro_noop_qualified_collision/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_lib.rs:predicate:c80557eb --root <cwd>/fixtures/property_macro_noop_qualified_collision/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/property_macro_noop_qualified_collision/input --at src/lib.rs:2 --kind predicate
 

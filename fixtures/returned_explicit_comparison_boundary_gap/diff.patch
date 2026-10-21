@@ -1,0 +1,10 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0000000..1111111 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,4 +1,4 @@
+ /// True when an order ships free.
+ pub fn ships_free(items: u32) -> bool {
+-    return items > 10;
++    return items >= 10;
+ }

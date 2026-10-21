@@ -447,6 +447,7 @@ pub(super) fn python_inactive_term_evidence(
             return None;
         }
         observed_values.push(ValueFact {
+            file: None,
             line: row.line,
             text: row.text.clone(),
             value: format!("{argument} = {value}"),
@@ -582,7 +583,11 @@ fn classify_body_call(
     let covering = body
         .iter()
         .find(|stmt| range_contains(stmt.range(), offset))?;
-    if owner_call_count_on_line(&row.text, owner, test) > 1 {
+    // Count on the full physical line, not `row.text`: the row text is a
+    // display excerpt that is cut to a window on a very long line, and a cut
+    // window would drop owner calls and let the line read as a single call.
+    let full_line = source.lines().nth(source_line - 1).unwrap_or(&row.text);
+    if owner_call_count_on_line(full_line.trim(), owner, test) > 1 {
         return Some(CallObservation::Unclear);
     }
     if strong_assertion_covers_stmt(covering, strong, test, &parsed) {
