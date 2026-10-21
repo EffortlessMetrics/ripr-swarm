@@ -772,6 +772,10 @@ fn edit_leaves_imported_symbols_untouched(old: &str, new: &str, imports: &[Pytho
             if is_fstring_token(token) {
                 return true;
             }
+            // A literal dict key may be a keyword name (`f(**{"x": 1})`).
+            if token.starts_with(['"', '\'']) && next.is_some_and(|n| n == ":") {
+                return true;
+            }
             if !token.starts_with(|c: char| c.is_alphabetic() || c == '_') {
                 return false;
             }
@@ -806,7 +810,9 @@ fn edit_tokens(text: &str) -> Vec<String> {
     let mut index = 0;
     while index < chars.len() {
         let c = chars[index];
-        if c.is_whitespace() {
+        if c == '#' {
+            break;
+        } else if c.is_whitespace() {
             index += 1;
         } else if c.is_alphabetic() || c == '_' {
             let start = index;
@@ -864,9 +870,21 @@ fn edit_tokens(text: &str) -> Vec<String> {
 /// Index one past the closing quote of the string starting at `start`.
 fn string_end(chars: &[char], start: usize) -> usize {
     let quote = chars[start];
-    let mut index = start + 1;
+    let triple = chars.get(start + 1) == Some(&quote) && chars.get(start + 2) == Some(&quote);
+    let mut index = if triple { start + 3 } else { start + 1 };
     while index < chars.len() {
-        if chars[index] == '\\' {
+        if triple {
+            if chars[index] == '\\' {
+                index += 2;
+            } else if chars[index] == quote
+                && chars.get(index + 1) == Some(&quote)
+                && chars.get(index + 2) == Some(&quote)
+            {
+                return index + 3;
+            } else {
+                index += 1;
+            }
+        } else if chars[index] == '\\' {
             index += 2;
         } else if chars[index] == quote {
             return index + 1;
@@ -1388,13 +1406,14 @@ mod tests {
             ),
             limited
         );
-        // A trailing-comment edit leaves the imported call untouched.
+        // A trailing-comment edit changes no executable token, so nothing
+        // earns a verdict the limit withheld.
         assert_eq!(
             import_limit(
                 Some("    return itertools.islice(seq, 0)  # a"),
                 "    return itertools.islice(seq, 0)  # b"
             ),
-            None
+            limited
         );
     }
 
@@ -1469,6 +1488,40 @@ mod tests {
             import_limit(
                 Some("    return itertools.islice(a, a)"),
                 "    return itertools.islice(a)"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn unpacked_dict_key_edit_keeps_the_limit_but_string_argument_edit_does_not() {
+        let limited = Some(StaticLimitKind::MissingImportGraph);
+        assert_eq!(
+            import_limit(
+                Some("    return itertools.starmap(f, **{\"x\": 1})"),
+                "    return itertools.starmap(f, **{\"y\": 1})"
+            ),
+            limited
+        );
+        assert_eq!(
+            import_limit(
+                Some("    return itertools.islice(\"abc\", 0)"),
+                "    return itertools.islice(\"abd\", 0)"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn triple_quoted_argument_is_one_token() {
+        assert_eq!(
+            edit_tokens("f(\"\"\"a \"b\" c\"\"\", 0)"),
+            vec!["f", "(", "\"\"\"a \"b\" c\"\"\"", ",", "0", ")"]
+        );
+        assert_eq!(
+            import_limit(
+                Some("    return itertools.islice(\"\"\"a \"b\" c\"\"\", 0)"),
+                "    return itertools.islice(\"\"\"a \"b\" d\"\"\", 0)"
             ),
             None
         );
