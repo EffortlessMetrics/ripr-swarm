@@ -16922,6 +16922,12 @@ tests = [
   "crates/ripr/src/analysis/language/python/classify/tests.rs::fallthrough_return_with_input_missing_the_early_exit_stays_exposed",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::fallthrough_return_with_disjoint_early_exits_words_at_least_one",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::fallthrough_return_ignores_early_exit_text_inside_a_docstring",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::else_arm_return_no_strong_call_enters_is_weakly_exposed",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::else_arm_return_with_an_entering_call_stays_exposed",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::else_arm_after_an_elif_chain_names_every_chain_condition",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::else_arm_that_does_not_close_an_if_chain_stays_exposed",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::walk_guards_reads_the_if_elif_chain_of_an_else_arm",
+  "crates/ripr/src/analysis/language/python/guard_activation.rs::tests::walk_guards_fails_open_on_loop_else",
 ]
 code = [
   "crates/ripr/src/analysis/language/python/guard_activation.rs",

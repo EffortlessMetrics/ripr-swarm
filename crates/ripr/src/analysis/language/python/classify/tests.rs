@@ -1610,6 +1610,106 @@ fn fallthrough_return_ignores_early_exit_text_inside_a_docstring() -> Result<(),
     Ok(())
 }
 
+// #9184: an `else` arm runs only for inputs that fail every condition of its
+// `if`/`elif` chain. When every strong related call satisfies one of them,
+// the changed `else` line never runs and the exact-value oracle cannot
+// discriminate its change.
+const SIGN_SOURCE: &str =
+    "def sign(x):\n    if x > 0:\n        return 1\n    else:\n        return -2\n";
+
+#[test]
+fn else_arm_return_no_strong_call_enters_is_weakly_exposed() -> Result<(), String> {
+    let finding = classify_added_case(
+        SIGN_SOURCE,
+        "from src.subject import sign\n\ndef test_sign():\n    assert sign(5) == 1\n",
+        5,
+        "        return -2",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    let reason = missing_boundary(&finding, "not (x > 0)")
+        .ok_or_else(|| format!("missing discriminator absent: {finding:?}"))?;
+    assert!(
+        reason.contains("`if`/`elif` chain whose `else` arm holds the changed line (`x > 0`)"),
+        "{reason}"
+    );
+    assert!(observed(&finding, "x = 5"), "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn else_arm_return_with_an_entering_call_stays_exposed() -> Result<(), String> {
+    let finding = classify_added_case(
+        SIGN_SOURCE,
+        "from src.subject import sign\n\ndef test_sign():\n    assert sign(5) == 1\n    assert sign(-3) == -2\n",
+        5,
+        "        return -2",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+#[test]
+fn else_arm_after_an_elif_chain_names_every_chain_condition() -> Result<(), String> {
+    // grade(95) takes the `if` arm and grade(85) the `elif` arm: neither
+    // condition holds for every call, so the reason words "at least one".
+    let finding = classify_added_case(
+        "def grade(s):\n    if s >= 90:\n        return \"A\"\n    elif s >= 80:\n        return \"B\"\n    else:\n        return \"D\"\n",
+        "from src.subject import grade\n\ndef test_grade():\n    assert grade(95) == \"A\"\n    assert grade(85) == \"B\"\n",
+        7,
+        "        return \"D\"",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    let reason = missing_boundary(&finding, "not (s >= 90) and not (s >= 80)")
+        .ok_or_else(|| format!("missing discriminator absent: {finding:?}"))?;
+    assert!(
+        reason.contains("at least one condition of the `if`/`elif` chain"),
+        "{reason}"
+    );
+    // A call that fails both conditions enters the `else` arm.
+    let entered = classify_added_case(
+        "def grade(s):\n    if s >= 90:\n        return \"A\"\n    elif s >= 80:\n        return \"B\"\n    else:\n        return \"D\"\n",
+        "from src.subject import grade\n\ndef test_grade():\n    assert grade(95) == \"A\"\n    assert grade(10) == \"D\"\n",
+        7,
+        "        return \"D\"",
+    )?;
+    assert_eq!(entered.class, ExposureClass::Exposed, "{entered:?}");
+    Ok(())
+}
+
+#[test]
+fn else_arm_that_does_not_close_an_if_chain_stays_exposed() -> Result<(), String> {
+    // `for`/`else`, an unreadable `or` condition and an unreadable row all
+    // fail open.
+    for (source, tests, line, after) in [
+        (
+            "def f(xs):\n    for x in xs:\n        if x > 0:\n            return 1\n    else:\n        return 0\n",
+            "from src.subject import f\n\ndef test_f():\n    assert f([5]) == 1\n",
+            6,
+            "        return 0",
+        ),
+        (
+            "def f(x, force):\n    if x > 0 or force:\n        return 1\n    else:\n        return 0\n",
+            "from src.subject import f\n\ndef test_f():\n    assert f(5, False) == 1\n",
+            5,
+            "        return 0",
+        ),
+        (
+            "def f(x):\n    if x > limit():\n        return 1\n    else:\n        return 0\n",
+            "from src.subject import f\n\ndef test_f():\n    assert f(5) == 1\n",
+            5,
+            "        return 0",
+        ),
+    ] {
+        let finding = classify_added_case(source, tests, line, after)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{source}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
 // The gate's premise is "EVERY strong related call provably fails the
 // guard". Each of the following shapes leaves that premise unprovable, so
 // the gate must fail open and keep the oracle verdict rather than

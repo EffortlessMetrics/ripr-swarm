@@ -7,7 +7,8 @@ Owner: product-analysis
 Created: 2026-10-14
 
 Linked issues: [#7392](https://github.com/EffortlessMetrics/ripr-swarm/issues/7392),
-[#9002](https://github.com/EffortlessMetrics/ripr-swarm/issues/9002).
+[#9002](https://github.com/EffortlessMetrics/ripr-swarm/issues/9002),
+[#9184](https://github.com/EffortlessMetrics/ripr-swarm/issues/9184).
 
 Support-tier impact: Python preview adapter output only; no support-tier
 change. See: [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md).
@@ -38,7 +39,8 @@ bind:
   calls bind as observed values, the way the predicate boundary rule does.
 - A row with an unevaluable guard is never excluded: one unreadable input
   keeps the existing verdict. Shapes that fail open (keep the pre-gate
-  verdict) include `else` arms, `elif` chains read by their own condition,
+  verdict) include an `else` that closes a `for`/`while`/`try` rather than an
+  `if`/`elif` chain, `elif` arms read by their own condition,
   guards containing `or`/`not` boolean syntax anywhere in the WHOLE
   condition (the check runs before any `and` conjunct is evaluated, so a
   false leading conjunct cannot exclude a row a later `or` lets in,
@@ -59,6 +61,16 @@ bind:
   call that misses every exit, a non-terminating or nested-only `return`
   body, a chained `elif`/`else`, and unreadable guards keep the existing
   verdict.
+- Else arm (#9184): a changed line inside the `else:` of an `if`/`elif`
+  chain runs only for inputs that fail every chain condition. When every
+  strong related call provably satisfies at least one condition of that chain
+  (the same readable-comparison evaluation as an early exit), the finding
+  fails closed to `weakly_exposed` with missing discriminator
+  `not (X)` (one `not (...)` per chain condition, joined by `and`); the reason
+  says each call satisfies at least one chain condition and takes an earlier
+  arm. A call that fails every chain condition enters the arm and keeps the
+  existing verdict, as do a chain condition containing `or`/`not`, an
+  unreadable row, and an `else` that closes a `for`/`while`/`try`.
 - Equality follows Python semantics for scalar literals: `True == 1` and
   `False == 0` hold, and `2 == True` does not, so a bool call argument is
   not excluded by a numeric guard (or vice versa).
