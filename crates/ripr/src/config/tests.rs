@@ -2551,6 +2551,14 @@ fn config_load_parse_error_strips_windows_verbatim_prefix() -> Result<(), String
             "Windows parse error must use plain forward-slash spelling: {windows}"
         ));
     }
+    // #9033: the parse error ends without a stray blank line and is followed by
+    // exactly one recovery line.
+    let trailing_newline = config_load_parse_error_for_host(path, "invalid ripr.toml: x\n", false);
+    if trailing_newline.contains("\n\n") || !trailing_newline.ends_with(CONFIG_LOAD_REPAIR_HINT) {
+        return Err(format!(
+            "parse error must end with one recovery line: {trailing_newline:?}"
+        ));
+    }
     let unix = config_load_parse_error_for_host(path, parse_detail, false);
     if !unix.starts_with(&format!("{verbatim}: invalid ripr.toml:")) {
         return Err(format!(

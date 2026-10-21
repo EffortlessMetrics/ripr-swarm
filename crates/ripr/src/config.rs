@@ -293,8 +293,18 @@ fn config_load_error_path_for_host(path: &Path, windows: bool) -> String {
     crate::output::path::human_path_text(&path.to_string_lossy(), windows)
 }
 
+/// What a reader can do about a `ripr.toml` that failed to load (#9033). The
+/// parse error alone names the line but not the way out; this trailing line
+/// stays after the first line, which JSON refusals and `doctor` evidence keep.
+const CONFIG_LOAD_REPAIR_HINT: &str =
+    "Fix the error above in ripr.toml and rerun, or remove ripr.toml to use the built-in defaults.";
+
 fn config_load_parse_error_for_host(path: &Path, err: &str, windows: bool) -> String {
-    format!("{}: {err}", config_load_error_path_for_host(path, windows))
+    format!(
+        "{}: {}\n{CONFIG_LOAD_REPAIR_HINT}",
+        config_load_error_path_for_host(path, windows),
+        err.trim_end()
+    )
 }
 
 fn config_load_read_error_for_host(
