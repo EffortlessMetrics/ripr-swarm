@@ -2,7 +2,7 @@
 use super::{
     assert_success, repair_route_after, repair_route_attempt_id, repair_route_before,
     repair_route_commit, repair_route_manifest, repair_route_status, repair_route_workspace,
-    run_git,
+    run_command, run_git,
 };
 
 /// An unparseable observation concerns the whole selected file and may be an
