@@ -405,6 +405,7 @@ pub(super) fn collect_tests_from_statements(
                     framework,
                     assertions,
                     assertion_admission,
+                    decorator_texts: decorator_source_texts(source, &function.decorator_list),
                     constant_rebinding: python_test_rebinding(
                         &function.args,
                         &function.body,
@@ -481,6 +482,7 @@ pub(super) fn collect_tests_from_statements(
                     framework,
                     assertions,
                     assertion_admission,
+                    decorator_texts: decorator_source_texts(source, &function.decorator_list),
                     constant_rebinding: python_test_rebinding(
                         &function.args,
                         &function.body,
@@ -1094,6 +1096,15 @@ fn test_member_names(class: &ast::StmtClassDef) -> BTreeSet<&str> {
     }
     names.retain(|name| name.starts_with("test"));
     names
+}
+
+/// Source text of each decorator expression, so a mock decorator's
+/// arguments stay readable (`mock_patch.rs`); `decorators` keeps names only.
+fn decorator_source_texts(source: &str, decorators: &[Expr]) -> Vec<String> {
+    decorators
+        .iter()
+        .map(|decorator| text_for_range(source, decorator.range()))
+        .collect()
 }
 
 pub(super) fn decorator_names(decorators: &[Expr]) -> Vec<String> {

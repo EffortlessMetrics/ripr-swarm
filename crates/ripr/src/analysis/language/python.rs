@@ -139,6 +139,7 @@ use source_facts::{extract_source_facts, source_fact_snapshot_observation};
 mod source_utils;
 use source_utils::{is_test_file, normalized_path};
 mod fixtures;
+mod mock_patch;
 mod module_callees;
 mod same_class_callees;
 mod static_limits;
@@ -315,6 +316,9 @@ struct PythonTest {
     /// How the test and its module can rebind names and attributes; guards
     /// module-constant boundary resolution (`boundary.rs`, #4227).
     constant_rebinding: module_constants::PythonTestRebinding,
+    /// Source text of each decorator expression, arguments included. Only
+    /// `mock_patch.rs` reads it, to judge a `@patch(...)` target.
+    decorator_texts: Vec<String>,
 }
 
 /// A module-level `@pytest.fixture` function: its body is read with the same
@@ -1065,6 +1069,9 @@ mod fixtures_tests;
 
 #[cfg(test)]
 mod helper_owner_call_tests;
+
+#[cfg(test)]
+mod mock_patch_tests;
 
 #[cfg(test)]
 mod new_declaration_tests;

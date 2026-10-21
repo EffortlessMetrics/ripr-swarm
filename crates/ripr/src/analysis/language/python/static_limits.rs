@@ -28,17 +28,20 @@ pub(super) fn static_limit_for_change(
         line_text,
         None,
     );
-    static_limit_for_focused_change(line_text, &focus, owner, related_candidates)
+    static_limit_for_focused_change(line_text, &focus, owner, related_candidates, None)
 }
 
 /// `focus` is the one the finding's rows are selected with (#5572): only the
 /// assertion a row selects can suppress a test-side limit, so a strong
-/// sibling-field or other-family assertion never hides one.
+/// sibling-field or other-family assertion never hides one. `owner_source` is
+/// the owner's file; without it a mock site is never judged disjoint from the
+/// owner (`mock_patch.rs`).
 pub(super) fn static_limit_for_focused_change(
     line_text: &str,
     focus: &PythonAssertionFocus,
     owner: &PythonOwner,
     related_candidates: &[PythonRelatedCandidate<'_>],
+    owner_source: Option<&str>,
 ) -> Option<PythonStaticLimit> {
     let trimmed = line_text.trim();
     if contains_dynamic_dispatch(trimmed) {
@@ -117,7 +120,14 @@ pub(super) fn static_limit_for_focused_change(
     if related_candidates
         .iter()
         .filter(|candidate| candidate.relation.uses_oracle())
-        .any(|candidate| test_has_mocked_module(candidate.test))
+        .any(|candidate| {
+            test_has_mocked_module(candidate.test)
+                && !super::mock_patch::mock_sites_are_disjoint_from_owner(
+                    candidate.test,
+                    owner,
+                    owner_source,
+                )
+        })
     {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::MockedModule,

@@ -301,9 +301,14 @@ pub(super) fn classify_change_for_owner(
     let related = related_tests_for_candidates(&related_candidates, Some(&focus));
     let alignment =
         classify_sink_alignment_with_old(owner, line_text, old_line_text, &related, all_tests);
-    let static_limit =
-        static_limit_for_focused_change(line_text, &focus, owner, &related_candidates)
-            .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, &related_candidates));
+    let static_limit = static_limit_for_focused_change(
+        line_text,
+        &focus,
+        owner,
+        &related_candidates,
+        owner_source,
+    )
+    .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, &related_candidates));
     let has_oracle_eligible_relation = related_candidates
         .iter()
         .any(|candidate| candidate.relation.uses_oracle());

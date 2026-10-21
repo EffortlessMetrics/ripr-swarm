@@ -399,6 +399,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
                 let owner_evidence = build_production_file_evidence(
                     relative,
                     &facts,
+                    &source,
                     &all_tests,
                     &mut limitations,
                     &mut findings,
@@ -572,6 +573,7 @@ fn load_facts_with_source(
 fn build_production_file_evidence(
     relative: &Path,
     facts: &PythonSourceFacts,
+    source: &str,
     all_tests: &[PythonTest],
     limitations: &mut Vec<PythonRepoLimitation>,
     findings: &mut Vec<Finding>,
@@ -608,7 +610,7 @@ fn build_production_file_evidence(
             continue;
         };
         let (candidates, _) = &owner_relations[index];
-        let item = build_behavior_item(relative, owner, line, &text, candidates, all_tests);
+        let item = build_behavior_item(relative, owner, line, &text, candidates, all_tests, source);
         if let Some(kind) = item.static_limit {
             limitations.push(PythonRepoLimitation::StaticLimit {
                 file: normalized_path(relative),
@@ -701,6 +703,7 @@ fn build_behavior_item(
     text: &str,
     candidates: &[PythonRelatedCandidate<'_>],
     all_tests: &[PythonTest],
+    source: &str,
 ) -> PythonRepoBehaviorItem {
     let (family, delta) = classify_probe_shape(text);
     // Same family-selected assertion identity the classifier uses for this
@@ -708,9 +711,10 @@ fn build_behavior_item(
     let focus = PythonAssertionFocus::for_change(family.clone(), text, None);
     let related = related_tests_for_candidates(candidates, Some(&focus));
     let related = related.as_slice();
-    let static_limit = static_limit_for_focused_change(text, &focus, owner, candidates)
-        .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, candidates))
-        .map(|limit| limit.kind);
+    let static_limit =
+        static_limit_for_focused_change(text, &focus, owner, candidates, Some(source))
+            .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, candidates))
+            .map(|limit| limit.kind);
     let canonical_gap = static_limit
         .is_none()
         .then(|| canonical_python_gap_for(relative, owner, &family, text));
