@@ -88,3 +88,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_returned_error_drop_exit (8)
+
+Reason:
+RIPR-SPEC-0259 and RIPR-SPEC-0094 #8954: condition return advice on return sensitivity; preserve actual effect versus return evidence and authentic standalone call identity.
+
+Command:
+`cargo xtask goldens bless rust_returned_error_drop_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

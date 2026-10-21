@@ -17,9 +17,10 @@ Start here:
   Changed behavior: self.base() * 3
   Missing discriminator: No strong discriminator was detected
   Related test: tests/trap_tests.rs:9 fixed_reader_overrides_next_word (ripr could not confirm that this assertion observes the changed behavior)
-  Next step: The related test `fixed_reader_overrides_next_word` already asserts an exact value; the
-    gap is not the assertion shape. Add a test input where the changed branch behaves differently
-    and keep the exact assertion
+  Next step: The related test `fixed_reader_overrides_next_word` already has an exact assertion;
+    this does not establish observation of the returned value. Check whether the change can affect
+    the returned value. If it can, add a separating input and assert the exact returned value. If it
+    cannot, test the changed effect separately; another input cannot distinguish unchanged returns
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     - reach yes: Related tests appear to reach next_word: fixed_reader_overrides_next_word
     - infection yes: Reachable tests can plausibly activate this changed behavior

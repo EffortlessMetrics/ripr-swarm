@@ -36,7 +36,7 @@ Weakness
   - No strong discriminator was detected
 
 Next step
-  The related test `observes_answer` already asserts an exact value; the gap is not the assertion shape. Add a test input where the changed branch behaves differently and keep the exact assertion
+  The related test `observes_answer` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns
 Drill in:
   ripr explain --root <cwd>/fixtures/owner_return_pin_fallible_literal_inverted/input --diff <cwd>/fixtures/owner_return_pin_fallible_literal_inverted/diff.patch --mode fast probe:src_lib.rs:return_value:b4958fd8
   ripr context --root <cwd>/fixtures/owner_return_pin_fallible_literal_inverted/input --diff <cwd>/fixtures/owner_return_pin_fallible_literal_inverted/diff.patch --mode fast --at probe:src_lib.rs:return_value:b4958fd8

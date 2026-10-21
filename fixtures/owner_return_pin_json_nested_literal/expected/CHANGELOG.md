@@ -71,3 +71,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_json_nested_literal (7)
+
+Reason:
+RIPR-SPEC-0259 and RIPR-SPEC-0094 #8954: condition return advice on return sensitivity; preserve actual effect versus return evidence and authentic standalone call identity.
+
+Command:
+`cargo xtask goldens bless owner_return_pin_json_nested_literal --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

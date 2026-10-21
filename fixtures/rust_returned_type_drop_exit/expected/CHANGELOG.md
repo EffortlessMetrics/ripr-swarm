@@ -37,3 +37,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_returned_type_drop_exit (4)
+
+Reason:
+RIPR-SPEC-0259 and RIPR-SPEC-0094 #8954: condition return advice on return sensitivity; preserve actual effect versus return evidence and authentic standalone call identity.
+
+Command:
+`cargo xtask goldens bless rust_returned_type_drop_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

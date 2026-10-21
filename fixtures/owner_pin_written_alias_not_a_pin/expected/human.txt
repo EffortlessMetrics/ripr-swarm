@@ -17,9 +17,11 @@ Start here:
   Changed behavior: x * 3
   Missing discriminator: No strong discriminator was detected
   Related test (1 of 3 matched rows): src/lib.rs:31 braced_tuple_element_ref_mut_alias_is_not_independent (ripr could not confirm that this assertion observes the changed behavior)
-  Next step: The related test `tuple_ref_mut_alias_is_not_independent` already asserts an exact
-    value; the gap is not the assertion shape. Add a test input where the changed branch behaves
-    differently and keep the exact assertion
+  Next step: The related test `tuple_ref_mut_alias_is_not_independent` already has an exact
+    assertion; this does not establish observation of the returned value. Check whether the change
+    can affect the returned value. If it can, add a separating input and assert the exact returned
+    value. If it cannot, test the changed effect separately; another input cannot distinguish
+    unchanged returns
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     - reach yes: Related tests appear to reach weight: braced_tuple_element_ref_mut_alias_is_not_independent, nested_braced_tuple_element_ref_mut_alias_is_not_independent,…
     - infection yes: Reachable tests can plausibly activate this changed behavior

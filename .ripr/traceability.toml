@@ -7581,6 +7581,9 @@ id = "RIPR-SPEC-0094"
 name = "observation_unverified guard generalization"
 spec = "docs/specs/RIPR-SPEC-0094-observation-unverified-guard-generalization.md"
 tests = [
+  "xtask/src/reports/fixtures/observation_tail_return.rs::tests::inherited_tail_return_has_real_parser_inventory",
+  "xtask/src/reports/fixtures/observation_tail_return.rs::tests::semicolon_effect_has_genuine_line18_call_deletion",
+  "xtask/src/reports/fixtures/observation_tail_return.rs::tests::inherited_tail_return_rejects_shifted_coordinates_before_analysis",
   "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_graph_is_shared_across_changed_arms_cold_and_warm",
   "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_graph_rebuilds_after_a_same_path_helper_edit",
   "crates/ripr/src/analysis/facts/cfg_predicates/tests.rs::plain_test_gate_excludes_conditional_attribute_expansion",
@@ -7680,6 +7683,7 @@ fixtures = [
   "fixtures/observation_verified_side_effect",
   "fixtures/observation_unverified_call_deletion",
   "fixtures/observation_verified_call_deletion",
+  "fixtures/observation_verified_semicolon_effect",
   "fixtures/match_arm_type_token_blind"
 ]
 code = [
@@ -7731,6 +7735,8 @@ outputs = [
   "fixtures/observation_verified_side_effect/expected/human.txt",
   "fixtures/observation_unverified_call_deletion/expected/check.json",
   "fixtures/observation_unverified_call_deletion/expected/human.txt",
+  "fixtures/observation_verified_semicolon_effect/expected/check.json",
+  "fixtures/observation_verified_semicolon_effect/expected/human.txt",
   "fixtures/observation_verified_call_deletion/expected/check.json",
   "fixtures/observation_verified_call_deletion/expected/human.txt",
   "fixtures/match_arm_type_token_blind/expected/check.json",
