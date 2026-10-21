@@ -729,9 +729,12 @@ fn options_parameter(part: &str, index: usize) -> Option<OptionsParameter> {
         }
         let default = match default_text {
             None => PropDefault::Absent,
-            Some(text) => parse_literal(text)
-                .map(PropDefault::Literal)
-                .unwrap_or(PropDefault::Unknown),
+            Some(text) => match parse_literal(text) {
+                Some(literal) => PropDefault::Literal(literal),
+                // A later default can write an earlier binding.
+                None if default_may_assign(text) => return None,
+                None => PropDefault::Unknown,
+            },
         };
         props.push(OptionProp {
             key,
@@ -746,12 +749,50 @@ fn options_parameter(part: &str, index: usize) -> Option<OptionsParameter> {
     })
 }
 
+/// Whether a default expression could assign a binding (`x = v`, `x += v`,
+/// `x++`); comparison operators and `=>` do not.
+fn default_may_assign(text: &str) -> bool {
+    if text.contains("++") || text.contains("--") {
+        return true;
+    }
+    let chars: Vec<char> = text.chars().collect();
+    chars.iter().enumerate().any(|(at, c)| {
+        *c == '='
+            && chars.get(at + 1) != Some(&'=')
+            && chars.get(at + 1) != Some(&'>')
+            && !matches!(
+                at.checked_sub(1).and_then(|before| chars.get(before)),
+                Some('=' | '!' | '<' | '>')
+            )
+    })
+}
+
+/// `Object.prototype` members a destructuring default reads through the
+/// prototype when the literal has no own key.
+const INHERITED_KEYS: [&str; 12] = [
+    "constructor",
+    "toString",
+    "toLocaleString",
+    "valueOf",
+    "hasOwnProperty",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+    "__proto__",
+    "__defineGetter__",
+    "__defineSetter__",
+    "__lookupGetter__",
+    "__lookupSetter__",
+];
+
 /// The literal a test writes for `key` in an object-literal argument:
 /// `Some(None)` when the key is absent, `Some(Some(v))` when set to the
 /// literal `v`, and `None` when the argument is not a plain object literal or
 /// the key's value cannot be read (a spread, computed key, accessor, method,
 /// duplicate or non-literal value could set it).
 fn object_property(text: &str, key: &str) -> Option<Option<Lit>> {
+    if INHERITED_KEYS.contains(&key) {
+        return None;
+    }
     let text = text.trim();
     let inner = text.strip_prefix('{')?.strip_suffix('}')?;
     // `{ a } + { b }`-style text is not one literal.
@@ -1968,6 +2009,12 @@ mod tests {
             "b();",
             &["[]", "{ nested: { preserveOrder: false } }"]
         ));
+        // Inherited members and later defaults that assign are not read.
+        let inherited = "function run(items, { toString = false } = {}) {\n  if (toString) {\n    a();\n  } else {\n    b();\n  }\n}\n";
+        assert!(!excludes(inherited, 5, "a();", &["[]", "{}"]));
+        let assigning = "function run(items, { flag = true, other = (flag = false) } = {}) {\n  if (flag) {\n    a();\n  } else {\n    b();\n  }\n}\n";
+        assert!(!excludes(assigning, 5, "b();", &["[]", "{}"]));
+        assert!(parameter_shapes(assigning).is_none());
     }
 
     #[test]
