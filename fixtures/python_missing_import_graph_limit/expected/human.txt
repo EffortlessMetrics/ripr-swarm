@@ -29,6 +29,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_missing_import_graph_limit/input --diff <cwd>/fixtures/python_missing_import_graph_limit/diff.patch --mode fast probe:src_totals.py:python_preview:1274639f
   ripr context --root <cwd>/fixtures/python_missing_import_graph_limit/input --diff <cwd>/fixtures/python_missing_import_graph_limit/diff.patch --mode fast --at probe:src_totals.py:python_preview:1274639f
+  no repair start offered: the finding carries no canonical gap to bind a seam; run `ripr repair probe:src_totals.py:python_preview:1274639f --root <cwd>/fixtures/python_missing_import_graph_limit/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

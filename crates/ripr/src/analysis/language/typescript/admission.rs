@@ -119,21 +119,28 @@ pub(crate) struct TypeScriptAdmissionContext {
     /// Something the runner runs for every test in the file is
     /// assertion-like (see the module docs).
     setup_assertion_like: bool,
+    /// Modules and strict scripts keep block functions inside their block.
+    pub(super) block_functions_are_lexical: bool,
 }
 
 impl TypeScriptAdmissionContext {
     pub(crate) fn of_program(
-        statements: &[Statement<'_>],
+        program: &oxc_ast::ast::Program<'_>,
         imports: &[TypeScriptImport],
         file: &Path,
     ) -> Self {
+        let statements = program.body.as_slice();
+        let block_functions_are_lexical =
+            program.source_type.is_module() || program.has_use_strict_directive();
         let esm_imports: Vec<_> = statements
             .iter()
             .filter(|statement| matches!(statement, Statement::ImportDeclaration(_)))
             .flat_map(|statement| extract_imports_from_statements(std::slice::from_ref(statement)))
             .collect();
-        let known_require = program_require_is_known(statements, &esm_imports);
+        let known_require =
+            program_require_is_known(statements, &esm_imports, block_functions_are_lexical);
         let mut context = Self {
+            block_functions_are_lexical,
             imports: imports.to_vec(),
             registration_imports: statements
                 .iter()
@@ -144,7 +151,31 @@ impl TypeScriptAdmissionContext {
                                 && declaration.kind == oxc_ast::ast::VariableDeclarationKind::Const)
                 })
                 .flat_map(|statement| {
-                    extract_imports_from_statements(std::slice::from_ref(statement))
+                    let mut imports =
+                        extract_imports_from_statements(std::slice::from_ref(statement));
+                    if let Statement::VariableDeclaration(declaration) = statement {
+                        for declarator in &declaration.declarations {
+                            let Some(Expression::StaticMemberExpression(member)) = declarator
+                                .init
+                                .as_ref()
+                                .map(Expression::get_inner_expression)
+                            else {
+                                continue;
+                            };
+                            if let Some(source) = require_string_literal_source(&member.object)
+                                && let Some(local) =
+                                    super::owners::binding_identifier_name(&declarator.id)
+                            {
+                                imports.push(TypeScriptImport {
+                                    source,
+                                    imported: Some(member.property.name.to_string()),
+                                    local: local.to_string(),
+                                    namespace: false,
+                                });
+                            }
+                        }
+                    }
+                    imports
                 })
                 .collect(),
             reexport_names: reexport_spellings(statements),
@@ -163,6 +194,9 @@ impl TypeScriptAdmissionContext {
                 .unwrap_or_default(),
             ..Self::default()
         };
+        context
+            .registration_imports
+            .extend(verified_extended_registrations(program, &esm_imports));
         let mut helpers = BTreeSet::new();
         let mut enclosing = BTreeSet::new();
         collect_setup_names(statements, &mut helpers, &mut enclosing);
@@ -202,7 +236,7 @@ impl TypeScriptAdmissionContext {
         }
     }
 
-    /// Root admission for newly supported awaited registrations. Reuse the
+    /// Root admission for bare and awaited registrations. Reuse the
     /// scanner's runner binding decision before a recognized assertion can
     /// take the shortcut in `admission_of`. The extractor supplies visible
     /// bindings and marks file-level declarations. File-wide setup uncertainty
@@ -261,6 +295,97 @@ impl TypeScriptAdmissionContext {
     }
 }
 
+/// A bounded fixture-extension registration: one immutable top-level result
+/// of a named Vitest/Playwright test import's `.extend(...)`. Other uses of
+/// that imported receiver remain unresolved: they could replace or expose
+/// its mutable `extend` member. Arbitrary factory results are never trusted.
+fn verified_extended_registrations(
+    program: &oxc_ast::ast::Program<'_>,
+    imports: &[TypeScriptImport],
+) -> Vec<TypeScriptImport> {
+    let Some(code) = super::tests_extract::byte_preserving_code_mask(program.source_text) else {
+        return Vec::new();
+    };
+    if super::tests_extract::file_is_opaque(&code) {
+        return Vec::new();
+    }
+    let mut result = Vec::new();
+    for import in imports.iter().filter(|import| {
+        matches!(import.source.as_str(), "vitest" | "@playwright/test")
+            && (import.imported.as_deref() == Some("test")
+                || (import.source == "vitest" && import.imported.as_deref() == Some("it")))
+            && !import.namespace
+    }) {
+        let mut allowed = Vec::new();
+        let mut candidates = Vec::new();
+        for statement in &program.body {
+            if let Statement::ImportDeclaration(declaration) = statement {
+                allowed.push(declaration.span.start as usize..declaration.span.end as usize);
+            }
+            let Statement::VariableDeclaration(declaration) = statement else {
+                continue;
+            };
+            if declaration.declare
+                || declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const
+            {
+                continue;
+            }
+            for declarator in &declaration.declarations {
+                let BindingPattern::BindingIdentifier(local) = &declarator.id else {
+                    continue;
+                };
+                let Some(Expression::CallExpression(call)) = declarator
+                    .init
+                    .as_ref()
+                    .map(Expression::get_inner_expression)
+                else {
+                    continue;
+                };
+                let Expression::StaticMemberExpression(member) = call.callee.get_inner_expression()
+                else {
+                    continue;
+                };
+                let Expression::Identifier(receiver) = member.object.get_inner_expression() else {
+                    continue;
+                };
+                if receiver.name.as_str() != import.local
+                    || member.property.name != "extend"
+                    || call.optional
+                    || member.optional
+                {
+                    continue;
+                }
+                allowed.push(receiver.span.start as usize..receiver.span.end as usize);
+                // Exclude only this declaration's initializing write. A later
+                // assignment must not acquire the synthetic import exemption.
+                let outside = format!(
+                    "{}{}",
+                    &code[..declarator.span.start as usize],
+                    &code[declarator.span.end as usize..]
+                );
+                if super::tests_extract::identifier_written_in(&outside, local.name.as_str()) {
+                    continue;
+                }
+                candidates.push(TypeScriptImport {
+                    source: import.source.clone(),
+                    imported: Some("test".to_string()),
+                    local: local.name.to_string(),
+                    namespace: false,
+                });
+            }
+        }
+        if super::tests_extract::identifier_occurrences(&code, &import.local).all(|at| {
+            allowed.iter().any(|range| range.contains(&at))
+                // Calling the genuine imported test does not expose its mutable
+                // extension method. Other value escapes/member uses stay refused.
+                || code[at + import.local.len()..].trim_start().starts_with('(')
+        }) {
+            result.extend(candidates);
+        }
+    }
+    result
+}
+
 /// Visible spellings of top-level re-exports (`export { x } from './y'`),
 /// mirroring the `local` name owners.rs records for owner graphs. A re-export
 /// binds nothing in this file, so it never makes a registration known; the
@@ -289,9 +414,17 @@ fn reexport_spellings(statements: &[Statement<'_>]) -> BTreeSet<String> {
 /// Loader identity for the bounded awaited-root import exemption. Mutable
 /// loaders and same-spelled helpers cannot establish a callable runner. The
 /// ambient `require` syntax contract does not prove runtime module resolution.
-fn program_require_is_known(statements: &[Statement<'_>], imports: &[TypeScriptImport]) -> bool {
+fn program_require_is_known(
+    statements: &[Statement<'_>],
+    imports: &[TypeScriptImport],
+    block_functions_are_lexical: bool,
+) -> bool {
     let mut names = Vec::new();
-    super::tests_extract::collect_registration_scope_names(statements, &mut names);
+    super::tests_extract::collect_registration_scope_names(
+        statements,
+        &mut names,
+        block_functions_are_lexical,
+    );
     if !names.iter().any(|name| name == "require") {
         return true;
     }
@@ -344,6 +477,7 @@ enum ImportClass {
 
 const RUNNER_MODULES: &[&str] = &[
     "vitest",
+    "@playwright/test",
     "@jest/globals",
     "bun:test",
     "node:test",

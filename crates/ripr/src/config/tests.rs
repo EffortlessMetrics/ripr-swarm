@@ -1549,7 +1549,8 @@ proptest! {
             "perllsp".to_string(),
             "perl-lsp".to_string(),
         ])),
-        executable in any::<String>(),
+        executable in any::<String>()
+            .prop_filter("usable executable path", |value| !value.is_empty() && !value.contains('\0')),
         timeout_ms in 1u64..,
         cache_dir in valid_repository_paths(),
     ) {
@@ -2559,9 +2560,11 @@ fn config_load_parse_error_strips_windows_verbatim_prefix() -> Result<(), String
     let unc = Path::new(r"\\?\UNC\server\share\ripr.toml");
     let unc_windows =
         config_load_parse_error_for_host(unc, "invalid ripr.toml: expected table", true);
-    if !unc_windows.starts_with(r"\\?\UNC\server\share\ripr.toml: invalid ripr.toml:") {
+    // #8754: the UNC verbatim form folds to its plain spelling at the shared
+    // human path owner, like the drive-letter form above.
+    if !unc_windows.starts_with("//server/share/ripr.toml: invalid ripr.toml:") {
         return Err(format!(
-            "Windows UNC verbatim form must render exactly as given: {unc_windows}"
+            "Windows UNC verbatim form must render its plain spelling: {unc_windows}"
         ));
     }
     let notice = crate::core_error::CoreError::config_invalid(windows.clone()).refusal_notice();

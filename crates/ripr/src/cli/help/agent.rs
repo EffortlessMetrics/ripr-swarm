@@ -42,7 +42,9 @@ pub(super) const AGENT_START_HELP: &str = r#"Start a source-edit-free workflow p
 Usage: ripr agent start [--root PATH] --seam-id ID [--out PATH] [--json]
 
 Options:
-  --root PATH      Workspace root. Defaults to current directory.
+  --root PATH      Workspace root. Defaults to the current directory, then
+                   walks up to the enclosing workspace or package, or the git
+                   top level; `--root .` pins this directory.
   --seam-id ID     Select one visible seam by ID.
   --out PATH       Workflow output directory (relative to --root). Defaults to target/ripr/workflow.
   --json           Emit one machine-readable JSON document instead of the
@@ -105,7 +107,9 @@ pub(super) const AGENT_CARD_HELP: &str = r#"Hand off one seam as the compact def
 Usage: ripr agent card [--root PATH] --seam-id ID [--json]
 
 Options:
-  --root PATH      Workspace root. Defaults to current directory.
+  --root PATH      Workspace root. Defaults to the current directory, then
+                   walks up to the enclosing workspace or package, or the git
+                   top level; `--root .` pins this directory.
   --seam-id ID     Select one visible seam by ID.
   --json           Emit the versioned repair_card.v1 JSON document. Without
                    this flag the same typed fields render as a compact human
@@ -135,7 +139,9 @@ pub(super) const AGENT_STUB_HELP: &str = r#"Write a compiling Rust test stub for
 Usage: ripr agent stub [--root PATH] (--seam-id ID | --at FILE:LINE [--kind FAMILY]) [--write] [--json]
 
 Options:
-  --root PATH      Workspace root. Defaults to current directory.
+  --root PATH      Workspace root. Defaults to the current directory, then
+                   walks up to the enclosing workspace or package, or the git
+                   top level; `--root .` pins this directory.
   --seam-id ID     Select one visible seam by ID.
   --at FILE:LINE   Select the gap at a `ripr check` finding location.
   --kind FAMILY    With --at: the finding's probe family (`predicate`,
@@ -176,7 +182,9 @@ pub(super) const AGENT_VERIFY_HELP: &str = r#"Verify static-evidence movement be
 Usage: ripr agent verify [--root PATH] --before PATH --after PATH --json
 
 Options:
-  --root PATH      Workspace root. Defaults to current directory.
+  --root PATH      Workspace root. Defaults to the current directory, then
+                   walks up to the enclosing workspace or package, or the git
+                   top level; `--root .` pins this directory.
   --before PATH    Before `repo-exposure-json` snapshot.
   --after PATH     After `repo-exposure-json` snapshot.
   --json           Required until a human verify surface exists.
@@ -262,7 +270,9 @@ pub(super) const AGENT_STATUS_HELP: &str = r#"Report local agent-loop artifact s
 Usage: ripr agent status [--root PATH] [--store PATH] [--attempt ID] [--json] [--out PATH]
 
 Options:
-  --root PATH      Workspace root. Defaults to current directory.
+  --root PATH      Workspace root. Defaults to the current directory, then
+                   walks up to the enclosing workspace or package, or the git
+                   top level; `--root .` pins this directory.
   --store PATH     Explicit repair-attempt store, resolved against --root.
                    Defaults to `target/ripr/repair-attempts`. Missing explicit
                    stores do not fall back to the default.
@@ -310,7 +320,13 @@ Usage: ripr agent repair [--root PATH] [--store PATH] --seam-id ID --phase befor
            [--verify-authorized --verify-authority ID] [--verify-rollback]
 
 Options:
-  --root PATH          Workspace root. Defaults to current directory.
+  --root PATH          Workspace root. Defaults to the current directory, then
+                       walks up to the enclosing workspace or package, or the git
+                       top level; `--root .` pins this directory. A member-
+                       relative `file:line` --seam-id is refused when a
+                       workspace-root file with the same path suffix exists,
+                       even without a root finding there; use `--root .` or
+                       a seam or gap ID.
   --store PATH         Explicit repair-attempt store, resolved against --root.
                        Defaults to `target/ripr/repair-attempts`. Missing
                        explicit stores do not fall back to the default.
@@ -318,10 +334,14 @@ Options:
                        packet, the after-phase result, or the verification
                        receipt). Without it stdout is a short summary and the
                        documents stay in their files under target/ripr/.
-  --seam-id ID         Select one visible seam by ID; required for `before` and
-                       the compatibility selector for `after`. `ripr pilot
-                       --root .` lists seam IDs; `ripr check` finding IDs
-                       (`probe:...`) are not seam IDs.
+  --seam-id ID         Select one visible seam; required for `before` and the
+                       compatibility selector for `after`. For `--phase before`,
+                       a seam ID, a `ripr check` finding ID (`probe:` /
+                       `repo-probe:`), a canonical gap ID, or a `file:line`
+                       location naming exactly one repair-eligible seam
+                       resolves to that seam. `--phase after` keeps exact seam
+                       IDs. An unmapped ID refuses with the `ripr pilot`
+                       recovery route.
   --attempt ID         Select one durable repair attempt; valid for `after`
                        and `verify` (verify accepts only `--attempt`).
   --phase before|after|verify
@@ -406,3 +426,41 @@ Environment variables:
                                     if the value is empty or 0; it does not
                                     change any verdict.
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::AGENT_REPAIR_HELP;
+
+    #[test]
+    fn agent_repair_help_seam_id_names_before_phase_finding_id_acceptance() -> Result<(), String> {
+        // #8686: pin the `--seam-id` entry, not AGENT_HELP.
+        let seam_id = AGENT_REPAIR_HELP
+            .split("  --seam-id ID")
+            .nth(1)
+            .and_then(|rest| rest.split("  --attempt ID").next())
+            .ok_or("AGENT_REPAIR_HELP must have a --seam-id entry before --attempt")?;
+        for needle in [
+            "`ripr check` finding ID",
+            "`probe:`",
+            "`repo-probe:`",
+            "canonical gap ID",
+            "`file:line`",
+            "`--phase before`",
+            "`--phase after` keeps exact seam",
+            "unmapped ID refuses",
+            "`ripr pilot`",
+        ] {
+            if !seam_id.contains(needle) {
+                return Err(format!(
+                    "AGENT_REPAIR_HELP --seam-id omitted {needle:?}: {seam_id}"
+                ));
+            }
+        }
+        if seam_id.contains("are not seam IDs") {
+            return Err(format!(
+                "stale pre-#8556 wording must not remain on --seam-id: {seam_id}"
+            ));
+        }
+        Ok(())
+    }
+}

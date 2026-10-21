@@ -127,10 +127,16 @@ fn evidence_path<T>(
     ];
 
     for sink in &finding.flow_sinks {
-        lines.push(project(
-            crate::output::flow_sink_line::flow_sink_evidence_line(sink),
-            EvidenceSource::Flow(sink),
-        ));
+        let mut line = crate::output::flow_sink_line::flow_sink_evidence_line(sink);
+        // #8744: `unknown sink` is the one unglossed internal term in the
+        // explain vocabulary; the human window states its meaning beside the
+        // row instead of leaving the consumer to guess whether it is a ripr
+        // limit, a code property, or an instruction.
+        if let Some(meaning) = crate::output::flow_sink_line::flow_sink_kind_meaning(&sink.kind) {
+            line.push_str(" — ");
+            line.push_str(meaning);
+        }
+        lines.push(project(line, EvidenceSource::Flow(sink)));
     }
 
     for test in finding.related_tests.iter().take(MAX_RELATED_TESTS_SHOWN) {
@@ -170,15 +176,15 @@ fn evidence_path<T>(
             ));
             continue;
         }
-        let oracle_kind = display_label(test.oracle_kind.as_str());
         let mut line = format!(
-            "related test {}:{} {} uses {} oracle",
+            "related test {}:{} {} uses {}",
             display_path(&test.file),
             test.line,
             test.name,
-            crate::output::oracle_phrase::oracle_phrase(
-                test.oracle_strength.as_str(),
-                &oracle_kind
+            crate::output::related_test_miss::oracle_projection(
+                &test.oracle_strength,
+                &test.oracle_kind,
+                test.oracle.is_some()
             )
         );
         if let Some(oracle) = &test.oracle {
@@ -227,14 +233,27 @@ fn evidence_path<T>(
     }
 
     let observed_values_total = finding.activation.observed_values.len();
-    for value in finding
+    let shown_values = finding
         .activation
         .observed_values
         .iter()
         .take(MAX_OBSERVED_VALUES_SHOWN)
-    {
+        .collect::<Vec<_>>();
+    // #8389: a bare `at line N` is only ambiguous when the shown window mixes
+    // facts from more than one test file; then each line names its file.
+    let name_files = shown_values
+        .iter()
+        .filter_map(|value| value.file.as_deref())
+        .collect::<std::collections::BTreeSet<_>>()
+        .len()
+        > 1;
+    for value in shown_values {
         lines.push(project(
-            crate::output::observed_values::source_value_evidence_line(value),
+            if name_files {
+                crate::output::observed_values::source_value_evidence_line_with_file(value)
+            } else {
+                crate::output::observed_values::source_value_evidence_line(value)
+            },
             EvidenceSource::Value(value),
         ));
     }
@@ -261,7 +280,7 @@ fn evidence_path<T>(
             }
         };
         lines.push(project(format!(
-            "source values (showing {MAX_OBSERVED_VALUES_SHOWN} of {observed_values_total}; {json_window})"
+            "source values (showing {MAX_OBSERVED_VALUES_SHOWN} of {observed_values_total} read from related tests; {json_window})"
         ), EvidenceSource::Window));
     }
 
@@ -308,8 +327,4 @@ fn is_duplicate_discriminator_missing(missing: &str, discriminator_values: &[&st
         return false;
     };
     discriminator_values.contains(&value)
-}
-
-fn display_label(value: &str) -> String {
-    value.replace('_', " ")
 }

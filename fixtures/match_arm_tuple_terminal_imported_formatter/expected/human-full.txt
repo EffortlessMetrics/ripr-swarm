@@ -42,7 +42,7 @@ Evidence
   - source assertion argument value "request_identity_v2" at line 10
   - source assertion argument value 1 at line 10
   - source assertion argument value "request-1" at line 11
-  - source values (showing 8 of 11; full list in --format json)
+  - source values (showing 8 of 11 read from related tests; full list in --format json)
 
 Weakness
   - No strong discriminator was detected
@@ -89,7 +89,7 @@ Evidence
   - source assertion argument value "request_identity_v2" at line 10
   - source assertion argument value 1 at line 10
   - source assertion argument value "request-1" at line 11
-  - source values (showing 8 of 11; full list in --format json)
+  - source values (showing 8 of 11 read from related tests; full list in --format json)
 
 Weakness
   - No strong discriminator was detected

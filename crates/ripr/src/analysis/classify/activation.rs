@@ -267,6 +267,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
                     .map(|parameter| format!("{parameter} = {value}"))
                     .unwrap_or(value);
                 facts.push(ValueFact {
+                    file: None,
                     line: call.line,
                     text: call.text.to_string(),
                     value,
@@ -275,6 +276,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
             }
             for value in enum_variant_values(argument) {
                 facts.push(ValueFact {
+                    file: None,
                     line: call.line,
                     text: call.text.to_string(),
                     context: path_value_context(&value),
@@ -292,6 +294,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
             }
             for value in scalar_values(&argument) {
                 facts.push(ValueFact {
+                    file: None,
                     line: assertion.line,
                     text: assertion.text.clone(),
                     value,
@@ -301,6 +304,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
         }
         for value in enum_variant_values(&assertion.text) {
             facts.push(ValueFact {
+                file: None,
                 line: assertion.line,
                 text: assertion.text.clone(),
                 context: path_value_context(&value),
@@ -315,6 +319,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
         if looks_like_table_row(trimmed) {
             for value in spelled_scalar_values(trimmed) {
                 facts.push(ValueFact {
+                    file: None,
                     line: line_number,
                     text: trimmed.to_string(),
                     value,
@@ -325,6 +330,7 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
         if looks_like_builder_method(trimmed) {
             for value in spelled_scalar_values(trimmed) {
                 facts.push(ValueFact {
+                    file: None,
                     line: line_number,
                     text: trimmed.to_string(),
                     value,
@@ -334,6 +340,11 @@ fn value_facts_for_test(test: &TestSummary, owner_fn: Option<&FunctionSummary>) 
         }
     }
 
+    // #8389: the run-wide value list merges facts from every related test, so
+    // each fact records its own test file; a bare line number is ambiguous.
+    for fact in &mut facts {
+        fact.file = Some(test.file.clone());
+    }
     sort_value_facts(&mut facts);
     facts
 }
@@ -418,6 +429,7 @@ fn observed_discriminator_values(
             && left_value.value == right_value.value
         {
             facts.push(ValueFact {
+                file: None,
                 line: row.first().map(|cell| cell.line).unwrap_or_default(),
                 text: format!(
                     "{} | {}; {}",
@@ -450,6 +462,7 @@ fn observed_discriminator_values(
             .is_some_and(|value| comparable_value(value) == comparable_value(&left_value.value))
         {
             facts.push(ValueFact {
+                file: None,
                 line: left_value.line,
                 text: left_value.text.clone(),
                 value: format!("{left} == {right}"),
@@ -467,6 +480,7 @@ fn observed_discriminator_values(
             index,
         ) {
             facts.push(ValueFact {
+                file: None,
                 line,
                 text: format!("{text} | argument names constant {right}"),
                 value: format!("{left} == {right}"),
@@ -1416,6 +1430,7 @@ fn element_boundary_observations(
         .iter()
         .filter(|run| view.tail.run_reaches_boundary(&run.elements, &boundary))
         .map(|run| ValueFact {
+            file: None,
             line: run.line,
             text: format!(
                 "{} | element {} = {boundary} of {}",
@@ -3287,10 +3302,7 @@ fn observed_parameter_values(rows: &[Vec<ParameterValue>], parameter: &str) -> V
 /// text before the parameter's first `:`, so a destructuring pattern is not
 /// widened into its field names (unlike `signature_parameters`).
 pub(crate) fn function_parameters(function: &FunctionSummary) -> Vec<String> {
-    let body = function.body.as_str();
-    let Some(arguments) =
-        parameter_list_open(body).and_then(|open| delimited_contents_at(body, open))
-    else {
+    let Some(arguments) = signature_arguments(function) else {
         return Vec::new();
     };
     parameters_in_arguments(&arguments)
@@ -3305,10 +3317,7 @@ pub(crate) fn function_parameters(function: &FunctionSummary) -> Vec<String> {
 /// binds. Field names in a pattern are kept too, which only widens the
 /// owner-scoped set (#6970 review).
 pub(crate) fn signature_parameters(function: &FunctionSummary) -> Vec<String> {
-    let body = function.body.as_str();
-    let Some(arguments) =
-        parameter_list_open(body).and_then(|open| delimited_contents_at(body, open))
-    else {
+    let Some(arguments) = signature_arguments(function) else {
         return Vec::new();
     };
     split_top_level_args(&arguments)
@@ -3322,10 +3331,7 @@ pub(crate) fn signature_parameters(function: &FunctionSummary) -> Vec<String> {
 /// `i`. A parameter whose pattern binds more or fewer than one name
 /// (`(a, b): (u8, u8)`, `_: u8`) is an empty name.
 pub(crate) fn call_parameter_names(function: &FunctionSummary) -> Vec<String> {
-    let body = function.body.as_str();
-    let Some(arguments) =
-        parameter_list_open(body).and_then(|open| delimited_contents_at(body, open))
-    else {
+    let Some(arguments) = signature_arguments(function) else {
         return Vec::new();
     };
     split_top_level_args(&arguments)
@@ -3344,6 +3350,14 @@ pub(crate) fn call_parameter_names(function: &FunctionSummary) -> Vec<String> {
             })
         })
         .collect()
+}
+
+/// The contents of `function`'s parameter list with comments and strings
+/// masked, so a trailing comment such as `// lo: a, b: c` on a wrapped
+/// signature cannot add, split or shift parameter names (#7840).
+fn signature_arguments(function: &FunctionSummary) -> Option<String> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(&function.body);
+    parameter_list_open(&masked).and_then(|open| delimited_contents_at(&masked, open))
 }
 
 /// The `(` opening the parameter list: the first one after `fn` that sits
@@ -4035,6 +4049,10 @@ pub(super) fn sort_value_facts(facts: &mut Vec<ValueFact>) {
             .then(left.context.as_str().cmp(right.context.as_str()))
             .then(left.value.cmp(&right.value))
             .then(left.text.cmp(&right.text))
+            // Same line/value/text from two files still collapses to one fact
+            // (the first file in path order), exactly as before #8389, so the
+            // JSON observed values and totals do not move.
+            .then(left.file.cmp(&right.file))
     });
     facts.dedup_by(|left, right| {
         left.line == right.line
@@ -4907,6 +4925,18 @@ mod tests {
         );
         let no_params = function("pub fn zero() -> u8 {\n    f(1)\n}");
         assert!(function_parameters(&no_params).is_empty());
+    }
+
+    #[test]
+    fn signature_comments_do_not_shift_parameter_names() {
+        // #7840: a trailing comment holding a comma and a colon is not a
+        // parameter, for all three signature readers.
+        let commented = function(
+            "pub fn tier(\n    lo: u8, // lo: a, b: c\n    hi: u8, /* x: y, z: w */\n) -> u8 {\n    0\n}",
+        );
+        assert_eq!(function_parameters(&commented), vec!["lo", "hi"]);
+        assert_eq!(signature_parameters(&commented), vec!["lo", "hi"]);
+        assert_eq!(call_parameter_names(&commented), vec!["lo", "hi"]);
     }
 
     #[test]
@@ -6346,6 +6376,7 @@ assert_eq!(input.amount, 100);"#
 
     fn value_fact(line: usize, text: &str, value: &str, context: ValueContext) -> ValueFact {
         ValueFact {
+            file: None,
             line,
             text: text.to_string(),
             value: value.to_string(),
