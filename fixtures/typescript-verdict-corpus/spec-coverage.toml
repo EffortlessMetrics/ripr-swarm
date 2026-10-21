@@ -608,6 +608,10 @@ id = "RIPR-SPEC-0292"
 scope = "out"
 reason = "xtask spot-check admission by report schema version; not an exposure-verdict example a corpus case labels"
 [[spec]]
+id = "RIPR-SPEC-0297"
+scope = "out"
+reason = "static related-test admission for Display/Debug fmt dispatch; not an exposure-verdict example a corpus case labels"
+[[spec]]
 id = "RIPR-SPEC-0296"
 scope = "out"
 reason = "xtask dx-scoreboard first-run budget counting grain; not an exposure-verdict example a corpus case labels"
