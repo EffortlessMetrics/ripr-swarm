@@ -1226,18 +1226,8 @@ pub(super) fn calibrate(args: &[String]) -> Result<(), String> {
         &repo_exposure_json,
         &mutants_json,
     )?;
-    // Disclose on stderr (machine JSON output on stdout is unchanged) what
-    // can actually be said about artifact identity. The join is file/line
-    // capable and cargo-mutants JSON usually carries no head, so a silent
-    // success lets a foreign same-line mutant inherit the static seam's
-    // authority. Mirror `ripr outcome`'s disclosure (#7449 / #1942).
-    eprintln!(
-        "{}",
-        output::mutation_calibration::calibrate_head_provenance_disclosure(
-            &repo_exposure_json,
-            &mutants_json,
-        )
-    );
+    // The report owns the input-head projection and its qualification on every surface.
+    eprintln!("{}", report.head_provenance_disclosure());
     let rendered = match options.format {
         CalibrateFormat::Markdown => {
             output::mutation_calibration::render_mutation_calibration_md(&report)
@@ -3432,6 +3422,19 @@ pub(super) fn drill_in_scope_conflict(
 }
 
 pub(super) fn lsp(args: &[String]) -> Result<(), String> {
+    lsp_with_serve(args, crate::lsp::serve)
+}
+
+/// Argument dispatch for `ripr lsp`, separated from the blocking stdio
+/// transport so unit tests can prove accepted-argument/dispatch semantics
+/// without entering the real server (issue #1387: the server owns tokio
+/// stdin/stdout and waits indefinitely while stdin stays open, so a test
+/// that calls `lsp(&["--stdio"])` hangs). Production always passes
+/// `crate::lsp::serve`; tests inject a nonblocking stub.
+fn lsp_with_serve(
+    args: &[String],
+    serve: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
     for arg in args {
         match arg.as_str() {
             "--stdio" => {}
@@ -3446,7 +3449,7 @@ pub(super) fn lsp(args: &[String]) -> Result<(), String> {
             other => return Err(unknown_argument("lsp", other)),
         }
     }
-    crate::lsp::serve()
+    serve()
 }
 
 /// `ripr pr-summary` — binary-first PR readiness summary (Campaign 31 item 8).
@@ -7199,7 +7202,7 @@ language = "rust"
 
         let rendered = std::fs::read_to_string(&out)
             .map_err(|err| format!("read calibration output: {err}"))?;
-        assert!(rendered.contains(r#""schema_version": "0.2""#));
+        assert!(rendered.contains(r#""schema_version": "0.3""#));
         assert!(rendered.contains(r#""static_gap_and_runtime_signal": 1"#));
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
@@ -7543,6 +7546,76 @@ language = "rust"
         assert!(combined.contains("outcomes"));
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
+    }
+
+    /// A headed cargo-mutants directory keeps its head identity through the
+    /// CLI combine: agreeing members surface the shared head, and
+    /// disagreeing members are disclosed as a conflict instead of a
+    /// missing head.
+    #[test]
+    fn calibrate_directory_preserves_member_head_identity() -> Result<(), String> {
+        let dir = unique_command_test_dir("calibrate-dir-heads");
+        let mutants_dir = dir.join("cargo-mutants");
+        std::fs::create_dir_all(&mutants_dir)
+            .map_err(|err| format!("create mutants dir: {err}"))?;
+        let head = "1111111111111111111111111111111111111140";
+        std::fs::write(
+            mutants_dir.join("outcomes.json"),
+            format!(
+                r#"{{"artifact":{{"repository":{{"head":"{head}"}}}},"outcomes":[{{"id":"m1","outcome":"missed"}}]}}"#
+            ),
+        )
+        .map_err(|err| format!("write outcomes.json: {err}"))?;
+        std::fs::write(
+            mutants_dir.join("mutants.json"),
+            r#"{"mutants":[{"id":"m1","operator":"replace"}]}"#,
+        )
+        .map_err(|err| format!("write mutants.json: {err}"))?;
+
+        let combined = read_calibration_mutants_json(&mutants_dir)?;
+        let disclosure = output::mutation_calibration::calibrate_head_provenance_disclosure(
+            &snapshot_with_head(head),
+            &combined,
+        );
+        assert!(
+            disclosure.contains(head) && disclosure.contains("same commit"),
+            "agreeing directory members must surface the shared head: {disclosure}"
+        );
+
+        // Disagreeing members: rewrite mutants.json with a different head.
+        let other = "2222222222222222222222222222222222222241";
+        std::fs::write(
+            mutants_dir.join("mutants.json"),
+            format!(
+                r#"{{"artifact":{{"repository":{{"head":"{other}"}}}},"mutants":[{{"id":"m1","operator":"replace"}}]}}"#
+            ),
+        )
+        .map_err(|err| format!("rewrite mutants.json: {err}"))?;
+        let combined = read_calibration_mutants_json(&mutants_dir)?;
+        let disclosure = output::mutation_calibration::calibrate_head_provenance_disclosure(
+            &snapshot_with_head(head),
+            &combined,
+        );
+        assert!(
+            disclosure.contains("conflicting repository heads")
+                && disclosure.contains(head)
+                && disclosure.contains(other),
+            "disagreeing directory members must be disclosed as a conflict: {disclosure}"
+        );
+        assert!(
+            !disclosure.contains("does not carry a head SHA"),
+            "a disagreement must not be reported as an absent head: {disclosure}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    fn snapshot_with_head(head: &str) -> String {
+        serde_json::json!({
+            "schema_version": "0.3",
+            "artifact": { "repository": { "root": "/w", "head": head } },
+        })
+        .to_string()
     }
 
     #[test]
@@ -8664,8 +8737,46 @@ language = "rust"
 
     #[test]
     fn lsp_accepts_stdio_flag() {
-        // lsp function doesn't reject --stdio, it just processes it
-        assert_eq!(lsp(&args(&["--stdio"])), Ok(()));
+        // Must not enter the real blocking stdio server (issue #1387: it
+        // owns tokio stdin/stdout and waits indefinitely while stdin stays
+        // open). The injected stub proves `--stdio` is accepted and
+        // dispatches to the transport.
+        let entered = std::cell::Cell::new(false);
+        assert_eq!(
+            lsp_with_serve(&args(&["--stdio"]), || {
+                entered.set(true);
+                Ok(())
+            }),
+            Ok(())
+        );
+        assert!(
+            entered.get(),
+            "expected --stdio to dispatch to the transport"
+        );
+    }
+
+    #[test]
+    fn lsp_default_args_enter_transport() {
+        let entered = std::cell::Cell::new(false);
+        assert_eq!(
+            lsp_with_serve(&args(&[]), || {
+                entered.set(true);
+                Ok(())
+            }),
+            Ok(())
+        );
+        assert!(
+            entered.get(),
+            "expected default args to dispatch to the transport"
+        );
+    }
+
+    #[test]
+    fn lsp_propagates_transport_errors() {
+        assert_eq!(
+            lsp_with_serve(&args(&["--stdio"]), || Err("transport down".to_string())),
+            Err("transport down".to_string())
+        );
     }
 
     #[test]
