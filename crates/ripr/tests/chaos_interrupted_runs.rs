@@ -1538,6 +1538,29 @@ exit 66
             assert_sigint("directory", true)
         }
 
+        /// Kernel wait channel of every thread of `pid`. A thread that exits
+        /// between the directory listing and the read is skipped; an
+        /// unreadable instrument is an error, not an empty observation.
+        fn task_wchans(pid: u32) -> Result<Vec<String>, String> {
+            let mut waits = Vec::new();
+            for entry in fs::read_dir(format!("/proc/{pid}/task"))
+                .map_err(|e| format!("observe Linux blocked-I/O instrument: {e}"))?
+            {
+                let entry = entry.map_err(|e| e.to_string())?;
+                match fs::read_to_string(entry.path().join("wchan")) {
+                    Ok(wait) => waits.push(wait),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(format!("observe Linux blocked-I/O instrument: {e}")),
+                }
+            }
+            if waits.is_empty() {
+                return Err(
+                    "observe Linux blocked-I/O instrument: no thread wchan readable".to_string(),
+                );
+            }
+            Ok(waits)
+        }
+
         fn wait_blocked(
             child: &mut ripr::process_owner::OwnedProcess,
             operation: &str,
@@ -1547,13 +1570,17 @@ exit 66
                 if child.try_wait().map_err(|e| e.to_string())?.is_some() {
                     return Err("CLI exited before blocked-I/O observation".to_string());
                 }
-                let wait = fs::read_to_string(format!("/proc/{}/wchan", child.id()))
-                    .map_err(|e| format!("observe Linux blocked-I/O instrument: {e}"))?;
-                if wait.contains(operation) {
+                // The budgeted check runs on a worker thread (#8846), so the main
+                // thread waits on a futex while a sibling thread holds the blocking
+                // I/O. Observe every thread of the CLI, not only the leader.
+                let wait = task_wchans(child.id())?;
+                if wait.iter().any(|w| w.contains(operation)) {
                     return Ok(());
                 }
                 if started.elapsed() > Duration::from_secs(5) {
-                    return Err(format!("CLI did not reach {operation}; last wchan={wait}"));
+                    return Err(format!(
+                        "CLI did not reach {operation}; last wchan per thread={wait:?}"
+                    ));
                 }
                 std::thread::sleep(Duration::from_millis(2));
             }
