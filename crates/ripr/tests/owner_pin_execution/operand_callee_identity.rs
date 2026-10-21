@@ -48,7 +48,7 @@ fn compiled_operator_removal_controls_match_observed_effects() -> Result<(), Str
             let stdout = String::from_utf8_lossy(&result.stdout);
             let stderr = String::from_utf8_lossy(&result.stderr);
             assert!(
-                stdout.contains("running 1 test"),
+                stdout.contains("running 1 test") && stdout.contains("0 ignored"),
                 "{name}: nonempty runtime subject: {stdout}; {stderr}"
             );
             let effect_must_fail = remove_operator && observes_effect;
