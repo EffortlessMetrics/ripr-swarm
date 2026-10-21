@@ -289,7 +289,10 @@ non-ignored related test matches one of these shapes:
   `debug_assert*`, the insta `assert_*_snapshot` family, `format!`, `print*`,
   `matches!`, `vec!`, `dbg!`, `with_settings!`, .., spelled bare or rooted at
   `std`, `core`, `insta` or `expect_test`; any other path, a raw identifier or
-  a body-level `use .. as <that name>` is a user macro), gets no credit: a macro defined
+  a user macro), gets no credit. Any `use` or `extern crate` item in the test
+  body turns the allowlist off for that body (it can rename, glob-import or
+  re-root a macro; an over-withhold). Whitespace or comments around `::` in a
+  macro path are ignored, so `my ::dbg!(x)` is the qualified `my::dbg`: a macro defined
   elsewhere can bind or rewrite any name it is handed (an over-withhold). A bare allowlisted name shadowed by a module-level
   `macro_rules!` or `use` outside the test body is not detected (inherent
   residual). Residuals, kept as gaps: mutation

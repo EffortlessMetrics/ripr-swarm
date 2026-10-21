@@ -150,27 +150,17 @@ pub(crate) fn local_is_owner_result_before(
 /// its arguments and is not one of the macros that only read them.
 fn macro_argument_names(code: &str, name: &str) -> bool {
     let bytes = code.as_bytes();
-    // `use foo::bump as dbg;` renames a user macro to an allowlisted name.
-    let words: Vec<&str> = code
-        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-        .filter(|word| !word.is_empty())
-        .collect();
-    let reads_only = !words
-        .windows(2)
-        .any(|pair| pair[0] == "as" && macro_only_reads_name(pair[1]));
+    // Any `use` or `extern crate` item before the assertion can rename,
+    // glob-import or re-root a macro (`use foo::bump as dbg;`, `use foo as
+    // std;`, `use foo::*;`), so the allowlist is off for the whole body.
+    let reads_only = !code
+        .split(|ch: char| !(ch.is_alphanumeric() || ch == '_' || ch == '#'))
+        .any(|word| word == "use" || word == "extern");
     for (bang, _) in code.match_indices('!') {
         if bytes.get(bang + 1) == Some(&b'=') {
             continue;
         }
-        let head = code[..bang].trim_end();
-        let macro_path: String = head
-            .chars()
-            .rev()
-            .take_while(|ch| ch.is_alphanumeric() || matches!(ch, '_' | ':' | '#'))
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
+        let macro_path = macro_path_before(&code[..bang]);
         if macro_path.is_empty() {
             continue;
         }
@@ -204,6 +194,44 @@ fn macro_argument_names(code: &str, name: &str) -> bool {
         }
     }
     false
+}
+
+/// The full macro path ending at the end of `head`, whitespace around `::`
+/// ignored (`my :: dbg` reads as `my::dbg`), so a qualifier is never dropped.
+fn macro_path_before(head: &str) -> String {
+    let is_word = |ch: char| ch.is_alphanumeric() || matches!(ch, '_' | '#');
+    let mut rest = head.trim_end();
+    let mut segments: Vec<String> = Vec::new();
+    let mut leading = false;
+    loop {
+        let word: String = rest
+            .chars()
+            .rev()
+            .take_while(|ch| is_word(*ch))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        rest = rest[..rest.len() - word.len()].trim_end();
+        if !word.is_empty() {
+            segments.push(word);
+            leading = false;
+        }
+        match rest.strip_suffix("::") {
+            Some(before) => {
+                leading = true;
+                rest = before.trim_end();
+            }
+            None => break,
+        }
+    }
+    segments.reverse();
+    let joined = segments.join("::");
+    if leading && !joined.is_empty() {
+        format!("::{joined}")
+    } else {
+        joined
+    }
 }
 
 /// Standard and snapshot macros that evaluate their arguments without
@@ -1577,6 +1605,20 @@ mod tests {
             "my::dbg!({n});\n",
             "r#dbg!({n});\n",
             "use foo::bump as dbg;\ndbg!({n});\n",
+            "my ::dbg!({n});\n",
+            "my::\ndbg!({n});\n",
+            "my:: dbg!({n});\n",
+            "my::/**/dbg!({n});\n",
+            "my ::std::dbg!({n});\n",
+            "use foo::bump as r#dbg;\ndbg!({n});\n",
+            "use foo as std;\nstd::dbg!({n});\n",
+            "use foo as insta;\ninsta::assert_snapshot!({n});\n",
+            "use foo as expect_test;\nexpect_test::assert_snapshot!({n});\n",
+            "extern crate foo as std;\nstd::dbg!({n});\n",
+            "use foo as crate;\ndbg!({n});\n",
+            "use foo as self;\ndbg!({n});\n",
+            "use foo::*;\ndbg!({n});\n",
+            "use foo::dbg;\ndbg!({n});\n",
             "expect!({n});\n",
             "crate::assert_eq!({n}, 1);\n",
             "for({n}) in v {\n",
@@ -1792,6 +1834,34 @@ mod tests {
         assert!(!strict("let x = own(2);\nrebind!(x);"));
         assert!(!strict("let x = own(2);\nassert_rebind!(x);"));
         assert!(!strict("let x = own(2);\nmy::dbg!(x);"));
+        assert!(!strict("let x = own(2);\nmy ::dbg!(x);"));
+        assert!(!strict("let x = own(2);\nmy::\ndbg!(x);"));
+        assert!(!strict("let x = own(2);\nmy:: dbg!(x);"));
+        assert!(!strict("let x = own(2);\nmy::/**/dbg!(x);"));
+        assert!(!strict("let x = own(2);\nmy ::std::dbg!(x);"));
+        assert!(!strict(
+            "let x = own(2);\nuse foo::bump as r#dbg;\ndbg!(x);"
+        ));
+        assert!(!strict("let x = own(2);\nuse foo as std;\nstd::dbg!(x);"));
+        assert!(!strict(
+            "let x = own(2);\nuse foo as insta;\ninsta::assert_snapshot!(x);"
+        ));
+        assert!(!strict(
+            "let x = own(2);\nuse foo as expect_test;\nexpect_test::assert_snapshot!(x);"
+        ));
+        assert!(!strict(
+            "let x = own(2);\nextern crate foo as std;\nstd::dbg!(x);"
+        ));
+        assert!(!strict("let x = own(2);\nuse foo as crate;\ndbg!(x);"));
+        assert!(!strict("let x = own(2);\nuse foo as self;\ndbg!(x);"));
+        assert!(!strict("let x = own(2);\nuse foo::*;\ndbg!(x);"));
+        assert!(!strict("let x = own(2);\nuse foo::dbg;\ndbg!(x);"));
+        assert!(strict("let x = own(2);\ninsta :: assert_snapshot!(x);"));
+        assert!(strict("let x = own(2);\n::std::dbg!(x);"));
+        assert!(strict("let x = own(2);\ncore::dbg!(x);"));
+        assert!(strict(
+            "let x = own(2);\nlet k = 3 as u8;\nassert_eq!(x, k);"
+        ));
         assert!(strict("let x = own(2);\nassert_yaml_snapshot!(x);"));
         assert!(!strict("let x = own(2);\ncrate::rebind!{x}"));
         assert!(strict("let x = own(2);\nassert_eq!(x.len(), 1);"));
@@ -1823,6 +1893,10 @@ mod tests {
             for read in [
                 "let x = own(2);\ninsta::assert_snapshot!(x);\n",
                 "let x = own(2);\nassert_yaml_snapshot!(x);\n",
+                "let x = own(2);\ninsta :: assert_snapshot!(x);\n",
+                "let x = own(2);\n::std::dbg!(x);\n",
+                "let x = own(2);\ncore::dbg!(x);\n",
+                "let x = own(2);\nlet k = 3 as u8;\nassert_eq!(x, k);\n",
                 "let x = own(2);\nassert_debug_snapshot!(x);\n",
                 "let x = own(2);\nstd::println!(\"{}\", x);\n",
                 "let x = own(2);\n::std::dbg!(x);\n",
@@ -1847,6 +1921,19 @@ mod tests {
                 "let x = own(2);\nmy::dbg!(x);\n",
                 "let x = own(2);\nr#dbg!(x);\n",
                 "let x = own(2);\nuse foo::bump as dbg;\ndbg!(x);\n",
+                "let x = own(2);\nmy ::dbg!(x);\n",
+                "let x = own(2);\nmy::\ndbg!(x);\n",
+                "let x = own(2);\nmy:: dbg!(x);\n",
+                "let x = own(2);\nmy ::std::dbg!(x);\n",
+                "let x = own(2);\nuse foo::bump as r#dbg;\ndbg!(x);\n",
+                "let x = own(2);\nuse foo as std;\nstd::dbg!(x);\n",
+                "let x = own(2);\nuse foo as insta;\ninsta::assert_snapshot!(x);\n",
+                "let x = own(2);\nuse foo as expect_test;\nexpect_test::assert_snapshot!(x);\n",
+                "let x = own(2);\nextern crate foo as std;\nstd::dbg!(x);\n",
+                "let x = own(2);\nuse foo as crate;\ndbg!(x);\n",
+                "let x = own(2);\nuse foo as self;\ndbg!(x);\n",
+                "let x = own(2);\nuse foo::*;\ndbg!(x);\n",
+                "let x = own(2);\nuse foo::dbg;\ndbg!(x);\n",
                 "let x = own(2);\nexpect!(x);\n",
                 "let x = own(2);\ncrate::assert_eq!(x, 1);\n",
                 "let x = own(2);\nassert_yaml_snapshotx!(x);\n",
