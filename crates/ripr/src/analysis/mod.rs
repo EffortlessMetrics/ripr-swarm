@@ -46,6 +46,7 @@ mod witness;
 mod workspace;
 
 pub(crate) use diff::parse_unified_diff_bounded_with_metadata;
+pub(crate) use diff_scope_filter::DiffIntake;
 pub use diff_scope_filter::DiffScopeFilter;
 
 /// Shared pinned PR-evidence diff assembly (#3930, #4004): the one named
@@ -1041,8 +1042,7 @@ pub(crate) fn run_analysis_with_oracle_policy_and_rust_config(
     languages: &[language::LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
     language_config: &crate::config::LanguagesConfig,
-    perl_cache_dir: Option<&std::path::Path>,
-    scope: &DiffScopeFilter,
+    intake: DiffIntake<'_>,
 ) -> Result<AnalysisResult, CoreError> {
     pipeline::run_diff_pipeline_with_oracle_policy_and_rust_config(
         options,
@@ -1050,8 +1050,7 @@ pub(crate) fn run_analysis_with_oracle_policy_and_rust_config(
         languages,
         rust_config,
         language_config,
-        perl_cache_dir,
-        scope,
+        intake,
     )
 }
 
@@ -1061,8 +1060,7 @@ pub(crate) fn run_worktree_analysis_with_oracle_policy_and_rust_config(
     languages: &[language::LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
     language_config: &crate::config::LanguagesConfig,
-    perl_cache_dir: Option<&std::path::Path>,
-    scope: &DiffScopeFilter,
+    intake: DiffIntake<'_>,
     disclosure_probes: DisclosureProbes,
 ) -> Result<AnalysisResult, CoreError> {
     pipeline::run_worktree_pipeline_with_oracle_policy_and_rust_config(
@@ -1071,8 +1069,7 @@ pub(crate) fn run_worktree_analysis_with_oracle_policy_and_rust_config(
         languages,
         rust_config,
         language_config,
-        perl_cache_dir,
-        scope,
+        intake,
         disclosure_probes,
     )
 }

@@ -786,8 +786,10 @@ mod tests {
             &[crate::analysis::language::LanguageId::Rust],
             &crate::config::RustLanguageConfig::default(),
             &crate::config::LanguagesConfig::default(),
-            None,
-            &crate::analysis::DiffScopeFilter::default(),
+            crate::analysis::DiffIntake {
+                perl_cache_dir: None,
+                scope: &crate::analysis::DiffScopeFilter::default(),
+            },
             crate::analysis::DisclosureProbes::Run,
         )
         .err()

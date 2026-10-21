@@ -3437,7 +3437,9 @@ fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() ->
     let diff = diff.display().to_string();
     let cap = [("RIPR_MAX_DIFF_CHANGED_RUST_LINES", "5")];
     let run = |extra: &[&str]| {
-        let mut args = vec!["check", "--root", &root, "--diff", &diff, "--json", "--quiet"];
+        let mut args = vec![
+            "check", "--root", &root, "--diff", &diff, "--json", "--quiet",
+        ];
         args.extend_from_slice(extra);
         run_ripr_with_env(&args, &cap)
     };
@@ -3449,7 +3451,10 @@ fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() ->
     assert!(stderr.contains("diff_scope_oversized"), "{stderr}");
     assert!(stderr.contains("--path <glob>"), "{stderr}");
 
-    for flags in [vec!["--exclude", "src/big.rs"], vec!["--path", "src/lib.rs"]] {
+    for flags in [
+        vec!["--exclude", "src/big.rs"],
+        vec!["--path", "src/lib.rs"],
+    ] {
         let output = run(&flags);
         assert_success(&output);
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -3502,7 +3507,13 @@ fn check_scope_flags_turn_an_oversized_diff_into_a_disclosed_partial_result() ->
     assert_eq!(bad.status.code(), Some(2));
     let repo_format = run_ripr_with_env(
         &[
-            "check", "--root", &root, "--format", "repo-exposure-json", "--path", "src/lib.rs",
+            "check",
+            "--root",
+            &root,
+            "--format",
+            "repo-exposure-json",
+            "--path",
+            "src/lib.rs",
         ],
         &cap,
     );

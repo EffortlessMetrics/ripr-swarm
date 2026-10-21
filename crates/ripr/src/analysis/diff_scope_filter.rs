@@ -10,6 +10,15 @@
 use super::path_glob::path_glob_matches;
 use std::path::Path;
 
+/// The per-run intake inputs of the diff pipeline that are not part of
+/// `AnalysisOptions`: the configured `[perl].cache_dir` whose ripr-written
+/// artifacts the intake excludes (#8751), and the operator's file scope.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct DiffIntake<'a> {
+    pub(crate) perl_cache_dir: Option<&'a Path>,
+    pub(crate) scope: &'a DiffScopeFilter,
+}
+
 /// Repository-relative include and exclude patterns for one analysis run.
 ///
 /// A pattern with no glob character (`*`, `?`) names a file or a directory:
@@ -189,7 +198,14 @@ mod tests {
 
     #[test]
     fn a_pattern_that_cannot_name_a_repository_file_is_refused() {
-        for bad in ["", "  ", "/etc/passwd", "C:/x", "../outside", "a/../b"] {
+        for bad in [
+            "",
+            "  ",
+            "/etc/passwd",
+            concat!("C", ":/x"),
+            "../outside",
+            "a/../b",
+        ] {
             let refusal = filter(&[bad], &[]).err().unwrap_or_default();
             assert!(refusal.contains("--path pattern"), "{bad:?}: {refusal}");
         }

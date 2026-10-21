@@ -1664,9 +1664,9 @@ pub(crate) fn is_generated_rust_file(path: &Path) -> bool {
     // A committed Cargo `target/` at the repository root is build output, not
     // source (#9277). Only the first component counts: a nested `target`
     // module or crate directory is ordinary hand-written layout.
-    let build_output_root = path.components().next().is_some_and(|component| {
-        matches!(component, std::path::Component::Normal(value) if value == "target")
-    });
+    let build_output_root = path.components().next().is_some_and(
+        |component| matches!(component, std::path::Component::Normal(value) if value == "target"),
+    );
     conventional_name || generated_directory || build_output_root
 }
 
@@ -6708,10 +6708,14 @@ fn absent_delimiter_boundary_returns_head() {
     #[test]
     fn committed_root_target_is_build_output_but_a_nested_target_module_is_not() {
         // #9277: only the repository-root `target/` is Cargo build output.
-        assert!(is_generated_rust_file(Path::new("target/debug/build/x/out.rs")));
+        assert!(is_generated_rust_file(Path::new(
+            "target/debug/build/x/out.rs"
+        )));
         assert!(is_generated_rust_file(Path::new("target/lib.rs")));
         assert!(!is_generated_rust_file(Path::new("src/target/mod.rs")));
-        assert!(!is_generated_rust_file(Path::new("crates/target/src/lib.rs")));
+        assert!(!is_generated_rust_file(Path::new(
+            "crates/target/src/lib.rs"
+        )));
         assert!(!is_generated_rust_file(Path::new("targets/lib.rs")));
     }
 
