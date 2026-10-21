@@ -218,6 +218,7 @@ pub(crate) fn render_with_config(
     out.push_str("  \"summary\": ");
     summary_json(&mut out, output);
     out.push_str(",\n");
+    let mut analysis_outcome_close_at: Option<usize> = None;
     if let Some(outcome) = &output.analysis_outcome {
         let serialized = serde_json::to_string(outcome).unwrap_or_else(|error| {
             format!(
@@ -233,6 +234,9 @@ pub(crate) fn render_with_config(
         });
         out.push_str("    \"outcome\": ");
         out.push_str(&serialized);
+        // #9010: the findings bound is only known after the array renders, so
+        // remember where a `document_complete` disclosure splices in.
+        analysis_outcome_close_at = Some(out.len());
         out.push_str("\n  },\n");
     }
     out.push_str("  \"findings\": [\n");
@@ -292,6 +296,22 @@ pub(crate) fn render_with_config(
     } else {
         None
     };
+    // #9010: a budget-bounded document must not read as a complete outcome.
+    // `analysis_complete` stays the analysis verdict (no new outcome kind);
+    // this additive, only-when-bounded disclosure sits beside it so the shared
+    // incomplete-outcome predicate can fail closed on a findings prefix.
+    if let (Some(bound), Some(at)) = (findings_bound.as_ref(), analysis_outcome_close_at) {
+        // `at` was recorded before the findings array was appended, so it must
+        // sit on a char boundary inside the buffer.
+        debug_assert!(at <= out.len() && out.is_char_boundary(at));
+        out.insert_str(
+            at,
+            &format!(
+                ",\n    \"document_complete\": false,\n    \"findings_rendered\": {},\n    \"findings_total\": {}",
+                bound.rendered, bound.total
+            ),
+        );
+    }
     // Additive advisory field — emitted only when the caller passed
     // `--suppression-policy` (#1441). Absent otherwise, so existing goldens
     // and consumers without a policy see identical output.
@@ -1151,21 +1171,11 @@ fn evidence_path_values(finding: &Finding) -> Vec<String> {
             crate::output::path::display_path(&test.file),
             test.line,
             test.name,
-            // TRANSITIONAL (#8747): the JSON evidence path keeps the legacy
-            // "none unknown oracle" phrase until its goldens are re-blessed.
-            if matches!(test.oracle_strength, crate::domain::OracleStrength::None) {
-                format!(
-                    "{} {} oracle",
-                    test.oracle_strength.as_str(),
-                    test.oracle_kind.as_str().replace('_', " ")
-                )
-            } else {
-                crate::output::related_test_miss::oracle_projection(
-                    &test.oracle_strength,
-                    &test.oracle_kind,
-                    test.oracle.is_some(),
-                )
-            }
+            crate::output::related_test_miss::oracle_projection(
+                &test.oracle_strength,
+                &test.oracle_kind,
+                test.oracle.is_some(),
+            )
         );
         if let Some(oracle) = &test.oracle {
             value.push_str(&format!(": {oracle}"));

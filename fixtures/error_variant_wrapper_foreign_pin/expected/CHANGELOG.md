@@ -310,7 +310,7 @@ Updated:
 ## Pending — error_variant_wrapper_foreign_pin (24)
 
 Reason:
-RIPR-SPEC-0122: no_static_path Weakness list no longer restates the Evidence block (#9033)
+RIPR-SPEC-0224: JSON evidence_path words a test with no assertion 'uses no oracle' (#8747)
 
 Command:
 `cargo xtask goldens bless error_variant_wrapper_foreign_pin --reason "..."`
@@ -321,6 +321,18 @@ Updated:
 - `expected/human-full.txt`
 
 ## Pending — error_variant_wrapper_foreign_pin (25)
+
+Reason:
+RIPR-SPEC-0122: no_static_path Weakness list no longer restates the Evidence block (#9033)
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_foreign_pin --reason "..."`
+
+Updated:
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_variant_wrapper_foreign_pin (26)
 
 Reason:
 RIPR-SPEC-0122: the digest names an entry the Weakness list still shows, not a no_static_path restatement (#9033)
