@@ -73,29 +73,31 @@ pub(crate) fn rust_include_directives(
         .descendants()
         .filter_map(ast::MacroCall::cast)
     {
-        // The macro-call node spans its attributes too, so the call's own
-        // text starts at its path token: an attributed invocation
-        // (`#[cfg(test)] include!(...)`) would otherwise carry the attribute
-        // prefix into the callee check and be silently dropped.
-        let call_range = macro_call.syntax().text_range();
-        let call_start = macro_call
-            .path()
-            .map(|path| path.syntax().text_range().start())
-            .unwrap_or(call_range.start());
-        let expression = slice_text(text, call_start, call_range.end());
-        let Some((callee, _)) = expression.split_once('!') else {
+        let Some(path) = macro_call.path() else {
             continue;
         };
-        if callee.trim() != "include" {
+        let Some(name) = path.segment().and_then(|segment| segment.name_ref()) else {
+            continue;
+        };
+        // Only bare include calls enter compilation-unit composition. Read
+        // the identifier itself: raw spelling and intervening comments do
+        // not change its name, and comment text may itself contain `!`.
+        if path.qualifier().is_some()
+            || path.coloncolon_token().is_some()
+            || cfg_predicates::rust_ident_name(name.text()) != "include"
+        {
             continue;
         }
+        // Keep diagnostics anchored at the path, outside its attributes.
+        let call_start = path.syntax().text_range().start();
+        let expression = slice_text(text, call_start, macro_call.syntax().text_range().end());
         let attributes = macro_call
             .attrs()
             .map(|attr| attr.syntax().text().to_string())
             .collect::<Vec<_>>();
         directives.push(RustIncludeDirective {
             line: line_index.line(call_start),
-            literal_path: include_literal_path(&expression),
+            literal_path: include_literal_path(&macro_call),
             is_file_level: !macro_call
                 .syntax()
                 .ancestors()
@@ -433,15 +435,16 @@ pub(crate) fn fn_name_binding_count(fn_text: &str, name: &str) -> Option<usize> 
     )
 }
 
-pub(super) fn include_literal_path(expression: &str) -> Option<PathBuf> {
-    let (_, arguments) = expression.split_once('!')?;
-    let arguments = arguments.trim();
-    let arguments = arguments.strip_suffix(';').unwrap_or(arguments).trim();
-    let inner = match (arguments.chars().next()?, arguments.chars().last()?) {
-        ('(', ')') | ('{', '}') | ('[', ']') => arguments.get(1..arguments.len() - 1)?.trim(),
-        _ => return None,
-    };
-    parse_rust_string_literal(inner).map(PathBuf::from)
+pub(super) fn include_literal_path(macro_call: &ast::MacroCall) -> Option<PathBuf> {
+    let token_tree = macro_call.token_tree()?;
+    let mut children = ast::TokenTreeChildren::new(&token_tree);
+    // Count elements before extracting tokens: a nested group must not
+    // disappear and turn a computed/malformed argument into a literal.
+    let literal = children.next()?.into_token()?;
+    if children.next().is_some() || literal.kind() != ra_ap_syntax::SyntaxKind::STRING {
+        return None;
+    }
+    parse_rust_string_literal(literal.text()).map(PathBuf::from)
 }
 
 pub(super) fn parse_rust_string_literal(literal: &str) -> Option<String> {
@@ -4200,6 +4203,65 @@ mod guard_pipeline_debug_tests {
 mod include_directive_tests {
     use super::rust_include_directives;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn include_token_boundaries_preserve_literals_attributes_and_refusals() -> Result<(), String> {
+        for source in [
+            "#[cfg(test)] r#include!(/* path */ \"fragment.rs\" /* tail */);",
+            "#[cfg(test)] include /* ! nested /* block */ */ ![r###\"fragment.rs\"###];",
+            "#[cfg(test)] include // ! comment\n ! /* bang */ {\"fragment.rs\"}",
+        ] {
+            let directives = rust_include_directives(Path::new("src/lib.rs"), source, 16)?;
+            assert_eq!(directives.len(), 1, "{source}");
+            assert_eq!(
+                directives[0].literal_path,
+                Some(PathBuf::from("fragment.rs"))
+            );
+            assert!(directives[0].requires_test, "{source}");
+            assert!(directives[0].is_file_level, "{source}");
+            assert_eq!(directives[0].line, 1);
+            assert!(
+                directives[0].expression.starts_with("include")
+                    || directives[0].expression.starts_with("r#include")
+            );
+        }
+        for arguments in [
+            "concat!(\"fragment\", \".rs\")",
+            "(\"fragment.rs\")",
+            "\"fragment.rs\" {}",
+            "{} \"fragment.rs\"",
+            "\"fragment.rs\" \"other.rs\"",
+            "b\"fragment.rs\"",
+            "c\"fragment.rs\"",
+            "",
+        ] {
+            let source = format!("include!({arguments});");
+            let directives = rust_include_directives(Path::new("src/lib.rs"), &source, 16)?;
+            assert_eq!(directives.len(), 1, "{source}");
+            assert_eq!(directives[0].literal_path, None, "{source}");
+        }
+        for source in [
+            "std::include!(\"fragment.rs\");",
+            "::include!(\"fragment.rs\");",
+            "other_include!(\"fragment.rs\");",
+            "// r#include!(\"fragment.rs\");",
+            "const TEXT: &str = r###\"r#include!(\"fragment.rs\");\"###;",
+        ] {
+            assert!(
+                rust_include_directives(Path::new("src/lib.rs"), source, 16)?.is_empty(),
+                "{source}"
+            );
+        }
+        assert!(
+            rust_include_directives(
+                Path::new("src/lib.rs"),
+                "include!(r###\"fragment.rs\"##);",
+                16
+            )
+            .is_err()
+        );
+        Ok(())
+    }
 
     #[test]
     fn parser_extracts_only_real_include_macros_and_decodes_literals() -> Result<(), String> {

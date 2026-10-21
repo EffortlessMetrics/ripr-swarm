@@ -11388,6 +11388,9 @@ id = "RIPR-SPEC-0169"
 name = "Contextual source-role composition"
 spec = "docs/specs/RIPR-SPEC-0169-contextual-source-role-composition.md"
 tests = [
+  "crates/ripr/tests/rust_include_compilation_unit.rs",
+  "crates/ripr/src/analysis/syntax/ra.rs::include_directive_tests",
+  "crates/ripr/src/analysis/syntax/module_tree.rs::tests::include_token_boundaries_preserve_module_edges",
   "crates/ripr/src/analysis/facts/role_composition.rs::tests",
   "crates/ripr/src/analysis/facts/cfg_predicates/tests.rs",
   "crates/ripr/src/analysis/facts/includes.rs::tests",
@@ -11396,6 +11399,7 @@ tests = [
 ]
 fixtures = []
 code = [
+  "crates/ripr/src/analysis/syntax/module_tree.rs",
   "crates/ripr/src/analysis/facts/role_composition.rs",
   "crates/ripr/src/analysis/facts/model.rs",
   "crates/ripr/src/analysis/facts/includes.rs",

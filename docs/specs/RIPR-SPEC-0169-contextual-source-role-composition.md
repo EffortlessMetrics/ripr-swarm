@@ -152,6 +152,11 @@ file occurrence under a closed rule set:
   the provenance chain records the module edge.
 - `#[cfg(test)] include!("fragment.rs");` beside a production unit: the
   fragment's helpers gain `CfgTestModule` through the include edge.
+- Bare `r#include!` and comments between the macro name, bang, delimiters,
+  and one string-literal argument preserve the same include context. All
+  three delimiters and raw strings remain supported. Nested token groups,
+  computed paths, byte/C strings, and malformed input do not become literal
+  edges; qualified calls retain their existing consumer-specific boundaries.
 - `#[path = "nested/renamed.rs"] mod nested;` with `mod child;` inside
   `renamed.rs`: the child is `nested/child.rs`, not
   `nested/renamed/child.rs`. Likewise, `include!("fragments/body.rs")` with

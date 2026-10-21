@@ -79,12 +79,13 @@ fn semantic_inventory(
         .collect()
 }
 
-#[test]
-fn public_repo_analysis_preserves_literal_include_compilation_unit_and_attribution()
--> Result<(), Box<dyn Error>> {
+fn assert_literal_include_compilation_unit(invocation: &str) -> Result<(), Box<dyn Error>> {
     let included = TempRepo::new("public-include")?;
     let inline = TempRepo::new("public-inline")?;
-    fs::write(included.path().join("src/lib.rs"), parent_source(true))?;
+    fs::write(
+        included.path().join("src/lib.rs"),
+        parent_source(true).replace("include!(\"parser_fragment.rs\");", invocation),
+    )?;
     fs::write(
         included.path().join("src/parser_fragment.rs"),
         r#"
@@ -144,5 +145,27 @@ impl Parser {
         semantic_inventory(&inline_output, Path::new("src/lib.rs")),
         "inline and include representations must agree modulo source location"
     );
+    Ok(())
+}
+
+#[test]
+fn public_repo_analysis_preserves_literal_include_compilation_unit_and_attribution()
+-> Result<(), Box<dyn Error>> {
+    assert_literal_include_compilation_unit("include!(\"parser_fragment.rs\");")
+}
+
+#[test]
+fn public_repo_analysis_preserves_include_token_boundaries() -> Result<(), Box<dyn Error>> {
+    for invocation in [
+        "r#include!(\"parser_fragment.rs\");",
+        "include /* ! nested /* block */ */ !(\"parser_fragment.rs\");",
+        "include! /* bang */ (/* path */ \"parser_fragment.rs\" /* tail */);",
+        "include // ! comment\n !(\"parser_fragment.rs\");",
+        "include![r###\"parser_fragment.rs\"###];",
+        "include!{r###\"parser_fragment.rs\"###}",
+        "#[allow(dead_code)] r#include!(/* path */ \"parser_fragment.rs\");",
+    ] {
+        assert_literal_include_compilation_unit(invocation)?;
+    }
     Ok(())
 }

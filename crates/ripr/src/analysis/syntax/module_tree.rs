@@ -232,7 +232,7 @@ pub(crate) fn rust_module_tree_scan(text: &str) -> RustModuleTreeScan {
             .or_else(|| callee.strip_prefix("core::"))
             .or_else(|| callee.strip_prefix("alloc::"))
             .unwrap_or(callee);
-        if callee != "include" {
+        if rust_ident_name(callee) != "include" {
             // A macro from any crate can expand to `mod x;` without
             // spelling `mod` here, so its expansion is unknown. Std macros
             // that cannot declare modules are the only exception.
@@ -264,12 +264,7 @@ pub(crate) fn rust_module_tree_scan(text: &str) -> RustModuleTreeScan {
             }
             continue;
         }
-        // The node spans the call's attributes too; the expression starts at
-        // the macro path.
-        let start: usize = path.syntax().text_range().start().into();
-        let end: usize = macro_call.syntax().text_range().end().into();
-        let expression = text.get(start..end).unwrap_or_default();
-        match include_literal_path(expression) {
+        match include_literal_path(&macro_call) {
             Some(target) => scan.edges.push(RustModuleTreeEdge::Include(target)),
             // Includes build output (`OUT_DIR`) or a computed path. Generated
             // code can declare `#[path]` modules, so either is unknown.
@@ -634,5 +629,33 @@ mod tests {
                 RustModuleTreeEdge::Include(PathBuf::from("frag.rs")),
             ]
         );
+    }
+
+    #[test]
+    fn include_token_boundaries_preserve_module_edges() {
+        for source in [
+            "r#include!(\"fragment.rs\");",
+            "include /* ! */ !(/* path */ r###\"fragment.rs\"### /* tail */);",
+            "#[cfg(test)] r#include!{\"fragment.rs\"}",
+            "std::r#include![\"fragment.rs\"];",
+        ] {
+            let scan = rust_module_tree_scan(source);
+            assert!(scan.complete && scan.items_complete, "{source}: {scan:?}");
+            assert_eq!(
+                scan.edges,
+                vec![RustModuleTreeEdge::Include(PathBuf::from("fragment.rs"))],
+                "{source}"
+            );
+        }
+        for source in [
+            "include!(concat!(\"fragment\", \".rs\"));",
+            "include!(\"fragment.rs\" {});",
+            "other_include!(\"fragment.rs\");",
+            "include!(r###\"fragment.rs\"##);",
+        ] {
+            let scan = rust_module_tree_scan(source);
+            assert!(!scan.complete && !scan.items_complete, "{source}: {scan:?}");
+            assert!(scan.edges.is_empty(), "{source}: {scan:?}");
+        }
     }
 }
