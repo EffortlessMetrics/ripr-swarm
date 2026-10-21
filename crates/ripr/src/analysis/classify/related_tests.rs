@@ -1581,6 +1581,43 @@ fn declares_module(stripped: &str, name: &str) -> bool {
     })
 }
 
+/// Whether comment-and-string-stripped `source` may bind `name` to something
+/// other than a crate: an item (`mod`/`fn`/`struct`/`enum`/`union`/`trait`/
+/// `type`/`const`/`static`) or a `let`/`mut` binding named `name`, a closure
+/// parameter (`|name|`) or a typed parameter/field (`name:` but not `name::`).
+/// Conservative on purpose: any such mention refuses.
+fn file_may_bind_name(stripped: &str, name: &str) -> bool {
+    const BINDERS: [&str; 11] = [
+        "mod", "fn", "struct", "enum", "union", "trait", "type", "const", "static", "let", "mut",
+    ];
+    let bytes = stripped.as_bytes();
+    let mut previous_word = "";
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if !is_ident_char(char::from(bytes[index])) {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < bytes.len() && is_ident_char(char::from(bytes[index])) {
+            index += 1;
+        }
+        let word = &stripped[start..index];
+        if word == name {
+            let before = stripped[..start].trim_end().chars().next_back();
+            let after = stripped[index..].trim_start();
+            if BINDERS.contains(&previous_word)
+                || before == Some('|')
+                || (after.starts_with(':') && !after.starts_with("::"))
+            {
+                return true;
+            }
+        }
+        previous_word = word;
+    }
+    false
+}
+
 /// #8999: whether `call_text` is an integration test's call of the helper
 /// chain's entry `caller`, spelled through the package's own library name
 /// (`rr::order_discount(..)` with no `use`).
@@ -1589,10 +1626,10 @@ fn declares_module(stripped: &str, name: &str) -> bool {
 /// the test sits under `tests/` of the root package, the entry is a
 /// module-level item of that package's `src/lib.rs` (a recognized library
 /// root, so a binary's modules never match), and the call is spelled exactly
-/// `<crate>::<entry>(` with `<crate>` one of the root manifest's package or
-/// `[lib]` names. A test that declares or renames that crate name, binds the
-/// entry name locally, or any workspace member / nested package / absolute
-/// path keeps the existing refusal.
+/// `<crate>::<entry>(` with `<crate>` the root manifest's library identifier
+/// (`[lib] name`, else the package name). A test that declares, renames or imports that crate name
+/// (or globs anything), binds it locally, or any workspace member / nested
+/// package / absolute path keeps the existing refusal.
 fn own_crate_qualified_entry_call(
     index: &RustIndex,
     test: &TestSummary,
@@ -1617,13 +1654,30 @@ fn own_crate_qualified_entry_call(
     let Some(facts) = index.files().get(&test.file) else {
         return false;
     };
+    // The one identifier the package's library is imported as: `[lib] name`
+    // when set, else the package name (hyphens folded). The package name is
+    // not a second spelling when `[lib] name` differs.
+    let Some(crate_name) = index.root_library_name.as_deref() else {
+        return false;
+    };
     let stripped_file = strip_comments_and_strings(&facts.source);
-    index.package_names.iter().any(|crate_name| {
-        is_qualified_owner_call(call_text, &format!("{crate_name}::{}", caller.name))
-            && !declares_module(&stripped_file, crate_name)
-            && !body_binds_owner_name(&test.body, crate_name)
-            && !super::owner_pin::file_renames_to(&facts.source, crate_name)
-    })
+    // Any import that may bind the crate name to something else, in the
+    // file or in the test body: a glob, or a path ending in that name
+    // (`use some_dep::qual_reach;`). `as` renames are read by
+    // `file_renames_to`.
+    let may_rebind_crate_name = |source: &str| {
+        super::reveal::flattened_use_paths(source)
+            .iter()
+            .any(|import| {
+                import.path.ends_with('*') || import.path.rsplit("::").next() == Some(crate_name)
+            })
+    };
+    is_qualified_owner_call(call_text, &format!("{crate_name}::{}", caller.name))
+        && !file_may_bind_name(&stripped_file, crate_name)
+        && !body_binds_owner_name(&test.body, crate_name)
+        && !super::owner_pin::file_renames_to(&facts.source, crate_name)
+        && !may_rebind_crate_name(&facts.source)
+        && !may_rebind_crate_name(&test.body)
 }
 
 /// Whether `text` invokes the owner through the dependency's declared name,

@@ -242,15 +242,18 @@ can only hint that a caller "may lead here" without changing anything.
 - The test-to-entry edge is a direct free-function call. One qualified
   spelling also counts (#8999): an integration test under `tests/` of the
   root package calling a crate-root item of that package's `src/lib.rs`
-  as `<package or [lib] name>::entry(..)` with no `use`. The qualifier must
-  be exactly the root manifest's package or `[lib]` identifier directly
-  before the entry, so a longer path, another crate name, a module or `as`
-  rename of that name in the test, a local binding of it, a workspace
-  member or nested package, an absolute path, a non-root or non-library
-  entry (a `src/main.rs` or `src/bin` module, an inline `mod` item) and a
-  shadowed entry keep the existing refusal. The edge carries relation only:
-  argument rows and entry pairing still read a direct call site, so a
-  qualified call earns no value credit it cannot read.
+  as `<lib>::entry(..)` with no `use`, where `<lib>` is the root manifest's
+  `[lib] name`, else its package name with hyphens folded to underscores
+  (the package name is not a second spelling when `[lib] name` differs; a
+  moved `[lib] path` admits nothing). It is refused for a longer path,
+  another crate name, a test file that declares any item, `let`, closure
+  or typed parameter named like the crate, aliases anything to that name
+  (`use x as <lib>`), imports a path ending in it, or has any glob import, a unit test inside `src/`, a workspace member's entry, a
+  `src/main.rs` entry, and an entry inside an inline `mod`. The edge
+  carries relation only: argument rows and entry pairing still read a
+  direct call site, so a qualified call earns no value credit it cannot
+  read. (A path-form guard for absolute paths exists in code as defense in
+  depth; no test exercises it.)
 - Every unsupported edge is named, never silently dropped: non-unique
   callee, incomplete workspace index, recursion, multiple callers,
   multiple call sites, computed (non-literal, non-parameter)
@@ -366,7 +369,7 @@ call operand); fixtures `helper_chain_{one_hop,multi_hop,controls}`;
 `crates/ripr/tests/helper_wrapper_reach.rs` (relation precedence, hop
 propagation stop, rebinding stop);
 `crates/ripr/tests/crate_qualified_entry_reach.rs` (own-crate qualified
-entry call and its refusals).
+entry call, `[lib] name` and hyphen spellings, and each refusal above).
 
 ## Non-Goals
 
