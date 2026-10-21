@@ -1027,14 +1027,17 @@ fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
                         .is_some_and(|tail| tail == ".rs" || tail.starts_with('/'))
                 })
         }),
+        // The retained Rust gates include workspace/all-target Clippy and
+        // test-source policy. Include package tests, examples and build scripts,
+        // with anchored roots so fixture lookalikes keep their own category.
         rust_src: files.iter().any(|f| {
             f == "Cargo.lock"
                 || f == "Cargo.toml"
                 || f.ends_with("/Cargo.toml")
                 || (f.ends_with(".rs")
-                    && (f.contains("crates/ripr/src")
-                        || f.contains("xtask/src")
-                        || f.starts_with("tools/repo-policy/")))
+                    && ["crates/ripr/", "xtask/", "tools/repo-policy/"]
+                        .iter()
+                        .any(|root| f.starts_with(root)))
         }),
         workflow: files.iter().any(|f| f.starts_with(".github/workflows/")),
         policy: files
@@ -1146,6 +1149,51 @@ mod check_fast_selector_tests {
         Ok(())
     }
 
+    #[test]
+    fn workspace_rust_targets_select_existing_rust_gates() {
+        for path in [
+            "crates/ripr/src/lib.rs",
+            "crates/ripr/tests/agent_stub_compiles.rs",
+            "crates/ripr/tests/cli_smoke/workflow_directory.rs",
+            "crates/ripr/build.rs",
+            "crates/ripr/examples/check_diff.rs",
+            "xtask/src/main.rs",
+            "xtask/tests/spec_format_determinism.rs",
+            "xtask/examples/mandatory_partitions.rs",
+            "tools/repo-policy/src/lib.rs",
+            "tools/repo-policy/tests/frontdoor.rs",
+            "tools/repo-policy/build.rs",
+            "tools/repo-policy/examples/inventory.rs",
+            "Cargo.toml",
+            "Cargo.lock",
+            "crates/ripr/Cargo.toml",
+        ] {
+            assert!(
+                categorize_changed_files(&[path.to_string()]).rust_src,
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn non_workspace_rust_and_near_prefixes_keep_existing_categories() {
+        assert!(!categorize_changed_files(&[]).rust_src);
+        for path in [
+            "docs/selector.md",
+            "crates/ripr/tests/README.md",
+            "crates/ripr-not/src/lib.rs",
+            "xtask-not/src/main.rs",
+            "tools/repo-policy-not/src/lib.rs",
+            "fixtures/crates/ripr/src/lib.rs",
+            "fixtures/xtask/src/main.rs",
+            "fixtures/control/input/src/lib.rs",
+        ] {
+            let categories = categorize_changed_files(&[path.to_string()]);
+            assert!(!categories.rust_src, "{path}");
+            assert_eq!(categories.fixture, path.starts_with("fixtures/"), "{path}");
+        }
+    }
+
     fn run_fixture_git(root: &std::path::Path, args: &[&str]) -> Result<(), String> {
         // Route through the centralized runner: process policy allows one
         // raw spawn literal in this file (the gate-runner git-diff site),
@@ -1242,6 +1290,56 @@ mod check_fast_selector_tests {
             ));
         }
         Ok(())
+    }
+
+    #[test]
+    fn committed_workspace_test_changes_select_rust_gates() -> Result<(), String> {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "ripr-check-fast-workspace-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let result = (|| {
+            let git = |args: &[&str]| run_fixture_git(&root, args);
+            git(&["init", "--initial-branch=main"])?;
+            git(&["config", "user.email", "ripr@example.invalid"])?;
+            git(&["config", "user.name", "ripr test"])?;
+            std::fs::write(root.join("README.md"), "baseline\n")
+                .map_err(|error| error.to_string())?;
+            git(&["add", "."])?;
+            git(&["commit", "-m", "baseline"])?;
+            git(&["update-ref", "refs/remotes/origin/main", "HEAD"])?;
+            if !changed_files_vs_base(&root)?.is_empty() {
+                return Err("clean selector fixture was not empty".to_string());
+            }
+            for path in ["crates/ripr/tests/changed.rs", "xtask/tests/changed.rs"] {
+                let file = root.join(path);
+                let parent = file.parent().ok_or("fixture path has no parent")?;
+                std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+                std::fs::write(file, "// changed Rust test\n")
+                    .map_err(|error| error.to_string())?;
+            }
+            git(&["add", "."])?;
+            git(&["commit", "-m", "workspace tests"])?;
+            let paths = changed_files_vs_base(&root)?;
+            if paths != ["crates/ripr/tests/changed.rs", "xtask/tests/changed.rs"] {
+                return Err(format!("unexpected native selector paths: {paths:?}"));
+            }
+            for path in paths {
+                if !categorize_changed_files(std::slice::from_ref(&path)).rust_src {
+                    return Err(format!(
+                        "workspace Rust test did not select Rust gates: {path}"
+                    ));
+                }
+            }
+            Ok(())
+        })();
+        let cleanup = std::fs::remove_dir_all(&root).map_err(|error| error.to_string());
+        result.and(cleanup)
     }
 
     #[test]

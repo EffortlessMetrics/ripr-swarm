@@ -1240,7 +1240,14 @@ would. Such an assertion is a pin when:
    optionally negated by one `!`. A conjunction, a comparison, a chained
    call or a double negation pins nothing about the owner's result. Message
    arguments do not decide whether the test fails and are not read.
-3. Every other rule above holds unchanged: execution and macro admission
+3. (#9074) The condition may instead be one plain identifier (optionally negated by
+   one `!`) that the test binds once with an immutable `let` to a complete
+   owner call, read under the same binding rules as `assert_eq!(binding, true)`
+   (RIPR-SPEC-0225 rule 1): the binding is a scalar used only as a whole
+   operand of assertions after the `let`, once in this assertion. A `mut` or
+   reassigned binding, a disjunction (`assert!(hit || other)`), a copy or
+   other non-assertion use, or a binding named in the message refuses.
+4. Every other rule above holds unchanged: execution and macro admission
    (the parser collects `assert!` invocations alongside `assert_eq!`), call
    identity and binding defeats, `#[should_panic]`, and the return-path
    gate. A bool owner with an early `return` has no `Ok`/`Some` head, so the
@@ -2330,12 +2337,14 @@ assertions. This repair shares the existing callback without that larger migrati
   imported, ambiguous, shadowed and disabled declarations. The property
   quarantine integration retains its named/direct/helper mixed positives.
   The execution fixtures and their JSON/human outputs are mapped in `.ripr/traceability.toml`.
-  `bool_owner_assert_pin_matched_static_and_runtime_controls` runs thirteen
-  bool-owner layouts (both boundary sides, let-bound inputs, far inputs
-  only, one side only, a shadowing closure, an uncalled closure, a boundary
-  call or binding only in a message argument or an operand comment, and a boundary call left
-  unasserted on the assertion's line) against the rewrite and a `<`
-  mutant; only the two `exposed` layouts fail on the mutant.
+  `bool_owner_assert_pin_matched_static_and_runtime_controls` runs seventeen
+  bool-owner layouts (both boundary sides, let-bound inputs and let-bound
+  results, a crate-qualified call, far inputs only, one side only, a
+  let-bound disjunction, a reassigned mutable binding, a shadowing closure, an
+  uncalled closure, a boundary call or binding only in a message argument or
+  an operand comment, and a boundary call left unasserted on the assertion's
+  line) against the rewrite and a `<` mutant; only the four `exposed` layouts
+  fail on the mutant.
   `unit_struct_receiver_matched_static_and_runtime_controls` (#7083) pins a
   kept trait default through `Unit.advance()` and through `let unit = Unit;`,
   and refuses an impl that overrides the default; only the two `exposed`
