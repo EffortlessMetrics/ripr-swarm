@@ -23334,13 +23334,14 @@ fn check_default_base_with_clean_worktree_keeps_no_scope_note_only() -> Result<(
             "empty default-base run must keep the no-scope disclosure (base-naming form per #4012); got:\n{stdout}"
         ));
     }
-    // Clean-install walk (0.11): Start-here must name the flag that analyzes
-    // uncommitted edits, not only "make a change". "tracked" per #5258: the
-    // runtime wording must match `check --help` and cannot promise that
-    // `--worktree` covers untracked files.
-    if !stdout.contains("add `--worktree` to include uncommitted tracked edits") {
+    // Clean-install walk (0.11): on the base branch Start-here says the tree
+    // is already the comparison base and names the next edit, instead of
+    // suggesting `--worktree` for a clean tree.
+    if !stdout
+        .contains("you are on `main`, which is the comparison base; edit a tracked source file")
+    {
         return Err(format!(
-            "empty-range Start-here must name `--worktree` for tracked edits; got:\n{stdout}"
+            "empty-range Start-here on the base branch must say so and name the next edit; got:\n{stdout}"
         ));
     }
     // RIPR-SPEC-0116 amendment: a clean tree (an untracked non-source file
