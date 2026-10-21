@@ -60,6 +60,9 @@ mod javascript_awaited_roots;
 #[path = "cli_smoke/mixed_quote_rename.rs"]
 mod mixed_quote_rename;
 #[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/mutation_calibration_provenance.rs"]
+mod mutation_calibration_provenance;
+#[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/native_fanout.rs"]
 mod native_fanout;
 #[path = "cli_smoke/next_action.rs"]
@@ -14908,8 +14911,8 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     // pins the end-to-end wiring and consistency.
     let generator = env!("CARGO_PKG_VERSION");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let warned = stderr.contains("is a development version");
-    if warned {
+    let noted = stderr.contains("is a development version");
+    if noted {
         // The pin is compiled into the binary, so the note must say to
         // upgrade ripr before refreshing (the same old binary re-pins).
         let upgrade_at = stderr.find("upgrade ripr, then refresh");
@@ -18098,6 +18101,9 @@ fn pilot_names_typescript_diff_first_route_when_repo_has_no_rust_seams() -> Resu
                 "package.json",
                 "{\"name\":\"pilot-lang-ts\",\"version\":\"0.0.0\"}\n",
             ),
+            // Pinned: with no ripr.toml, TypeScript project detection would
+            // enable the preview; this test covers the disabled-route wording.
+            ("ripr.toml", "[languages]\nenabled = [\"rust\"]\n"),
             ("src/pricing.ts", base),
             (
                 "tests/pricing.test.ts",
@@ -19467,7 +19473,7 @@ fn calibrate_cargo_mutants_writes_json_when_requested() -> Result<(), String> {
 
     let json =
         std::fs::read_to_string(&out_path).map_err(|e| format!("read calibration json: {e}"))?;
-    assert!(json.contains(r#""schema_version": "0.2""#));
+    assert!(json.contains(r#""schema_version": "0.3""#));
     assert!(json.contains(r#""status": "advisory""#));
     assert!(json.contains(r#""agreement""#));
     assert!(json.contains(r#""matches""#));
@@ -19518,8 +19524,8 @@ fn calibrate_foreign_same_line_join_discloses_missing_head() -> Result<(), Strin
         "identity-free snapshot plus cargo-mutants JSON must warn on stderr:\n{stderr}"
     );
     assert!(
-        !stdout.contains("does not carry a head SHA"),
-        "the caveat is stderr-only so JSON/markdown stdout stays the report:\n{stdout}"
+        stdout.contains("does not carry a head SHA"),
+        "the saved Markdown must retain the provenance caveat:\n{stdout}"
     );
 
     ignore_remove_dir_all(&workspace);
@@ -19582,7 +19588,7 @@ fn calibrate_mutants_json_only_directory_discloses_unexecuted_denominator() -> R
 
 /// A headed snapshot names the assumed subject; cargo-mutants still has no
 /// head, so the same-repo caveat remains. JSON written with `--out` must
-/// stay free of the stderr sentence.
+/// retain the full disclosure printed on stderr.
 #[test]
 fn calibrate_headed_snapshot_names_the_assumed_subject() -> Result<(), String> {
     let workspace = unique_temp_workspace("calibrate-headed-snapshot");
@@ -19634,8 +19640,12 @@ fn calibrate_headed_snapshot_names_the_assumed_subject() -> Result<(), String> {
     let json =
         std::fs::read_to_string(&out_path).map_err(|e| format!("read calibration json: {e}"))?;
     assert!(
-        !json.contains("does not carry a head SHA") && !json.contains(head),
-        "JSON report schema is unchanged; provenance stays on stderr:\n{json}"
+        json.contains("does not carry a head SHA"),
+        "the saved JSON must retain the provenance caveat:\n{json}"
+    );
+    assert!(
+        json.contains(head),
+        "the JSON report now carries in-band provenance naming the snapshot head (#8753):\n{json}"
     );
     assert!(
         json.contains(r#""join_method": "file_line""#),
@@ -19798,7 +19808,7 @@ fn calibration_span_containment_atuin_fixture_matches_checked_reports() -> Resul
     let fixture = root.join("fixtures/boundary_gap/calibration/span-containment-atuin");
     let value = assert_calibration_fixture_matches_checked_reports(&fixture)?;
 
-    assert_eq!(value["schema_version"], "0.2");
+    assert_eq!(value["schema_version"], "0.3");
     assert_eq!(value["metrics"]["mutants_total"], 27);
     assert_eq!(
         value["metrics"]["join_method_counts"]["span_containment"],

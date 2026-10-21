@@ -54,7 +54,7 @@ const SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v2";
 /// `crates/ripr/src/output/mutation_calibration.rs`; xtask is a separate crate
 /// and cannot import it, so the supported set is duplicated here with this
 /// pointer at the owner (RIPR-SPEC-0292). 0.2 carries the span-containment
-/// join and explicit span-overlap and unmatched reasons; 0.3 (RIPR-SPEC-0286,
+/// join and explicit span-overlap and unmatched reasons; 0.3 (RIPR-SPEC-0294,
 /// PR #8988) adds provenance and how_to_read without changing that shape.
 const SUPPORTED_CALIBRATION_SCHEMA_VERSIONS: &[&str] = &["0.2", "0.3"];
 const CANONICAL_PRECISE: &str = "canonical_precise";
@@ -798,7 +798,7 @@ fn classify_records(
         .unwrap_or("missing");
     if !SUPPORTED_CALIBRATION_SCHEMA_VERSIONS.contains(&schema) {
         return Err(format!(
-            "mutation calibration schema `{schema}` is not one the spot check classifies; supported calibration schema versions: {}. The renderer's current schema version is owned by `MUTATION_CALIBRATION_SCHEMA_VERSION` in crates/ripr/src/output/mutation_calibration.rs (0.2 before RIPR-SPEC-0286, 0.3 after it); rebuild ripr and re-run `cargo xtask mutation-spot-check` so the calibration JSON it feeds the harness carries a supported schema",
+            "mutation calibration schema `{schema}` is not one the spot check classifies; supported calibration schema versions: {}. The renderer's current schema version is owned by `MUTATION_CALIBRATION_SCHEMA_VERSION` in crates/ripr/src/output/mutation_calibration.rs (0.2 before RIPR-SPEC-0294, 0.3 after it); rebuild ripr and re-run `cargo xtask mutation-spot-check` so the calibration JSON it feeds the harness carries a supported schema",
             SUPPORTED_CALIBRATION_SCHEMA_VERSIONS.join(", ")
         ));
     }
@@ -1694,6 +1694,14 @@ mod tests {
             "BinaryOperator".to_string(),
         )]);
         let records = classify_records(&calibration, &exposure, &genres)?;
+        let mut v3 = calibration.clone();
+        v3["schema_version"] = json!("0.3");
+        v3["provenance"] = json!({
+            "repo_exposure_head": null, "mutants_head": null, "verdict": "no_head_recorded",
+            "disclosure": "Neither artifact names a head; qualification remains advisory."
+        });
+        let v3_records = classify_records(&v3, &exposure, &genres)?;
+        assert_eq!(v3_records, records);
         assert_eq!(records[0].disposition, "canonical_precise");
         assert_eq!(records[0].operator_token, "absent");
         let report = build_report(&[repo_run(records)], 5, TEST_ANALYZER);
@@ -1743,6 +1751,26 @@ mod tests {
         assert_eq!(
             classify_records(&partial, &Value::Null, &genres).map(|records| records.len()),
             Ok(1)
+        );
+        let mut v3 = partial.clone();
+        v3["schema_version"] = json!("0.3");
+        v3["provenance"] = json!({"repo_exposure_head": null, "mutants_head": null, "verdict": "no_head_recorded", "disclosure": "No recorded heads."});
+        assert_eq!(
+            classify_records(&v3, &Value::Null, &genres),
+            classify_records(&partial, &Value::Null, &genres)
+        );
+        v3["metrics"]["mutants_total"] = json!(2);
+        assert!(
+            classify_records(&v3, &Value::Null, &genres).is_err_and(
+                |err| err.contains("lists 1 runtime records but reports mutants_total 2")
+            )
+        );
+        v3["schema_version"] = json!("0.4");
+        assert!(
+            classify_records(&v3, &Value::Null, &genres)
+                .is_err_and(|err| err.contains("schema `0.4`")
+                    && err.contains("supported calibration schema versions: 0.2, 0.3")
+                    && err.contains("MUTATION_CALIBRATION_SCHEMA_VERSION"))
         );
         partial["metrics"]["mutants_total"] = json!(2);
         assert!(

@@ -1,7 +1,7 @@
 use super::super::rust_index::{FunctionSummary, TestSummary, extract_literals};
 use super::activation::{
     boundary_constant_operand_name, comparison_operands, has_observed_boundary_equality,
-    is_computed_value_expression, is_returned_comparison, owner_input_values,
+    is_computed_value_expression, owner_input_values, returned_comparison_view,
 };
 use super::owner_pin::short_circuit::ShortCircuitTail;
 use crate::analysis::probes::same_connectives;
@@ -270,8 +270,9 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
     // discriminator reads the predicate lens's gap, never a better reading:
     // only a `weak` result replaces the return-value reading, which is
     // otherwise unchanged (#9094).
-    if is_returned_comparison(probe) && !activation.missing_discriminators.is_empty() {
-        let mut predicate = probe.clone();
+    if let Some(mut predicate) = returned_comparison_view(probe)
+        && !activation.missing_discriminators.is_empty()
+    {
         predicate.family = ProbeFamily::Predicate;
         let evidence = infection_evidence_for_owner(
             &predicate,

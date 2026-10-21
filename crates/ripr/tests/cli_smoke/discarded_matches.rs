@@ -346,7 +346,7 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                             "{id}: full human output must retain the exact no-observer class"
                         );
                         let no_assertion_row =
-                            format!("{projection}none unknown oracle; misses: has no assertion");
+                            format!("{projection}no oracle; misses: has no assertion");
                         assert!(
                             human_full_text
                                 .lines()
