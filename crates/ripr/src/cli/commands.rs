@@ -3279,7 +3279,12 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
         .transpose()?;
     let config = load_for_root(&input.root)?;
     apply_to_check_input(&mut input, &config, explicit);
-    let worktree = worktree || dirty_tree_default_is_worktree(&input, from_artifact.is_some());
+    let worktree = worktree
+        || dirty_tree_default_is_worktree(
+            &input,
+            from_artifact.is_some(),
+            base_explicitly_provided,
+        );
     let Some(selector) = selector else {
         return Err(missing_selector_error(
             "missing finding selector",
@@ -3372,9 +3377,16 @@ pub(super) fn resolve_worktree_root(
 /// must resolve those ids against the same subject, so a live-repository
 /// drill-in without a supplied scope (`--diff`, `--from`, candidate tree)
 /// follows the shared `app::diff_source` default instead of re-analysing
-/// committed history only.
-pub(super) fn dirty_tree_default_is_worktree(input: &CheckInput, from_artifact: bool) -> bool {
+/// committed history only. An explicit `--base` keeps the committed scope.
+pub(super) fn dirty_tree_default_is_worktree(
+    input: &CheckInput,
+    from_artifact: bool,
+    base_explicit: bool,
+) -> bool {
+    // An explicit `--base` without `--worktree` pins the committed range
+    // (#7328): recovery routes replay it with `--committed`.
     !from_artifact
+        && !base_explicit
         && input.diff_file.is_none()
         && input.git_candidate.is_none()
         && app::diff_source::select_live_diff_source(

@@ -24155,19 +24155,14 @@ fn dirty_tree_default_check_ids_resolve_in_explain_and_context() -> Result<(), S
     .map_err(|err| format!("write dirty lib.rs: {err}"))?;
     let root_str = root.to_string_lossy().into_owned();
 
-    // No `--worktree` anywhere: `check` picks the dirty tree by default.
-    let listed = run_ripr(&["check", "--root", &root_str, "--base", "HEAD", "--json"]);
+    // No `--worktree` or `--base` anywhere: `check` picks the dirty tree by
+    // default, and an explicit `--base` on explain/context keeps the committed
+    // scope (#7328), so the drill-in follows the default route.
+    let listed = run_ripr(&["check", "--root", &root_str, "--json"]);
     assert_success(&listed);
     let finding_id = first_finding_id(&listed.stdout)?;
 
-    let explained = run_ripr(&[
-        "explain",
-        "--root",
-        &root_str,
-        "--base",
-        "HEAD",
-        &finding_id,
-    ]);
+    let explained = run_ripr(&["explain", "--root", &root_str, &finding_id]);
     assert_success(&explained);
     let explanation = String::from_utf8_lossy(&explained.stdout).into_owned();
     if !explanation.contains(&format!("id: {finding_id}")) {
@@ -24176,15 +24171,7 @@ fn dirty_tree_default_check_ids_resolve_in_explain_and_context() -> Result<(), S
         ));
     }
 
-    let context = run_ripr(&[
-        "context",
-        "--root",
-        &root_str,
-        "--base",
-        "HEAD",
-        "--at",
-        &finding_id,
-    ]);
+    let context = run_ripr(&["context", "--root", &root_str, "--at", &finding_id]);
     assert_success(&context);
     let packet: serde_json::Value = serde_json::from_slice(&context.stdout)
         .map_err(|err| format!("parse context JSON: {err}"))?;
@@ -24315,11 +24302,15 @@ fn check_worktree_drill_in_commands_reach_the_uncommitted_finding() -> Result<()
         ));
     }
 
-    // Negative controls on the printed command itself: a corrupted selector
-    // misses. Dropping `--worktree` on a dirty tree follows `check`'s default
-    // and still resolves the uncommitted finding.
-    let defaulted = run_printed(&printed_explain.replace(" --worktree", ""))?;
-    assert_success(&defaulted);
+    // Negative controls on the printed command itself: dropping `--worktree`
+    // replays committed history, where the finding does not exist, and a
+    // corrupted selector misses.
+    let committed = run_printed(&printed_explain.replace(" --worktree", ""))?;
+    if committed.status.success() {
+        return Err(
+            "the printed explain without --worktree must miss the uncommitted finding".to_string(),
+        );
+    }
     let corrupted = run_printed(&printed_explain.replace(&finding_id, "probe:no-such-finding"))?;
     if corrupted.status.success() {
         return Err("a corrupted printed selector must miss".to_string());
@@ -24585,21 +24576,48 @@ fn explain_context_miss_names_the_worktree_route_when_uncommitted_edits_exist() 
         return Err("the committed listing must not contain the worktree finding".to_string());
     }
 
-    // The copied id on a repository with uncommitted tracked edits now
-    // resolves: `explain` / `context` follow `check`'s dirty-tree default, so
-    // the former committed-history dead-end (#7328) is no longer reachable
-    // without a supplied scope.
-    for command in ["explain", "context"] {
+    // The copied-id miss on a repository with uncommitted tracked edits:
+    // the message names the scope-bound worktree retry (same root and base
+    // as the failed run, #7328 review) and the worktree listing.
+    for (command, retry) in [
+        (
+            "explain",
+            format!("ripr explain --root {root_str} --base 'HEAD~1' --worktree {finding_id}"),
+        ),
+        (
+            "context",
+            format!("ripr context --root {root_str} --base 'HEAD~1' --worktree --at {finding_id}"),
+        ),
+    ] {
         let mut args = vec![command, "--root", root_str.as_str(), "--base", "HEAD~1"];
         if command == "context" {
             args.push("--at");
         }
         args.push(finding_id.as_str());
-        let resolved = run_ripr(&args);
-        assert_success(&resolved);
-        if !String::from_utf8_lossy(&resolved.stdout).contains(&finding_id) {
+        let miss = run_ripr(&args);
+        if miss.status.success() || !miss.stdout.is_empty() {
             return Err(format!(
-                "{command} must resolve the dirty-tree finding {finding_id}: {resolved:?}"
+                "{command} miss changed the CLI failure contract: {miss:?}"
+            ));
+        }
+        let stderr = String::from_utf8_lossy(&miss.stderr);
+        if !stderr.contains("not analyzed without `--worktree`")
+            || !stderr.contains("Uncommitted tracked edits exist")
+        {
+            return Err(format!(
+                "{command} miss must disclose the uncommitted-edits cause:\n{stderr}"
+            ));
+        }
+        if !stderr.contains(&retry) {
+            return Err(format!(
+                "{command} miss must name the working retry `{retry}`:\n{stderr}"
+            ));
+        }
+        if !stderr.contains(&format!(
+            "ripr check --root {root_str} --base 'HEAD~1' --worktree --json"
+        )) {
+            return Err(format!(
+                "{command} miss must name the worktree listing for this run's root/base:\n{stderr}"
             ));
         }
     }
