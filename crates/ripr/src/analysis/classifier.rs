@@ -113,15 +113,13 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
 }
 
 /// Whether the changed code is proc-macro code: its package builds a
-/// `proc-macro = true` library, or its file declares a `proc_macro`,
-/// `proc_macro_derive` or `proc_macro_attribute` entry point.
+/// `proc-macro = true` library (`[lib] proc-macro`/`proc_macro`). Manifest
+/// authority is package-wide: every file of such a package is proc-macro
+/// crate code, whether or not the changed function is itself an entry point.
+/// There is deliberately no source-text fallback; a marker in a comment or
+/// string would downgrade findings in ordinary crates.
 fn is_proc_macro_code(index: &RustIndex, file: &std::path::Path) -> bool {
     index.member_crates.is_proc_macro_crate(file)
-        || index.files().get(file).is_some_and(|facts| {
-            ["proc_macro]", "proc_macro_derive(", "proc_macro_attribute]"]
-                .iter()
-                .any(|marker| facts.source.contains(&format!("#[{marker}")))
-        })
 }
 
 /// Proc-macro code is exercised through `#[derive]`/attribute expansion in
@@ -155,16 +153,20 @@ fn withhold_proc_macro_no_path_as_unknown(
         &ripr.reveal.discriminate,
         &finding.class,
     ));
+    // Those two reasons say the class stays `no_static_path`; drop them so
+    // class and stop reason agree. `static_probe_unknown` is the unknown
+    // class's own reason; the proc-macro cause is in the evidence lines.
     finding.stop_reasons.retain(|reason| {
         !matches!(
             reason,
-            StopReason::StaticProbeUnknown
-                | StopReason::TransitiveReachUnresolved
-                | StopReason::MacroReachUnresolved
+            StopReason::TransitiveReachUnresolved | StopReason::MacroReachUnresolved
         )
     });
-    if !finding.stop_reasons.contains(&StopReason::ProcMacroOpaque) {
-        finding.stop_reasons.push(StopReason::ProcMacroOpaque);
+    if !finding
+        .stop_reasons
+        .contains(&StopReason::StaticProbeUnknown)
+    {
+        finding.stop_reasons.push(StopReason::StaticProbeUnknown);
     }
     finding.missing = vec![
         "proc-macro reach abstains: tests exercise this code through derive or attribute expansion, which ripr does not follow".to_string(),
@@ -3158,19 +3160,35 @@ fn far_above_threshold_discounts() {
         assert_eq!(finding.ripr.reveal.discriminate.state, StageState::No);
     }
 
-    #[test]
-    fn given_uncalled_owner_in_proc_macro_derive_file_when_classified_then_static_unknown() {
-        let index = uncalled_owner_index(
-            "#[proc_macro_derive(Fee)]\npub fn derive_fee(i: TokenStream) -> TokenStream { i }\n",
-        );
-        let probe = fragile_fee_probe(ProbeFamily::Predicate, "fragile_fee");
+    fn on_disk_index(
+        manifest: &str,
+        extra_source: &str,
+        label: &str,
+    ) -> Result<(RustIndex, PathBuf), String> {
+        let root = crate::analysis::facts::drop_in::temp_workspace(
+            label,
+            &[("derive/Cargo.toml", manifest)],
+        )?;
+        let mut index = uncalled_owner_index(extra_source);
+        index.member_crates = crate::analysis::facts::member_crates::MemberCrates::new(&root);
+        Ok((index, root))
+    }
 
-        let finding = classify_probe(&probe, &index, true, None);
+    fn probe_in(file: &str) -> Probe {
+        let mut probe = fragile_fee_probe(ProbeFamily::Predicate, "fragile_fee");
+        probe.location = SourceLocation::new(file, 2, 1);
+        probe
+    }
 
+    fn assert_proc_macro_unknown(finding: &Finding) {
         assert_eq!(finding.class, ExposureClass::StaticUnknown);
         assert_eq!(finding.class.severity(), "note");
         assert_eq!(finding.ripr.reach.state, StageState::Unknown);
-        assert!(finding.stop_reasons.contains(&StopReason::ProcMacroOpaque));
+        assert!(
+            finding
+                .stop_reasons
+                .contains(&StopReason::StaticProbeUnknown)
+        );
         assert!(
             !finding
                 .stop_reasons
@@ -3192,15 +3210,89 @@ fn far_above_threshold_discounts() {
         );
     }
 
+    const PROC_MACRO_MANIFEST: &str =
+        "[package]\nname = \"derive\"\nversion = \"0.1.0\"\n[lib]\nproc-macro = true\n";
+
     #[test]
-    fn given_uncalled_owner_in_ordinary_lib_file_when_classified_then_still_no_static_path() {
-        let index = uncalled_owner_index("pub fn proc_macro_derive_helper() {}\n");
+    fn given_uncalled_owner_in_manifest_proc_macro_crate_without_markers_when_classified_then_static_unknown()
+    -> Result<(), String> {
+        let (index, root) = on_disk_index(PROC_MACRO_MANIFEST, "", "pm-classify")?;
+        let probe = probe_in("derive/src/lib.rs");
+
+        let finding = classify_probe(&probe, &index, true, None);
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_proc_macro_unknown(&finding);
+        Ok(())
+    }
+
+    #[test]
+    fn given_proc_macro_underscore_spelling_when_classified_then_static_unknown()
+    -> Result<(), String> {
+        let manifest = PROC_MACRO_MANIFEST.replace("proc-macro", "proc_macro");
+        let (index, root) = on_disk_index(&manifest, "", "pm-underscore")?;
+        let probe = probe_in("derive/src/lib.rs");
+
+        let finding = classify_probe(&probe, &index, true, None);
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_proc_macro_unknown(&finding);
+        Ok(())
+    }
+
+    #[test]
+    fn given_nested_workspace_member_proc_macro_crate_when_classified_then_static_unknown()
+    -> Result<(), String> {
+        let root = crate::analysis::facts::drop_in::temp_workspace(
+            "pm-nested",
+            &[
+                ("Cargo.toml", "[workspace]\nmembers = [\"crates/derive\"]\n"),
+                ("crates/derive/Cargo.toml", PROC_MACRO_MANIFEST),
+            ],
+        )?;
+        let mut index = uncalled_owner_index("");
+        index.member_crates = crate::analysis::facts::member_crates::MemberCrates::new(&root);
+        let probe = probe_in("crates/derive/src/lib.rs");
+
+        let finding = classify_probe(&probe, &index, true, None);
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_proc_macro_unknown(&finding);
+        Ok(())
+    }
+
+    #[test]
+    fn given_proc_macro_marker_only_in_comment_or_string_of_ordinary_crate_when_classified_then_still_no_static_path()
+    -> Result<(), String> {
+        let plain = "[package]\nname = \"plain\"\nversion = \"0.1.0\"\n";
+        let (index, root) = on_disk_index(
+            plain,
+            "// #[proc_macro_derive(Fee)]\npub const NOTE: &str = \"#[proc_macro_attribute]\";\n",
+            "pm-negative",
+        )?;
+        let probe = probe_in("derive/src/lib.rs");
+
+        let finding = classify_probe(&probe, &index, true, None);
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+        assert!(
+            !finding
+                .evidence
+                .iter()
+                .any(|line| line.starts_with("proc_macro_expansion:"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn given_uncalled_owner_in_ordinary_lib_when_classified_then_still_no_static_path() {
+        let index = uncalled_owner_index("");
         let probe = fragile_fee_probe(ProbeFamily::Predicate, "fragile_fee");
 
         let finding = classify_probe(&probe, &index, true, None);
 
         assert_eq!(finding.class, ExposureClass::NoStaticPath);
-        assert!(!finding.stop_reasons.contains(&StopReason::ProcMacroOpaque));
     }
 
     // A changed line inside a `macro_rules!` template has no resolved owner,
