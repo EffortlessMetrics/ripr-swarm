@@ -21,6 +21,8 @@ pub use load::{
     probe_working_tree_tracked_changes_within, resolve_base_commit, resolve_default_base_commit,
     resolve_effective_base, working_tree_has_tracked_changes,
 };
+pub(crate) use parse::parse_unified_diff_with_metadata;
+
 pub(crate) use model::lines_look_alike;
 #[allow(
     unused_imports,

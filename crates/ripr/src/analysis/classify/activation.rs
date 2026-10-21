@@ -848,6 +848,25 @@ fn missing_discriminator_facts(
     {
         missing.push(fact);
     }
+    // A returned bare comparison reads the same boundary, but only a
+    // resolved gap counts: a boundary the lens cannot read leaves the
+    // return-value reading as it was and sets no unresolved reason.
+    let mut returned_unresolved = None;
+    if is_returned_comparison(probe)
+        && let Some(fact) = missing_boundary_discriminator(
+            probe,
+            owner_fn,
+            related_tests,
+            flow_sinks,
+            helper_chain,
+            index,
+            workspace_complete,
+            &mut returned_unresolved,
+        )
+        && returned_unresolved.is_none()
+    {
+        missing.push(fact);
+    }
     if (matches!(probe.family, ProbeFamily::ErrorPath)
         || flow_sinks
             .iter()
@@ -3639,6 +3658,54 @@ fn body_contains_direct_local_alias(body: &str, operand: &str, parameter: &str) 
     })
 }
 
+/// Whether a `return_value` probe's changed expression is one bare relational
+/// comparison (`x > 101`), so the returned bool is the changed predicate and
+/// its boundary is the boundary a `predicate` probe on the same line reads.
+/// When the predicate lens resolves a missing boundary discriminator for it,
+/// the probe reads that gap too: reaching the owner with inputs that never
+/// separate the old and new threshold is not an activated change. A compound (`&&`/`||`)
+/// or non-comparison expression keeps the return-value reading.
+pub(in crate::analysis) fn is_returned_comparison(probe: &Probe) -> bool {
+    matches!(probe.family, ProbeFamily::ReturnValue)
+        && !probe.expression.contains("&&")
+        && !probe.expression.contains("||")
+        && comparison_operands(&probe.expression).is_some()
+        && probe
+            .before
+            .as_deref()
+            .is_some_and(|before| same_comparison_shape(before, &probe.expression))
+}
+
+/// Whether `before` and `after` are bare comparisons in the same operator
+/// family (`>`/`>=`, `<`/`<=`, `==`, `!=`) on the same left operand, so only
+/// the boundary differs. An operator change across families (`x == 100` to
+/// `x > 101`) can separate the versions at an off-boundary input, so it keeps
+/// the return-value reading.
+fn same_comparison_shape(before: &str, after: &str) -> bool {
+    fn operator_and_left(expression: &str) -> Option<(&'static str, String)> {
+        for (operator, family) in [
+            (">=", ">"),
+            ("<=", "<"),
+            ("==", "=="),
+            ("!=", "!="),
+            (">", ">"),
+            ("<", "<"),
+        ] {
+            if let Some((left, right)) = expression.split_once(operator) {
+                let left = clean_operand(left);
+                if !left.is_empty() && !clean_operand(right).is_empty() {
+                    return Some((family, left));
+                }
+            }
+        }
+        None
+    }
+    match (operator_and_left(before), operator_and_left(after)) {
+        (Some(before), Some(after)) => before == after,
+        _ => false,
+    }
+}
+
 pub(in crate::analysis) fn comparison_operands(expression: &str) -> Option<(String, String)> {
     for operator in [">=", "<=", "==", "!=", ">", "<"] {
         if let Some((left, right)) = expression.split_once(operator) {
@@ -5717,6 +5784,39 @@ assert_eq!(input.amount, 100);"#
         assert_eq!(context_of("crate::KIB"), Some(ValueContext::Constant));
         assert_eq!(context_of("u64::MAX"), Some(ValueContext::Constant));
         assert_eq!(context_of("Mode::Fast"), Some(ValueContext::EnumVariant));
+    }
+
+    /// #8999: a call through a local alias reads the alias call's own
+    /// arguments, never a target-looking quoted substring on the same line.
+    #[test]
+    fn value_facts_for_test_reads_alias_call_arguments_not_quoted_owner_text() {
+        let owner = function("pub fn score(limit: u32) -> bool {\n    limit > 5\n}");
+        let body = "let f = crate::gate::score;\nassert_eq!(f(7), \"score(100)\");";
+        let test = TestSummary {
+            name: "alias_call".to_string(),
+            file: PathBuf::from("tests/value.rs"),
+            start_line: 1,
+            end_line: 3,
+            body: body.into(),
+            calls: crate::analysis::extract::extract_call_facts(body, 1),
+            assertions: Vec::new(),
+            literals: Vec::new(),
+            attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+        };
+
+        let facts = value_facts_for_test(&test, Some(&owner));
+        let values: Vec<&str> = facts.iter().map(|fact| fact.value.as_str()).collect();
+
+        assert!(
+            values.iter().any(|value| value.ends_with("7")),
+            "{values:?}"
+        );
+        assert!(
+            !values.iter().any(|value| value.contains("100")),
+            "{values:?}"
+        );
     }
 
     #[test]
