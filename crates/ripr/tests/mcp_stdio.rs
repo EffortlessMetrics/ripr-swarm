@@ -3643,3 +3643,161 @@ fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// #8847: literal producer totals survive both gap routes and refreshes.
+/// The equal-window digest discriminator lives beside the shared projection;
+/// this control reaches the analyzer, committed refresh and actual stdio server.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn gap_details_disclose_pre_cap_related_test_totals_across_refreshes() -> Result<(), String> {
+    let timeout = Duration::from_mins(3);
+    let root = install_b4_repair_ready_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    std::fs::write(root.join(".gitignore"), ".ripr/\ntarget/\n")
+        .map_err(|error| error.to_string())?;
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), timeout)?;
+    let tools = session.call("tools", "tools/list", json!({}), timeout)?;
+    let mut previous_snapshot: Option<String> = None;
+    let mut first_rows: Option<Value> = None;
+    let mut first_id: Option<String> = None;
+    for (total, retained) in [(12, 8), (13, 8), (1, 1), (0, 0)] {
+        let mut tests = "use mcp_journey_fixture::discounted_total;\n".to_string();
+        for index in 0..total {
+            tests.push_str(&format!(
+                "#[test]\nfn discounted_total_{index:02}() {{\n    assert_eq!(discounted_total(50, 100), 50);\n}}\n"
+            ));
+        }
+        std::fs::write(root.join("tests/pricing.rs"), tests).map_err(|error| error.to_string())?;
+        commit_fixture(&root, &format!("retain {total} related tests"))?;
+        let cli = worktree_ripr()
+            .args(["check", "--committed", "--format", "json", "--root"])
+            .arg(&root)
+            .output()
+            .map_err(|error| error.to_string())?;
+        if !cli.status.success() {
+            return Err(format!(
+                "CLI fixture failed: {}",
+                String::from_utf8_lossy(&cli.stderr)
+            ));
+        }
+        let cli: Value = serde_json::from_slice(&cli.stdout).map_err(|error| error.to_string())?;
+        let findings = cli["findings"].as_array().ok_or("CLI omitted findings")?;
+        assert_eq!(
+            findings.len(),
+            1,
+            "fixture must analyze one changed predicate"
+        );
+        let finding = &findings[0];
+        assert_eq!(
+            finding["related_tests_total"],
+            json!(total),
+            "literal CLI total"
+        );
+        assert_eq!(
+            finding["related_tests"].as_array().map(Vec::len),
+            Some(retained)
+        );
+        let canonical_id = finding
+            .pointer("/canonical_gap/id")
+            .or_else(|| finding.get("id"))
+            .and_then(Value::as_str)
+            .ok_or("CLI finding omitted its identity")?;
+        if total == 12 {
+            first_id = Some(canonical_id.to_string());
+        } else if total == 13 {
+            assert_eq!(
+                Some(canonical_id),
+                first_id.as_deref(),
+                "count alone preserves item identity"
+            );
+        }
+        let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), timeout)?;
+        let refresh = structured_tool_success(&refresh, "count refresh")?;
+        assert_eq!(refresh.pointer("/attempt/state"), Some(&json!("completed")));
+        let reply = session.call_tool(
+            "gap",
+            "ripr_get_gap",
+            json!({"canonical_id": canonical_id}),
+            timeout,
+        )?;
+        let reply_bytes = serde_json::to_vec(&reply).map_err(|error| error.to_string())?;
+        assert!(reply_bytes.len() < 128 * 1024);
+        let gap = structured_tool_success(&reply, "count gap")?;
+        assert_eq!(
+            gap.pointer("/item/related_tests_total"),
+            Some(&json!(total)),
+            "MCP must disclose literal pre-cap total {total} beside {retained} rows"
+        );
+        let rows = gap
+            .pointer("/item/related_tests")
+            .ok_or("gap omitted retained rows")?;
+        assert_eq!(rows.as_array().map(Vec::len), Some(retained));
+        if total == 12 {
+            first_rows = Some(rows.clone());
+        } else if total == 13 {
+            assert_eq!(
+                Some(rows),
+                first_rows.as_ref(),
+                "12/8 and 13/8 must retain identical rows"
+            );
+        }
+        let resource = read_resource_document(
+            &mut session,
+            "gap-resource",
+            &format!("ripr://gap/{canonical_id}"),
+            timeout,
+        )?;
+        assert_eq!(gap, resource);
+        let repeated = session.call_tool(
+            "repeat",
+            "ripr_get_gap",
+            json!({"canonical_id": canonical_id}),
+            timeout,
+        )?;
+        assert_eq!(
+            gap,
+            structured_tool_success(&repeated, "repeated count gap")?
+        );
+        let snapshot = gap["snapshot_id"]
+            .as_str()
+            .ok_or("gap omitted snapshot identity")?;
+        if let Some(old) = previous_snapshot {
+            assert_ne!(snapshot, old);
+            let stale = session.call_tool(
+                "stale",
+                "ripr_get_gap",
+                json!({"canonical_id": canonical_id, "snapshot_id": old}),
+                timeout,
+            )?;
+            assert_eq!(stale.pointer("/result/isError"), Some(&json!(true)));
+            assert_eq!(
+                stale.pointer("/result/structuredContent/failure/code"),
+                Some(&json!("stale_snapshot"))
+            );
+        }
+        previous_snapshot = Some(snapshot.to_string());
+    }
+    let tool = tools
+        .pointer("/result/tools")
+        .and_then(Value::as_array)
+        .and_then(|tools| tools.iter().find(|tool| tool["name"] == "ripr_get_gap"))
+        .ok_or("tools/list omitted ripr_get_gap")?;
+    let item = tool
+        .pointer("/outputSchema/oneOf/0/properties/item")
+        .ok_or("gap schema omitted item")?;
+    assert_eq!(
+        item.pointer("/properties/related_tests_total/type"),
+        Some(&json!("integer"))
+    );
+    assert_eq!(
+        item.pointer("/properties/related_tests_total/minimum"),
+        Some(&json!(0))
+    );
+    assert!(
+        item["required"]
+            .as_array()
+            .is_some_and(|fields| fields.contains(&json!("related_tests_total")))
+    );
+    Ok(())
+}

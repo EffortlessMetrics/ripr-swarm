@@ -1193,7 +1193,13 @@ fn gap_output_schema() -> Value {
                 "properties": {
                     "schema_version": { "type": "string", "const": GAP_SCHEMA_VERSION },
                     "snapshot_id": { "type": "string" },
-                    "item": { "type": "object" },
+                    "item": {
+                        "type": "object",
+                        "properties": {
+                            "related_tests_total": { "type": "integer", "minimum": 0 }
+                        },
+                        "required": ["related_tests_total"]
+                    },
                     "claim_boundary": { "type": "string" },
                     "limitations": {
                         "type": "array",
