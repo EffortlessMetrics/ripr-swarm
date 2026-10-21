@@ -1272,12 +1272,7 @@ fn run_analysis_pass(
     let status = classify_pass(output.timed_out, exit_ok, parsed.as_ref());
     let complete = parsed
         .as_ref()
-        .and_then(|value| {
-            value
-                .get("analysis_outcome")
-                .and_then(|outcome| outcome.get("analysis_complete"))
-                .and_then(Value::as_bool)
-        })
+        .and_then(crate::check_document_analysis_complete)
         .unwrap_or(false);
     let limitations = parsed
         .as_ref()

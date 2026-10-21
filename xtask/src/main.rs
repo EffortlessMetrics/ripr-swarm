@@ -22331,6 +22331,47 @@ mod tests;
 #[path = "tests/sorted_allowlist_content.rs"]
 mod sorted_allowlist_content_tests;
 
+/// Whether a `ripr check --format json` document reports a complete analysis
+/// (#9010). `analysis_outcome.analysis_complete` is the analysis verdict, but a
+/// findings array cut by the byte budget adds `document_complete: false`; that
+/// document holds only a prefix of the findings and is never complete for a
+/// consumer. Returns `Some(false)` for it, otherwise the producer's boolean
+/// (`None` when absent or non-boolean). A non-boolean `document_complete` also
+/// fails closed.
+pub(crate) fn check_document_analysis_complete(check: &serde_json::Value) -> Option<bool> {
+    let outcome = check.get("analysis_outcome")?;
+    if let Some(document_complete) = outcome.get("document_complete")
+        && document_complete.as_bool() != Some(true)
+    {
+        return Some(false);
+    }
+    outcome
+        .get("analysis_complete")
+        .and_then(serde_json::Value::as_bool)
+}
+
+#[cfg(test)]
+mod check_document_completeness_tests {
+    use super::check_document_analysis_complete;
+    use serde_json::json;
+
+    #[test]
+    fn bounded_document_is_never_complete_but_unbounded_control_is() {
+        let bounded = json!({"analysis_outcome": {
+            "analysis_complete": true, "document_complete": false,
+            "findings_rendered": 1, "findings_total": 3}});
+        assert_eq!(check_document_analysis_complete(&bounded), Some(false));
+        let corrupt = json!({"analysis_outcome": {
+            "analysis_complete": true, "document_complete": "false"}});
+        assert_eq!(check_document_analysis_complete(&corrupt), Some(false));
+        let control = json!({"analysis_outcome": {"analysis_complete": true}});
+        assert_eq!(check_document_analysis_complete(&control), Some(true));
+        let incomplete = json!({"analysis_outcome": {"analysis_complete": false}});
+        assert_eq!(check_document_analysis_complete(&incomplete), Some(false));
+        assert_eq!(check_document_analysis_complete(&json!({})), None);
+    }
+}
+
 #[cfg(test)]
 mod inherited_failure_tests {
     use super::*;

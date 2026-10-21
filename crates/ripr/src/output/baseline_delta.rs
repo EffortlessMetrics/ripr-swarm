@@ -2934,6 +2934,32 @@ mod tests {
     }
 
     #[test]
+    fn baseline_delta_markdown_renders_document_complete_line_only_when_bounded() {
+        // #9010: the propagated bounded-document disclosure is visible in the
+        // human surface; the unbounded control carries no such line.
+        let render = |outcome: &str| {
+            let current = format!(
+                r#"{{"schema_version": "0.1", "decisions": [], "analysis_outcome": {outcome}}}"#
+            );
+            render_baseline_delta_markdown(&build_baseline_delta_report(BaselineDeltaInput {
+                root: ".".to_string(),
+                baseline_path: "baseline.json".to_string(),
+                current_gate_decision_path: "current.json".to_string(),
+                baseline_json: Ok(r#"{"schema_version": "0.1", "entries": []}"#.to_string()),
+                current_gate_decision_json: Ok(current),
+            }))
+        };
+        let bounded = render(
+            r#"{"analysis_complete": true, "document_complete": false, "outcome": {"kind": "complete_with_findings"}}"#,
+        );
+        assert!(bounded.contains("Analysis complete: `true`"), "{bounded}");
+        assert!(bounded.contains("Document complete: `false`"), "{bounded}");
+        let control =
+            render(r#"{"analysis_complete": true, "outcome": {"kind": "complete_with_findings"}}"#);
+        assert!(!control.contains("Document complete"), "{control}");
+    }
+
+    #[test]
     fn zero_status_withholds_achieved_over_self_produced_limited_delta() -> Result<(), String> {
         // Issue #6257: the existing #5251/#6095 guard becomes reachable on
         // self-produced deltas. An all-clear delta built from a limited

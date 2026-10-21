@@ -684,10 +684,7 @@ fn outcome_from_check(
         .and_then(|value| value.as_str())
         .unwrap_or("unreported")
         .to_string();
-    let complete = check
-        .get("analysis_outcome")
-        .and_then(|outcome| outcome.get("analysis_complete"))
-        .and_then(|value| value.as_bool());
+    let complete = crate::check_document_analysis_complete(check);
     let limitations = analysis_child(check, "limitations")
         .and_then(|value| value.as_array())
         .map(|items| {
@@ -2458,6 +2455,16 @@ mod tests {
                 }
             }
             _ => return Err("a valid complete run must claim its comparison".to_string()),
+        }
+
+        // #9010: a findings-bounded document never claims a complete comparison.
+        let mut bounded = valid_no_candidates.clone();
+        bounded["analysis_outcome"]["document_complete"] = json!(false);
+        if matches!(
+            super::outcome_from_check(&bounded, &subject),
+            super::ReplayOutcome::Complete { .. }
+        ) {
+            return Err("a bounded check document must not read as Complete".to_string());
         }
 
         let failed_analysis = json!({

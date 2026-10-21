@@ -2656,11 +2656,16 @@ the analysis verdict derived from `outcome.kind` and no `outcome.kind` variant
 is added: the enum describes analysis, not the rendered document. The shared
 incomplete-analysis predicate (`discloses_incomplete_analysis_outcome`) treats
 `document_complete: false` as incomplete, so the gate, baseline and ledger
-inputs, `baseline-delta`, RIPR Zero, and `pr-evidence` summary (which reports
-`analysis_complete: false` and `run_status: incomplete` for such a document)
-refuse it even when `run_limitations[]` is absent. A non-boolean
-`document_complete` is a malformed disclosure that RIPR Zero reports as
-unknown.
+inputs, `baseline-delta`, and RIPR Zero refuse it even when `run_limitations[]`
+is absent, and the `pr-evidence` summary reports `analysis_complete: false` and
+`run_status: incomplete` for such a document. The repository xtask readers of
+check JSON (eval-sweep refresh, release smoke, the Python and Rust judged-panel
+replay and packet readers) use `check_document_analysis_complete`, which applies
+the same rule. `agent_review_summary` and agent-packet currentness read a
+separate analysis-outcome artifact projection and are out of scope; the MCP,
+LSP, SARIF and badge surfaces do not read check-JSON `analysis_complete`. A
+non-boolean `document_complete` is a malformed disclosure that RIPR Zero reports
+as unknown.
 
 `summary` keeps full analysis counts (`summary.findings` is the analyzed
 total, `rendered + omitted == total`); `finding_alignment` covers the rendered

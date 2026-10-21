@@ -3648,6 +3648,30 @@ mod tests {
     }
 
     #[test]
+    fn records_source_renders_document_complete_line_only_when_bounded() {
+        // #9010: the bounded check document says so beside the verdict; the
+        // unbounded control carries no such line.
+        let render = |outcome: serde_json::Value| {
+            render_gap_decision_ledger_markdown(&report_from_json(serde_json::json!({
+                "analysis_outcome": outcome,
+                "records": []
+            })))
+        };
+        let bounded = render(serde_json::json!({
+            "analysis_complete": true,
+            "document_complete": false,
+            "outcome": {"kind": "complete_with_findings"}
+        }));
+        assert!(bounded.contains("Analysis complete: `true`"), "{bounded}");
+        assert!(bounded.contains("Document complete: `false`"), "{bounded}");
+        let control = render(serde_json::json!({
+            "analysis_complete": true,
+            "outcome": {"kind": "complete_with_findings"}
+        }));
+        assert!(!control.contains("Document complete"), "{control}");
+    }
+
+    #[test]
     fn records_source_preserves_incomplete_outcome_in_json_and_markdown() -> Result<(), String> {
         let report = report_from_json(serde_json::json!({
             "analysis_outcome": {
