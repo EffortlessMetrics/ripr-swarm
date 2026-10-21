@@ -515,6 +515,16 @@ pub(super) struct NarrowedScope {
     /// Owners alternate between a few closures, so a single slot rebuilt
     /// the same index repeatedly (#5363).
     reach_index: Vec<(Vec<PathBuf>, RustIndex)>,
+    /// Closure-specific indexes built so far. Past
+    /// [`REACH_INDEX_CAPACITY`] distinct closures the run is alternating
+    /// among more owners than the cache holds, and narrowing costs more
+    /// than it saves (#9278).
+    widened_builds: usize,
+    /// One index over every selected file, built once the widened builds
+    /// pass the cache capacity and then shared by all remaining owners.
+    /// It holds a superset of each closure, and the witness walks are
+    /// bounded by the closure, so verdicts match the per-closure index.
+    full_reach: Option<RustIndex>,
     test_harnesses: Vec<crate::config::TestHarnessRegistration>,
     /// Bytes the reach widening read, for the run's consumed sources.
     consumed: ConsumedRustSources,
@@ -799,6 +809,8 @@ pub(super) fn admit_dependents(
             tokens,
             closures: std::collections::BTreeMap::new(),
             reach_index: Vec::new(),
+            widened_builds: 0,
+            full_reach: None,
             test_harnesses: test_harnesses.to_vec(),
             consumed: ConsumedRustSources::default(),
             widen: !core_only,
@@ -904,13 +916,42 @@ impl NarrowedScope {
                 limit,
             });
         }
+        let cached = self.reach_index.iter().any(|(held, _)| *held == files);
+        if self.full_reach.is_none() && !cached && self.widened_builds >= REACH_INDEX_CAPACITY {
+            // The pre-#5320 selection: the main files and every withheld
+            // dependent, which is what `RIPR_DIFF_DEPENDENT_SCOPE=full` indexes.
+            let selected = self
+                .main_files
+                .iter()
+                .chain(&self.withheld)
+                .cloned()
+                .collect::<Vec<_>>();
+            let everything =
+                crate::analysis::workspace::with_module_context_files(&self.all_files, selected);
+            let index = build_index(
+                &self.root,
+                &everything,
+                &self.test_harnesses,
+                &mut self.consumed,
+            )?
+            .index;
+            self.reach_index.clear();
+            self.full_reach = Some(index);
+        }
+        if let Some(index) = &self.full_reach {
+            return Ok(ReachIndex::Widened(index));
+        }
         let consumed = &mut self.consumed;
+        let builds = &mut self.widened_builds;
         let (root, harnesses) = (&self.root, &self.test_harnesses);
         let index = most_recent_or_build(
             &mut self.reach_index,
             REACH_INDEX_CAPACITY,
             files,
-            |files| build_index(root, files, harnesses, consumed).map(|cached| cached.index),
+            |files| {
+                *builds += 1;
+                build_index(root, files, harnesses, consumed).map(|cached| cached.index)
+            },
         )?;
         Ok(ReachIndex::Widened(index))
     }
