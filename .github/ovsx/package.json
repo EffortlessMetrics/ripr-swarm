@@ -1,8 +1,0 @@
-{
-  "name": "ripr-ovsx-publish",
-  "private": true,
-  "description": "Locked ovsx install used only by publish-extension.yml's Open VSX job.",
-  "dependencies": {
-    "ovsx": "1.3.0"
-  }
-}

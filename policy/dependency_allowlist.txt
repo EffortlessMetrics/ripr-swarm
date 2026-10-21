@@ -31,8 +31,6 @@ Cargo.toml|rust_workspace_manifest|rust|Root Cargo workspace manifest.
 benchmarks/agentic/**/Cargo.toml|fixture_input|agentic-benchmarks|Controlled agentic-surface benchmark fixture input manifests (B1-B6).
 benchmarks/targeted_rerun_benchmark/**/Cargo.toml|fixture_input|targeted-rerun|Controlled SPEC-0123 benchmark workspace manifest.
 crates/**/Cargo.toml|rust_package_manifest|rust|Cargo package manifests.
-.github/ovsx/package-lock.json|editor_extension_lockfile|lsp/editor|Pinned npm graph for the ovsx publisher (publish-extension.yml Open VSX job).
-.github/ovsx/package.json|editor_extension_manifest|lsp/editor|Manifest pinning the ovsx publisher.
 editors/vscode/package-lock.json|editor_extension_lockfile|lsp/editor|Pinned npm dependency graph for the VS Code extension.
 editors/vscode/package.json|editor_extension_manifest|lsp/editor|VS Code extension package manifest.
 editors/vscode/test-fixtures/**/Cargo.toml|fixture_input|lsp/editor|VS Code extension test fixture workspace Cargo manifest.
