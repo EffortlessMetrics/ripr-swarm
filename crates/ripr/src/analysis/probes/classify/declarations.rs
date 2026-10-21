@@ -470,6 +470,20 @@ mod tests {
             ),
             // Tuple variants carry no named field.
             ("enum E {\n    A(u8, u8),\n}\n", 2, "A(u8, u8),"),
+            // A discriminant is expression syntax on the variant.
+            ("enum E {\n    A { x: u8 } = 1,\n}\n", 2, "A { x: u8 } = 1,"),
+            // A macro-typed field is macro syntax.
+            (
+                "macro_rules! m { () => { u8 } }\nenum E {\n    A { x: m!() },\n}\n",
+                3,
+                "A { x: m!() },",
+            ),
+            // An attribute carrying an expression is not plain declaration text.
+            (
+                "enum E {\n    #[doc = concat!(\"a\", \"b\")] A { x: u8 },\n}\n",
+                2,
+                "#[doc = concat!(\"a\", \"b\")] A { x: u8 },",
+            ),
         ] {
             let facts = declaration_facts(source)?;
             assert!(
