@@ -11,6 +11,7 @@ mod commands_timestamps;
 mod execute;
 mod help;
 mod help_json;
+mod interrupt;
 mod parse;
 pub(crate) mod progress;
 mod rerun;
@@ -35,9 +36,8 @@ pub(crate) const EXIT_DECISION_OR_REFUSAL: i32 = 3;
 /// contract documented in `docs/EXIT_CODES.md`.
 ///
 /// Most command layers keep producing plain `String` errors; `From<String>`
-/// maps them to [`CommandError::Failure`], so the only call sites that must
-/// name this type are the ones that reached a blocking decision or typed
-/// refusal and therefore exit with code 3.
+/// maps them to [`CommandError::Failure`]. Decision/refusal adapters use
+/// code 3, and the standalone interruption adapter uses code 130.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandError {
     /// The command could not complete: usage, parse, operational, or
@@ -48,21 +48,26 @@ pub enum CommandError {
     /// can branch on `0` (completed), `3` (decision/refusal), and `2`
     /// (could not complete) without parsing output.
     Decision(String),
+    /// Standalone check analysis was interrupted after an owned cleanup attempt. Exit 130.
+    Interrupted(String),
 }
 
 impl CommandError {
     /// The raw error message; `Display` is the terminal-safe rendering.
     pub fn message(&self) -> &str {
         match self {
-            Self::Failure(message) | Self::Decision(message) => message,
+            Self::Failure(message) | Self::Decision(message) | Self::Interrupted(message) => {
+                message
+            }
         }
     }
 
-    /// The process exit code this error maps to (2 or 3).
+    /// The process exit code this error maps to (2, 3 or 130).
     pub const fn exit_code(&self) -> i32 {
         match self {
             Self::Failure(_) => EXIT_COULD_NOT_COMPLETE,
             Self::Decision(_) => EXIT_DECISION_OR_REFUSAL,
+            Self::Interrupted(_) => 130,
         }
     }
 }
@@ -97,7 +102,18 @@ use std::path::Path;
 use std::time::Instant;
 
 pub fn run(args: Vec<String>) -> Result<(), CommandError> {
-    let outcome = run_command(args);
+    run_with_policy(args, false)
+}
+
+/// Standalone process entry with Unix first-SIGINT handling for ordinary
+/// single-output checks. Call once per process; signal ownership lasts until
+/// process exit. Embedders retain their signal policy through [`run`].
+pub fn run_with_interrupt_handling(args: Vec<String>) -> Result<(), CommandError> {
+    run_with_policy(args, true)
+}
+
+fn run_with_policy(args: Vec<String>, interrupt_handling: bool) -> Result<(), CommandError> {
+    let outcome = run_command(args, interrupt_handling);
     // #5213: observe this process's own CPU time and peak resident memory
     // once the command has finished, so the peak covers rendering and
     // serialization instead of stopping at the analysis boundary. Emits
@@ -107,7 +123,7 @@ pub fn run(args: Vec<String>) -> Result<(), CommandError> {
     outcome
 }
 
-fn run_command(mut args: Vec<String>) -> Result<(), CommandError> {
+fn run_command(mut args: Vec<String>, interrupt_handling: bool) -> Result<(), CommandError> {
     let version_requested = parse::top_level_version_requested(&args);
     // #2610: the global --verbose/-v spelling is extracted before command
     // dispatch so it works with any subcommand. #5009: the extraction has
@@ -140,7 +156,10 @@ fn run_command(mut args: Vec<String>) -> Result<(), CommandError> {
     if let Some(options) = before_attempt {
         drive_before_phase(options)?;
     } else {
-        execute::execute(parse::parse_args(args)?)?;
+        match (parse::parse_args(args)?, interrupt_handling) {
+            (command::CliCommand::Check(args), true) => interrupt::check(&args)?,
+            (command, _) => execute::execute(command)?,
+        }
     }
     Ok(())
 }
@@ -155,7 +174,13 @@ fn run_command(mut args: Vec<String>) -> Result<(), CommandError> {
 pub(in crate::cli) fn drive_before_phase(
     options: agent::AgentRepairOptions,
 ) -> Result<String, CommandError> {
-    let (attempt_id, stdout_document) = drive_before_phase_deferring_stdout(options)?;
+    // The advanced spelling keeps its failure semantics for the held-target
+    // refusal; only the task-first façade maps it to a decision (#9033).
+    let (attempt_id, stdout_document) =
+        drive_before_phase_inner(options).map_err(|error| match error {
+            BeforePhaseError::Refused(message) => CommandError::Failure(message),
+            BeforePhaseError::Other(error) => error,
+        })?;
     // The advanced spelling prints its success document immediately; only
     // the façade holds stdout across its follow-on card render (#7032).
     print!("{stdout_document}");
@@ -171,6 +196,41 @@ pub(in crate::cli) fn drive_before_phase(
 pub(in crate::cli) fn drive_before_phase_deferring_stdout(
     options: agent::AgentRepairOptions,
 ) -> Result<(String, String), CommandError> {
+    drive_before_phase_inner(options).map_err(|error| match error {
+        // A deliberate typed refusal: the façade exits with the decision code.
+        BeforePhaseError::Refused(message) => CommandError::Decision(message),
+        BeforePhaseError::Other(error) => error,
+    })
+}
+
+/// Why a before phase did not start: a deliberate start refusal that wrote
+/// nothing (#9033), or any other command error.
+pub(in crate::cli) enum BeforePhaseError {
+    Refused(String),
+    Other(CommandError),
+}
+
+impl<E: Into<CommandError>> From<E> for BeforePhaseError {
+    fn from(error: E) -> Self {
+        Self::Other(error.into())
+    }
+}
+
+fn drive_before_phase_inner(
+    mut options: agent::AgentRepairOptions,
+) -> Result<(String, String), BeforePhaseError> {
+    // #8166 residual: a cross-namespace `--seam-id` (a `probe:` finding ID,
+    // a canonical `gap:` ID, or a `file:line` location) that names exactly
+    // one seam proceeds under that seam's ID, so the attempt identity, the
+    // packet, and every later seam reference agree. Translation happens
+    // before the lock and the identity preparation: a refused mapping
+    // writes no workflow artifact and starts no attempt.
+    if let Some(seam_id) = options.seam_id.clone() {
+        options.seam_id = Some(commands::translate_agent_repair_seam_id(
+            &options.root,
+            &seam_id,
+        )?);
+    }
     let _before_lock = lock_before_repair_attempt(&options.root)?;
     let seam_id = options
         .seam_id
@@ -225,9 +285,12 @@ fn before_repair_attempt(args: &[String]) -> Result<Option<agent::AgentRepairOpt
         return Ok(None);
     }
     match agent::parse_agent_args(&args[2..])? {
-        agent::AgentCommand::Repair(options)
+        agent::AgentCommand::Repair(mut options)
             if options.phase == agent::AgentRepairPhase::Before =>
         {
+            // #8872: this route bypasses the `agent` dispatch, so it resolves
+            // the implicit workspace root here; `--root .` opts out.
+            commands::resolve_agent_repair_root(&mut options)?;
             Ok(Some(options))
         }
         _ => Ok(None),

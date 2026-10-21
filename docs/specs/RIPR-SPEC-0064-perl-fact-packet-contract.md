@@ -130,6 +130,22 @@ cache identity, reuse policy, or the platform process-containment authority.
 After successful publication, a staging-cleanup blocker is retained and named
 as a warning; the published packet is still consumed as the successful export.
 
+For ordinary single-output standalone Unix checks with live Git or resolved
+regular-file diff input, first SIGINT requests cooperative cancellation through
+existing checkpoints. The exporter must settle through its existing child owner
+before analysis returns, or report the precise cleanup limit and retained staging.
+Cancellation exits 130 without a successful partial report or producer-degradation
+fallback. Prior published packets, unrelated user evidence and cleanup blockers
+remain intact; a healthy repeat agrees with an independent cold report.
+
+Blocking/nonregular diff input, artifact/ledger sinks and output-directory fanout
+retain native interruption. Stdout publication and a repeated analysis SIGINT
+retain native termination as an escape. Forced termination does not establish
+settlement. Library callers retain their own signal policy; only the explicit
+standalone process entry registers handlers. Linux fixture execution does not
+qualify other native platforms, arbitrary descendants or real exporter parity.
+
+
 ### Packet status
 
 Top-level `packet_status` is one of:

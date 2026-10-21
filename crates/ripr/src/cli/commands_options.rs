@@ -23,7 +23,11 @@ pub(crate) enum PilotStdoutFormat {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct PilotOptions {
     pub(crate) root: PathBuf,
+    /// `--root` was typed, so the root is used as given (#8767).
+    pub(crate) root_explicit: bool,
     pub(crate) out_dir: PathBuf,
+    /// `--out` was typed; otherwise the packet directory follows the root.
+    pub(crate) out_explicit: bool,
     pub(crate) mode: Mode,
     pub(crate) explicit: CheckInputExplicit,
     pub(crate) max_seams: usize,

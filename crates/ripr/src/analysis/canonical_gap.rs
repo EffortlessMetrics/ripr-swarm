@@ -83,6 +83,148 @@ pub(crate) fn canonical_gap_identity(entry: &ClassifiedSeam) -> Option<Canonical
     })
 }
 
+/// Whether a `ripr check` finding ID (`probe:...`, or `repo-probe:...` for a
+/// whole-repo probe) names this seam (#8166 residual).
+///
+/// Like [`producer_gap_id_names_seam`], the ID is read from the seam side:
+/// the probe fingerprint is re-minted from the seam's file, the probe family
+/// its kind names, its owner, and its own source expression, with the same
+/// content-addressed fingerprint the probe producer uses. A changed line the
+/// seam does not carry therefore never matches. Several seams can still
+/// share one re-minted ID (the fingerprint carries no line); the caller owns
+/// that uniqueness decision.
+///
+/// The collision ordinal (`.2`, ...) the probe producers append to the
+/// 2nd+ occurrence of a repeated ID is handled per ID family, because the
+/// two producers mint over different sets:
+///
+/// * `repo-probe:` — rank-binding. The repo producer
+///   (`probes/repo.rs:82`) scans every probe shape in the repo, so its
+///   mint set is the seam set: the first occurrence of a base ID keeps it
+///   bare and each later occurrence takes its 1-based encounter rank.
+///   The seam side mirrors that ordering exactly: `seams` is scanned in
+///   slice order (the classified inventory order, which sorts by file
+///   then byte offset in `seam_inventory.rs:2800`, i.e. source order
+///   within the one file a base ID can name, since the fingerprint
+///   carries that file), and an explicit ordinal `N` names only the seam
+///   whose rank among the seams re-minting the same base ID equals `N`.
+///   An invented ordinal (`.999`) or a `.2` whose second occurrence was
+///   seam-filtered so only the first seam remains therefore names
+///   nothing (stale).
+/// * `probe:` — NOT rank-binding. The diff producer
+///   (`dedup_probe_ids` in `probes/diff.rs:582`) ranks only the probes
+///   for changed lines, while the seam inventory also contains unchanged
+///   seams re-minting the same base ID. A diff ordinal therefore cannot
+///   be rank-bound from the full inventory: with three identical
+///   predicates where the diff touches only occurrences 1 and 3, the
+///   second changed probe is `.2` but inventory rank 2 is the unchanged
+///   middle seam, so rank-binding would silently start repair on a seam
+///   the diff never touched. Instead an explicit diff ordinal names
+///   every seam re-minting the shared base, so the caller refuses it as
+///   ambiguous (bounded seam list, no attempt). The sole exception is a
+///   single sharing seam, where an explicit ordinal (`.2`, `.999`) still
+///   names nothing (stale): its second occurrence is not in the
+///   inventory at all.
+///
+/// With no ordinal, the bare base ID names every sharing seam for both
+/// families, so the caller refuses it as ambiguous rather than picking
+/// an occurrence.
+pub(crate) fn probe_id_names_seam(
+    item: &str,
+    entry: &ClassifiedSeam,
+    seams: &[ClassifiedSeam],
+) -> bool {
+    let prefix = if item.starts_with("probe:") {
+        "probe"
+    } else if item.starts_with("repo-probe:") {
+        "repo-probe"
+    } else {
+        return false;
+    };
+    let explicit_ordinal = item
+        .rsplit_once(':')
+        .and_then(|(_, fp)| fp.rsplit_once('.'))
+        .and_then(|(_, ordinal)| ordinal.parse::<u32>().ok());
+    let Some(ordinal) = explicit_ordinal else {
+        // No ordinal: the bare base ID names every seam re-minting it;
+        // the caller owns the resulting ambiguity.
+        if reminted_probe_id(entry, prefix, 1).as_deref() != Some(item) {
+            return false;
+        }
+        let Some(base) = reminted_probe_id(entry, prefix, 1) else {
+            return false;
+        };
+        return seams
+            .iter()
+            .any(|candidate| reminted_probe_id(candidate, prefix, 1).as_deref() == Some(&*base));
+    };
+    if reminted_probe_id(entry, prefix, ordinal).as_deref() != Some(item) {
+        return false;
+    }
+    let Some(base) = reminted_probe_id(entry, prefix, 1) else {
+        return false;
+    };
+    let sharing = seams
+        .iter()
+        .filter(|candidate| reminted_probe_id(candidate, prefix, 1).as_deref() == Some(&*base))
+        .count();
+    match prefix {
+        // `repo-probe:` ordinals CAN be rank-bound: the repo producer's
+        // mint set is the seam set (see the doc comment above), so the
+        // seam at 1-based rank `ordinal` among the seams re-minting
+        // `base`, in slice (inventory/source) order, is the named seam.
+        "repo-probe" => {
+            let mut rank = 0u32;
+            for candidate in seams {
+                if reminted_probe_id(candidate, prefix, 1).as_deref() == Some(&*base) {
+                    rank += 1;
+                    if candidate.seam.id() == entry.seam.id() {
+                        return rank == ordinal;
+                    }
+                }
+            }
+            false
+        }
+        // `probe:` ordinals CANNOT be rank-bound from the full inventory:
+        // the diff producer ranked only changed-line probes, so inventory
+        // rank can name an unchanged seam the diff never touched. Fall
+        // back to the shared-base seam set (the caller refuses it as
+        // ambiguous); a sole sharing seam still names nothing, so a
+        // filtered-twin `.2` refuses as stale.
+        _ => sharing > 1,
+    }
+}
+
+/// Re-mint the probe ID for one seam at `ordinal`, or `None` when the
+/// seam's kind names no probe family.
+fn reminted_probe_id(entry: &ClassifiedSeam, prefix: &str, ordinal: u32) -> Option<String> {
+    const FAMILIES: [crate::domain::ProbeFamily; 8] = [
+        crate::domain::ProbeFamily::Predicate,
+        crate::domain::ProbeFamily::ReturnValue,
+        crate::domain::ProbeFamily::ErrorPath,
+        crate::domain::ProbeFamily::CallDeletion,
+        crate::domain::ProbeFamily::FieldConstruction,
+        crate::domain::ProbeFamily::SideEffect,
+        crate::domain::ProbeFamily::MatchArm,
+        crate::domain::ProbeFamily::StaticUnknown,
+    ];
+    let sanitized = super::sanitize_path(entry.seam.file());
+    let owner = crate::domain::SymbolId(entry.seam.owner().to_string());
+    FAMILIES.iter().find_map(|family| {
+        (super::seam_kind_for_probe_family(family.as_str()) == Some(entry.seam.kind())).then(|| {
+            super::fingerprint_probe_id(
+                prefix,
+                &sanitized,
+                family.as_str(),
+                &owner.0,
+                &super::normalize_rust_expression(entry.seam.expression()),
+                ordinal,
+            )
+            .0
+        })
+    })
+}
+
 /// Whether a Rust producer gap id as `ripr check` prints it names this seam.
 /// That id is minted from the changed line, not from the seam, so it joins on
 /// the seam's stable file, owner, kind and source expression. A shared id
@@ -416,6 +558,219 @@ mod tests {
         assert_eq!(second_gap.group_size, 2);
         assert_eq!(first_gap.reason, CANONICAL_GAP_REASON);
         Ok(())
+    }
+
+    /// #8166 residual: the `probe:` ID `ripr check` prints re-mints from the
+    /// seam it names (file, family-from-kind, owner, seam expression), and
+    /// from no other seam. Two seams sharing those fields share the ID; the
+    /// resolver caller owns that ambiguity.
+    #[test]
+    fn probe_id_names_only_the_seam_it_was_minted_from() {
+        let entry = classified_gap("src/pricing.rs::pricing::discounted_total", 88, "x");
+        // Mint the ID exactly as the diff probe producer does: the
+        // content-addressed fingerprint over sanitized path, family, owner
+        // and normalized expression.
+        let id = crate::analysis::fingerprint_probe_id(
+            "probe",
+            &crate::analysis::sanitize_path(entry.seam.file()),
+            "predicate",
+            entry.seam.owner(),
+            &crate::analysis::normalize_rust_expression(entry.seam.expression()),
+            1,
+        )
+        .0;
+        assert!(
+            probe_id_names_seam(&id, &entry, std::slice::from_ref(&entry)),
+            "own probe ID must name its seam: {id}"
+        );
+        // A fingerprint over a different expression names no seam here.
+        let other = classified_gap_with_expression(
+            "src/pricing.rs::pricing::discounted_total",
+            88,
+            "amount < threshold",
+            "x",
+        );
+        assert!(!probe_id_names_seam(
+            &id,
+            &other,
+            std::slice::from_ref(&other)
+        ));
+        // A stale fingerprint (no seam carries it) names nothing.
+        assert!(!probe_id_names_seam(
+            "probe:src_pricing.rs:predicate:00000000",
+            &entry,
+            std::slice::from_ref(&entry)
+        ));
+        // The duplicate-expression twin shares the re-minted ID: the matcher
+        // credits both, so the resolver must refuse as ambiguous.
+        let twin = classified_gap("src/pricing.rs::pricing::discounted_total", 99, "x");
+        let seams = [entry.clone(), twin.clone()];
+        assert!(probe_id_names_seam(&id, &twin, &seams));
+    }
+
+    #[test]
+    fn line_comment_terminators_do_not_reverse_to_the_other_value() {
+        let commented = classified_gap_with_expression(
+            "src/pricing.rs::equal",
+            88,
+            "x == concat!(\"a\", // \"b\",\n        \"c\")",
+            "concat value",
+        );
+        let active = classified_gap_with_expression(
+            "src/pricing.rs::equal",
+            88,
+            "x == concat!(\"a\", //\n        \"b\", \"c\")",
+            "concat value",
+        );
+        // Fixed expected payload hashes use this fixture's path and owner;
+        // the old flat payload was shared by both source expressions.
+        for prefix in ["probe", "repo-probe"] {
+            let old = format!("{prefix}:src_pricing.rs:predicate:e4b79a1b");
+            let commented_id = format!("{prefix}:src_pricing.rs:predicate:60ee2017");
+            let active_id = format!("{prefix}:src_pricing.rs:predicate:1862f384");
+            for (entry, own, other) in [
+                (&commented, &commented_id, &active_id),
+                (&active, &active_id, &commented_id),
+            ] {
+                let sole = std::slice::from_ref(entry);
+                assert!(
+                    !probe_id_names_seam(&old, entry, sole),
+                    "ambiguous old ID must be stale"
+                );
+                assert!(probe_id_names_seam(own, entry, sole));
+                assert!(!probe_id_names_seam(other, entry, sole));
+            }
+        }
+    }
+
+    /// #8166 review: a sole sharing seam plus an explicit ordinal names
+    /// nothing for either family. An invented `.999` is stale, and a real
+    /// `.2` whose second occurrence was seam-filtered (so only the first
+    /// seam remains) must not resolve to that first seam.
+    #[test]
+    fn probe_id_ordinal_must_be_assignable_to_the_seam_set() {
+        let entry = classified_gap("src/pricing.rs::pricing::discounted_total", 88, "x");
+        let mint = |prefix: &str, ordinal: u32| {
+            crate::analysis::fingerprint_probe_id(
+                prefix,
+                &crate::analysis::sanitize_path(entry.seam.file()),
+                "predicate",
+                entry.seam.owner(),
+                &crate::analysis::normalize_rust_expression(entry.seam.expression()),
+                ordinal,
+            )
+            .0
+        };
+        let sole = std::slice::from_ref(&entry);
+        for prefix in ["probe", "repo-probe"] {
+            assert!(probe_id_names_seam(&mint(prefix, 1), &entry, sole));
+            assert!(
+                !probe_id_names_seam(&mint(prefix, 999), &entry, sole),
+                "an invented .999 ordinal must be refused as stale ({prefix})"
+            );
+            assert!(
+                !probe_id_names_seam(&mint(prefix, 2), &entry, sole),
+                "a .2 whose second occurrence is seam-filtered must not name the sole remaining seam ({prefix})"
+            );
+        }
+        // Without an ordinal the bare ID still names both seams of a pair,
+        // so the resolver refuses it as ambiguous.
+        let twin = classified_gap("src/pricing.rs::pricing::discounted_total", 99, "x");
+        let pair = [entry.clone(), twin.clone()];
+        for prefix in ["probe", "repo-probe"] {
+            assert!(probe_id_names_seam(&mint(prefix, 1), &entry, &pair));
+            assert!(probe_id_names_seam(&mint(prefix, 1), &twin, &pair));
+        }
+    }
+
+    /// #8166 round 3: the two ID families handle explicit ordinals
+    /// differently. A `repo-probe:` `.2` rank-binds to exactly the second
+    /// seam (its mint set is the seam set) and `.3` exceeds the set. A
+    /// diff `probe:` `.2` instead names every sharing seam, so the
+    /// resolver refuses it as ambiguous rather than rank-binding it to a
+    /// possibly unchanged seam.
+    #[test]
+    fn probe_id_second_ordinal_resolves_to_the_second_seam() {
+        let first = classified_gap("src/pricing.rs::pricing::discounted_total", 88, "x");
+        let second = classified_gap("src/pricing.rs::pricing::discounted_total", 99, "x");
+        let pair = [first.clone(), second.clone()];
+        let mint = |prefix: &str, ordinal: u32| {
+            crate::analysis::fingerprint_probe_id(
+                prefix,
+                &crate::analysis::sanitize_path(first.seam.file()),
+                "predicate",
+                first.seam.owner(),
+                &crate::analysis::normalize_rust_expression(first.seam.expression()),
+                ordinal,
+            )
+            .0
+        };
+        let repo_resolved: Vec<&ClassifiedSeam> = pair
+            .iter()
+            .filter(|entry| probe_id_names_seam(&mint("repo-probe", 2), entry, &pair))
+            .collect();
+        assert_eq!(
+            repo_resolved.len(),
+            1,
+            "repo-probe .2 must resolve to exactly one seam"
+        );
+        assert_eq!(repo_resolved[0].seam.id(), second.seam.id());
+        assert!(!probe_id_names_seam(&mint("repo-probe", 3), &first, &pair));
+        assert!(!probe_id_names_seam(&mint("repo-probe", 3), &second, &pair));
+        // Diff `probe:`: `.2` (and any explicit ordinal) names the whole
+        // shared-base set, never just the inventory-rank-2 seam.
+        for ordinal in [2, 3, 999] {
+            let diff_resolved: Vec<&ClassifiedSeam> = pair
+                .iter()
+                .filter(|entry| probe_id_names_seam(&mint("probe", ordinal), entry, &pair))
+                .collect();
+            assert_eq!(
+                diff_resolved.len(),
+                2,
+                "diff probe .{ordinal} must name both sharing seams (ambiguous), not rank-bind"
+            );
+        }
+    }
+
+    /// #8166 round 3 (reviewer's concrete case): three identical
+    /// predicates, a diff touching only occurrences 1 and 3, so the
+    /// second changed probe is `.2`. That `.2` must not bind occurrence
+    /// 2's (unchanged) seam: the diff matcher names all three sharing
+    /// seams so the caller refuses as ambiguous, while `repo-probe:`
+    /// `.2` still rank-binds to exactly occurrence 2.
+    #[test]
+    fn diff_probe_second_ordinal_does_not_bind_the_middle_of_three_seams() {
+        let seams = [
+            classified_gap("src/pricing.rs::pricing::discounted_total", 2, "x"),
+            classified_gap("src/pricing.rs::pricing::discounted_total", 3, "x"),
+            classified_gap("src/pricing.rs::pricing::discounted_total", 4, "x"),
+        ];
+        let mint = |prefix: &str, ordinal: u32| {
+            crate::analysis::fingerprint_probe_id(
+                prefix,
+                &crate::analysis::sanitize_path(seams[0].seam.file()),
+                "predicate",
+                seams[0].seam.owner(),
+                &crate::analysis::normalize_rust_expression(seams[0].seam.expression()),
+                ordinal,
+            )
+            .0
+        };
+        let diff_resolved: Vec<&ClassifiedSeam> = seams
+            .iter()
+            .filter(|entry| probe_id_names_seam(&mint("probe", 2), entry, &seams))
+            .collect();
+        assert_eq!(
+            diff_resolved.len(),
+            3,
+            "diff probe .2 must name all sharing seams (ambiguous), not bind occurrence 2"
+        );
+        let repo_resolved: Vec<&ClassifiedSeam> = seams
+            .iter()
+            .filter(|entry| probe_id_names_seam(&mint("repo-probe", 2), entry, &seams))
+            .collect();
+        assert_eq!(repo_resolved.len(), 1);
+        assert_eq!(repo_resolved[0].seam.id(), seams[1].seam.id());
     }
 
     #[test]

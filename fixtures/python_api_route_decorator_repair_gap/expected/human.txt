@@ -35,6 +35,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_api_route_decorator_repair_gap/input --diff <cwd>/fixtures/python_api_route_decorator_repair_gap/diff.patch --mode fast probe:app_checkout.py:python_preview:b4e7eda0
   ripr context --root <cwd>/fixtures/python_api_route_decorator_repair_gap/input --diff <cwd>/fixtures/python_api_route_decorator_repair_gap/diff.patch --mode fast --at probe:app_checkout.py:python_preview:b4e7eda0
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:app_checkout.py:python_preview:b4e7eda0 --root <cwd>/fixtures/python_api_route_decorator_repair_gap/input` for the full gate's answer
 
 More:
   Full evidence: rerun with --format human-full

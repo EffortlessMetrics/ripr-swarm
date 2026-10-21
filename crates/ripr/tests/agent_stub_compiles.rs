@@ -335,13 +335,12 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
         match expect {
             Expect::Refused(kind) => {
                 assert_eq!(output.status.code(), Some(3), "{needle}: {stdout}{stderr}");
-                let (envelope, _) = split_refusal_envelope(&stderr)?;
+                let (envelope, _) = split_refusal_envelope(&stdout, &stderr)?;
                 assert_eq!(envelope["schema_version"], "0.2");
                 assert_eq!(envelope["state"], "refused");
-                assert!(output.stdout.is_empty());
                 assert!(
-                    stderr.contains(&format!("\"kind\": \"{kind}\"")),
-                    "{needle}: {stderr}"
+                    stdout.contains(&format!("\"kind\": \"{kind}\"")),
+                    "{needle}: {stdout}"
                 );
                 assert_eq!(
                     std::fs::read_to_string(root.join("src/lib.rs"))
@@ -896,6 +895,54 @@ fn bare_at_stubs_only_a_reported_gap() -> Result<(), String> {
     scratch.cleanup()
 }
 
+/// A CRLF owner file stays CRLF after `--write`: the stub is produced with
+/// `\n` line breaks, so splicing it verbatim leaves mixed line endings.
+#[test]
+fn write_keeps_a_crlf_owner_file_crlf() -> Result<(), String> {
+    const NEW_MODULE: &str = "pub fn gate(a: u32) -> bool {\r\n    a > 10\r\n}";
+    const EXISTING_MODULE: &str = "pub fn gate(a: u32) -> bool {\r\n    a > 10\r\n}\r\n\r\n#[cfg(test)]\r\nmod tests {\r\n    #[test]\r\n    fn smoke() {}\r\n}\r\n";
+    for (label, source) in [("new", NEW_MODULE), ("existing", EXISTING_MODULE)] {
+        let scratch = Scratch::new()?;
+        let root = scratch.directory.clone();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"stub_crlf\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
+        let output = run_bounded(
+            ripr_stub_write(&root, "src/lib.rs:2"),
+            &root,
+            "stub",
+            Duration::from_mins(2),
+        )?;
+        assert!(
+            output.status.success(),
+            "{label}: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let written = std::fs::read(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
+        assert!(
+            written.len() > source.len(),
+            "{label}: stub was not written"
+        );
+        let lone_lf = written
+            .iter()
+            .enumerate()
+            .filter(|(index, byte)| **byte == b'\n' && (*index == 0 || written[index - 1] != b'\r'))
+            .count();
+        assert_eq!(
+            lone_lf,
+            0,
+            "{label}: mixed line endings in {}",
+            String::from_utf8_lossy(&written)
+        );
+        scratch.cleanup()?;
+    }
+    Ok(())
+}
+
 /// #6689 items 1–2: refusal hints keep the requested family and never route
 /// the caller to a nearer seam of another family.
 const KIND_REFUSAL_SOURCE: &str = "pub fn plain(n: u8) -> u8 {\n    if n > 3 { n } else { 0 }\n}\n\npub fn fallible(input: &str) -> Result<u8, E> {\n    if input.is_empty() {\n        return Err(E::Bad);\n    }\n    Ok(1)\n}\n\n#[derive(Debug, PartialEq)]\npub enum E { Bad }\n";
@@ -925,17 +972,19 @@ fn kind_refusal_command(root: &Path, at: &str, kind: Option<&str>) -> Command {
     stub
 }
 
-/// #7390: under `--json` a not-found refusal leads stderr with the typed
-/// `rust_test_stub` `state: "refused"` envelope (pretty-printed), followed by
-/// the prose refusal line; stdout stays empty. Returns the parsed envelope
-/// and the prose tail.
-fn split_refusal_envelope(stderr: &str) -> Result<(serde_json::Value, &str), String> {
-    let prose_at = stderr
-        .find("ripr: agent stub: ")
-        .ok_or_else(|| format!("the refusal prose must follow the envelope: {stderr}"))?;
-    let envelope: serde_json::Value = serde_json::from_str(&stderr[..prose_at])
-        .map_err(|error| format!("the not-found envelope did not parse: {error}: {stderr}"))?;
-    Ok((envelope, &stderr[prose_at..]))
+/// #7390: under `--json` a not-found refusal puts the typed `rust_test_stub`
+/// `state: "refused"` envelope (pretty-printed) on stdout and the prose
+/// refusal line on stderr. Returns the parsed envelope and the prose.
+fn split_refusal_envelope<'a>(
+    stdout: &str,
+    stderr: &'a str,
+) -> Result<(serde_json::Value, &'a str), String> {
+    if !stderr.starts_with("ripr: agent stub: ") {
+        return Err(format!("the refusal prose must be on stderr: {stderr}"));
+    }
+    let envelope: serde_json::Value = serde_json::from_str(stdout)
+        .map_err(|error| format!("the not-found envelope did not parse: {error}: {stdout}"))?;
+    Ok((envelope, stderr))
 }
 
 fn assert_selector_refusal(envelope: &serde_json::Value, kind: &str) {
@@ -1015,9 +1064,9 @@ fn absent_selectors_keep_not_found_and_explicit_disclosures() -> Result<(), Stri
         }
         let output = run_bounded(command, root, "absent-selector", Duration::from_mins(2))?;
         assert_eq!(output.status.code(), Some(3));
-        assert!(output.stdout.is_empty());
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let (envelope, prose) = split_refusal_envelope(&stderr)?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let (envelope, prose) = split_refusal_envelope(&stdout, &stderr)?;
         assert_eq!(envelope["schema_version"], "0.2");
         assert_eq!(envelope["state"], "refused");
         assert_eq!(envelope["refusal"]["kind"], "seam_not_found");
@@ -1075,7 +1124,6 @@ fn ambiguous_at_files_refuse_with_disambiguation_and_no_write() -> Result<(), St
         command.arg("--write");
         let output = run_bounded(command, root, "ambiguous-files", Duration::from_mins(2))?;
         assert_eq!(output.status.code(), Some(3));
-        assert!(output.stdout.is_empty());
         let mut repeat = kind_refusal_command(root, "src/lib.rs:2", kind);
         repeat.arg("--write");
         let repeated = run_bounded(
@@ -1089,7 +1137,8 @@ fn ambiguous_at_files_refuse_with_disambiguation_and_no_write() -> Result<(), St
         assert_eq!(repeated.stderr, output.stderr);
         assert_eq!(fixture_files(root)?, before);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let (envelope, prose) = split_refusal_envelope(&stderr)?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let (envelope, prose) = split_refusal_envelope(&stdout, &stderr)?;
         assert_selector_refusal(&envelope, "selector_ambiguous");
         assert_eq!(
             envelope["refusal"]["reason"],
@@ -1137,7 +1186,6 @@ fn ambiguous_at_tied_seams_refuse_without_weakening_nested_selection() -> Result
     command.arg("--write");
     let output = run_bounded(command, root, "ambiguous-seams", Duration::from_mins(2))?;
     assert_eq!(output.status.code(), Some(3));
-    assert!(output.stdout.is_empty());
     let mut repeat = kind_refusal_command(root, "src/lib.rs:2", Some("predicate"));
     repeat.arg("--write");
     let repeated = run_bounded(
@@ -1151,7 +1199,8 @@ fn ambiguous_at_tied_seams_refuse_without_weakening_nested_selection() -> Result
     assert_eq!(repeated.stderr, output.stderr);
     assert_eq!(fixture_files(root)?, before);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let (envelope, prose) = split_refusal_envelope(&stderr)?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let (envelope, prose) = split_refusal_envelope(&stdout, &stderr)?;
     assert_selector_refusal(&envelope, "selector_ambiguous");
     let reason = envelope["refusal"]["reason"]
         .as_str()
@@ -1245,12 +1294,9 @@ fn kind_not_found_refusal_preserves_the_requested_probe_family() -> Result<(), S
         Duration::from_mins(2),
     )?;
     assert_eq!(refused.status.code(), Some(3));
-    assert!(
-        refused.stdout.is_empty(),
-        "a not-found decision keeps stdout empty; the envelope rides stderr"
-    );
     let stderr = String::from_utf8_lossy(&refused.stderr);
-    let (envelope, prose) = split_refusal_envelope(&stderr)?;
+    let stdout = String::from_utf8_lossy(&refused.stdout);
+    let (envelope, prose) = split_refusal_envelope(&stdout, &stderr)?;
     assert_eq!(envelope["kind"], "rust_test_stub");
     assert_eq!(envelope["state"], "refused");
     assert_eq!(envelope["refusal"]["kind"], "seam_not_found");
@@ -1407,12 +1453,9 @@ fn kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub() -> Res
         Duration::from_mins(2),
     )?;
     assert_eq!(refused.status.code(), Some(3));
-    assert!(
-        refused.stdout.is_empty(),
-        "a not-found decision keeps stdout empty; the envelope rides stderr"
-    );
     let stderr = String::from_utf8_lossy(&refused.stderr);
-    let (envelope, prose) = split_refusal_envelope(&stderr)?;
+    let stdout = String::from_utf8_lossy(&refused.stdout);
+    let (envelope, prose) = split_refusal_envelope(&stdout, &stderr)?;
     assert_eq!(envelope["refusal"]["kind"], "seam_not_found");
     let (_, tail) = prose
         .split_once("; nearest: ")
@@ -1505,12 +1548,9 @@ fn kind_not_found_without_a_matching_family_suggests_no_other_seams() -> Result<
         Duration::from_mins(2),
     )?;
     assert_eq!(refused.status.code(), Some(3));
-    assert!(
-        refused.stdout.is_empty(),
-        "a not-found decision keeps stdout empty; the envelope rides stderr"
-    );
     let stderr = String::from_utf8_lossy(&refused.stderr);
-    let (envelope, prose) = split_refusal_envelope(&stderr)?;
+    let stdout = String::from_utf8_lossy(&refused.stdout);
+    let (envelope, prose) = split_refusal_envelope(&stdout, &stderr)?;
     assert_eq!(envelope["refusal"]["kind"], "seam_not_found");
     let (_, tail) = prose
         .split_once("; nearest: ")
@@ -2175,6 +2215,391 @@ pub mod extra {
     Ok(())
 }
 
+/// #8741: when the gap's related test is an existing `tests/*.rs` file, the
+/// stub is appended to that file (the only path the repair packet's edit cage
+/// allows) instead of adding an inline module to the production file.
+#[test]
+fn stub_for_an_existing_integration_test_target_appends_to_that_file() -> Result<(), String> {
+    const SOURCE: &str =
+        "pub fn discount(qty: u32, rate: u32) -> u32 {\n    if qty > 10 { rate } else { 0 }\n}\n";
+    const TEST: &str = "use stub_existing::discount;\n\n#[test]\nfn small() {\n    assert!(discount(5, 2) == 0);\n}\n";
+    let scratch = Scratch::new()?;
+    let root = scratch.directory.clone();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"stub_existing\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n# Keep this scratch crate out of a parent Cargo workspace.\n[workspace]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), SOURCE).map_err(|error| error.to_string())?;
+    std::fs::create_dir(root.join("tests")).map_err(|error| error.to_string())?;
+    std::fs::write(root.join("tests/discount.rs"), TEST).map_err(|error| error.to_string())?;
+
+    let stub = ripr_stub_write(&root, "src/lib.rs:2");
+    let output = run_bounded(stub, &root, "stub", Duration::from_mins(2))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(output.status.success(), "stub: {stdout}{stderr}");
+    let document: serde_json::Value =
+        serde_json::from_str(&stdout).map_err(|error| format!("stub JSON: {error}: {stdout}"))?;
+    assert_eq!(
+        document["placement"]["kind"], "existing_integration_file",
+        "an existing tests/ target must receive the stub: {stdout}"
+    );
+    assert_eq!(
+        document["placement"]["file"], "tests/discount.rs",
+        "{stdout}"
+    );
+    assert_eq!(document["written"], true, "{stdout}");
+    assert_eq!(
+        std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?,
+        SOURCE,
+        "the production file must not be touched"
+    );
+    let test_name = document["test_name"]
+        .as_str()
+        .ok_or_else(|| "test_name".to_string())?;
+    let written = std::fs::read_to_string(root.join("tests/discount.rs"))
+        .map_err(|error| error.to_string())?;
+    assert!(
+        written.starts_with(TEST),
+        "existing content kept:\n{written}"
+    );
+    assert!(
+        written.contains(&format!("fn {test_name}(")) && written.contains("use stub_existing::*;"),
+        "{written}"
+    );
+    assert!(
+        !written.contains("mod ripr_tests"),
+        "no inline module in the integration file: {written}"
+    );
+
+    let run = document["run_command"]
+        .as_str()
+        .ok_or_else(|| format!("run_command: {stdout}"))?;
+    assert!(
+        run.contains("--test discount") && run.contains(test_name),
+        "{run}"
+    );
+    let cargo = cargo_from_run_command(run, &root)?;
+    let cargo_run = run_bounded(cargo, &root, "cargo-test", Duration::from_mins(2))?;
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&cargo_run.stdout),
+        String::from_utf8_lossy(&cargo_run.stderr)
+    );
+    assert!(
+        !cargo_run.status.success() && text.contains("not yet implemented: ripr:"),
+        "the appended stub must compile and stop at its own todo:\n{text}\n{written}"
+    );
+    scratch.cleanup()?;
+    Ok(())
+}
+
+const EXISTING_LIB: &str =
+    "pub fn discount(qty: u32, rate: u32) -> u32 {\n    if qty > 10 { rate } else { 0 }\n}\n";
+const EXISTING_TEST: &str =
+    "use stub_existing::discount;\n\n#[test]\nfn small() {\n    assert!(discount(5, 2) == 0);\n}\n";
+
+fn existing_target_scratch(
+    manifest_tail: &str,
+    lib_path: &str,
+    lib: &str,
+    test_path: &str,
+    test: &str,
+) -> Result<Scratch, String> {
+    let scratch = Scratch::new()?;
+    let root = &scratch.directory;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        format!(
+            "[package]\nname = \"stub_existing\"\nversion = \"0.1.0\"\nedition = \"2024\"\n{manifest_tail}\n# Keep this scratch crate out of a parent Cargo workspace.\n[workspace]\n"
+        ),
+    )
+    .map_err(|error| error.to_string())?;
+    for (path, text) in [(lib_path, lib), (test_path, test)] {
+        let full = root.join(path);
+        if let Some(parent) = full.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        std::fs::write(full, text).map_err(|error| error.to_string())?;
+    }
+    Ok(scratch)
+}
+
+/// #8794: edition 2015 disables legacy test auto-discovery once any explicit
+/// `[[test]]` exists, so the file is not a registered target and no command is
+/// offered; edition 2018+ still auto-discovers, and `autotests = true` restores
+/// discovery in 2015. The human output says the file is not a registered target.
+#[test]
+fn legacy_edition_discovery_fails_closed_and_controls_register() -> Result<(), String> {
+    let other = "\n[[test]]\nname = \"other\"\npath = \"tests/other.rs\"\n";
+    let cases = [
+        ("2015", other.to_string(), false),
+        ("2015", format!("autotests = true\n{other}"), true),
+        ("2018", other.to_string(), true),
+    ];
+    for (edition, tail, registered) in cases {
+        let scratch = existing_target_scratch(
+            &tail,
+            "src/lib.rs",
+            EXISTING_LIB,
+            "tests/discount.rs",
+            &format!("extern crate stub_existing;\n{EXISTING_TEST}"),
+        )?;
+        let root = &scratch.directory;
+        let manifest = root.join("Cargo.toml");
+        let text = std::fs::read_to_string(&manifest).map_err(|error| error.to_string())?;
+        std::fs::write(
+            &manifest,
+            text.replace("edition = \"2024\"", &format!("edition = \"{edition}\"")),
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("tests/other.rs"), "#[test]\nfn unrelated() {}\n")
+            .map_err(|error| error.to_string())?;
+        if !registered {
+            let human = ripr_stub(root, "src/lib.rs:2");
+            let out = run_bounded(human, root, "human-stub", Duration::from_mins(2))?;
+            let text = String::from_utf8_lossy(&out.stdout).to_string();
+            assert!(
+                out.status.success()
+                    && text.contains("tests/discount.rs is not a registered cargo test target"),
+                "{edition}: {text}"
+            );
+        }
+        let document = stub_json(root, "src/lib.rs:2")?;
+        let case = format!("{edition} {tail}: {document}");
+        assert_eq!(document["placement"]["file"], "tests/discount.rs", "{case}");
+        if registered {
+            let run = document["run_command"].as_str().ok_or(case.clone())?;
+            assert!(run.contains("--test discount "), "{case}");
+            let out = run_bounded(
+                cargo_from_run_command(run, root)?,
+                root,
+                "cargo-test",
+                Duration::from_mins(2),
+            )?;
+            let text = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert!(
+                text.contains("not yet implemented: ripr:"),
+                "{case}: {text}"
+            );
+        } else {
+            assert!(document["run_command"].is_null(), "{case}");
+        }
+        scratch.cleanup()?;
+    }
+    Ok(())
+}
+
+fn stub_json(root: &Path, location: &str) -> Result<serde_json::Value, String> {
+    let output = run_bounded(
+        ripr_stub_write(root, location),
+        root,
+        "stub",
+        Duration::from_mins(2),
+    )?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    if !output.status.success() {
+        return Ok(serde_json::json!({
+            "refused": true,
+            "output": format!("{stdout}{}", String::from_utf8_lossy(&output.stderr)),
+        }));
+    }
+    serde_json::from_str(&stdout).map_err(|error| format!("stub JSON: {error}: {stdout}"))
+}
+
+fn count_fn(text: &str, name: &str) -> usize {
+    text.matches(&format!("fn {name}(")).count()
+}
+
+/// A repeated `--write`, and a same-named test already in the target, must
+/// never append a duplicate `fn` (which would break the target's compilation).
+#[test]
+fn stub_for_an_existing_integration_target_is_unique_within_that_file() -> Result<(), String> {
+    let scratch = existing_target_scratch(
+        "",
+        "src/lib.rs",
+        EXISTING_LIB,
+        "tests/discount.rs",
+        EXISTING_TEST,
+    )?;
+    let root = scratch.directory.clone();
+    let first = stub_json(&root, "src/lib.rs:2")?;
+    assert_eq!(first["placement"]["kind"], "existing_integration_file");
+    let name = first["test_name"]
+        .as_str()
+        .ok_or_else(|| format!("test_name: {first}"))?
+        .to_string();
+
+    // Second write: either cleanly refused or a distinct name, never a duplicate.
+    let second = stub_json(&root, "src/lib.rs:2")?;
+    let written = std::fs::read_to_string(root.join("tests/discount.rs"))
+        .map_err(|error| error.to_string())?;
+    assert_eq!(count_fn(&written, &name), 1, "duplicate fn:\n{written}");
+    if second["refused"] != true {
+        assert_ne!(second["test_name"], first["test_name"], "{second}");
+        let compile = cargo_from_run_command(
+            second["run_command"]
+                .as_str()
+                .unwrap_or("cargo test --test discount"),
+            &root,
+        )?;
+        let out = run_bounded(compile, &root, "cargo-test", Duration::from_mins(2))?;
+        let text = String::from_utf8_lossy(&out.stderr).to_string();
+        assert!(
+            !text.contains("error["),
+            "second write must compile:\n{text}"
+        );
+    }
+
+    // A same-named test already present in the target is not shadowed.
+    std::fs::write(
+        root.join("tests/discount.rs"),
+        format!("{EXISTING_TEST}\n#[test]\nfn {name}() {{}}\n"),
+    )
+    .map_err(|error| error.to_string())?;
+    let third = stub_json(&root, "src/lib.rs:2")?;
+    let written = std::fs::read_to_string(root.join("tests/discount.rs"))
+        .map_err(|error| error.to_string())?;
+    assert_eq!(count_fn(&written, &name), 1, "collision:\n{written}");
+    if third["refused"] != true {
+        assert_ne!(third["test_name"].as_str(), Some(name.as_str()), "{third}");
+    }
+    scratch.cleanup()?;
+    Ok(())
+}
+
+/// Owners and targets the integration route cannot serve keep the old
+/// placement (or refuse); the named target file is never appended to.
+fn assert_not_appended(
+    manifest_tail: &str,
+    lib_path: &str,
+    lib: &str,
+    location: &str,
+    test_path: &str,
+    test: &str,
+) -> Result<(), String> {
+    let scratch = existing_target_scratch(manifest_tail, lib_path, lib, test_path, test)?;
+    let root = scratch.directory.clone();
+    let result = stub_json(&root, location)?;
+    assert_ne!(
+        result["placement"]["kind"], "existing_integration_file",
+        "{test_path}: {result}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join(test_path)).map_err(|error| error.to_string())?,
+        test,
+        "{test_path} must be untouched: {result}"
+    );
+    scratch.cleanup()
+}
+
+/// #8794: `[[test]] name = "pricing" path = "tests/discount.rs"` registers the
+/// file as `pricing`, so the printed command must say `--test pricing` and,
+/// executed, must reach the stub's own todo (not "no test target named").
+/// With `autotests = false` the explicit entry is still honored; without one
+/// the file is no target at all and no command is printed.
+#[test]
+fn run_command_uses_the_effective_cargo_target_name() -> Result<(), String> {
+    let renamed = "\n[[test]]\nname = \"pricing\"\npath = \"tests/discount.rs\"\n";
+    for tail in [renamed.to_string(), format!("autotests = false\n{renamed}")] {
+        let scratch = existing_target_scratch(
+            &tail,
+            "src/lib.rs",
+            EXISTING_LIB,
+            "tests/discount.rs",
+            EXISTING_TEST,
+        )?;
+        let root = scratch.directory.clone();
+        let document = stub_json(&root, "src/lib.rs:2")?;
+        assert_eq!(
+            document["placement"]["kind"], "existing_integration_file",
+            "{document}"
+        );
+        let run = document["run_command"]
+            .as_str()
+            .ok_or_else(|| format!("run_command: {document}"))?;
+        assert!(
+            run.contains("--test pricing ") && !run.contains("--test discount"),
+            "{run}"
+        );
+        let cargo = cargo_from_run_command(run, &root)?;
+        let out = run_bounded(cargo, &root, "cargo-test", Duration::from_mins(2))?;
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            !out.status.success() && text.contains("not yet implemented: ripr:"),
+            "the emitted command must run the stub under its renamed target:\n{text}"
+        );
+        scratch.cleanup()?;
+    }
+
+    // The target name cannot be established: omit the command rather than
+    // print one (`--test discount`) that cargo would reject.
+    let scratch = existing_target_scratch(
+        "autotests = false\n",
+        "src/lib.rs",
+        EXISTING_LIB,
+        "tests/discount.rs",
+        EXISTING_TEST,
+    )?;
+    let root = scratch.directory.clone();
+    let document = stub_json(&root, "src/lib.rs:2")?;
+    assert_eq!(
+        document["placement"]["kind"], "existing_integration_file",
+        "{document}"
+    );
+    assert!(
+        document["run_command"].is_null(),
+        "no command when the target is not registered: {document}"
+    );
+    scratch.cleanup()
+}
+
+#[test]
+fn stub_for_an_unservable_existing_target_keeps_the_old_placement() -> Result<(), String> {
+    assert_not_appended(
+        "",
+        "src/lib.rs",
+        &EXISTING_LIB.replace("pub fn", "pub(crate) fn"),
+        "src/lib.rs:2",
+        "tests/discount.rs",
+        EXISTING_TEST,
+    )?;
+    assert_not_appended(
+        "",
+        "src/lib.rs",
+        "pub mod inner {\n    pub fn discount(qty: u32, rate: u32) -> u32 {\n        if qty > 10 { rate } else { 0 }\n    }\n}\n",
+        "src/lib.rs:3",
+        "tests/discount.rs",
+        EXISTING_TEST,
+    )?;
+    assert_not_appended(
+        "",
+        "src/main.rs",
+        &format!("{EXISTING_LIB}fn main() {{}}\n"),
+        "src/main.rs:2",
+        "tests/discount.rs",
+        EXISTING_TEST,
+    )?;
+    assert_not_appended(
+        "",
+        "src/lib.rs",
+        EXISTING_LIB,
+        "src/lib.rs:2",
+        "tests/common/mod.rs",
+        EXISTING_TEST,
+    )?;
+    Ok(())
+}
+
 fn cargo_from_run_command(run: &str, root: &Path) -> Result<Command, String> {
     let mut parts = run.split_whitespace();
     let program = parts
@@ -2194,11 +2619,17 @@ fn cargo_from_run_command(run: &str, root: &Path) -> Result<Command, String> {
     Ok(command)
 }
 
-fn ripr_stub_write(root: &Path, at: &str) -> Command {
+fn ripr_stub(root: &Path, at: &str) -> Command {
     let mut stub = Command::new(env!("CARGO_BIN_EXE_ripr"));
     stub.args(["agent", "stub", "--root"])
         .arg(root)
-        .args(["--at", at, "--write", "--json"]);
+        .args(["--at", at]);
+    stub
+}
+
+fn ripr_stub_write(root: &Path, at: &str) -> Command {
+    let mut stub = ripr_stub(root, at);
+    stub.args(["--write", "--json"]);
     stub
 }
 

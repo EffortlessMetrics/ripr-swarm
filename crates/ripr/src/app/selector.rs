@@ -1,15 +1,33 @@
 use crate::domain::Finding;
 
-/// Outcome of resolving one selector against the finding set (#8166 Slice B).
+/// Outcome of resolving one selector against the finding set (#8166 Slice B,
+/// #8689).
 ///
 /// Selection is fail-closed: a selector that names several findings is
 /// `Ambiguous`, never a silent first match, and a selector that names none
-/// is `NoMatch`. Both refusals are usage-class at the CLI (prose-only,
-/// exit 2), matching the existing selector-miss contract.
+/// is `NoMatch`. A lookup that could not check — an unreadable or
+/// truncated seam inventory — is `Undecided`, never a clean miss. All
+/// refusals are usage-class at the CLI (prose-only, exit 2), matching the
+/// existing selector-miss contract.
 pub(in crate::app) enum FindingSelection<'a> {
     Unique(&'a Finding),
     NoMatch,
+    /// The lookup could not establish a match or a miss (#8689): the seam
+    /// inventory the reverse lookup needs was unreadable or budget-
+    /// truncated. Rendering must name the limitation instead of claiming a
+    /// clean miss the lookup did not establish.
+    Undecided(SelectorLimitation),
     Ambiguous(Vec<&'a Finding>),
+}
+
+/// Why a seam-reverse lookup could not decide (#8689). Both arms mean the
+/// lookup checked nothing, so the refusal must disclose the state rather
+/// than render a plain miss.
+pub(in crate::app) enum SelectorLimitation {
+    /// The seam inventory could not be read at all.
+    InventoryUnreadable,
+    /// The seam inventory was budget-truncated: `analyzed` of `total` seams.
+    InventoryTruncated { analyzed: usize, total: usize },
 }
 
 /// Resolve `selector` against `findings`: an exact finding ID, an exact
@@ -35,6 +53,148 @@ pub(in crate::app) fn select_finding<'a>(
         0 => FindingSelection::NoMatch,
         1 => FindingSelection::Unique(matches[0]),
         _ => FindingSelection::Ambiguous(matches),
+    }
+}
+
+/// Whether `selector` has the shape of a seam ID: exactly 16 lowercase hex
+/// characters. Only seam-shaped selectors pay for the reverse seam lookup;
+/// every other miss keeps the direct selection result.
+pub(in crate::app) fn is_seam_id_selector(selector: &str) -> bool {
+    selector.len() == 16
+        && selector
+            .chars()
+            .all(|character| character.is_ascii_digit() || ('a'..='f').contains(&character))
+}
+
+/// Whether `selector` has the shape of the seam-derived hash-form canonical
+/// gap ID `ripr rerun --json` and `ripr repo-exposure` JSON emit:
+/// `gap:` followed by exactly 16 lowercase hex characters (#8688). The
+/// producer form `ripr check` prints (`gap:rust:...`) is longer and names a
+/// colon-separated body, so this shape check cannot confuse the two.
+pub(in crate::app) fn is_gap_hash_selector(selector: &str) -> bool {
+    let Some(hash) = selector.strip_prefix("gap:") else {
+        return false;
+    };
+    hash.len() == 16
+        && hash
+            .chars()
+            .all(|character| character.is_ascii_digit() || ('a'..='f').contains(&character))
+}
+
+/// Resolve a seam ID against the finding set through the shared
+/// seam-to-finding binding (#8166 residual): the seam named by `seam_id`
+/// binds at most one finding via
+/// [`finding_for_seam`](super::repair_card_handoff::finding_for_seam), whose
+/// producer branch already refuses sibling collisions. A seam naming no
+/// finding in this set (stale for the selected diff), or no such seam at
+/// all, is `NoMatch` — never a manufactured finding.
+pub(in crate::app) fn select_finding_for_seam<'a>(
+    findings: &'a [Finding],
+    classified: &[crate::analysis::ClassifiedSeam],
+    seam_id: &str,
+) -> FindingSelection<'a> {
+    let Some(entry) = classified
+        .iter()
+        .find(|entry| entry.seam.id().as_str() == seam_id)
+    else {
+        return FindingSelection::NoMatch;
+    };
+    let canonical_gap_id =
+        crate::analysis::canonical_gap::canonical_gap_identity(entry).map(|identity| identity.id);
+    match super::repair_card_handoff::finding_for_seam(
+        findings,
+        entry,
+        canonical_gap_id.as_deref(),
+        classified,
+    ) {
+        Some(finding) => FindingSelection::Unique(finding),
+        None => FindingSelection::NoMatch,
+    }
+}
+
+/// Resolve the seam-derived hash-form canonical gap ID (`gap:<16hex>`,
+/// #8688) against the finding set through the same seam-to-finding binding
+/// as the seam-ID reverse lookup. The hash form is minted from the seam's
+/// owner, kind, flow sink, missing discriminator and assertion shape, so it
+/// is read from the seam side: every headline-eligible seam whose
+/// [`canonical_gap_identity`] recomputes to the selector is bound back to
+/// its finding. Several seams can group under one gap; distinct bound
+/// findings make the selector ambiguous, never a silent first match, and a
+/// gap no seam carries is `NoMatch`.
+pub(in crate::app) fn select_finding_for_gap_hash<'a>(
+    findings: &'a [Finding],
+    classified: &[crate::analysis::ClassifiedSeam],
+    selector: &str,
+) -> FindingSelection<'a> {
+    let mut bound: Vec<&Finding> = Vec::new();
+    for entry in classified.iter().filter(|entry| {
+        crate::analysis::canonical_gap::canonical_gap_identity(entry)
+            .is_some_and(|identity| identity.id == selector)
+    }) {
+        let canonical_gap_id = crate::analysis::canonical_gap::canonical_gap_identity(entry)
+            .map(|identity| identity.id);
+        let Some(finding) = super::repair_card_handoff::finding_for_seam(
+            findings,
+            entry,
+            canonical_gap_id.as_deref(),
+            classified,
+        ) else {
+            continue;
+        };
+        if !bound.contains(&finding) {
+            bound.push(finding);
+        }
+    }
+    match bound.len() {
+        0 => FindingSelection::NoMatch,
+        1 => FindingSelection::Unique(bound[0]),
+        _ => FindingSelection::Ambiguous(bound),
+    }
+}
+
+/// [`select_finding`] plus the seam-side reverse lookups for a fresh run
+/// (#8166 residual, #8688): a direct hit keeps the existing result; only a
+/// miss shaped like a seam ID or a hash-form canonical gap ID inventories
+/// the root's classified seams and binds the named identity back to its
+/// finding. An unreadable or truncated inventory is `Undecided` rather than
+/// a miss (#8689): the lookup checked nothing, so claiming "no finding
+/// matched" would overstate what was established.
+pub(in crate::app) fn select_finding_with_seam_reverse<'a>(
+    findings: &'a [Finding],
+    root: &std::path::Path,
+    config: &crate::config::RiprConfig,
+    selector: &str,
+) -> FindingSelection<'a> {
+    let direct = select_finding(findings, selector);
+    if !matches!(direct, FindingSelection::NoMatch) {
+        return direct;
+    }
+    let seam_lookup = if is_seam_id_selector(selector) {
+        true
+    } else if is_gap_hash_selector(selector) {
+        false
+    } else {
+        return direct;
+    };
+    let (classified, limit_info) =
+        match crate::analysis::inventory_classified_seams_at_with_config(root, config) {
+            Ok(inventory) => inventory,
+            Err(_error) => {
+                return FindingSelection::Undecided(SelectorLimitation::InventoryUnreadable);
+            }
+        };
+    if let Some(info) = &limit_info
+        && info.analyzed < info.total
+    {
+        return FindingSelection::Undecided(SelectorLimitation::InventoryTruncated {
+            analyzed: info.analyzed,
+            total: info.total,
+        });
+    }
+    if seam_lookup {
+        select_finding_for_seam(findings, &classified, selector)
+    } else {
+        select_finding_for_gap_hash(findings, &classified, selector)
     }
 }
 
@@ -75,7 +235,11 @@ pub(in crate::app) fn selector_matches_location(selector: &str, finding: &Findin
 /// `.\crates/ripr/src/lib.rs`); normalize both sides, then accept an exact
 /// match or a path-suffix match in either direction so that `src/lib.rs:8` and
 /// `crates/ripr/src/lib.rs:8` both resolve.
-fn selector_matches_file_line(stored_file: &str, stored_line: usize, selector: &str) -> bool {
+pub(in crate::app) fn selector_matches_file_line(
+    stored_file: &str,
+    stored_line: usize,
+    selector: &str,
+) -> bool {
     let Some((selector_file, selector_line)) = selector.rsplit_once(':') else {
         return false;
     };
@@ -196,6 +360,170 @@ mod tests {
                 "unique selector {selector} must resolve exactly its finding"
             );
         }
+    }
+
+    /// #8166 residual: a seam ID resolves back to the one finding bound to
+    /// that seam; a seam naming no finding in the set, and a seam-shaped ID
+    /// naming no seam, stay `NoMatch`.
+    #[test]
+    fn seam_id_selector_resolves_through_the_seam_binding() {
+        use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
+        use crate::analysis::test_grip_evidence::TestGripEvidence;
+        use crate::analysis::{ClassifiedSeam, canonical_gap::canonical_gap_identity};
+        use crate::domain::{Confidence, StageState};
+
+        let seam = RepoSeam::new(
+            "src/lib.rs",
+            "src/lib.rs::add",
+            SeamKind::PredicateBoundary,
+            30,
+            3,
+            "x > 0",
+            RequiredDiscriminator::BoundaryValue {
+                description: "x > 0".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        let stage = |state: StageState| StageEvidence::new(state, Confidence::Medium, "t");
+        let entry = ClassifiedSeam {
+            evidence: TestGripEvidence {
+                seam_id: seam.id().clone(),
+                related_tests: Vec::new(),
+                reach: stage(StageState::Yes),
+                activate: stage(StageState::Yes),
+                propagate: stage(StageState::Yes),
+                observe: stage(StageState::Yes),
+                discriminate: stage(StageState::Weak),
+                observed_values: Vec::new(),
+                missing_discriminators: Vec::new(),
+                new_test_target: None,
+                statically_contradicted_related_tests: 0,
+            },
+            seam,
+            class: crate::analysis::seams::SeamGripClass::WeaklyGripped,
+        };
+        let seam_id = entry.seam.id().as_str().to_string();
+        let identity = canonical_gap_identity(&entry);
+        assert!(identity.is_some(), "eligible seam must have a gap identity");
+        let Some(identity) = identity else {
+            return;
+        };
+        let mut bound = finding("probe:src_lib.rs:predicate:aaaa", 3, None);
+        bound.canonical_gap = Some(crate::domain::FindingCanonicalGap {
+            id: identity.id.clone(),
+            language: "rust".to_string(),
+            file: "src/lib.rs".to_string(),
+            owner: entry.seam.owner().to_string(),
+            behavior_kind: "predicate".to_string(),
+            probe_kind: "predicate".to_string(),
+            normalized_discriminator: "x".to_string(),
+        });
+        let findings = vec![bound];
+        let classified = [entry];
+        assert!(
+            matches!(
+                super::select_finding_for_seam(&findings, &classified, &seam_id),
+                FindingSelection::Unique(selected) if selected.id == findings[0].id
+            ),
+            "the seam ID must resolve to its bound finding"
+        );
+        // Stale for this diff: the seam exists, no finding binds to it.
+        assert!(matches!(
+            super::select_finding_for_seam(&[], &classified, &seam_id),
+            FindingSelection::NoMatch
+        ));
+        // No such seam at all.
+        assert!(matches!(
+            super::select_finding_for_seam(&findings, &classified, "0123456789abcdef"),
+            FindingSelection::NoMatch
+        ));
+        assert!(super::is_seam_id_selector("0123456789abcdef"));
+        assert!(!super::is_seam_id_selector(
+            "probe:src_lib.rs:predicate:aaaa"
+        ));
+    }
+
+    /// #8688: the seam-derived hash-form canonical gap ID (`gap:<16hex>`)
+    /// that `ripr rerun --json` and repo-exposure JSON carry resolves
+    /// through the seam binding to the same finding the seam ID resolves
+    /// to; a hash no seam carries stays `NoMatch`, and the producer form
+    /// `ripr check` prints is not mistaken for the hash shape.
+    #[test]
+    fn gap_hash_selector_resolves_through_the_seam_binding() {
+        use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
+        use crate::analysis::test_grip_evidence::TestGripEvidence;
+        use crate::analysis::{ClassifiedSeam, canonical_gap::canonical_gap_identity};
+        use crate::domain::{Confidence, StageState};
+
+        let seam = RepoSeam::new(
+            "src/lib.rs",
+            "src/lib.rs::add",
+            SeamKind::PredicateBoundary,
+            30,
+            3,
+            "x > 0",
+            RequiredDiscriminator::BoundaryValue {
+                description: "x > 0".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        let stage = |state: StageState| StageEvidence::new(state, Confidence::Medium, "t");
+        let entry = ClassifiedSeam {
+            evidence: TestGripEvidence {
+                seam_id: seam.id().clone(),
+                related_tests: Vec::new(),
+                reach: stage(StageState::Yes),
+                activate: stage(StageState::Yes),
+                propagate: stage(StageState::Yes),
+                observe: stage(StageState::Yes),
+                discriminate: stage(StageState::Weak),
+                observed_values: Vec::new(),
+                missing_discriminators: Vec::new(),
+                new_test_target: None,
+                statically_contradicted_related_tests: 0,
+            },
+            seam,
+            class: crate::analysis::seams::SeamGripClass::WeaklyGripped,
+        };
+        let identity = canonical_gap_identity(&entry);
+        assert!(identity.is_some(), "eligible seam must have a gap identity");
+        let Some(identity) = identity else {
+            return;
+        };
+        assert!(
+            super::is_gap_hash_selector(&identity.id),
+            "the minted id is the hash form: {}",
+            identity.id
+        );
+        assert!(!super::is_gap_hash_selector(
+            "gap:rust:src/lib.rs:add:predicate_boundary:predicate:x==y"
+        ));
+        assert!(!super::is_gap_hash_selector("gap:rust"));
+        assert!(!super::is_gap_hash_selector("0123456789abcdef"));
+        let mut bound = finding("probe:src_lib.rs:predicate:aaaa", 3, None);
+        bound.canonical_gap = Some(crate::domain::FindingCanonicalGap {
+            id: identity.id.clone(),
+            language: "rust".to_string(),
+            file: "src/lib.rs".to_string(),
+            owner: entry.seam.owner().to_string(),
+            behavior_kind: "predicate".to_string(),
+            probe_kind: "predicate".to_string(),
+            normalized_discriminator: "x".to_string(),
+        });
+        let findings = vec![bound];
+        let classified = [entry];
+        assert!(
+            matches!(
+                super::select_finding_for_gap_hash(&findings, &classified, &identity.id),
+                FindingSelection::Unique(selected) if selected.id == findings[0].id
+            ),
+            "the hash-form gap ID must resolve to its bound finding"
+        );
+        // A hash no seam carries names nothing (clean miss is established).
+        assert!(matches!(
+            super::select_finding_for_gap_hash(&findings, &classified, "gap:0000000000000000"),
+            FindingSelection::NoMatch
+        ));
     }
 
     #[test]

@@ -120,6 +120,24 @@ read-only and without execution authority (ADR 0022):
   producer condition so one document cannot contradict its own
   `discriminator_availability` block (#5268); the readiness reason and the
   `ripr_prepare_repair` ineligibility are the same evaluation.
+- The conjunction ends with the shared seam-level repair validator (#8717).
+  During `ripr_refresh` the adapter resolves every committed finding id
+  through the same resolver `ripr repair <finding-id>` uses
+  (`app::task_first::resolve_repair_subject_in`) over the refresh's
+  diff-scoped classified seam inventory, and the item is repair-ready only
+  when exactly one seam is named and the shared repair-admission gate admits
+  it. A finding-ready item the validator refuses is not ready and keeps the
+  validator's own explanation: `seam_already_gripped` (the seam's existing
+  tests already grip it), `seam_gate_refused` (route not ready, unresolved
+  cross-language visibility or target, policy omission), `seam_ambiguous`
+  (several seams name the finding; the resolver never picks) or
+  `seam_not_found` (no classified seam names it). The verdict is projected
+  before the snapshot identity is computed, so the list summary, the
+  `ripr_get_gap` readiness block, `ripr_prepare_repair` and the snapshot
+  identity carry one decision, and a finding-level refusal remains the first
+  failing gate. MCP never reads readiness from finding facts alone and keeps
+  no parallel validator: `ripr_prepare_repair` cannot return a ready packet
+  or an `awaiting_edit` attempt for an item `ripr repair` refuses.
 - When every gate is established, the tool creates one session repair
   transaction with a deterministic, root-bound `repair-attempt-` identity
   (the first 24 hex digits of a SHA-256 over schema version, snapshot id,
@@ -334,6 +352,11 @@ read-only and without execution authority (ADR 0022):
   authenticity for those compatibility inputs.
 - `crates/ripr/src/mcp/gaps.rs::tests` — the committed producer
   repair-readiness evaluation and its fail-closed gates.
+- `crates/ripr/tests/mcp_stdio.rs`
+  `mcp_readiness_never_exceeds_the_cli_repair_gate` and
+  `mcp_ready_item_is_the_item_the_cli_repair_gate_admits` — real-stdio
+  parity of list, get_gap and prepare readiness against `ripr repair`
+  (#8717).
 - `crates/ripr/src/mcp/protocol.rs::tests` + `server_tests.rs` —
   descriptors, vocabulary, instructions, dispatch-edge rejections, and
   pre-refresh typed failures.
@@ -348,6 +371,7 @@ read-only and without execution authority (ADR 0022):
 | Surface | Responsibility |
 | --- | --- |
 | `crates/ripr/src/mcp/repair.rs` | readiness-gated session transactions, deterministic root-bound attempt identity, durable attempt/receipt projection, `CommandSpec` document projection, receipt-status vocabulary mapping |
+| `crates/ripr/src/mcp/repair_admission.rs` | per-finding verdicts from the shared seam-level repair validator over the refresh's seam inventory, with typed seam refusal codes (#8717) |
 | `crates/ripr/src/mcp/gaps.rs` | producer repair-readiness evaluation at snapshot commit time; readiness block and live repair-attempt link in the evidence document |
 | `crates/ripr/src/mcp/workspace.rs` | session repairs map (in-memory, restart-drops), shared `AttemptFailure::with_data`, link injection in `get_gap` |
 | `crates/ripr/src/mcp/protocol.rs` | tool/resource-template descriptors, output schemas, instructions, status surface lists, failure vocabulary |

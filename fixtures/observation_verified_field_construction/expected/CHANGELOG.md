@@ -434,7 +434,7 @@ Updated:
 ## Pending — observation_verified_field_construction (37)
 
 Reason:
-RIPR-SPEC-0122: printed agent stub --at line is now the seam line the stub targets (#8444); the old line triggered nearest-gap substitution
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down; printed agent stub --at line is now the seam line the stub targets (#8444); the old line triggered nearest-gap substitution
 
 Command:
 `cargo xtask goldens bless observation_verified_field_construction --reason "..."`

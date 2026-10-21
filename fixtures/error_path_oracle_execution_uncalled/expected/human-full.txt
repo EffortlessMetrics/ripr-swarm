@@ -30,7 +30,7 @@ Evidence
   - observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - local flow reaches error variant: let n = rdr.read(&mut buf)? (line 5)
-  - related test src/lib.rs:21 reports_read_failure uses none unknown oracle; misses: assertion not credited: ripr could not establish that it runs as the standard macro
+  - related test src/lib.rs:21 reports_read_failure uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
   - source enum variant value io::ErrorKind::Other at line 23
 
 Weakness
@@ -66,8 +66,8 @@ Evidence
   - propagation unknown: No propagation model is available for this changed syntax
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator unknown: Assertions exist, but oracle strength is unknown
-  - local flow reaches unknown sink (line 5)
-  - related test src/lib.rs:21 reports_read_failure uses unknown exact value oracle: assert_eq!(read_all(rdr).unwrap_err().kind(), io::ErrorKind::Other);
+  - local flow reaches unknown sink (line 5) — ripr could not classify where the changed value ends up; propagation confidence is limited
+  - related test src/lib.rs:21 reports_read_failure uses exact value oracle, not graded against this probe: assert_eq!(read_all(rdr).unwrap_err().kind(), io::ErrorKind::Other);
   - source enum variant value io::ErrorKind::Other at line 23
 
 Weakness

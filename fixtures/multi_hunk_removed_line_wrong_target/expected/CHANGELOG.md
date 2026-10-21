@@ -473,3 +473,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — multi_hunk_removed_line_wrong_target (22)
+
+Reason:
+RIPR-SPEC-0122: #8729 names the repair-route refusal on the bounded check drill-down
+
+Command:
+`cargo xtask goldens bless multi_hunk_removed_line_wrong_target --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

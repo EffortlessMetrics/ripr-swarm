@@ -50,6 +50,10 @@ pub(crate) struct CompactGripContext<'a> {
     /// parse, its line index, and its test-function lookup, built once per
     /// file instead of once per seam and related test.
     parsed_sources: Mutex<BTreeMap<&'a Path, Option<Arc<ParsedTestFile>>>>,
+    /// Manifest-backed default target identity, once per observer file.
+    /// Small, immutable-index answers survive evidence window boundaries.
+    default_unit_test_files: Mutex<BTreeMap<&'a Path, bool>>,
+    pub(super) private_visibility: super::visibility::PrivateVisibilityMemo,
     /// Per production file: the parser-backed module layout new-test-target
     /// admission reads. File-bounded and small, so it survives windows.
     pub(in crate::analysis::test_grip_evidence) inline_unit_layouts:
@@ -398,14 +402,25 @@ impl<'a> CompactGripContext<'a> {
         let function_name_counts =
             context_build_phase("function_name_counts", || count_functions_by_name(index));
         checkpoint()?;
+        let qualified_helper_modules =
+            QualifiedHelperModules::new(&helper_owner_calls_by_module_path);
+        let free_qualified_helper_modules =
+            QualifiedHelperModules::new(&free_helper_owner_calls_by_module_path);
+        let target_affinity_qualified_modules =
+            QualifiedHelperModules::new(&target_affinity_production_owner_calls_by_module_path);
+        let free_target_affinity_qualified_modules = QualifiedHelperModules::new(
+            &free_target_affinity_production_owner_calls_by_module_path,
+        );
         let helper_owner_lookup = HelperOwnerCallLookup {
             helpers: &helper_owner_calls_by_file,
             unique_helpers: &unambiguous_test_helper_owner_calls_by_name,
             qualified_helpers: &helper_owner_calls_by_module_path,
+            qualified_helper_modules: &qualified_helper_modules,
             production_helpers: &production_helper_owner_calls_by_package,
             free_helpers: &free_helper_owner_calls_by_file,
             free_unique_helpers: &unambiguous_free_test_helper_owner_calls_by_name,
             free_qualified_helpers: &free_helper_owner_calls_by_module_path,
+            free_qualified_helper_modules: &free_qualified_helper_modules,
             free_production_helpers: &free_production_helper_owner_calls_by_package,
             local_function_names_by_file: &function_names_by_file,
             direct_helper_import_aliases_by_file: &direct_helper_import_aliases_by_file,
@@ -487,7 +502,7 @@ impl<'a> CompactGripContext<'a> {
                 let mut target_affinity_owner_call_names =
                     helper_owner_call_names_from_qualified_calls(
                         &test.calls,
-                        &target_affinity_production_owner_calls_by_module_path,
+                        &target_affinity_qualified_modules,
                         module_import_aliases,
                     );
                 target_affinity_owner_call_names.extend(
@@ -502,7 +517,7 @@ impl<'a> CompactGripContext<'a> {
                     free_spelling_target_affinity_owner_call_names_for_test(
                         test,
                         &call_names,
-                        &free_target_affinity_production_owner_calls_by_module_path,
+                        &free_target_affinity_qualified_modules,
                         &free_target_affinity_production_owner_calls_by_package,
                         module_import_aliases,
                         local_function_names,
@@ -626,6 +641,8 @@ impl<'a> CompactGripContext<'a> {
             source_digest_cache: Mutex::new(BTreeMap::new()),
             evidence_functions_by_line_cache: Mutex::new(BTreeMap::new()),
             parsed_sources: Mutex::new(BTreeMap::new()),
+            default_unit_test_files: Mutex::new(BTreeMap::new()),
+            private_visibility: Default::default(),
             inline_unit_layouts: Default::default(),
             owner_lookups: Mutex::new(BTreeMap::new()),
             fixture_names: Mutex::new(BTreeMap::new()),
@@ -708,6 +725,22 @@ impl<'a> CompactGripContext<'a> {
             .filter(|function| function.name == name);
         let function = matches.next()?;
         matches.next().is_none().then_some(function)
+    }
+
+    /// An observer in a manifest-certified default crate root remains an
+    /// inline unit test when its owner moves into another source file.
+    /// Custom targets retain the existing cross-file Integration fallback.
+    pub(in crate::analysis::test_grip_evidence) fn is_default_unit_test_file(
+        &self,
+        path: &Path,
+    ) -> bool {
+        let Some((path, _)) = self.index.files().get_key_value(path) else {
+            return false;
+        };
+        let mut cache = memo(&self.default_unit_test_files);
+        *cache
+            .entry(path.as_path())
+            .or_insert_with(|| self.index.member_crates.is_default_unit_target_root(path))
     }
 
     /// SHA-256 of an indexed file's source, computed once per context.
@@ -1355,10 +1388,12 @@ pub(in crate::analysis::test_grip_evidence) struct HelperOwnerCallLookup<'a> {
     helpers: &'a HelperOwnerCallsByFile,
     unique_helpers: &'a HelperOwnerCallsByName,
     qualified_helpers: &'a HelperOwnerCallsByModulePath,
+    qualified_helper_modules: &'a QualifiedHelperModules<'a>,
     production_helpers: &'a HelperOwnerCallsByPackage,
     free_helpers: &'a HelperOwnerCallsByFile,
     free_unique_helpers: &'a HelperOwnerCallsByName,
     free_qualified_helpers: &'a HelperOwnerCallsByModulePath,
+    free_qualified_helper_modules: &'a QualifiedHelperModules<'a>,
     free_production_helpers: &'a HelperOwnerCallsByPackage,
     local_function_names_by_file: &'a BTreeMap<PathBuf, BTreeSet<String>>,
     direct_helper_import_aliases_by_file: &'a DirectFunctionImportAliasesByFile,
@@ -1407,7 +1442,7 @@ pub(in crate::analysis::test_grip_evidence) fn free_spelling_helper_owner_call_n
 ) -> BTreeSet<String> {
     let mut owner_names = helper_owner_call_names_from_qualified_calls(
         &test.calls,
-        lookup.free_qualified_helpers,
+        lookup.free_qualified_helper_modules,
         module_import_aliases,
     );
     // Direct-imported helper edges join the free projection directly:
@@ -1470,7 +1505,7 @@ pub(in crate::analysis::test_grip_evidence) fn free_spelling_helper_owner_call_n
 pub(in crate::analysis::test_grip_evidence) fn free_spelling_target_affinity_owner_call_names_for_test(
     test: &TestSummary,
     call_names: &BTreeSet<String>,
-    free_target_affinity_by_module_path: &HelperOwnerCallsByModulePath,
+    free_target_affinity_by_module_path: &QualifiedHelperModules<'_>,
     free_target_affinity_by_package: &HelperOwnerCallsByPackage,
     module_import_aliases: Option<&BTreeMap<String, ScopedModuleImportAlias>>,
     local_function_names: Option<&BTreeSet<String>>,
@@ -3480,7 +3515,7 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_for_test(
 ) -> BTreeSet<String> {
     let mut owner_names = helper_owner_call_names_from_qualified_calls(
         &test.calls,
-        lookup.qualified_helpers,
+        lookup.qualified_helper_modules,
         module_import_aliases,
     );
     let local_function_names = lookup.local_function_names_by_file.get(&test.file);
@@ -3554,16 +3589,14 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_from_dire
 
 pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_from_qualified_calls(
     calls: &[CallFact],
-    qualified_helpers: &HelperOwnerCallsByModulePath,
+    qualified_helpers: &QualifiedHelperModules<'_>,
     module_import_aliases: Option<&BTreeMap<String, ScopedModuleImportAlias>>,
 ) -> BTreeSet<String> {
     let mut owner_names = BTreeSet::new();
     for call in calls {
         let cleaned = strip_comments_and_strings(&call.text);
-        for (module_path, helpers) in qualified_helper_modules(&cleaned, qualified_helpers) {
-            let Some(helper_owner_names) = helpers.get(&call.name) else {
-                continue;
-            };
+        for &(module_path, helper_owner_names) in qualified_helpers.candidates(&cleaned, &call.name)
+        {
             if code_contains_qualified_helper_call(&cleaned, module_path, &call.name)
                 || code_contains_aliased_module_helper_call(
                     &cleaned,
@@ -3580,19 +3613,43 @@ pub(in crate::analysis::test_grip_evidence) fn helper_owner_call_names_from_qual
     owner_names
 }
 
-/// Every admitted qualified spelling contains `::` after lexical cleaning.
-/// An unqualified call therefore has no candidate module, regardless of corpus
-/// size. Keep the existing path/alias predicates authoritative for candidates.
-fn qualified_helper_modules<'a>(
-    cleaned: &str,
-    modules: &'a HelperOwnerCallsByModulePath,
-) -> impl Iterator<Item = (&'a String, &'a HelperOwnerCallsByName)> {
-    let candidates = if cleaned.contains("::") {
-        modules.len()
-    } else {
-        0
-    };
-    modules.iter().take(candidates)
+/// A module table inverted by helper name: for each helper name, the modules
+/// that define it together with the owner names it reaches. A call can only
+/// match a module whose table defines the call's own name, so the per-call
+/// scan visits those modules instead of every module in the corpus (the
+/// per-call full-corpus `get` dominated the MCP refresh's context build).
+/// Built once per table and borrowed by every per-test lookup.
+pub(in crate::analysis::test_grip_evidence) struct QualifiedHelperModules<'a> {
+    by_name: BTreeMap<&'a str, Vec<(&'a str, &'a BTreeSet<String>)>>,
+}
+
+impl<'a> QualifiedHelperModules<'a> {
+    pub(in crate::analysis::test_grip_evidence) fn new(
+        modules: &'a HelperOwnerCallsByModulePath,
+    ) -> Self {
+        let mut by_name: BTreeMap<&'a str, Vec<(&'a str, &'a BTreeSet<String>)>> = BTreeMap::new();
+        for (module_path, helpers) in modules {
+            for (helper_name, owner_names) in helpers {
+                by_name
+                    .entry(helper_name.as_str())
+                    .or_default()
+                    .push((module_path.as_str(), owner_names));
+            }
+        }
+        Self { by_name }
+    }
+
+    /// Every admitted qualified spelling contains `::` after lexical cleaning.
+    /// An unqualified call therefore has no candidate module, regardless of
+    /// corpus size. The candidates are exactly the modules that define
+    /// `call_name`; the existing path/alias predicates stay authoritative.
+    fn candidates(&self, cleaned: &str, call_name: &str) -> &[(&'a str, &'a BTreeSet<String>)] {
+        if cleaned.contains("::") {
+            self.by_name.get(call_name).map_or(&[], Vec::as_slice)
+        } else {
+            &[]
+        }
+    }
 }
 
 pub(in crate::analysis::test_grip_evidence) fn code_contains_aliased_module_helper_call(
@@ -3810,7 +3867,7 @@ mod tests {
         let call = CallFact {
             line: 8,
             name: "wrapper".to_string(),
-            text: "wrapper()".to_string(),
+            text: "wrapper()".to_string().into(),
         };
         assert!(!same_file_unit_production_helper_call_is_allowed(
             &call,
@@ -3829,6 +3886,7 @@ mod tests {
                 )
             })
             .collect();
+        let inverted = QualifiedHelperModules::new(&modules);
         for text in [
             "target()",
             "receiver.target()",
@@ -3836,23 +3894,24 @@ mod tests {
             "target() // scope_0::target()",
         ] {
             let cleaned = strip_comments_and_strings(text);
-            assert_eq!(
-                qualified_helper_modules(&cleaned, &modules).count(),
-                0,
-                "{text}"
-            );
+            assert_eq!(inverted.candidates(&cleaned, "target").len(), 0, "{text}");
             let call = CallFact {
                 line: 2,
                 name: "target".to_string(),
-                text: text.to_string(),
+                text: text.to_string().into(),
             };
             assert!(
-                helper_owner_call_names_from_qualified_calls(&[call], &modules, None).is_empty()
+                helper_owner_call_names_from_qualified_calls(&[call], &inverted, None).is_empty()
             );
         }
         assert_eq!(
-            qualified_helper_modules("scope_0::target()", &modules).count(),
+            inverted.candidates("scope_0::target()", "target").len(),
             2048
+        );
+        assert!(
+            inverted
+                .candidates("scope_0::target()", "absent_name")
+                .is_empty()
         );
     }
 
@@ -3898,7 +3957,7 @@ mod tests {
             let call = CallFact {
                 line: 2,
                 name: "target".to_string(),
-                text: text.to_string(),
+                text: text.to_string().into(),
             };
             let old = unbounded_qualified_helper_names(
                 std::slice::from_ref(&call),
@@ -3907,7 +3966,7 @@ mod tests {
             );
             let current = helper_owner_call_names_from_qualified_calls(
                 std::slice::from_ref(&call),
-                &modules,
+                &QualifiedHelperModules::new(&modules),
                 Some(&aliases),
             );
             assert_eq!(current, old, "exact relation parity for {text}");

@@ -90,6 +90,7 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "pr-comments existing",
     "pr-comments plan",
     "pr-comments requests",
+    "pr-comments summary",
     "pr-evidence",
     "pr-ledger record",
     "pr-review front-panel",
@@ -165,7 +166,10 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         | "policy readiness"
         | "policy suppression-health"
         | "policy waiver-aging" => POLICY_HELP,
-        "pr-comments plan" | "pr-comments existing" | "pr-comments requests" => PR_COMMENTS_HELP,
+        "pr-comments plan"
+        | "pr-comments existing"
+        | "pr-comments requests"
+        | "pr-comments summary" => PR_COMMENTS_HELP,
         "pr-evidence" => PR_EVIDENCE_HELP,
         "pr-ledger record" => PR_LEDGER_HELP,
         "pr-review front-panel" => PR_REVIEW_HELP,
@@ -1288,7 +1292,7 @@ mod tests {
             CLI_COMMANDS_RS,
             &["parse_calibrate_cargo_mutants_options"],
         ),
-        ("check", CHECK_PARSER_RS, &["check"]),
+        ("check", CHECK_PARSER_RS, &["check_inner"]),
         (
             "config validate",
             CONFIG_PARSER_RS,
@@ -1332,7 +1336,7 @@ mod tests {
             &["run_impacted_evidence", "parse_options"],
         ),
         ("init", INIT_PARSER_RS, &["parse_init_options"]),
-        ("lsp", CLI_COMMANDS_RS, &["lsp"]),
+        ("lsp", CLI_COMMANDS_RS, &["lsp_with_serve"]),
         ("mcp", MCP_PARSER_RS, &["run"]),
         ("outcome", CLI_COMMANDS_RS, &["parse_outcome_options"]),
         ("pilot", PILOT_PARSER_RS, &["parse_pilot_options"]),
@@ -1390,6 +1394,11 @@ mod tests {
             "pr-comments requests",
             PR_COMMENTS_GITHUB_PARSER_RS,
             &["parse_pr_comments_requests_options"],
+        ),
+        (
+            "pr-comments summary",
+            PR_COMMENTS_GITHUB_PARSER_RS,
+            &["parse_pr_comments_summary_options"],
         ),
         (
             "pr-evidence",
@@ -1569,12 +1578,67 @@ mod tests {
 
     /// One pass over Rust source producing `(skeleton, literals)`.
     ///
-    /// The skeleton blanks comment bodies and string-literal contents while
+    /// The skeleton blanks comment bodies, string-literal contents, and char
+    /// literals (`'x'`, `'\''`, `'\\'`, `'\n'`, `'\u{..}'`, `b'x'`) while
     /// keeping the byte layout, so code searches and brace matching see only
     /// code; `literals` carries each string literal's byte offset and decoded
     /// content. Raw strings (`r#"…"#`) and raw identifiers (`r#type`) are
-    /// told apart from plain identifiers starting with `r`.
+    /// told apart from plain identifiers starting with `r`. Lifetimes and
+    /// loop labels stay code.
     fn scan_rust_source(source: &str) -> (String, Vec<(usize, String)>) {
+        // End offset after a `'…'` / `b'…'` char literal, or `None` for a
+        // lifetime or loop label (`'a`, `'static`, `'outer:`). A `'` opens a
+        // char literal only when followed by an escape, or by exactly one
+        // char then `'`.
+        fn char_literal_end(source: &str, open: usize) -> Option<usize> {
+            let rest = open + 1;
+            let tail = source.get(rest..)?;
+            let mut chars = tail.char_indices();
+            let (_, first) = chars.next()?;
+            if first == '\\' {
+                let (_, escaped) = chars.next()?;
+                match escaped {
+                    'u' => {
+                        let (_, brace) = chars.next()?;
+                        if brace != '{' {
+                            return None;
+                        }
+                        loop {
+                            let (_, ch) = chars.next()?;
+                            if ch == '}' {
+                                break;
+                            }
+                            if !ch.is_ascii_hexdigit() && ch != '_' {
+                                return None;
+                            }
+                        }
+                    }
+                    'x' => {
+                        let (_, d1) = chars.next()?;
+                        let (_, d2) = chars.next()?;
+                        if !d1.is_ascii_hexdigit() || !d2.is_ascii_hexdigit() {
+                            return None;
+                        }
+                    }
+                    _ => {}
+                }
+                let (close_rel, close) = chars.next()?;
+                if close == '\'' {
+                    return Some(rest + close_rel + 1);
+                }
+                return None;
+            }
+            if first == '\'' {
+                return None;
+            }
+            let (close_rel, close) = chars.next()?;
+            if close == '\'' {
+                Some(rest + close_rel + 1)
+            } else {
+                None
+            }
+        }
+
         let bytes = source.as_bytes();
         let mut skeleton = vec![b' '; bytes.len()];
         let mut literals: Vec<(usize, String)> = Vec::new();
@@ -1662,6 +1726,12 @@ mod tests {
                 i = (content_end + 1).min(bytes.len());
                 continue;
             }
+            if bytes[i] == b'\''
+                && let Some(after) = char_literal_end(source, i)
+            {
+                i = after;
+                continue;
+            }
             skeleton[i] = bytes[i];
             i += 1;
         }
@@ -1706,6 +1776,78 @@ mod tests {
             return None;
         }
         None
+    }
+
+    /// #4368: char literals must not open a phantom string or inject a
+    /// phantom brace into the skeleton, or `function_body_span` depth
+    /// counting and later flag mining go wrong. Lifetimes and loop labels
+    /// stay code.
+    #[test]
+    fn scan_rust_source_blanks_char_literals_without_phantom_strings_or_braces()
+    -> Result<(), String> {
+        let source = r#"
+fn parse_demo<'a>(xs: &'a str) {
+    let _quote = '"';
+    let _brace = '}';
+    let _apos = '\'';
+    let _nl = '\n';
+    let _bs = '\\';
+    let _uni = '\u{1F600}';
+    let _byte = b'x';
+    'outer: loop {
+        break 'outer;
+    }
+    match arg {
+        "--keep-me" => {}
+    }
+}
+"#;
+        let (skeleton, literals) = scan_rust_source(source);
+        let opens = skeleton.bytes().filter(|byte| *byte == b'{').count();
+        let closes = skeleton.bytes().filter(|byte| *byte == b'}').count();
+        if opens != closes {
+            return Err(format!(
+                "skeleton brace imbalance ({opens} open, {closes} close): {skeleton:?}"
+            ));
+        }
+        if skeleton.contains('"') {
+            return Err(format!(
+                "skeleton retained a quote that should have been blanked: {skeleton:?}"
+            ));
+        }
+        if !skeleton.contains("'a") {
+            return Err(format!("lifetime `'a` should remain code: {skeleton:?}"));
+        }
+        if !skeleton.contains("'outer") {
+            return Err(format!(
+                "loop label `'outer` should remain code: {skeleton:?}"
+            ));
+        }
+        if let Some((_, phantom)) = literals.iter().find(|(_, literal)| {
+            literal.contains('}')
+                || literal.contains("let _")
+                || literal.contains("outer")
+                || literal.contains("parse_demo")
+        }) {
+            return Err(format!(
+                "phantom string literal from char contents: {phantom:?}"
+            ));
+        }
+        let (body_start, body_end) = function_body_span(&skeleton, "parse_demo")
+            .ok_or_else(|| "parse_demo body not found after char-literal scan".to_string())?;
+        let flags: Vec<&str> = literals
+            .iter()
+            .filter(|(at, literal)| {
+                *at >= body_start && *at < body_end && flag_shaped_literal(literal)
+            })
+            .map(|(_, literal)| literal.as_str())
+            .collect();
+        if flags != ["--keep-me"] {
+            return Err(format!(
+                "flag literals after char literals should still be mined; got {flags:?}"
+            ));
+        }
+        Ok(())
     }
 
     /// The flags one command's parser accepts: flag-shaped string literals

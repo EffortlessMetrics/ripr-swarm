@@ -31,8 +31,10 @@ const ROWS_FILE: &str = "first-run-rows.jsonl";
 /// A developer is asked to review the generated workflow before committing it.
 const MAX_WORKFLOW_LINES: usize = 1500;
 /// Marker for the friction flag emitted when the generated workflow exceeds
-/// `MAX_WORKFLOW_LINES`. The public-proof page matches on this text to keep
-/// the workflow-size flag in its own metric, so the wording has one owner.
+/// `MAX_WORKFLOW_LINES`, and the `metric` name of its structured
+/// `budget_breaches` entry. Receipts written before that field existed are
+/// matched on this text as a disclosed fallback (#8722), so the wording has
+/// one owner.
 pub(crate) const GENERATED_WORKFLOW_BUDGET_FLAG: &str = "generated workflow is";
 const INSTALL_STDERR_LOG: &str = "install_published.stderr.log";
 const ARCHIVE_STDERR_LOG: &str = "install_archive.stderr.log";
@@ -773,8 +775,9 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
 
 struct CaseResult {
     name: String,
-    steps: Vec<(StepResult, Vec<String>)>,
+    steps: Vec<(StepResult, Vec<String>, Vec<Value>)>,
     verdict: Option<&'static str>,
+    verdict_reason: Option<String>,
     caught_by: &'static [&'static str],
     workflow_lines: Option<usize>,
     workflow_installs_with_cargo: Option<bool>,
@@ -817,6 +820,14 @@ fn walk_case(out: &Path, ripr: &str, case: &Case) -> Result<CaseResult, String> 
     )?;
     push_step(&mut steps, &work, ripr, "doctor_after", &["doctor"])?;
 
+    let verdict_reason = verdict_reason_of(
+        verdict,
+        &steps[check].stdout.clone(),
+        steps
+            .iter()
+            .find(|step| step.name == "explain")
+            .map(|step| step.stdout.as_str()),
+    );
     let workflow = fs::read_to_string(work.join(".github").join("workflows").join("ripr.yml")).ok();
     let workflow_lines = workflow.as_ref().map(|text| text.lines().count());
     let workflow_installs_with_cargo = workflow
@@ -825,16 +836,17 @@ fn walk_case(out: &Path, ripr: &str, case: &Case) -> Result<CaseResult, String> 
 
     let mut annotated = Vec::new();
     for result in steps {
-        let mut flags = friction(&result, workflow.as_deref());
+        let (mut flags, breaches) = friction_detail(&result, workflow.as_deref());
         if explain_missing && result.name == "check" {
             flags.push("no `ripr explain` command printed to drill into".to_string());
         }
-        annotated.push((result, flags));
+        annotated.push((result, flags, breaches));
     }
     Ok(CaseResult {
         name,
         steps: annotated,
         verdict,
+        verdict_reason,
         caught_by: case.caught_by,
         workflow_lines,
         workflow_installs_with_cargo,
@@ -893,8 +905,62 @@ fn verdict_of(check_stdout: &str) -> Option<&'static str> {
         })
 }
 
-fn friction(result: &StepResult, workflow: Option<&str>) -> Vec<String> {
+/// Reason evidence for an unknown verdict, taken only from output the walk
+/// already produced: the `Stop reasons:` list in the captured `ripr explain`
+/// output, falling back to the `Why unknown:` / `Analyzer limit:` line next to
+/// the verdict in the captured `ripr check` output. Specific verdicts and
+/// outputs with no such line record no reason rather than a fabricated one.
+fn verdict_reason_of(
+    verdict: Option<&str>,
+    check_stdout: &str,
+    explain_stdout: Option<&str>,
+) -> Option<String> {
+    if !matches!(
+        verdict,
+        Some("infection_unknown" | "propagation_unknown" | "static_unknown")
+    ) {
+        return None;
+    }
+    if let Some(explain) = explain_stdout
+        && let Some(reasons) = stop_reasons_of(explain)
+    {
+        return Some(reasons);
+    }
+    check_stdout.lines().map(str::trim).find_map(|line| {
+        line.strip_prefix("Why unknown:")
+            .or_else(|| line.strip_prefix("Analyzer limit:"))
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty())
+            .map(str::to_string)
+    })
+}
+
+/// The bullet lines under the first `Stop reasons:` heading, joined as one
+/// recorded reason. Both explain forms use `- ` bullets (`token: meaning` in
+/// the verdict explanation, `token — meaning` in the finding block).
+fn stop_reasons_of(output: &str) -> Option<String> {
+    let mut lines = output.lines();
+    lines.find(|line| line.trim() == "Stop reasons:")?;
+    let reasons: Vec<String> = lines
+        .map(str::trim)
+        .take_while(|line| line.starts_with("- "))
+        .map(|line| {
+            line.trim_start_matches("- ")
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .filter(|reason| !reason.is_empty())
+        .collect();
+    (!reasons.is_empty()).then(|| reasons.join("; "))
+}
+
+/// Friction flags plus the structured budget breaches behind them. The
+/// prose stays human-readable; the breaches are what the public-proof page
+/// counts, so a reworded flag cannot change a bar's meaning (#8722).
+fn friction_detail(result: &StepResult, workflow: Option<&str>) -> (Vec<String>, Vec<Value>) {
     let mut flags = Vec::new();
+    let mut breaches = Vec::new();
     if result.exit != Some(0) {
         flags.push(format!("exit {:?}, expected 0", result.exit));
     }
@@ -912,11 +978,26 @@ fn friction(result: &StepResult, workflow: Option<&str>) -> Vec<String> {
             flags.push(format!(
                 "{lines} stdout lines, over the {limit}-line read budget"
             ));
+            breaches.push(json!({
+                "metric": "stdout_lines",
+                "value": lines,
+                "budget": limit,
+            }));
         }
     }
+    // Compare the recorded (hundredth-rounded) duration, not the raw sample:
+    // the receipt's `secs` field, the row export and the nightly ingest all
+    // compare the rounded value, so a 5.004 s step on a 5 s budget must not
+    // flag here and vanish there (#8722 review).
     let budget = budget_secs(&result.name);
-    if result.secs > budget {
-        flags.push(format!("{:.1}s, over the {budget:.0}s budget", result.secs));
+    let secs = (result.secs * 100.0).round() / 100.0;
+    if secs > budget {
+        flags.push(format!("{secs:.1}s, over the {budget:.0}s budget"));
+        breaches.push(json!({
+            "metric": "secs",
+            "value": secs,
+            "budget": budget,
+        }));
     }
     if result.name == "check" {
         let has_next = result.stdout.lines().any(|line| {
@@ -936,6 +1017,11 @@ fn friction(result: &StepResult, workflow: Option<&str>) -> Vec<String> {
                     flags.push(format!(
                         "{GENERATED_WORKFLOW_BUDGET_FLAG} {lines} lines, over the {MAX_WORKFLOW_LINES}-line review budget"
                     ));
+                    breaches.push(json!({
+                        "metric": "workflow_lines",
+                        "value": lines,
+                        "budget": MAX_WORKFLOW_LINES,
+                    }));
                 }
                 if text.contains("cargo install ripr") && !text.contains("sha256") {
                     flags.push(
@@ -945,7 +1031,14 @@ fn friction(result: &StepResult, workflow: Option<&str>) -> Vec<String> {
             }
         }
     }
-    flags
+    (flags, breaches)
+}
+
+/// Flags only; production plumbing uses `friction_detail`, tests assert on
+/// the prose without repeating the breach bookkeeping.
+#[cfg(test)]
+fn friction(result: &StepResult, workflow: Option<&str>) -> Vec<String> {
+    friction_detail(result, workflow).0
 }
 
 fn finish(
@@ -956,7 +1049,7 @@ fn finish(
     cases: Vec<CaseResult>,
     archive: Option<&archive::ArchiveInstall>,
 ) -> Result<(), String> {
-    let step_json = |result: &StepResult, flags: &[String]| {
+    let step_json = |result: &StepResult, flags: &[String], breaches: &[Value]| {
         json!({
             "step": result.name,
             "command": result.command,
@@ -965,6 +1058,7 @@ fn finish(
             "stdout_lines": result.stdout.lines().count(),
             "stderr_lines_beyond_progress": result.stderr_noise().len(),
             "friction": flags,
+            "budget_breaches": breaches,
         })
     };
     let document = json!({
@@ -973,7 +1067,7 @@ fn finish(
         "binary": if options.install_published { "cargo install ripr --locked".to_string() } else if let Some(installed) = archive { installed.executable.display().to_string() } else { options.ripr.clone() },
         "install": install_json(options, archive),
         "setup": setup.iter().map(|s| {
-            let mut entry = step_json(s, &setup_friction(s));
+            let mut entry = step_json(s, &setup_friction(s), &[]);
             if s.exit != Some(0)
                 && let Some(log) = install_log(&s.name)
             {
@@ -984,11 +1078,12 @@ fn finish(
         "cases": cases.iter().map(|case| json!({
             "case": case.name,
             "verdict": case.verdict,
+            "verdict_reason": case.verdict_reason,
             "caught_by": case.caught_by,
             "verdict_reading": verdict_reading(case.verdict, !case.caught_by.is_empty()),
             "workflow_lines": case.workflow_lines,
             "workflow_installs_with_cargo": case.workflow_installs_with_cargo,
-            "steps": case.steps.iter().map(|(s, f)| step_json(s, f)).collect::<Vec<Value>>(),
+            "steps": case.steps.iter().map(|(s, f, b)| step_json(s, f, b)).collect::<Vec<Value>>(),
         })).collect::<Vec<Value>>(),
     });
     let rendered = serde_json::to_string_pretty(&document)
@@ -1055,7 +1150,7 @@ fn scoreboard_rows(version: &str, setup: &[StepResult], cases: &[CaseResult]) ->
         ));
     }
     for case in cases {
-        for (step, flags) in &case.steps {
+        for (step, flags, _breaches) in &case.steps {
             let name = step.name.as_str();
             rows.push(row(
                 &case.name,
@@ -1208,7 +1303,10 @@ fn render_markdown(
             case.workflow_installs_with_cargo
                 .map_or_else(|| "unknown".to_string(), |flag| flag.to_string()),
         ));
-        for (step, flags) in &case.steps {
+        if let Some(reason) = &case.verdict_reason {
+            text.push_str(&format!("verdict reason: {reason}\n\n"));
+        }
+        for (step, flags, _breaches) in &case.steps {
             friction_total += flags.len();
             text.push_str(&format!(
                 "| {} | {} | {:.2} | {} | {} |\n",
@@ -1267,10 +1365,15 @@ mod tests {
         let case = CaseResult {
             name: "demo-1.0.0".to_string(),
             steps: vec![
-                (step("check", 0, "a\nb\n", "", 0.5), vec![]),
-                (step("init_ci", 0, "", "", 0.1), vec!["x".to_string()]),
+                (step("check", 0, "a\nb\n", "", 0.5), vec![], vec![]),
+                (
+                    step("init_ci", 0, "", "", 0.1),
+                    vec!["x".to_string()],
+                    vec![],
+                ),
             ],
             verdict: Some("weakly_exposed"),
+            verdict_reason: None,
             caught_by: &[],
             workflow_lines: Some(321),
             workflow_installs_with_cargo: Some(false),
@@ -1338,6 +1441,87 @@ mod tests {
     }
 
     #[test]
+    fn an_unknown_verdict_records_its_reason_and_a_specific_verdict_does_not() -> Result<(), String>
+    {
+        let check = "Static exposure: unknown (severity: warning, confidence 0.40)\n  Why unknown: infection could not be determined statically\n";
+        let explain = "Why this verdict\n  Stop reasons:\n  - infection_evidence_unknown: infection evidence is unknown\n";
+        assert_eq!(
+            verdict_reason_of(Some("infection_unknown"), check, Some(explain)).as_deref(),
+            Some("infection_evidence_unknown: infection evidence is unknown")
+        );
+        // Without explain output the check line next to the verdict is the reason.
+        assert_eq!(
+            verdict_reason_of(Some("infection_unknown"), check, None).as_deref(),
+            Some("infection could not be determined statically")
+        );
+        // A specific verdict never fabricates a reason, even if the same
+        // explain text were present.
+        assert_eq!(
+            verdict_reason_of(Some("exposed"), check, Some(explain)),
+            None
+        );
+        assert_eq!(
+            verdict_reason_of(Some("infection_unknown"), "No findings", None),
+            None
+        );
+
+        let out =
+            std::env::temp_dir().join(format!("first-run-verdict-reason-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&out);
+        fs::create_dir_all(&out).map_err(|err| err.to_string())?;
+        let options = Options {
+            ripr: "ripr".into(),
+            out: out.clone(),
+            install_published: false,
+            install_archive: None,
+        };
+        let unknown = CaseResult {
+            name: "demo-1.0.0".to_string(),
+            steps: vec![(step("check", 0, check, "", 0.1), vec![], vec![])],
+            verdict: Some("infection_unknown"),
+            verdict_reason: verdict_reason_of(Some("infection_unknown"), check, Some(explain)),
+            caught_by: &[],
+            workflow_lines: None,
+            workflow_installs_with_cargo: None,
+        };
+        let exposed = CaseResult {
+            name: "demo-2.0.0".to_string(),
+            steps: vec![(step("check", 0, check, "", 0.1), vec![], vec![])],
+            verdict: Some("exposed"),
+            verdict_reason: verdict_reason_of(Some("exposed"), check, Some(explain)),
+            caught_by: &[],
+            workflow_lines: None,
+            workflow_installs_with_cargo: None,
+        };
+        finish(
+            &options,
+            &out,
+            "ripr 0.0.0",
+            Vec::new(),
+            vec![unknown, exposed],
+            None,
+        )?;
+        let report: Value = serde_json::from_str(
+            &fs::read_to_string(out.join("first-run.json")).map_err(|err| err.to_string())?,
+        )
+        .map_err(|err| err.to_string())?;
+        assert_eq!(report["schema_version"], "first_run.v1");
+        assert_eq!(
+            report["cases"][0]["verdict_reason"],
+            json!("infection_evidence_unknown: infection evidence is unknown")
+        );
+        assert_eq!(report["cases"][1]["verdict_reason"], Value::Null);
+        let markdown =
+            fs::read_to_string(out.join("first-run.md")).map_err(|err| err.to_string())?;
+        assert!(
+            markdown.contains("verdict reason: infection_evidence_unknown"),
+            "{markdown}"
+        );
+        let _ = fs::remove_dir_all(&out);
+        Ok(())
+    }
+
+    #[test]
     fn progress_lines_are_not_friction_but_other_stderr_is() {
         let quiet = step(
             "check",
@@ -1369,6 +1553,48 @@ mod tests {
         assert!(flags.iter().any(|f| f.contains("61 stdout lines")));
         assert!(flags.iter().any(|f| f.contains("budget")));
         assert!(flags.iter().any(|f| f.contains("no next step")));
+    }
+
+    #[test]
+    fn budget_breaches_mirror_the_budget_flags() {
+        let wall = "line\n".repeat(61);
+        let slow = step("check", 0, &wall, "", 11.0);
+        let (flags, breaches) = friction_detail(&slow, None);
+        assert_eq!(breaches.len(), 2, "flags: {flags:?}");
+        assert_eq!(breaches[0]["metric"], "stdout_lines");
+        assert_eq!(breaches[0]["value"], 61);
+        assert_eq!(breaches[0]["budget"], json!(60));
+        assert_eq!(breaches[1]["metric"], "secs");
+        assert_eq!(breaches[1]["value"], json!(11.0));
+        assert!(breaches[1]["budget"].as_f64().is_some_and(|b| b < 11.0));
+        let quiet = step("check", 0, "Next: ripr explain x\n", "", 0.1);
+        assert!(friction_detail(&quiet, None).1.is_empty());
+        let init = step("init_ci", 0, "Wrote ./ripr.toml\n", "", 0.1);
+        let compiled = format!("run: cargo install ripr\n{}", "x\n".repeat(1600));
+        let (_, breaches) = friction_detail(&init, Some(&compiled));
+        assert_eq!(breaches.len(), 1);
+        assert_eq!(breaches[0]["metric"], "workflow_lines");
+        assert_eq!(breaches[0]["value"], json!(1601));
+        assert_eq!(breaches[0]["budget"], json!(1500));
+    }
+
+    #[test]
+    fn budget_breach_uses_the_recorded_rounded_duration_at_the_boundary() {
+        // The receipt, the row export and the nightly ingest all compare the
+        // hundredth-rounded duration; a step just over its budget in raw
+        // samples must not flag here and vanish in ingest (#8722 review).
+        let borderline = step("doctor", 0, "", "", 5.004);
+        let (flags, breaches) = friction_detail(&borderline, None);
+        assert!(
+            breaches.is_empty(),
+            "5.004 s rounds to the 5 s budget and must not flag: {flags:?}"
+        );
+        let over = step("doctor", 0, "", "", 5.006);
+        let (flags, breaches) = friction_detail(&over, None);
+        assert_eq!(breaches.len(), 1, "{flags:?}");
+        assert_eq!(breaches[0]["metric"], "secs");
+        assert_eq!(breaches[0]["value"], json!(5.01));
+        assert_eq!(breaches[0]["budget"], json!(5.0));
     }
 
     #[test]
@@ -1489,8 +1715,9 @@ mod tests {
     fn the_markdown_verdict_line_names_the_reading_and_the_catching_tests() {
         let case = CaseResult {
             name: "demo-1.0.0".to_string(),
-            steps: vec![(step("check", 0, "", "", 0.1), vec![])],
+            steps: vec![(step("check", 0, "", "", 0.1), vec![], vec![])],
             verdict: Some("reachable_unrevealed"),
+            verdict_reason: None,
             caught_by: &["tests::boundary", "tests::equal"],
             workflow_lines: None,
             workflow_installs_with_cargo: None,

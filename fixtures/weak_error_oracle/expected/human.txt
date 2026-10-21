@@ -26,6 +26,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/weak_error_oracle/input --diff <cwd>/fixtures/weak_error_oracle/diff.patch --mode fast probe:src_lib.rs:error_path:99b06ce7
   ripr context --root <cwd>/fixtures/weak_error_oracle/input --diff <cwd>/fixtures/weak_error_oracle/diff.patch --mode fast --at probe:src_lib.rs:error_path:99b06ce7
+  no repair start offered: no seam in the finding's file binds this finding; run `ripr repair probe:src_lib.rs:error_path:99b06ce7 --root <cwd>/fixtures/weak_error_oracle/input` for the full gate's answer
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/weak_error_oracle/input --at src/lib.rs:8 --kind error_path
 

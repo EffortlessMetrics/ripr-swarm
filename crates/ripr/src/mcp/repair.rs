@@ -359,6 +359,8 @@ fn durable_attempt_document(
     });
     let mut limitations = manifest.limitations.clone();
     limitations.extend(route_limitations);
+    // #8766: a restart the shared repair gate refuses is named as by-hand work.
+    limitations.extend(selected.restart_withheld.clone());
     json!({
         "schema_version": REPAIR_ATTEMPT_SCHEMA_VERSION,
         "attempt_id": manifest.repair_attempt_id.as_str(),
@@ -669,10 +671,14 @@ impl WorkspaceSession {
                 "repair_packet_ready": false,
                 "ineligibility": {
                     "reason": reason,
-                    "detail": readiness.reason(),
+                    "detail": readiness.detail(),
                 },
                 "attempt": Value::Null,
-                "recovery": "re-run ripr_refresh after the producer establishes the missing fact; ripr_prepare_repair never guesses a missing field",
+                "recovery": if reason.starts_with("seam_") {
+                    "the shared repair gate refused this seam; ripr_prepare_repair does not override it. Change the code or tests, then re-run ripr_refresh"
+                } else {
+                    "re-run ripr_refresh after the producer establishes the missing fact; ripr_prepare_repair never guesses a missing field"
+                },
                 "limitations": [
                     "a route that lacks a safe target, discriminator, fix site, or command stays a typed limitation",
                     "no attempt was created: the tool must not create a misleading transaction",

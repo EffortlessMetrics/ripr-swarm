@@ -5,7 +5,7 @@ use crate::app::feedback::{
     record_feedback, record_result_json,
 };
 use crate::cli::parse::expect_value;
-use crate::cli::suggest::unknown_argument;
+use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::domain::{
     ActorKind, FeedbackJudgment, FeedbackPayload, FeedbackReason, ResultIdentity, ReviewStatus,
 };
@@ -20,8 +20,10 @@ pub(in crate::cli) fn run_feedback(args: &[String]) -> Result<(), String> {
         }
         Some("record") => run_record(&args[1..]),
         Some("export") => run_export(&args[1..]),
-        Some(other) => Err(format!(
-            "unknown feedback subcommand {other:?}; expected `record` or `export`"
+        Some(other) => Err(unknown_value(
+            "feedback subcommand",
+            other,
+            &["record", "export"],
         )),
     }
 }
@@ -358,6 +360,17 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn unknown_feedback_subcommand_suggests_record_for_recrod() {
+        assert_eq!(
+            run_feedback(&args(&["recrod"])),
+            Err(
+                "unknown feedback subcommand \"recrod\". Did you mean `record`? Accepted: record, export."
+                    .to_string()
+            )
+        );
     }
 
     // #7781: feedback export refuses a checked-in `target` link that escapes
