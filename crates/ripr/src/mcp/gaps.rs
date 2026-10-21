@@ -41,8 +41,9 @@ pub(crate) struct RepairFixSite {
 ///    normalized discriminator, and any producer-named missing discriminator
 ///    sits on a weakly exposed finding, where the named value is the repair
 ///    target (#8717). A producer that names its missing discriminators on
-///    any other class refuses as `missing_discriminator`; a finding whose canonical gap was withheld
-///    behind the finding's own typed static limitation refuses as
+///    any other class refuses as `missing_discriminator`; a finding whose
+///    canonical gap was withheld behind the finding's own typed static
+///    limitation refuses as
 ///    `static_limitation`; only a producer that names no missing
 ///    discriminator and populates no canonical gap at all for the language
 ///    refuses as `discriminator_not_populated_for_language`, so one document
@@ -465,7 +466,7 @@ fn gap_evidence_core(
             "repair_packet_ready": readiness.ready,
             "reason": readiness.detail(),
             "prepared_by": "#3090",
-            "evaluation_basis": "producer facts on the committed finding: candidate actionability (#3281), the canonical gap's normalized discriminator with no producer-named missing discriminator, and the strongest directly-related related-test grip; conjoined with the shared seam-level repair validator behind `ripr repair`, which must admit the item's seam (#8717)",
+            "evaluation_basis": "producer facts on the committed finding: candidate actionability (#3281), the canonical gap's normalized discriminator (a producer-named missing discriminator is accepted only on a weakly exposed finding, where it is the repair target), and the strongest directly-related related-test grip; conjoined with the shared seam-level repair validator behind `ripr repair`, which must admit the item's seam (#8717)",
         },
         "repair_boundary": {
             "allowed_edit_surface": "none_declared",
