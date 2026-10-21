@@ -164,6 +164,17 @@ def dependabot_identity(current: dict[str, Any]) -> dict[str, str] | None:
     }
 
 
+def effective_fields(pr: dict[str, Any]) -> dict[str, str]:
+    """Body fields, with the Dependabot policy identity filling missing lines."""
+
+    fields = extract_fields(pr.get("body") or "")
+    if invalid(fields["claim"]) or invalid(fields["delta"]):
+        derived = dependabot_identity(pr)
+        if derived is not None:
+            fields = {**fields, **derived}
+    return fields
+
+
 def identity_detail(fields: dict[str, str]) -> str:
     missing = [
         TEMPLATE_LINES[key]
@@ -214,7 +225,7 @@ def decide(
     max_files: int,
     max_lines: int,
 ) -> dict[str, Any]:
-    fields = extract_fields(current.get("body") or "")
+    fields = effective_fields(current)
     actual_head = ((current.get("head") or {}).get("sha") or "")
     refuse = lambda reason, peers=None, detail="": refusal(  # noqa: E731
         reason, current, fields, max_files, max_lines, peers, detail
@@ -235,10 +246,7 @@ def decide(
             detail=f"PR state is {current.get('state')!r} and draft is {current.get('draft')!r}; admission requires an open, ready (non-draft) PR",
         )
     if invalid(fields["claim"]) or invalid(fields["delta"]):
-        derived = dependabot_identity(current)
-        if derived is None:
-            return refuse("claim_identity_missing", detail=identity_detail(fields))
-        fields = {**fields, **derived}
+        return refuse("claim_identity_missing", detail=identity_detail(fields))
 
     claim = normalize(fields["claim"])
     delta = normalize(fields["delta"])
@@ -246,7 +254,7 @@ def decide(
     for peer in open_candidates:
         if peer.get("number") == current.get("number") or not trusted_peer(current, peer):
             continue
-        peer_fields = extract_fields(peer.get("body") or "")
+        peer_fields = effective_fields(peer)
         if invalid(peer_fields["claim"]) or invalid(peer_fields["delta"]):
             continue
         if normalize(peer_fields["claim"]) == claim and normalize(
@@ -499,7 +507,18 @@ def self_test() -> None:
     ):
         refused = run(fixture(body="", head=head, **spoof), [])
         assert refused["reason"] == "claim_identity_missing", spoof
-    print("candidate-admission self-test: 35 controls passed")
+    matching = fixture(
+        number=12,
+        body=fixture_body(
+            claim="docs/CI.md dependency update policy",
+            delta=f"dependency update {bump['ref']}",
+        ),
+        head="c" * 40,
+    )
+    bot = fixture(number=10, body="", head=head, **bump)
+    assert run(bot, [bot, matching])["reason"] == "competing_candidate"
+    assert run(matching, [bot, matching], "c" * 40)["reason"] == "competing_candidate"
+    print("candidate-admission self-test: 37 controls passed")
 
 
 def load_json(path: Path) -> Any:
