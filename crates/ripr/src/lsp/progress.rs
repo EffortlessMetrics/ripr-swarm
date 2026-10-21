@@ -937,9 +937,34 @@ mod tests {
     fn terminal_cancellation_preserves_custody(terminal: &str) -> Result<(), String> {
         use std::future::Future;
 
+        fn events_for(sink: &RecordingSink, generation: u64) -> Vec<ProgressEvent> {
+            let expected = progress_token(generation);
+            sink.events()
+                .into_iter()
+                .filter(|event| match event {
+                    ProgressEvent::Create { token }
+                    | ProgressEvent::Begin { token, .. }
+                    | ProgressEvent::Report { token, .. }
+                    | ProgressEvent::End { token, .. } => token == &expected,
+                })
+                .collect()
+        }
+
         runtime()?.block_on(async {
             tokio::time::timeout(std::time::Duration::from_secs(5), async {
                 let (tracker, recorder) = tracker_with_recorder();
+                let phase = if terminal == "end_queued" {
+                    AnalysisProgressPhase::Queued
+                } else {
+                    AnalysisProgressPhase::Analyzing
+                };
+                let generations: &[u64] = if terminal == "end" { &[41] } else { &[41, 42] };
+                // The later registry entry must also survive cancellation of
+                // a drain waiting at its first held token. Start it before
+                // installing the suspended-Begin sink.
+                if terminal != "end" {
+                    tracker.begin(&test_request(42), phase).await;
+                }
                 let sink = Arc::new(HeldProgressSink {
                     recorder: Arc::clone(&recorder),
                     hold_begin: true,
@@ -948,16 +973,11 @@ mod tests {
                 });
                 tracker.install_test_sink(sink.clone());
                 let announcing = Arc::clone(&tracker);
-                let phase = if terminal == "end_queued" {
-                    AnalysisProgressPhase::Queued
-                } else {
-                    AnalysisProgressPhase::Analyzing
-                };
                 let announce = tokio::spawn(async move {
                     announcing.begin(&test_request(41), phase).await;
                 });
                 sink.entered.notified().await;
-                if recorder.events() != [ProgressEvent::Create { token: progress_token(41) }] {
+                if events_for(&recorder, 41) != [ProgressEvent::Create { token: progress_token(41) }] {
                     return Err(format!("SETUP: Begin was not held: {:?}", recorder.events()));
                 }
 
@@ -981,7 +1001,7 @@ mod tests {
                 announce.await.map_err(|error| format!("announce failed: {error}"))?;
                 // A cancellation-safe owner may already arrange terminal
                 // delivery itself; only require the released Begin here.
-                if !matches!(recorder.events().as_slice(), [
+                if !matches!(events_for(&recorder, 41).as_slice(), [
                     ProgressEvent::Create { token: create },
                     ProgressEvent::Begin { token: begin, .. },
                     ..
@@ -999,28 +1019,32 @@ mod tests {
                 // A retained cleanup task may deliver End independently of
                 // the retried caller. Observe that delivery before challenging
                 // repeated cleanup; do not depend on which task runs first.
-                tokio::time::timeout(std::time::Duration::from_millis(200), async {
-                    loop {
-                        if recorder.events().iter().any(|event| matches!(event,
-                            ProgressEvent::End { token, .. } if token == &progress_token(41)
-                        )) {
-                            break;
+                for generation in generations {
+                    tokio::time::timeout(std::time::Duration::from_millis(200), async {
+                        loop {
+                            if recorder.events().iter().any(|event| matches!(event,
+                                ProgressEvent::End { token, .. } if token == &progress_token(*generation)
+                            )) {
+                                break;
+                            }
+                            tokio::task::yield_now().await;
                         }
-                        tokio::task::yield_now().await;
-                    }
-                }).await.map_err(|_elapsed| format!(
-                    "{terminal}: canceled terminal owner lost custody; no End after retry: {:?}",
-                    recorder.events()
-                ))?;
+                    }).await.map_err(|_elapsed| format!(
+                        "{terminal}: canceled terminal owner lost generation {generation}; no End after retry: {:?}",
+                        recorder.events()
+                    ))?;
+                }
                 tracker.end(41, AnalysisProgressEnd::Cancelled).await;
                 tracker.end_all(AnalysisProgressEnd::Cancelled).await;
-                let events = recorder.events();
-                if !matches!(events.as_slice(), [
-                    ProgressEvent::Create { token: create },
-                    ProgressEvent::Begin { token: begin, .. },
-                    ProgressEvent::End { token: end, .. },
-                ] if create == &progress_token(41) && begin == create && end == create) {
-                    return Err(format!("{terminal}: canceled terminal owner lost custody or duplicated End: {events:?}"));
+                for generation in generations {
+                    let events = events_for(&recorder, *generation);
+                    if !matches!(events.as_slice(), [
+                        ProgressEvent::Create { token: create },
+                        ProgressEvent::Begin { token: begin, .. },
+                        ProgressEvent::End { token: end, .. },
+                    ] if create == &progress_token(*generation) && begin == create && end == create) {
+                        return Err(format!("{terminal}: canceled terminal owner lost custody or duplicated End: {events:?}"));
+                    }
                 }
                 Ok(())
             }).await.map_err(|_elapsed| "terminal cancellation exchange exceeded 5 seconds".to_string())?
