@@ -3279,7 +3279,9 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
         .transpose()?;
     let config = load_for_root(&input.root)?;
     apply_to_check_input(&mut input, &config, explicit);
-    let worktree = worktree || dirty_tree_default_is_worktree(&input, from_artifact.is_some());
+    let worktree_from_default =
+        !worktree && dirty_tree_default_is_worktree(&input, from_artifact.is_some());
+    let worktree = worktree || worktree_from_default;
     let Some(selector) = selector else {
         return Err(missing_selector_error(
             "missing finding selector",
@@ -3327,6 +3329,7 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
                 &config,
                 explicit.mode,
                 worktree,
+                worktree_from_default,
                 progress_sink,
             )?
         }
