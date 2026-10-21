@@ -1346,6 +1346,7 @@ pub(crate) fn run_check(
         &output.findings,
         &inventory.candidate_seams,
         crate::app::agent_brief::AgentBriefPolicy::from_config(&config),
+        &inventory.completeness,
     );
     let mut snapshot = Snapshot::from_output_admitted(&output, root_identity, &admission)?;
     // Bind the repair-card producers inside the same bounded attempt, after

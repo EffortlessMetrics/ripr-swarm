@@ -131,7 +131,13 @@ read-only and without execution authority (ADR 0022):
   tests already grip it), `seam_gate_refused` (route not ready, unresolved
   cross-language visibility or target, policy omission), `seam_ambiguous`
   (several seams name the finding; the resolver never picks) or
-  `seam_not_found` (no classified seam names it). The verdict is projected
+  `seam_not_found` (no classified seam names it). Before any item is
+  resolved, the refresh also reads the truncation fact from the same repo-wide
+  seam inventory the CLI consults (`limit_info.analyzed < total`): when that
+  inventory is truncated by the seam limit, or cannot be established, the CLI
+  errors for every item, so the adapter refuses every item with
+  `seam_inventory_truncated` (#9108) and the validator's per-seam verdicts are
+  not consulted. The verdict is projected
   before the snapshot identity is computed, so the list summary, the
   `ripr_get_gap` readiness block, `ripr_prepare_repair` and the snapshot
   identity carry one decision, and a finding-level refusal remains the first

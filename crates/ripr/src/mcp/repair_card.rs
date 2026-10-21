@@ -135,6 +135,9 @@ fn inventory_changed_files(root: &Path, findings: &[Finding]) -> Vec<PathBuf> {
 pub(crate) struct SeamInventory {
     pub(crate) repository_head: String,
     pub(crate) candidate_seams: Vec<ClassifiedSeam>,
+    /// Whether the repo-wide inventory `ripr repair` consults is complete
+    /// (#9108); the diff-scoped `candidate_seams` carry no seam-limit fact.
+    pub(crate) completeness: super::repair_admission::InventoryCompleteness,
 }
 
 /// Gather the refresh's seam inventory. This runs inside the refresh attempt
@@ -163,7 +166,16 @@ pub(crate) fn gather_seam_inventory(
         .trim()
         .to_string();
     let mut candidate_seams = Vec::new();
+    let mut completeness = super::repair_admission::InventoryCompleteness::Complete;
     if !findings.is_empty() {
+        // The CLI resolves a repair item against the repo-wide inventory and
+        // errors when the seam limit truncated it. The diff-scoped inventory
+        // below has no such fact, so read it from the same repo-wide
+        // authority (cache-backed) and carry it into the admission (#9108).
+        completeness = super::repair_admission::InventoryCompleteness::from_inventory_limit(
+            crate::analysis::inventory_classified_seams_at_with_config(root, config)
+                .map(|(_, limit_info)| limit_info),
+        );
         let changed_files = inventory_changed_files(root, findings);
         let changed_owner_names = findings
             .iter()
@@ -187,6 +199,7 @@ pub(crate) fn gather_seam_inventory(
     Ok(SeamInventory {
         repository_head,
         candidate_seams,
+        completeness,
     })
 }
 
@@ -203,6 +216,7 @@ pub(crate) fn bind_snapshot_card_producers(
     let SeamInventory {
         repository_head,
         candidate_seams,
+        completeness: _,
     } = inventory;
     let mut bindings = Vec::new();
     let mut all_candidate_seams = Vec::new();

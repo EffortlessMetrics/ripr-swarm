@@ -203,7 +203,8 @@ impl RepairReadiness {
                 crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED
                 | crate::mcp::repair_admission::SEAM_GATE_REFUSED
                 | crate::mcp::repair_admission::SEAM_AMBIGUOUS
-                | crate::mcp::repair_admission::SEAM_NOT_FOUND,
+                | crate::mcp::repair_admission::SEAM_NOT_FOUND
+                | crate::mcp::repair_admission::SEAM_INVENTORY_TRUNCATED,
             ) => {
                 "the shared seam-level repair validator behind `ripr repair` does not admit this item"
             }
@@ -1207,6 +1208,7 @@ mod tests {
             crate::app::agent_brief::AgentBriefPolicy::from_config(
                 &crate::config::RiprConfig::default(),
             ),
+            &crate::mcp::repair_admission::InventoryCompleteness::Complete,
         );
         match evaluated.verdict("probe:uncovered") {
             Some(SeamVerdict::Refused { code, .. })
@@ -1216,6 +1218,88 @@ mod tests {
             }
             other => Err(format!("uncovered finding must be refused: {other:?}")),
         }
+    }
+
+    /// #9108: the CLI errors before resolving any item when the repo-wide
+    /// inventory is truncated, so MCP must refuse every finding with the
+    /// typed truncation reason. Without the fix the empty inventory below
+    /// yields `seam_not_found` for the truncated case too.
+    #[test]
+    fn truncated_inventory_refuses_before_any_resolution() -> Result<(), String> {
+        use crate::mcp::repair_admission::{InventoryCompleteness, SEAM_INVENTORY_TRUNCATED};
+        let config = crate::config::RiprConfig::default();
+        let policy = crate::app::agent_brief::AgentBriefPolicy::from_config(&config);
+        let findings = [finding()?];
+        let id = findings[0].id.as_str();
+        let complete =
+            SeamAdmission::evaluate(&findings, &[], policy, &InventoryCompleteness::Complete);
+        match complete.verdict(id) {
+            Some(SeamVerdict::Refused { code, .. }) if code != SEAM_INVENTORY_TRUNCATED => {}
+            other => return Err(format!("complete inventory must not truncate: {other:?}")),
+        }
+        for completeness in [
+            InventoryCompleteness::Truncated {
+                analyzed: 3,
+                total: 7,
+            },
+            InventoryCompleteness::Unverified("inventory failed".to_string()),
+        ] {
+            let evaluated = SeamAdmission::evaluate(&findings, &[], policy, &completeness);
+            match evaluated.verdict(id) {
+                Some(SeamVerdict::Refused { code, detail }) if code == SEAM_INVENTORY_TRUNCATED => {
+                    if matches!(completeness, InventoryCompleteness::Truncated { .. })
+                        && !(detail.contains("3 of 7")
+                            && detail.contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT"))
+                    {
+                        return Err(format!("detail must name the counts and remedy: {detail}"));
+                    }
+                }
+                other => return Err(format!("{completeness:?} must refuse: {other:?}")),
+            }
+        }
+        // The refusal blocks readiness with its typed reason and a specific
+        // explanation, never the generic fallback.
+        let refused = SeamVerdict::Refused {
+            code: SEAM_INVENTORY_TRUNCATED,
+            detail: "truncated".to_string(),
+        };
+        let blocked = ready_readiness().with_seam_verdict(Some(&refused));
+        if blocked.ready
+            || blocked.ineligibility != Some(SEAM_INVENTORY_TRUNCATED)
+            || blocked.reason().contains("did not establish every")
+        {
+            return Err(format!("truncation must block readiness: {blocked:?}"));
+        }
+        Ok(())
+    }
+
+    /// #9108: the completeness fact is read exactly like the CLI reads it:
+    /// an error or `analyzed < total` refuses; an exact fit or no limit
+    /// does not.
+    #[test]
+    fn completeness_mirrors_the_cli_truncation_check() {
+        use crate::analysis::{SeamLimitInfo, SeamLimitSource};
+        use crate::mcp::repair_admission::InventoryCompleteness as C;
+        let info = |analyzed, total| {
+            Ok(Some(SeamLimitInfo {
+                analyzed,
+                total,
+                source: SeamLimitSource::Default,
+            }))
+        };
+        assert_eq!(
+            C::from_inventory_limit(info(3, 7)),
+            C::Truncated {
+                analyzed: 3,
+                total: 7
+            }
+        );
+        assert_eq!(C::from_inventory_limit(info(7, 7)), C::Complete);
+        assert_eq!(C::from_inventory_limit(Ok(None)), C::Complete);
+        assert_eq!(
+            C::from_inventory_limit(Err("boom".to_string())),
+            C::Unverified("boom".to_string())
+        );
     }
 
     /// #5210: the non-surface refusal names the inline-test boundary, so
