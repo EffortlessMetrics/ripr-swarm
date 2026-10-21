@@ -15213,12 +15213,14 @@ fn init_force_replaces_a_symlinked_config_without_writing_its_target() -> Result
 
 #[test]
 fn baseline_create_writes_reviewed_ledger_and_refuses_overwrite() -> Result<(), String> {
-    let workspace = unique_temp_workspace("baseline-create");
+    let workspace = unique_temp_workspace("baseline create it's quoted");
     std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
-    let source = workspace_root().join(
+    let fixture = workspace_root().join(
         "fixtures/boundary_gap/expected/calibrated-gate/visible-only-advisory/gate-decision.json",
     );
-    let out = workspace.join(".ripr/gate-baseline.json");
+    let source = workspace.join("gate decision it's current.json");
+    std::fs::copy(fixture, &source).map_err(|e| format!("copy gate decision: {e}"))?;
+    let out = workspace.join("chosen baseline it's ledger.json");
     let source_arg = source.display().to_string();
     let out_arg = out.display().to_string();
 
@@ -15248,8 +15250,48 @@ fn baseline_create_writes_reviewed_ledger_and_refuses_overwrite() -> Result<(), 
         &out_arg,
     ]);
     assert_failure(&overwrite);
+    assert_eq!(overwrite.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&overwrite.stderr);
-    assert!(stderr.contains("--force"));
+    assert_eq!(
+        std::fs::read_to_string(&out).map_err(|e| format!("read refused output: {e}"))?,
+        baseline,
+        "refusing overwrite must preserve the baseline"
+    );
+    let retry = stderr
+        .split_once("rerun `")
+        .and_then(|(_, rest)| rest.split_once("` to overwrite it"))
+        .map(|(command, _)| command)
+        .ok_or_else(|| format!("missing overwrite recovery command: {stderr}"))?;
+    let retry_args = if cfg!(windows) {
+        printed_ripr_args(retry)?
+    } else {
+        let words = shell_words::posix_words(retry)?;
+        if words.first().map(String::as_str) != Some("ripr") {
+            return Err(format!("unexpected recovery program: {retry}"));
+        }
+        words.into_iter().skip(1).collect()
+    };
+    // A successful no-op would not establish that the printed --out survived.
+    std::fs::write(&out, "existing baseline must be replaced\n")
+        .map_err(|e| format!("seed overwrite witness: {e}"))?;
+    let retry_refs: Vec<&str> = retry_args.iter().map(String::as_str).collect();
+    let recovered = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&workspace),
+        &retry_refs,
+    )
+    .map_err(|e| format!("replay {retry}: {e}"))?;
+    assert_success(&recovered);
+    let recovered_baseline = std::fs::read_to_string(&out)
+        .map_err(|e| format!("read recovered baseline: {e}"))?;
+    let original: serde_json::Value =
+        serde_json::from_str(&baseline).map_err(|e| e.to_string())?;
+    let recovered: serde_json::Value =
+        serde_json::from_str(&recovered_baseline).map_err(|e| e.to_string())?;
+    assert_eq!(recovered["source_report"], original["source_report"]);
+    assert_eq!(recovered["entries"], original["entries"]);
+    assert_eq!(recovered["summary"]["entries"], 1);
+    assert!(!workspace.join(".ripr/gate-baseline.json").exists());
 
     let dry_run_out = workspace.join(".ripr/dry-run-baseline.json");
     let dry_run_out_arg = dry_run_out.display().to_string();
