@@ -723,6 +723,7 @@ mod tests {
         let none_arm = |source: &str| expr(source).is_some_and(|value| returns_none(&value));
         assert!(none_arm("return None"));
         for source in ["None", "return Some(1)", "return", "return other::None"] {
+            assert!(expr(source).is_some(), "control must parse: {source}");
             assert!(!none_arm(source), "{source}");
         }
     }
