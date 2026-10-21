@@ -247,6 +247,11 @@ pub(crate) fn producer_gap_id_names_seam(item: &str, entry: &ClassifiedSeam) -> 
 /// [`canonical_gap_identity`] stays an internal join key.
 pub(crate) fn readable_gap_id_for_seam(entry: &ClassifiedSeam) -> Option<String> {
     let file = crate::analysis::stable_path_text(entry.seam.file());
+    // The readable id is the Rust producer's spelling; a non-Rust path mints
+    // no `gap:rust:` id.
+    if !file.ends_with(".rs") {
+        return None;
+    }
     super::language::rust_gap_id_for_seam_shape(
         &file,
         entry.seam.owner(),
@@ -368,6 +373,36 @@ mod tests {
             evidence,
             class: SeamGripClass::WeaklyGripped,
         }
+    }
+
+    /// #8638: the readable `gap:rust:` id is the Rust producer's spelling, so
+    /// a Rust seam mints it and a non-Rust path mints nothing.
+    #[test]
+    fn readable_gap_id_is_minted_for_rust_seams_only() {
+        let rust = classified_gap("pricing::score", 3, "amount == threshold");
+        assert!(
+            readable_gap_id_for_seam(&rust)
+                .as_deref()
+                .is_some_and(|id| id.starts_with("gap:rust:src/pricing.rs:"))
+        );
+        let python_seam = RepoSeam::new(
+            "src/pricing.py",
+            "pricing::score",
+            SeamKind::PredicateBoundary,
+            30,
+            3,
+            "amount >= threshold",
+            RequiredDiscriminator::BoundaryValue {
+                description: "amount >= threshold".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        let python = ClassifiedSeam {
+            seam: python_seam,
+            evidence: rust.evidence.clone(),
+            class: SeamGripClass::WeaklyGripped,
+        };
+        assert_eq!(readable_gap_id_for_seam(&python), None);
     }
 
     fn classified_match_arm_gap(owner: &str, line: usize, arm: &str) -> ClassifiedSeam {

@@ -268,8 +268,8 @@ pub struct RepairCardSubject {
     /// It is minted by the producer's own gap-id minter, never by the card.
     pub canonical_gap_id: Option<String>,
     /// The seam-side content-hash gap id (`gap:<16 hex>`) this field carried
-    /// before #8638, kept additive under a name that says what it is. No
-    /// other surface accepts it; use `canonical_gap_id` to address the gap.
+    /// before #8638, kept additive under a name that says what it is. Neither
+    /// `ripr_get_gap` nor `ripr_list_gaps` accepts it; use `canonical_gap_id` to address the gap. Two seams with identical file, owner, kind and normalized expression share a readable id while the hash is unique per seam.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seam_content_gap_id: Option<String>,
     pub finding_id: Option<String>,
