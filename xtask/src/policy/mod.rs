@@ -17,6 +17,7 @@ mod positioning_language;
 mod process;
 mod product_copy;
 pub(crate) mod proof_packs;
+mod release_selection;
 mod release_targets;
 
 pub(crate) use release_targets::{CandidateAuthoritySnapshot, capture_candidate_authority};
@@ -55,6 +56,9 @@ pub(crate) fn check_release_targets() -> Result<(), String> {
         failures.push(error);
     }
     if let Err(error) = distribution::check_distribution_contract() {
+        failures.push(error);
+    }
+    if let Err(error) = release_selection::check_release_selection() {
         failures.push(error);
     }
 
