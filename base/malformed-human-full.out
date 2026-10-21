@@ -1,0 +1,50 @@
+ripr static RIPR exposure analysis
+mode: draft
+root: /workspace/8830-proof/consumer
+
+Summary: 1 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Analysis outcome: the input is not supported (analysis incomplete; unsupported_input)
+  The 1 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
+  Limitation: the diff could not be parsed during parsing the diff (malformed_diff at diff_parse); file: src/lib.rs; affected items: 1; recovery: retry — A two-way hunk has invalid ranges or its body does not match the declared old/new line counts. Obtain the complete valid unified diff and re-run; retained changed lines are advisory only.
+
+NOTE ./src/lib.rs:1
+  id: probe:src_lib.rs:static_unknown:6965a129
+
+Changed
+  after:  broken
+
+Probe
+  family: static_unknown
+  delta:  unknown
+  owner:  src/lib.rs::accepts
+  canonical gap: gap:rust:src/lib.rs:accepts:static_unknown:static_unknown:broken
+
+Static exposure
+  static_unknown (note, confidence 0.38)
+
+Evidence
+  - reach yes: Related tests appear to reach accepts: boundary
+  - infection unknown: Changed syntax is not mapped to a high-confidence probe family
+  - propagation unknown: No propagation model is available for this changed syntax
+  - observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect
+  - discriminator no: No assertion found on related tests
+  - local flow reaches unknown sink (line 1)
+  - related test src/lib.rs:6 boundary misses: asserts, but not on the changed value; checked `assert!(!accepts(2))`
+  - source function argument value n = 2 at line 7
+  - source function argument value n = 3 at line 8
+
+Weakness
+  - No relevant oracle was detected
+  - No strong discriminator was detected
+  - Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests
+
+Stop reasons:
+  - static_probe_unknown — ripr could not model this change well enough to classify it
+
+Next step
+  Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
+Drill in:
+  ripr explain --root /workspace/8830-proof/consumer --diff /workspace/8830-proof/malformed.diff probe:src_lib.rs:static_unknown:6965a129
+  ripr context --root /workspace/8830-proof/consumer --diff /workspace/8830-proof/malformed.diff --at probe:src_lib.rs:static_unknown:6965a129
+

@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index ab52df2..53587a0 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,5 +1,5 @@
+ pub fn accepts(n: i32) -> bool {
+-    n > 2
++    n >= 2
+ }
+ 
+ #[test]

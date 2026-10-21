@@ -1,0 +1,32 @@
+ripr static RIPR exposure analysis
+mode: draft
+root: /workspace/8830-proof/consumer
+
+Summary: 2 probes (2 exposed, 0 weak, 0 unrevealed, 0 no path); 2 of 2 findings unsuppressed
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s)
+
+Start here:
+  State: no gap selected for repair
+  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation
+  File: ./src/lib.rs:2
+  Static exposure: exposed (severity: info, confidence 1.00)
+  Canonical gap: gap:rust:src/lib.rs:accepts:predicate_boundary:predicate:n==2
+  Changed behavior: n >= 2
+  Related test (1 of 2 matched rows): src/lib.rs:6 boundary
+  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
+    - reach yes: Related tests appear to reach accepts: boundary
+    - infection yes: Detected related test input at the changed boundary
+    - 9 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root /workspace/8830-proof/consumer --diff /workspace/8830-proof/predicate.diff probe:src_lib.rs:predicate:e2f231b4
+  ripr context --root /workspace/8830-proof/consumer --diff /workspace/8830-proof/predicate.diff --at probe:src_lib.rs:predicate:e2f231b4
+
+Hidden:
+  1 lower-priority finding(s) omitted from default human output.
+    - ./src/lib.rs:2 (exposed)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+

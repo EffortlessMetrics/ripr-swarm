@@ -1,0 +1,10 @@
+ripr static RIPR exposure analysis
+mode: draft
+root: /workspace/8830-proof/consumer
+
+Summary: 0 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 0 of 0 finding(s) unsuppressed
+
+Analysis outcome: nothing was in scope (analysis complete; no_scope)
+  Counts: 0 changed file(s), 0 changed line(s), 0 candidate line(s), 0 probe(s), 0 finding(s)
+
+No diff-derived static exposure probes found.

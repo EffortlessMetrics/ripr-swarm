@@ -1,0 +1,5 @@
+ripr progress: loading_input [diff]
+ripr progress: analyzing [diff]
+ripr progress: building_output [diff]
+ripr: --diff produced zero findings. If the diff file is not a valid unified diff, this result is empty because nothing was parsed — not because all behavior is covered.
+ripr progress: completed [diff]

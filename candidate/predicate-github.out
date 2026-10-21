@@ -1,0 +1,2 @@
+::notice file=src/lib.rs,line=2,title=ripr exposed::Static RIPR exposure finding Canonical gap: gap:rust:src/lib.rs:accepts:predicate_boundary:predicate:n==2
+::notice file=src/lib.rs,line=2,title=ripr exposed::Static RIPR exposure finding Canonical gap: gap:rust:src/lib.rs:accepts:return_value:return_value:n>=2

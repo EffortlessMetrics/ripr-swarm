@@ -1,0 +1,140 @@
+diff --git a/changelog.d/8827-subjectless-diff-badges.md b/changelog.d/8827-subjectless-diff-badges.md
+new file mode 100644
+index 000000000..f26f8da62
+--- /dev/null
++++ b/changelog.d/8827-subjectless-diff-badges.md
+@@ -0,0 +1,2 @@
++<!-- section: Fixed -->
++- Diff badges now name empty and non-behavioral scopes with a warning instead of showing a green zero when no analysis subject existed (#8827).
+diff --git a/crates/ripr/src/output/badge/summaries.rs b/crates/ripr/src/output/badge/summaries.rs
+index 0a832ddb3..b12e31e46 100644
+--- a/crates/ripr/src/output/badge/summaries.rs
++++ b/crates/ripr/src/output/badge/summaries.rs
+@@ -4,7 +4,7 @@ use crate::analysis::SeamGripClassCounts;
+ use crate::analysis::canonical_gap::canonical_gap_identities;
+ #[cfg(test)]
+ use crate::analysis::seams::SeamGripClass;
+-use crate::analysis_outcome::AnalysisOutcome;
++use crate::analysis_outcome::{AnalysisOutcome, AnalysisOutcomeKind};
+ use crate::app::CheckOutput;
+ #[cfg(test)]
+ use crate::config::{ConfigSeverity, RiprConfig};
+@@ -100,6 +100,24 @@ pub(super) fn apply_analysis_outcome_disclosure(
+     let Some(outcome) = analysis_outcome.as_ref() else {
+         return (status, color, message, None);
+     };
++    if matches!(
++        outcome.kind,
++        AnalysisOutcomeKind::NoScope
++            | AnalysisOutcomeKind::NoChangedLines
++            | AnalysisOutcomeKind::NoBehavioralCandidates
++    ) {
++        let (status, color) = if status == BadgeStatus::Pass {
++            (BadgeStatus::Warn, "yellow")
++        } else {
++            (status, color)
++        };
++        return (
++            status,
++            color,
++            format!("no analysis subject: {}", outcome.kind.as_str()),
++            analysis_outcome,
++        );
++    }
+     if outcome.kind.is_complete() {
+         return (status, color, message, analysis_outcome);
+     }
+diff --git a/crates/ripr/src/output/badge/tests.rs b/crates/ripr/src/output/badge/tests.rs
+index b01f67aee..190856d0e 100644
+--- a/crates/ripr/src/output/badge/tests.rs
++++ b/crates/ripr/src/output/badge/tests.rs
+@@ -2101,6 +2101,72 @@ fn clean_rust_diff_zero_findings_no_preview_is_pass_green() {
+     );
+ }
+ 
++#[test]
++fn no_subject_badges_do_not_claim_a_clean_zero() -> Result<(), String> {
++    for (kind, counts) in [
++        (
++            AnalysisOutcomeKind::NoScope,
++            AnalysisOutcomeCounts::default(),
++        ),
++        (
++            AnalysisOutcomeKind::NoChangedLines,
++            AnalysisOutcomeCounts {
++                changed_file_count: 1,
++                ..AnalysisOutcomeCounts::default()
++            },
++        ),
++        (
++            AnalysisOutcomeKind::NoBehavioralCandidates,
++            AnalysisOutcomeCounts {
++                changed_file_count: 1,
++                changed_line_count: 1,
++                ..AnalysisOutcomeCounts::default()
++            },
++        ),
++    ] {
++        let mut output = check_output(Vec::new());
++        output.analysis_outcome = Some(AnalysisOutcome::new(
++            kind,
++            Default::default(),
++            counts,
++            Vec::new(),
++        )?);
++        let summary = ripr_badge_summary(&output, BadgePolicy::default());
++        assert_eq!(summary.status, BadgeStatus::Warn, "{kind:?}");
++        assert_eq!(summary.color, "yellow", "{kind:?}");
++        assert_eq!(
++            summary.message,
++            format!("no analysis subject: {}", kind.as_str())
++        );
++        let native: serde_json::Value = serde_json::from_str(&render_native_json(&summary))
++            .map_err(|error| error.to_string())?;
++        let shields: serde_json::Value = serde_json::from_str(&render_shields_json(&summary))
++            .map_err(|error| error.to_string())?;
++        assert_eq!(native["analysis_complete"], true, "{kind:?}");
++        assert_eq!(native["analysis_outcome"]["kind"], kind.as_str());
++        assert_eq!(shields["color"], "yellow");
++        assert_eq!(shields["message"], summary.message);
++    }
++
++    let mut analyzed = check_output(Vec::new());
++    analyzed.analysis_outcome = Some(AnalysisOutcome::new(
++        AnalysisOutcomeKind::CompleteNoFindings,
++        Default::default(),
++        AnalysisOutcomeCounts {
++            changed_file_count: 1,
++            changed_line_count: 1,
++            candidate_line_count: 1,
++            ..AnalysisOutcomeCounts::default()
++        },
++        Vec::new(),
++    )?);
++    let summary = ripr_badge_summary(&analyzed, BadgePolicy::default());
++    assert_eq!(summary.status, BadgeStatus::Pass);
++    assert_eq!(summary.color, "brightgreen");
++    assert_eq!(summary.message, "0");
++    Ok(())
++}
++
+ #[test]
+ fn incomplete_zero_finding_diff_is_not_a_green_badge() -> Result<(), String> {
+     let mut output = check_output(Vec::new());
+diff --git a/docs/BADGE_POLICY.md b/docs/BADGE_POLICY.md
+index 011b7df4e..2d83a54dc 100644
+--- a/docs/BADGE_POLICY.md
++++ b/docs/BADGE_POLICY.md
+@@ -437,7 +437,11 @@ The ordinary count thresholds are:
+ | nonzero with `--fail-on-nonzero` | `fail` | `red` |
+ 
+ Limited, stale, unknown, preview-skipped, or missing-input states override these
+-count thresholds. Badge status and CI exit policy remain separate decisions.
++count thresholds. A diff outcome with no analysis subject (`no_scope`,
++`no_changed_lines`, or `no_behavioral_candidates`) also renders a yellow
++`warn` badge naming that kind, even though the typed analysis outcome is
++complete. An analyzed `complete_no_findings` outcome can retain the green zero.
++Badge status and CI exit policy remain separate decisions.
+ 
+ ## CLI shape
+ 

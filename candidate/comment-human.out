@@ -1,0 +1,10 @@
+ripr static RIPR exposure analysis
+mode: draft
+root: /workspace/8830-proof/consumer
+
+Summary: 0 probes analyzed; 0 findings unsuppressed
+
+Analysis outcome: no changed line is behavior ripr checks (analysis complete)
+  Counts: 1 changed file(s), 1 changed line(s), 0 candidate line(s), 0 probe(s), 0 finding(s)
+
+No diff-derived static exposure probes found.

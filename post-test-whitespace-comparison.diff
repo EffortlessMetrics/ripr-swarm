@@ -1,0 +1,26 @@
+diff --git a/workspace/8830-proof/executed-tests.patch b/workspace/8830-proof/formatted-tests.patch
+index 9f0d71362..dd6771325 100644
+--- a/workspace/8830-proof/executed-tests.patch
++++ b/workspace/8830-proof/formatted-tests.patch
+@@ -1,5 +1,5 @@
+ diff --git a/crates/ripr/src/output/badge/tests.rs b/crates/ripr/src/output/badge/tests.rs
+-index 190856d0e..6cc5f5ac3 100644
++index 190856d0e..2bb66f697 100644
+ --- a/crates/ripr/src/output/badge/tests.rs
+ +++ b/crates/ripr/src/output/badge/tests.rs
+ @@ -2142,6 +2142,9 @@ fn no_subject_badges_do_not_claim_a_clean_zero() -> Result<(), String> {
+@@ -16,10 +16,10 @@ index 190856d0e..6cc5f5ac3 100644
+      assert_eq!(summary.status, BadgeStatus::Pass);
+      assert_eq!(summary.color, "brightgreen");
+      assert_eq!(summary.message, "0");
+-+    let native: serde_json::Value = serde_json::from_str(&render_native_json(&summary))
+-+        .map_err(|error| error.to_string())?;
+-+    let shields: serde_json::Value = serde_json::from_str(&render_shields_json(&summary))
+-+        .map_err(|error| error.to_string())?;
+++    let native: serde_json::Value =
+++        serde_json::from_str(&render_native_json(&summary)).map_err(|error| error.to_string())?;
+++    let shields: serde_json::Value =
+++        serde_json::from_str(&render_shields_json(&summary)).map_err(|error| error.to_string())?;
+ +    assert_eq!(native["status"], "pass");
+ +    assert_eq!(native["color"], "brightgreen");
+ +    assert_eq!(native["message"], "0");

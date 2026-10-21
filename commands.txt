@@ -1,0 +1,13 @@
+Environment: Linux x86_64, Bash; pinned Rust/Cargo 1.95.0.
+Cargo environment: PATH=/workspace/.ripr-toolchain/cargo/bin:/usr/bin:/bin CARGO_HOME=/workspace/.ripr-toolchain/cargo RUSTUP_HOME=/workspace/.ripr-toolchain/rustup CARGO_TARGET_DIR=/workspace/8830-target CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0.
+Candidate review tree: /workspace/8830-review at 430d5b4c3dd1b78b8792238d0bbbcd037ac59e80. Clean during installed CLI build.
+Candidate: cargo install --path crates/ripr --locked --debug --root /workspace/8830-installed
+Candidate CLI: python3 /workspace/8830-proof/replay.py /workspace/8830-installed/bin/ripr candidate
+Component proof: git apply /workspace/8830-proof/proposed-tests.patch
+Component proof: cargo test --locked -p ripr --lib output::badge::tests:: -- --test-threads=1
+Test-only delta: executed-tests.patch. This is candidate production plus an uncommitted proposed test patch, not tests run on an unchanged exact head.
+Parent comparison tree: /workspace/8830-base at 4ad263541fa2a05bf3420b21eb62ea5dc92e7bcd; shares this task's target sequentially.
+Parent: cargo install --path crates/ripr --locked --debug --root /workspace/8830-base-installed
+Parent CLI: python3 /workspace/8830-proof/replay.py /workspace/8830-base-installed/bin/ripr base
+Comparison: python3 /workspace/8830-proof/compare.py
+Resource admission: all 8830-* paths belong to this review; git common objects belong to original repository. Observed 30 GiB free, 12 GiB peak additional growth admitted including two installs and proof, 8 GiB reserve. Original repository target/toolchain and unrelated resources preserved. No frozen binary copies.

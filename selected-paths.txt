@@ -1,0 +1,4 @@
+changelog.d/8827-subjectless-diff-badges.md
+crates/ripr/src/output/badge/summaries.rs
+crates/ripr/src/output/badge/tests.rs
+docs/BADGE_POLICY.md

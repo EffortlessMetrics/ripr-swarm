@@ -1,0 +1,11 @@
+ripr static RIPR exposure analysis
+mode: draft
+root: /workspace/8830-proof/consumer
+
+Summary: 0 probes analyzed; 0 findings unsuppressed
+
+Analysis outcome: the input is not supported (analysis incomplete)
+  Zero findings is not a clean result because the analyzed scope is incomplete.
+  Limitation: the diff could not be parsed during parsing the diff; recovery: retry — Run the analysis on a diff that includes the source changes; binary and file-mode changes are not analyzed.
+
+No diff-derived static exposure probes found.

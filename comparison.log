@@ -1,0 +1,1 @@
+PASS: 42 executions per revision; 30 non-badge stdout/stderr/exit comparisons identical; all 42 exit codes and stderr identical; exactly six expected subjectless badge outputs changed; genuine analyzed-subject zero headline retained; unsupported controls identical.

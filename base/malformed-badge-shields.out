@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "label": "ripr",
+  "message": "analysis-incomplete: unsupported_input",
+  "color": "yellow"
+}

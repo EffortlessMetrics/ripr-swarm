@@ -1,0 +1,854 @@
+[
+  {
+    "case": "empty",
+    "format": "badge-json",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/empty.diff",
+      "--format",
+      "badge-json"
+    ],
+    "stdout_sha256": "cbaa7bf6c13df83f23672a234f4a32b2f2faafd0aad3f3d7836b4e38d4c425d5",
+    "status": "pass",
+    "color": "brightgreen",
+    "message": "0",
+    "outcome": {
+      "schema_version": "0.1",
+      "kind": "no_scope",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": null,
+        "base_revision": null,
+        "input_identity": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 0,
+        "changed_line_count": 0,
+        "candidate_line_count": 0,
+        "probe_count": 0,
+        "finding_count": 0
+      },
+      "limitations": [],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    },
+    "complete": true
+  },
+  {
+    "case": "empty",
+    "format": "badge-shields",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/empty.diff",
+      "--format",
+      "badge-shields"
+    ],
+    "stdout_sha256": "6750dc92cfd8006c7758d4d4c2bcc85bc948ab096227c136aa308b9448ffa86a"
+  },
+  {
+    "case": "empty",
+    "format": "json",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/empty.diff",
+      "--format",
+      "json"
+    ],
+    "stdout_sha256": "d79e2e87ea60e4fefa3c9135d0742324e23ad34d35d07702a4174e025341332e"
+  },
+  {
+    "case": "empty",
+    "format": "human",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/empty.diff",
+      "--format",
+      "human"
+    ],
+    "stdout_sha256": "cf46323cbdd07474ffb93a8976739e2055ffc7490962d8030bb8516adf344551"
+  },
+  {
+    "case": "empty",
+    "format": "human-full",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/empty.diff",
+      "--format",
+      "human-full"
+    ],
+    "stdout_sha256": "4442266534745ef1582f8dda19e158d18581cdf81f7a6d659d278384bf4f6ec7"
+  },
+  {
+    "case": "empty",
+    "format": "sarif",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/empty.diff",
+      "--format",
+      "sarif"
+    ],
+    "stdout_sha256": "1149fa2cce6d9c353791731df3ace239154331721ff93b57b6014e93641ecea9"
+  },
+  {
+    "case": "empty",
+    "format": "github",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/empty.diff",
+      "--format",
+      "github"
+    ],
+    "stdout_sha256": "a3fa371a56e2f3aef12e233cdad3bae64a87a3087520473098a6e4d2b37f49f5"
+  },
+  {
+    "case": "readme",
+    "format": "badge-json",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/readme.diff",
+      "--format",
+      "badge-json"
+    ],
+    "stdout_sha256": "defc9acb99e2b600b64b90cceace214f6ba6139197c95ac937f138da516a2286",
+    "status": "pass",
+    "color": "brightgreen",
+    "message": "0",
+    "outcome": {
+      "schema_version": "0.1",
+      "kind": "no_behavioral_candidates",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": null,
+        "base_revision": null,
+        "input_identity": "sha256:4834d7f8d83e7c932e365cdb6cb696ad7cb30b2f100b4b49821d6687bcf588d7",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 1,
+        "changed_line_count": 2,
+        "candidate_line_count": 0,
+        "probe_count": 0,
+        "finding_count": 0
+      },
+      "limitations": [],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    },
+    "complete": true
+  },
+  {
+    "case": "readme",
+    "format": "badge-shields",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/readme.diff",
+      "--format",
+      "badge-shields"
+    ],
+    "stdout_sha256": "6750dc92cfd8006c7758d4d4c2bcc85bc948ab096227c136aa308b9448ffa86a"
+  },
+  {
+    "case": "readme",
+    "format": "json",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/readme.diff",
+      "--format",
+      "json"
+    ],
+    "stdout_sha256": "a156c808fb0c3a1e2689c8f7db4e266eae5d366a4f62e7d1c7771eabf59465f6"
+  },
+  {
+    "case": "readme",
+    "format": "human",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/readme.diff",
+      "--format",
+      "human"
+    ],
+    "stdout_sha256": "ccdfd3b9ee97668f0ebb6864a68f3196bbca968ae71e303daba59245375ac24a"
+  },
+  {
+    "case": "readme",
+    "format": "human-full",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/readme.diff",
+      "--format",
+      "human-full"
+    ],
+    "stdout_sha256": "8a8d848700f90072fa0494a91ee74cc02e9a957c491c4fdc53fc5aca6f4b0c04"
+  },
+  {
+    "case": "readme",
+    "format": "sarif",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/readme.diff",
+      "--format",
+      "sarif"
+    ],
+    "stdout_sha256": "8b25cbd74d60b81d9197f0bf60d8b8e1ed4b3fd963ac4ade0a3e159416f84865"
+  },
+  {
+    "case": "readme",
+    "format": "github",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/readme.diff",
+      "--format",
+      "github"
+    ],
+    "stdout_sha256": "a3fa371a56e2f3aef12e233cdad3bae64a87a3087520473098a6e4d2b37f49f5"
+  },
+  {
+    "case": "comment",
+    "format": "badge-json",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/comment.diff",
+      "--format",
+      "badge-json"
+    ],
+    "stdout_sha256": "a56e2538379246e6943a3573ec39ddfb05987ba900338b2aed72516e039e11a4",
+    "status": "pass",
+    "color": "brightgreen",
+    "message": "0",
+    "outcome": {
+      "schema_version": "0.1",
+      "kind": "no_behavioral_candidates",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": null,
+        "base_revision": null,
+        "input_identity": "sha256:2bbf938628d1bf1cd5b7711523c7893f5090b142e90fa5c20970203fab382c27",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 1,
+        "changed_line_count": 1,
+        "candidate_line_count": 0,
+        "probe_count": 0,
+        "finding_count": 0
+      },
+      "limitations": [],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    },
+    "complete": true
+  },
+  {
+    "case": "comment",
+    "format": "badge-shields",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/comment.diff",
+      "--format",
+      "badge-shields"
+    ],
+    "stdout_sha256": "6750dc92cfd8006c7758d4d4c2bcc85bc948ab096227c136aa308b9448ffa86a"
+  },
+  {
+    "case": "comment",
+    "format": "json",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/comment.diff",
+      "--format",
+      "json"
+    ],
+    "stdout_sha256": "2671abeee535138bfea5c96ace78d063a44d2ae46ada7712ab2320b7eea05fe7"
+  },
+  {
+    "case": "comment",
+    "format": "human",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/comment.diff",
+      "--format",
+      "human"
+    ],
+    "stdout_sha256": "91751816997e943f625a6985445927062457c7a116e0dcab3f8a3d44a540bbf0"
+  },
+  {
+    "case": "comment",
+    "format": "human-full",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/comment.diff",
+      "--format",
+      "human-full"
+    ],
+    "stdout_sha256": "d55a7940c56df4c503566d2931b26468dd22cb20704e9db30600fdfd1e5898a0"
+  },
+  {
+    "case": "comment",
+    "format": "sarif",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/comment.diff",
+      "--format",
+      "sarif"
+    ],
+    "stdout_sha256": "2c699d681b592ea81d8b55b7e1d31eb6d88c6f83227432de229d81a9dd842e4e"
+  },
+  {
+    "case": "comment",
+    "format": "github",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/comment.diff",
+      "--format",
+      "github"
+    ],
+    "stdout_sha256": "a3fa371a56e2f3aef12e233cdad3bae64a87a3087520473098a6e4d2b37f49f5"
+  },
+  {
+    "case": "predicate",
+    "format": "badge-json",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/predicate.diff",
+      "--format",
+      "badge-json"
+    ],
+    "stdout_sha256": "63387ad48e7e19511cd4a53a17bd8b2bf3997aff0e9fe26d9d00d1aa0d39eff4",
+    "status": "pass",
+    "color": "brightgreen",
+    "message": "0",
+    "outcome": {
+      "schema_version": "0.1",
+      "kind": "complete_with_findings",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": null,
+        "base_revision": null,
+        "input_identity": "sha256:5d05d89568cd283ae311c646422520f18994bebbfc38851f678ab5f9d54c6d51",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 1,
+        "changed_line_count": 2,
+        "candidate_line_count": 1,
+        "probe_count": 2,
+        "finding_count": 2
+      },
+      "limitations": [],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    },
+    "complete": true
+  },
+  {
+    "case": "predicate",
+    "format": "badge-shields",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/predicate.diff",
+      "--format",
+      "badge-shields"
+    ],
+    "stdout_sha256": "6750dc92cfd8006c7758d4d4c2bcc85bc948ab096227c136aa308b9448ffa86a"
+  },
+  {
+    "case": "predicate",
+    "format": "json",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/predicate.diff",
+      "--format",
+      "json"
+    ],
+    "stdout_sha256": "b96ac1859d8bfe496128b22ab2b2b780e457392aee1cc8c80911290da0cb012b"
+  },
+  {
+    "case": "predicate",
+    "format": "human",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/predicate.diff",
+      "--format",
+      "human"
+    ],
+    "stdout_sha256": "68578f67c63c3335ff04526713a5cde7f9ad5bbb814c61d056a113493f7d9f4f"
+  },
+  {
+    "case": "predicate",
+    "format": "human-full",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/predicate.diff",
+      "--format",
+      "human-full"
+    ],
+    "stdout_sha256": "3b2523e69a9276a5638b20f0d2db883a0950d972a9ab86e3ee74021a698e8d75"
+  },
+  {
+    "case": "predicate",
+    "format": "sarif",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/predicate.diff",
+      "--format",
+      "sarif"
+    ],
+    "stdout_sha256": "7615bd1eed74ee567a731724d533dc3ad3673a169c87a2906c2fcec80fab91a2"
+  },
+  {
+    "case": "predicate",
+    "format": "github",
+    "exit": 0,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/predicate.diff",
+      "--format",
+      "github"
+    ],
+    "stdout_sha256": "658da8ab4194fb5137106be71a6e768d50b8c51c7a7ecab5786d945371995504"
+  },
+  {
+    "case": "mode",
+    "format": "badge-json",
+    "exit": 2,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/mode.diff",
+      "--format",
+      "badge-json"
+    ],
+    "stdout_sha256": "d1bffcece4b8b615dba122eae0758707d24fda3ef9934d4109183ff465312df4",
+    "status": "warn",
+    "color": "yellow",
+    "message": "analysis-incomplete: unsupported_input",
+    "outcome": {
+      "schema_version": "0.1",
+      "kind": "unsupported_input",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": null,
+        "base_revision": null,
+        "input_identity": "sha256:5d9e0dc4f36a9cac8feb665ce93016fccdc17e11029e31847c132901afe4e371",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 0,
+        "changed_line_count": 0,
+        "candidate_line_count": 0,
+        "probe_count": 0,
+        "finding_count": 0
+      },
+      "limitations": [
+        {
+          "kind": "malformed_diff",
+          "producer_stage": "diff_parse",
+          "path": null,
+          "affected_items": null,
+          "bounded_detail": "The diff is well formed but contains only binary or file-mode changes, so no text hunk was analyzed.",
+          "recovery": {
+            "kind": "retry",
+            "detail": "Run the analysis on a diff that includes the source changes; binary and file-mode changes are not analyzed."
+          }
+        }
+      ],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    },
+    "complete": false
+  },
+  {
+    "case": "mode",
+    "format": "badge-shields",
+    "exit": 2,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/mode.diff",
+      "--format",
+      "badge-shields"
+    ],
+    "stdout_sha256": "1bc531e1f834938165bc7c8a72e154656be6ae62ed604e36aae36704dafc8582"
+  },
+  {
+    "case": "mode",
+    "format": "json",
+    "exit": 2,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/mode.diff",
+      "--format",
+      "json"
+    ],
+    "stdout_sha256": "a40018c85e4a0ca39db6271b4a226c543b0aa324adfa54eddc4268c26b476d2c"
+  },
+  {
+    "case": "mode",
+    "format": "human",
+    "exit": 2,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/mode.diff",
+      "--format",
+      "human"
+    ],
+    "stdout_sha256": "264c00cfdd6378cdb3f4d2b6f1daa68fde3f0f4c3b95383af83260c7d666612b"
+  },
+  {
+    "case": "mode",
+    "format": "human-full",
+    "exit": 2,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/mode.diff",
+      "--format",
+      "human-full"
+    ],
+    "stdout_sha256": "01f5bd74ba97ae0f85638badcafe0c8ebb591aa3bb48194e6ae3acd8df37e964"
+  },
+  {
+    "case": "mode",
+    "format": "sarif",
+    "exit": 2,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/mode.diff",
+      "--format",
+      "sarif"
+    ],
+    "stdout_sha256": "8cbdade9ec86930f0fad9a1283eb3da7e39b6b274dffac28ef7bc1cdf65075d9"
+  },
+  {
+    "case": "mode",
+    "format": "github",
+    "exit": 2,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/mode.diff",
+      "--format",
+      "github"
+    ],
+    "stdout_sha256": "98628fb9efb44dacf1c155326955176efec3c11d7c21e6d50f85a0c5e4605ecd"
+  },
+  {
+    "case": "malformed",
+    "format": "badge-json",
+    "exit": 2,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/malformed.diff",
+      "--format",
+      "badge-json"
+    ],
+    "stdout_sha256": "eaf30636a422503fab16766bb9ad530a221af1b58c346cdf909f55c7902ec3a9",
+    "status": "warn",
+    "color": "yellow",
+    "message": "analysis-incomplete: unsupported_input",
+    "outcome": {
+      "schema_version": "0.1",
+      "kind": "unsupported_input",
+      "identity": {
+        "repository_identity": null,
+        "root_identity": null,
+        "config_identity": null,
+        "base_revision": null,
+        "input_identity": "sha256:6225e7fc07beb70f12100d30ebc9449d54711c5e8c8f6c46238f686470bd3380",
+        "snapshot_identity": null,
+        "git_candidate_subject": null
+      },
+      "counts": {
+        "changed_file_count": 1,
+        "changed_line_count": 1,
+        "candidate_line_count": 1,
+        "probe_count": 1,
+        "finding_count": 1
+      },
+      "limitations": [
+        {
+          "kind": "malformed_diff",
+          "producer_stage": "diff_parse",
+          "path": "src/lib.rs",
+          "affected_items": 1,
+          "bounded_detail": null,
+          "recovery": {
+            "kind": "retry",
+            "detail": "A two-way hunk has invalid ranges or its body does not match the declared old/new line counts. Obtain the complete valid unified diff and re-run; retained changed lines are advisory only."
+          }
+        }
+      ],
+      "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
+    },
+    "complete": false
+  },
+  {
+    "case": "malformed",
+    "format": "badge-shields",
+    "exit": 2,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/malformed.diff",
+      "--format",
+      "badge-shields"
+    ],
+    "stdout_sha256": "1bc531e1f834938165bc7c8a72e154656be6ae62ed604e36aae36704dafc8582"
+  },
+  {
+    "case": "malformed",
+    "format": "json",
+    "exit": 2,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/malformed.diff",
+      "--format",
+      "json"
+    ],
+    "stdout_sha256": "26c1b1f4df90e345a6ab9f2dc97249ee12dcc0783a00b70e564af97e511baa7d"
+  },
+  {
+    "case": "malformed",
+    "format": "human",
+    "exit": 2,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/malformed.diff",
+      "--format",
+      "human"
+    ],
+    "stdout_sha256": "4dc0bf5e29138118c3a43df1179b7d2d3533392df58b1065bf8a092c4ecbfdc1"
+  },
+  {
+    "case": "malformed",
+    "format": "human-full",
+    "exit": 2,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/malformed.diff",
+      "--format",
+      "human-full"
+    ],
+    "stdout_sha256": "6fbcf48e7b7649882ef455e3ea8346c2ff37b326023452dc011ca862ed9ac456"
+  },
+  {
+    "case": "malformed",
+    "format": "sarif",
+    "exit": 2,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/malformed.diff",
+      "--format",
+      "sarif"
+    ],
+    "stdout_sha256": "0b2221a0392bd43c03360e6ef77107110559297b029b08593e6df9ee74de5fef"
+  },
+  {
+    "case": "malformed",
+    "format": "github",
+    "exit": 2,
+    "command": [
+      "/workspace/8830-base-installed/bin/ripr",
+      "check",
+      "--root",
+      "/workspace/8830-proof/consumer",
+      "--diff",
+      "/workspace/8830-proof/malformed.diff",
+      "--format",
+      "github"
+    ],
+    "stdout_sha256": "11ea1b36a41849a1843e999b2ac4c243c38f70a051759c014e0db598b5772789"
+  }
+]

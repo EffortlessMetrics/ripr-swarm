@@ -1,0 +1,15 @@
+Diff in /workspace/8830-review/crates/ripr/src/output/badge/tests.rs:2167:
+     assert_eq!(summary.status, BadgeStatus::Pass);
+     assert_eq!(summary.color, "brightgreen");
+     assert_eq!(summary.message, "0");
+-    let native: serde_json::Value = serde_json::from_str(&render_native_json(&summary))
+-        .map_err(|error| error.to_string())?;
+-    let shields: serde_json::Value = serde_json::from_str(&render_shields_json(&summary))
+-        .map_err(|error| error.to_string())?;
++    let native: serde_json::Value =
++        serde_json::from_str(&render_native_json(&summary)).map_err(|error| error.to_string())?;
++    let shields: serde_json::Value =
++        serde_json::from_str(&render_shields_json(&summary)).map_err(|error| error.to_string())?;
+     assert_eq!(native["status"], "pass");
+     assert_eq!(native["color"], "brightgreen");
+     assert_eq!(native["message"], "0");

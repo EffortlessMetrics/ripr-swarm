@@ -1,0 +1,1 @@
+::warning title=ripr analysis incomplete::Analysis outcome: unsupported_input (analysis incomplete). Zero findings is not a clean result because the analyzed scope is incomplete. Limitation: malformed_diff: Run the analysis on a diff that includes the source changes; binary and file-mode changes are not analyzed.

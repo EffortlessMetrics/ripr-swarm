@@ -1,0 +1,68 @@
+diff --git a/crates/ripr/src/output/badge/tests.rs b/crates/ripr/src/output/badge/tests.rs
+index 190856d0e..6cc5f5ac3 100644
+--- a/crates/ripr/src/output/badge/tests.rs
++++ b/crates/ripr/src/output/badge/tests.rs
+@@ -2142,6 +2142,9 @@ fn no_subject_badges_do_not_claim_a_clean_zero() -> Result<(), String> {
+             .map_err(|error| error.to_string())?;
+         let shields: serde_json::Value = serde_json::from_str(&render_shields_json(&summary))
+             .map_err(|error| error.to_string())?;
++        assert_eq!(native["status"], "warn", "{kind:?}");
++        assert_eq!(native["color"], "yellow", "{kind:?}");
++        assert_eq!(native["message"], summary.message, "{kind:?}");
+         assert_eq!(native["analysis_complete"], true, "{kind:?}");
+         assert_eq!(native["analysis_outcome"]["kind"], kind.as_str());
+         assert_eq!(shields["color"], "yellow");
+@@ -2164,6 +2167,43 @@ fn no_subject_badges_do_not_claim_a_clean_zero() -> Result<(), String> {
+     assert_eq!(summary.status, BadgeStatus::Pass);
+     assert_eq!(summary.color, "brightgreen");
+     assert_eq!(summary.message, "0");
++    let native: serde_json::Value = serde_json::from_str(&render_native_json(&summary))
++        .map_err(|error| error.to_string())?;
++    let shields: serde_json::Value = serde_json::from_str(&render_shields_json(&summary))
++        .map_err(|error| error.to_string())?;
++    assert_eq!(native["status"], "pass");
++    assert_eq!(native["color"], "brightgreen");
++    assert_eq!(native["message"], "0");
++    assert_eq!(native["analysis_complete"], true);
++    assert_eq!(native["analysis_outcome"]["kind"], "complete_no_findings");
++    assert_eq!(shields["color"], "brightgreen");
++    assert_eq!(shields["message"], "0");
++    Ok(())
++}
++
++#[test]
++fn no_subject_disclosure_preserves_existing_warning_and_failure() -> Result<(), String> {
++    let outcome = AnalysisOutcome::new(
++        AnalysisOutcomeKind::NoScope,
++        Default::default(),
++        AnalysisOutcomeCounts::default(),
++        Vec::new(),
++    )?;
++    for (status, color) in [(BadgeStatus::Warn, "orange"), (BadgeStatus::Fail, "red")] {
++        let (actual_status, actual_color, message, disclosed) =
++            super::summaries::apply_analysis_outcome_disclosure(
++                Some(&outcome),
++                status,
++                color,
++                "existing result".to_string(),
++            );
++        assert_eq!(actual_status, status);
++        assert_eq!(actual_color, color);
++        assert_eq!(message, "no analysis subject: no_scope");
++        let disclosed = disclosed.ok_or("typed outcome must remain present")?;
++        assert_eq!(disclosed.kind, AnalysisOutcomeKind::NoScope);
++        assert!(disclosed.kind.is_complete());
++    }
+     Ok(())
+ }
+ 
+@@ -2180,6 +2220,9 @@ fn incomplete_zero_finding_diff_is_not_a_green_badge() -> Result<(), String> {
+     let rendered = render_native_json(&summary);
+     let value: serde_json::Value = serde_json::from_str(&rendered)
+         .map_err(|error| format!("badge JSON should parse: {error}"))?;
++    assert_eq!(value["status"], "warn");
++    assert_eq!(value["color"], "yellow");
++    assert_eq!(value["message"], "analysis-incomplete: unsupported_input");
+     assert_eq!(value["analysis_complete"], false);
+     assert_eq!(value["analysis_outcome"]["kind"], "unsupported_input");
+     assert_eq!(

@@ -1,0 +1,5 @@
+ripr progress: loading_input [diff]
+ripr progress: analyzing [diff]
+ripr: diff contained 1 non-source file(s) (.md); no analyzable Rust, TypeScript, Python, or Perl files found. The empty result is correct — ripr cannot analyze non-source files.
+ripr progress: building_output [diff]
+ripr progress: completed [diff]

@@ -1,0 +1,7 @@
+  Installing ripr v0.11.0 (/workspace/8830-base/crates/ripr)
+    Updating crates.io index
+   Compiling ripr v0.11.0 (/workspace/8830-base/crates/ripr)
+    Finished `dev` profile [unoptimized] target(s) in 2m 14s
+  Installing /workspace/8830-base-installed/bin/ripr
+   Installed package `ripr v0.11.0 (/workspace/8830-base/crates/ripr)` (executable `ripr`)
+warning: be sure to add `/workspace/8830-base-installed/bin` to your PATH to be able to run the installed binaries

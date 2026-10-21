@@ -1,0 +1,6 @@
+ripr progress: loading_input [diff]
+ripr progress: analyzing [diff]
+ripr: the diff changes only binary files or file modes; there are no text hunks to analyze. This empty result reflects an empty analysis scope, not sufficient tests. Run ripr on a diff that includes the source changes.
+ripr progress: building_output [diff]
+ripr progress: failed [diff]
+ripr: check: analysis could not complete (unsupported_input); see the emitted report's limitations and recovery routes
