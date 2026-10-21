@@ -1826,6 +1826,30 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// The bound keeps the first eight matches in the order the caller supplied
+    /// (analysis order), then sorts only that window for display: it is not the
+    /// eight lowest IDs overall.
+    #[test]
+    fn ambiguous_gap_item_bounds_before_sorting() -> Result<(), String> {
+        let root = Path::new("/ripr-task-first-root");
+        let ids: Vec<String> = (0..10).rev().map(|n| format!("seam:{n}")).collect();
+        let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+        let many = ambiguous_gap_item(root, "gap:x", &refs);
+        let expected =
+            "seam:2, seam:3, seam:4, seam:5, seam:6, seam:7, seam:8, seam:9 (and 2 more).";
+        if !many.contains(expected) {
+            return Err(format!(
+                "the first eight supplied matches must list sorted:\n{many}"
+            ));
+        }
+        if many.contains("seam:0") || many.contains("seam:1,") {
+            return Err(format!(
+                "the two omitted matches must not be listed:\n{many}"
+            ));
+        }
+        Ok(())
+    }
+
     /// A stale check-printed finding ID is named as stale; any other
     /// unknown item gets the plain no-seam message. Both route to pilot.
     #[test]
