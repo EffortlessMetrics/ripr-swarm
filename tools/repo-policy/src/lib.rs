@@ -1041,18 +1041,6 @@ pub fn routed_rust_event_route(
 /// other labels, and the result job always runs so a nonrequest exists only
 /// under a different name.
 pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String> {
-    let has_pull_request_trigger = workflow
-        .lines()
-        .map(str::trim)
-        .any(|line| line == "pull_request:");
-    if !has_pull_request_trigger {
-        return Vec::new();
-    }
-    let Some(types) = routed_rust_pull_request_types(workflow) else {
-        return vec![
-            ".github/workflows/routed-rust.yml must declare an inline pull_request types array so the Ready-only admission contract is auditable (#4986)".to_string(),
-        ];
-    };
     let mut violations = Vec::new();
     match routed_rust_event_types(workflow, "merge_group") {
         None => violations.push(
@@ -1068,6 +1056,19 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
             ".github/workflows/routed-rust.yml admission must resolve the queued PR from the merge-group ref (`{ROUTED_RUST_QUEUE_ENTRY_SNIPPET}`) so claim and scope admission (#8192) still bind the merged candidate"
         ));
     }
+    let has_pull_request_trigger = workflow
+        .lines()
+        .map(str::trim)
+        .any(|line| line == "pull_request:");
+    if !has_pull_request_trigger {
+        return violations;
+    }
+    let Some(types) = routed_rust_pull_request_types(workflow) else {
+        violations.push(
+            ".github/workflows/routed-rust.yml must declare an inline pull_request types array so the Ready-only admission contract is auditable (#4986)".to_string(),
+        );
+        return violations;
+    };
     for (label, snippet) in [
         (
             "forward the queued PR's labels to the gate",
@@ -1079,7 +1080,7 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
         ),
         (
             "refuse merge groups that carry more than one queued PR",
-            "candidate admission requires exactly one queued PR per group",
+            "[ \"$parent\" = \"$GROUP_BASE_SHA\" ]",
         ),
     ] {
         if !workflow.contains(snippet) {

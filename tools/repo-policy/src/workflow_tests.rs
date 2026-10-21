@@ -346,6 +346,11 @@ jobs:
 #[test]
 fn routed_rust_workflow_contract_accepts_swarm_shape() {
     let workflow = r#"
+on:
+  merge_group:
+    types: [checks_requested]
+env:
+  GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
 jobs:
   route:
     name: Route Ripr Rust Small
@@ -482,6 +487,11 @@ jobs = ["Ripr Rust Small Result"]
 #[test]
 fn routed_rust_workflow_contract_accepts_reusable_implementation_authority() {
     let workflow = r#"
+on:
+  merge_group:
+    types: [checks_requested]
+env:
+  GROUP_HEAD_REF: ${{ github.event.merge_group.head_ref }}
 jobs:
   route:
     name: Route Ripr Rust Small
@@ -1085,6 +1095,17 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&missing_types)
     );
 
+    let no_triggers = workflow
+        .replace("  pull_request:\n    types: [labeled]\n", "")
+        .replace("  merge_group:\n", "  merge_group_removed:\n");
+    assert_ne!(no_triggers, workflow, "fixture must remove both triggers");
+    assert!(
+        routed_rust_ready_event_contract_violations(&no_triggers)
+            .iter()
+            .any(|violation| violation.contains("inline merge_group types array")),
+        "a workflow with neither trigger must still fail the queue contract: {:?}",
+        routed_rust_ready_event_contract_violations(&no_triggers)
+    );
     let queue_dropped = workflow.replace("    types: [checks_requested]\n", "");
     assert_ne!(
         queue_dropped, workflow,
@@ -1136,7 +1157,7 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         ),
         (
             "more than one queued PR",
-            "requires exactly one queued PR per group",
+            "[ \"$parent\" = \"$GROUP_BASE_SHA\" ]",
         ),
     ] {
         let mutated = workflow.replace(snippet, "removed");

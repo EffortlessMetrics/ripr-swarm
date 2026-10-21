@@ -200,14 +200,18 @@ jobs:
           set -euo pipefail
           pr="$PR_NUMBER" head="$PR_HEAD_SHA" labels="$PR_LABELS"
           if [ "$EVENT_NAME" = "merge_group" ]; then
-            # The queue branch is named for the entry's PR and the PR head it
-            # queued: .../pr-<number>-<head sha>. That immutable head is the
-            # exact-head binding, so a push after enqueue fails admission.
-            # Admission is per PR: the queued commit must be one squash commit
-            # of that PR directly on the group's base, so the workflow itself refuses a
-            # batch (fail closed) even if the ruleset group size is misconfigured.
+            # The queue branch is named .../pr-<number>-<sha>. The PR comes from
+            # the name; the exact head is the PR's live head, which must match
+            # the name's sha when that sha is a PR head (a push after enqueue)
+            # and may equal the group's base otherwise. Admission is per PR: the
+            # queued commit must be one squash commit of that PR directly on the
+            # group's base, so the workflow itself refuses a batch (fail closed)
+            # even if the ruleset group size is misconfigured.
             [[ "$GROUP_HEAD_REF" =~ /pr-([0-9]+)-([0-9a-f]{40})$ ]] || { echo "::error::merge group ref names no queued PR: $GROUP_HEAD_REF"; exit 1; }
-            pr="${BASH_REMATCH[1]}" head="${BASH_REMATCH[2]}"
+            pr="${BASH_REMATCH[1]}" ref_sha="${BASH_REMATCH[2]}"
+            current="$(gh api "repos/${REPOSITORY}/pulls/${pr}")"
+            head="$(jq -r '.head.sha' <<<"$current")"
+            { [ "$ref_sha" = "$head" ] || [ "$ref_sha" = "$GROUP_BASE_SHA" ]; } || { echo "::error::queue ref sha $ref_sha is neither the live head $head of PR #${pr} (pushed after enqueue) nor the group base $GROUP_BASE_SHA"; exit 1; }
             commit="$(gh api "repos/${REPOSITORY}/commits/${GROUP_HEAD_SHA}")"
             parents="$(jq -r '.parents | length' <<<"$commit")"
             subject="$(jq -r '.commit.message | split("\n")[0]' <<<"$commit")"
@@ -215,7 +219,6 @@ jobs:
             # A group's base is the parent of its first commit, so a one-entry
             # group has base == the queued commit's parent; a batch does not.
             { [ "$parents" = "1" ] && [ "$parent" = "$GROUP_BASE_SHA" ] && [[ "$subject" == *"(#${pr})" ]]; } || { echo "::error::queued commit is not a single squash commit of PR #${pr} ($parents parents, parent $parent, base $GROUP_BASE_SHA: $subject); candidate admission requires exactly one queued PR per group"; exit 1; }
-            current="$(gh api "repos/${REPOSITORY}/pulls/${pr}")"
             labels="$(jq -r '[.labels[].name] | join(",")' <<<"$current")"
           fi
           { echo "pr=$pr"; echo "head=$head"; echo "labels=$labels"; } >> "$GITHUB_OUTPUT"
