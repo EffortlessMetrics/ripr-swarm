@@ -35,7 +35,7 @@
 //! The table form is a whole-matcher repetition `$( row ) sep? *` (or `+`)
 //! whose row is `$name:ident`, `literal`, `tt` or `block` variables,
 //! literal `,`, `;` or `:` tokens, and delimited groups of comma-separated
-//! metavariables (an `expr` outside a group needs a `,` or `;` after it),
+//! metavariables (an `expr` outside a group needs a row separator after it),
 //! paired with a transcriber that is exactly one separator-free
 //! `$( body )*`. The invocation must split into rows with nothing left
 //! over; the body is emitted once per row. This is itoa's
@@ -292,15 +292,23 @@ fn argument(elements: &[NodeOrToken<SyntaxNode, SyntaxToken>]) -> Option<Argumen
         NodeOrToken::Node(node) => node.parent()?,
         NodeOrToken::Token(token) => token.parent()?,
     };
+    // Sliced, not copied: a row's arguments share the invocation as parent,
+    // and copying it per argument made a table's cost rows times its size.
     let base = parent.text_range().start();
-    let parent_text = parent.text().to_string();
-    let text = parent_text
-        .get(usize::from(start - base)..usize::from(end - base))?
+    let text = parent
+        .text()
+        .slice(ra_ap_syntax::TextRange::new(start - base, end - base))
         .to_string();
     Some(Argument {
         text,
         kinds: elements.iter().map(|element| element.kind()).collect(),
     })
+}
+
+fn invocation_ends_with_comma(invocation: &ast::TokenTree) -> bool {
+    inner_elements(invocation.syntax())
+        .last()
+        .is_some_and(|element| element.kind() == SyntaxKind::COMMA)
 }
 
 /// A matcher of comma-separated `$name:fragment` metavariables, as
@@ -325,7 +333,14 @@ fn simple_matcher(matcher: &SyntaxNode) -> Option<Vec<(String, String)>> {
         index += 4;
         match elements.get(index) {
             None => break,
-            Some(separator) if separator.kind() == SyntaxKind::COMMA => index += 1,
+            // A comma after the last metavariable is a literal the
+            // invocation must carry, which this reader does not model.
+            Some(separator) if separator.kind() == SyntaxKind::COMMA => {
+                index += 1;
+                if index == elements.len() {
+                    return None;
+                }
+            }
             Some(_) => return None,
         }
     }
@@ -411,6 +426,11 @@ fn expand(
             return expand_rows(&transcriber, &rows, local_macros);
         }
         let variables = simple_matcher(&matcher)?;
+        // `top_level_arguments` drops a trailing comma, which a matcher
+        // without one would not accept: rustc moves to the next arm.
+        if invocation_ends_with_comma(invocation) {
+            return None;
+        }
         let arguments = arguments?;
         if variables.len() != arguments.len() {
             continue;
@@ -573,6 +593,11 @@ fn substitute<'a>(
 
 /// The most rows one repetition invocation may expand to.
 const MAX_REPETITION_ROWS: usize = 512;
+
+/// The most expansion text one table invocation may produce. Rows are
+/// bounded, but rows times a large body is not: every generated test is
+/// parsed and kept, so a big table of big bodies is refused whole.
+const MAX_EXPANSION_BYTES: usize = 128 * 1024;
 
 /// One element of a repetition matcher's row.
 enum RowItem {
@@ -799,6 +824,9 @@ fn expand_rows(
                 .map(|(fragment, argument)| (fragment.as_str(), argument))
         })?);
         text.push('\n');
+        if text.len() > MAX_EXPANSION_BYTES {
+            return None;
+        }
     }
     (!text_invokes_local_macro(&text, local_macros) && !text_has_conditional_attribute(&text))
         .then_some(text)
@@ -1128,5 +1156,48 @@ mod tests {
         assert_eq!(expanded.len(), 2, "{expanded:?}");
         assert!(expanded[0].text.contains("table(1)") && expanded[0].text.contains("table(2)"));
         assert!(expanded[1].text.contains("simple(3)"));
+    }
+
+    #[test]
+    fn a_trailing_comma_must_agree_between_matcher_and_invocation() {
+        let strict_first = "macro_rules! c {\n    ($n:ident, $v:expr,) => { #[test] fn $n() { assert!(strict($v)); } };\n    ($n:ident, $v:expr) => { #[test] fn $n() { assert!(loose($v)); } };\n}\nc!(a, 1);\n";
+        assert!(
+            expand_local_test_macros(strict_first).is_empty(),
+            "a matcher's trailing comma is required, so arm 2 runs and is not guessed"
+        );
+        let loose_first = "macro_rules! c {\n    ($n:ident, $v:expr) => { #[test] fn $n() { assert!(first($v)); } };\n    ($n:ident, $v:expr,) => { #[test] fn $n() { assert!(second($v)); } };\n}\nc!(a, 1,);\n";
+        assert!(
+            expand_local_test_macros(loose_first).is_empty(),
+            "an invocation's trailing comma does not fit a matcher without one"
+        );
+        let table = "macro_rules! t {\n    ($($n:ident($v:expr, $w:expr,))*) => { $( #[test] fn $n() { assert_eq!(f($v), $w); } )* };\n}\nt! { a(1, 2) }\n";
+        assert!(expand_local_test_macros(table).is_empty());
+        let plain = "macro_rules! c {\n    ($n:ident, $v:expr) => { #[test] fn $n() { assert!(f($v)); } };\n}\nc!(a, 1);\n";
+        assert_eq!(expand_local_test_macros(plain).len(), 1, "premise");
+    }
+
+    #[test]
+    fn row_and_expansion_size_are_bounded() {
+        let table = |rows: usize, body: &str| {
+            let invocation: String = (0..rows).map(|row| format!("r{row}({row}) ")).collect();
+            format!(
+                "macro_rules! t {{\n    ($($n:ident($v:expr))*) => {{ $( #[test] fn $n() {{ {body} }} )* }};\n}}\nt! {{ {invocation} }}\n"
+            )
+        };
+        let small = "assert!(f($v));";
+        let at_cap = expand_local_test_macros(&table(MAX_REPETITION_ROWS, small));
+        assert_eq!(at_cap.len(), 1, "premise: the cap row count expands");
+        assert!(expand_local_test_macros(&table(MAX_REPETITION_ROWS + 1, small)).is_empty());
+
+        let large = format!("{} assert!(f($v));", "let _x = 1;".repeat(400));
+        assert!(
+            expand_local_test_macros(&table(64, &large)).is_empty(),
+            "64 rows of a 4 KB body exceed the expansion budget"
+        );
+        assert_eq!(
+            expand_local_test_macros(&table(4, &large)).len(),
+            1,
+            "a few rows of the same body fit"
+        );
     }
 }

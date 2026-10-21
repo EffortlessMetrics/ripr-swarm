@@ -258,8 +258,12 @@ comma-separated metavariables (an `expr` outside a group needs a `,`, `;` or
 separator-free `$( body )*` over those variables. The invocation must split
 into rows with nothing left over, and every fragment must fit as for a plain
 arm. Each row becomes one expansion of the body, so a table of ten rows
-indexes ten tests. Any other row layout (`=>`, nested repetition, a trailing
-separator, a leftover token, a group of the wrong arity) indexes nothing.
+indexes ten tests, up to 512 rows and 128 KiB of expansion text per
+invocation; a larger table indexes nothing. Any other row layout (`=>`,
+nested repetition, a trailing separator, a leftover token, a group of the
+wrong arity) indexes nothing. A matcher that ends in a literal `,`, or an
+invocation that ends in one the matcher does not take, indexes nothing for
+that arm, because rustc would match a different arm.
 
 Each metavariable is replaced by its argument's source text and `$crate` by
 `crate`; an `expr` or `literal` argument of more than one element (`-1`) is
@@ -418,6 +422,8 @@ end of the file, which is an approximation for an edit in progress.
 - `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::tables_the_expander_cannot_split_exactly_refuse`
 - `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::a_local_macro_in_a_table_row_or_body_refuses`
 - `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::a_table_arm_follows_simple_arms_that_do_not_fit`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::a_trailing_comma_must_agree_between_matcher_and_invocation`
+- `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::row_and_expansion_size_are_bounded`
 - `crates/ripr/tests/macro_generated_tests.rs::a_table_generated_test_reads_like_the_hand_written_test`
 - `crates/ripr/tests/macro_generated_tests.rs::a_table_the_expander_cannot_split_exactly_adds_no_test`
 - Verdict corpus cases `macro-table-boundary-rows`, `macro-table-semicolon-rows`, `macro-table-far-rows`, `macro-table-smoke-rows` and `macro-table-arrow-rows-refused`.
