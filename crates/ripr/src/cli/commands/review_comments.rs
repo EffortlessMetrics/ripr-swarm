@@ -319,12 +319,11 @@ fn load_review_comments_analysis_outcome(
     }
     // #9010: a findings-bounded check document is a prefix, never a complete
     // outcome; present non-`true` (including malformed) fails closed.
-    if envelope
-        .get("document_complete")
-        .is_some_and(|member| member.as_bool() != Some(true))
+    if crate::output::gate::discloses_limited_findings_bound(&value)
+        || crate::output::gate::discloses_bounded_analysis_document(&value)
     {
         return Err(format!(
-            "review-comments --check-output {} is invalid: findings-bounded check document (document_complete is not true); re-run with RIPR_CHECK_FINDINGS_BYTES=0",
+            "review-comments --check-output {} is invalid: findings-bounded check document (document_complete is not true or run_limitations names limited_findings_bound); re-run with RIPR_CHECK_FINDINGS_BYTES=0",
             path.display()
         ));
     }
@@ -1040,34 +1039,47 @@ mod tests {
             },
             Vec::new(),
         )?;
-        let write = |name: &str, bounded: bool| -> Result<PathBuf, String> {
+        // `shape`: None = unbounded control; otherwise a bounded peer.
+        let write = |name: &str, shape: Option<&str>| -> Result<PathBuf, String> {
             let mut envelope = serde_json::json!({
                 "analysis_complete": true,
                 "outcome": outcome
             });
-            if bounded {
-                envelope["document_complete"] = serde_json::json!(false);
-            }
-            let document = serde_json::json!({
+            let mut document = serde_json::json!({
                 "schema_version": "0.2", "tool": "ripr", "mode": "draft",
                 "root": output::outcome::display_path(&root),
-                "base": "main", "summary": {}, "findings": [],
-                "analysis_outcome": envelope
+                "base": "main", "summary": {}, "findings": []
             });
+            match shape {
+                Some("false") => envelope["document_complete"] = serde_json::json!(false),
+                Some("string") => envelope["document_complete"] = serde_json::json!("false"),
+                Some("null") => envelope["document_complete"] = serde_json::Value::Null,
+                Some("legacy") => {
+                    document["run_limitations"] = serde_json::json!([
+                        {"category": "limited_findings_bound",
+                         "run_status": "limited_findings_bound"}
+                    ]);
+                }
+                _ => {}
+            }
+            document["analysis_outcome"] = envelope;
             let path = dir.join(name);
             std::fs::write(&path, document.to_string()).map_err(|error| error.to_string())?;
             Ok(path)
         };
-        let control = write("control.json", false)?;
+        let control = write("control.json", None)?;
         assert!(
             load_review_comments_analysis_outcome(Some(&control), &root, "main", diff_text)?
                 .is_some()
         );
-        let bounded = write("bounded.json", true)?;
-        let error = load_review_comments_analysis_outcome(Some(&bounded), &root, "main", diff_text)
-            .err()
-            .ok_or("a bounded check document must be refused")?;
-        assert!(error.contains("findings-bounded"), "{error}");
+        for shape in ["false", "string", "null", "legacy"] {
+            let path = write(&format!("bounded-{shape}.json"), Some(shape))?;
+            let error =
+                load_review_comments_analysis_outcome(Some(&path), &root, "main", diff_text)
+                    .err()
+                    .ok_or_else(|| format!("{shape}: a bounded check document must be refused"))?;
+            assert!(error.contains("findings-bounded"), "{shape}: {error}");
+        }
         Ok(())
     }
 

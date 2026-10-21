@@ -197,12 +197,13 @@ pub(crate) fn validate_analysis_outcome_artifact(
     // json` into this artifact, so a findings-bounded check document can
     // arrive here. It holds only a prefix of the findings and is not a
     // complete analysis outcome, whatever `analysis_complete` says.
-    if envelope
-        .get("document_complete")
-        .is_some_and(|member| member.as_bool() != Some(true))
+    // Both disclosure shapes refuse: the `document_complete` flag (present
+    // non-`true` included) and the legacy `run_limitations[]` bound.
+    if crate::output::gate::discloses_limited_findings_bound(value)
+        || crate::output::gate::discloses_bounded_analysis_document(value)
     {
         return Err(invalid(
-            "Analysis outcome artifact is a findings-bounded check document (document_complete is not true); re-run with RIPR_CHECK_FINDINGS_BYTES=0 for the full set.",
+            "Analysis outcome artifact is a findings-bounded check document (document_complete is not true or run_limitations names limited_findings_bound); re-run with RIPR_CHECK_FINDINGS_BYTES=0 for the full set.",
         ));
     }
     let Some(outcome) = envelope.get("outcome") else {
@@ -386,14 +387,28 @@ mod tests {
             validate_analysis_outcome_artifact(&root, &root_display, &control),
             Ok(outcome.clone())
         );
-        for member in [serde_json::json!(false), serde_json::json!("false")] {
+        let mut shapes = Vec::new();
+        for member in [
+            serde_json::json!(false),
+            serde_json::json!("false"),
+            serde_json::Value::Null,
+        ] {
             let mut bounded = artifact(&outcome, true)?;
             bounded["analysis_outcome"]["document_complete"] = member;
+            shapes.push(bounded);
+        }
+        // Legacy shape: no document_complete member, run_limitations only.
+        let mut legacy = artifact(&outcome, true)?;
+        legacy["run_limitations"] = serde_json::json!([
+            {"category": "limited_findings_bound", "run_status": "limited_findings_bound"}
+        ]);
+        shapes.push(legacy);
+        for bounded in shapes {
             let result = validate_analysis_outcome_artifact(&root, &root_display, &bounded);
             assert!(
                 matches!(&result, Err(AnalysisOutcomeArtifactError::Invalid(reason))
                     if reason.contains("findings-bounded")),
-                "{result:?}"
+                "{bounded}: {result:?}"
             );
         }
         Ok(())

@@ -78,26 +78,20 @@ fn build_summary(
     let analysis_outcome = diff_report_value
         .and_then(|value| value.get("analysis_outcome"))
         .cloned();
-    // #9010: a budget-bounded check document carries
-    // `analysis_outcome.document_complete: false` while `analysis_complete`
-    // stays the analysis verdict. The summary's completeness is a consumer
-    // claim about the evidence it was built from, so the bounded document
-    // fails closed to `false` rather than reading as a complete run.
-    // A present non-`true` member (including a malformed one) fails closed,
-    // matching the xtask helper and `ripr_zero_status`.
-    let document_bounded = analysis_outcome
+    // #9010: `analysis_complete` stays the producer's analysis verdict. A
+    // findings-bounded check document (the `document_complete` flag or the
+    // legacy `run_limitations[]` bound) is a prefix, so it is expressed through
+    // `run_status: incomplete` and the propagated `analysis_outcome` members,
+    // never by rewriting the producer's boolean.
+    let analysis_complete = analysis_outcome
         .as_ref()
-        .and_then(|value| value.get("document_complete"))
-        .is_some_and(|member| member.as_bool() != Some(true));
-    let analysis_complete = if document_bounded {
-        Some(false)
-    } else {
-        analysis_outcome
-            .as_ref()
-            .and_then(|value| value.get("analysis_complete"))
-            .and_then(Value::as_bool)
-    };
-    let run_status = derive_run_status(diff_report_value, analysis_complete);
+        .and_then(|value| value.get("analysis_complete"))
+        .and_then(Value::as_bool);
+    let document_bounded = diff_report_value.is_some_and(|value| {
+        crate::output::gate::discloses_limited_findings_bound(value)
+            || crate::output::gate::discloses_bounded_analysis_document(value)
+    });
+    let run_status = derive_run_status(diff_report_value, analysis_complete, document_bounded);
     let changed_surfaces = derive_changed_surfaces(diff_report_value);
     let gaps = derive_gaps(gap_ledger_value, baseline_value);
     let limitations = derive_limitations(repo_exposure_value);
@@ -135,8 +129,12 @@ fn build_summary(
     }
 }
 
-fn derive_run_status(diff_report_value: Option<&Value>, analysis_complete: Option<bool>) -> String {
-    if analysis_complete == Some(false) {
+fn derive_run_status(
+    diff_report_value: Option<&Value>,
+    analysis_complete: Option<bool>,
+    document_bounded: bool,
+) -> String {
+    if analysis_complete == Some(false) || document_bounded {
         return "incomplete".to_string();
     }
     // Prefer diff-report run_status (top-level field per DiffReport struct).
@@ -1298,7 +1296,11 @@ mod tests {
         });
         let summary = build_pr_evidence_summary(None, None, None, Some(&bounded), None, None);
         assert_eq!(summary.run_status, "incomplete");
-        assert_eq!(summary.analysis_complete, Some(false));
+        assert_eq!(
+            summary.analysis_complete,
+            Some(true),
+            "the producer's analysis verdict is preserved, not rewritten"
+        );
         assert_eq!(
             summary
                 .analysis_outcome
@@ -1308,7 +1310,28 @@ mod tests {
             "the disclosure is propagated, not dropped"
         );
         let markdown = super::super::render_evidence_summary_md(&summary);
-        assert!(markdown.contains("**Analysis Complete**: `false`"));
+        assert!(
+            markdown.contains("**Analysis Complete**: `true`"),
+            "{markdown}"
+        );
+        assert!(
+            markdown.contains("**Document Complete**: `false`"),
+            "{markdown}"
+        );
+        assert!(markdown.contains("1 of 3"), "{markdown}");
+        assert!(markdown.contains("RIPR_CHECK_FINDINGS_BYTES"), "{markdown}");
+
+        // Legacy shape: run_limitations only, no document_complete member.
+        let legacy = serde_json::json!({
+            "run_status": "complete",
+            "run_limitations": [{"category": "limited_findings_bound",
+                "run_status": "limited_findings_bound"}],
+            "analysis_outcome": {"analysis_complete": true,
+                "outcome": {"kind": "complete_with_findings"}}
+        });
+        let legacy_summary = build_pr_evidence_summary(None, None, None, Some(&legacy), None, None);
+        assert_eq!(legacy_summary.run_status, "incomplete");
+        assert_eq!(legacy_summary.analysis_complete, Some(true));
 
         let malformed = serde_json::json!({
             "run_status": "complete",
@@ -1320,7 +1343,7 @@ mod tests {
         });
         let summary = build_pr_evidence_summary(None, None, None, Some(&malformed), None, None);
         assert_eq!(summary.run_status, "incomplete");
-        assert_eq!(summary.analysis_complete, Some(false));
+        assert_eq!(summary.analysis_complete, Some(true));
 
         let control = serde_json::json!({
             "run_status": "complete",

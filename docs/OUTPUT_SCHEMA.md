@@ -2657,15 +2657,21 @@ is added: the enum describes analysis, not the rendered document. The shared
 incomplete-analysis predicate (`discloses_incomplete_analysis_outcome`) treats
 `document_complete: false` as incomplete, so the gate, baseline and ledger
 inputs, `baseline-delta`, and RIPR Zero refuse it even when `run_limitations[]`
-is absent, and the `pr-evidence` summary reports `analysis_complete: false` and
-`run_status: incomplete` for such a document. The repository xtask readers of
+is absent. The `pr-evidence` summary keeps the producer's `analysis_complete`
+verdict, reports `run_status: incomplete` for either disclosure shape (the
+`document_complete` flag or the legacy `run_limitations[]` bound), propagates the
+`analysis_outcome` members, and renders `Document Complete: false` with the
+rendered/total finding counts and the `RIPR_CHECK_FINDINGS_BYTES` recovery. The repository xtask readers of
 check JSON (eval-sweep refresh, release smoke, the Python and Rust judged-panel
 replay and packet readers) use `check_document_analysis_complete`, which applies
 the same rule. The typed analysis-outcome artifact validator (shared by
 `agent review-summary` and the agent loop, whose command builder redirects
 `ripr check --format json` into `analysis-outcome.json`) and the
-`review-comments --check-output` loader reject a present non-`true`
-`document_complete`. Agent-packet currentness never reads check-JSON
+`review-comments --check-output` loader reject both disclosure shapes: a
+present non-`true` `document_complete` (false, string, null) and the legacy
+`run_limitations[]` `limited_findings_bound` entry. `agent review-summary`
+Markdown carries the refusal reason and the `RIPR_CHECK_FINDINGS_BYTES`
+recovery as an escaped `Analysis outcome reason` line. Agent-packet currentness never reads check-JSON
 `analysis_complete`, and the MCP, LSP, SARIF and badge surfaces do not either.
 RIPR Zero keeps its bounded-denominator refusal for `document_complete: false`
 and prints an incomplete-analysis warning only when the producer's own

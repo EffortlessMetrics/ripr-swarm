@@ -1405,6 +1405,13 @@ fn run_stability_pass(
             };
         }
     };
+    compare_passes(first, second)
+}
+
+/// Pure repeat decision over a complete first pass and its second pass: a
+/// comparison needs a Complete second pass (a bounded or partial repeat never
+/// compares), then gap sets and raw output identity decide stability.
+fn compare_passes(first: &AnalysisPass, second: AnalysisPass) -> StabilityResult {
     if !matches!(second.status, RunStatus::Complete) {
         return StabilityResult::NotCompared {
             limitation: format!(
@@ -3783,6 +3790,120 @@ mod python_eval_sweep_refresh {
             Some(&json!(sha256_hex(b"pass2 stderr"))),
             "a compared row digests the retained second-pass stderr"
         );
+        Ok(())
+    }
+
+    /// #9010 whole path: eval row -> repeat decision -> `derive_summary` gate.
+    /// A bounded first pass never enters the repeat phase, a bounded/partial
+    /// second pass never compares, and neither can yield a `pass` gate; the
+    /// unbounded control with a complete repeat does.
+    #[test]
+    fn bounded_documents_never_yield_a_passing_summary_gate() -> Result<(), String> {
+        let bounded = json!({"analysis_outcome": {
+            "analysis_complete": true, "document_complete": false,
+            "findings_rendered": 1, "findings_total": 3,
+            "outcome": {"kind": "complete_with_findings"}}, "findings": []});
+        let unbounded = json!({"analysis_outcome": {
+            "analysis_complete": true,
+            "outcome": {"kind": "complete_with_findings"}}, "findings": []});
+        let pass_from = |doc: &Value| -> AnalysisPass {
+            let status = classify_pass(false, true, Some(doc));
+            AnalysisPass {
+                status,
+                complete: matches!(status, RunStatus::Complete),
+                stdout: doc.to_string().into_bytes(),
+                output_json: Some(doc.clone()),
+                ..analysis_pass(status, 10)
+            }
+        };
+        let subject = test_subject("bounded", VALID_SHA_C, "click_typer");
+        let binary = test_binary();
+        let gate_of = |first: &AnalysisPass, stability: Option<&StabilityResult>| {
+            let row = assemble_row(RowInputs {
+                subject: &subject,
+                binary: &binary,
+                diff_portable: "diffs/bounded.diff",
+                diff_digest: Some(DIGEST_ONE.to_string()),
+                materialization: &materialized(),
+                first: Some(first),
+                stability,
+                corpus: None,
+                config_profile: CONFIG_PROFILE_SUBJECT,
+            });
+            let row_status = row.status;
+            let execution = SubjectExecution {
+                subject_id: subject.id.clone(),
+                row,
+                materialization_state: "materialized",
+                materialization_source: Some("local_seed_clone"),
+                materialization_limitation: None,
+                analysis_complete: Some(first.complete),
+                analysis_limitations: Vec::new(),
+                stability_performed: stability.is_some(),
+                stability_limitation: None,
+                output_identity_stable: None,
+                config_profile: CONFIG_PROFILE_SUBJECT.to_string(),
+                subject_config_path: None,
+                corpus_state: "selected",
+                corpus_limitation: None,
+                infrastructure_limitation: None,
+            };
+            let summary = derive_summary(&[execution]);
+            (
+                row_status,
+                summary
+                    .get("gate_status")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+            )
+        };
+        let missing_binary = BinaryIdentity {
+            absolute: PathBuf::from("definitely-missing-binary-path"),
+            binary_digest: DIGEST_ONE.to_string(),
+            version: "unused".to_string(),
+            build_profile: None,
+        };
+
+        // Bounded first pass: no repeat is spent, the row is not complete.
+        let first = pass_from(&bounded);
+        let decision = run_stability_pass(
+            &missing_binary,
+            Path::new("unused"),
+            Path::new("unused"),
+            Path::new("unused"),
+            Duration::from_secs(1),
+            "s",
+            &first,
+        );
+        assert!(
+            matches!(&decision, StabilityResult::NotCompared { limitation }
+                if limitation.contains("runs only where the first result is complete")),
+            "bounded first pass must not reach a repeat"
+        );
+        let (row_status, gate) = gate_of(&first, Some(&decision));
+        assert_ne!(row_status, "complete");
+        assert_ne!(gate.as_deref(), Some("pass"), "bounded first pass");
+
+        // Unbounded first, bounded (Partial) second: never compared, no pass.
+        let first = pass_from(&unbounded);
+        let decision = compare_passes(&first, pass_from(&bounded));
+        assert!(matches!(decision, StabilityResult::NotCompared { .. }));
+        let (_, gate) = gate_of(&first, Some(&decision));
+        assert_ne!(gate.as_deref(), Some("pass"), "partial second pass");
+
+        // Control: unbounded first and complete second compare stable -> pass.
+        let decision = compare_passes(&first, pass_from(&unbounded));
+        assert!(matches!(
+            decision,
+            StabilityResult::Compared {
+                gap_stable: true,
+                output_identity_stable: true,
+                ..
+            }
+        ));
+        let (row_status, gate) = gate_of(&first, Some(&decision));
+        assert_eq!(row_status, "complete");
+        assert_eq!(gate.as_deref(), Some("pass"));
         Ok(())
     }
 

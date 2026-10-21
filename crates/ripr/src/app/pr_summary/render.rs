@@ -463,6 +463,22 @@ pub fn render_evidence_summary_md(s: &super::model::PrEvidenceSummaryJson) -> St
         )
     ));
     if let Some(outcome) = &s.analysis_outcome {
+        // #9010: a findings-bounded check document is disclosed beside the
+        // unchanged producer verdict, with its counts and the recovery.
+        if let Some(member) = outcome.get("document_complete") {
+            let rendered = outcome.get("findings_rendered").and_then(Value::as_u64);
+            let total = outcome.get("findings_total").and_then(Value::as_u64);
+            let counts = match (rendered, total) {
+                (Some(rendered), Some(total)) => {
+                    format!(" ({rendered} of {total} findings rendered)")
+                }
+                _ => String::new(),
+            };
+            out.push_str(&format!(
+                "**Document Complete**: {}{counts}. The findings array was cut by the byte budget; raise `RIPR_CHECK_FINDINGS_BYTES` or set it to `0` for the full set (see docs/OUTPUT_SCHEMA.md).\n\n",
+                code_span(&member.to_string())
+            ));
+        }
         let kind = outcome
             .pointer("/outcome/kind")
             .and_then(Value::as_str)
