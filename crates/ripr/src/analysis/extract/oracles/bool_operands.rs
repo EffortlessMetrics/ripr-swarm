@@ -610,6 +610,54 @@ fn wrapper_contents(text: &str) -> Option<&str> {
     text.get(open + 1..text.len() - 1)
 }
 
+/// `text` without leading references (`&`, `&mut`) and grouping parentheses
+/// that hold one value: neither changes which value is compared (#8654). A
+/// tuple's parentheses stay.
+fn peel_references_and_groups(text: &str) -> &str {
+    let mut text = text.trim();
+    loop {
+        if let Some(rest) = text.strip_prefix("&mut ") {
+            text = rest.trim_start();
+        } else if let Some(rest) = text.strip_prefix('&') {
+            text = rest.trim_start();
+        } else if let Some(inner) = grouped_value(text) {
+            text = inner.trim();
+        } else {
+            return text;
+        }
+    }
+}
+
+/// The value inside `text` when it is one parenthesized group with no
+/// top-level comma (not a tuple).
+fn grouped_value(text: &str) -> Option<&str> {
+    let contents = whole_group_contents(text)?;
+    let single = split_top_level_commas(contents)
+        .iter()
+        .filter(|element| !element.trim().is_empty())
+        .nth(1)
+        .is_none()
+        && !contents.trim_end().ends_with(',');
+    single.then_some(contents)
+}
+
+/// The contents of a bare tuple (`(x == 1, y)`, `(x == 1,)`), which holds its
+/// elements like a wrapper does.
+fn tuple_contents(text: &str) -> Option<&str> {
+    let contents = whole_group_contents(text)?;
+    grouped_value(text).is_none().then_some(contents)
+}
+
+/// The contents of `text` when it is one parenthesized group.
+fn whole_group_contents(text: &str) -> Option<&str> {
+    let text = text.trim();
+    let masked = mask_comments_and_strings(text);
+    let whole = masked.starts_with('(')
+        && super::arguments::delimited_contents_at(text, 0)
+            .is_some_and(|contents| contents.len() + 2 == text.len());
+    whole.then(|| text.get(1..text.len() - 1)).flatten()
+}
+
 /// Whether `side` is a value wrapper, a struct literal, or a passthrough
 /// method on one, that holds a test anywhere among its elements
 /// (`Wrapper(r == Err(E::Bad))`, `Foo { ok: x == 1 }`,
@@ -617,7 +665,7 @@ fn wrapper_contents(text: &str) -> Option<&str> {
 /// other side wraps `true` the same way, the wrapper's equality does not
 /// say the test held (reviews of ed1a892ca and #8615).
 fn holds_wrapped_test(side: &str) -> bool {
-    let side = side.trim();
+    let side = peel_references_and_groups(side);
     if let Some(receiver) = passthrough_receiver(side) {
         return holds_wrapped_test(receiver);
     }
@@ -625,7 +673,10 @@ fn holds_wrapped_test(side: &str) -> bool {
         Some(contents) => (contents, false),
         None => match record_contents(side) {
             Some(contents) => (contents, true),
-            None => return false,
+            None => match tuple_contents(side) {
+                Some(contents) => (contents, false),
+                None => return false,
+            },
         },
     };
     split_top_level_commas(contents).iter().any(|element| {
@@ -648,14 +699,14 @@ fn holds_wrapped_test(side: &str) -> bool {
 /// test (#8615) unless the wrapper holds other elements, one of which the
 /// read may select instead.
 fn holds_member_test(side: &str, other_is_true: bool) -> bool {
-    let mut text = side.trim();
+    let mut text = peel_references_and_groups(side);
     let mut called = false;
     let mut accessed = false;
     loop {
         if let Some(receiver) = passthrough_receiver(text) {
             text = receiver.trim();
         } else if let Some((receiver, call)) = member_receiver(text) {
-            (text, called, accessed) = (receiver.trim(), called || call, true);
+            (text, called, accessed) = (peel_references_and_groups(receiver), called || call, true);
         } else {
             break;
         }
@@ -667,7 +718,10 @@ fn holds_member_test(side: &str, other_is_true: bool) -> bool {
 /// element, so a field read need not select the test it carries
 /// (`Foo { ok: x == 1, other: true }.other`).
 fn holds_other_elements(text: &str) -> bool {
-    let contents = wrapper_contents(text).or_else(|| record_contents(text));
+    let text = peel_references_and_groups(text);
+    let contents = wrapper_contents(text)
+        .or_else(|| record_contents(text))
+        .or_else(|| tuple_contents(text));
     contents.is_some_and(|contents| {
         split_top_level_commas(contents)
             .iter()
@@ -682,6 +736,9 @@ fn holds_other_elements(text: &str) -> bool {
 fn member_receiver(text: &str) -> Option<(&str, bool)> {
     let masked = mask_comments_and_strings(text);
     let masked = masked.trim_end();
+    if let Some(receiver) = index_receiver(masked) {
+        return text.get(..receiver.len()).map(|receiver| (receiver, false));
+    }
     let call = masked.ends_with(')');
     let callee = if call {
         let open = final_group_open(masked)?;
@@ -700,6 +757,34 @@ fn member_receiver(text: &str) -> Option<(&str, bool)> {
     let after_value = receiver.ends_with([')', ']', '}']) || call || receiver.contains('.');
     (is_member && after_value && !receiver.is_empty() && !receiver.ends_with('.'))
         .then(|| text.get(..receiver.len()).map(|receiver| (receiver, call)))?
+}
+
+/// The receiver of a trailing `[index]` read (`vec![x == 1, y][0]`), which
+/// selects one element, like a field. A bare array or `vec!` literal is not a
+/// read.
+fn index_receiver(masked: &str) -> Option<&str> {
+    if !masked.ends_with(']') {
+        return None;
+    }
+    let bytes = masked.as_bytes();
+    let mut depth = 0usize;
+    for index in (0..bytes.len()).rev() {
+        match bytes.get(index) {
+            Some(b')' | b']' | b'}') => depth += 1,
+            Some(b'(' | b'[' | b'{') => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    let receiver = masked.get(..index)?.trim_end();
+                    let reads_a_value = receiver.ends_with(|ch: char| {
+                        ch.is_alphanumeric() || matches!(ch, '_' | ')' | ']' | '}')
+                    });
+                    return (bytes.get(index) == Some(&b'[') && reads_a_value).then_some(receiver);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// The contents of a struct literal (`Foo { ok: x == 1 }`): braces after
@@ -1048,7 +1133,10 @@ fn sides_compare_test_with_non_literal<'a>(mut left: &'a str, mut right: &'a str
     // comparison is read in turn (`assert_eq!((r == Err(E::Bad)) as u8 == 0,
     // true)`; review of #8110).
     loop {
-        (left, right) = (left.trim(), right.trim());
+        (left, right) = (
+            peel_references_and_groups(left),
+            peel_references_and_groups(right),
+        );
         // A statement block is the value its tail holds
         // (`{ let a = 1; a == b }`; #8615).
         if block_tail(left) != left {
@@ -1150,7 +1238,8 @@ fn sequence_elements(side: &str) -> Option<Vec<String>> {
     let side = side.trim();
     let array = side.strip_prefix("vec!").map_or(side, str::trim_start);
     let contents = super::arguments::delimited_contents_at(array, 0)
-        .filter(|contents| array.starts_with('[') && contents.len() + 2 == array.len())?;
+        .filter(|contents| array.starts_with('[') && contents.len() + 2 == array.len())
+        .or_else(|| tuple_contents(side).map(str::to_string))?;
     // A repeat array holds one value (`[x; 2]`), compared with the other
     // side's repeated value.
     if let Some(value) = repeated_value(&contents) {
