@@ -7,6 +7,8 @@
 //! represent safely fall back to the full test set. Cross-package relations consume
 //! path-dependency adjacency owned by `analysis/workspace`.
 
+mod fmt_dispatch;
+
 use super::super::rust_index::{
     FunctionSummary, RustIndex, TestSummary, extract_identifier_tokens,
 };
@@ -94,6 +96,9 @@ pub(in crate::analysis) struct RelatedTestCandidateIndex {
     // do not rescan ordinary bodies or property token trees.
     property_only_calls: BTreeMap<usize, BTreeSet<String>>,
     all_tests: Vec<usize>,
+    /// Tests whose body may format a value (`format!`, `write!`, `to_string`),
+    /// the candidates for a changed `Display`/`Debug` `fmt` owner.
+    fmt_dispatch_tests: Vec<usize>,
     /// Run-scoped reveal memo filled lazily from the same index; valid for
     /// exactly as long as the candidate lists above are.
     file_use_statements: super::FileUseStatements,
@@ -128,6 +133,9 @@ impl RelatedTestCandidateIndex {
 
         for (test_index, test) in index.tests().iter().enumerate() {
             candidates.all_tests.push(test_index);
+            if fmt_dispatch::body_may_dispatch_fmt(&test.body) {
+                candidates.fmt_dispatch_tests.push(test_index);
+            }
             let refused =
                 crate::analysis::extract::property_macros::property_only_call_names(&test.body);
             if !refused.is_empty() {
@@ -281,6 +289,12 @@ impl RelatedTestCandidateIndex {
             {
                 scan_all = true;
             }
+        }
+
+        // A changed `Display`/`Debug` `fmt` is reached through formatting
+        // that never spells `fmt`.
+        if owner_fn.is_some_and(fmt_dispatch::is_fmt_dispatch_owner) {
+            selected.extend(self.fmt_dispatch_tests.iter().copied());
         }
 
         if owner_fn.is_none() {
@@ -872,10 +886,17 @@ fn find_related_tests_with_candidates<'a>(
                     .contains(owner_name)
             }
         };
-        let calls_owner = !owner_name.is_empty()
+        let calls_owner_by_name = !owner_name.is_empty()
             && !property_only_owner_call
             && (test.calls.iter().any(|call| call.name == owner_name)
                 || body_contains_owner_call(&test.body, owner_name));
+        // A formatting macro or `to_string()` on a value typed as the owner's
+        // self type runs a changed `Display`/`Debug` `fmt` without naming it.
+        let dispatches_to_fmt = !calls_owner_by_name
+            && owner_fn.is_some_and(|owner| {
+                fmt_dispatch::test_dispatches_to_fmt(test, owner, &indexed_same_name_ids)
+            });
+        let calls_owner = calls_owner_by_name || dispatches_to_fmt;
         // #3714: captured `calls` facts only — the same authority as
         // `calls_owner`. Never overrides owner attribution. A same-named
         // local definition or binding in the test body defeats the admit
@@ -1120,6 +1141,7 @@ fn find_related_tests_with_candidates<'a>(
                 &indexed_same_name_ids,
                 test_source,
                 index,
+                dispatches_to_fmt,
             )
         } else if helper_chain_reaches {
             // The test calls a function that reaches the owner through
@@ -3098,6 +3120,7 @@ fn owner_call_relation_reason(
     same_name_ids: &[&str],
     test_source: Option<&str>,
     index: &RustIndex,
+    fmt_dispatch_resolved: bool,
 ) -> RelationReason {
     let indexed_same_name_count = same_name_ids.len();
     let Some(owner) = owner_fn else {
@@ -3235,7 +3258,9 @@ fn owner_call_relation_reason(
     }) {
         return RelationReason::WeakTokenSubstring;
     }
-    if indexed_same_name_count <= 1 {
+    // The formatting dispatch already bound the value to this impl's type
+    // and trait, and refused a second `fmt` for the same pair.
+    if indexed_same_name_count <= 1 || fmt_dispatch_resolved {
         return RelationReason::DirectOwnerCall;
     }
     let impl_trait = owner_dispatch_trait(owner);
