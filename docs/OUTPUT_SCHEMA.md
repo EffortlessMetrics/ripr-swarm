@@ -326,6 +326,16 @@ repair start uses); otherwise the key stays absent rather than inventing a
 route — notably for `--at --kind` file-parse selections, which carry no
 classified entry. The `0.2` field set is unchanged; refused envelopes keep it.
 
+A divergent `--write --json` refuses with exit 2 and empty stdout. Its stderr
+schema `0.3` envelope uses `state: refused` and
+`refusal.kind: placement_divergence`, followed by human prose naming both
+files and the supported repair route. It retains the resolved `seam_id`,
+`owner`, `grip_class`, `classification`, and `warnings`, and uses the existing
+refused field set (no ready-only `next_repair` or `written` fields). The
+`refusal.reason` is the human message without the `ripr: ` prefix. Source and
+test bytes and metadata are preserved; cold analysis may create normal
+`target/ripr/cache/` entries.
+
 Schema `0.2` replaces `0.1` for all ready and refused stub documents (#7762).
 The field set is unchanged; the new refusal-kind spelling requires the new
 version. Consumers must recognize `0.2`, dispatch on `state`, and distinguish

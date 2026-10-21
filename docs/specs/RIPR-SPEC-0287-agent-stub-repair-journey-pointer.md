@@ -31,6 +31,8 @@ Support-tier impact:
 - None. The `rust_test_stub` document gains one optional block and the
   human output gains two lines; no command accepts or executes anything
   new, and the repair before phase is unchanged.
+- Claim boundaries remain governed by
+  [support tiers](../status/SUPPORT_TIERS.md).
 
 Policy impact:
 
@@ -106,9 +108,14 @@ the test belongs in the packet's admitted surface.
 
 With `--write`, that divergence refuses the write instead of warning after
 it: the command names both files and the supported route — write the test
-in the packet's admitted surface, then run the repair — and touches no
-file. The written stub would leave a file dirty outside the admitted
-surface, and the repair's before phase would refuse the advertised start
+in the packet's admitted surface, then run the repair — without changing
+source or test file bytes or metadata. Analysis can populate the normal
+`target/ripr/cache/` cache on a cold run. With `--json`, stdout stays empty
+and stderr carries a schema `0.3`, `state: refused` envelope with
+`refusal.kind: placement_divergence`, followed by the human prose. The
+envelope retains the resolved seam identity and disclosure fields, with the
+same field set as other resolved refusals. This refused write keeps exit 2.
+The written stub would leave a file dirty outside the admitted surface, and the repair's before phase would refuse the advertised start
 command at the dirty-premise gate; a warning printed after the write
 cannot prevent that. Committing the stub does not repair the journey
 either, because the packet's edit cage admits only its own surface, so the
@@ -130,11 +137,15 @@ refusal is the honest resolution.
   repair line; no route is invented.
 - `agent stub --write` on a seam whose placement diverges from the packet
   surface refuses before writing, names both files and the supported
-  route, and leaves the tree untouched.
+  route, and preserves user-file bytes and metadata. Cold analysis-cache
+  creation is permitted; a warm refusal preserves cache files too.
 - The schema version is `0.3` on every ready and refused
   `rust_test_stub` document, and the docs/help literals agree.
 
 ## Test Mapping
+
+- `crates/ripr/tests/agent_stub_at_disclosure.rs::divergent_write_refuses_with_json_and_preserves_source_and_warm_cache`
+- `crates/ripr/tests/agent_stub_at_disclosure.rs::agreeing_repair_placement_still_writes_through_cli`
 
 - `crates/ripr/src/app/test_stub.rs::tests::next_repair_names_the_start_and_the_agreeing_surface`
 - `crates/ripr/src/app/test_stub.rs::tests::next_repair_warns_when_the_stub_lands_outside_the_packet_surface`

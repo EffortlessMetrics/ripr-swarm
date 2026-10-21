@@ -105,6 +105,20 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
             .as_ref()
             .and_then(|next| divergent_write_refusal(&resolution.seam_id, next))
     {
+        if options.json {
+            let document = serde_json::json!({
+                "schema_version": RUST_TEST_STUB_SCHEMA_VERSION,
+                "kind": "rust_test_stub",
+                "seam_id": resolution.seam_id,
+                "owner": resolution.owner,
+                "state": "refused",
+                "refusal": {"kind": "placement_divergence", "reason": message},
+                "grip_class": disclosure.grip_class,
+                "classification": disclosure.classification,
+                "warnings": disclosure.warnings,
+            });
+            write_stderr_refusal_json(render(&document)?);
+        }
         return Err(CommandError::Failure(message));
     }
     let written = if options.write {
@@ -284,13 +298,13 @@ fn divergence_warning_line(divergence: &StubPlacementDivergence) -> String {
 /// Why a `--write` is refused when the stub's placement diverges from the
 /// packet's admitted edit surface (#8727 review): the write would dirty a
 /// file the repair's before phase refuses, so the command stops before
-/// touching anything and names the supported route. `None` when the
+/// changing source or test files and names the supported route. `None` when the
 /// placement agrees (or no repair route was projected), where the write is
 /// safe to apply.
 fn divergent_write_refusal(seam_id: &str, next_repair: &StubNextRepair) -> Option<String> {
     let divergence = next_repair.placement_divergence.as_ref()?;
     Some(format!(
-        "agent stub: the stub for seam {seam_id} lands in {stub_file}, but the repair packet admits only {packet_file} as its edit surface; --write would leave {stub_file} dirty outside that surface and the repair's before phase would refuse the start. Rerun without --write, write the test in {packet_file} instead, then start the repair: {start_command}. No file was written.",
+        "agent stub: the stub for seam {seam_id} lands in {stub_file}, but the repair packet admits only {packet_file} as its edit surface; --write would leave {stub_file} dirty outside that surface and the repair's before phase would refuse the start. Rerun without --write, write the test in {packet_file} instead, then start the repair: {start_command}. No source or test file was written.",
         stub_file = divergence.stub_file,
         packet_file = divergence.packet_file,
         start_command = next_repair.start_command,
@@ -553,8 +567,10 @@ mod tests {
                 "refusal must state the dirty-premise consequence: {message}"
             ));
         }
-        if !message.contains("No file was written") {
-            return Err(format!("refusal must state nothing was written: {message}"));
+        if !message.contains("No source or test file was written") {
+            return Err(format!(
+                "refusal must state no source or test was written: {message}"
+            ));
         }
         if !message.contains("ripr agent repair --root . --seam-id abc --phase before") {
             return Err(format!(

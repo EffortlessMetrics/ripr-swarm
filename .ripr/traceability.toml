@@ -16953,6 +16953,8 @@ id = "RIPR-SPEC-0287"
 name = "Agent stub names the repair journey it feeds"
 spec = "docs/specs/RIPR-SPEC-0287-agent-stub-repair-journey-pointer.md"
 tests = [
+  "crates/ripr/tests/agent_stub_at_disclosure.rs::divergent_write_refuses_with_json_and_preserves_source_and_warm_cache",
+  "crates/ripr/tests/agent_stub_at_disclosure.rs::agreeing_repair_placement_still_writes_through_cli",
   "crates/ripr/src/app/test_stub.rs::tests::next_repair_names_the_start_and_the_agreeing_surface",
   "crates/ripr/src/app/test_stub.rs::tests::next_repair_warns_when_the_stub_lands_outside_the_packet_surface",
   "crates/ripr/src/app/test_stub.rs::tests::next_repair_stays_silent_when_the_repair_route_is_not_eligible",

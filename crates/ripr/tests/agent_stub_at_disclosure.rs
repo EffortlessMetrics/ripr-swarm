@@ -35,11 +35,27 @@ impl Drop for Scratch {
 }
 
 fn stub(root: &Path, at: &str, kind: &str, json: bool) -> Result<Output, String> {
+    stub_options(root, at, Some(kind), json, false)
+}
+
+fn stub_options(
+    root: &Path,
+    at: &str,
+    kind: Option<&str>,
+    json: bool,
+    write: bool,
+) -> Result<Output, String> {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
     command
         .args(["agent", "stub", "--root"])
         .arg(root)
-        .args(["--at", at, "--kind", kind]);
+        .args(["--at", at]);
+    if let Some(kind) = kind {
+        command.args(["--kind", kind]);
+    }
+    if write {
+        command.arg("--write");
+    }
     if json {
         command.arg("--json");
     }
@@ -73,6 +89,191 @@ const GRIPPED_PREDICATE: &str = "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 1
 
 const ASYNC_PREDICATE: &str =
     "pub async fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n";
+
+const DIVERGENT_METHOD: &str = "pub struct Clamp;\nimpl Clamp {\n    pub fn clamp_to(&self, x: i32) -> i32 {\n        if x >= 100 { 100 } else { x }\n    }\n}\n";
+
+fn repair_fixture(label: &str, source: &str, observer: &str) -> Result<Scratch, String> {
+    let scratch = Scratch::create(label, source)?;
+    std::fs::create_dir_all(scratch.0.join("tests")).map_err(|error| error.to_string())?;
+    std::fs::write(scratch.0.join("tests/clamp_tests.rs"), observer)
+        .map_err(|error| error.to_string())?;
+    std::fs::write(scratch.0.join("sentinel"), "untracked user data\n")
+        .map_err(|error| error.to_string())?;
+    Ok(scratch)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct FileSnapshot {
+    bytes: Vec<u8>,
+    modified: std::time::SystemTime,
+    permissions: std::fs::Permissions,
+    #[cfg(unix)]
+    identity: (u64, u64, i64, i64),
+}
+
+/// Source no-touch excludes only the normal analysis cache. Warm snapshots
+/// include that cache too; directory access times are not a write oracle.
+fn file_snapshot(
+    root: &Path,
+    include_cache: bool,
+) -> Result<std::collections::BTreeMap<PathBuf, FileSnapshot>, String> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut files = std::collections::BTreeMap::new();
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(directory).map_err(|error| error.to_string())? {
+            let path = entry.map_err(|error| error.to_string())?.path();
+            let relative = path.strip_prefix(root).map_err(|error| error.to_string())?;
+            if !include_cache && relative == Path::new("target/ripr/cache") {
+                continue;
+            }
+            let metadata = std::fs::metadata(&path).map_err(|error| error.to_string())?;
+            if metadata.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            #[cfg(unix)]
+            let identity = {
+                use std::os::unix::fs::MetadataExt;
+                (
+                    metadata.dev(),
+                    metadata.ino(),
+                    metadata.ctime(),
+                    metadata.ctime_nsec(),
+                )
+            };
+            files.insert(
+                relative.to_path_buf(),
+                FileSnapshot {
+                    bytes: std::fs::read(&path).map_err(|error| error.to_string())?,
+                    modified: metadata.modified().map_err(|error| error.to_string())?,
+                    permissions: metadata.permissions(),
+                    #[cfg(unix)]
+                    identity,
+                },
+            );
+        }
+    }
+    Ok(files)
+}
+
+/// Real inventory selects an inline impl-method stub while the packet admits
+/// its existing integration observer. No synthetic placement is injected.
+#[test]
+fn divergent_write_refuses_with_json_and_preserves_source_and_warm_cache() -> Result<(), String> {
+    let observer = "use divergent_write::Clamp;\n#[test]\nfn below_boundary() { assert_eq!(Clamp.clamp_to(80), 80); }\n";
+    let dry = repair_fixture("divergent_write", DIVERGENT_METHOD, observer)?;
+    let output = stub_options(&dry.0, "src/lib.rs:4", None, true, false)?;
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("dry projection: {error}: {output:?}"))?;
+    if !output.status.success()
+        || document["state"] != "ready"
+        || document["next_repair"]["placement_divergence"]["stub_file"] != "src/lib.rs"
+        || document["next_repair"]["placement_divergence"]["packet_file"] != "tests/clamp_tests.rs"
+    {
+        return Err(format!(
+            "fixture must establish the real divergent route: {document}"
+        ));
+    }
+    for json in [true, false] {
+        // Each mode starts cold independently of the dry projection above.
+        let scratch = repair_fixture("divergent_write", DIVERGENT_METHOD, observer)?;
+        let before = file_snapshot(&scratch.0, false)?;
+        if before.len() != 4 || scratch.0.join("target").exists() {
+            return Err(format!(
+                "fixture must start cold with four user files: {before:?}"
+            ));
+        }
+        let mut warm = None;
+        for _ in 0..2 {
+            let output = stub_options(&scratch.0, "src/lib.rs:4", None, json, true)?;
+            if file_snapshot(&scratch.0, false)? != before {
+                return Err("refused write changed user paths, bytes or metadata".to_owned());
+            }
+            if output.status.code() != Some(2) || !output.stdout.is_empty() {
+                return Err(format!(
+                    "write refusal must exit 2 with empty stdout: {output:?}"
+                ));
+            }
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let prose = if json {
+                let (envelope, prose) = split_refusal_envelope(&stderr)?;
+                if envelope["schema_version"] != "0.3"
+                    || envelope["kind"] != "rust_test_stub"
+                    || envelope["state"] != "refused"
+                    || envelope["refusal"]["kind"] != "placement_divergence"
+                    || envelope["seam_id"] != document["seam_id"]
+                    || envelope["owner"] != document["owner"]
+                    || envelope["grip_class"] != document["grip_class"]
+                    || envelope["classification"] != document["classification"]
+                    || envelope["warnings"] != document["warnings"]
+                    || envelope["refusal"]["reason"].as_str()
+                        != Some(prose.trim().trim_start_matches("ripr: "))
+                    || envelope.get("written").is_some()
+                    || envelope.get("next_repair").is_some()
+                {
+                    return Err(format!(
+                        "versioned refusal must retain resolved identity: {envelope}"
+                    ));
+                }
+                prose.to_owned()
+            } else {
+                stderr.to_string()
+            };
+            if !prose.contains("src/lib.rs")
+                || !prose.contains("tests/clamp_tests.rs")
+                || !prose.contains("Rerun without --write")
+                || !prose.contains("No source or test file was written")
+            {
+                return Err(format!(
+                    "refusal must name both files and recovery: {prose}"
+                ));
+            }
+            let after = file_snapshot(&scratch.0, true)?;
+            if let Some(warm) = &warm
+                && &after != warm
+            {
+                return Err(
+                    "warm refusal changed file bytes or metadata, including cache".to_owned(),
+                );
+            }
+            warm = Some(after);
+        }
+    }
+    Ok(())
+}
+
+/// An agreeing placement still writes through the real CLI: the refusal
+/// regression cannot pass by disabling all writes or all repair projections.
+#[test]
+fn agreeing_repair_placement_still_writes_through_cli() -> Result<(), String> {
+    let scratch = repair_fixture(
+        "agreeing_write",
+        "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n",
+        "use agreeing_write::clamp_to;\n#[test]\nfn below_boundary() { assert_eq!(clamp_to(80), 80); }\n",
+    )?;
+    let before =
+        std::fs::read(scratch.0.join("tests/clamp_tests.rs")).map_err(|error| error.to_string())?;
+    let output = stub_options(&scratch.0, "src/lib.rs:2", None, true, true)?;
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("agreeing write JSON: {error}: {output:?}"))?;
+    let after =
+        std::fs::read(scratch.0.join("tests/clamp_tests.rs")).map_err(|error| error.to_string())?;
+    if !output.status.success()
+        || !output.stderr.is_empty()
+        || document["state"] != "ready"
+        || document["written"] != true
+        || document["next_repair"]["allowed_edit_surface"] != "tests/clamp_tests.rs"
+        || document["next_repair"]
+            .get("placement_divergence")
+            .is_some()
+        || before == after
+    {
+        return Err(format!(
+            "agreeing placement must really write: {output:?}: {document}"
+        ));
+    }
+    Ok(())
+}
 
 /// Dropping `disclosure.warnings.insert(0, note)` would put the grip-class
 /// omission first (or leave the note out). The #8364 test never sees this
