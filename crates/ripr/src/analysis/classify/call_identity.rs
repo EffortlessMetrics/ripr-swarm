@@ -971,7 +971,7 @@ fn attribute_sets_path(attribute: &str) -> bool {
 /// The module path of a definition: its file's module segments, then the
 /// inline modules its parser id records. `None` when either is unknown or
 /// the id is not a parser id of a module-level item.
-fn definition_module_path(function: &FunctionSummary) -> Option<Vec<String>> {
+pub(super) fn definition_module_path(function: &FunctionSummary) -> Option<Vec<String>> {
     let mut path = file_module_segments(&function.file)?;
     let prefix = format!("{}::", crate::analysis::stable_path_text(&function.file));
     let rest = function.id.0.strip_prefix(&prefix)?;
@@ -1156,7 +1156,7 @@ fn crate_class(file: &Path) -> Option<String> {
 
 /// The file sits under a `tests/` directory and no `src/` directory: an
 /// integration-test crate.
-fn under_tests_dir(file: &Path) -> bool {
+pub(super) fn under_tests_dir(file: &Path) -> bool {
     let normalized = super::related_tests::normalize_path(file);
     !(normalized.contains("/src/") || normalized.starts_with("src/"))
         && super::super::rust_index::is_test_file(file)
