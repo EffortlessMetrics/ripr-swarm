@@ -788,7 +788,7 @@ pub(crate) fn repair_start_withheld_note(
 /// file, and its related tests name the files that carry their evidence.
 /// Only that file's seams are classified, with test-grip evidence from
 /// the finding's own related-test files
-/// ([`classify_seams_in_file_with_related_at_with_config`](crate::analysis::classify_seams_in_file_with_related_at_with_config)).
+/// ([`classify_seams_in_file_with_shared_index`](crate::analysis::classify_seams_in_file_with_shared_index)).
 /// A fresh workspace inventory — full or diff-scoped — is never built
 /// here: on a large workspace either one builds a workspace-wide index
 /// and evidence context, and the full inventory additionally classified
@@ -813,6 +813,7 @@ pub(crate) fn check_repair_route(
     root: &Path,
     check_config: &crate::config::RiprConfig,
     output: &super::CheckOutput,
+    seam_index: &mut Option<crate::analysis::FileSeamIndex>,
 ) -> crate::app::CheckRepairRoute {
     use super::navigation::{CheckRepairRoute, RepairRouteRefusal};
     let Some(finding) = crate::output::human::selected_triage_finding(output, check_config) else {
@@ -855,11 +856,12 @@ pub(crate) fn check_repair_route(
                 .then_some(relative)
         })
         .collect();
-    let Ok(classified) = crate::analysis::classify_seams_in_file_with_related_at_with_config(
+    let Ok(classified) = crate::analysis::classify_seams_in_file_with_shared_index(
         root,
         &config,
         Path::new(&gap.file),
         &evidence_files,
+        seam_index,
     ) else {
         return CheckRepairRoute::Refused(RepairRouteRefusal::ClassificationFailed);
     };
