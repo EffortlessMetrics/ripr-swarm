@@ -2978,6 +2978,37 @@ mod tests {
     }
 
     #[test]
+    fn related_test_totals_change_snapshot_identity_without_changing_rows() -> Result<(), String> {
+        let mut before = output(AnalysisOutcomeKind::CompleteWithFindings, 1, Vec::new())?;
+        let mut finding = gaps::test_finding()?;
+        finding.related_tests = vec![finding.related_tests[0].clone(); 8];
+        finding.related_tests_matched_total = Some(12);
+        before.findings.push(finding);
+        let mut after = before.clone();
+        after.findings[0].related_tests_matched_total = Some(13);
+        let twelve =
+            Snapshot::from_output(&before, Some("root:sha256:test")).map_err(|f| f.detail)?;
+        let thirteen =
+            Snapshot::from_output(&after, Some("root:sha256:test")).map_err(|f| f.detail)?;
+        assert_eq!(twelve.items.len(), 1);
+        assert_eq!(thirteen.items.len(), 1);
+        assert_eq!(
+            twelve.items[0].evidence_core["related_tests"],
+            thirteen.items[0].evidence_core["related_tests"]
+        );
+        assert_eq!(
+            twelve.items[0].evidence_bytes,
+            thirteen.items[0].evidence_bytes
+        );
+        assert_ne!(
+            twelve.items[0].evidence_sha256,
+            thirteen.items[0].evidence_sha256
+        );
+        assert_ne!(twelve.snapshot_id, thirteen.snapshot_id);
+        Ok(())
+    }
+
+    #[test]
     fn portable_snapshot_identity_survives_distinct_absolute_checkouts() -> Result<(), String> {
         // #5254 item 6: the same finding content committed from two checkouts
         // at different absolute roots must share one snapshot identity, since

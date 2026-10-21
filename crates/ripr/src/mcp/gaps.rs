@@ -444,6 +444,7 @@ fn gap_evidence_core(
         },
         "causal_attribution": canonical_gap,
         "discriminator_availability": activation,
+        "related_tests_total": finding.related_tests_total(),
         "related_tests": related_tests,
         "evidence": finding.evidence,
         "missing": finding.missing,
@@ -695,6 +696,93 @@ mod tests {
 
     fn finding() -> Result<Finding, String> {
         test_finding()
+    }
+
+    #[test]
+    fn related_test_totals_bind_equal_windows_to_distinct_evidence() -> Result<(), String> {
+        let mut source = finding()?;
+        let row = source.related_tests[0].clone();
+        source.related_tests = (0..8)
+            .map(|index| {
+                let mut row = row.clone();
+                row.name = format!("checkout_{index}");
+                row.line += index;
+                row
+            })
+            .collect();
+        source.related_tests_matched_total = Some(12);
+        let twelve = GapItem::from_finding(&source, Path::new("."))?;
+        source.related_tests_matched_total = Some(13);
+        let thirteen = GapItem::from_finding(&source, Path::new("."))?;
+        assert_eq!(twelve.evidence_core["related_tests_total"], 12);
+        assert_eq!(thirteen.evidence_core["related_tests_total"], 13);
+        assert_eq!(
+            twelve.evidence_core["related_tests"],
+            thirteen.evidence_core["related_tests"]
+        );
+        assert_eq!(
+            twelve.evidence_core["related_tests"]
+                .as_array()
+                .map(Vec::len),
+            Some(8)
+        );
+        let mut only_total_changed = twelve.evidence_core.clone();
+        only_total_changed["related_tests_total"] = json!(13);
+        assert_eq!(only_total_changed, thirteen.evidence_core);
+        assert_eq!(twelve.evidence_bytes, thirteen.evidence_bytes);
+        assert_ne!(twelve.evidence_sha256, thirteen.evidence_sha256);
+        assert_eq!(twelve.repair_readiness, thirteen.repair_readiness);
+        assert_eq!(twelve.list_summary, thirteen.list_summary);
+
+        for (total, retained) in [(1, 1), (0, 0)] {
+            source.related_tests.truncate(retained);
+            source.related_tests_matched_total = Some(total);
+            let item = GapItem::from_finding(&source, Path::new("."))?;
+            assert_eq!(item.evidence_core["related_tests_total"], json!(total));
+            assert_eq!(
+                item.evidence_core["related_tests"].as_array().map(Vec::len),
+                Some(retained)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_serialized_findings_project_retained_totals_without_digest_drift()
+    -> Result<(), String> {
+        let mut source = finding()?;
+        let row = source.related_tests[0].clone();
+        source.related_tests = (0..3)
+            .map(|index| {
+                let mut row = row.clone();
+                row.name = format!("checkout_{index}");
+                row.line += index;
+                row
+            })
+            .collect();
+        source.related_tests_matched_total = Some(3);
+        let explicit = GapItem::from_finding(&source, Path::new("."))?;
+        let serialized = serde_json::to_value(&source).map_err(|error| error.to_string())?;
+        for metadata in [None, Some(Value::Null), Some(json!(0))] {
+            let mut legacy = serialized.clone();
+            let object = legacy
+                .as_object_mut()
+                .ok_or("Finding must serialize as an object")?;
+            object.remove("related_tests_matched_total");
+            if let Some(metadata) = metadata {
+                object.insert("related_tests_matched_total".to_string(), metadata);
+            }
+            let decoded: Finding =
+                serde_json::from_value(legacy).map_err(|error| error.to_string())?;
+            assert_eq!(decoded.related_tests.len(), 3);
+            let projected = GapItem::from_finding(&decoded, Path::new("."))?;
+            assert_eq!(projected.evidence_core["related_tests_total"], 3);
+            assert_eq!(projected.evidence_core, explicit.evidence_core);
+            assert_eq!(projected.evidence_bytes, explicit.evidence_bytes);
+            assert_eq!(projected.evidence_sha256, explicit.evidence_sha256);
+            assert_eq!(projected.repair_readiness, explicit.repair_readiness);
+        }
+        Ok(())
     }
 
     /// #5996: one finding, one location string on every surface. The MCP
