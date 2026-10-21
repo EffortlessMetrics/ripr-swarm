@@ -1699,7 +1699,10 @@ fn own_crate_qualified_entry_call(
         super::reveal::flattened_use_paths(source)
             .iter()
             .any(|import| {
-                import.path.ends_with('*') || import.path.rsplit("::").next() == Some(crate_name)
+                let unraw = |name: &str| name.strip_prefix("r#").unwrap_or(name).to_string();
+                import.path.ends_with('*')
+                    || import.path.rsplit("::").next().map(unraw).as_deref() == Some(crate_name)
+                    || import.alias.as_deref().map(unraw).as_deref() == Some(crate_name)
             })
     };
     // The call fact's text is the whole source line: match the own-crate
@@ -1710,6 +1713,7 @@ fn own_crate_qualified_entry_call(
         && !file_may_bind_name(&stripped_file, crate_name)
         && !body_binds_owner_name(&test.body, crate_name)
         && !super::owner_pin::file_renames_to(&facts.source, crate_name)
+        && !super::owner_pin::file_renames_to(&facts.source, &format!("r#{crate_name}"))
         && !may_rebind_crate_name(&facts.source)
         && !may_rebind_crate_name(&test.body)
 }

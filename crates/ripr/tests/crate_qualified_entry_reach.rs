@@ -205,6 +205,10 @@ fn a_rebindable_crate_name_does_not_link() -> Result<(), String> {
         "const qual_reach: u32 = 1;\n",
         "mod r#qual_reach {\n    pub fn order_discount(_: u32) -> u32 { 5 }\n}\n",
         "fn r#qual_reach() {}\n",
+        "use dep::r#qual_reach;\n",
+        "use x as r#qual_reach;\n",
+        "extern crate x as r#qual_reach;\n",
+        "extern crate x as qual_reach;\n",
     ];
     for rebind in rebinds {
         let tests = format!("{rebind}{}", test_file(&qualified("qual_reach")));
@@ -270,7 +274,10 @@ fn a_unit_test_inside_src_does_not_link() -> Result<(), String> {
     };
     // File proximity may still relate a same-file test; the qualified spelling
     // earns no helper-chain link there.
-    assert_ne!(qualified_unit.relation()?.as_deref(), LINKED);
+    assert_eq!(
+        qualified_unit.relation()?.as_deref(),
+        Some("same_test_file")
+    );
     Ok(())
 }
 
@@ -292,10 +299,28 @@ fn a_workspace_member_does_not_link() -> Result<(), String> {
     // spelling rather than proving a guard in isolation. The root-package
     // check (`target_root` must be the root `src/lib.rs`, and neither path
     // may carry a package prefix) is what refuses it.
+    // Control: the member's files are indexed and its tests are related (a
+    // unit test beside the member's library is related by file proximity; the
+    // helper chain is not built for a member, so it is not `helper_owner_call`).
+    let indexed = Package {
+        files: vec![
+            ("src/lib.rs", "pub fn root() {}\n".to_string()),
+            ("crates/inner/Cargo.toml", manifest("inner", None)),
+            (
+                "crates/inner/src/lib.rs",
+                format!(
+                    "{LIB}\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n{}\n}}\n",
+                    test_file(BARE)
+                ),
+            ),
+        ],
+        ..member(String::new())
+    };
+    assert_eq!(indexed.relation()?.as_deref(), Some("same_test_file"));
     // The member's own name and the root package's name are both refused.
     for name in ["inner", "qual_reach"] {
         let tests = test_file(&qualified(name));
-        assert_ne!(member(tests).relation()?.as_deref(), LINKED, "{name}");
+        assert_eq!(member(tests).relation()?, None, "{name}");
     }
     Ok(())
 }
@@ -381,7 +406,21 @@ fn a_test_module_child_does_not_link() -> Result<(), String> {
         ],
         ..Package::root("", false, "")
     };
-    assert_ne!(package.relation()?.as_deref(), LINKED);
+    assert_eq!(package.relation()?, None);
+    // Control: the child file is indexed and reaches the chain (the bare
+    // spelling links from a child), so the refusal above is the guard.
+    let child_bare = Package {
+        files: vec![
+            ("src/lib.rs", LIB.to_string()),
+            ("tests/api.rs", "mod child;\n".to_string()),
+            (
+                "tests/api/child.rs",
+                format!("use qual_reach::order_discount;\n{}", test_file(BARE)),
+            ),
+        ],
+        ..Package::root("", false, "")
+    };
+    assert_eq!(child_bare.relation()?.as_deref(), LINKED);
     // Control: the same test as a test-crate root links.
     let root = Package::root(LIB, false, &test_file(&qualified("qual_reach")));
     assert_eq!(root.relation()?.as_deref(), LINKED);
