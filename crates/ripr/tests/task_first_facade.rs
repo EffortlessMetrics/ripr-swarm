@@ -4398,5 +4398,441 @@ fn member_explain_replay_anchor_shadowed_by_a_root_directory_is_refused() -> Res
     Ok(())
 }
 
+/// #8902: the artifact-consuming agent commands resolve the implicit root from
+/// a workspace member directory like `check` (stderr disclosure, `--root .`
+/// opt-out), so the loop `agent start` began under the workspace `target/ripr`
+/// is read from there, and existing member-relative input files bind to the
+/// directory they were typed in even when a sibling member collides.
+#[cfg(unix)]
+#[test]
+fn member_directory_agent_artifact_commands_use_the_resolved_workspace_root() -> Result<(), String>
+{
+    let fixture = Fixture::dir("facade-member-agent-artifacts")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let member = outer.join("pkg");
+    let other = outer.join("other");
+    for dir in [&member, &other] {
+        std::fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
+    }
+    std::fs::create_dir_all(member.join("tests")).map_err(|e| e.to_string())?;
+    std::fs::write(
+        outer.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"pkg\", \"other\"]\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(member.join("Cargo.toml"), FIXTURE_CARGO_TOML).map_err(|e| e.to_string())?;
+    std::fs::write(member.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    std::fs::write(member.join("tests/pricing.rs"), FIXTURE_WEAK_TEST)
+        .map_err(|e| e.to_string())?;
+    // A colliding sibling `src/lib.rs`: only the invocation-directory binding
+    // selects pkg's file for the member-relative inputs below.
+    std::fs::write(
+        other.join("Cargo.toml"),
+        "[package]\nname = \"other_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(other.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    init_repo(&outer)?;
+    run_git(&outer, &["add", "Cargo.toml", "pkg", "other"])?;
+    git_commit(&outer, "member artifact fixture")?;
+    let disclosure = format!("ripr: resolved workspace root to {} ", outer.display());
+    let json_stdout = |label: &str, output: &Output| -> Result<serde_json::Value, String> {
+        serde_json::from_str(&stdout_text(output)).map_err(|e| {
+            format!(
+                "{label} stdout must be JSON: {e}\nstdout:\n{}\nstderr:\n{}",
+                stdout_text(output),
+                stderr_text(output)
+            )
+        })
+    };
+
+    // A member-relative `--files` binds to pkg even though `other` collides.
+    let brief = run_ripr(
+        &member,
+        &["agent", "brief", "--files", "src/lib.rs", "--json"],
+    )?;
+    assert_exit(&brief, 0, "agent brief --files from a member directory");
+    assert!(
+        stderr_text(&brief).contains(&disclosure),
+        "{}",
+        stderr_text(&brief)
+    );
+    let brief_json = json_stdout("agent brief --files", &brief)?;
+    assert_eq!(brief_json["root"], outer.to_string_lossy().as_ref());
+    assert_eq!(brief_json["scope"], "working_set");
+    assert_eq!(brief_json["warnings"], serde_json::json!([]));
+    let seams = brief_json["top_seams"].as_array().ok_or("no top_seams")?;
+    assert!(
+        !seams.is_empty() && seams.iter().all(|seam| seam["file"] == "pkg/src/lib.rs"),
+        "the member-relative file must bind to pkg:\n{brief_json}"
+    );
+    let seam_id = seams[0]["seam_id"]
+        .as_str()
+        .ok_or("brief seam has no seam_id")?
+        .to_string();
+
+    // The loop's own first step writes the workspace artifacts the siblings read.
+    let start = run_ripr(&member, &["agent", "start", "--seam-id", &seam_id])?;
+    assert_exit(&start, 0, "agent start from a member directory");
+    assert!(
+        outer.join("target/ripr/workflow/workflow.json").exists(),
+        "agent start must write under the workspace target/ripr"
+    );
+    for name in ["verify.json", "packet.json", "ledger.json"] {
+        std::fs::write(member.join(name), "{}\n").map_err(|e| e.to_string())?;
+    }
+    std::fs::write(
+        member.join("change.diff"),
+        "diff --git a/pkg/src/lib.rs b/pkg/src/lib.rs\n--- a/pkg/src/lib.rs\n+++ b/pkg/src/lib.rs\n@@ -2,1 +2,1 @@\n-    if amount > discount_threshold {\n+    if amount >= discount_threshold {\n",
+    )
+    .map_err(|e| e.to_string())?;
+
+    let commands: Vec<(&str, Vec<&str>)> = vec![
+        (
+            "agent brief --seam-id",
+            vec!["agent", "brief", "--seam-id", &seam_id, "--json"],
+        ),
+        (
+            "agent brief --diff",
+            vec!["agent", "brief", "--diff", "change.diff", "--json"],
+        ),
+        (
+            "agent packet",
+            vec!["agent", "packet", "--seam-id", &seam_id, "--json"],
+        ),
+        (
+            "agent packet --gap-ledger",
+            vec![
+                "agent",
+                "packet",
+                "--gap-ledger",
+                "ledger.json",
+                "--gap-id",
+                "gap:x",
+                "--json",
+            ],
+        ),
+        (
+            "agent review-summary",
+            vec!["agent", "review-summary", "--json"],
+        ),
+        (
+            "agent receipt",
+            vec![
+                "agent",
+                "receipt",
+                "--verify-json",
+                "verify.json",
+                "--seam-id",
+                &seam_id,
+                "--json",
+            ],
+        ),
+        (
+            "agent verify-execute",
+            vec![
+                "agent",
+                "verify-execute",
+                "--packet",
+                "packet.json",
+                "--result-json",
+                "target/ripr/result.json",
+                "--authorize",
+                "--json",
+            ],
+        ),
+        (
+            "context",
+            vec!["context", "--worktree", "--at", "src/lib.rs:2"],
+        ),
+    ];
+    let mut outputs = std::collections::BTreeMap::new();
+    for (label, args) in &commands {
+        let output = run_ripr(&member, args)?;
+        assert!(
+            stderr_text(&output).contains(&disclosure),
+            "{label} must disclose the resolved root:\nstdout:\n{}\nstderr:\n{}",
+            stdout_text(&output),
+            stderr_text(&output)
+        );
+        assert!(
+            !member.join("target/ripr").exists(),
+            "{label} must not create a member-local target/ripr"
+        );
+        outputs.insert(*label, output);
+    }
+
+    // Positive reads: each command reaches the workspace state or the
+    // member-relative file it was handed, not an empty member directory.
+    let diff_brief = json_stdout("agent brief --diff", &outputs["agent brief --diff"])?;
+    assert_eq!(diff_brief["root"], outer.to_string_lossy().as_ref());
+    assert_eq!(diff_brief["scope"], "working_set");
+    assert!(
+        diff_brief["top_seams"]
+            .as_array()
+            .is_some_and(|seams| !seams.is_empty()
+                && seams.iter().all(|seam| seam["file"] == "pkg/src/lib.rs")),
+        "{diff_brief}"
+    );
+    let packet = &outputs["agent packet"];
+    assert_exit(packet, 0, "agent packet from a member directory");
+    let packet_json = json_stdout("agent packet", packet)?;
+    assert_eq!(packet_json["packets_total"], 1, "{packet_json}");
+    assert_eq!(
+        packet_json["packets"][0]["file"], "pkg/src/lib.rs",
+        "the packet must come from the workspace-rooted analysis:\n{packet_json}"
+    );
+    let summary = json_stdout("agent review-summary", &outputs["agent review-summary"])?;
+    assert!(
+        summary["ci_artifacts"]
+            .as_array()
+            .ok_or("no ci_artifacts")?
+            .iter()
+            .any(|artifact| artifact["name"] == "agent_workflow" && artifact["state"] == "present"),
+        "review-summary must read the workspace workflow written by agent start:\n{summary}"
+    );
+    assert!(
+        stderr_text(&outputs["agent receipt"]).contains("unsupported schema version"),
+        "an existing member-relative verify JSON must bind and reach content validation:\n{}",
+        stderr_text(&outputs["agent receipt"])
+    );
+    assert!(
+        stderr_text(&outputs["agent packet --gap-ledger"]).contains("ledger.json is invalid"),
+        "--gap-ledger is read as typed from the member directory:\n{}",
+        stderr_text(&outputs["agent packet --gap-ledger"])
+    );
+    let execute = &outputs["agent verify-execute"];
+    assert_exit(execute, 3, "agent verify-execute of a bound invalid packet");
+    assert!(
+        stdout_text(execute).contains("packet schema_version must be 0.5"),
+        "an existing member-relative packet must bind and reach packet validation:\n{}",
+        stdout_text(execute)
+    );
+
+    // Negative control: a packet naming no file is a wrong-root refusal, never
+    // a read of some other member's file.
+    let missing = run_ripr(
+        &member,
+        &[
+            "agent",
+            "verify-execute",
+            "--packet",
+            "nope.json",
+            "--result-json",
+            "target/ripr/result.json",
+            "--authorize",
+            "--json",
+        ],
+    )?;
+    assert!(
+        stdout_text(&missing).contains("verification_wrong_root"),
+        "{}",
+        stdout_text(&missing)
+    );
+
+    // Negative control: `--root .` keeps the member directory for every command.
+    for (label, args) in &commands {
+        let mut pinned = args.clone();
+        pinned.extend(["--root", "."]);
+        let output = run_ripr(&member, &pinned)?;
+        assert!(
+            !stderr_text(&output).contains("resolved workspace root"),
+            "{label} --root . must keep the member directory:\n{}",
+            stderr_text(&output)
+        );
+    }
+    let pinned_summary = run_ripr(
+        &member,
+        &["agent", "review-summary", "--json", "--root", "."],
+    )?;
+    assert!(
+        json_stdout("pinned review-summary", &pinned_summary)?["ci_artifacts"]
+            .as_array()
+            .ok_or("no ci_artifacts")?
+            .iter()
+            .any(|artifact| artifact["name"] == "agent_workflow" && artifact["state"] == "missing"),
+        "`--root .` reads the member's own (empty) target/ripr"
+    );
+
+    // Positive binding with a colliding sibling: both members carry the same
+    // weakened `src/lib.rs`, so only the invocation-directory binding makes
+    // the member-relative `context` selector reach pkg's finding.
+    weaken_boundary_predicate(&member)?;
+    weaken_boundary_predicate(&other)?;
+    let context = run_ripr(&member, &["context", "--worktree", "--at", "src/lib.rs:2"])?;
+    assert_exit(&context, 0, "context of a member-relative selector");
+    assert!(
+        stdout_text(&context).contains("pkg/src/lib.rs")
+            && !stdout_text(&context).contains("other/src/lib.rs"),
+        "context must bind to the invocation directory's file:\n{}",
+        stdout_text(&context)
+    );
+    Ok(())
+}
+
+/// #8902: a root-resolution failure of a `--json` artifact command is a
+/// post-argv failure, so `agent brief`, `agent packet` and `context` still
+/// write the #7331 refusal envelope on stdout, and `agent verify-execute`
+/// still answers with its typed disposition, instead of exiting with empty
+/// stdout.
+#[cfg(unix)]
+#[test]
+fn member_directory_agent_artifact_root_failure_keeps_the_json_refusal_envelope()
+-> Result<(), String> {
+    let fixture = Fixture::dir("facade-artifact-root-envelope")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let project = outer.join("proj");
+    std::fs::create_dir_all(&project).map_err(|e| e.to_string())?;
+    std::fs::write(outer.join("Cargo.toml"), "[workspace]\nmembers = []\n")
+        .map_err(|e| e.to_string())?;
+    init_repo(&project)?;
+    let programs = outer.join("programs");
+    std::fs::create_dir_all(&programs).map_err(|e| e.to_string())?;
+    // A present, non-executable program is a launch failure, not missing Git.
+    std::fs::write(programs.join("git"), "not executable\n").map_err(|e| e.to_string())?;
+    let path = programs.to_str().ok_or("fixture PATH is not UTF-8")?;
+    for args in [
+        &["agent", "brief", "--seam-id", "x", "--json"][..],
+        &["agent", "packet", "--seam-id", "x", "--json"][..],
+        &["context", "--at", "src/lib.rs:2"][..],
+        &[
+            "agent",
+            "verify-execute",
+            "--packet",
+            "p.json",
+            "--result-json",
+            "r.json",
+            "--authorize",
+            "--json",
+        ][..],
+    ] {
+        let output = run_ripr_env(&project, args, &[("PATH", path), ("RIPR_CACHE_DIR", "")])?;
+        assert_ne!(output.status.code(), Some(0), "{args:?}");
+        let document: serde_json::Value = serde_json::from_str(&stdout_text(&output))
+            .map_err(|e| format!("{args:?} stdout must be a JSON document: {e}"))?;
+        assert!(
+            document
+                .to_string()
+                .contains("cannot verify implicit Git root"),
+            "{args:?}: {document}"
+        );
+        // The refusal envelope names its own schema version (the context
+        // packet contract is 1.1; the agent artifacts are 0.1).
+        if args[0] == "context" {
+            assert_eq!(
+                document["schema_version"].as_str(),
+                Some("1.1"),
+                "{document}"
+            );
+        } else if args[1] != "verify-execute" {
+            assert!(
+                document["schema_version"].is_string(),
+                "{args:?} refusal must carry a schema_version: {document}"
+            );
+        }
+        // brief, packet and context refuse with the root-unusable family;
+        // verify-execute answers in its own typed disposition shape.
+        if args[0] != "agent" || args[1] != "verify-execute" {
+            assert!(
+                document.to_string().contains("repository_root_unusable"),
+                "{args:?} must refuse with the root-unusable family: {document}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// #8902: `context` shares the `explain` selector binding: a member-relative
+/// `file:line` is refused when a workspace-root file with the same path suffix
+/// exists, and with `--diff` a selector naming no file is anchored to the
+/// invocation directory instead of suffix-matching another member.
+#[cfg(unix)]
+#[test]
+fn member_context_selector_shadowed_by_a_root_package_file_is_refused() -> Result<(), String> {
+    let fixture = Fixture::dir("member-context-root-shadow")?;
+    let outer = fixture.root.canonicalize().map_err(|e| e.to_string())?;
+    let member = outer.join("pkg");
+    for dir in [&outer, &member] {
+        std::fs::create_dir_all(dir.join("src")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(dir.join("tests")).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(
+        outer.join("Cargo.toml"),
+        format!("{FIXTURE_CARGO_TOML}\n[workspace]\nmembers = [\"pkg\"]\n"),
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(outer.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    std::fs::write(outer.join("tests/pricing.rs"), FIXTURE_WEAK_TEST).map_err(|e| e.to_string())?;
+    std::fs::write(
+        member.join("Cargo.toml"),
+        "[package]\nname = \"member_pkg\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(member.join("src/lib.rs"), FIXTURE_LIB).map_err(|e| e.to_string())?;
+    init_repo(&outer)?;
+    run_git(&outer, &["add", "."])?;
+    git_commit(&outer, "root and member share src/lib.rs")?;
+    weaken_boundary_predicate(&member)?;
+    weaken_boundary_predicate(&outer)?;
+
+    let refused = run_ripr(&member, &["context", "--worktree", "--at", "src/lib.rs:2"])?;
+    assert_ne!(refused.status.code(), Some(0), "{}", stderr_text(&refused));
+    assert!(
+        stderr_text(&refused).contains("also matches the workspace-root file"),
+        "{}",
+        stderr_text(&refused)
+    );
+    // The binding failure keeps the JSON refusal envelope on stdout (no packet).
+    let envelope: serde_json::Value = serde_json::from_str(&stdout_text(&refused))
+        .map_err(|e| format!("shadowed context selector must emit a JSON refusal: {e}"))?;
+    assert_eq!(
+        envelope["schema_version"].as_str(),
+        Some("1.1"),
+        "{envelope}"
+    );
+    assert!(
+        envelope
+            .to_string()
+            .contains("also matches the workspace-root file"),
+        "{envelope}"
+    );
+    assert!(
+        envelope.get("selected").is_none() && envelope.get("finding").is_none(),
+        "must not emit a packet for either file:\n{envelope}"
+    );
+    // Control: `--root .` analyzes the member alone and is not refused.
+    let pinned = run_ripr(
+        &member,
+        &[
+            "context",
+            "--worktree",
+            "--at",
+            "src/lib.rs:2",
+            "--root",
+            ".",
+        ],
+    )?;
+    assert_exit(&pinned, 0, "`--root .` context of the member's own finding");
+
+    // Replay anchoring: a selector naming no working-tree file is anchored to
+    // the invocation directory, so the miss names `pkg/gone.rs:2`.
+    std::fs::write(
+        member.join("change.diff"),
+        "diff --git a/pkg/src/lib.rs b/pkg/src/lib.rs\n--- a/pkg/src/lib.rs\n+++ b/pkg/src/lib.rs\n@@ -2,1 +2,1 @@\n-    if amount >= discount_threshold {\n+    if amount > discount_threshold {\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let replay = run_ripr(
+        &member,
+        &["context", "--diff", "change.diff", "--at", "gone.rs:2"],
+    )?;
+    assert_ne!(replay.status.code(), Some(0));
+    assert!(
+        stderr_text(&replay).contains("pkg/gone.rs:2"),
+        "the replay selector must be anchored to the invocation directory:\n{}",
+        stderr_text(&replay)
+    );
+    Ok(())
+}
+
 #[path = "task_first_facade/brief_diff_status.rs"]
 mod brief_diff_status;
