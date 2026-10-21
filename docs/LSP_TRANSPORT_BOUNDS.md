@@ -53,6 +53,14 @@ input.
 | `ripr/listActionableItems` params | 16 KiB (size estimate) | The live handler reads no client-supplied fields (#1603); the bound caps the params blob as one opaque value at handler entry, before any snapshot access or early-return fast path. |
 | JSON nesting depth | 128 | Enforced by serde_json's default recursion limit; the `unbounded_depth` feature is not enabled anywhere in the workspace. Over-deep bodies are bounded codec errors. |
 
+Work-done progress creation uses that same 30-second request bound, but its
+announcement runs separately from refresh completion (#9149). Tokens register
+before announcement starts; termination removes an unstarted token silently.
+A late create success cannot begin a terminated token. Begin, report and end
+notifications serialize with terminal removal so an already-started token
+ends once, after its Begin. Capability negotiation remains owned by
+`ClientFeatureProfile` (#1971).
+
 ## Typed-size traversal work
 
 The 64 KiB typed limits use the existing decoded-value estimate, not exact

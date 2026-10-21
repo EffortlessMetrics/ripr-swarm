@@ -201,11 +201,12 @@ pub(super) struct AnalysisProgressTracker {
     sink: Mutex<Arc<dyn ProgressSink>>,
     supported: AtomicBool,
     tokens: Mutex<BTreeMap<u64, TokenRecord>>,
+    // Serialize notifications with terminal removal, never the create round
+    // trip. A begin already sending must precede its exactly-once end.
+    notifications: tokio::sync::Mutex<()>,
     /// Liveness bound for the `window/workDoneProgress/create` round trip
-    /// (#5278). `begin` runs on the interactive refresh path inside the
-    /// transport's task pipeline, so an unanswered create must fail like
-    /// every other server→client request instead of pinning the pipeline
-    /// alive-but-silent.
+    /// (#5278). Announcement is detached from refresh (#9149); the bound
+    /// also limits how long that best-effort task waits for the client.
     client_request_timeout: std::time::Duration,
 }
 
@@ -224,6 +225,7 @@ impl AnalysisProgressTracker {
             sink: Mutex::new(sink),
             supported: AtomicBool::new(false),
             tokens: Mutex::new(BTreeMap::new()),
+            notifications: tokio::sync::Mutex::new(()),
             client_request_timeout,
         }
     }
@@ -264,33 +266,62 @@ impl AnalysisProgressTracker {
         self.sink.lock().ok().map(|sink| Arc::clone(&sink))
     }
 
-    /// Begin progress for an accepted generation. A create failure is
-    /// logged and the token is dropped: per the spec no progress
-    /// notifications may follow a failed create, and analysis state is
-    /// unaffected (best-effort).
-    pub(super) async fn begin(&self, request: &RefreshRequest, phase: AnalysisProgressPhase) {
+    /// Register before spawning the announcement so termination can always
+    /// remove an accepted token, even before the task is first polled.
+    fn register(&self, request: &RefreshRequest, phase: AnalysisProgressPhase) -> bool {
         if !self.supported.load(Ordering::SeqCst) {
-            return;
+            return false;
         }
+        let Ok(mut tokens) = self.tokens.lock() else {
+            return false;
+        };
+        if tokens.contains_key(&request.generation) {
+            return false;
+        }
+        tokens.insert(
+            request.generation,
+            TokenRecord {
+                token: progress_token(request.generation),
+                phase,
+                started: false,
+                last_stage: None,
+            },
+        );
+        true
+    }
+
+    /// Progress is advisory: an unanswered create must not hold refresh or
+    /// shutdown in the transport's request pipeline (#9149).
+    pub(super) fn begin_detached(
+        self: &Arc<Self>,
+        request: &RefreshRequest,
+        phase: AnalysisProgressPhase,
+    ) -> Option<tokio::task::JoinHandle<()>> {
+        if !self.register(request, phase) {
+            return None;
+        }
+        let tracker = Arc::clone(self);
+        let request = request.clone();
+        Some(tokio::spawn(
+            async move { tracker.announce(&request).await },
+        ))
+    }
+
+    #[cfg(test)]
+    pub(super) async fn begin(&self, request: &RefreshRequest, phase: AnalysisProgressPhase) {
+        if self.register(request, phase) {
+            self.announce(request).await;
+        }
+    }
+
+    async fn announce(&self, request: &RefreshRequest) {
         {
-            // Register BEFORE the sink awaits so a concurrent end() always
-            // finds the generation and terminates it cleanly instead of
-            // leaking a begin without an end.
-            let Ok(mut tokens) = self.tokens.lock() else {
+            let Ok(tokens) = self.tokens.lock() else {
                 return;
             };
-            if tokens.contains_key(&request.generation) {
+            if !tokens.contains_key(&request.generation) {
                 return;
             }
-            tokens.insert(
-                request.generation,
-                TokenRecord {
-                    token: progress_token(request.generation),
-                    phase,
-                    started: false,
-                    last_stage: None,
-                },
-            );
         }
         let Some(sink) = self.sink() else {
             return;
@@ -325,6 +356,17 @@ impl AnalysisProgressTracker {
                 .await;
             return;
         }
+        let _notifications = self.notifications.lock().await;
+        let phase = {
+            let Ok(tokens) = self.tokens.lock() else {
+                return;
+            };
+            let Some(record) = tokens.get(&request.generation) else {
+                // Terminated while create was pending: #1971 requires silence.
+                return;
+            };
+            record.phase
+        };
         sink.notify(
             token.clone(),
             ProgressNotificationValue::Begin {
@@ -341,8 +383,10 @@ impl AnalysisProgressTracker {
     }
 
     /// Move a queued token to `analyzing` on the SAME token when the queued
-    /// request starts. No-op for tokens already analyzing or unknown.
+    /// request starts. An unstarted token records the new phase silently.
+    /// No-op for tokens already analyzing or unknown.
     pub(super) async fn transition_to_analyzing(&self, generation: u64) {
+        let _notifications = self.notifications.lock().await;
         let token = {
             let Ok(mut tokens) = self.tokens.lock() else {
                 return;
@@ -350,10 +394,15 @@ impl AnalysisProgressTracker {
             let Some(record) = tokens.get_mut(&generation) else {
                 return;
             };
-            if !record.started || record.phase != AnalysisProgressPhase::Queued {
+            if record.phase != AnalysisProgressPhase::Queued {
                 return;
             }
             record.phase = AnalysisProgressPhase::Analyzing;
+            if !record.started {
+                // A delayed create must announce the current phase when it
+                // succeeds, rather than claiming the promoted request is queued.
+                return;
+            }
             record.token.clone()
         };
         let Some(sink) = self.sink() else {
@@ -371,6 +420,7 @@ impl AnalysisProgressTracker {
     /// Bounded report at the real phase boundary where analysis results are
     /// about to be published.
     pub(super) async fn report_publishing(&self, generation: u64) {
+        let _notifications = self.notifications.lock().await;
         let token = {
             let Ok(tokens) = self.tokens.lock() else {
                 return;
@@ -411,6 +461,7 @@ impl AnalysisProgressTracker {
     /// unsupported clients, unknown generations, unstarted tokens, tokens
     /// still queued, terminal stages, and consecutive duplicate stages.
     pub(super) async fn report_stage(&self, generation: u64, stage: AnalysisProgressStage) {
+        let _notifications = self.notifications.lock().await;
         if !self.supported.load(Ordering::SeqCst) {
             return;
         }
@@ -449,6 +500,7 @@ impl AnalysisProgressTracker {
     /// before the end notification, so later ends for the same generation
     /// are no-ops.
     pub(super) async fn end(&self, generation: u64, end: AnalysisProgressEnd) {
+        let _notifications = self.notifications.lock().await;
         let record = {
             let Ok(mut tokens) = self.tokens.lock() else {
                 return;
@@ -480,6 +532,7 @@ impl AnalysisProgressTracker {
     /// without ever starting; the active (analyzing) token is left for the
     /// refresh loop's outcome-based end.
     pub(super) async fn end_queued(&self, end: AnalysisProgressEnd) {
+        let _notifications = self.notifications.lock().await;
         let drained = {
             let Ok(mut tokens) = self.tokens.lock() else {
                 return;
@@ -513,6 +566,7 @@ impl AnalysisProgressTracker {
     /// Terminate every open token. Used on shutdown when the scheduler
     /// stops accepting and running work.
     pub(super) async fn end_all(&self, end: AnalysisProgressEnd) {
+        let _notifications = self.notifications.lock().await;
         let drained = {
             let Ok(mut tokens) = self.tokens.lock() else {
                 return;
@@ -876,6 +930,66 @@ mod tests {
             {
                 return Err(format!(
                     "begin/end must stay ordered and end exactly once: {events:?}"
+                ));
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn detached_announcement_registers_before_its_task_is_polled() -> Result<(), String> {
+        runtime()?.block_on(async {
+            let (tracker, recorder) = tracker_with_recorder();
+            let announcement = tracker
+                .begin_detached(&test_request(12), AnalysisProgressPhase::Analyzing)
+                .ok_or_else(|| "supported generation was not registered".to_string())?;
+            // No yield: shutdown wins before the announcement task runs.
+            tracker.end_all(AnalysisProgressEnd::Cancelled).await;
+            announcement
+                .await
+                .map_err(|error| format!("announcement failed: {error}"))?;
+            if !recorder.events().is_empty() {
+                return Err(format!(
+                    "terminated registration was announced: {:?}",
+                    recorder.events()
+                ));
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn queued_promotion_during_create_announces_the_current_phase() -> Result<(), String> {
+        runtime()?.block_on(async {
+            let (tracker, recorder) = tracker_with_recorder();
+            let sink = Arc::new(HeldProgressSink {
+                recorder: Arc::clone(&recorder),
+                hold_begin: false,
+                entered: tokio::sync::Notify::new(),
+                release: tokio::sync::Notify::new(),
+            });
+            tracker.install_test_sink(sink.clone());
+            let announcement = tracker
+                .begin_detached(&test_request(13), AnalysisProgressPhase::Queued)
+                .ok_or_else(|| "supported queued generation was not registered".to_string())?;
+            sink.entered.notified().await;
+            tracker.transition_to_analyzing(13).await;
+            sink.release.notify_one();
+            announcement
+                .await
+                .map_err(|error| format!("announcement failed: {error}"))?;
+            tracker.end(13, AnalysisProgressEnd::Complete).await;
+            tracker.end_all(AnalysisProgressEnd::Cancelled).await;
+            let events = recorder.events();
+            if !matches!(events.as_slice(), [
+                ProgressEvent::Create { token: create },
+                ProgressEvent::Begin { token: begin, message, .. },
+                ProgressEvent::End { token: end, .. },
+            ] if create == &progress_token(13) && begin == create && end == create
+                && message == "analyzing workspace (did_save)")
+            {
+                return Err(format!(
+                    "delayed announcement used a stale phase or lost its end: {events:?}"
                 ));
             }
             Ok(())

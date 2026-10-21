@@ -20347,7 +20347,9 @@ fn work_done_progress_success_run_ends_complete_exactly_once() -> Result<(), Str
 
         let decision = work_done_progress_request(backend, 1)?;
         let request = started_request(&decision)?;
-        backend.emit_progress_for_decision(&decision).await;
+        backend
+            .emit_recorded_progress_for_decision(&decision)
+            .await?;
 
         // Simulate the successful publish: commit a full snapshot, then end
         // the attempt with the same outcome mapping the refresh loop uses.
@@ -20401,7 +20403,7 @@ fn work_done_progress_queued_then_success_reuses_one_token() -> Result<(), Strin
 
         let first = work_done_progress_request(backend, 1)?;
         let first_request = started_request(&first)?;
-        backend.emit_progress_for_decision(&first).await;
+        backend.emit_recorded_progress_for_decision(&first).await?;
 
         let second = work_done_progress_request(backend, 2)?;
         if !matches!(
@@ -20413,7 +20415,7 @@ fn work_done_progress_queued_then_success_reuses_one_token() -> Result<(), Strin
         ) {
             return Err(format!("expected first queued request, got {second:?}"));
         }
-        backend.emit_progress_for_decision(&second).await;
+        backend.emit_recorded_progress_for_decision(&second).await?;
 
         let third = work_done_progress_request(backend, 3)?;
         if !matches!(
@@ -20427,7 +20429,7 @@ fn work_done_progress_queued_then_success_reuses_one_token() -> Result<(), Strin
                 "expected queued replacement superseding generation 2, got {third:?}"
             ));
         }
-        backend.emit_progress_for_decision(&third).await;
+        backend.emit_recorded_progress_for_decision(&third).await?;
 
         // The active attempt finishes and the newest queued request starts on
         // the SAME token it began with.
@@ -20518,7 +20520,7 @@ fn work_done_progress_deduplicated_request_creates_no_token() -> Result<(), Stri
 
         let first = work_done_progress_request(backend, 1)?;
         let first_request = started_request(&first)?;
-        backend.emit_progress_for_decision(&first).await;
+        backend.emit_recorded_progress_for_decision(&first).await?;
         let accepted_events = sink.events().len();
 
         // Same input while active: deduplicated, no progress.
@@ -20526,7 +20528,9 @@ fn work_done_progress_deduplicated_request_creates_no_token() -> Result<(), Stri
         if duplicate_active != RefreshDecision::Deduplicated {
             return Err(format!("expected Deduplicated, got {duplicate_active:?}"));
         }
-        backend.emit_progress_for_decision(&duplicate_active).await;
+        backend
+            .emit_recorded_progress_for_decision(&duplicate_active)
+            .await?;
         if sink.events().len() != accepted_events {
             return Err(format!(
                 "deduplicated request created progress traffic: {:?}",
@@ -20549,8 +20553,8 @@ fn work_done_progress_deduplicated_request_creates_no_token() -> Result<(), Stri
             ));
         }
         backend
-            .emit_progress_for_decision(&duplicate_completed)
-            .await;
+            .emit_recorded_progress_for_decision(&duplicate_completed)
+            .await?;
         if sink.events().len() != accepted_events {
             return Err(format!(
                 "completed-input dedup created progress traffic: {:?}",
@@ -20588,7 +20592,9 @@ fn work_done_progress_cancelled_superseded_and_not_started_terminal_ends() -> Re
         ] {
             let decision = work_done_progress_request(backend, revision)?;
             let request = started_request(&decision)?;
-            backend.emit_progress_for_decision(&decision).await;
+            backend
+                .emit_recorded_progress_for_decision(&decision)
+                .await?;
             backend.end_progress_for_attempt(&request, outcome).await;
             // Repeated terminal paths (guard + loop, invalidation + loop)
             // must stay exactly-once.
@@ -20620,7 +20626,9 @@ fn work_done_progress_failed_end_carries_kind_not_paths() -> Result<(), String> 
 
         let decision = work_done_progress_request(backend, 1)?;
         let request = started_request(&decision)?;
-        backend.emit_progress_for_decision(&decision).await;
+        backend
+            .emit_recorded_progress_for_decision(&decision)
+            .await?;
         backend
             .report_refresh_failure_after(
                 &request,
@@ -20703,7 +20711,7 @@ fn explicit_refresh_returns_once_the_scheduler_accepts_a_queued_request() -> Res
 
         let first = work_done_progress_request(backend, 1)?;
         let first_request = started_request(&first)?;
-        backend.emit_progress_for_decision(&first).await;
+        backend.emit_recorded_progress_for_decision(&first).await?;
         backend.mark_attempt_running_for_test(&first_request);
 
         backend
