@@ -614,20 +614,24 @@ pub fn workflow_review_thread_mutation_violations(path: &str, text: &str) -> Vec
 /// token split across lines (a folded YAML query, a multi-line concatenation)
 /// is still found.
 pub fn text_has_review_thread_mutation(text: &str) -> bool {
+    scan_review_thread_windows(text, true)
+}
+
+fn scan_review_thread_windows(text: &str, join_literals: bool) -> bool {
     let lines: Vec<&str> = text.lines().collect();
     (0..lines.len()).any(|start| {
         let end = (start + 4).min(lines.len());
         (start + 1..=end).any(|stop| {
             let window = lines[start..stop].join("\n");
             review_thread_mutation_line(&window)
-                || review_thread_mutation_line(&quoted_literals(&window))
+                || (join_literals && review_thread_mutation_line(&quoted_literals(&window)))
         })
     })
 }
 
 /// Concatenates only the quoted string literals of `text`, so a token assigned
-/// to separate variables (`R='resolve'` then `T='ReviewThread'`) is joined
-/// without the variable names between its halves.
+/// to two separate variables is joined without the variable names between its
+/// halves.
 fn quoted_literals(text: &str) -> String {
     let mut out = String::new();
     let mut quote: Option<char> = None;
@@ -675,15 +679,11 @@ pub fn repository_owned_review_thread_mutation_violations() -> Result<Vec<String
         }
         for path in collect_files(root)? {
             let normalized = normalize_path(&path);
-            // The scanner and its fixtures necessarily spell the token.
-            if normalized.ends_with("xtask/src/tests.rs")
-                || normalized.ends_with("tools/repo-policy/src/lib.rs")
-                || normalized.ends_with("tools/repo-policy/src/workflow_tests.rs")
-            {
+            if normalized.ends_with("xtask/src/tests.rs") {
                 continue;
             }
             let text = read_text_lossy(&path)?;
-            if text_has_review_thread_mutation(&text) {
+            if text.lines().any(review_thread_mutation_line) {
                 violations.push(format!(
                     "{normalized}: repository-owned automation contains a review-thread resolution mutation; review-thread resolution requires explicit adjudication outside automated workflow mutation"
                 ));

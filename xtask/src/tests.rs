@@ -8395,6 +8395,31 @@ fn bound_descriptor_requires_the_receipted_manifest_digest() -> Result<(), Strin
         return Err("a generation mismatch must be refused".to_string());
     };
     assert!(err.contains("does not match generation"), "{err}");
+    for bad in [
+        "ABC".to_string(),
+        digest.to_uppercase(),
+        format!("{digest}\n"),
+    ] {
+        let Err(err) = super::bound_descriptor_source("1.2.3", manifest, &bad) else {
+            return Err(format!("digest `{bad:?}` must be refused"));
+        };
+        assert!(err.contains("64 lowercase hex"), "{err}");
+    }
+    for generation in ["1.2.3-rc.1", "1.2", "a.b.c"] {
+        if super::bound_descriptor_source(generation, manifest, &digest).is_ok() {
+            return Err(format!("generation `{generation}` must be refused"));
+        }
+    }
+    for body in [
+        &b"not json"[..],
+        br#"{"version":"1.2.3","assets":{}}"#,
+        br#"{"version":"1.2.3","assets":{"t":{"url":"https://x/a","sha256":"zz"}}}"#,
+    ] {
+        let body_digest = format!("{:x}", Sha256::digest(body));
+        if super::bound_descriptor_source("1.2.3", body, &body_digest).is_ok() {
+            return Err("a malformed manifest must be refused".to_string());
+        }
+    }
     let Err(err) = super::bound_descriptor_source("1.2.3", manifest, "ABC") else {
         return Err("a malformed digest must be refused".to_string());
     };
