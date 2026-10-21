@@ -834,7 +834,7 @@ fn missing_discriminator_facts(
     unresolved_boundary: &mut Option<String>,
 ) -> Vec<MissingDiscriminatorFact> {
     let mut missing = Vec::new();
-    if (matches!(probe.family, ProbeFamily::Predicate) || is_returned_comparison(probe))
+    if matches!(probe.family, ProbeFamily::Predicate)
         && let Some(fact) = missing_boundary_discriminator(
             probe,
             owner_fn,
@@ -845,6 +845,25 @@ fn missing_discriminator_facts(
             workspace_complete,
             unresolved_boundary,
         )
+    {
+        missing.push(fact);
+    }
+    // A returned bare comparison reads the same boundary, but only a
+    // resolved gap counts: a boundary the lens cannot read leaves the
+    // return-value reading as it was and sets no unresolved reason.
+    let mut returned_unresolved = None;
+    if is_returned_comparison(probe)
+        && let Some(fact) = missing_boundary_discriminator(
+            probe,
+            owner_fn,
+            related_tests,
+            flow_sinks,
+            helper_chain,
+            index,
+            workspace_complete,
+            &mut returned_unresolved,
+        )
+        && returned_unresolved.is_none()
     {
         missing.push(fact);
     }
@@ -3642,9 +3661,9 @@ fn body_contains_direct_local_alias(body: &str, operand: &str, parameter: &str) 
 /// Whether a `return_value` probe's changed expression is one bare relational
 /// comparison (`x > 101`), so the returned bool is the changed predicate and
 /// its boundary is the boundary a `predicate` probe on the same line reads.
-/// Such a probe takes the predicate lens's missing boundary discriminator and
-/// infection reading: reaching the owner with inputs that never separate the
-/// old and new threshold is not an activated change. A compound (`&&`/`||`)
+/// When the predicate lens resolves a missing boundary discriminator for it,
+/// the probe reads that gap too: reaching the owner with inputs that never
+/// separate the old and new threshold is not an activated change. A compound (`&&`/`||`)
 /// or non-comparison expression keeps the return-value reading.
 pub(in crate::analysis) fn is_returned_comparison(probe: &Probe) -> bool {
     matches!(probe.family, ProbeFamily::ReturnValue)

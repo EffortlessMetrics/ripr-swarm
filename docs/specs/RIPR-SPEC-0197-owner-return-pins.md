@@ -2530,3 +2530,15 @@ existing owner-call argument pin is unavailable; this leaf does not relax that
 authority. Withheld diff-index source bindings receive the same constructor scan.
 Full frozen consumer replay is separate from fixture admission and never clears
 consumer gates, missing IDs or unrelated propagation residuals by absence.
+
+### A returned bare comparison is read at its boundary (#9094)
+
+A `return_value` probe whose changed expression is one bare relational
+comparison (`x > 101` against `x > 100`, no `&&`/`||`) is the same changed
+predicate a `predicate` probe on that line reads. When the predicate lens
+resolves a missing equality-boundary discriminator for it and its infection
+reading is `weak`, the return-value finding takes that discriminator and that
+infection reading instead of crediting `yes`, so inputs far from the threshold
+(`thr(50)`, `thr(500)`) never read `exposed`. A boundary the lens cannot read
+(`unresolved`), a compound expression and a non-comparison return value keep
+their previous reading: the rule only downgrades and is not a runtime claim.

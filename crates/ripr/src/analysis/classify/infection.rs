@@ -252,10 +252,6 @@ pub(in crate::analysis) fn infection_evidence_with_boundary_input(
     )
 }
 
-fn is_returned_comparison_or_predicate(probe: &Probe) -> bool {
-    matches!(probe.family, ProbeFamily::Predicate) || is_returned_comparison(probe)
-}
-
 /// [`infection_evidence_with_boundary_input`] given the changed owner, which
 /// the `&&`/`||` skipped-operand reading (#7970) needs to know the owner's
 /// parameters and that its body is the whole chain. Without an owner, or when
@@ -270,10 +266,27 @@ pub(in crate::analysis) fn infection_evidence_for_owner(
     owner: Option<&FunctionSummary>,
     owner_has_other_callers: bool,
 ) -> StageEvidence {
+    // A returned bare comparison with a resolved missing boundary
+    // discriminator reads the predicate lens's gap, never a better reading:
+    // only a `weak` result replaces the return-value reading, which is
+    // otherwise unchanged (#9094).
+    if is_returned_comparison(probe) && !activation.missing_discriminators.is_empty() {
+        let mut predicate = probe.clone();
+        predicate.family = ProbeFamily::Predicate;
+        let evidence = infection_evidence_for_owner(
+            &predicate,
+            related_tests,
+            activation,
+            unresolved_boundary,
+            owner,
+            owner_has_other_callers,
+        );
+        if matches!(evidence.state, StageState::Weak) {
+            return evidence;
+        }
+    }
     match probe.family {
-        ProbeFamily::Predicate | ProbeFamily::ReturnValue
-            if is_returned_comparison_or_predicate(probe) =>
-        {
+        ProbeFamily::Predicate => {
             let probe_literals = boundary_literals(&probe.expression);
             // A number, a char (`'x'`) and a byte (`b'x'`) share no
             // comparable boundary in this report, so only literals of a kind
