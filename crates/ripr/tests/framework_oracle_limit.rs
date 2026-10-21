@@ -311,18 +311,9 @@ fn a_mock_shape_that_differs_keeps_the_gap() -> Result<(), String> {
     // The closure ignores the call's arguments.
     keeps_gap(&mock_source("|_, _| true"), &edit, 15, "ignored arguments")?;
     keeps_gap(&mock_source("|to, _| true"), &edit, 15, "unused argument")?;
-    // The changed line is the grace predicate, which no closure decides.
-    let guard = diff(
-        13,
-        "    if overdue_days >= GRACE_DAYS {",
-        "    if overdue_days > GRACE_DAYS {",
-    );
-    keeps_gap(
-        &mock_source("|to, _| to != \"cy\""),
-        &guard,
-        13,
-        "predicate line",
-    )
+    // The grace predicate line is no longer a kept gap here: the count-pinned
+    // 31/30 test discriminates it (RIPR-SPEC-0305, mock_count.rs).
+    Ok(())
 }
 
 fn expect_source(assertion: &str) -> String {
