@@ -17,6 +17,7 @@ mod reach_limit;
 mod related_tests;
 pub(crate) mod shared_grips;
 mod snapshot_owner_binding;
+pub(crate) use snapshot_owner_binding::{BindingReach, local_is_owner_result_before, text_calls};
 mod value_contradiction;
 
 pub(crate) use value_contradiction::CONTRADICTION_DISCLOSURE;
