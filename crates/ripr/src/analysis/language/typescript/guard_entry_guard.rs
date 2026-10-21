@@ -438,17 +438,395 @@ pub(crate) fn parameter_defaults(owner_source: &str, params: &[String]) -> Optio
     Some(defaults)
 }
 
+/// How a destructured property gets its value when the call omits it.
+#[derive(Clone, Debug, PartialEq)]
+enum PropDefault {
+    /// No default: the binding is `undefined`.
+    Absent,
+    Literal(Lit),
+    /// A default the reader cannot evaluate (`Infinity`, another binding).
+    Unknown,
+}
+
+#[derive(Clone, Debug)]
+struct OptionProp {
+    key: String,
+    local: String,
+    default: PropDefault,
+}
+
+/// A destructured options parameter, `{ a, b = 1, c: d } = {}`: the local
+/// bindings it introduces and the literal object a call must pass to set them.
+#[derive(Clone, Debug)]
+pub(crate) struct OptionsParameter {
+    index: usize,
+    /// The whole parameter defaults to `{}`, so an omitted argument is legal.
+    empty_default: bool,
+    props: Vec<OptionProp>,
+}
+
+impl OptionsParameter {
+    /// `local`'s value for a call whose argument at this position is
+    /// `argument` (`None` when omitted); `None` when it cannot be read.
+    fn value_of(&self, prop: &OptionProp, argument: Option<&str>) -> Option<Lit> {
+        let supplied = match argument.map(str::trim) {
+            // Omitted or explicit `undefined` applies the `= {}` default;
+            // without one, destructuring throws and nothing is known.
+            None | Some("undefined") => {
+                if !self.empty_default {
+                    return None;
+                }
+                None
+            }
+            Some(text) => object_property(text, &prop.key)?,
+        };
+        match supplied {
+            Some(literal) if literal != Lit::Undef => Some(literal),
+            // A missing key and an explicit `undefined` both apply the default.
+            _ => match &prop.default {
+                PropDefault::Absent => Some(Lit::Undef),
+                PropDefault::Literal(literal) => Some(literal.clone()),
+                PropDefault::Unknown => None,
+            },
+        }
+    }
+}
+
+/// The owner's parameter list when it holds a destructured options object:
+/// per-position plain names (empty for an options position) and default
+/// flags, plus the options parameters. `None` for anything it cannot read
+/// exactly (rest, nested defaults it cannot place, type annotations beyond a
+/// plain name, decorators), or when no parameter is destructured.
+pub(crate) struct ParameterShapes {
+    pub(crate) names: Vec<String>,
+    pub(crate) defaults: Vec<bool>,
+    pub(crate) options: Vec<OptionsParameter>,
+}
+
+pub(crate) fn parameter_shapes(owner_source: &str) -> Option<ParameterShapes> {
+    let masked = ts_mask_literals_and_comments(owner_source);
+    // The masked text lines up byte for byte with the source only when no
+    // multi-byte character was replaced.
+    if masked.len() != owner_source.len() {
+        return None;
+    }
+    let open = masked.find('(')?;
+    // A decorator or a call before the parameter list is not the header.
+    if !header_prefix_is_binding(&masked[..open]) {
+        return None;
+    }
+    let ranges = parameter_part_ranges(&masked, open)?;
+    let after_list = ranges.close + 1;
+    let chars: Vec<char> = masked[after_list..].chars().collect();
+    let mut next = 0usize;
+    while next < chars.len() && chars[next].is_whitespace() {
+        next += 1;
+    }
+    let arrow = chars.get(next) == Some(&'=') && chars.get(next + 1) == Some(&'>');
+    if !arrow && !opens_body_after_paren(&chars, next) {
+        return None;
+    }
+    let mut shapes = ParameterShapes {
+        names: Vec::new(),
+        defaults: Vec::new(),
+        options: Vec::new(),
+    };
+    for (index, (start, end)) in ranges.parts.iter().enumerate() {
+        let part = owner_source[*start..*end].trim();
+        if part.starts_with("...") {
+            return None;
+        }
+        if part.starts_with('{') {
+            shapes.options.push(options_parameter(part, index)?);
+            shapes.names.push(String::new());
+            shapes.defaults.push(true);
+            continue;
+        }
+        let ident: String = part
+            .chars()
+            .take_while(|c| is_identifier_char(*c))
+            .collect();
+        if ident.is_empty() || ident.starts_with(|c: char| c.is_ascii_digit()) {
+            return None;
+        }
+        shapes.defaults.push(part_has_default(part));
+        shapes.names.push(ident);
+    }
+    (!shapes.options.is_empty()).then_some(shapes)
+}
+
+/// `const f = async (` / `export default async function f(` style prefixes:
+/// words, `=`, `*`, `<generics>` and `export`, with no call, decorator or
+/// block before the parameter list.
+fn header_prefix_is_binding(prefix: &str) -> bool {
+    !prefix.contains(['@', ';', '{', '(', ')'])
+}
+
+struct ParameterRanges {
+    /// Byte index of the `)` that closes the list.
+    close: usize,
+    /// Byte ranges of each top-level parameter within the source.
+    parts: Vec<(usize, usize)>,
+}
+
+/// Split the parenthesized list that opens at `open` into parameter ranges.
+fn parameter_part_ranges(masked: &str, open: usize) -> Option<ParameterRanges> {
+    let mut depth = 0usize;
+    let mut close = None;
+    for (at, c) in masked[open..].char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    close = Some(open + at);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let close = close?;
+    let list_start = open + 1;
+    let list = &masked[list_start..close];
+    let mut parts = Vec::new();
+    let (mut depth, mut start) = (0usize, 0usize);
+    for (at, c) in list.char_indices() {
+        match c {
+            '(' | '[' | '{' | '<' => depth += 1,
+            ')' | ']' | '}' | '>' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push((list_start + start, list_start + at));
+                start = at + 1;
+            }
+            _ => {}
+        }
+    }
+    if !list[start..].trim().is_empty() {
+        parts.push((list_start + start, list_start + list.len()));
+    }
+    Some(ParameterRanges { close, parts })
+}
+
+/// A default `= v` after the optional annotation; `=>` inside a type is not
+/// one.
+fn part_has_default(part: &str) -> bool {
+    part.match_indices('=').any(|(at, _)| {
+        let after = &part[at + 1..];
+        !after.starts_with(['>', '=']) && !part[..at].ends_with(['=', '!'])
+    })
+}
+
+/// Parse `{ a, b = 1, c: d = 2 } = {}` (optionally `: Name` annotated).
+fn options_parameter(part: &str, index: usize) -> Option<OptionsParameter> {
+    let mut depth = 0usize;
+    let mut close = None;
+    let mut quote: Option<char> = None;
+    for (at, c) in part.char_indices() {
+        if let Some(open) = quote {
+            if c == open {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            '\'' | '"' | '`' => quote = Some(c),
+            '{' | '[' | '(' => depth += 1,
+            '}' | ']' | ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    close = Some(at);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let close = close?;
+    let mut rest = part[close + 1..].trim();
+    if let Some(annotation) = rest.strip_prefix(':') {
+        let name_len = annotation
+            .trim_start()
+            .chars()
+            .take_while(|c| is_identifier_char(*c))
+            .count();
+        if name_len == 0 {
+            return None;
+        }
+        let annotation = annotation.trim_start();
+        rest = annotation[name_len..].trim();
+    }
+    let empty_default = match rest {
+        "" => false,
+        _ => {
+            let value = rest.strip_prefix('=')?;
+            if value.trim() != "{}" {
+                return None;
+            }
+            true
+        }
+    };
+    let body = &part[1..close];
+    let items: Vec<&str> = match split_top_level(body, ",") {
+        Some(items) => items,
+        None => vec![body],
+    };
+    let mut props: Vec<OptionProp> = Vec::new();
+    for item in items {
+        let item = item.trim();
+        if item.is_empty() || item.starts_with("...") {
+            continue;
+        }
+        let key: String = item
+            .chars()
+            .take_while(|c| is_identifier_char(*c))
+            .collect();
+        if key.is_empty() || key.starts_with(|c: char| c.is_ascii_digit()) {
+            return None;
+        }
+        let after = item[key.len()..].trim();
+        let (local, default_text) = if after.is_empty() {
+            (key.clone(), None)
+        } else if let Some(default) = after.strip_prefix('=').filter(|d| !d.starts_with('=')) {
+            (key.clone(), Some(default))
+        } else if let Some(renamed) = after.strip_prefix(':') {
+            let renamed = renamed.trim();
+            if renamed.starts_with(['{', '[']) {
+                // A nested pattern introduces bindings this reader leaves
+                // unreadable.
+                continue;
+            }
+            let local: String = renamed
+                .chars()
+                .take_while(|c| is_identifier_char(*c))
+                .collect();
+            if local.is_empty() || local.starts_with(|c: char| c.is_ascii_digit()) {
+                return None;
+            }
+            let tail = renamed[local.len()..].trim();
+            if tail.is_empty() {
+                (local, None)
+            } else {
+                let default = tail.strip_prefix('=').filter(|d| !d.starts_with('='))?;
+                (local, Some(default))
+            }
+        } else {
+            return None;
+        };
+        if props.iter().any(|prop| prop.local == local) {
+            return None;
+        }
+        let default = match default_text {
+            None => PropDefault::Absent,
+            Some(text) => parse_literal(text)
+                .map(PropDefault::Literal)
+                .unwrap_or(PropDefault::Unknown),
+        };
+        props.push(OptionProp {
+            key,
+            local,
+            default,
+        });
+    }
+    Some(OptionsParameter {
+        index,
+        empty_default,
+        props,
+    })
+}
+
+/// The literal a test writes for `key` in an object-literal argument:
+/// `Some(None)` when the key is absent, `Some(Some(v))` when set to the
+/// literal `v`, and `None` when the argument is not a plain object literal or
+/// the key's value cannot be read (a spread, computed key, accessor, method,
+/// duplicate or non-literal value could set it).
+fn object_property(text: &str, key: &str) -> Option<Option<Lit>> {
+    let text = text.trim();
+    let inner = text.strip_prefix('{')?.strip_suffix('}')?;
+    // `{ a } + { b }`-style text is not one literal.
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    for c in inner.chars() {
+        if let Some(open) = quote {
+            if c == open {
+                quote = None;
+            }
+            continue;
+        }
+        match c {
+            '\'' | '"' | '`' => quote = Some(c),
+            '{' | '[' | '(' => depth += 1,
+            '}' | ']' | ')' => depth = depth.checked_sub(1)?,
+            _ => {}
+        }
+    }
+    if depth != 0 || quote.is_some() {
+        return None;
+    }
+    let entries: Vec<&str> = match split_top_level(inner, ",") {
+        Some(entries) => entries,
+        None => vec![inner],
+    };
+    let mut found: Option<Option<Lit>> = None;
+    for entry in entries {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        if entry.starts_with("...") || entry.starts_with('[') {
+            return None;
+        }
+        let (name, rest) =
+            if let Some(quote) = entry.chars().next().filter(|c| matches!(c, '\'' | '"')) {
+                let close = entry[1..].find(quote)? + 1;
+                (entry[1..close].to_string(), entry[close + 1..].trim())
+            } else {
+                let name: String = entry
+                    .chars()
+                    .take_while(|c| is_identifier_char(*c))
+                    .collect();
+                if name.is_empty() {
+                    return None;
+                }
+                let rest = entry[name.len()..].trim();
+                (name, rest)
+            };
+        let value = if rest.is_empty() {
+            // Shorthand `{ key }`: the value is another binding.
+            None
+        } else if let Some(value) = rest.strip_prefix(':') {
+            Some(value)
+        } else {
+            // A method, getter or setter (`get key() {}`, `key() {}`).
+            return None;
+        };
+        if name != key {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
+        let literal = parse_literal(value?)?;
+        found = Some(Some(literal));
+    }
+    Some(found.unwrap_or(None))
+}
+
 /// One owner call's argument bindings, read from literal arguments.
 pub(crate) struct CallInputs<'a> {
     pub(crate) owner_source: &'a str,
     pub(crate) params: &'a [String],
     pub(crate) defaults: &'a [bool],
+    /// Destructured options parameters (`{ a = 1 } = {}`), by position.
+    pub(crate) options: &'a [OptionsParameter],
     pub(crate) arguments: &'a [String],
 }
 
 impl CallInputs<'_> {
     fn lookup(&self, name: &str) -> Option<Lit> {
-        let index = self.params.iter().position(|param| param == name)?;
+        let Some(index) = self.params.iter().position(|param| param == name) else {
+            return self.lookup_option(name);
+        };
         if !ts_parameter_is_stable(self.owner_source, name) {
             return None;
         }
@@ -460,6 +838,23 @@ impl CallInputs<'_> {
             None if !self.defaults.get(index).copied().unwrap_or(true) => Some(Lit::Undef),
             None => None,
         }
+    }
+
+    /// The value a destructured options property takes for this call.
+    fn lookup_option(&self, name: &str) -> Option<Lit> {
+        let (options, prop) = self
+            .options
+            .iter()
+            .find_map(|options| Some((options, options.props.iter().find(|p| p.local == name)?)))?;
+        if !ts_parameter_is_stable(self.owner_source, name) {
+            return None;
+        }
+        options.value_of(
+            prop,
+            self.arguments
+                .get(options.index)
+                .map(|argument| argument.as_str()),
+        )
     }
 
     /// `Some(false)` when `condition` is provably false for this call and
@@ -979,6 +1374,7 @@ mod tests {
             owner_source: SOURCE,
             params,
             defaults,
+            options: &[],
             arguments,
         }
     }
@@ -1033,6 +1429,7 @@ mod tests {
             owner_source: source,
             params: &params,
             defaults: &defaults,
+            options: &[],
             arguments: &call,
         };
         assert!(!call_excludes_arm(&inputs, &arms));
@@ -1056,6 +1453,7 @@ mod tests {
                 owner_source: source,
                 params: &params,
                 defaults: &defaults,
+                options: &[],
                 arguments: &arguments,
             };
             let arms = vec![GuardCondition {
@@ -1077,6 +1475,7 @@ mod tests {
                 owner_source: source,
                 params: &params,
                 defaults: &defaults,
+                options: &[],
                 arguments: &arguments,
             };
             let arms = vec![GuardCondition {
@@ -1108,6 +1507,7 @@ mod tests {
             owner_source: source,
             params: &params,
             defaults: &defaulted,
+            options: &[],
             arguments: &explicit,
         };
         assert!(!call_excludes_arm(&call, &arms));
@@ -1124,6 +1524,7 @@ mod tests {
                 owner_source: "function f(x) {\n  return x;\n}\n",
                 params: &p,
                 defaults: &d,
+                options: &[],
                 arguments: &arguments,
             };
             assert!(
@@ -1195,6 +1596,7 @@ mod tests {
                 owner_source: src,
                 params: &params,
                 defaults: &defaults,
+                options: &[],
                 arguments: &arguments,
             };
             call_excludes_arm(
@@ -1309,6 +1711,7 @@ mod tests {
             owner_source: src,
             params: &params,
             defaults: &defaults,
+            options: &[],
             arguments: &arguments,
         };
         assert!(!call_excludes_arm(
@@ -1385,5 +1788,127 @@ mod tests {
         }
         // No length cap on the annotation.
         check(&format!("run(c: string): {}B {{", "A | ".repeat(120)));
+    }
+
+    const OPTIONS: &str = "export function run(items, { preserveOrder = true, limit = Infinity, mode: kind = 'fast' } = {}) {\n  if (preserveOrder) {\n    a();\n  } else {\n    b();\n  }\n  if (kind === 'slow') {\n    c();\n  }\n  if (limit > 3) {\n    d();\n  }\n}\n";
+
+    /// Whether a call with `arguments` provably keeps the arm that holds
+    /// `text` (on `line` of `source`) closed.
+    fn excludes(source: &str, line: usize, text: &str, arguments: &[&str]) -> bool {
+        let Some(shapes) = parameter_shapes(source) else {
+            return false;
+        };
+        let Some(arms) = enclosing_conditions(source, 1, line, text) else {
+            return false;
+        };
+        let arguments: Vec<String> = arguments.iter().map(|a| a.to_string()).collect();
+        let call = CallInputs {
+            owner_source: source,
+            params: &shapes.names,
+            defaults: &shapes.defaults,
+            options: &shapes.options,
+            arguments: &arguments,
+        };
+        call_excludes_arm(&call, &arms)
+    }
+
+    #[test]
+    fn reads_destructured_options_parameters() {
+        let shapes = parameter_shapes(OPTIONS).map(|s| (s.names, s.defaults, s.options.len()));
+        assert_eq!(
+            shapes,
+            Some((
+                vec!["items".to_string(), String::new()],
+                vec![false, true],
+                1
+            ))
+        );
+        // Annotated by name, arrow, and async forms read the same list.
+        for source in [
+            "function f(a, { x = 1 }: Opts = {}) {\n  if (x) {\n    y();\n  }\n}\n",
+            "const f = ({ x = 1 } = {}) => {\n  if (x) {\n    y();\n  }\n};\n",
+            "export default async function f({ x = 1 } = {}) {\n  if (x) {\n    y();\n  }\n}\n",
+        ] {
+            assert!(parameter_shapes(source).is_some(), "{source}");
+        }
+        // Rest, decorators, type-literal annotations, other defaults and a
+        // plain list are not options shapes.
+        for source in [
+            "function f({ x }, ...rest) {\n  if (x) {\n    y();\n  }\n}\n",
+            "@Dec() f({ x } = {}) {\n  if (x) {\n    y();\n  }\n}\n",
+            "function f({ x }: { x: number } = {}) {\n  if (x) {\n    y();\n  }\n}\n",
+            "function f({ x } = defaults) {\n  if (x) {\n    y();\n  }\n}\n",
+            "function f({ [k]: x } = {}) {\n  if (x) {\n    y();\n  }\n}\n",
+            "function f(a, b) {\n  if (a) {\n    y();\n  }\n}\n",
+        ] {
+            assert!(parameter_shapes(source).is_none(), "{source}");
+        }
+    }
+
+    #[test]
+    fn option_defaults_and_literal_objects_decide_the_guard() {
+        // `else` arm of `if (preserveOrder)`: closed whenever preserveOrder
+        // is truthy, which is the default.
+        let else_arm = |args: &[&str]| excludes(OPTIONS, 5, "b();", args);
+        assert!(else_arm(&["[]"]));
+        assert!(else_arm(&["[]", "undefined"]));
+        assert!(else_arm(&["[]", "{}"]));
+        assert!(else_arm(&["[]", "{ limit: 2 }"]));
+        assert!(else_arm(&["[]", "{ preserveOrder: true }"]));
+        assert!(else_arm(&["[]", "{ preserveOrder: undefined }"]));
+        assert!(else_arm(&["[]", "{ 'preserveOrder': 1 }"]));
+        assert!(!else_arm(&["[]", "{ preserveOrder: false }"]));
+        assert!(!else_arm(&["[]", "{ preserveOrder: 0 }"]));
+        assert!(!else_arm(&["[]", "{ preserveOrder: null }"]));
+        // Unreadable objects may set the key.
+        assert!(!else_arm(&["[]", "opts"]));
+        assert!(!else_arm(&["[]", "null"]));
+        assert!(!else_arm(&["[]", "{ preserveOrder }"]));
+        assert!(!else_arm(&["[]", "{ preserveOrder: pick() }"]));
+        assert!(!else_arm(&["[]", "{ ...base }"]));
+        assert!(!else_arm(&["[]", "{ limit: 1, ...base }"]));
+        assert!(!else_arm(&["[]", "{ ['preserve' + 'Order']: false }"]));
+        assert!(!else_arm(&[
+            "[]",
+            "{ get preserveOrder() { return false; } }"
+        ]));
+        assert!(!else_arm(&["[]", "{ preserveOrder() { return false; } }"]));
+        assert!(!else_arm(&[
+            "[]",
+            "{ preserveOrder: true, preserveOrder: false }"
+        ]));
+        assert!(!else_arm(&[
+            "[]",
+            "{ limit: 2 } + { preserveOrder: false }"
+        ]));
+        // `then` arm: closed only when the call turns the option off.
+        let then_arm = |args: &[&str]| excludes(OPTIONS, 3, "a();", args);
+        assert!(then_arm(&["[]", "{ preserveOrder: false }"]));
+        assert!(!then_arm(&["[]"]));
+        assert!(!then_arm(&["[]", "{}"]));
+        // A renamed property reads through its local name.
+        let slow = |args: &[&str]| excludes(OPTIONS, 8, "c();", args);
+        assert!(slow(&["[]"]));
+        assert!(slow(&["[]", "{ mode: 'fast' }"]));
+        assert!(!slow(&["[]", "{ mode: 'slow' }"]));
+        assert!(!slow(&["[]", "{ mode: pick() }"]));
+        // A default the reader cannot evaluate is unknown when omitted.
+        let large = |args: &[&str]| excludes(OPTIONS, 11, "d();", args);
+        assert!(large(&["[]", "{ limit: 1 }"]));
+        assert!(!large(&["[]"]));
+        assert!(!large(&["[]", "{ limit: 9 }"]));
+        // Without `= {}` an omitted options argument throws, so nothing is
+        // known about the arm.
+        let strict = "function run(items, { preserveOrder = true }) {\n  if (preserveOrder) {\n    a();\n  } else {\n    b();\n  }\n}\n";
+        assert!(!excludes(strict, 5, "b();", &["[]"]));
+        assert!(excludes(strict, 5, "b();", &["[]", "{}"]));
+    }
+
+    #[test]
+    fn a_reassigned_or_shadowed_option_local_is_not_read() {
+        let reassigned = "function run(items, { preserveOrder = true } = {}) {\n  preserveOrder = !items;\n  if (preserveOrder) {\n    a();\n  } else {\n    b();\n  }\n}\n";
+        assert!(!excludes(reassigned, 5, "b();", &["[]"]));
+        let shadowed = "function run(items, { preserveOrder = true } = {}) {\n  const preserveOrder = items.length;\n  if (preserveOrder) {\n    a();\n  } else {\n    b();\n  }\n}\n";
+        assert!(!excludes(shadowed, 5, "b();", &["[]"]));
     }
 }

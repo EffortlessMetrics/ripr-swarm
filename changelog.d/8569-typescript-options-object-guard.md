@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A TypeScript changed line under an `if` / `else` arm whose guard reads a property destructured from an options-object parameter (`{ preserveOrder = true } = {}`) now reads `weakly_exposed` when every related test call passes an object literal that provably leaves the arm untaken, instead of `exposed`. Spreads, computed keys, accessors, shorthand or non-literal values, non-literal arguments and non-literal defaults keep the existing verdict (#8569).
